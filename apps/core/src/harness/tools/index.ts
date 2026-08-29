@@ -32,6 +32,7 @@ import type {
   RunAsyncToolDispatch,
 } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
+import type { DispatchAppliedIngress } from "../integrations.ts";
 import type {
   SandboxCpuSample,
   SandboxExecutorConfig,
@@ -93,6 +94,7 @@ export interface ToolContext {
   modelProvider: unknown;
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
+  dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
@@ -274,7 +276,10 @@ export async function createTools(
         }),
         updateSubagentTool({
           accountId: context.accountId,
+          agentConfig: agentConfig,
+          dispatchAppliedIngress: context.dispatchAppliedIngress,
           eventId: context.session.eventId,
+          session: context.session,
         }),
         stopSubagentTool({
           accountId: context.accountId,

@@ -56,11 +56,12 @@ import type {
 import {
   modelValueToUserParts,
   prependTextToUserParts,
+  VIRTUAL_AGENT_PREFIX,
+  withoutNestedSubagents,
 } from "./tools/utils.ts";
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 interface SubagentCompletion {
   taskId: string;
@@ -742,6 +743,7 @@ export class SubagentCoordinator {
       accountId: requireParentAccountId(this.parentSession),
       agentId: task.agentId,
       eventId: task.eventId,
+      ownerTaskId: task.taskId,
       conversationKey: task.conversationKey,
       events: [promptMessage],
       requestedMode: "reject",
@@ -1111,16 +1113,6 @@ function bestEffortSubagentPublisher(
           error: error instanceof Error ? error.message : String(error),
         });
       });
-    },
-  };
-}
-
-function withoutNestedSubagents(config: AgentConfig): AgentConfig {
-  return {
-    ...config,
-    subagent: {
-      ...config.subagent,
-      enabled: false,
     },
   };
 }

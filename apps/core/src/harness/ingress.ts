@@ -86,6 +86,9 @@ export type IngressDelivery =
   | { kind: "channel"; channel: string; source?: Record<string, unknown> };
 
 export interface IngressCandidate {
+  activeOwnerOnly?: boolean;
+  expectedOwnerTaskId?: string;
+  ownerTaskId?: string;
   accountId: string;
   agentId: string;
   eventId: string;
@@ -120,7 +123,8 @@ export type IngressAdmission = {
     | "duplicate"
     | "rejected"
     | "capacity"
-    | "conflict";
+    | "conflict"
+    | "not_running";
   eventId?: string;
   status?: IngressStatus;
   ownerGeneration?: number;
@@ -172,6 +176,9 @@ export async function acceptIngress(
       events: candidate.events,
       requestedMode: candidate.requestedMode,
       deliveryKind: candidate.delivery.kind,
+      activeOwnerOnly: candidate.activeOwnerOnly,
+      expectedOwnerTaskId: candidate.expectedOwnerTaskId,
+      ownerTaskId: candidate.ownerTaskId,
       agentConfig: candidate.agentConfig,
       ephemeralSystem: candidate.ephemeralSystem,
     }),

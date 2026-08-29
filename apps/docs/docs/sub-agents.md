@@ -134,16 +134,25 @@ Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memor
 The parent model gets three focused tools for children returned by
 `run_subagent`:
 
-- `get_subagent_status` reads the durable task status and completed result or
-  failure detail
+- `get_subagent_status` optionally reads durable status while the child is
+  running; completed results are injected into the parent automatically
 - `update_subagent` uses mode `steer` to change the active child's direction or
-  mode `continue` to queue a follow-up turn; both require a `message`
-- `stop_subagent` cooperatively stops the active child
+  mode `continue` to queue a follow-up turn; both require a `message` and return
+  `not_running` without restarting a child that already finished
+- `stop_subagent` cooperatively stops the active child and returns `not_running`
+  when no active child owns the conversation
 
 Each tool takes the `taskId` and `agentId` returned by `run_subagent`. They are
 exposed only in persistent mode and accept only tasks created by the calling
 parent event, so a child cannot control a sibling and one parent cannot control
 another parent's child.
+
+Control admission and conversation ownership are decided in one transaction.
+An update can only enter the queue while the child still owns an active fenced
+generation. If the child finishes at the same moment, the update creates no
+ingress envelope and returns `not_running`. The completed result still follows
+the ordinary injection path, which starts another parent model pass. A late stop
+uses the same current-owner rule.
 
 ```json
 {
