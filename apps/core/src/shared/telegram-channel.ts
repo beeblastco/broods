@@ -36,9 +36,7 @@ const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
 // Telegram serves every static sticker as WebP whatever the set was built from.
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
-// The answered message is context for this turn, not the turn itself, and
-// Telegram allows 4096 characters, so a long one is quoted only as far as it
-// takes to recognise which message it is.
+// A quote is context for the turn, not the turn itself; Telegram allows 4096.
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
 
 export interface TelegramChannelOptions {
@@ -546,33 +544,26 @@ function verifyWebhookSecret(
 /**
  * Frames the message a reply answers ahead of the reply itself.
  *
- * Telegram draws a reply as a quote of the answered message, but the
- * conversation the model reads is a flat list in time order, so that quote is
- * not in it. "and with margin?" then arrives with nothing to attach it to, and
- * the model has to guess, exactly like a person who scrolled past the quote.
- *
- * The frame matches `withScheduledRunContext`: a delimited block, not a
- * markdown blockquote a group member could type by hand to forge one. A display
- * name is whatever that member set, so the quote character that would break the
- * attribute is dropped.
- *
- * A reply to a message with no text of its own (a bare photo, a sticker) is
- * left alone: an empty frame says less than no frame.
+ * Telegram draws that quote in its own UI, but the conversation the model reads
+ * is a flat list in time order, so without this "and with margin?" arrives with
+ * nothing to attach it to. Same delimited shape as `withScheduledRunContext`, so
+ * a member cannot type one by hand to forge it.
  */
 function withReplyContext(
   text: string,
   repliedTo: Message | undefined,
 ): string {
-  const quoted = repliedTo?.text.trim();
-  if (!repliedTo || !quoted) {
-    return text;
-  }
+  if (!repliedTo) return text;
+  const quoted = repliedTo.text.trim();
+  if (!quoted) return text;
+
+  const from = repliedTo.author.fullName.replaceAll('"', "");
   const shortened =
     quoted.length > TELEGRAM_REPLY_QUOTE_MAX
       ? `${quoted.slice(0, TELEGRAM_REPLY_QUOTE_MAX).trimEnd()}...`
       : quoted;
 
-  return `<replying-to from="${repliedTo.author.fullName.replaceAll('"', "")}">
+  return `<replying-to from="${from}">
 ${shortened}
 </replying-to>
 
