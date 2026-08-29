@@ -1,7 +1,7 @@
 /**
  * Shared cleanup helpers for persistent sandbox reservations. Account deletion,
- * workspace deletion, and channel-scoped cleanup all need the same provider
- * release path.
+ * workspace deletion, channel-scoped cleanup, and the sandbox sweeper all need the
+ * same provider release path.
  */
 
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
@@ -11,20 +11,57 @@ import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
-import type { SandboxConfig } from "./domain/sandbox-config.ts";
+import type {
+  SandboxConfig,
+  SandboxProvider,
+} from "./domain/sandbox-config.ts";
 import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
-type ReleasableSandboxProvider =
-  | "sandbox"
-  | "lambda"
-  | "daytona"
-  | "e2b"
-  | "vercel";
+const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
+  "daytona",
+  "e2b",
+  "lambda",
+  "sandbox",
+  "vercel",
+];
+
+/** The pair that names one reserved machine at its provider. */
+export interface SandboxReservationRef {
+  provider: SandboxProvider;
+  reservationKey: string;
+}
 
 /**
- * Clean delete of reserved sandboxes for the given workspace namespaces.
+ * Release the reservations the sweeper found expired. Unlike the namespace-deletion
+ * path it never drops a row the provider teardown did not confirm: that row holds the
+ * only copy of `externalId`, so deleting it early strands the sandbox.
+ */
+export async function releaseExpiredSandboxes(
+  accountId: string,
+  reservations: SandboxReservationRef[],
+): Promise<SandboxReservationRef[]> {
+  if (reservations.length === 0) {
+    return [];
+  }
+  const configs = await persistentSandboxConfigs(accountId);
+
+  const released: SandboxReservationRef[] = [];
+  for (const reservation of reservations) {
+    const key = reservation.reservationKey;
+    if (!(await releaseFromConfigs(reservation.provider, configs, key)))
+      continue;
+    released.push(reservation);
+    await removeSandboxInstance(accountId, key);
+  }
+
+  return released;
+}
+
+/**
+ * Clean delete of reserved sandboxes for the given workspace namespaces. The caller is
+ * discarding the namespace, so a row no config could release is dropped with it.
  * Idempotent: a namespace with no reserved sandbox is a cheap no-op.
  */
 export async function releaseReservedSandboxes(
@@ -34,35 +71,16 @@ export async function releaseReservedSandboxes(
   if (namespaces.length === 0) {
     return 0;
   }
-  const configs = await getStorage()
-    .sandboxConfigs.list(accountId)
-    .catch(() => []);
-  const persistent = configs
-    .map((record) => record.config)
-    .filter((config) => config.persistent === true);
-  const sandbox = persistent.filter((config) => config.provider === "sandbox");
-  const lambda = persistent.filter((config) => config.provider === "lambda");
-  const daytona = persistent.filter((config) => config.provider === "daytona");
-  const e2b = persistent.filter((config) => config.provider === "e2b");
-  const vercel = persistent.filter((config) => config.provider === "vercel");
+  const configs = await persistentSandboxConfigs(accountId);
 
   let released = 0;
   for (const namespace of namespaces) {
-    if (await releaseFromConfigs("sandbox", sandbox, namespace)) released++;
-    if (await releaseFromConfigs("lambda", lambda, namespace)) released++;
-    if (await releaseFromConfigs("daytona", daytona, namespace)) released++;
-    if (await releaseFromConfigs("e2b", e2b, namespace)) released++;
-    if (await releaseFromConfigs("vercel", vercel, namespace)) released++;
-    // Drop any orphaned instance rows (e.g. all configs deleted, or none owned it).
-    await deleteSandboxInstance("sandbox", namespace, accountId).catch(
-      () => {},
-    );
-    await deleteSandboxInstance("lambda", namespace, accountId).catch(() => {});
-    await deleteSandboxInstance("daytona", namespace, accountId).catch(
-      () => {},
-    );
-    await deleteSandboxInstance("e2b", namespace, accountId).catch(() => {});
-    await deleteSandboxInstance("vercel", namespace, accountId).catch(() => {});
+    for (const provider of RELEASABLE_PROVIDERS) {
+      if (await releaseFromConfigs(provider, configs, namespace)) released++;
+      await deleteSandboxInstance(provider, namespace, accountId).catch(
+        () => {},
+      );
+    }
     await removeSandboxInstance(accountId, namespace);
   }
 
@@ -77,7 +95,7 @@ export async function releaseSandboxConfigInstances(
   accountId: string,
   config: SandboxConfig,
 ): Promise<number> {
-  if (config.persistent !== true || !isReleasableProvider(config.provider)) {
+  if (config.persistent !== true) {
     return 0;
   }
   const workspaceConfigs = await getStorage()
@@ -95,24 +113,25 @@ export async function releaseSandboxConfigInstances(
   return released;
 }
 
-function isReleasableProvider(
-  provider: SandboxConfig["provider"],
-): provider is ReleasableSandboxProvider {
-  return (
-    provider === "sandbox" ||
-    provider === "lambda" ||
-    provider === "daytona" ||
-    provider === "e2b" ||
-    provider === "vercel"
-  );
+async function persistentSandboxConfigs(
+  accountId: string,
+): Promise<SandboxConfig[]> {
+  const configs = await getStorage()
+    .sandboxConfigs.list(accountId)
+    .catch(() => []);
+
+  return configs
+    .map((record) => record.config)
+    .filter((config) => config.persistent === true);
 }
 
 async function releaseFromConfigs(
-  provider: ReleasableSandboxProvider,
+  provider: SandboxProvider,
   configs: SandboxConfig[],
   namespace: string,
 ): Promise<boolean> {
   for (const config of configs) {
+    if (config.provider !== provider) continue;
     try {
       const executor =
         provider === "sandbox"

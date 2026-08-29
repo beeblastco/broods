@@ -1,9 +1,8 @@
 /**
  * Storage mirror writes for sandbox snapshot/image build state. The account-manage
  * snapshot endpoint calls this after the provider captures a snapshot so the
- * dashboard's live sandboxSnapshots query reflects it. Fire-and-forget safe —
- * gated on convex mode and wrapped so a mirror failure never fails the request.
- * See usage.ts for the same pattern.
+ * dashboard's live sandboxSnapshots query reflects it. Fire-and-forget safe — wrapped
+ * so a mirror failure never fails the request. See usage.ts for the same pattern.
  */
 
 const internal: any = require("@broods/convex/_generated/api").internal;
@@ -21,14 +20,8 @@ export type SandboxSnapshotStatus =
   | "error"
   | "build_failed";
 
-/** Convex mode is active only when both env vars are present (see CLAUDE.md). */
-function convexEnabled(): boolean {
-  return Boolean(process.env.CONVEX_URL && process.env.CONVEX_DEPLOY_KEY);
-}
-
 /**
- * Mirrors a captured/registered snapshot into Convex. No-op outside convex mode.
- * Idempotent by (account, name).
+ * Mirrors a captured/registered snapshot into Convex. Idempotent by (account, name).
  */
 export async function upsertSandboxSnapshot(input: {
   accountId: string;
@@ -38,7 +31,6 @@ export async function upsertSandboxSnapshot(input: {
   externalImageId: string;
   status?: SandboxSnapshotStatus;
 }): Promise<void> {
-  if (!convexEnabled()) return;
   try {
     await getConvexClient().mutation(internal.sandbox.snapshots.upsert, {
       accountId: input.accountId as any,

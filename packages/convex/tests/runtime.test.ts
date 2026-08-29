@@ -760,7 +760,7 @@ describe("runtime persistence", () => {
       }
     });
 
-    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(5);
+    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(4);
     expect(
       await t.run(async (ctx) => ({
         claims: (await ctx.db.query("runtimeClaims").collect()).map(
@@ -784,8 +784,143 @@ describe("runtime persistence", () => {
       agents: ["live-agent"],
       tools: ["live-tool"],
       groups: ["live-parent"],
-      reservations: ["live-sandbox"],
+      // Both survive: deleting an expired reservation here would drop the only
+      // copy of its provider id and strand the sandbox. The core sweeper owns it.
+      reservations: ["expired-sandbox", "live-sandbox"],
     });
+  });
+});
+
+describe("sandbox reservation expiry", () => {
+  const ACCOUNT = "sweep-account";
+
+  /** Inserts one reservation with an absolute expiry. */
+  async function reservation(
+    t: ReturnType<typeof runtimeTest>,
+    reservationKey: string,
+    expiresAt: number,
+  ) {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("sandboxReservations", {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: reservationKey,
+        externalId: `sbx-${reservationKey}`,
+        expiresAt: expiresAt,
+      });
+    });
+  }
+
+  test("lists only reservations whose idle window lapsed", async () => {
+    const t = runtimeTest();
+    const now = Math.floor(Date.now() / 1000);
+    await reservation(t, "abandoned", now - 60);
+    await reservation(t, "active", now + 60);
+
+    expect(
+      await t.query(internal.runtime.listExpiredSandboxReservations, {
+        limit: 10,
+      }),
+    ).toEqual([
+      {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "abandoned",
+        externalId: "sbx-abandoned",
+      },
+    ]);
+  });
+
+  test("deferral moves a row off the head of the expiry page", async () => {
+    const t = runtimeTest();
+    const now = Math.floor(Date.now() / 1000);
+    await reservation(t, "unreleasable", now - 60);
+
+    expect(
+      await t.mutation(internal.runtime.deferSandboxReservations, {
+        accountId: ACCOUNT,
+        reservations: [
+          { provider: "sandbox", reservationKey: "unreleasable" },
+          // Already released by the sweeper: a defer must never resurrect it.
+          { provider: "sandbox", reservationKey: "gone" },
+        ],
+      }),
+    ).toBe(1);
+    expect(
+      await t.query(internal.runtime.listExpiredSandboxReservations, {
+        limit: 10,
+      }),
+    ).toEqual([]);
+    expect(
+      await t.run(async (ctx) =>
+        (await ctx.db.query("sandboxReservations").collect()).map(
+          (row) => row.reservationKey,
+        ),
+      ),
+    ).toEqual(["unreleasable"]);
+  });
+
+  test("deferral ignores a row that belongs to another account", async () => {
+    const t = runtimeTest();
+    const now = Math.floor(Date.now() / 1000);
+    await reservation(t, "not-yours", now - 60);
+
+    expect(
+      await t.mutation(internal.runtime.deferSandboxReservations, {
+        accountId: "other-account",
+        reservations: [{ provider: "sandbox", reservationKey: "not-yours" }],
+      }),
+    ).toBe(0);
+  });
+
+  test("reports only idle mirror rows whose reservation is gone", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const idle = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    await t.run(async (ctx) => {
+      for (const [reservationKey, lastUsedAt] of [
+        ["orphan", idle],
+        ["reserved", idle],
+        ["recent", Date.now()],
+        ["throwaway", idle],
+      ] as const) {
+        await ctx.db.insert("sandboxInstances", {
+          accountId: accountId,
+          provider: "sandbox",
+          reservationKey: reservationKey,
+          externalId: `sbx-${reservationKey}`,
+          name: reservationKey,
+          status: "running",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+          createdAt: lastUsedAt,
+          lastUsedAt: lastUsedAt,
+          // A per-call instance keys on the provider id, so there is no
+          // reconnect key to adopt it back with.
+          ...(reservationKey === "throwaway" ? { ephemeral: true } : {}),
+        });
+      }
+      // Still reachable through the normal acquire path: not an orphan.
+      await ctx.db.insert("sandboxReservations", {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: "reserved",
+        externalId: "sbx-reserved",
+        expiresAt: Math.floor(Date.now() / 1000) - 60,
+      });
+    });
+
+    expect(
+      await t.query(internal.runtime.listOrphanedSandboxInstances, {
+        limit: 10,
+      }),
+    ).toEqual([
+      {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: "orphan",
+        externalId: "sbx-orphan",
+      },
+    ]);
   });
 });
 

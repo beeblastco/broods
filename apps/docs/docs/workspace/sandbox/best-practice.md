@@ -40,7 +40,7 @@ reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8 h max lifetime)
     "permissionMode": "bypass",
     "lifecycle": {
       "idleTimeoutSeconds": 1800, // scale down after 30 min idle (default 900)
-      "maxLifetimeSeconds": 86400, // hard expiry backstop (optional)
+      "maxLifetimeSeconds": 86400, // rebuild once this old (optional)
     },
     "onCreate": ["python3 -m venv $HOME/.venv"],
     "onResume": ["test -x $HOME/.venv/bin/python"],
@@ -67,17 +67,22 @@ native `lifecycle.onTimeout: "pause"` (filesystem + memory snapshot persist); **
 uses named persistent sandboxes and native `onCreate`/`onResume` callbacks. A reserved
 sandbox is reconnected by id on the next call (`sandbox`/workdir reserves a deterministic
 sandbox per workspace namespace; lambda/daytona/e2b/vercel store the id/name in a
-`persistentSandboxInstance` table). Instance rows carry a 30-day TTL refreshed on every use,
-and a concurrent first-create race is resolved by a conditional claim — the loser discards
-its duplicate sandbox and reconnects to the winner's.
+`persistentSandboxInstance` table). Reservation rows carry a 7-day idle TTL refreshed on
+every use, and a concurrent first-create race is resolved by a conditional claim — the loser
+discards its duplicate sandbox and reconnects to the winner's.
 
 Setup commands (`onCreate`/`onResume`) only run on persistent configs — see
 [Hooks → Setup commands](hook.md#setup-commands-oncreate--onresume).
 
 **Clean delete (no leaks).** Deleting a workspace or account releases its reserved
 sandboxes: `sandbox`/lambda/daytona/e2b/vercel are torn down explicitly and their instance
-rows dropped. There is also a hard-lifetime backstop (`lifecycle.maxLifetimeSeconds`,
-default 7 days) so nothing lingers indefinitely.
+rows dropped. Most conversations are never deleted though, they just stop, so the always-on
+backstop is **idle**: a reservation expires 7 days after its last call and a sweep in the
+harness deletes the sandbox at its provider, then drops the row.
+
+`lifecycle.maxLifetimeSeconds` is a separate opt-in ceiling on absolute age since create,
+checked on acquire rather than on a timer, so it never interrupts a running command. The call
+that trips it boots a fresh sandbox: local disk lost, S3 workspace files kept.
 
 ## Background jobs + `async_status`
 

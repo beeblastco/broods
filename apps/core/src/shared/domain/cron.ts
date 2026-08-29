@@ -9,7 +9,6 @@ import {
   normalizeUpdateCronInput as normalizeUpdateCronInputRule,
 } from "@broods/convex/model/cronRules";
 import type { JSONValue, ModelMessage } from "ai";
-import { optionalEnv } from "../env.ts";
 
 // Whether a schedule fires exactly once (an at(...) expression). EventBridge
 // deletes such a schedule itself once it has run, so the stored job is dropped
@@ -102,10 +101,6 @@ export interface NormalizedCronUpdate {
   scheduleExpression?: string;
   timezone?: string | null;
   status?: CronStatus;
-}
-
-export function isCronsConfigured(): boolean {
-  return Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 }
 
 /**

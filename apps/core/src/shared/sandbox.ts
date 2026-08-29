@@ -27,9 +27,9 @@ const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// Default hard-expiry backstop for a reserved sandbox when no maxLifetimeSeconds
-// is set: an abandoned sandbox self-deletes after this long without use (the
-// harness refreshes the expiry on every call). Prevents leaked compute/disk.
+// Idle backstop for the providers that take a native expiry (daytona, lambda) when the
+// config sets no maxLifetimeSeconds. Keep equal to SANDBOX_RESERVATION_TTL_SECONDS in
+// `packages/convex/runtime.ts`, which the sandbox sweeper enforces for every provider.
 export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
 // Cap concurrent detached background jobs per reserved sandbox so a runaway agent
 // cannot pin a sandbox busy (and defeat scale-to-0) with unbounded jobs.

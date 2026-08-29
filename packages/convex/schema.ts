@@ -1277,6 +1277,7 @@ export default defineSchema({
       "projectId",
       "stageId",
     ])
+    .index("by_lastUsedAt", ["lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
     .index("by_accountId", ["accountId"])

@@ -8,6 +8,7 @@ import {
   rolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
+import type { SandboxExecutor } from "../harness/sandbox/types.ts";
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import {
   MICROVM_SHELL_AUTH_HEADER,
@@ -26,13 +27,17 @@ import {
   removeSandboxInstance,
   sandboxInstanceIsControllable,
   setSandboxInstanceStatus,
+  type SandboxInstanceStatus,
 } from "../shared/convex/sandbox-instances.ts";
 import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
 import {
   normalizeCreateAccountInput,
   type AccountRecord,
 } from "../shared/domain/accounts.ts";
-import { isCronsConfigured } from "../shared/domain/cron.ts";
+import type {
+  SandboxConfig,
+  SandboxProvider,
+} from "../shared/domain/sandbox-config.ts";
 import { requireEnv } from "../shared/env.ts";
 import {
   errorResponse,
@@ -65,6 +70,29 @@ type SandboxLifecycleAction =
   | "refresh"
   | "exec"
   | "terminal";
+
+interface SandboxAuditDetails {
+  durationMs?: number;
+  errorMessage?: string;
+  exitCode?: number | null;
+  status?: SandboxInstanceStatus;
+  truncated?: boolean;
+}
+
+/** Everything one lifecycle action needs, resolved once by the router. */
+interface SandboxLifecycleContext {
+  accountId: string;
+  audit: (
+    result: "ok" | "error",
+    details?: SandboxAuditDetails,
+  ) => Promise<void>;
+  body: Record<string, unknown>;
+  config: SandboxConfig;
+  executor: SandboxExecutor;
+  provider: SandboxProvider;
+  ref: { reservationKey: string };
+  reservationKey: string;
+}
 
 class AccountEndpointUnauthorizedError extends Error {
   constructor() {
@@ -170,7 +198,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     logError("Account manage request failed", {
       method: method,
       rawPath: rawPath,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText(err),
       errorName: err instanceof Error ? err.name : undefined,
       stack: err instanceof Error ? err.stack : undefined,
     });
@@ -259,317 +287,301 @@ async function handleSandboxLifecycle(
     );
   }
 
-  const executor = createSandboxExecutor(record.config);
-  const ref = { reservationKey: reservationKey };
-  const provider = record.config.provider;
   const actor = sandboxAuditActor(body.actor);
-  const audit = async (
-    result: "ok" | "error",
-    details: {
-      status?: "running" | "suspended" | "terminating" | "error";
-      errorMessage?: string;
-      exitCode?: number | null;
-      durationMs?: number;
-      truncated?: boolean;
-    } = {},
-  ) =>
-    recordSandboxAuditEvent({
-      accountId: accountId,
-      sandboxConfigId: sandboxId,
-      reservationKey: reservationKey,
-      provider: provider,
-      action: action,
-      result: result,
-      actor: actor,
-      ...details,
-    });
-
-  if (action === "exec") {
-    const code = typeof body.code === "string" ? body.code : "";
-    if (!code.trim()) {
-      await audit("error", { errorMessage: "code is required" });
-
-      return errorResponse(400, "code is required");
-    }
-    if (code.length > 20_000) {
-      await audit("error", {
-        errorMessage: "code must be 20000 characters or less",
-      });
-
-      return errorResponse(400, "code must be 20000 characters or less");
-    }
-
-    const limits = workspaceSandboxLimits(provider);
-    const timeoutSeconds = boundedInteger(
-      body.timeoutSeconds,
-      record.config.timeout ?? limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    );
-    const outputLimitBytes = boundedInteger(
-      body.outputLimitBytes,
-      record.config.outputLimitBytes ?? limits.defaultOutputLimitBytes,
-      limits.maxOutputLimitBytes,
-    );
-    let result;
-    try {
-      result = await executor.run({
-        code: code,
+  const context: SandboxLifecycleContext = {
+    accountId: accountId,
+    audit: async (result, details = {}): Promise<void> => {
+      await recordSandboxAuditEvent({
+        accountId: accountId,
+        sandboxConfigId: sandboxId,
         reservationKey: reservationKey,
-        timeoutSeconds: timeoutSeconds,
-        outputLimitBytes: outputLimitBytes,
+        provider: record.config.provider,
+        action: action,
+        result: result,
+        actor: actor,
+        ...details,
       });
-    } catch (err) {
-      await audit("error", {
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-    await setSandboxInstanceStatus(accountId, reservationKey, "running");
-    await audit(result.ok ? "ok" : "error", {
-      status: "running",
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
-      truncated: result.truncated === true,
+    },
+    body: body,
+    config: record.config,
+    executor: createSandboxExecutor(record.config),
+    provider: record.config.provider,
+    ref: { reservationKey: reservationKey },
+    reservationKey: reservationKey,
+  };
+  if (action === "exec") return execSandbox(context);
+  if (action === "refresh") return refreshSandboxStatus(context);
+  if (action === "resume") return suspendOrResumeSandbox(context, "resume");
+  if (action === "snapshot") return snapshotSandbox(context);
+  if (action === "suspend") return suspendOrResumeSandbox(context, "suspend");
+  if (action === "terminal") return openSandboxTerminal(context);
+
+  return terminateSandbox(context);
+}
+
+/** Runs one provider call, auditing and rethrowing its failure. */
+async function auditedSandboxCall<T>(
+  context: SandboxLifecycleContext,
+  call: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    await context.audit("error", { errorMessage: errorText(err) });
+    throw err;
+  }
+}
+
+async function execSandbox(
+  context: SandboxLifecycleContext,
+): Promise<Response> {
+  const code = typeof context.body.code === "string" ? context.body.code : "";
+  if (!code.trim()) {
+    await context.audit("error", { errorMessage: "code is required" });
+
+    return errorResponse(400, "code is required");
+  }
+  if (code.length > 20_000) {
+    await context.audit("error", {
+      errorMessage: "code must be 20000 characters or less",
     });
 
-    return jsonResponse(200, {
-      ok: result.ok,
-      runtime: result.runtime,
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      durationMs: result.durationMs,
-      truncated: result.truncated === true,
-      provider: result.provider,
-    });
+    return errorResponse(400, "code must be 20000 characters or less");
   }
 
-  if (action === "terminal") {
-    // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
-    // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
-    // terminal.
-    if (provider !== "sandbox" && provider !== "lambda") {
-      await audit("error", {
-        errorMessage: `provider ${provider} does not support a live terminal`,
-      });
+  const limits = workspaceSandboxLimits(context.provider);
+  const timeoutSeconds = boundedInteger(
+    context.body.timeoutSeconds,
+    context.config.timeout ?? limits.defaultTimeoutSeconds,
+    limits.maxTimeoutSeconds,
+  );
+  const outputLimitBytes = boundedInteger(
+    context.body.outputLimitBytes,
+    context.config.outputLimitBytes ?? limits.defaultOutputLimitBytes,
+    limits.maxOutputLimitBytes,
+  );
+  const result = await auditedSandboxCall(context, () =>
+    context.executor.run({
+      code: code,
+      reservationKey: context.reservationKey,
+      timeoutSeconds: timeoutSeconds,
+      outputLimitBytes: outputLimitBytes,
+    }),
+  );
+  await setSandboxInstanceStatus(
+    context.accountId,
+    context.reservationKey,
+    "running",
+  );
+  await context.audit(result.ok ? "ok" : "error", {
+    status: "running",
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    truncated: result.truncated === true,
+  });
 
-      return errorResponse(
-        409,
-        `provider ${provider} does not support a live terminal`,
-      );
-    }
-    const externalId = await getSandboxExternalId(provider, reservationKey);
-    if (!externalId) {
-      await audit("error", {
-        errorMessage: "No reserved sandbox instance for this reservation key",
-      });
+  return jsonResponse(200, {
+    ok: result.ok,
+    runtime: result.runtime,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    durationMs: result.durationMs,
+    truncated: result.truncated === true,
+    provider: result.provider,
+  });
+}
 
-      return errorResponse(
-        404,
-        "No reserved sandbox instance for this reservation key",
-      );
-    }
-    // The PTY endpoint requires a running guest, so opening a terminal
-    // resumes a suspended instance the same way an exec would.
-    if (executor.getInstanceInfo && executor.resume) {
-      const info = await executor.getInstanceInfo(ref);
-      if (info?.state === "suspended") {
-        try {
-          await executor.resume(ref);
-        } catch (err) {
-          await audit("error", {
-            errorMessage: err instanceof Error ? err.message : String(err),
-          });
-          throw err;
-        }
-        await setSandboxInstanceStatus(accountId, reservationKey, "running");
-      }
-    }
-    let target: {
-      url: string;
-      authorization: string;
-      authorizationHeader?: string;
-    };
-    if (provider === "lambda") {
-      try {
-        const shell = await microvmShellConnection(externalId);
-        target = { ...shell, authorizationHeader: MICROVM_SHELL_AUTH_HEADER };
-      } catch (error) {
-        // Most likely a VM launched before SHELL_INGRESS was attached at
-        // RunMicrovm; connectors cannot be added to a live VM.
-        const message = error instanceof Error ? error.message : String(error);
-        await audit("error", { errorMessage: message });
-
-        return errorResponse(
-          409,
-          `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`,
-        );
-      }
-    } else {
-      const { baseUrl, apiKey } = workdirConnection(record.config);
-      target = {
-        url: workdirPtyUrl(baseUrl, externalId),
-        authorization: `Bearer ${apiKey}`,
-      };
-    }
-    const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
-    const token = sealTerminalTicket(
-      { ...target, accountId: accountId, expiresAt: expiresAt },
-      requireEnv("SERVICE_AUTH_SECRET"),
-    );
-    await audit("ok", { status: "running" });
-
-    return jsonResponse(200, {
-      token: token,
-      expiresAt: expiresAt,
-      websocketPath: TERMINAL_WEBSOCKET_PATH,
-    });
+async function openSandboxTerminal(
+  context: SandboxLifecycleContext,
+): Promise<Response> {
+  // workdir exposes an in-guest PTY WebSocket; AWS MicroVMs expose the native
+  // shell endpoint (SHELL_INGRESS). Other providers keep the bounded `exec`
+  // terminal.
+  if (context.provider !== "sandbox" && context.provider !== "lambda") {
+    return unsupportedSandboxAction(context, "a live terminal");
   }
-
-  if (action === "refresh") {
-    if (!executor.getInstanceInfo) {
-      await audit("error", {
-        errorMessage: `provider ${provider} does not support instance status refresh`,
-      });
-
-      return errorResponse(
-        409,
-        `provider ${provider} does not support instance status refresh`,
-      );
-    }
-    let info;
-    try {
-      info = await executor.getInstanceInfo(ref);
-    } catch (err) {
-      await audit("error", {
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-    if (!info || info.state === "terminating") {
-      await removeSandboxInstance(accountId, reservationKey);
-      await audit("ok", { status: "terminating" });
-
-      return jsonResponse(200, { status: "terminated" });
-    }
-    const status = info.state === "unknown" ? "error" : info.state;
-    // A refresh reads the provider's state; it does not use the sandbox.
-    await setSandboxInstanceStatus(accountId, reservationKey, status, true);
-    await audit(status === "error" ? "error" : "ok", { status: status });
-
-    return jsonResponse(200, { status: status, externalId: info.externalId });
-  }
-
-  if (action === "suspend") {
-    if (!executor.suspend) {
-      await audit("error", {
-        errorMessage: `provider ${provider} does not support suspend`,
-      });
-
-      return errorResponse(
-        409,
-        `provider ${provider} does not support suspend`,
-      );
-    }
-    try {
-      await executor.suspend(ref);
-    } catch (err) {
-      await audit("error", {
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-    await setSandboxInstanceStatus(accountId, reservationKey, "suspended");
-    await audit("ok", { status: "suspended" });
-
-    return jsonResponse(200, { status: "suspended" });
-  }
-  if (action === "resume") {
-    if (!executor.resume) {
-      await audit("error", {
-        errorMessage: `provider ${provider} does not support resume`,
-      });
-
-      return errorResponse(409, `provider ${provider} does not support resume`);
-    }
-    try {
-      await executor.resume(ref);
-    } catch (err) {
-      await audit("error", {
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-    await setSandboxInstanceStatus(accountId, reservationKey, "running");
-    await audit("ok", { status: "running" });
-
-    return jsonResponse(200, { status: "running" });
-  }
-  if (action === "snapshot") {
-    if (!executor.snapshot) {
-      await audit("error", {
-        errorMessage: `provider ${provider} does not support snapshot`,
-      });
-
-      return errorResponse(
-        409,
-        `provider ${provider} does not support snapshot`,
-      );
-    }
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) {
-      await audit("error", { errorMessage: "name is required" });
-
-      return errorResponse(400, "name is required");
-    }
-    let result;
-    try {
-      result = await executor.snapshot(ref);
-    } catch (err) {
-      await audit("error", {
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-    const externalImageId = result.externalImageId ?? result.snapshotId;
-    await upsertSandboxSnapshot({
-      accountId: accountId,
-      name: name,
-      provider: provider,
-      baseImage: provider,
-      externalImageId: externalImageId,
-      status: "active",
-    });
-    await audit("ok", { status: "running" });
-
-    return jsonResponse(200, {
-      status: "active",
-      snapshotId: result.snapshotId,
-      externalImageId: externalImageId,
-    });
-  }
-  if (!executor.release) {
-    await audit("error", {
-      errorMessage: `provider ${provider} does not support terminate`,
+  const externalId = await getSandboxExternalId(
+    context.provider,
+    context.reservationKey,
+  );
+  if (!externalId) {
+    await context.audit("error", {
+      errorMessage: "No reserved sandbox instance for this reservation key",
     });
 
     return errorResponse(
-      409,
-      `provider ${provider} does not support terminate`,
+      404,
+      "No reserved sandbox instance for this reservation key",
     );
   }
-  try {
-    await executor.release(ref);
-  } catch (err) {
-    await audit("error", {
-      errorMessage: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
+  // The PTY endpoint requires a running guest, so opening a terminal
+  // resumes a suspended instance the same way an exec would.
+  if (context.executor.getInstanceInfo && context.executor.resume) {
+    const info = await context.executor.getInstanceInfo(context.ref);
+    if (info?.state === "suspended") {
+      await auditedSandboxCall(context, async () => {
+        await context.executor.resume?.(context.ref);
+      });
+      await setSandboxInstanceStatus(
+        context.accountId,
+        context.reservationKey,
+        "running",
+      );
+    }
   }
-  await removeSandboxInstance(accountId, reservationKey);
-  await audit("ok", { status: "terminating" });
+  let target: {
+    url: string;
+    authorization: string;
+    authorizationHeader?: string;
+  };
+  if (context.provider === "lambda") {
+    try {
+      const shell = await microvmShellConnection(externalId);
+      target = { ...shell, authorizationHeader: MICROVM_SHELL_AUTH_HEADER };
+    } catch (error) {
+      // Most likely a VM launched before SHELL_INGRESS was attached at
+      // RunMicrovm; connectors cannot be added to a live VM.
+      const message = errorText(error);
+      await context.audit("error", { errorMessage: message });
+
+      return errorResponse(
+        409,
+        `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`,
+      );
+    }
+  } else {
+    const { baseUrl, apiKey } = workdirConnection(context.config);
+    target = {
+      url: workdirPtyUrl(baseUrl, externalId),
+      authorization: `Bearer ${apiKey}`,
+    };
+  }
+  const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
+  const token = sealTerminalTicket(
+    { ...target, accountId: context.accountId, expiresAt: expiresAt },
+    requireEnv("SERVICE_AUTH_SECRET"),
+  );
+  await context.audit("ok", { status: "running" });
+
+  return jsonResponse(200, {
+    token: token,
+    expiresAt: expiresAt,
+    websocketPath: TERMINAL_WEBSOCKET_PATH,
+  });
+}
+
+async function refreshSandboxStatus(
+  context: SandboxLifecycleContext,
+): Promise<Response> {
+  if (!context.executor.getInstanceInfo) {
+    return unsupportedSandboxAction(context, "instance status refresh");
+  }
+  const info = await auditedSandboxCall(context, async () =>
+    context.executor.getInstanceInfo?.(context.ref),
+  );
+  if (!info || info.state === "terminating") {
+    await removeSandboxInstance(context.accountId, context.reservationKey);
+    await context.audit("ok", { status: "terminating" });
+
+    return jsonResponse(200, { status: "terminated" });
+  }
+  const status = info.state === "unknown" ? "error" : info.state;
+  // A refresh reads the provider's state; it does not use the sandbox.
+  await setSandboxInstanceStatus(
+    context.accountId,
+    context.reservationKey,
+    status,
+    true,
+  );
+  await context.audit(status === "error" ? "error" : "ok", { status: status });
+
+  return jsonResponse(200, { status: status, externalId: info.externalId });
+}
+
+async function snapshotSandbox(
+  context: SandboxLifecycleContext,
+): Promise<Response> {
+  if (!context.executor.snapshot) {
+    return unsupportedSandboxAction(context, "snapshot");
+  }
+  const name =
+    typeof context.body.name === "string" ? context.body.name.trim() : "";
+  if (!name) {
+    await context.audit("error", { errorMessage: "name is required" });
+
+    return errorResponse(400, "name is required");
+  }
+  // The assertion is safe under the guard above; calling through the executor
+  // keeps its `this` binding.
+  const result = await auditedSandboxCall(context, async () =>
+    context.executor.snapshot!(context.ref),
+  );
+  const externalImageId = result.externalImageId ?? result.snapshotId;
+  await upsertSandboxSnapshot({
+    accountId: context.accountId,
+    name: name,
+    provider: context.provider,
+    baseImage: context.provider,
+    externalImageId: externalImageId,
+    status: "active",
+  });
+  await context.audit("ok", { status: "running" });
+
+  return jsonResponse(200, {
+    status: "active",
+    snapshotId: result.snapshotId,
+    externalImageId: externalImageId,
+  });
+}
+
+async function suspendOrResumeSandbox(
+  context: SandboxLifecycleContext,
+  action: "suspend" | "resume",
+): Promise<Response> {
+  const supported =
+    action === "suspend" ? context.executor.suspend : context.executor.resume;
+  if (!supported) {
+    return unsupportedSandboxAction(context, action);
+  }
+  await auditedSandboxCall(context, async () => {
+    if (action === "suspend") await context.executor.suspend?.(context.ref);
+    else await context.executor.resume?.(context.ref);
+  });
+  const status = action === "suspend" ? "suspended" : "running";
+  await setSandboxInstanceStatus(
+    context.accountId,
+    context.reservationKey,
+    status,
+  );
+  await context.audit("ok", { status: status });
+
+  return jsonResponse(200, { status: status });
+}
+
+async function terminateSandbox(
+  context: SandboxLifecycleContext,
+): Promise<Response> {
+  if (!context.executor.release) {
+    return unsupportedSandboxAction(context, "terminate");
+  }
+  await auditedSandboxCall(context, async () => {
+    await context.executor.release?.(context.ref);
+  });
+  await removeSandboxInstance(context.accountId, context.reservationKey);
+  await context.audit("ok", { status: "terminating" });
 
   return jsonResponse(200, { status: "terminated" });
+}
+
+async function unsupportedSandboxAction(
+  context: SandboxLifecycleContext,
+  capability: string,
+): Promise<Response> {
+  const message = `provider ${context.provider} does not support ${capability}`;
+  await context.audit("error", { errorMessage: message });
+
+  return errorResponse(409, message);
 }
 
 async function deleteAccountResponse(
@@ -620,10 +632,6 @@ async function deleteAccountResponse(
 }
 
 async function deleteAccountCrons(accountId: string): Promise<number> {
-  if (!isCronsConfigured()) {
-    return 0;
-  }
-
   const cronsStore = getStorage().crons;
   const crons = await cronsStore.list(accountId);
   await Promise.all(
@@ -677,6 +685,10 @@ function boundedInteger(
   }
 
   return parsed;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function sandboxAuditActor(value: unknown): SandboxAuditActor {

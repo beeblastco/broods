@@ -112,11 +112,15 @@ if (import.meta.main) {
     await import("./harness/handler.ts");
   const { prewarmIsolatePool, shutdownIsolatePool } =
     await import("./harness/isolate/executor.ts");
+  const { startSandboxSweeper, stopSandboxSweeper } =
+    await import("./shared/sandbox-sweeper.ts");
 
   initOtel();
   // One warm isolate worker so the first uploaded-tool call does not pay Node
   // startup. Failure is not fatal: the pool spawns on demand anyway.
   void prewarmIsolatePool().catch(() => undefined);
+  // Releases reserved sandboxes whose conversation never came back.
+  startSandboxSweeper();
 
   const server = Bun.serve({
     port: positiveIntegerEnv("PORT", 3000),
@@ -177,6 +181,7 @@ if (import.meta.main) {
       await drainInFlight();
       await drainInProcessWorkers();
       shutdownIsolatePool();
+      stopSandboxSweeper();
     })().catch((err) => {
       logError("Graceful shutdown failed", {
         error: err instanceof Error ? err.message : String(err),

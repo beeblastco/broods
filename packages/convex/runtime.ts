@@ -3,7 +3,7 @@
  * former Convex conversation, claim, async-result, and reservation tables.
  */
 
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -24,6 +24,10 @@ const DAY_SECONDS = 24 * 60 * 60;
 // coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 const RUNTIME_DELETE_BATCH_SIZE = 100;
+// Idle window a reservation survives, refreshed on every acquire. Only core's sandbox
+// sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
+// without deleting the sandbox first strands the machine.
+export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
@@ -630,6 +634,74 @@ export const getSandboxReservationRecord = internalQuery({
     };
   },
 });
+const sandboxReservationSummary = v.object({
+  accountId: v.string(),
+  provider: sandboxProviderValidator,
+  reservationKey: v.string(),
+  externalId: v.string(),
+});
+/**
+ * One page of reservations whose idle window has lapsed, oldest first.
+ * @returns the expired reservations, up to `limit`
+ */
+export const listExpiredSandboxReservations = internalQuery({
+  args: { limit: v.number() },
+  returns: v.array(sandboxReservationSummary),
+  handler: async (ctx, args) => {
+    const now = Math.floor(Date.now() / 1000);
+    const rows = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(args.limit);
+
+    return rows.map((row) => ({
+      accountId: row.accountId,
+      provider: row.provider,
+      reservationKey: row.reservationKey,
+      externalId: row.externalId,
+    }));
+  },
+});
+/**
+ * Mirror rows the old prune left without a reservation, still carrying the provider id
+ * the sweeper needs to adopt them back. Bounded to rows idle longer than a whole
+ * reservation TTL so a live sandbox is never mistaken for one, and `ephemeral` rows are
+ * skipped: their key is a provider id, not a reconnect key.
+ * @returns the orphaned mirror rows, up to `limit`
+ */
+export const listOrphanedSandboxInstances = internalQuery({
+  args: { limit: v.number() },
+  returns: v.array(sandboxReservationSummary),
+  handler: async (ctx, args) => {
+    const idleBefore = Date.now() - SANDBOX_RESERVATION_TTL_SECONDS * 1000;
+    const rows = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_lastUsedAt", (q) => q.lt("lastUsedAt", idleBefore))
+      .take(args.limit);
+
+    const orphans: Infer<typeof sandboxReservationSummary>[] = [];
+    for (const row of rows) {
+      if (row.ephemeral === true) continue;
+      const reservation = await ctx.db
+        .query("sandboxReservations")
+        .withIndex("by_provider_and_reservationKey", (q) =>
+          q
+            .eq("provider", row.provider)
+            .eq("reservationKey", row.reservationKey),
+        )
+        .unique();
+      if (reservation) continue;
+      orphans.push({
+        accountId: row.accountId,
+        provider: row.provider,
+        reservationKey: row.reservationKey,
+        externalId: row.externalId,
+      });
+    }
+
+    return orphans;
+  },
+});
 /**
  * Claims a new persistent sandbox reservation if it is still unmapped.
  * @returns whether the reservation was created
@@ -659,7 +731,8 @@ export const claimSandboxReservation = internalMutation({
     }
     await ctx.db.insert("sandboxReservations", {
       ...args,
-      expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
+      expiresAt:
+        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
     });
 
     return true;
@@ -689,7 +762,8 @@ export const saveSandboxReservation = internalMutation({
       .unique();
     const patch = {
       externalId: args.externalId,
-      expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
+      expiresAt:
+        Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
     };
     if (row) await ctx.db.patch(row._id, patch);
     else
@@ -699,6 +773,45 @@ export const saveSandboxReservation = internalMutation({
       });
 
     return null;
+  },
+});
+/**
+ * Pushes the deadline out on reservations the sweeper could not clear, so one it can
+ * never clear stops holding the head of the `by_expiresAt` page. Patches only, so a
+ * released row stays gone. Bypasses the active-account guard: a suspended account's
+ * rows are exactly the ones that would otherwise block the page forever.
+ * @returns the number of rows whose deadline moved
+ */
+export const deferSandboxReservations = internalMutation({
+  args: {
+    accountId: v.string(),
+    reservations: v.array(
+      v.object({
+        provider: sandboxProviderValidator,
+        reservationKey: v.string(),
+      }),
+    ),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const expiresAt =
+      Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS;
+    let deferred = 0;
+    for (const reservation of args.reservations) {
+      const row = await ctx.db
+        .query("sandboxReservations")
+        .withIndex("by_provider_and_reservationKey", (q) =>
+          q
+            .eq("provider", reservation.provider)
+            .eq("reservationKey", reservation.reservationKey),
+        )
+        .unique();
+      if (!row || row.accountId !== args.accountId) continue;
+      await ctx.db.patch(row._id, { expiresAt: expiresAt });
+      deferred += 1;
+    }
+
+    return deferred;
   },
 });
 /**
@@ -962,7 +1075,8 @@ export const deleteAccountRuntimeData = internalMutation({
 /**
  * Deletes expired operational rows in bounded batches and schedules
  * continuation when needed. This maintenance path intentionally bypasses the
- * active-account guard.
+ * active-account guard. `sandboxReservations` is deliberately absent — core's sandbox
+ * sweeper expires that table instead, provider first and row second.
  * @returns the number of rows deleted in this batch
  */
 export const pruneExpired = internalMutation({
@@ -986,20 +1100,10 @@ export const pruneExpired = internalMutation({
       .query("runtimeAsyncToolGroups")
       .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
       .take(100);
-    const reservations = await ctx.db
-      .query("sandboxReservations")
-      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
-      .take(100);
-    const rows = [
-      ...claims,
-      ...agentResults,
-      ...toolResults,
-      ...groups,
-      ...reservations,
-    ];
+    const rows = [...claims, ...agentResults, ...toolResults, ...groups];
     for (const row of rows) await ctx.db.delete(row._id);
     if (
-      [claims, agentResults, toolResults, groups, reservations].some(
+      [claims, agentResults, toolResults, groups].some(
         (batch) => batch.length === 100,
       )
     ) {
