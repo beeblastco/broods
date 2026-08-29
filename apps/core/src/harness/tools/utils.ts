@@ -88,7 +88,7 @@ export async function getOwnedSubagent(
 }
 
 export function isFatalSandboxSetupError(value: string): boolean {
-  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(
+  return /allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(
     value,
   );
 }

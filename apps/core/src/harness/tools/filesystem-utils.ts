@@ -9,7 +9,6 @@
  * S3 (read/glob only — no mount, no Lambda cold start).
  */
 
-import type { JSONObject } from "@ai-sdk/provider";
 import type { JSONSchema7 } from "ai";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
@@ -546,25 +545,7 @@ export function formatRunText(result: SandboxRunResult): string {
   return `${result.stdout}${result.stderr}`;
 }
 
-export function formatRunJson(result: SandboxRunResult): JSONObject {
-  return {
-    output: {
-      stdout: result.stdout,
-      stderr: result.stderr,
-    },
-    status: {
-      ok: result.ok,
-      runtime: result.runtime,
-      provider: result.provider,
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
-      timedOut: result.timedOut === true,
-      truncated: result.truncated === true,
-    },
-  };
-}
-
-export function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
+function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
   return config.runtimes && config.runtimes.length > 0
     ? config.runtimes
     : ["bash", "python", "node"];
@@ -671,10 +652,6 @@ export function toWorkspaceRelative(path: string): string {
   }
 
   return parts.length === 0 ? "." : parts.join("/");
-}
-
-export function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 export function toBase64(value: string): string {

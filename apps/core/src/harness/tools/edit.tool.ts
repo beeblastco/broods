@@ -130,9 +130,9 @@ Usage notes:
 
           return toolText(result.stdout.trim());
         } catch (cause) {
-          return toolError(
-            cause instanceof Error ? cause.message : String(cause),
-          );
+          // toolError throws, so an in-try call already landed here. Feeding its
+          // message back through would prefix a fatal setup error a second time.
+          throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
     }),
