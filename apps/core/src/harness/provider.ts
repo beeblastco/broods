@@ -164,12 +164,12 @@ export function modelSettingsFromModelConfig(
 }
 
 /**
- * Account provider options, with a prompt cache key derived from the caller's
- * conversation when the provider needs one. OpenAI routes a request to the
- * machine holding a matching prefix by this key, and from GPT-5.6 on it is
- * required for that match to be dependable — without it a conversation pays
- * full price for a prefix the provider already has. The key is hashed because
- * a conversation key names the account, agent and chat it came from.
+ * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
+ * cacheControl (caching there is opt-in per request), OpenAI a promptCacheKey
+ * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
+ * A call without a conversation, like compaction, gets neither: a one-shot
+ * request pays the cache write and never reads it back. Explicit account
+ * config wins over both defaults.
  */
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
@@ -177,11 +177,23 @@ export function providerOptionsFromModelConfig(
 ): AgentModelProviderOptions | undefined {
   const configured = agentConfig.model?.providerOptions;
   const providerName = agentConfig.model?.provider;
-  if (
-    conversationKey === undefined ||
-    providerName === undefined ||
-    !STORED_ITEM_PROVIDERS.has(providerName)
-  ) {
+  if (conversationKey === undefined || providerName === undefined) {
+    return configured;
+  }
+  if (providerName === "anthropic") {
+    if (configured?.anthropic?.cacheControl !== undefined) {
+      return configured;
+    }
+
+    return {
+      ...configured,
+      anthropic: {
+        ...configured?.anthropic,
+        cacheControl: { type: "ephemeral" },
+      },
+    };
+  }
+  if (!STORED_ITEM_PROVIDERS.has(providerName)) {
     return configured;
   }
 
