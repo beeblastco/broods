@@ -989,7 +989,7 @@ export async function ingestChannelAttachments(
   }
   const runtimeConfig = await resolveAgentRuntime(
     context.agentConfig,
-    context.accountId,
+    { accountId: context.accountId },
     {
       channelName: context.channelName,
       channelScopeKey: channelScopeKeyFromConversation(context.conversationKey),
