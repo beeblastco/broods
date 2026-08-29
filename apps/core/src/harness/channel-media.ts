@@ -105,6 +105,29 @@ export interface InboundMediaContext {
   workspace?: ResolvedWorkspace;
 }
 
+// One attachment after ingestion, in either of the two states that matter: it
+// reached the workspace, or it did not and the agent is told why.
+interface StoredAttachment {
+  name: string;
+  mediaType: string;
+  /** The bytes themselves, kept only when no durable link exists to hand over. */
+  data?: Buffer;
+  /** Set once the bytes are in the workspace. */
+  path?: string;
+  /** The sealed link the model is handed. Absent when there is no workspace. */
+  url?: string;
+  /** Why the bytes are not available, for the note the agent reads. */
+  failure?: string;
+}
+
+// One attachment paired with the part it produced. A null part means nothing
+// about it reached the model, which the note has to say rather than imply the
+// file is there to look at.
+interface IngestedAttachment {
+  stored: StoredAttachment;
+  part: UserContentPart | null;
+}
+
 /**
  * Reads each attachment once and returns the parts to append to the message.
  *
@@ -195,27 +218,42 @@ export function resolveMediaType(
   return sniffed ?? claimed ?? "application/octet-stream";
 }
 
-// One attachment after ingestion, in either of the two states that matter: it
-// reached the workspace, or it did not and the agent is told why.
-interface StoredAttachment {
-  name: string;
-  mediaType: string;
-  /** The bytes themselves, kept only when no durable link exists to hand over. */
-  data?: Buffer;
-  /** Set once the bytes are in the workspace. */
-  path?: string;
-  /** The sealed link the model is handed. Absent when there is no workspace. */
-  url?: string;
-  /** Why the bytes are not available, for the note the agent reads. */
-  failure?: string;
+/**
+ * The host to fetch an attachment from, once it resolves somewhere public.
+ * The URL comes straight from the webhook body (Zalo, Pancake), so whoever
+ * posts to the webhook picks the host, and a public name can resolve to a
+ * private address. `fetch` re-resolves on connect, so this narrows the attack
+ * to a DNS rebind between the two lookups; `guardedFetch` would close that
+ * too, but reads every response as text and cannot carry a binary body.
+ */
+async function allowedAttachmentUrl(raw: string): Promise<URL> {
+  const url = new URL(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`refusing to fetch an attachment over ${url.protocol}`);
+  }
+  const addresses = await lookup(url.hostname, {
+    all: true,
+    verbatim: false,
+  });
+  if (addresses.length === 0) {
+    throw new Error(`attachment host ${url.hostname} did not resolve`);
+  }
+  for (const address of addresses) {
+    if (isDeniedAddress(address.address)) {
+      throw new Error(
+        `refusing to fetch an attachment from ${url.hostname}: private or metadata address`,
+      );
+    }
+  }
+
+  return url;
 }
 
-// One attachment paired with the part it produced. A null part means nothing
-// about it reached the model, which the note has to say rather than imply the
-// file is there to look at.
-interface IngestedAttachment {
-  stored: StoredAttachment;
-  part: UserContentPart | null;
+function assertWithinLimit(size: number, mediaType: string | null): void {
+  const limit = limitForMediaType(mediaType ?? undefined);
+  if (size > limit) {
+    throw new Error(`file is larger than ${formatBytes(limit)}`);
+  }
 }
 
 // The line the agent reads: what arrived, where it landed, and what to do with
@@ -253,42 +291,6 @@ function attachmentNote(
     ...lines,
     "Open any file you have not been shown directly with your own tools before answering; do not ask the sender to paste its contents.",
   ].join("\n");
-}
-
-/**
- * The host to fetch an attachment from, once it is known to resolve somewhere
- * public. The URL is not trusted input: `zalo-channel` and `pancake-channel`
- * both take it straight out of the inbound webhook body, so whoever posts to the
- * webhook picks the host. Protocol alone is not the boundary, because a public
- * name can resolve to a private address.
- *
- * `fetch` resolves the name again when it opens the socket, so this narrows the
- * attack to a DNS rebind between the two lookups rather than closing it. Pinning
- * the socket the way `guardedFetch` does would close it, at the cost of the
- * binary body this path exists to carry: that helper reads every response as
- * text.
- */
-async function allowedAttachmentUrl(raw: string): Promise<URL> {
-  const url = new URL(raw);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`refusing to fetch an attachment over ${url.protocol}`);
-  }
-  const addresses = await lookup(url.hostname, {
-    all: true,
-    verbatim: false,
-  });
-  if (addresses.length === 0) {
-    throw new Error(`attachment host ${url.hostname} did not resolve`);
-  }
-  for (const address of addresses) {
-    if (isDeniedAddress(address.address)) {
-      throw new Error(
-        `refusing to fetch an attachment from ${url.hostname}: private or metadata address`,
-      );
-    }
-  }
-
-  return url;
 }
 
 // The provider's own fetch, for an attachment named only by URL. Redirects are
@@ -329,60 +331,8 @@ async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
   throw new Error(`attachment redirected more than ${REDIRECT_LIMIT} times`);
 }
 
-// Counts the bytes as they arrive rather than calling `arrayBuffer()`, which
-// takes whatever the provider chooses to send before anyone can measure it: a
-// missing or lying Content-Length is otherwise enough on its own to exhaust the
-// pod, ten attachments at a time.
-async function readCappedBody(response: Response): Promise<Buffer> {
-  if (!response.body) {
-    throw new Error("provider answered without a body");
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    total += value.byteLength;
-    if (total > MAX_ATTACHMENT_BYTES) {
-      await reader.cancel();
-      throw new Error(
-        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
-      );
-    }
-    chunks.push(value);
-  }
-
-  return Buffer.concat(chunks);
-}
-
-function assertWithinLimit(size: number, mediaType: string | null): void {
-  const limit = limitForMediaType(mediaType ?? undefined);
-  if (size > limit) {
-    throw new Error(`file is larger than ${formatBytes(limit)}`);
-  }
-}
-
 function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
-}
-
-// A workspace path an agent can read back, and a shell will not fight over.
-// The hash keeps two messages that both carry `image.jpg` apart without making
-// the name unreadable.
-function mediaPath(name: string, eventId: string, index: number): string {
-  const folder = createHash("sha256")
-    .update(eventId)
-    .digest("hex")
-    .slice(0, 12);
-  const safeName = name
-    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-
-  return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
 function limitForMediaType(mediaType: string | undefined): number {
@@ -405,6 +355,22 @@ function mediaFileName(
   const extension = mediaTypeToExtension(mediaType);
 
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
+}
+
+// A workspace path an agent can read back, and a shell will not fight over.
+// The hash keeps two messages that both carry `image.jpg` apart without making
+// the name unreadable.
+function mediaPath(name: string, eventId: string, index: number): string {
+  const folder = createHash("sha256")
+    .update(eventId)
+    .digest("hex")
+    .slice(0, 12);
+  const safeName = name
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
 // The part the model actually receives. Pictures go over as pictures; anything
@@ -433,6 +399,35 @@ function nativePart(
     mediaType: item.mediaType,
     filename: item.name,
   };
+}
+
+// Counts the bytes as they arrive rather than calling `arrayBuffer()`, which
+// takes whatever the provider chooses to send before anyone can measure it: a
+// missing or lying Content-Length is otherwise enough on its own to exhaust the
+// pod, ten attachments at a time.
+async function readCappedBody(response: Response): Promise<Buffer> {
+  if (!response.body) {
+    throw new Error("provider answered without a body");
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    total += value.byteLength;
+    if (total > MAX_ATTACHMENT_BYTES) {
+      await reader.cancel();
+      throw new Error(
+        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
+      );
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks);
 }
 
 // Read the bytes, put them in the workspace, and seal the link. Every failure
