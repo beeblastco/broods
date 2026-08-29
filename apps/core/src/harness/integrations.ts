@@ -16,6 +16,7 @@ import {
   toolModelMessageSchema,
   userModelMessageSchema,
 } from "ai";
+import type { Attachment } from "chat";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import type {
   ChannelActions,
@@ -217,6 +218,9 @@ export interface ChannelInboundEvent {
   eventId: string;
   conversationKey: string;
   content: UserContent;
+  // Media the channel delivered with the message. Still un-downloaded: the
+  // bytes are read once the turn runs, against the agent's own workspace.
+  attachments?: Attachment[];
   events: ConversationIngressEvent[];
   channelName: string;
   identity?: ChannelIdentity;
@@ -236,6 +240,7 @@ export interface ChannelContextEvent {
   eventId: string;
   conversationKey: string;
   content: UserContent;
+  attachments?: Attachment[];
   events: ConversationIngressEvent[];
   channelName: string;
   identity?: ChannelIdentity;
@@ -1261,6 +1266,9 @@ async function handleChannelWebhook(
               message.conversationKey,
             ),
             content: message.content,
+            ...(message.attachments?.length
+              ? { attachments: message.attachments }
+              : {}),
             events: message.events ?? [
               { role: "user", content: message.content },
             ],
@@ -1385,6 +1393,9 @@ async function handleChannelWebhook(
               message.conversationKey,
             ),
             content: message.content,
+            ...(message.attachments?.length
+              ? { attachments: message.attachments }
+              : {}),
             events: message.events ?? [
               { role: "user", content: message.content },
             ],
@@ -1765,14 +1776,29 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   };
 }
 
+/**
+ * The adapter one named channel is configured with, rebuilt from the agent's
+ * own credentials. The webhook path resolves an adapter by asking every channel
+ * whether it recognises the request; anything working from a stored message
+ * already knows the channel's name and asks for it directly.
+ */
+export function channelAdapterFromConfig(
+  config: AgentConfig,
+  channelName: string,
+): ChannelAdapter | null {
+  return (
+    createChannelRegistry(config).webhookChannels.find(
+      (candidate): boolean => candidate.name === channelName,
+    ) ?? null
+  );
+}
+
 export function channelActionsFromConfig(
   config: AgentConfig,
   channelName: string,
   source: Record<string, unknown>,
 ): ChannelActions | null {
-  const adapter = createChannelRegistry(config).webhookChannels.find(
-    (candidate): boolean => candidate.name === channelName,
-  );
+  const adapter = channelAdapterFromConfig(config, channelName);
   if (!adapter) {
     return null;
   }

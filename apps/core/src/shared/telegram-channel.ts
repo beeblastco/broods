@@ -8,7 +8,12 @@ import {
   type TelegramMessage,
   type TelegramUpdate,
 } from "@chat-adapter/telegram";
-import { ConsoleLogger, fromFullStream } from "chat";
+import {
+  ConsoleLogger,
+  fromFullStream,
+  type Attachment,
+  type Message,
+} from "chat";
 import { timingSafeEqual } from "node:crypto";
 import type {
   ChannelActions,
@@ -29,9 +34,25 @@ const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 // own; past ten it rejects the batch, so a longer list goes out as consecutive
 // albums rather than failing.
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
+// Telegram serves every static sticker as WebP whatever the set was built from.
+const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
 
 export interface TelegramChannelOptions {
   botUsername?: string;
+}
+
+/**
+ * A Telegram sticker, including the two flags that separate a static WebP from
+ * an animated `.tgs` or a `.webm` video sticker. The Chat SDK's message type
+ * models the file and its emoji but neither flag, and the difference decides
+ * whether the sticker is worth downloading at all.
+ */
+interface TelegramSticker {
+  emoji?: string;
+  file_id: string;
+  file_size?: number;
+  is_animated?: boolean;
+  is_video?: boolean;
 }
 
 export interface TelegramSource {
@@ -65,6 +86,10 @@ export function createTelegramChannel(
   return {
     name: "telegram",
 
+    rehydrateAttachment: function (attachment) {
+      return transport.rehydrateAttachment(attachment);
+    },
+
     canHandle: function (req) {
       return "x-telegram-bot-api-secret-token" in req.headers;
     },
@@ -83,7 +108,12 @@ export function createTelegramChannel(
     parse: function (req): ChannelParseResult {
       const update: TelegramUpdate = JSON.parse(req.body);
       const message = extractInboundMessage(update);
-      if (!message?.text) {
+      // A photo, voice note or document with no caption is still a message. It
+      // is only nothing to answer when it carries no media either.
+      if (
+        !message ||
+        (!telegramMessageText(message) && !hasTelegramMedia(message))
+      ) {
         return { kind: "ignore" };
       }
 
@@ -107,6 +137,11 @@ export function createTelegramChannel(
       const runAgent =
         !botUsername || addressesTelegramBot(message, botUsername);
       const parsed = transport.parseMessage(message);
+      const attachments = telegramAttachments(
+        transport,
+        message.sticker,
+        parsed,
+      );
       const source: TelegramSource = {
         chatId: message.chat.id,
         messageId: parsed.id,
@@ -124,7 +159,8 @@ export function createTelegramChannel(
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
-          content: parsed.text,
+          content: parsed.text || skippedStickerText(message.sticker),
+          ...(attachments.length > 0 ? { attachments: attachments } : {}),
           identity: {
             channelId: String(message.chat.id),
             ...(message.message_thread_id !== undefined
@@ -240,6 +276,85 @@ function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.edited_message ?? null;
 }
 
+// Whether the message carries anything the agent could look at. Kept beside the
+// Chat SDK's own extraction list, plus the sticker it does not model.
+function hasTelegramMedia(message: TelegramMessage): boolean {
+  return Boolean(
+    message.photo?.length ||
+    message.audio ||
+    message.document ||
+    message.rich_message ||
+    message.sticker ||
+    message.video ||
+    message.video_note ||
+    message.voice,
+  );
+}
+
+// The stand-in text for a sticker `telegramAttachments` skips: an animated or
+// video sticker carries no caption, so without its emoji the turn would arrive
+// entirely empty.
+function skippedStickerText(sticker: TelegramSticker | undefined): string {
+  if (!sticker || (!sticker.is_animated && !sticker.is_video)) {
+    return "";
+  }
+
+  return sticker.emoji ?? "[sticker]";
+}
+
+/**
+ * The media on a Telegram message, as Chat SDK attachments.
+ *
+ * The SDK already extracts photos, video, audio, voice notes, documents and
+ * video notes, each with a reader that resolves the file id and signs the
+ * download with the bot token — that is what `parsed.attachments` holds. It has
+ * no notion of a sticker, so that one is built here against the same reader:
+ * `rehydrateAttachment` turns a file id back into a download, which is exactly
+ * what a sticker needs and all it needs.
+ *
+ * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
+ * a model can read; `skippedStickerText` carries their emoji as the message
+ * text instead, which says more than a failed download would.
+ */
+function telegramAttachments(
+  transport: TelegramAdapter,
+  sticker: TelegramSticker | undefined,
+  parsed: Message,
+): Attachment[] {
+  if (!sticker || sticker.is_animated || sticker.is_video) {
+    return parsed.attachments;
+  }
+
+  return [
+    ...parsed.attachments,
+    transport.rehydrateAttachment({
+      type: "image",
+      name: `sticker${sticker.emoji ? `-${sticker.emoji}` : ""}.webp`,
+      mimeType: TELEGRAM_STICKER_MEDIA_TYPE,
+      ...(sticker.file_size !== undefined ? { size: sticker.file_size } : {}),
+      fetchMetadata: { fileId: sticker.file_id },
+    }),
+  ];
+}
+
+// Entities are indexed against whichever of the two text fields carries the
+// message, so the pair must be read together — otherwise an @-mention in a photo
+// caption is matched against the offsets of a `text` that is not there.
+function telegramEntities(
+  message: TelegramMessage,
+): NonNullable<TelegramMessage["entities"]> {
+  return message.text !== undefined
+    ? (message.entities ?? [])
+    : (message.caption_entities ?? []);
+}
+
+// A caption is the text of a photo or document message, and Telegram never sets
+// both. Everything reading the message text has to agree on that, or a captioned
+// picture reads as an empty message.
+function telegramMessageText(message: TelegramMessage): string {
+  return message.text ?? message.caption ?? "";
+}
+
 /**
  * Telegram tags every `@name` and `/command` in the text with an entity, so the
  * entities decide this rather than a substring search. A bare `/command` counts
@@ -250,9 +365,9 @@ function mentionsTelegramBot(
   message: TelegramMessage,
   botUsername: string,
 ): boolean {
-  const text = message.text ?? "";
+  const text = telegramMessageText(message);
 
-  return (message.entities ?? []).some((entity): boolean => {
+  return telegramEntities(message).some((entity): boolean => {
     const value = text
       .slice(entity.offset, entity.offset + entity.length)
       .toLowerCase();

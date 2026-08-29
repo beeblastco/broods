@@ -6,9 +6,11 @@
 
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
+import type { Attachment } from "chat";
 import type {
   ChannelAdapter,
   ChannelParseResult,
+  InboundMessage,
 } from "../src/shared/channels.ts";
 import {
   createZaloActions,
@@ -262,37 +264,33 @@ describe("zalo channel adapter", () => {
     );
   });
 
-  it("normalizes inbound images, stickers, and voice notes into content parts", async () => {
+  it("normalizes inbound images, stickers, and voice notes into attachments", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
+    const captioned = validUpdate({
+      eventName: "message.image.received",
+      media: {
+        photo: "https://zalo.example/photo.jpg",
+        caption: "  look at this  ",
+      },
+    });
 
-    expect(
-      await parsedContent(
-        adapter,
-        validUpdate({
-          eventName: "message.image.received",
-          media: {
-            photo: "https://zalo.example/photo.jpg",
-            caption: "  look at this  ",
-          },
-        }),
-      ),
-    ).toEqual([
-      { type: "text", text: "look at this" },
-      { type: "image", image: "https://zalo.example/photo.jpg" },
+    // The caption is the message; the picture rides beside it rather than in it.
+    expect(await parsedContent(adapter, captioned)).toBe("look at this");
+    expect(await parsedAttachments(adapter, captioned)).toEqual([
+      { type: "image", url: "https://zalo.example/photo.jpg", name: "photo" },
+    ]);
+
+    const uncaptioned = validUpdate({
+      eventName: "message.image.received",
+      media: { photo: "https://zalo.example/photo.jpg" },
+    });
+    expect(await parsedContent(adapter, uncaptioned)).toBe("");
+    expect(await parsedAttachments(adapter, uncaptioned)).toEqual([
+      { type: "image", url: "https://zalo.example/photo.jpg", name: "photo" },
     ]);
 
     expect(
-      await parsedContent(
-        adapter,
-        validUpdate({
-          eventName: "message.image.received",
-          media: { photo: "https://zalo.example/photo.jpg" },
-        }),
-      ),
-    ).toEqual([{ type: "image", image: "https://zalo.example/photo.jpg" }]);
-
-    expect(
-      await parsedContent(
+      await parsedAttachments(
         adapter,
         validUpdate({
           eventName: "message.sticker.received",
@@ -303,11 +301,15 @@ describe("zalo channel adapter", () => {
         }),
       ),
     ).toEqual([
-      { type: "image", image: "https://stickers.zaloapp.com/12345.png" },
+      {
+        type: "image",
+        url: "https://stickers.zaloapp.com/12345.png",
+        name: "sticker",
+      },
     ]);
 
     expect(
-      await parsedContent(
+      await parsedAttachments(
         adapter,
         validUpdate({
           eventName: "message.voice.received",
@@ -316,27 +318,27 @@ describe("zalo channel adapter", () => {
       ),
     ).toEqual([
       {
-        type: "file",
-        data: "https://zalo.example/note.aac",
-        mediaType: "audio/aac",
+        type: "audio",
+        url: "https://zalo.example/note.aac",
+        name: "voice.aac",
+        mimeType: "audio/aac",
       },
     ]);
   });
 
   it("falls back to a link for any voice note that is not .aac", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
+    const mp3 = validUpdate({
+      eventName: "message.voice.received",
+      media: { voice_url: "https://zalo.example/note.mp3" },
+    });
 
-    expect(
-      await parsedContent(
-        adapter,
-        validUpdate({
-          eventName: "message.voice.received",
-          media: { voice_url: "https://zalo.example/note.mp3" },
-        }),
-      ),
-    ).toEqual([
-      { type: "text", text: "Voice message: https://zalo.example/note.mp3" },
-    ]);
+    // Zalo only ever sends .aac, so a different extension means we do not know
+    // what the file is — the link goes over as text and nothing is downloaded.
+    expect(await parsedContent(adapter, mp3)).toBe(
+      "Voice message: https://zalo.example/note.mp3",
+    );
+    expect(await parsedAttachments(adapter, mp3)).toEqual([]);
 
     expect(
       await parsedContent(
@@ -346,9 +348,7 @@ describe("zalo channel adapter", () => {
           media: { voice_url: "https://zalo.example/note" },
         }),
       ),
-    ).toEqual([
-      { type: "text", text: "Voice message: https://zalo.example/note" },
-    ]);
+    ).toBe("Voice message: https://zalo.example/note");
   });
 
   it("sends an image through sendPhoto with the caption truncated", async () => {
@@ -417,6 +417,23 @@ async function parsedContent(
   adapter: ChannelAdapter,
   update: unknown,
 ): Promise<UserContent> {
+  return (await parsedMessage(adapter, update)).content;
+}
+
+// The media Zalo delivered, as the harness receives it. Zalo names every
+// attachment by URL and never sends bytes, so there is no reader to compare and
+// the descriptor is the whole contract.
+async function parsedAttachments(
+  adapter: ChannelAdapter,
+  update: unknown,
+): Promise<Attachment[]> {
+  return (await parsedMessage(adapter, update)).attachments ?? [];
+}
+
+async function parsedMessage(
+  adapter: ChannelAdapter,
+  update: unknown,
+): Promise<InboundMessage> {
   const parsed = await adapter.parse(createZaloRequest(update));
   if (parsed.kind !== "message") {
     throw new Error(
@@ -426,7 +443,7 @@ async function parsedContent(
     );
   }
 
-  return parsed.message.content;
+  return parsed.message;
 }
 
 async function captureZaloCalls(

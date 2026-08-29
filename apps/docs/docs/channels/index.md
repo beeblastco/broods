@@ -41,19 +41,76 @@ The two split at the channel boundary, not in the prompt. A provider declares wh
 
 Providers disagree on more than grouping: some fetch a URL you hand them, others accept only an upload. The adapter hides that, and a workspace attachment carries both a sealed link and a reader, so each provider takes whichever it needs and the bytes are read only when one actually uploads.
 
-| Channel         | Pictures               | Documents                        | Batch                       |
-| --------------- | ---------------------- | -------------------------------- | --------------------------- |
-| Telegram        | fetches the URL        | fetches the URL                  | album of 2-10, then another |
-| Slack           | Block Kit image blocks | uploads bytes (`files.uploadV2`) | one message, one upload     |
-| Discord         | uploads bytes          | uploads bytes                    | one multipart message       |
-| Zalo            | fetches the URL        | none                             | one per message             |
-| GitHub, Pancake | none                   | none                             | text links only             |
+| Channel  | Pictures                          | Documents                        | Batch                       |
+| -------- | --------------------------------- | -------------------------------- | --------------------------- |
+| Telegram | fetches the URL                   | fetches the URL                  | album of 2-10, then another |
+| Slack    | Block Kit image blocks            | uploads bytes (`files.uploadV2`) | one message, one upload     |
+| Discord  | uploads bytes                     | uploads bytes                    | one multipart message       |
+| Pancake  | uploads bytes (`upload_contents`) | uploads bytes                    | one per message             |
+| Zalo     | fetches the URL                   | none                             | one per message             |
+| GitHub   | none                              | none                             | text links only             |
 
 Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
 
 `send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead — as documents where the provider has them, as download links where it does not. The reason for the rejection is logged, not shown to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 
 Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
+
+## Inbound Attachments
+
+Media arriving on a channel is the mirror of the same path. A picture, document,
+voice note, video or sticker sent to the agent is read once while the turn runs,
+stored in the agent's default workspace under `media/`, and handed to the model
+as the same durable `/media/{ticket}` link the outbound tools mint. Nothing is
+inlined as base64: the conversation is persisted as JSON, so a link is what
+still resolves when the turn is replayed months later.
+
+Parsing never downloads. The webhook is acknowledged first, and only then is the
+provider read — a download during parse would hold the provider's connection
+open for the length of a video. Each provider's own authentication is used:
+Telegram resolves a file id through `getFile` and signs the download with the
+bot token, and Slack sends a bearer header, with the host checked before the
+token is attached and the auth stripped if a redirect leaves Slack.
+
+| Channel  | Inbound media                                                              |
+| -------- | -------------------------------------------------------------------------- |
+| Telegram | photos, video, audio, voice notes, documents, video notes, static stickers |
+| Slack    | every file on a message, including voice clips                             |
+| Discord  | uploads, voice messages, stickers                                          |
+| Pancake  | photos and videos                                                          |
+| Zalo     | photos, stickers, voice notes                                              |
+| GitHub   | none — an image pasted into a comment stays a markdown URL in its text     |
+
+What reaches the model depends on what the provider will read. Pictures always
+go over as pictures. Anything else — a PDF, a voice note, a video — goes over as
+a native part only where the configured model provider accepts that media type,
+and otherwise arrives as a saved workspace file the agent opens with `read` or
+`bash`. That keeps a voice note a transcription job rather than a turn the
+provider refuses outright. Every message carrying attachments also gets one
+short note listing what arrived and where it was stored.
+
+Limits are enforced twice, on the declared size and again on the bytes actually
+read: 6 MB for a picture and 25 MB for anything else, the same ceiling the media
+route serves at, and at most ten attachments per message. The media type comes
+from the bytes rather than the provider's claim — Telegram calls every photo a
+JPEG, and Discord labels a voice message `application/ogg` — except where the
+sniff only identifies a container, since a `.docx` really is a zip. An
+attachment that cannot be read becomes a line of text saying so, so one failed
+download costs a picture rather than the message.
+
+An agent with no workspace attached stores nothing, and still handles media.
+The bytes reach the model on the turn they arrive, and the message keeps a
+reference to the copy the channel itself holds, so a later turn reads the file
+again through that channel with its own credentials. Nothing is written to
+storage and no bucket appears behind the owner's back — the trade is that how
+long media keeps working is the channel's answer: a Telegram file id lasts
+indefinitely, a Discord link expires within a day. A file the channel no longer
+serves becomes a line of text saying so, in the message where the picture was.
+
+Attach a workspace when media has to outlive the channel's own retention, or
+when the agent needs to open the file rather than look at it: only a stored file
+can be read with `read` or `bash`, which is what turns a voice note into a
+transcription job or a spreadsheet into something to compute over.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

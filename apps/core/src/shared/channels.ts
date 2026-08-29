@@ -90,6 +90,19 @@ export interface InboundMessage {
   conversationKey: string;
   channelName: string;
   content: UserContent;
+  /**
+   * Pictures, documents, voice notes and videos that arrived with the message,
+   * in the Chat SDK's own attachment shape — the same one the outbound aliases
+   * above narrow, kept wide here because inbound is whatever the provider sent.
+   *
+   * Adapters name the attachment and leave the bytes alone. Parsing runs before
+   * the webhook is acknowledged, so downloading there would hold the provider's
+   * connection open for the length of a video; `fetchData` is the adapter's own
+   * authenticated reader (Telegram resolves a file id through getFile and signs
+   * the download with the bot token; Slack sends a bearer header for a private
+   * file) and the harness calls it once the turn is already running.
+   */
+  attachments?: Attachment[];
   events?: ChannelIngressEvent[];
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
@@ -145,6 +158,13 @@ export interface ChannelAdapter {
     source: Record<string, unknown>,
     replyIn: ChannelReplyIn,
   ): Record<string, unknown>;
+  /**
+   * Rebuild the reader for an attachment named only by its `fetchMetadata`,
+   * so a picture can be downloaded again on a later turn. Providers whose SDK
+   * adapter implements it delegate straight to the transport; the rest omit it
+   * and their attachments are re-read from the URL they arrived with.
+   */
+  rehydrateAttachment?(attachment: Attachment): Attachment;
 }
 
 /**

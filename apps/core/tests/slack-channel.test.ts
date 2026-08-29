@@ -12,7 +12,7 @@ import {
   setSystemTime,
 } from "bun:test";
 import { createHmac } from "node:crypto";
-import type { ChannelAdapter } from "../src/shared/channels.ts";
+import type { ChannelAdapter, InboundMessage } from "../src/shared/channels.ts";
 import {
   createSlackChannel,
   toSlackStream,
@@ -786,9 +786,117 @@ describe("slack channel adapter", () => {
       adapter.applyReplyIn?.(parsed.message.source, "thread"),
     ).toMatchObject({ threadTs: "1713916800.000040" });
   });
+
+  it("accepts a file upload instead of dropping it as an unsupported subtype", async () => {
+    // Slack delivers an ordinary message carrying a file as subtype
+    // `file_share`, so refusing every subtype dropped every file ever sent.
+    const message = await parseFileShare();
+
+    expect(message.attachments).toEqual([
+      expect.objectContaining({
+        type: "image",
+        url: "https://files.slack.com/files-pri/T1-F1/chart.png",
+        name: "chart.png",
+        mimeType: "image/png",
+        size: 2048,
+      }),
+    ]);
+  });
+
+  it("still refuses the subtypes that are events about a message", async () => {
+    const adapter = createTestSlackChannel(null);
+    const parsed = await adapter.parse(
+      createEventRequest({
+        type: "event_callback",
+        event_id: "evt-join",
+        team_id: "T1",
+        event: {
+          type: "message",
+          subtype: "channel_join",
+          text: "joined",
+          channel: "D1",
+          channel_type: "im",
+          user: "U1",
+          ts: "1713916800.000051",
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("ignore");
+  });
+
+  it("corrects a voice clip Slack serves as video", async () => {
+    const message = await parseFileShare({
+      id: "F2",
+      name: "audio_message.webm",
+      // Slack labels a recorded clip video/* even though there is no picture in
+      // it; left alone it is offered to the model as a video and refused.
+      mimetype: "video/webm",
+      subtype: "slack_audio",
+      url_private: "https://files.slack.com/files-pri/T1-F2/audio_message.webm",
+    });
+
+    expect(message.attachments?.[0]).toMatchObject({
+      type: "audio",
+      mimeType: "audio/webm",
+    });
+  });
+
+  it("refuses to send the bot token to a host that is not Slack", async () => {
+    // The file URL arrives inside the webhook body, so a poisoned one would
+    // otherwise be handed the workspace's token.
+    const message = await parseFileShare({
+      id: "F3",
+      name: "steal.png",
+      mimetype: "image/png",
+      url_private: "https://files.slack.com.attacker.example/steal.png",
+    });
+
+    await expect(message.attachments?.[0]?.fetchData?.()).rejects.toThrow(
+      /refusing to send the Slack token/,
+    );
+  });
 });
 
-async function parseChannelMention(adapter: ChannelAdapter, threadTs?: string) {
+async function parseFileShare(
+  file: Record<string, unknown> = {
+    id: "F1",
+    name: "chart.png",
+    mimetype: "image/png",
+    size: 2048,
+    url_private: "https://files.slack.com/files-pri/T1-F1/chart.png",
+  },
+): Promise<InboundMessage> {
+  const parsed = await createTestSlackChannel(null).parse(
+    createEventRequest({
+      type: "event_callback",
+      event_id: `evt-file-${String(file.id)}`,
+      team_id: "T1",
+      event: {
+        type: "message",
+        subtype: "file_share",
+        text: "have a look",
+        channel: "D1",
+        channel_type: "im",
+        user: "U1",
+        ts: "1713916800.000050",
+        files: [file],
+      },
+    }),
+  );
+  if (parsed.kind !== "message") {
+    throw new Error(
+      `Expected the Slack file share to be accepted, got ${parsed.kind}`,
+    );
+  }
+
+  return parsed.message;
+}
+
+async function parseChannelMention(
+  adapter: ChannelAdapter,
+  threadTs?: string,
+): Promise<InboundMessage> {
   const parsed = await adapter.parse(
     createEventRequest({
       type: "event_callback",

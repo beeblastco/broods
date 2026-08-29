@@ -94,6 +94,62 @@ describe("createStoredEventFromModelMessage", () => {
     });
     expect(stored).not.toHaveProperty("metadata");
   });
+
+  it("keeps media named by a link, which is what still resolves next turn", () => {
+    const stored = createStoredEventFromModelMessage(
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          {
+            type: "image",
+            image: "https://core.example/media/ml1.aaa.bbb.ccc",
+            mediaType: "image/png",
+          },
+          {
+            type: "file",
+            data: "https://core.example/media/ml1.ddd.eee.fff",
+            mediaType: "application/pdf",
+          },
+        ],
+      },
+      "evt-3",
+    );
+
+    expect(stored?.message.content).toHaveLength(3);
+  });
+
+  it("drops media carrying its own bytes, which would be megabytes of row per turn", () => {
+    const stored = createStoredEventFromModelMessage(
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image", image: "data:image/png;base64,iVBORw0KGgo=" },
+          { type: "image", image: new Uint8Array([1, 2, 3]) },
+        ],
+      },
+      "evt-4",
+    );
+
+    expect(stored?.message.content).toEqual([{ type: "text", text: "look" }]);
+  });
+
+  it("keeps a note for a picture-only turn instead of dropping the row", () => {
+    // A dropped row would leave the assistant's reply in history answering a
+    // user turn that is not there.
+    const stored = createStoredEventFromModelMessage(
+      {
+        role: "user",
+        content: [{ type: "image", image: new Uint8Array([1, 2, 3]) }],
+      },
+      "evt-5",
+    );
+
+    expect(stored?.message.content).toEqual([
+      { type: "text", text: "[attachment not retained]" },
+    ]);
+  });
 });
 
 describe("stripEnvelopeFieldsFromMessages", () => {

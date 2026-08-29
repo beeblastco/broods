@@ -4,7 +4,7 @@
  */
 
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
-import { ConsoleLogger, type FileUpload } from "chat";
+import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
 import {
   channelAttachmentBytes,
   channelAttachmentName,
@@ -23,6 +23,18 @@ import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 // conversation to the thread, with the parent channel as its channel scope.
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
+// One bound for the direct REST calls and CDN downloads, so a stalled Discord
+// response cannot hold the turn open until the platform kills it.
+const DISCORD_FETCH_TIMEOUT_MS = 30_000;
+
+// Discord sticker format ids, and the CDN extension each is served under.
+// Format 3 is Lottie — a JSON animation with no raster form — so it is absent.
+const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
+  1: "png",
+  2: "png",
+  4: "gif",
+};
+
 /**
  * Identity used to decide whether a guild message is addressed to the agent.
  * Without `botUserId` Discord messages cannot be attributed to a mention, so the
@@ -39,13 +51,31 @@ interface DiscordForwardedEventPayload {
   data?: unknown;
 }
 
+/**
+ * One Discord upload. `duration_secs` and `waveform` are set only on a recorded
+ * voice message, and they are the only dependable sign of one: Discord labels
+ * the same file `application/ogg`, which says nothing about whether it holds
+ * audio or video.
+ */
+interface DiscordAttachment {
+  id?: string;
+  url?: string;
+  filename?: string;
+  content_type?: string;
+  size?: number;
+  height?: number;
+  width?: number;
+  duration_secs?: number;
+  waveform?: string;
+}
+
 interface DiscordGatewayMessageData {
-  attachments?: Array<{
+  attachments?: DiscordAttachment[];
+  sticker_items?: Array<{
     id?: string;
-    url?: string;
-    filename?: string;
-    content_type?: string;
-    size?: number;
+    name?: string;
+    /** 1 PNG, 2 APNG, 3 Lottie, 4 GIF. */
+    format_type?: number;
   }>;
   author?: {
     id?: string;
@@ -170,6 +200,10 @@ export function createDiscordChannel(
 
   return {
     name: "discord",
+
+    rehydrateAttachment: function (attachment) {
+      return discord.rehydrateAttachment(attachment);
+    },
 
     canHandle: function (req) {
       return (
@@ -400,6 +434,28 @@ function createDiscordActions(
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
 
+    // Discord sends a sticker by id and by nothing else — there is no URL form
+    // and no upload — so the model names one the bot can reach: a sticker from
+    // a guild the bot is in, or a standard pack. The Chat SDK's postMessage has
+    // no field for it, which is why this is the one send that goes direct.
+    sendSticker: async function (sticker): Promise<void> {
+      const value = sticker.trim();
+      if (!/^\d+$/.test(value)) {
+        throw new Error("Discord sendSticker needs a numeric sticker id");
+      }
+      // `threadId` on the source is the SDK's encoded composite, not an id
+      // Discord's REST API would accept, so it is decoded back to the channel
+      // the message actually lives in — a thread posts to the thread.
+      const decoded = discord.decodeThreadId(threadId);
+      const target = decoded.threadId ?? decoded.channelId;
+      if (!target) {
+        throw new Error("Discord sendSticker needs a channel to post in");
+      }
+      await callDiscordApi(apiUrl, botToken, `channels/${target}/messages`, {
+        sticker_ids: [value],
+      });
+    },
+
     sendText: async function (text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
@@ -458,6 +514,137 @@ async function discordUploads(
       ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     })),
   );
+}
+
+/**
+ * The uploads and stickers on a Discord message, as Chat SDK attachments.
+ *
+ * Discord's CDN URLs are signed and expire, so each attachment is read while
+ * the turn runs rather than linked and fetched later — that is what the reader
+ * on every attachment is for. Nothing here is authenticated: a Discord upload
+ * URL is a bearer credential in itself, which is also why it is never persisted.
+ */
+function discordAttachments(data: DiscordGatewayMessageData): Attachment[] {
+  const uploads = (data.attachments ?? []).flatMap(
+    (attachment): Attachment[] => {
+      const url = attachment.url;
+      if (!url) {
+        return [];
+      }
+      const mimeType = discordMediaType(attachment);
+
+      return [
+        {
+          type: discordAttachmentType(attachment, mimeType),
+          url: url,
+          ...(attachment.filename ? { name: attachment.filename } : {}),
+          ...(mimeType ? { mimeType: mimeType } : {}),
+          ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+          ...(attachment.width !== undefined
+            ? { width: attachment.width }
+            : {}),
+          ...(attachment.height !== undefined
+            ? { height: attachment.height }
+            : {}),
+          fetchData: (): Promise<Buffer> => fetchDiscordFile(url),
+        },
+      ];
+    },
+  );
+
+  return [...uploads, ...discordStickers(data.sticker_items ?? [])];
+}
+
+// A voice message is the one case where the structure beats the label: Discord
+// sends it as `application/ogg`, which a MIME prefix reads as neither audio nor
+// video, but only a voice message carries a duration and a waveform.
+function discordAttachmentType(
+  attachment: DiscordAttachment,
+  mimeType: string | undefined,
+): Attachment["type"] {
+  if (
+    attachment.duration_secs !== undefined ||
+    attachment.waveform !== undefined
+  ) {
+    return "audio";
+  }
+  if (mimeType?.startsWith("image/")) return "image";
+  if (mimeType?.startsWith("video/")) return "video";
+  if (mimeType?.startsWith("audio/")) return "audio";
+
+  return "file";
+}
+
+// Dropping the claimed type on a voice message is deliberate: keeping
+// `application/ogg` would let it override the sniff that identifies the real
+// codec, and the label is the part that is wrong.
+function discordMediaType(attachment: DiscordAttachment): string | undefined {
+  const isVoice =
+    attachment.duration_secs !== undefined || attachment.waveform !== undefined;
+
+  return isVoice ? undefined : attachment.content_type;
+}
+
+// Discord serves a sticker from a well-known CDN path keyed by its id. Lottie
+// stickers (format 3) are a JSON animation, not a picture, so only the raster
+// formats are worth fetching — the sticker's name carries the rest.
+function discordStickers(
+  stickers: NonNullable<DiscordGatewayMessageData["sticker_items"]>,
+): Attachment[] {
+  return stickers.flatMap((sticker): Attachment[] => {
+    const extension = sticker.id
+      ? DISCORD_STICKER_EXTENSIONS[sticker.format_type ?? 1]
+      : undefined;
+    if (!extension) {
+      return [];
+    }
+    const url = `https://media.discordapp.net/stickers/${sticker.id}.${extension}`;
+
+    return [
+      {
+        type: "image",
+        url: url,
+        name: `${sticker.name ?? "sticker"}.${extension}`,
+        mimeType: extension === "gif" ? "image/gif" : "image/png",
+        fetchData: (): Promise<Buffer> => fetchDiscordFile(url),
+      },
+    ];
+  });
+}
+
+// One direct Discord REST call, for the sends the Chat SDK models no field for.
+async function callDiscordApi(
+  apiUrl: string | undefined,
+  botToken: string,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const base = (apiUrl ?? "https://discord.com/api/v10").replace(/\/+$/, "");
+  const response = await fetch(`${base}/${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bot ${botToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Discord ${path} failed (${response.status}): ${await response.text()}`,
+    );
+  }
+}
+
+async function fetchDiscordFile(url: string): Promise<Buffer> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Discord answered ${response.status}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
 }
 
 /**
@@ -618,8 +805,10 @@ function parseForwardedGatewayEvent(
   }
 
   const threadId = discord.encodeThreadId(thread);
+  const attachments = discordAttachments(data);
   const content = data.content.trim();
-  if (!content) {
+  // A picture, a voice message or a sticker on its own is still a message.
+  if (!content && attachments.length === 0) {
     return {
       kind: "ignore",
       reason: "empty_message",
@@ -635,7 +824,7 @@ function parseForwardedGatewayEvent(
     options.botUserId && runAgent ? [options.botUserId] : [],
   );
   const text = formatDiscordMessageText(content, data, omittedUserIds);
-  if (!text) {
+  if (!text && attachments.length === 0) {
     return {
       kind: "ignore",
       reason: "empty_message",
@@ -660,6 +849,7 @@ function parseForwardedGatewayEvent(
       conversationKey: threadId,
       channelName: "discord",
       content: [{ type: "text", text: text }],
+      ...(attachments.length > 0 ? { attachments: attachments } : {}),
       identity: {
         workspaceRef: data.guild_id,
         channelId: thread.channelId,
