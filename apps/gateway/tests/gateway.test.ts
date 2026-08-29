@@ -1859,19 +1859,22 @@ test("websocket token prefers the Authorization header over the query param", ()
   expect(websocketToken(new Request(bare), bare)).toBe("");
 });
 
-test("client ip prefers x-real-ip, then x-forwarded-for, then the socket address", () => {
-  const withRealIp = new Request("https://gateway.example.com/", {
-    headers: {
-      "x-real-ip": "203.0.113.7",
-      "x-forwarded-for": "198.51.100.1, 10.0.0.1",
-    },
-  });
-  expect(clientIp(withRealIp, "127.0.0.1")).toBe("203.0.113.7");
-
+test("client ip takes the rightmost forwarded hop, then the socket address", () => {
   const withForwarded = new Request("https://gateway.example.com/", {
     headers: { "x-forwarded-for": "198.51.100.1, 10.0.0.1" },
   });
-  expect(clientIp(withForwarded, "127.0.0.1")).toBe("198.51.100.1");
+  expect(clientIp(withForwarded, "127.0.0.1")).toBe("10.0.0.1");
+
+  // Only the ingress appends the rightmost hop, so a caller cannot mint a fresh
+  // rate-limit bucket by prepending one or by sending its own x-real-ip.
+  const spoofed = new Request("https://gateway.example.com/", {
+    headers: {
+      "x-real-ip": "203.0.113.7",
+      "x-forwarded-for": "203.0.113.9, 198.51.100.1, 10.0.0.1",
+    },
+  });
+  expect(clientIp(spoofed, "127.0.0.1")).toBe("10.0.0.1");
+
   expect(
     clientIp(new Request("https://gateway.example.com/"), "127.0.0.1"),
   ).toBe("127.0.0.1");

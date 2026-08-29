@@ -84,9 +84,18 @@ export async function handleMediaRequest(
     return new Response("Payload too large", { status: 413 });
   }
 
-  const contentType = mediaContentType(ticket.path, head.contentType);
+  // The extension is the only source. An account on a bring-your-own bucket sets
+  // the stored content type itself, so that value is request input, not metadata.
+  const contentType = contentTypeForPath(ticket.path);
   const headers: Record<string, string> = {
     "content-type": contentType,
+    // This route is unauthenticated and answers on our own origin, so a browser
+    // must never sniff its way to a type the extension did not claim, and must
+    // never render an SVG here, which would execute script against that origin.
+    "x-content-type-options": "nosniff",
+    ...(contentType === "image/svg+xml"
+      ? { "content-disposition": "attachment" }
+      : {}),
     // The ticket names one immutable file, so a provider CDN may hold it forever.
     "cache-control": "public, max-age=31536000, immutable",
     ...(head.contentLength !== undefined
@@ -110,16 +119,6 @@ export async function handleMediaRequest(
     : await readS3Bytes(target.bucket, key);
 
   return new Response(bytes, { status: 200, headers: headers });
-}
-
-// S3 keeps whatever content type the writer set, and a file written through the
-// sandbox mount has none, so the extension is the fallback rather than the source.
-function mediaContentType(path: string, stored: string | undefined): string {
-  if (stored && stored !== "application/octet-stream") {
-    return stored;
-  }
-
-  return contentTypeForPath(path);
 }
 
 // One answer for a bad ticket, a deleted workspace and a missing file, so the
