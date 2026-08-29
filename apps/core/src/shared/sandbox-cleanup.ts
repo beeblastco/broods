@@ -19,12 +19,6 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
-/** The pair that names one reserved machine at its provider. */
-export interface SandboxReservationRef {
-  provider: SandboxProvider;
-  reservationKey: string;
-}
-
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "daytona",
   "e2b",
@@ -32,6 +26,12 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "sandbox",
   "vercel",
 ];
+
+/** The pair that names one reserved machine at its provider. */
+export interface SandboxReservationRef {
+  provider: SandboxProvider;
+  reservationKey: string;
+}
 
 /**
  * Release the reservations the sweeper found expired. Unlike the namespace-deletion

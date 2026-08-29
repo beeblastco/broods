@@ -24,8 +24,8 @@ interface SandboxReservationSummary extends SandboxReservationRef {
   externalId: string;
 }
 
-let sweeper: ReturnType<typeof setInterval> | undefined;
 let firstSweep: ReturnType<typeof setTimeout> | undefined;
+let sweeper: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
 
 /** Starts the periodic sweep. No-op when it is already running. */
@@ -126,23 +126,6 @@ async function adoptOrphanedInstances(): Promise<SandboxReservationSummary[]> {
   return adopted;
 }
 
-/**
- * One pass, guarded so a slow one cannot stack. The lease already stops two
- * replicas duplicating an account; this stops one replica racing itself when a
- * pass outlives the interval.
- */
-function runSweep(): void {
-  if (sweeping) return;
-  sweeping = true;
-  void sweepExpiredSandboxes()
-    .catch((error: unknown) => {
-      logWarn("Sandbox sweep failed", { error: errorMessage(error) });
-    })
-    .finally(() => {
-      sweeping = false;
-    });
-}
-
 async function deferAttempted(
   accountId: string,
   reservations: SandboxReservationSummary[],
@@ -170,6 +153,23 @@ async function deferAttempted(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * One pass, guarded so a slow one cannot stack. The lease already stops two
+ * replicas duplicating an account; this stops one replica racing itself when a
+ * pass outlives the interval.
+ */
+function runSweep(): void {
+  if (sweeping) return;
+  sweeping = true;
+  void sweepExpiredSandboxes()
+    .catch((error: unknown) => {
+      logWarn("Sandbox sweep failed", { error: errorMessage(error) });
+    })
+    .finally(() => {
+      sweeping = false;
+    });
 }
 
 /**
