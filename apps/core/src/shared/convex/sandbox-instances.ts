@@ -18,7 +18,10 @@ import { getConvexClient } from "./client.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 export type SandboxInstanceStatus =
-  "running" | "suspended" | "terminating" | "error";
+  | "running"
+  | "suspended"
+  | "terminating"
+  | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
