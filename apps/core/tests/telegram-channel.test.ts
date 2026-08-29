@@ -302,7 +302,7 @@ describe("telegram channel adapter", () => {
     expect(toPerson.kind).toBe("context");
   });
 
-  it("quotes the message a reply answers, and leaves a plain message alone", async () => {
+  it("frames the message a reply answers, and leaves a plain message alone", async () => {
     const adapter = createGatedAdapter();
 
     const reply = await adapter.parse(
@@ -329,7 +329,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected a reply to the bot to be accepted");
     }
     expect(reply.message.content).toBe(
-      "> Tracy: here is the template\nand with margin?",
+      '<replying-to from="Tracy">\nhere is the template\n</replying-to>\n\nand with margin?',
     );
 
     const plain = await adapter.parse(
@@ -345,7 +345,7 @@ describe("telegram channel adapter", () => {
     expect(plain.message.content).toBe("hello");
   });
 
-  it("truncates a long quote instead of replaying the whole message", async () => {
+  it("truncates a long frame instead of replaying the whole message", async () => {
     const adapter = createGatedAdapter();
     const long = "x".repeat(600);
 
@@ -373,7 +373,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected a reply to the bot to be accepted");
     }
     expect(parsed.message.content).toBe(
-      `> Tracy: ${"x".repeat(500)}...\nand with margin?`,
+      `<replying-to from="Tracy">\n${"x".repeat(500)}...\n</replying-to>\n\nand with margin?`,
     );
   });
 

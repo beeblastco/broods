@@ -163,7 +163,7 @@ export function createTelegramChannel(
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
-          content: withReplyQuote(
+          content: withReplyContext(
             parsed.text || skippedStickerText(message.sticker),
             parsed.replyTo,
           ),
@@ -544,17 +544,25 @@ function verifyWebhookSecret(
 }
 
 /**
- * Prefixes the message with the one it answers, the way Telegram shows a reply.
+ * Frames the message a reply answers ahead of the reply itself.
  *
  * Telegram draws a reply as a quote of the answered message, but the
  * conversation the model reads is a flat list in time order, so that quote is
  * not in it. "and with margin?" then arrives with nothing to attach it to, and
  * the model has to guess, exactly like a person who scrolled past the quote.
  *
+ * The frame matches `withScheduledRunContext`: a delimited block, not a
+ * markdown blockquote a group member could type by hand to forge one. A display
+ * name is whatever that member set, so the quote character that would break the
+ * attribute is dropped.
+ *
  * A reply to a message with no text of its own (a bare photo, a sticker) is
- * left alone: an empty quote says less than no quote.
+ * left alone: an empty frame says less than no frame.
  */
-function withReplyQuote(text: string, repliedTo: Message | undefined): string {
+function withReplyContext(
+  text: string,
+  repliedTo: Message | undefined,
+): string {
   const quoted = repliedTo?.text.trim();
   if (!repliedTo || !quoted) {
     return text;
@@ -564,5 +572,9 @@ function withReplyQuote(text: string, repliedTo: Message | undefined): string {
       ? `${quoted.slice(0, TELEGRAM_REPLY_QUOTE_MAX).trimEnd()}...`
       : quoted;
 
-  return `> ${repliedTo.author.fullName}: ${shortened.replaceAll("\n", "\n> ")}\n${text}`;
+  return `<replying-to from="${repliedTo.author.fullName.replaceAll('"', "")}">
+${shortened}
+</replying-to>
+
+${text}`;
 }
