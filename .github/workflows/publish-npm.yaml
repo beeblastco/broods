@@ -28,6 +28,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # next-version.ts anchors on the newest broods-v* tag and reads the
+          # commits since it, so the release needs full history and the tags.
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -43,31 +47,42 @@ jobs:
       # NOTE: no `npm install -g npm@latest` here — overwriting the bundled npm
       # in the hosted toolcache left it half-installed once ("Cannot find
       # module 'sigstore'" during the provenance publish).
-      - name: Install dependencies
-        run: bun install --ignore-scripts --no-save
-
-      - name: Read package version
+      # The version is derived here rather than committed to dev beforehand. A
+      # bump commit would have to be pushed straight to a protected branch, and
+      # such a commit carries no status checks, so the push is refused. Deriving
+      # at publish time removes the push instead of carving an exception for it.
+      # The write is local to this runner and is never committed; the broods-v*
+      # tag below is what records the release.
+      - name: Derive release version
         id: package
         shell: bash
         run: |
           set -euo pipefail
 
-          PACKAGE_VERSION="$(node -p "require('./packages/broods/package.json').version")"
-          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing candidate: broods@$PACKAGE_VERSION"
+          RESULT="$(bun packages/broods/scripts/next-version.ts --write)"
+          echo "$RESULT"
+          echo "bump=$(echo "$RESULT" | jq -r .bump)" >> "$GITHUB_OUTPUT"
+          echo "version=$(echo "$RESULT" | jq -r .next)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --no-save
 
       - name: Typecheck SDK
+        if: steps.package.outputs.bump != 'none'
         run: bun run --filter broods check
 
       - name: Test SDK
+        if: steps.package.outputs.bump != 'none'
         run: bun run --filter broods test
 
       - name: Pack check
+        if: steps.package.outputs.bump != 'none'
         working-directory: packages/broods
         run: bun run pack:check
 
       - name: Check npm version availability
         id: npm-version
+        if: steps.package.outputs.bump != 'none'
         shell: bash
         run: |
           set -euo pipefail
