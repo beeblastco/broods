@@ -77,10 +77,8 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
   if (workspaces.length === 0) {
-    // The absence is otherwise invisible: the model loses its only file delivery
-    // mid-run and improvises, so the run reads as disobedience rather than a
-    // missing tool. `sendImages` says what the same missing workspace did to the
-    // other half of the pair.
+    // Without this line the drop is invisible in the trace. `sendImages` names
+    // what the same missing workspace did to the other half of the pair.
     logWarn(
       "send-files not registered: sending files needs an attached workspace",
       {
@@ -143,8 +141,7 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
   }
   // A workspace file can only be handed over as a media link, which has to name
   // its account; without one the tool stays URL-only rather than half-working.
-  // Warned about once in `sendFilesTool`, which loses its whole tool to the same
-  // cause; a second line here would only say it twice.
+  // `sendFilesTool` already warns for that cause.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 

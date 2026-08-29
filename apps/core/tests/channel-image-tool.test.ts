@@ -44,6 +44,14 @@ mock.module("../src/shared/s3.ts", () => ({
 
 const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
+// Envelope fields every structured log line carries, stripped by `warnLines` so
+// assertions name only what the warning is about.
+const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  "level",
+  "service",
+  "service.name",
+  "time",
+]);
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const SECRET = "service-auth-secret";
 const WORKSPACE: ResolvedWorkspace = {
@@ -418,15 +426,12 @@ describe("sendFilesTool", () => {
     try {
       tools = sendFilesTool({ ...context, workspaces: [] });
     } finally {
-      // Restore before asserting: a throw here would otherwise leave stdout
-      // captured for every test after this one.
+      // Restore before asserting, or a throw leaves stdout captured for the
+      // tests after this one.
       write.mockRestore();
     }
 
     expect(tools).toEqual({});
-    // The absence is otherwise invisible: the model loses its only file
-    // delivery mid-run and the trace carries no WARN and no ERROR at all, so
-    // the run reads as the model ignoring instructions.
     expect(warnLines(chunks)).toEqual([
       {
         message:
@@ -474,18 +479,9 @@ async function execute(
     context: {},
   })) as string;
 }
-// What every structured log line carries, dropped so an assertion names only the
-// fields the warning is actually about.
-const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
-  "level",
-  "service",
-  "service.name",
-  "time",
-]);
 
-// One `process.stdout.write` is not one log line: a chunk can carry several
-// newline-delimited records, and anything that is not a log record at all would
-// otherwise fail the parse instead of the assertion.
+// One `process.stdout.write` chunk can carry several newline-delimited records,
+// and non-log output must not fail the parse.
 function warnLines(chunks: string[]): Record<string, unknown>[] {
   return chunks
     .flatMap((chunk): string[] => chunk.split("\n"))
