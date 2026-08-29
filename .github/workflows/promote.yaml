@@ -1,7 +1,7 @@
-# One-click promotion: fast-forwards main to dev, then dispatches the main
-# deploy workflows. Pushes made with GITHUB_TOKEN do not fire `on: push`
-# workflows (recursion guard), so the production workflows are dispatched
-# explicitly: Convex first, then the rest in parallel.
+# One-click promotion: waits for dev's required checks, fast-forwards main to
+# dev, then dispatches the main deploy workflows. Pushes made with GITHUB_TOKEN
+# do not fire `on: push` workflows (recursion guard), so the production
+# workflows are dispatched explicitly: Convex first, then the rest in parallel.
 
 name: Promote dev to main
 
@@ -26,27 +26,90 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Fast-forward main to dev
+      - name: Resolve promotion
         shell: bash
         run: |
           set -euo pipefail
 
           git fetch origin dev
-          if git merge-base --is-ancestor origin/dev HEAD; then
+          dev_sha=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$dev_sha" HEAD; then
             echo "main already contains dev; nothing to promote."
             echo "PROMOTED=false" >> "$GITHUB_ENV"
             exit 0
           fi
-          if ! git merge-base --is-ancestor HEAD origin/dev; then
+          if ! git merge-base --is-ancestor HEAD "$dev_sha"; then
             echo "main has commits that are not on dev; refusing a non-fast-forward promote." >&2
             echo "Merge main back into dev first, then re-run this workflow." >&2
             exit 1
           fi
 
-          git merge --ff-only origin/dev
-          git push origin main
           echo "PROMOTED=true" >> "$GITHUB_ENV"
-          echo "PROMOTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "DEV_SHA=$dev_sha" >> "$GITHUB_ENV"
+
+      # main's ruleset rejects a push whose commit still has required checks
+      # running, so hold until dev's head is green. The contexts come from the
+      # ruleset itself, so editing the rules does not strand this workflow.
+      - name: Wait for dev's required checks
+        if: env.PROMOTED == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          required=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" \
+            --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | unique | .[]')
+
+          if [[ -z "$required" ]]; then
+            echo "main requires no status checks; promoting without waiting."
+            exit 0
+          fi
+
+          for _ in $(seq 1 120); do
+            checks=$(gh api "repos/$GITHUB_REPOSITORY/commits/$DEV_SHA/check-runs?per_page=100")
+
+            pending=""
+            while IFS= read -r context; do
+              verdict=$(jq -r --arg context "$context" '
+                [.check_runs[] | select(.name == $context)] | sort_by(.started_at) | last
+                | if . == null then "missing"
+                  elif .status != "completed" then "running"
+                  elif (.conclusion as $conclusion | ["success", "skipped", "neutral"] | index($conclusion)) then "passed"
+                  else "failed"
+                  end' <<< "$checks")
+
+              case "$verdict" in
+                passed) ;;
+                failed)
+                  echo "Required check \"$context\" failed on dev ($DEV_SHA); fix dev before promoting." >&2
+                  exit 1
+                  ;;
+                *) pending="$pending $context ($verdict)" ;;
+              esac
+            done <<< "$required"
+
+            if [[ -z "$pending" ]]; then
+              echo "dev ($DEV_SHA) is green on every required check."
+              exit 0
+            fi
+
+            echo "Waiting on:$pending"
+            sleep 15
+          done
+
+          echo "Timed out waiting for dev's required checks; re-run once they finish." >&2
+          exit 1
+
+      - name: Fast-forward main to dev
+        if: env.PROMOTED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git merge --ff-only "$DEV_SHA"
+          git push origin main
+          echo "PROMOTED_SHA=$DEV_SHA" >> "$GITHUB_ENV"
 
       - name: Trigger main deploys
         if: env.PROMOTED == 'true'
