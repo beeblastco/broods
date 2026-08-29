@@ -105,11 +105,9 @@ export type ResourceInput<Name extends string, Config> = {
 } & Config;
 
 /**
- * Provider-specific sandbox knobs. Open-ended, but `reservationKey` is spelled out
- * because it is the one option the harness itself reads: it names the reserved
- * machine a `persistent` sandbox reconnects to when no workspace is mounted. Leave
- * it unset and each agent gets its own; pin the same string on two sandboxes to put
- * them deliberately on one machine.
+ * Provider-specific sandbox knobs. `reservationKey` names the reserved machine a
+ * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
+ * agent gets its own, and pinning one string on two sandboxes shares a machine.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;

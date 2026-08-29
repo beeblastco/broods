@@ -202,9 +202,8 @@ function ownSandboxNote(context: SandboxToolContext): string {
 - Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
 }
 
-// A workspace-less run has no namespace to key a reservation on, so it keys on the
-// sandbox's options.reservationKey — derived per agent by resolveAgentRuntime, or
-// pinned by the author. No key means nothing survives, and the note stays off.
+// A workspace-less run reconnects on options.reservationKey (derived per agent by
+// resolveAgentRuntime, or pinned). No key means nothing survives, no note.
 function reservedStandaloneNote(context: SandboxToolContext): string {
   const options = isPlainObject(context.agentSandbox?.options)
     ? context.agentSandbox.options

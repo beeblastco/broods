@@ -40,10 +40,8 @@ export async function deleteAccountRuntimeData(
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
-  // Two kinds of reservation key: a workspace reserves on its namespace, an agent's
-  // own sandbox on the key `agentSandboxReservation` picks for it. The release path
-  // treats them the same, so both lists go in together, and miss the second and the
-  // machines leak at the provider.
+  // Workspaces reserve on their namespace, agent-level sandboxes on a derived
+  // key; miss either list and machines leak at the provider.
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
     [
@@ -101,6 +99,40 @@ export async function deleteWorkspaceFilesystem(
   return deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
+/**
+ * The reservation keys this account's agents hold on their own sandboxes. Asks
+ * `agentSandboxReservation` so a pinned key releases the machine actually reserved.
+ */
+async function agentSandboxReservationKeys(
+  accountId: string,
+): Promise<string[]> {
+  const agents = await getStorage().agents.list(accountId);
+  const keys = await Promise.all(
+    agents.map(async (agent): Promise<string | undefined> => {
+      const sandboxId = agent.config.sandbox;
+      if (typeof sandboxId !== "string" || sandboxId.length === 0) {
+        return undefined;
+      }
+      const record = await getStorage().sandboxConfigs.getById(
+        accountId,
+        sandboxId,
+      );
+      if (!record) {
+        return undefined;
+      }
+
+      return agentSandboxReservation(
+        record.config,
+        accountId,
+        agent.agentId,
+        sandboxId,
+      );
+    }),
+  );
+
+  return keys.filter((key): key is string => key !== undefined);
+}
+
 async function deleteConvexRuntimeRows(
   accountId: string,
 ): Promise<
@@ -155,40 +187,4 @@ async function deleteWorkspaceFilesystems(
     );
 
   return deleted;
-}
-
-/**
- * The reservation keys this account's agents hold on their own sandboxes.
- * Asks `agentSandboxReservation` rather than deriving the key again, so a sandbox
- * with a pinned `options.reservationKey` releases the machine it actually reserved
- * instead of one that was never built.
- */
-async function agentSandboxReservationKeys(
-  accountId: string,
-): Promise<string[]> {
-  const agents = await getStorage().agents.list(accountId);
-  const keys = await Promise.all(
-    agents.map(async (agent): Promise<string | undefined> => {
-      const sandboxId = agent.config.sandbox;
-      if (typeof sandboxId !== "string" || sandboxId.length === 0) {
-        return undefined;
-      }
-      const record = await getStorage().sandboxConfigs.getById(
-        accountId,
-        sandboxId,
-      );
-      if (!record) {
-        return undefined;
-      }
-
-      return agentSandboxReservation(
-        record.config,
-        accountId,
-        agent.agentId,
-        sandboxId,
-      );
-    }),
-  );
-
-  return keys.filter((key): key is string => key !== undefined);
 }

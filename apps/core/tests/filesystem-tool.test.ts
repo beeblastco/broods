@@ -73,10 +73,8 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
 }));
 
 // The reservation registry, stubbed to "nothing reserved" so a persistent run
-// takes the create path. Three other test files replace this module wholesale
-// with a stub that answers a real externalId, and `mock.module` is process-wide
-// and never restored, so relying on the real one here means the answer depends
-// on which file bun happened to load first. Owning the mock makes it ours.
+// takes the create path. Other test files replace this module process-wide, so
+// owning the mock keeps the answer independent of bun's file load order.
 const getSandboxExternalIdMock = mock(
   async (_provider: string, _key: string): Promise<string | null> => null,
 );
@@ -560,9 +558,8 @@ describe("sandbox tool set", () => {
   });
 
   it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
-    // A run with no workspace reconnects on options.reservationKey, which
-    // resolveAgentRuntime derives upstream. The tool reads it rather than deriving
-    // it, so an unkeyed config still has to describe itself as throwaway.
+    // The tool reads options.reservationKey rather than deriving it, so an
+    // unkeyed config still has to describe itself as throwaway.
     const bare = await tool("bash", borrowedSandboxCtx());
     expect(bare.description).toContain("reaches durable storage");
     expect(bare.description).not.toContain("That sandbox is reserved");
@@ -581,10 +578,8 @@ describe("sandbox tool set", () => {
   });
 
   it("keeps two calls on one MicroVM when a persistent agent sandbox has no workspace", async () => {
-    // The whole point of `persistent: true`. With no workspace there is no
-    // filesystem namespace to key the reservation on, so resolveAgentRuntime
-    // derives one; without it both calls boot and terminate their own VM and the
-    // file the first one wrote is gone.
+    // The point of `persistent: true`: without the derived key both calls boot
+    // their own VM and the file the first one wrote is gone.
     const { setStorageForTests } = await import("../src/shared/storage.ts");
     const { resolveAgentRuntime } = await import("../src/shared/workspaces.ts");
     setStorageForTests({
@@ -616,8 +611,6 @@ describe("sandbox tool set", () => {
     await bash.execute({ command: "cat state.txt" });
 
     expect(microvmCommandsOfType("RunMicrovm")).toHaveLength(1);
-    // A reserved VM is never torn down after the call, which is what lets the
-    // second command read back what the first one wrote.
     expect(microvmCommandsOfType("TerminateMicrovm")).toHaveLength(0);
   });
 

@@ -127,10 +127,8 @@ export async function createTools(
   const hasSandboxReservation =
     typeof sandboxOptions.reservationKey === "string" &&
     sandboxOptions.reservationKey.trim().length > 0;
-  // Persistence is keyed by workspace namespace, or — for a run that reaches the
-  // sandbox without one — by the reservation key resolveAgentRuntime derives per
-  // agent. Neither is present only when the run has no agent identity to derive
-  // from, which leaves those runs ephemeral.
+  // Persistence keys on the workspace namespace, or without one on the key
+  // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
   const runsWithoutNamespace =
     workspaces.length === 0 || hasStandaloneSandbox(workspaces, agentSandbox);
   if (

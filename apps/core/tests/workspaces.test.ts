@@ -101,9 +101,8 @@ describe("agentSandboxReservationKey", () => {
   it("scopes a reserved agent sandbox by account, agent and sandbox record", () => {
     const key = agentSandboxReservationKey("acct_1", "ag_1", "sb_1");
     expect(key).toBe(normalizeFilesystemNamespace("acct_1:ag_1:sb_1"));
-    // Every segment is load bearing: agents never share a machine by accident, and
-    // re-pointing an agent at another sandbox record does not reconnect it to a
-    // machine built from the old record's image.
+    // Every segment is load bearing: no accidental sharing between agents or
+    // across sandbox records.
     expect(key).not.toBe(agentSandboxReservationKey("acct_2", "ag_1", "sb_1"));
     expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_2", "sb_1"));
     expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_2"));
@@ -113,8 +112,8 @@ describe("agentSandboxReservationKey", () => {
 });
 
 describe("agentSandboxReservation", () => {
-  // Account deletion asks this same question to know what to release, so a rule
-  // that disagreed with the runtime would leave the machine running at the provider.
+  // Account deletion asks this same question; a rule that disagreed with the
+  // runtime would leave machines running at the provider.
   const persistent = { provider: "sandbox", persistent: true } as const;
 
   it("derives a key for a persistent sandbox", () => {
@@ -400,8 +399,7 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.sandbox?.options?.reservationKey).toBe(
       agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
     );
-    // The inherited copy keys persistence on the workspace namespace instead, so
-    // handing it the agent's key would give two callers two names for one machine.
+    // The inherited copy keys persistence on the workspace namespace instead.
     expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
@@ -428,16 +426,15 @@ describe("resolveAgentRuntime", () => {
       { sandbox: "sb_pinned" },
       { accountId: "acct_1", agentId: "ag_1" },
     );
-    // An author who pins a key is deliberately naming the machine — two agents on
-    // one string is how they share it, so derivation must not overwrite that.
+    // A pinned key deliberately names the machine; derivation must not overwrite it.
     expect(pinned.sandbox?.options?.reservationKey).toBe("team-shared");
 
     const ephemeral = await resolveAgentRuntime(
       { sandbox: "sb_plain" },
       { accountId: "acct_1", agentId: "ag_1" },
     );
-    // Nothing to reserve without `persistent`, and inventing a key would quietly
-    // turn a throwaway sandbox into a long-lived one.
+    // Inventing a key without `persistent` would quietly make a throwaway
+    // sandbox long-lived.
     expect(ephemeral.sandbox?.options).toBeUndefined();
   });
 
