@@ -77,6 +77,20 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
   if (workspaces.length === 0) {
+    // Without this line the drop is invisible in the trace. `sendImages` names
+    // what the same missing workspace did to the other half of the pair.
+    logWarn(
+      "send-files not registered: sending files needs an attached workspace",
+      {
+        channel: channelName,
+        attachedWorkspaces: context.workspaces?.length ?? 0,
+        sendImages:
+          actions.sendImages || actions.sendFiles
+            ? "url-only"
+            : "not-registered",
+      },
+    );
+
     return {};
   }
   return {
@@ -127,6 +141,7 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
   }
   // A workspace file can only be handed over as a media link, which has to name
   // its account; without one the tool stays URL-only rather than half-working.
+  // `sendFilesTool` already warns for that cause.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 

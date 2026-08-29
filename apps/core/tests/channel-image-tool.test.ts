@@ -5,7 +5,15 @@
  * rungs send-images drops through when a channel will not show pictures.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { ChannelFile, ChannelImage } from "../src/shared/channels.ts";
@@ -36,6 +44,14 @@ mock.module("../src/shared/s3.ts", () => ({
 
 const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
+// Envelope fields every structured log line carries, stripped by `warnLines` so
+// assertions name only what the warning is about.
+const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  "level",
+  "service",
+  "service.name",
+  "time",
+]);
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const SECRET = "service-auth-secret";
 const WORKSPACE: ResolvedWorkspace = {
@@ -391,12 +407,40 @@ describe("sendFilesTool", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 
-  it("is not registered when no workspace is attached", async (): Promise<void> => {
+  it("is not registered when no workspace is attached, and says so", async (): Promise<void> => {
     const { sendFilesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const context = channelContext(async function (): Promise<void> {});
+    const chunks: string[] = [];
+    const write = spyOn(process.stdout, "write").mockImplementation(function (
+      chunk: string | Uint8Array,
+    ): boolean {
+      chunks.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
 
-    expect(sendFilesTool({ ...context, workspaces: [] })).toEqual({});
+      return true;
+    });
+
+    let tools: ToolSet;
+    try {
+      tools = sendFilesTool({ ...context, workspaces: [] });
+    } finally {
+      // Restore before asserting, or a throw leaves stdout captured for the
+      // tests after this one.
+      write.mockRestore();
+    }
+
+    expect(tools).toEqual({});
+    expect(warnLines(chunks)).toEqual([
+      {
+        message:
+          "send-files not registered: sending files needs an attached workspace",
+        channel: "zalo",
+        attachedWorkspaces: 0,
+        sendImages: "url-only",
+      },
+    ]);
   });
 });
 
@@ -434,4 +478,27 @@ async function execute(
     messages: [],
     context: {},
   })) as string;
+}
+
+// One `process.stdout.write` chunk can carry several newline-delimited records,
+// and non-log output must not fail the parse.
+function warnLines(chunks: string[]): Record<string, unknown>[] {
+  return chunks
+    .flatMap((chunk): string[] => chunk.split("\n"))
+    .flatMap((line): Record<string, unknown>[] => {
+      if (!line.trim()) return [];
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    })
+    .filter((entry): boolean => entry.level === "WARN")
+    .map((entry): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(entry).filter(
+          ([key]): boolean => !LOG_ENVELOPE_KEYS.has(key),
+        ),
+      ),
+    );
 }
