@@ -1914,6 +1914,40 @@ test("observability relay sheds droppable frames when the socket buffer is backe
   expect(sent).toEqual([]);
 });
 
+test("observability relay waits out span backpressure instead of shedding", async () => {
+  const encoder = new TextEncoder();
+  const sent: unknown[] = [];
+  // Backed up for the first few polls, drained afterwards — the relay must
+  // deliver the span once the buffer drops rather than shedding it.
+  let drainChecks = 0;
+  const socket = {
+    readyState: WebSocket.OPEN,
+    getBufferedAmount: () => (drainChecks++ < 3 ? 10 * 1024 * 1024 : 0),
+    send: (value: string) => sent.push(JSON.parse(value)),
+  } as unknown as Bun.ServerWebSocket<
+    import("../src/observability.ts").ObservabilityGatewayData
+  >;
+  const span = {
+    traceId: "trace-1",
+    spanId: "span-1",
+    name: "agent.task",
+    kind: "task",
+    startTimeMs: 1,
+    endTimeMs: 2,
+    durationMs: 1,
+    status: "ok",
+    attributes: {},
+  };
+  const messages = async function* () {
+    yield { data: encoder.encode(JSON.stringify(span)) };
+  };
+
+  await relayNatsMessages(socket, messages(), "traces", {
+    logsMinLevel: "INFO",
+  });
+  expect(sent).toEqual([{ type: "span", entry: span }]);
+});
+
 function gatewaySocket(sent: Array<Record<string, unknown>>) {
   return {
     data: {

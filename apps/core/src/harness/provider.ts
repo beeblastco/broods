@@ -74,7 +74,9 @@ interface ModelProviderInstance {
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
   provider: unknown;
-  model: LanguageModel;
+  // Never the string form: every resolver returns a constructed instance, so
+  // callers can wrap it in middleware.
+  model: Exclude<LanguageModel, string>;
 }
 
 export type ModelOutputSpec =
@@ -324,6 +326,28 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
     };
   },
 };
+
+export type ModelAttempt = { startedAt: number; error?: string };
+
+// One entry per doStream call — the SDK's retry loop re-invokes doStream, so
+// the recorded attempts split retry waste from server wait on the step span.
+export function attemptRecordingMiddleware(
+  record: (attempt: ModelAttempt) => void,
+  describeError: (error: unknown) => string,
+): LanguageModelMiddleware {
+  return {
+    wrapStream: async ({ doStream }) => {
+      const attempt: ModelAttempt = { startedAt: Date.now() };
+      record(attempt);
+      try {
+        return await doStream();
+      } catch (error) {
+        attempt.error = describeError(error);
+        throw error;
+      }
+    },
+  };
+}
 
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or

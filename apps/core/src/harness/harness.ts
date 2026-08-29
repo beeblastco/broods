@@ -17,6 +17,7 @@ import {
 import {
   isStepCount,
   streamText,
+  wrapLanguageModel,
   type AssistantModelMessage,
   type JSONValue,
   type LanguageModelUsage,
@@ -78,10 +79,12 @@ import {
   createRuntimeToolApproval,
 } from "./policy.ts";
 import {
+  attemptRecordingMiddleware,
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
+  type ModelAttempt,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import type {
@@ -641,6 +644,31 @@ export async function runAgentLoop(
   const reasoningWindow = new Map<number, StreamWindow>();
   const textWindow = new Map<number, StreamWindow>();
   const toolInputWindow = new Map<number, StreamWindow>();
+  // The SDK retries a failed stream start inside the ttft window with nothing
+  // recorded; attemptRecordingMiddleware fills this per doStream call.
+  const stepAttempts = new Map<number, ModelAttempt[]>();
+  // ttft = retry_wait (failed attempts + backoff) + the final attempt's real
+  // server wait, so a retried 429 is distinguishable from queueing.
+  const attemptAttributes = (
+    stepNumber: number,
+    stepStartMs: number,
+  ): Record<string, string | number> => {
+    const attempts = stepAttempts.get(stepNumber) ?? [];
+    const errors = attempts.flatMap((attempt) =>
+      attempt.error ? [attempt.error] : [],
+    );
+    const lastAttemptAt = attempts.at(-1)?.startedAt;
+
+    return {
+      ...(attempts.length > 0 ? { "model.attempts": attempts.length } : {}),
+      ...(attempts.length > 1 && lastAttemptAt !== undefined
+        ? { "model.retry_wait_ms": Math.max(0, lastAttemptAt - stepStartMs) }
+        : {}),
+      ...(errors.length > 0
+        ? { "model.attempt_errors": traceAttribute(errors) }
+        : {}),
+    };
+  };
   let activeStepNumber: number | undefined;
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   const logContext = {
@@ -681,13 +709,26 @@ export async function runAgentLoop(
     // Close the root OTel span. Published live via NATS and exported durably
     // via the OTLP exporter registered in otel.ts.
     const endTimeMs = runStartedAt + durationMs;
-    for (const tracked of [...toolSpans.values(), ...stepSpans.values()]) {
+    const orphanedSpans = [
+      ...[...toolSpans.values()].map((tracked) => ({
+        tracked: tracked,
+        extraAttributes: undefined,
+      })),
+      // A step whose every attempt failed never reaches onStepFinish, so its
+      // attempt attributes are attached here instead.
+      ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
+        tracked: tracked,
+        extraAttributes: attemptAttributes(stepNumber, tracked.startTimeMs),
+      })),
+    ];
+    for (const { tracked, extraAttributes } of orphanedSpans) {
       if (status === "failed") {
         tracked.otelSpan.setStatus({
           code: SpanStatusCode.ERROR,
           message: sanitizedError?.message,
         });
       }
+      if (extraAttributes) tracked.otelSpan.setAttributes(extraAttributes);
       tracked.otelSpan.end(endTimeMs);
       publishSpan({
         traceId: tracked.traceId,
@@ -704,6 +745,7 @@ export async function runAgentLoop(
         conversationKey: session.conversationKey,
         attributes: {
           ...tracked.attributes,
+          ...extraAttributes,
           [tracked.name === "model.step" ? "step.state" : "tool.state"]: status,
         },
         ...(sanitizedError ? { error: sanitizedError.message } : {}),
@@ -711,6 +753,7 @@ export async function runAgentLoop(
     }
     toolSpans.clear();
     stepSpans.clear();
+    stepAttempts.clear();
     // Task totals on the root span: token usage and sandbox CPU split per provider
     // so the dashboard reads final usage straight off the trace stream.
     const cpuUsecByType = new Map<string, number>();
@@ -878,10 +921,25 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
+  const attemptTrackedModel = wrapLanguageModel({
+    model: configuredModel.model,
+    middleware: attemptRecordingMiddleware(
+      (attempt) => {
+        const step = activeStepNumber ?? 0;
+        stepAttempts.set(step, [...(stepAttempts.get(step) ?? []), attempt]);
+      },
+      (error) =>
+        redactSensitiveText(
+          toErrorMessage(error),
+          getObservabilityContext()?.secretValues,
+        ),
+    ),
+  });
+
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
-    model: configuredModel.model,
+    model: attemptTrackedModel,
     instructions: turnContext.system,
     // History messages carry envelope fields (metadata/createdAt) for hook
     // payloads; the model must see clean AI SDK shapes.
@@ -1342,11 +1400,16 @@ export async function runAgentLoop(
         const reasoningMs = windowMs(reasoningWindow.get(stepNumber));
         const textMs = windowMs(textWindow.get(stepNumber));
         const toolInputMs = windowMs(toolInputWindow.get(stepNumber));
+        const stepAttemptAttributes = attemptAttributes(
+          stepNumber,
+          tracked.startTimeMs,
+        );
         firstChunkAt.delete(stepNumber);
         lastModelChunkAt.delete(stepNumber);
         reasoningWindow.delete(stepNumber);
         textWindow.delete(stepNumber);
         toolInputWindow.delete(stepNumber);
+        stepAttempts.delete(stepNumber);
         // Per-step token usage on the span so the dashboard can accumulate live
         // usage straight off the trace stream (no separate usage channel).
         const attributes = {
@@ -1356,6 +1419,7 @@ export async function runAgentLoop(
           "model.finish_reason": finishReason,
           "agent.tool_call_count": toolCalls.length,
           ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
+          ...stepAttemptAttributes,
           ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
           ...(toolWaitMs !== undefined
             ? { "model.tool_wait_ms": toolWaitMs }
