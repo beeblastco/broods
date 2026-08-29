@@ -5,6 +5,7 @@
 
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
+import type { McpRecord } from "./domain/mcp.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
@@ -208,6 +209,12 @@ interface AccountHookStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
+/** Registered external MCP servers (#331); rows live in the config plane. */
+interface McpStore {
+  getById(accountId: string, serverId: string): Promise<McpRecord | null>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
 /** Account-scoped reusable runtime authorization policies. */
 interface AgentPolicyStore {
   getById(accountId: string, policyId: string): Promise<PolicyRecord | null>;
@@ -238,6 +245,7 @@ export interface Storage {
   workspaceConfigs: WorkspaceConfigStore;
   accountTools: AccountToolStore;
   accountHooks: AccountHookStore;
+  mcp: McpStore;
   agentPolicies: AgentPolicyStore;
   roleSessions: RoleSessionStore;
   taskUsage: TaskUsageStore;

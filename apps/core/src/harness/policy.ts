@@ -71,6 +71,7 @@ export async function createPolicyToolApproval(
   workspaces: ResolvedWorkspace[],
   options: {
     toolIdsByName?: ReadonlyMap<string, string>;
+    mcpServerIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
   } = {},
 ): Promise<RuntimeToolApproval | undefined> {
@@ -335,6 +336,7 @@ export function policyInputForTool(
   workspaces: ResolvedWorkspace[],
   options: {
     toolIdsByName?: ReadonlyMap<string, string>;
+    mcpServerIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
   } = {},
 ): Pick<
@@ -342,6 +344,7 @@ export function policyInputForTool(
   | "action"
   | "toolName"
   | "toolId"
+  | "mcpServerId"
   | "workspaceId"
   | "workspaceName"
   | "filePath"
@@ -387,6 +390,9 @@ export function policyInputForTool(
     toolName: toolName,
     ...(options.toolIdsByName?.get(toolName)
       ? { toolId: options.toolIdsByName.get(toolName)! }
+      : {}),
+    ...(options.mcpServerIdsByName?.get(toolName)
+      ? { mcpServerId: options.mcpServerIdsByName.get(toolName)! }
       : {}),
     tool: toolContextForPolicy(input),
     ...(workspace

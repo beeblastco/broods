@@ -16,6 +16,39 @@ import {
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 
 describe("agent rules", () => {
+  it("validates config.mcpServers entries", () => {
+    const serverId = "k57mcpserver00000000000000000000";
+    expect(
+      normalizeAgentConfig({
+        mcpServers: {
+          [serverId]: {
+            enabled: true,
+            needsApproval: true,
+            headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
+          },
+        },
+      }),
+    ).toEqual({
+      mcpServers: {
+        [serverId]: {
+          enabled: true,
+          needsApproval: true,
+          headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
+        },
+      },
+    });
+    expect(() =>
+      normalizeAgentConfig({ mcpServers: { "not-an-id": {} } }),
+    ).toThrow("config.mcpServers.not-an-id must be keyed by an MCP server id");
+    expect(() =>
+      normalizeAgentConfig({
+        mcpServers: { [serverId]: { headers: { Authorization: 5 } } },
+      }),
+    ).toThrow(
+      `config.mcpServers.${serverId}.headers must be an object of string values`,
+    );
+  });
+
   it("validates channel trace settings", () => {
     expect(
       normalizeAgentConfig({

@@ -18,4 +18,22 @@ describe("agent config codec", () => {
     expect(flat.extraConfig).toMatchObject({ scheduler: { enabled: true } });
     expect(toNestedAgentConfig(flat).scheduler).toEqual({ enabled: true });
   });
+
+  // Same failure mode as scheduler: without a NESTED_BRANCHES entry the
+  // mcpServers branch is dropped on write and never reaches core (#331).
+  test("round-trips the mcpServers branch", () => {
+    const mcpServers = {
+      k57mcpserver00000000000000000000: {
+        enabled: true,
+        headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
+      },
+    };
+    const flat = fromNestedAgentConfig({
+      model: { provider: "custom", modelId: "deepseek-v4-pro" },
+      mcpServers: mcpServers,
+    });
+
+    expect(flat.extraConfig).toMatchObject({ mcpServers: mcpServers });
+    expect(toNestedAgentConfig(flat).mcpServers).toEqual(mcpServers);
+  });
 });

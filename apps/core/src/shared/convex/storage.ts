@@ -9,6 +9,7 @@
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
 import type { AccountToolRecord } from "../domain/account-tools.ts";
+import type { McpRecord } from "../domain/mcp.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -676,6 +677,50 @@ function accountToolFromConvex(
   };
 }
 
+interface ConvexMcpDoc {
+  _id: string;
+  accountId: string;
+  projectId: string;
+  stageId: string;
+  name: string;
+  description?: string;
+  transport: "http";
+  url: string;
+  headers?: Record<string, string>;
+  allowedTools?: string[];
+  disabled?: boolean;
+  status: "active" | "deleted";
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
+  if (!doc) return null;
+
+  return {
+    accountId: doc.accountId,
+    serverId: doc._id,
+    projectId: doc.projectId,
+    stageId: doc.stageId,
+    name: doc.name,
+    ...(doc.description !== undefined ? { description: doc.description } : {}),
+    transport: doc.transport,
+    url: doc.url,
+    ...(doc.headers !== undefined ? { headers: doc.headers } : {}),
+    ...(doc.allowedTools !== undefined
+      ? { allowedTools: doc.allowedTools }
+      : {}),
+    ...(doc.disabled !== undefined ? { disabled: doc.disabled } : {}),
+    status: doc.status,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+    ...(doc.deletedAt
+      ? { deletedAt: new Date(doc.deletedAt).toISOString() }
+      : {}),
+  };
+}
+
 interface ConvexAgentPolicyDoc {
   _id: string;
   accountId: string;
@@ -775,6 +820,30 @@ const accountTools: Storage["accountTools"] = {
   },
 };
 
+const mcp: Storage["mcp"] = {
+  getById: async function (accountId, serverId) {
+    const doc = await getConvexClient().query(internal.account.mcp.getById, {
+      accountId: accountId as any,
+      serverId: serverId,
+    });
+
+    return mcpFromConvex(doc as ConvexMcpDoc | null);
+  },
+  removeAllForAccount: async function (accountId) {
+    const docs = (await getConvexClient().query(internal.account.mcp.list, {
+      accountId: accountId as any,
+    })) as ConvexMcpDoc[];
+    await removeInBatches(docs, (doc) =>
+      getConvexClient().mutation(internal.account.mcp.remove, {
+        accountId: accountId as any,
+        serverId: doc._id,
+      }),
+    );
+
+    return docs.length;
+  },
+};
+
 const accountHooks: Storage["accountHooks"] = {
   getById: async function (accountId, hookId) {
     const doc = await getConvexClient().query(internal.account.hooks.getById, {
@@ -821,6 +890,7 @@ export const convexStorage: Storage = {
   agentPolicies: agentPolicies,
   accountTools: accountTools,
   accountHooks: accountHooks,
+  mcp: mcp,
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

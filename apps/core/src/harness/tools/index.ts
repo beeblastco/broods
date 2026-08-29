@@ -38,6 +38,8 @@ import type {
   SandboxExecutorConfig,
 } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
+import { listMcpTools, mcpConnection } from "../mcp/client.ts";
+import { mcpServerTools, mcpToolName } from "../mcp/mcp.tool.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
@@ -103,6 +105,8 @@ export interface ToolContext {
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   policyToolIdsByName?: Map<string, string>;
+  /** Model-facing tool name → MCP server row id, for per-server policy rules. */
+  policyMcpServerIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
 }
 
@@ -399,6 +403,11 @@ export async function createTools(
     addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
   }
 
+  // Connected MCP servers: each entry names a config-plane row; the server's
+  // tools resolve over the stateless HTTP transport at registration time and
+  // register as `server__tool` (#331).
+  await registerMcpTools(tools, agentConfig, context);
+
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
   if (asyncModes.size > 0 || hasBackgroundWorkspace) {
@@ -429,6 +438,56 @@ function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
     if (toolName in tools) {
       delete tools[toolName];
     }
+  }
+}
+
+/**
+ * Register every enabled connected MCP server's tools (#331). Listings come
+ * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
+ * the discovery round-trip.
+ */
+async function registerMcpTools(
+  tools: ToolSet,
+  agentConfig: AgentConfig,
+  context: Omit<ToolContext, "config">,
+): Promise<void> {
+  for (const [serverId, serverConfig] of Object.entries(
+    agentConfig.mcpServers ?? {},
+  )) {
+    if (serverConfig === undefined || serverConfig.enabled === false) {
+      continue;
+    }
+    if (!context.accountId) {
+      throw new Error(
+        `config.mcpServers.${serverId} requires an account-scoped session`,
+      );
+    }
+    const record = await getStorage().mcp.getById(context.accountId, serverId);
+    if (!record || record.status !== "active") {
+      throw new Error(
+        `config.mcpServers.${serverId} references an unknown MCP server`,
+      );
+    }
+    if (record.disabled) {
+      continue;
+    }
+    const connection = mcpConnection(record, serverConfig.headers);
+    const remoteTools = (await listMcpTools(connection)).filter(
+      (remote) =>
+        !record.allowedTools || record.allowedTools.includes(remote.name),
+    );
+    for (const remote of remoteTools) {
+      const name = mcpToolName(record.name, remote.name);
+      if (tools[name]) {
+        throw new Error(
+          `config.mcpServers.${serverId} model-facing name '${name}' conflicts with another tool`,
+        );
+      }
+      if (serverConfig.needsApproval === true)
+        context.approvalRequirements?.set(name, true);
+      context.policyMcpServerIdsByName?.set(name, serverId);
+    }
+    Object.assign(tools, mcpServerTools(connection, remoteTools));
   }
 }
 

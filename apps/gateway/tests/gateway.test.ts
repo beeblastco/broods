@@ -1138,6 +1138,10 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/tools/qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(
     true,
   );
+  expect(isConfigHttpPath("/v1/mcp")).toBe(true);
+  expect(isConfigHttpPath("/v1/mcp/k57mcpserver00000000000000000000")).toBe(
+    true,
+  );
   expect(isConfigHttpPath("/v1/hooks")).toBe(true);
   expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(
     true,

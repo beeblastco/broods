@@ -35,6 +35,18 @@ export const getById = internalQuery({
   },
 });
 
+export const list = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(mcpDoc),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("mcp")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .filter((q) => q.eq(q.field("status"), "active"))
+      .collect();
+  },
+});
+
 export const listForStage = internalQuery({
   args: { stageId: v.id("stages") },
   returns: v.array(mcpDoc),

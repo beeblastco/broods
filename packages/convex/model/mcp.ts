@@ -9,7 +9,10 @@
  * secret.
  */
 
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./agentConfigCodec";
+// `${NAME}` ref shape, duplicated from ./agentConfigCodec.ts
+// (ACCOUNT_ENV_PLACEHOLDER_PATTERN): importing the codec here drags it into
+// core's stricter typecheck through core's shared/domain/mcp.ts re-export.
+const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{[A-Z][A-Z0-9_]*\}/;
 
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_DESCRIPTION_LENGTH = 2000;
