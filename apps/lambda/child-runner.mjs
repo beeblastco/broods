@@ -62,7 +62,10 @@ async function runToolRequest() {
       readBundleBytes(),
     ]);
     const payload = parsePayload(JSON.parse(request));
-    const result = await runBundle(payload, bundle, controller.signal);
+    const result =
+      payload.mode === "mcp"
+        ? await runMcpBundle(payload, bundle, controller.signal)
+        : await runBundle(payload, bundle, controller.signal);
     clearTimeout(timeout);
     emitTerminal({ t: "final", result: result }, 0);
   } catch (error) {
@@ -123,6 +126,49 @@ async function runBundle(payload, bundle, abortSignal) {
   }
 
   return await value;
+}
+
+// MCP host mode (#331 phase 2): the bundle default-exports a fetch-style MCP
+// handler (e.g. `createMcpHandler(...)` from @modelcontextprotocol/server).
+// One invoke carries exactly one web request; the stateless 2026-07-28
+// transport is what makes that mapping complete.
+async function runMcpBundle(payload, bundle, abortSignal) {
+  const actualSha = createHash("sha256").update(bundle).digest("hex");
+  if (actualSha !== payload.expectedSha256) {
+    throw new Error("mcp server bundle hash mismatch inside sandbox runner");
+  }
+
+  const module = await importBundle(bundle);
+  const handler = module.default;
+  const fetchLike =
+    handler && typeof handler.fetch === "function"
+      ? handler.fetch.bind(handler)
+      : typeof handler === "function"
+        ? handler
+        : null;
+  if (!fetchLike) {
+    throw new Error(
+      "mcp server bundle default export must be a fetch handler (createMcpHandler)",
+    );
+  }
+
+  const mcp = payload.mcpRequest;
+  const request = new Request("http://mcp-hosted.internal/mcp", {
+    method: mcp.method,
+    headers: mcp.headers,
+    ...(mcp.body !== undefined && mcp.method !== "GET"
+      ? { body: mcp.body }
+      : {}),
+    signal: abortSignal,
+  });
+  const response = await fetchLike(request);
+  const body = await response.text();
+
+  return {
+    status: response.status,
+    headers: Object.fromEntries(response.headers.entries()),
+    body: body,
+  };
 }
 
 async function readAllStdin() {
@@ -188,6 +234,25 @@ function parsePayload(payload) {
   }
   if (typeof payload.toolName !== "string") {
     throw new Error("sandbox runner payload missing toolName");
+  }
+
+  if (payload.mode === "mcp") {
+    const mcp = payload.mcpRequest;
+    if (!mcp || typeof mcp !== "object" || typeof mcp.method !== "string") {
+      throw new Error("mcp runner payload missing mcpRequest");
+    }
+
+    return {
+      mode: "mcp",
+      expectedSha256: payload.expectedSha256,
+      toolName: payload.toolName,
+      mcpRequest: {
+        method: mcp.method,
+        headers:
+          mcp.headers && typeof mcp.headers === "object" ? mcp.headers : {},
+        body: typeof mcp.body === "string" ? mcp.body : undefined,
+      },
+    };
   }
 
   return {

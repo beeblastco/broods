@@ -1,8 +1,8 @@
 /**
  * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
- * collection, get/patch/delete by id. No bundle path — phase 1 rows describe
- * an external server core connects to; secrets stay in account env vars as
- * ${NAME} refs on the header values.
+ * collection, get/patch/delete by id. A `url` registers an external server
+ * core connects to; a `bundle` uploads a hosted one for the Lambda host.
+ * Secrets stay in account env vars as ${NAME} refs on the header values.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -12,7 +12,8 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
-import { normalizeMcpInput } from "../../model/mcp";
+import { normalizeMcpInput, type McpInput } from "../../model/mcp";
+import { putMcpBundle } from "../../model/bundles";
 import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
@@ -92,15 +93,20 @@ async function handleMcpCollectionRoute(
     });
   }
   if (req.method === "POST") {
-    const input = normalizeMcpInput(await req.json(), {
+    const input = await normalizeMcpInput(await req.json(), {
       requireConnection: true,
     });
+    const bundleStorageKey = await storeMcpBundle(ctx, accountId, input, null);
     const createdId = await ctx.runMutation(internal.account.mcp.create, {
       accountId: accountId,
       projectId: scope.projectId,
       stageId: scope.stageId,
       name: input.name!,
-      url: input.url!,
+      ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(bundleStorageKey !== undefined
+        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+        : {}),
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -148,9 +154,15 @@ async function patchMcpRoute(
     serverId: serverId,
   });
   if (!existing) return json({ error: "MCP server not found" }, 404);
-  const input = normalizeMcpInput(await req.json(), {
+  const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
+  const bundleStorageKey = await storeMcpBundle(
+    ctx,
+    accountId,
+    input,
+    existing,
+  );
   await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
     serverId: serverId,
@@ -158,7 +170,11 @@ async function patchMcpRoute(
     ...(input.description !== undefined
       ? { description: input.description }
       : {}),
+    ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
+    ...(bundleStorageKey !== undefined
+      ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+      : {}),
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.allowedTools !== undefined
       ? { allowedTools: input.allowedTools }
@@ -231,6 +247,31 @@ async function resolveMcpScope(
   };
 }
 
+/**
+ * Upload a hosted server bundle when the input carries one. The storage key
+ * is content-addressed, so an unchanged bundle reuses the row's existing key
+ * instead of re-writing identical bytes through storage and S3.
+ */
+async function storeMcpBundle(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  input: McpInput,
+  existing: Doc<"mcp"> | null,
+): Promise<string | undefined> {
+  if (input.bundle === undefined || input.sha256 === undefined) {
+    return undefined;
+  }
+  if (existing?.sha256 === input.sha256 && existing.bundleStorageKey) {
+    return existing.bundleStorageKey;
+  }
+
+  return await putMcpBundle(ctx, {
+    accountId: accountId,
+    sha256: input.sha256,
+    bundle: input.bundle,
+  });
+}
+
 /** Map an mcp document to its public API shape. */
 function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
   return {
@@ -243,7 +284,8 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
       ? { description: record.description }
       : {}),
     transport: record.transport,
-    url: record.url,
+    ...(record.url !== undefined ? { url: record.url } : {}),
+    ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     ...(record.allowedTools !== undefined
       ? { allowedTools: record.allowedTools }

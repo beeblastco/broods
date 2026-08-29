@@ -17,6 +17,7 @@ import {
   ENV_PLACEHOLDER_PATTERN,
   type McpRecord,
 } from "../../shared/domain/mcp.ts";
+import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
@@ -170,12 +171,23 @@ async function connectClient(
   connection: McpConnection,
   key: string,
 ): Promise<Client> {
+  // A hosted row has no external endpoint: the same stateless transport runs,
+  // but every request routes through the Lambda host instead of the network.
+  const hosted = connection.record.transport === "hosted";
+  if (!hosted && !connection.record.url) {
+    throw new Error(
+      `MCP server ${connection.record.name} has no url to connect to`,
+    );
+  }
   const makeClient = async (
     discover: DiscoverResult | undefined,
   ): Promise<Client> => {
     const transport = new StreamableHTTPClientTransport(
-      new URL(connection.record.url),
-      { requestInit: { headers: connection.headers } },
+      new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
+      {
+        requestInit: { headers: connection.headers },
+        ...(hosted ? { fetch: hostedMcpFetch(connection.record) } : {}),
+      },
     );
     const client = new Client(CLIENT_INFO, {
       versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },

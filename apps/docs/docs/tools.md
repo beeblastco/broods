@@ -410,3 +410,7 @@ Rules that follow from the transport and the policy layer:
 - Credential-bearing headers (`Authorization`, `X-Api-Key`, ...) must reference an account env var (`Bearer ${NAME}`); inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
 - Per-server OPA rules use the `mcpIds` selector on `tool.call`; `needsApproval` on the entry applies to every tool the server exposes; the row's `allowedTools` filters what registers at all.
 - `subscriptions/listen` (server-push list changes) is deliberately unsupported: tool lists refresh when their `ttlMs` expires. MRTR `input_required` results surface as tool errors.
+
+### Hosted MCP servers
+
+A server can also be uploaded instead of connected: give `defineMcpServer` a `path` (or `POST /v1/mcp` a `bundle`) whose module default-exports a fetch-style MCP handler — `export default createMcpHandler(...)` from `@modelcontextprotocol/server`. The row becomes `transport: "hosted"`, the bundle lands under the `account-mcp/` S3 prefix, and the tool-runner Lambda hosts it: one invoke per request, same scrubbed env, sha256 check, and CPU metering the custom-tool runner uses. Because the 2026-07-28 transport is stateless, per-invoke hosting is a complete implementation, not an approximation — agents use hosted and external servers identically.

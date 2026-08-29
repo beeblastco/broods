@@ -10,7 +10,7 @@ export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@bro
 
 export type McpStatus = "active" | "deleted";
 
-export type McpTransport = "http";
+export type McpTransport = "http" | "hosted";
 
 export interface McpRecord {
   accountId: string;
@@ -20,7 +20,11 @@ export interface McpRecord {
   name: string;
   description?: string;
   transport: McpTransport;
-  url: string;
+  /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
+  url?: string;
+  /** Hosted-only: the uploaded server bundle's S3 key and sha256. */
+  bundleStorageKey?: string;
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled?: boolean;

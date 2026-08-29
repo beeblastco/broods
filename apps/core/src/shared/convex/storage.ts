@@ -684,8 +684,10 @@ interface ConvexMcpDoc {
   stageId: string;
   name: string;
   description?: string;
-  transport: "http";
-  url: string;
+  transport: "http" | "hosted";
+  url?: string;
+  bundleStorageKey?: string;
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled?: boolean;
@@ -706,7 +708,11 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     name: doc.name,
     ...(doc.description !== undefined ? { description: doc.description } : {}),
     transport: doc.transport,
-    url: doc.url,
+    ...(doc.url !== undefined ? { url: doc.url } : {}),
+    ...(doc.bundleStorageKey !== undefined
+      ? { bundleStorageKey: doc.bundleStorageKey }
+      : {}),
+    ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
     ...(doc.headers !== undefined ? { headers: doc.headers } : {}),
     ...(doc.allowedTools !== undefined
       ? { allowedTools: doc.allowedTools }

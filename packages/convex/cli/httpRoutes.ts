@@ -12,7 +12,7 @@ import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeAccountToolUpload } from "../model/accountTools";
 import { normalizeMcpInput } from "../model/mcp";
-import { putHookBundle, putToolBundle } from "../model/bundles";
+import { putHookBundle, putMcpBundle, putToolBundle } from "../model/bundles";
 import { remapKeys, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
@@ -657,8 +657,8 @@ async function syncExternalResources(
 
 /**
  * Upsert the manifest's MCP server registrations by name within the stage, and
- * prune rows whose name is no longer desired (#331). No bundle path: rows are
- * connection metadata only.
+ * prune rows whose name is no longer desired (#331). A hosted server's bundle
+ * is content-addressed and re-uploads only when its sha256 changed.
  */
 async function syncMcpResources(
   ctx: ActionCtx,
@@ -683,7 +683,7 @@ async function syncMcpResources(
 
   for (const resource of desired) {
     const config = asRecord(resource.config, `mcp:${resource.name}`);
-    const input = normalizeMcpInput(
+    const input = await normalizeMcpInput(
       {
         name: resource.name,
         ...(resource.description !== undefined
@@ -694,9 +694,25 @@ async function syncMcpResources(
       { requireConnection: true },
     );
     const current = existing.get(resource.name);
+    // A hosted server re-uploads only when its bundle content changed.
+    let bundleStorageKey: string | undefined;
+    if (input.bundle !== undefined) {
+      bundleStorageKey =
+        current?.sha256 === input.sha256
+          ? current.bundleStorageKey
+          : await putMcpBundle(ctx, {
+              accountId: accountId,
+              sha256: input.sha256!,
+              bundle: input.bundle,
+            });
+    }
     const patch = {
       name: input.name!,
-      url: input.url!,
+      ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(bundleStorageKey !== undefined
+        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+        : {}),
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),

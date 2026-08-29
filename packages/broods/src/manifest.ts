@@ -1025,6 +1025,19 @@ async function normalizeConfig(
     );
   }
 
+  if (resource.kind === "mcp") {
+    return await normalizeMcpConfig(
+      entry,
+      resource.config as {
+        path?: string;
+        url?: string;
+        headers?: Record<string, string>;
+        allowedTools?: string[];
+      },
+      projectRoot,
+    );
+  }
+
   if (resource.kind === "policy") {
     const config = { ...(resource.config as Record<string, unknown>) };
     config.version = config.version ?? 1;
@@ -1534,6 +1547,77 @@ async function normalizeSkillConfig(
   };
 }
 
+/**
+ * An mcp resource with `url` syncs as-is (external server); one with `path`
+ * bundles the module whose default export is a fetch-style MCP handler, and
+ * the row becomes `transport: "hosted"` on the backend (#331 phase 2).
+ */
+async function normalizeMcpConfig(
+  entry: ExportedResource,
+  config: {
+    path?: string;
+    url?: string;
+    headers?: Record<string, string>;
+    allowedTools?: string[];
+  },
+  projectRoot: string,
+): Promise<Record<string, unknown>> {
+  const { path: serverPath, ...rest } = config;
+  if (serverPath !== undefined && config.url !== undefined) {
+    throw new Error(
+      `MCP server "${entry.resource.name}" declares both url and path; pick one`,
+    );
+  }
+  if (serverPath === undefined) {
+    if (config.url === undefined) {
+      throw new Error(
+        `MCP server "${entry.resource.name}" needs url (external) or path (hosted)`,
+      );
+    }
+
+    return rewriteValues(rest) as Record<string, unknown>;
+  }
+
+  const bundlePath = resolveContainedResourcePath(
+    projectRoot,
+    serverPath,
+    "MCP server",
+  );
+  const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
+  assertSafeBundlePath(manifestPath, "MCP server");
+  const build = await esbuild({
+    entryPoints: [bundlePath],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    minify: false,
+    write: false,
+    logLevel: "silent",
+  }).catch((error: unknown) => {
+    const details = isBuildFailure(error)
+      ? error.errors
+          .map((buildEntry) => buildEntry.text)
+          .filter(Boolean)
+          .join("; ")
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    throw new Error(
+      `MCP server bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
+    );
+  });
+  if (build.outputFiles.length !== 1) {
+    throw new Error(
+      `MCP server bundle ${manifestPath} failed to build: expected one output file`,
+    );
+  }
+
+  return {
+    ...(rewriteValues(rest) as Record<string, unknown>),
+    bundle: build.outputFiles[0]!.text,
+  };
+}
+
 async function normalizeToolConfig(
   entry: ExportedResource,
   config: {
@@ -1677,7 +1761,7 @@ function normalizeWorkspaceRef(
 function resolveContainedResourcePath(
   projectRoot: string,
   resourcePath: string,
-  kind: "Skill" | "Tool",
+  kind: "Skill" | "Tool" | "MCP server",
 ): string {
   if (resourcePath.trim().length === 0)
     throw new Error(`${kind} path is required`);
@@ -1785,7 +1869,10 @@ function shouldSkipBundleEntry(name: string): boolean {
   return name.startsWith(".") || SKIPPED_BUNDLE_DIRECTORIES.has(name);
 }
 
-function assertSafeBundlePath(path: string, kind: "Skill" | "Tool"): void {
+function assertSafeBundlePath(
+  path: string,
+  kind: "Skill" | "Tool" | "MCP server",
+): void {
   if (isUnsafeBundlePath(path)) {
     throw new Error(
       `${kind} bundle path ${path} looks like a hidden file or secret and will not be bundled`,

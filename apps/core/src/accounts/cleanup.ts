@@ -81,6 +81,7 @@ export async function deleteAccountToolBundles(
   const [toolsDeleted, hooksDeleted] = await Promise.all([
     deleteS3Prefix(bucket, `account-tools/${encodedAccountId}/`),
     deleteS3Prefix(bucket, `account-hooks/${encodedAccountId}/`),
+    deleteS3Prefix(bucket, `account-mcp/${encodedAccountId}/`),
   ]);
 
   return toolsDeleted + hooksDeleted;

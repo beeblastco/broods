@@ -46,6 +46,23 @@ export async function putHookBundle(
   }
 }
 
+/** Stores a hosted MCP server bundle in S3 and returns its object key. */
+export async function putMcpBundle(
+  ctx: ActionCtx,
+  options: { accountId: Id<"accounts">; sha256: string; bundle: string },
+): Promise<string> {
+  const storageId = await courier(ctx, options.bundle);
+  try {
+    return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
+      accountId: options.accountId,
+      sha256: options.sha256,
+      storageId: storageId,
+    });
+  } finally {
+    await ctx.storage.delete(storageId);
+  }
+}
+
 async function courier(
   ctx: ActionCtx,
   bundle: string,

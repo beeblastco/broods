@@ -204,8 +204,16 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
  * must be 1-32 lowercase letters, digits, or hyphens, starting with a letter.
  */
 export interface McpServerDefinitionConfig {
-  /** The server's MCP endpoint; http(s), no embedded credentials. */
-  url: string;
+  /** External server's MCP endpoint; http(s), no embedded credentials. */
+  url?: string;
+  /**
+   * Hosted alternative to `url`: a module (resolved from the `broods/`
+   * directory) whose default export is a fetch-style MCP handler —
+   * `export default createMcpHandler(...)` from @modelcontextprotocol/server.
+   * The CLI bundles it and the tool-runner Lambda hosts it, one invoke per
+   * request.
+   */
+  path?: string;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var — e.g.

@@ -9,7 +9,11 @@
  * secret.
  */
 
+import { sha256Hex } from "./accountSecrets";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
+
+/** Matches the uploaded-package ceiling from #190 (the sandbox tool cap). */
+const MAX_BUNDLE_BYTES = 10_000_000;
 
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -40,25 +44,41 @@ const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 /** Remote tool names, as constrained by the MCP spec's SHOULD plus our cap. */
 const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
+export type McpTransport = "http" | "hosted";
+
 export interface McpInput {
   name?: string;
   description?: string;
+  transport?: McpTransport;
   url?: string;
+  /** Hosted-only: bundled server module source; sha256 derived from it. */
+  bundle?: string;
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled?: boolean;
 }
 
 /**
- * Validate and normalize an MCP server create or patch body. With
- * `requireConnection` (POST) `name` and `url` are mandatory; a patch (PATCH)
- * may carry any subset. Unknown keys are ignored, matching the tolerance of
- * the other config-plane normalizers.
+ * Build the S3 object key used for a hosted MCP server bundle. Keeping the
+ * prefix separate from account-tools/ is what makes the phase 3 deletion and
+ * the account-delete sweep (accounts/cleanup.ts) unambiguous.
  */
-export function normalizeMcpInput(
+export function mcpBundleStorageKey(accountId: string, sha256: string): string {
+  return `account-mcp/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
+}
+
+/**
+ * Validate and normalize an MCP server create or patch body. With
+ * `requireConnection` (POST) `name` plus a connection are mandatory: a `url`
+ * makes an "http" row, a `bundle` makes a "hosted" one. A patch (PATCH) may
+ * carry any subset. Unknown keys are ignored, matching the tolerance of the
+ * other config-plane normalizers.
+ */
+export async function normalizeMcpInput(
   body: unknown,
   options: { requireConnection: boolean },
-): McpInput {
+): Promise<McpInput> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     throw new Error("Request body must be a JSON object");
   }
@@ -68,7 +88,12 @@ export function normalizeMcpInput(
   if (record.description !== undefined && record.description !== null) {
     input.description = normalizeDescription(record.description);
   }
-  if (record.url !== undefined) input.url = normalizeUrl(record.url);
+  normalizeConnection(record, input);
+  // Hash here (async: Convex's runtime only offers web crypto) so every
+  // write path gets sha256 with the bundle instead of deriving it later.
+  if (input.bundle !== undefined) {
+    input.sha256 = await sha256Hex(input.bundle);
+  }
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
   }
@@ -83,7 +108,9 @@ export function normalizeMcpInput(
   }
   if (options.requireConnection) {
     if (input.name === undefined) throw new Error("name must be provided");
-    if (input.url === undefined) throw new Error("url must be provided");
+    if (input.url === undefined && input.bundle === undefined) {
+      throw new Error("url must be provided, or bundle for a hosted server");
+    }
   }
 
   return input;
@@ -111,6 +138,34 @@ function normalizeAllowedTools(value: unknown): string[] {
   }
 
   return names;
+}
+
+function normalizeBundle(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("bundle must be a non-empty string of module source");
+  }
+  // TextEncoder, not Buffer: this runs in Convex's V8 isolate too.
+  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
+    throw new Error(`bundle must be at most ${MAX_BUNDLE_BYTES} bytes`);
+  }
+
+  return value;
+}
+
+/** A `url` makes an "http" row, a `bundle` a "hosted" one; never both. */
+function normalizeConnection(
+  record: Record<string, unknown>,
+  input: McpInput,
+): void {
+  if (record.url !== undefined) input.url = normalizeUrl(record.url);
+  if (record.bundle !== undefined) {
+    input.bundle = normalizeBundle(record.bundle);
+  }
+  if (input.url !== undefined && input.bundle !== undefined) {
+    throw new Error("url and bundle are mutually exclusive");
+  }
+  if (input.url !== undefined) input.transport = "http";
+  if (input.bundle !== undefined) input.transport = "hosted";
 }
 
 function normalizeDescription(value: unknown): string {

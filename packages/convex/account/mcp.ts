@@ -101,7 +101,10 @@ export const create = internalMutation({
     stageId: v.id("stages"),
     name: v.string(),
     description: v.optional(v.string()),
-    url: v.string(),
+    transport: v.optional(v.union(v.literal("http"), v.literal("hosted"))),
+    url: v.optional(v.string()),
+    bundleStorageKey: v.optional(v.string()),
+    sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
     allowedTools: v.optional(v.array(v.string())),
   },
@@ -125,6 +128,13 @@ export const create = internalMutation({
       throw new Error(`Stage not found: ${args.stageId}`);
     }
     await requireNameFree(ctx, args.stageId, args.name);
+    const transport = args.transport ?? "http";
+    if (transport === "http" && !args.url) {
+      throw new Error("url must be provided for an http MCP server");
+    }
+    if (transport === "hosted" && (!args.bundleStorageKey || !args.sha256)) {
+      throw new Error("hosted MCP servers need bundleStorageKey and sha256");
+    }
 
     const now = Date.now();
 
@@ -134,8 +144,10 @@ export const create = internalMutation({
       stageId: args.stageId,
       name: args.name,
       description: args.description,
-      transport: "http",
+      transport: transport,
       url: args.url,
+      bundleStorageKey: args.bundleStorageKey,
+      sha256: args.sha256,
       headers: args.headers,
       allowedTools: args.allowedTools,
       status: "active",
@@ -177,7 +189,10 @@ export const update = internalMutation({
     serverId: v.string(),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    transport: v.optional(v.union(v.literal("http"), v.literal("hosted"))),
     url: v.optional(v.string()),
+    bundleStorageKey: v.optional(v.string()),
+    sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
@@ -201,7 +216,12 @@ export const update = internalMutation({
       ...(args.description !== undefined
         ? { description: args.description }
         : {}),
+      ...(args.transport !== undefined ? { transport: args.transport } : {}),
       ...(args.url !== undefined ? { url: args.url } : {}),
+      ...(args.bundleStorageKey !== undefined
+        ? { bundleStorageKey: args.bundleStorageKey }
+        : {}),
+      ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
       ...(args.headers !== undefined ? { headers: args.headers } : {}),
       ...(args.allowedTools !== undefined
         ? { allowedTools: args.allowedTools }

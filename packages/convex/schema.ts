@@ -271,9 +271,13 @@ export const mcpFields = {
   /** Namespace prefix for the server's tools (`name__tool`); unique per stage. */
   name: v.string(),
   description: v.optional(v.string()),
-  /** Phase 2 adds a "hosted" variant carrying bundle fields. */
-  transport: v.literal("http"),
-  url: v.string(),
+  /** "http" connects to an external url; "hosted" runs an uploaded bundle on the Lambda host. */
+  transport: v.union(v.literal("http"), v.literal("hosted")),
+  /** Required for "http"; absent on "hosted" rows (the Lambda is the endpoint). */
+  url: v.optional(v.string()),
+  /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
+  bundleStorageKey: v.optional(v.string()),
+  sha256: v.optional(v.string()),
   headers: v.optional(v.record(v.string(), v.string())),
   /** Tool names the harness may register from this server; absent means all. */
   allowedTools: v.optional(v.array(v.string())),
