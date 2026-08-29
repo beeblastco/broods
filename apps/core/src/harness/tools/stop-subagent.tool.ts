@@ -10,7 +10,6 @@ import {
   SUBAGENT_TOOL_PROPERTIES,
   subagentNotFound,
   toolError,
-  toolText,
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
@@ -21,7 +20,7 @@ export default function stopSubagentTool(
   return {
     stop_subagent: tool({
       description:
-        "Cooperatively stop a running persistent subagent previously started by this run at its next model boundary. Use the taskId and agentId returned by run_subagent.",
+        "Cooperatively stop a running persistent subagent previously started by this run at its next model boundary. Completed results are injected automatically, so a late stop returns not_running. Use the taskId and agentId returned by run_subagent.",
       inputSchema: jsonSchema<SubagentToolInput>({
         type: "object",
         properties: SUBAGENT_TOOL_PROPERTIES,
@@ -33,9 +32,6 @@ export default function stopSubagentTool(
         if (!record) {
           return toolError(subagentNotFound(input.taskId));
         }
-        if (record.status !== "processing") {
-          return toolError(`Error: subagent is already ${record.status}`);
-        }
 
         const stopped = await runtime.mutate<{
           stopped: boolean;
@@ -46,11 +42,9 @@ export default function stopSubagentTool(
           conversationKey: record.conversationKey,
         });
 
-        return toolText(
-          stopped.stopped
-            ? "stopping at the next model boundary"
-            : "not running",
-        );
+        return {
+          status: stopped.stopped ? "stopping" : "not_running",
+        };
       },
     }),
   };

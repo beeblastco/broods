@@ -63,24 +63,28 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
       agentId: AGENT_ID,
     }),
   ).resolves.toEqual({ status: "processing" });
-  await execute(tools.update_subagent, {
-    taskId: taskId,
-    agentId: AGENT_ID,
-    mode: "steer",
-    message: "change direction",
-  });
-  await execute(tools.update_subagent, {
-    taskId: taskId,
-    agentId: AGENT_ID,
-    mode: "continue",
-    message: "then summarize",
-  });
+  await expect(
+    execute(tools.update_subagent, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+      mode: "steer",
+      message: "change direction",
+    }),
+  ).resolves.toEqual({ mode: "steer", status: "queued" });
+  await expect(
+    execute(tools.update_subagent, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+      mode: "continue",
+      message: "then summarize",
+    }),
+  ).resolves.toEqual({ mode: "continue", status: "queued" });
   await expect(
     execute(tools.stop_subagent, {
       taskId: taskId,
       agentId: AGENT_ID,
     }),
-  ).resolves.toBe("stopping at the next model boundary");
+  ).resolves.toEqual({ status: "stopping" });
 
   expect(mutations.map(({ name }) => name)).toEqual([
     "acceptIngress",
@@ -88,7 +92,9 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
     "stopIngressOwner",
   ]);
   expect(mutations[0]?.args.requestedMode).toBe("steer");
+  expect(mutations[0]?.args.activeOwnerOnly).toBe(true);
   expect(mutations[1]?.args.requestedMode).toBe("followup");
+  expect(mutations[1]?.args.activeOwnerOnly).toBe(true);
   expect(mutations[2]?.args.conversationKey).toBe(conversationKey);
 });
 
@@ -121,6 +127,68 @@ it("preserves a completed subagent response as structured output", async () => {
       agentId: AGENT_ID,
     }),
   ).toEqual({ status: "completed", response: response });
+});
+
+it("does not take ownership when a child finishes during an update", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  const conversationKey = scopedDirectConversationKey(
+    ACCOUNT_ID,
+    AGENT_ID,
+    "subagent-persistent-test",
+  );
+  runtime.query = mock(async () => ({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: conversationKey,
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  })) as never;
+  runtime.mutate = mock(async () => ({ outcome: "not_running" })) as never;
+  const tools = await subagentTools(PARENT_EVENT_ID);
+
+  await expect(
+    execute(tools.update_subagent, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+      mode: "steer",
+      message: "change direction",
+    }),
+  ).resolves.toEqual({ status: "not_running" });
+});
+
+it("reports a late stop as not running without trusting stale task status", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, AGENT_ID, taskId);
+  const conversationKey = scopedDirectConversationKey(
+    ACCOUNT_ID,
+    AGENT_ID,
+    "subagent-persistent-test",
+  );
+  runtime.query = mock(async () => ({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: conversationKey,
+    status: "completed",
+    response: "done",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  })) as never;
+  runtime.mutate = mock(async () => ({
+    queuedCount: 0,
+    stopped: false,
+  })) as never;
+  const tools = await subagentTools(PARENT_EVENT_ID);
+
+  await expect(
+    execute(tools.stop_subagent, {
+      taskId: taskId,
+      agentId: AGENT_ID,
+    }),
+  ).resolves.toEqual({ status: "not_running" });
 });
 
 it("rejects another parent's task before reading durable state", async () => {

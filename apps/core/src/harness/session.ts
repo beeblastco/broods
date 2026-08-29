@@ -381,7 +381,7 @@ export class Session {
     });
   }
 
-  /** Takes the next durable FIFO application after this event finishes. */
+  /** Transfers to the next durable FIFO application, or atomically releases ownership. */
   async takeNextIngress(): Promise<AppliedIngress | null> {
     if (this.ownerGeneration === undefined) return null;
 

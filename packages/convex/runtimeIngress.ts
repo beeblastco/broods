@@ -60,6 +60,7 @@ const admissionResultValidator = v.object({
     v.literal("rejected"),
     v.literal("capacity"),
     v.literal("conflict"),
+    v.literal("not_running"),
   ),
   eventId: v.optional(v.string()),
   status: v.optional(ingressStatusValidator),
@@ -118,6 +119,7 @@ type PublicDeploymentIngress = {
  */
 export const accept = internalMutation({
   args: {
+    activeOwnerOnly: v.optional(v.boolean()),
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
@@ -156,6 +158,10 @@ export const accept = internalMutation({
     const prepared = await prepareAdmissionCoordinator(ctx, args, now);
     let coordinator = prepared.coordinator;
     const queue = prepared.queue;
+
+    if (args.activeOwnerOnly === true && !hasActiveOwner(coordinator, now)) {
+      return { outcome: "not_running" as const };
+    }
 
     // Durable FIFO recovery: when the owner lease expired with work still
     // queued, the oldest queued group must run before this new arrival.
@@ -767,7 +773,7 @@ export const stopOwner = internalMutation({
   },
 });
 
-/** Applies the oldest runnable follow-up or contiguous collect/steer group. */
+/** Applies the oldest runnable group, or releases ownership when none remains. */
 export const takeNext = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -793,7 +799,9 @@ export const takeNext = internalMutation({
     if (!promoted) {
       await ctx.db.patch(coordinator._id, {
         ...queue,
-        leaseExpiresAt: now + args.leaseTtlMs,
+        ownerEventId: undefined,
+        stopRequestedGeneration: undefined,
+        leaseExpiresAt: undefined,
         updatedAt: now,
       });
 

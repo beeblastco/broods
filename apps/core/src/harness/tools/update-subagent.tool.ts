@@ -11,7 +11,6 @@ import {
   SUBAGENT_TOOL_PROPERTIES,
   subagentNotFound,
   toolError,
-  toolText,
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
@@ -27,7 +26,7 @@ export default function updateSubagentTool(
   return {
     update_subagent: tool({
       description:
-        'Update a running persistent subagent previously started by this run. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work.',
+        'Update a running persistent subagent previously started by this run. Use mode "steer" to change its direction at the next model boundary, or "continue" to queue a follow-up turn after its current work. Completed results are injected automatically, so a late update returns not_running without restarting the child.',
       inputSchema: jsonSchema<UpdateSubagentInput>({
         type: "object",
         properties: {
@@ -49,9 +48,6 @@ export default function updateSubagentTool(
         if (!record) {
           return toolError(subagentNotFound(input.taskId));
         }
-        if (record.status !== "processing") {
-          return toolError(`Error: subagent is already ${record.status}`);
-        }
 
         const message = input.message.trim();
         if (!message) {
@@ -67,6 +63,7 @@ export default function updateSubagentTool(
         );
         const events: ModelMessage[] = [{ role: "user", content: message }];
         const admission = await acceptIngress({
+          activeOwnerOnly: true,
           accountId: context.accountId,
           agentId: input.agentId,
           eventId: controlEventId,
@@ -81,15 +78,16 @@ export default function updateSubagentTool(
             statusUrl: "",
           },
         });
+        if (admission.outcome === "not_running") {
+          return { status: "not_running" };
+        }
         if (admission.outcome !== "queued") {
           return toolError(
             `Error: subagent could not accept ${input.mode}: ${admission.outcome}`,
           );
         }
 
-        return toolText(
-          input.mode === "steer" ? "steering queued" : "follow-up queued",
-        );
+        return { status: "queued", mode: input.mode };
       },
     }),
   };

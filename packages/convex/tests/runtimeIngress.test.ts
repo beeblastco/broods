@@ -36,6 +36,7 @@ function conversationKeyFor(accountId: string): string {
 
 /** Builds the common admission arguments for one candidate. */
 function admission(options: {
+  activeOwnerOnly?: boolean;
   accountId: Id<"accounts">;
   conversationKey: string;
   eventId: string;
@@ -45,6 +46,9 @@ function admission(options: {
   sizeBytes?: number;
 }) {
   return {
+    ...(options.activeOwnerOnly !== undefined
+      ? { activeOwnerOnly: options.activeOwnerOnly }
+      : {}),
     accountId: options.accountId,
     agentId: "test-agent",
     conversationKey: options.conversationKey,
@@ -295,6 +299,92 @@ describe("runtime ingress", () => {
       async (ctx) => await ctx.db.query("runtimeIngressEnvelopes").collect(),
     );
     expect(rows.map((row) => row.eventId)).toEqual(["owner", "queued"]);
+  });
+
+  test("queues control only while the conversation has an active owner", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          activeOwnerOnly: true,
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "late-control",
+          mode: "steer",
+        }),
+      ),
+    ).toEqual({ outcome: "not_running" });
+    expect(
+      await t.run(
+        async (ctx) => await ctx.db.query("runtimeIngressEnvelopes").collect(),
+      ),
+    ).toEqual([]);
+
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          activeOwnerOnly: true,
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "active-control",
+          mode: "steer",
+        }),
+      ),
+    ).toMatchObject({
+      outcome: "queued",
+      status: "queued",
+    });
+
+    const drainedConversationKey = `acct:${accountId}:agent:test-agent:api:drained-conversation`;
+    const drainedOwner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: drainedConversationKey,
+        eventId: "drained-owner",
+        mode: "reject",
+      }),
+    );
+    expect(
+      await t.mutation(internal.runtimeIngress.takeNext, {
+        conversationKey: drainedConversationKey,
+        ownerEventId: "drained-owner",
+        ownerGeneration: drainedOwner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+      }),
+    ).toBeNull();
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          activeOwnerOnly: true,
+          accountId: accountId,
+          conversationKey: drainedConversationKey,
+          eventId: "after-drain-control",
+          mode: "steer",
+        }),
+      ),
+    ).toEqual({ outcome: "not_running" });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        agentId: "test-agent",
+        eventId: "after-drain-control",
+      }),
+    ).toBeNull();
   });
 
   test("applies steering at the current fenced owner boundary", async () => {
