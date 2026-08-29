@@ -109,7 +109,7 @@ describe("ingestInboundAttachments", () => {
 
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
     const [, key, body, options] = writeS3ObjectMock.mock.calls[0]!;
-    expect(key).toContain(".media/");
+    expect(key).toContain("media/");
     expect(key).toEndWith("-photo.png");
     expect(body).toEqual(PNG_BYTES);
     expect(options).toEqual({ contentType: "image/png" });
@@ -125,7 +125,7 @@ describe("ingestInboundAttachments", () => {
 
     const note = noteText(parts);
     expect(note).toContain("Attachments received on telegram");
-    expect(note).toContain(".media/");
+    expect(note).toContain("media/");
     // Told only that a file exists, models ask the sender to paste it.
     expect(note).toContain("do not ask the sender to paste");
   });

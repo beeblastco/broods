@@ -35,7 +35,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 
 /** Where an inbound attachment lands, relative to the workspace root. */
-const MEDIA_DIRECTORY = ".media";
+const MEDIA_DIRECTORY = "media";
 
 // One ceiling for everything stored, matching the public media route: past it
 // the route answers 413 and the link the model was handed would be dead.
