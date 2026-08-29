@@ -52,6 +52,8 @@ export interface PolicyDecisionInput {
   userRoles?: string[];
   toolName?: string;
   toolId?: string;
+  /** MCP registration id behind the tool, when the tool is a remote MCP tool. */
+  mcpId?: string;
   workspaceId?: string;
   workspaceName?: string;
   filePath?: string;

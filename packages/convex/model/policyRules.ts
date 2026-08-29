@@ -53,6 +53,7 @@ export const API_POLICY_ACTIONS = [
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
   "toolIds",
+  "mcpIds",
   "workspaceIds",
   "workspaceNames",
   "filePaths",
@@ -102,6 +103,8 @@ export type PolicyEffect = "allow" | "deny";
 export interface PolicyResourceSelector {
   toolNames?: string[];
   toolIds?: string[];
+  /** MCP registration ids, for scoping tool.call rules per server (#331). */
+  mcpIds?: string[];
   workspaceIds?: string[];
   workspaceNames?: string[];
   filePaths?: string[];

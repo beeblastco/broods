@@ -76,6 +76,32 @@ describe("normalizeCreatePolicyInput", () => {
     ).toThrow("policy rules[0].resources.toolName is not supported");
   });
 
+  it("accepts the mcpIds selector on tool.call rules", () => {
+    expect(
+      normalizeRulesPolicyDocument({
+        version: 1,
+        rules: [
+          {
+            id: "r-mcp",
+            effect: "deny",
+            actions: ["tool.call"],
+            resources: { mcpIds: ["k57e2abc123def456ghi"] },
+          },
+        ],
+      }),
+    ).toEqual({
+      version: 1,
+      rules: [
+        {
+          id: "r-mcp",
+          effect: "deny",
+          actions: ["tool.call"],
+          resources: { mcpIds: ["k57e2abc123def456ghi"] },
+        },
+      ],
+    });
+  });
+
   it("rejects heterogeneous condition value arrays", () => {
     const documentWithValue = (value: unknown) => ({
       version: 1,
