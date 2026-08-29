@@ -50,17 +50,14 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   WARN: 2,
   ERROR: 3,
 };
-// Loki rejects query ranges over its max_query_length (30d1h by default) and
-// Tempo rejects search ranges over max_duration (168h by default) with an
-// HTTP 400, which sendBackfill used to swallow — so a window wider than the
-// server's cap means the backfill never delivers anything. Stay inside both.
+// Loki caps query ranges at 30d1h and Tempo search at 168h (their defaults);
+// a wider window is rejected with HTTP 400 and the backfill delivers nothing.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
-// Span relay backpressure: how often to re-check a backed-up socket and how
-// long to keep trying before falling through to sendObs shedding.
+// Span relay backpressure: re-check cadence and cap before shedding.
 const OBS_DRAIN_POLL_MS = 20;
 const OBS_DRAIN_MAX_WAIT_MS = 5_000;
 const obsState = new WeakMap<
@@ -118,12 +115,9 @@ export async function relayNatsMessages(
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
           sendObs(socket, { type: "log", entry: entry });
         } else {
-          // Span rows are fat (32k-char attribute budget each) and the JetStream
-          // replay delivers them far faster than a browser tab drains them, so
-          // without this wait the buffer overflows and sendObs sheds the newest
-          // rows — the terminal spans that mark recent tasks finished, leaving
-          // them "running" on the dashboard forever. Logs skip the wait: they
-          // are small, and Loki backfill restores any shed line.
+          // Replay outruns the tab's drain rate; shedding would drop the newest
+          // rows — the terminal spans that mark recent tasks finished. Logs skip
+          // the wait: they are small and Loki backfill restores a shed line.
           await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",
@@ -410,8 +404,7 @@ async function sendBackfill(
 
     return true;
   } catch (error) {
-    // A failed backfill leaves the client on whatever the live relay delivered,
-    // so make the failure visible instead of letting it look like empty history.
+    // Surface the failure instead of letting it look like empty history.
     console.error(`observability ${stream} backfill failed:`, error);
 
     return false;
@@ -577,8 +570,8 @@ function cleanupObservabilityStream(
 }
 
 // Wait for a backed-up socket to drain below the shed threshold. Bounded so a
-// dead or stalled tab cannot pin the relay loop: on timeout the caller's send
-// falls through to sendObs, which sheds it like before.
+// dead tab cannot pin the relay loop; on timeout the send falls through to
+// sendObs shedding.
 async function waitForObsDrain(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
 ): Promise<void> {
