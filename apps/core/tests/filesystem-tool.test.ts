@@ -72,6 +72,23 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
 }));
 
+// The reservation registry, stubbed to "nothing reserved" so a persistent run
+// takes the create path. Other test files replace this module process-wide, so
+// owning the mock keeps the answer independent of bun's file load order.
+const getSandboxExternalIdMock = mock(
+  async (_provider: string, _key: string): Promise<string | null> => null,
+);
+
+mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+  getSandboxExternalId: getSandboxExternalIdMock,
+  getSandboxReservationRecord: mock(
+    async (): Promise<{ externalId: string; claimedAt: number } | null> => null,
+  ),
+  claimSandboxInstance: mock(async (): Promise<boolean> => true),
+  saveSandboxInstance: mock(async (): Promise<void> => {}),
+  deleteSandboxInstance: mock(async (): Promise<void> => {}),
+}));
+
 // Read-only (S3-direct) path stubs for sandbox-less workspaces.
 const readS3TextMock = mock(async (_bucket: string, _key: string) => "");
 const listS3PrefixMock = mock(
@@ -279,6 +296,14 @@ function sandboxExecPayloads(): Array<Record<string, unknown>> {
         typeof payload.code !== "string" ||
         !payload.code.includes("mountpoint -q "),
     );
+}
+
+// Control-plane commands the executor sent, by type. One RunMicrovm across two
+// calls means the second call reconnected instead of booting its own VM.
+function microvmCommandsOfType(type: string): unknown[] {
+  return microvmSendMock.mock.calls
+    .map((call) => call[0] as { _type?: string })
+    .filter((command) => command?._type === type);
 }
 
 async function tool(
@@ -533,9 +558,8 @@ describe("sandbox tool set", () => {
   });
 
   it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
-    // A run with no workspace has no namespace to key a reservation on, so
-    // `persistent` alone is not enough — claiming otherwise tells the model its
-    // files survive when index.ts is logging that those runs are ephemeral.
+    // The tool reads options.reservationKey rather than deriving it, so an
+    // unkeyed config still has to describe itself as throwaway.
     const bare = await tool("bash", borrowedSandboxCtx());
     expect(bare.description).toContain("reaches durable storage");
     expect(bare.description).not.toContain("That sandbox is reserved");
@@ -551,6 +575,43 @@ describe("sandbox tool set", () => {
     const keyed = await tool("bash", ctx as never);
     expect(keyed.description).toContain("That sandbox is reserved");
     expect(keyed.description).toContain("only the workspace outlives it");
+  });
+
+  it("keeps two calls on one MicroVM when a persistent agent sandbox has no workspace", async () => {
+    // The point of `persistent: true`: without the derived key both calls boot
+    // their own VM and the file the first one wrote is gone.
+    const { setStorageForTests } = await import("../src/shared/storage.ts");
+    const { resolveAgentRuntime } = await import("../src/shared/workspaces.ts");
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async () => ({
+          sandboxId: "sb_reserved",
+          name: "reserved",
+          config: {
+            provider: "lambda",
+            persistent: true,
+            network: { mode: "allow-all" },
+          },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+    const resolved = await resolveAgentRuntime(
+      { sandbox: "sb_reserved" },
+      { accountId: "acct_reserved", agentId: "ag_reserved" },
+    );
+    setStorageForTests(null);
+
+    const bash = await tool("bash", {
+      workspaces: [],
+      agentSandbox: resolved.sandbox,
+      agentSandboxPermissionMode: "bypass",
+    } as never);
+    await bash.execute({ command: "echo one > state.txt" });
+    await bash.execute({ command: "cat state.txt" });
+
+    expect(microvmCommandsOfType("RunMicrovm")).toHaveLength(1);
+    expect(microvmCommandsOfType("TerminateMicrovm")).toHaveLength(0);
   });
 
   it("bash describes the write guard only where it actually applies", async () => {

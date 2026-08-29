@@ -53,6 +53,12 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
         return 0;
       },
     },
+    // Cleanup lists agents to release their derived sandbox reservations too.
+    agents: {
+      list: async function () {
+        return [];
+      },
+    },
     sandboxConfigs: {
       removeAllForAccount: async function () {
         return 0;

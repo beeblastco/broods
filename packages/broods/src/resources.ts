@@ -105,13 +105,27 @@ export type ResourceInput<Name extends string, Config> = {
 } & Config;
 
 /**
+ * Provider-specific sandbox knobs. `reservationKey` names the reserved machine a
+ * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
+ * agent gets its own, and pinning one string on two sandboxes shares a machine.
+ * Keys are scoped to the account, so they cannot reach another account's machine.
+ */
+export type SandboxDefinitionOptions = Record<string, unknown> & {
+  reservationKey?: string;
+};
+
+/**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
  * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
  * at sync time, exactly like provider `apiKey`). Add overrides here if more
  * sandbox fields should accept env refs.
  */
-export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
+export type SandboxDefinitionConfig = Omit<
+  SandboxConfig,
+  "envVars" | "options"
+> & {
   envVars?: Record<string, string | EnvRef | undefined>;
+  options?: SandboxDefinitionOptions;
 };
 
 export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];

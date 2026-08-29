@@ -6,7 +6,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
+  agentSandboxReservation,
+  agentSandboxReservationKey,
   isolatedWorkspaceNamespace,
+  pinnedSandboxReservationKey,
   resolveAgentRuntime,
   workspaceNamespace,
 } from "../src/shared/workspaces.ts";
@@ -95,6 +98,76 @@ describe("workspaceNamespace", () => {
   });
 });
 
+describe("agentSandboxReservationKey", () => {
+  it("scopes a reserved agent sandbox by account, agent and sandbox record", () => {
+    const key = agentSandboxReservationKey("acct_1", "ag_1", "sb_1");
+    expect(key).toBe(normalizeFilesystemNamespace("acct_1:ag_1:sb_1"));
+    // Every segment is load bearing: no accidental sharing between agents or
+    // across sandbox records.
+    expect(key).not.toBe(agentSandboxReservationKey("acct_2", "ag_1", "sb_1"));
+    expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_2", "sb_1"));
+    expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_2"));
+    // Nothing else in the system may collide with a workspace's reservation key.
+    expect(key).not.toBe(workspaceNamespace("acct_1", "sb_1"));
+  });
+});
+
+describe("agentSandboxReservation", () => {
+  // Account deletion asks this same question; a rule that disagreed with the
+  // runtime would leave machines running at the provider.
+  const persistent = { provider: "sandbox", persistent: true } as const;
+
+  it("derives a key for a persistent sandbox", () => {
+    expect(agentSandboxReservation(persistent, "acct_1", "ag_1", "sb_1")).toBe(
+      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
+    );
+  });
+
+  it("scopes a pinned key to its account rather than passing it raw", () => {
+    const pinned = {
+      ...persistent,
+      options: { reservationKey: "team-shared" },
+    };
+    expect(agentSandboxReservation(pinned, "acct_1", "ag_1", "sb_1")).toBe(
+      pinnedSandboxReservationKey("acct_1", "team-shared"),
+    );
+    // Raw pinned text must never reach the registry: the lookup is not
+    // account-checked, so an unscoped key could name another account's machine.
+    expect(agentSandboxReservation(pinned, "acct_1", "ag_1", "sb_1")).not.toBe(
+      "team-shared",
+    );
+    expect(pinnedSandboxReservationKey("acct_1", "team-shared")).not.toBe(
+      pinnedSandboxReservationKey("acct_2", "team-shared"),
+    );
+    // Nor may a pinned string collide with a key the runtime derives itself.
+    expect(
+      agentSandboxReservation(
+        { ...persistent, options: { reservationKey: "ag_1:sb_1" } },
+        "acct_1",
+        "ag_1",
+        "sb_1",
+      ),
+    ).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_1"));
+  });
+
+  it("reserves nothing without persistence or an identity to derive from", () => {
+    expect(
+      agentSandboxReservation(
+        { provider: "sandbox" },
+        "acct_1",
+        "ag_1",
+        "sb_1",
+      ),
+    ).toBeUndefined();
+    expect(
+      agentSandboxReservation(persistent, undefined, "ag_1", "sb_1"),
+    ).toBeUndefined();
+    expect(
+      agentSandboxReservation(persistent, "acct_1", undefined, "sb_1"),
+    ).toBeUndefined();
+  });
+});
+
 describe("resolveAgentRuntime", () => {
   it("resolves sandbox + workspace references through storage", async () => {
     setStorageForTests({
@@ -125,7 +198,7 @@ describe("resolveAgentRuntime", () => {
 
     const resolved = await resolveAgentRuntime(
       { sandbox: "sb_1", workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.sandbox).toMatchObject({
@@ -173,7 +246,7 @@ describe("resolveAgentRuntime", () => {
 
     const resolved = await resolveAgentRuntime(
       { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
-      "acct_1",
+      { accountId: "acct_1" },
       {
         channelName: "github",
         channelScopeKey: "gh:owner/repo",
@@ -201,7 +274,7 @@ describe("resolveAgentRuntime", () => {
 
     const resolved = await resolveAgentRuntime(
       { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.workspaces[0]?.namespace).toBe(
@@ -234,7 +307,7 @@ describe("resolveAgentRuntime", () => {
           { name: "notes", workspaceId: "ws_a", sandbox: "sb_bypass" },
         ],
       },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.sandbox).toMatchObject({ permissionMode: "ask" });
@@ -267,7 +340,7 @@ describe("resolveAgentRuntime", () => {
           { name: "ro", workspaceId: "ws_ro", sandbox: null }, // forced read-only
         ],
       },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.workspaces[0]?.sandbox).toMatchObject({
@@ -291,7 +364,7 @@ describe("resolveAgentRuntime", () => {
 
     const resolved = await resolveAgentRuntime(
       { workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.sandbox).toBeUndefined();
@@ -314,12 +387,76 @@ describe("resolveAgentRuntime", () => {
 
     const resolved = await resolveAgentRuntime(
       { workspaces: [{ name: "notes", workspaceId: "ws_a", sandbox: null }] },
-      "acct_1",
+      { accountId: "acct_1" },
     );
 
     expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
     // `sandbox: null` => no compute => read straight from S3 (no mount runner).
     expect(resolved.workspaces[0]?.readMount).toBeUndefined();
+  });
+
+  it("reserves a persistent agent sandbox on a derived key, and only the agent-level copy", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: "reserved",
+          config: { provider: "lambda", persistent: true },
+        }),
+      },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { sandbox: "sb_1", workspaces: [{ name: "notes", workspaceId: "ws_a" }] },
+      { accountId: "acct_1", agentId: "ag_1" },
+    );
+
+    expect(resolved.sandbox?.options?.reservationKey).toBe(
+      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
+    );
+    // The inherited copy keys persistence on the workspace namespace instead.
+    expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
+  });
+
+  it("stamps a pinned key in account-scoped form and leaves a non-persistent sandbox alone", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: id,
+          config:
+            id === "sb_pinned"
+              ? {
+                  provider: "lambda",
+                  persistent: true,
+                  options: { reservationKey: "team-shared" },
+                }
+              : { provider: "lambda" },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+
+    const pinned = await resolveAgentRuntime(
+      { sandbox: "sb_pinned" },
+      { accountId: "acct_1", agentId: "ag_1" },
+    );
+    // A pinned key deliberately names the machine; derivation must not replace
+    // it, but the registry only ever sees it in account-scoped form.
+    expect(pinned.sandbox?.options?.reservationKey).toBe(
+      pinnedSandboxReservationKey("acct_1", "team-shared"),
+    );
+
+    const ephemeral = await resolveAgentRuntime(
+      { sandbox: "sb_plain" },
+      { accountId: "acct_1", agentId: "ag_1" },
+    );
+    // Inventing a key without `persistent` would quietly make a throwaway
+    // sandbox long-lived.
+    expect(ephemeral.sandbox?.options).toBeUndefined();
   });
 
   it("throws a clear error when a referenced sandbox is missing", async () => {
@@ -329,7 +466,7 @@ describe("resolveAgentRuntime", () => {
     } as never);
 
     await expect(
-      resolveAgentRuntime({ sandbox: "missing" }, "acct_1"),
+      resolveAgentRuntime({ sandbox: "missing" }, { accountId: "acct_1" }),
     ).rejects.toThrow(/Referenced sandbox not found/);
   });
 });

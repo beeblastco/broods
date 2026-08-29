@@ -1264,7 +1264,7 @@ paths:
                     persistent:
                       {
                         type: boolean,
-                        description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max).",
+                        description: "Reserve one long-lived sandbox per workspace, or per agent for a sandbox reached with no workspace attached (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max).",
                       }
                     lifecycle:
                       type: object
@@ -1307,7 +1307,7 @@ paths:
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot).",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account.",
                       }
             examples:
               lambda:

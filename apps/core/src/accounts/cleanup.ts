@@ -16,7 +16,10 @@ import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
 import { skillsBucketName } from "../shared/skills.ts";
 import { getStorage } from "../shared/storage.ts";
-import { workspaceNamespace } from "../shared/workspaces.ts";
+import {
+  agentSandboxReservation,
+  workspaceNamespace,
+} from "../shared/workspaces.ts";
 
 const ACCOUNT_RUNTIME_DELETE_MAX_BATCHES = 100;
 
@@ -37,9 +40,16 @@ export async function deleteAccountRuntimeData(
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
+  // Workspaces reserve on their namespace, agent-level sandboxes on a derived
+  // key; miss either list and machines leak at the provider.
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
-    workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
+    [
+      ...workspaces.map((w) =>
+        workspaceNamespace(account.accountId, w.workspaceId),
+      ),
+      ...(await agentSandboxReservationKeys(account.accountId)),
+    ],
   );
   const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),
@@ -87,6 +97,40 @@ export async function deleteWorkspaceFilesystem(
   );
 
   return deleteS3Prefix(target.bucket, target.prefix, target.access);
+}
+
+/**
+ * The reservation keys this account's agents hold on their own sandboxes. Asks
+ * `agentSandboxReservation` so a pinned key releases the machine actually reserved.
+ */
+async function agentSandboxReservationKeys(
+  accountId: string,
+): Promise<string[]> {
+  const agents = await getStorage().agents.list(accountId);
+  const keys = await Promise.all(
+    agents.map(async (agent): Promise<string | undefined> => {
+      const sandboxId = agent.config.sandbox;
+      if (typeof sandboxId !== "string" || sandboxId.length === 0) {
+        return undefined;
+      }
+      const record = await getStorage().sandboxConfigs.getById(
+        accountId,
+        sandboxId,
+      );
+      if (!record) {
+        return undefined;
+      }
+
+      return agentSandboxReservation(
+        record.config,
+        accountId,
+        agent.agentId,
+        sandboxId,
+      );
+    }),
+  );
+
+  return keys.filter((key): key is string => key !== undefined);
 }
 
 async function deleteConvexRuntimeRows(

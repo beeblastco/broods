@@ -490,6 +490,10 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       getById: async function () {
         return fakeAgent();
       },
+      // Account deletion lists agents to release the sandbox each one reserved.
+      list: async function () {
+        return [];
+      },
       removeAllForAccount: async function () {
         return 0;
       },

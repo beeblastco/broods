@@ -72,6 +72,66 @@ export interface WorkspaceIsolationScope {
   partition?: ChannelPartition;
 }
 
+// Who the runtime is being resolved for. The agent's own sandbox is reserved per
+// agent, so resolution needs the agent identity as well as the account.
+export interface AgentRuntimeIdentity {
+  accountId?: string;
+  agentId?: string;
+}
+
+/**
+ * The key an agent's own sandbox reserves on, or undefined when it reserves
+ * nothing. A pinned `options.reservationKey` wins over the derived key, and both
+ * `resolveAgentRuntime` and account-deletion cleanup ask this one function so the
+ * machine released is the machine reserved.
+ */
+export function agentSandboxReservation(
+  sandbox: WorkspaceSandboxConfig,
+  accountId: string | undefined,
+  agentId: string | undefined,
+  sandboxId: string,
+): string | undefined {
+  if (sandbox.persistent !== true || !accountId) {
+    return undefined;
+  }
+  const pinned = sandbox.options?.reservationKey;
+  if (typeof pinned === "string" && pinned.trim().length > 0) {
+    return pinnedSandboxReservationKey(accountId, pinned.trim());
+  }
+  if (!agentId) {
+    return undefined;
+  }
+
+  return agentSandboxReservationKey(accountId, agentId, sandboxId);
+}
+
+/**
+ * Derive the reservation key for an agent's own workspace-less sandbox, scoped
+ * `accountId:agentId:sandboxId` like workspaceNamespace's account-plus-record
+ * scope: agents never share a machine by accident, and re-pointing an agent at
+ * another sandbox record hands it that record's machine.
+ */
+export function agentSandboxReservationKey(
+  accountId: string,
+  agentId: string,
+  sandboxId: string,
+): string {
+  return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
+}
+
+/**
+ * Scope an author-pinned reservation key to its account. The registry lookup is
+ * keyed by reservation key alone, so raw pinned text must never reach it: an
+ * unscoped key could name, and reconnect to, another account's reserved machine.
+ * The same string within one account still maps to one machine.
+ */
+export function pinnedSandboxReservationKey(
+  accountId: string,
+  reservationKey: string,
+): string {
+  return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
+}
+
 /** Derive the shared filesystem namespace for a workspace record. */
 export function workspaceNamespace(
   accountId: string | undefined,
@@ -121,9 +181,10 @@ export function isolatedWorkspaceNamespace(
  */
 export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
-  accountId: string | undefined,
+  identity: AgentRuntimeIdentity,
   isolationScope: WorkspaceIsolationScope = {},
 ): Promise<ResolvedAgentRuntime> {
+  const accountId = identity.accountId;
   const storage = getStorage();
   const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
 
@@ -153,10 +214,11 @@ export async function resolveAgentRuntime(
     return resolved;
   }
 
-  const sandbox =
+  const sandboxId =
     typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
-      ? await loadSandbox(agentConfig.sandbox)
+      ? agentConfig.sandbox
       : undefined;
+  const sandbox = sandboxId ? await loadSandbox(sandboxId) : undefined;
 
   const workspaces: ResolvedWorkspace[] = [];
   for (const ref of agentConfig.workspaces ?? []) {
@@ -218,7 +280,53 @@ export async function resolveAgentRuntime(
     });
   }
 
-  return { ...(sandbox ? { sandbox: sandbox } : {}), workspaces: workspaces };
+  // Only the agent-level copy carries the derived reservation key; the copies the
+  // workspaces inherit key their reservation on the workspace namespace instead.
+  const agentSandbox = reservedAgentSandbox(
+    sandbox,
+    accountId,
+    identity.agentId,
+    sandboxId,
+  );
+
+  return {
+    ...(agentSandbox ? { sandbox: agentSandbox } : {}),
+    workspaces: workspaces,
+  };
+}
+
+/**
+ * Give a persistent agent-level sandbox the reservation key its workspace-less
+ * runs key persistence on, so `persistent: true` works without the author also
+ * supplying `options.reservationKey`. A sandbox that reserves nothing passes
+ * through untouched.
+ */
+function reservedAgentSandbox(
+  sandbox: WorkspaceSandboxConfig | undefined,
+  accountId: string | undefined,
+  agentId: string | undefined,
+  sandboxId: string | undefined,
+): WorkspaceSandboxConfig | undefined {
+  if (!sandbox || !sandboxId) {
+    return sandbox;
+  }
+  const reservationKey = agentSandboxReservation(
+    sandbox,
+    accountId,
+    agentId,
+    sandboxId,
+  );
+  if (!reservationKey || reservationKey === sandbox.options?.reservationKey) {
+    return sandbox;
+  }
+
+  return {
+    ...sandbox,
+    options: {
+      ...sandbox.options,
+      reservationKey: reservationKey,
+    },
+  };
 }
 
 /**

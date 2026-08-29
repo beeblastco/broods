@@ -127,8 +127,8 @@ export async function createTools(
   const hasSandboxReservation =
     typeof sandboxOptions.reservationKey === "string" &&
     sandboxOptions.reservationKey.trim().length > 0;
-  // Persistence is keyed by workspace namespace, so a run that reaches the sandbox
-  // without one needs an explicit options.reservationKey to reconnect.
+  // Persistence keys on the workspace namespace, or without one on the key
+  // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
   const runsWithoutNamespace =
     workspaces.length === 0 || hasStandaloneSandbox(workspaces, agentSandbox);
   if (
@@ -137,7 +137,7 @@ export async function createTools(
     !hasSandboxReservation
   ) {
     logWarn(
-      "persistent sandbox reachable without a workspace; those runs are ephemeral",
+      "persistent sandbox has no reservation key; workspace-less runs are ephemeral",
       {
         conversationKey: context.conversationKey,
       },
