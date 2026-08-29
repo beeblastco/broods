@@ -1,5 +1,12 @@
 /**
- * SSRF-guarded fetch bridge helper for custom-tool isolates.
+ * SSRF-guarded pinned fetch: resolve the name, validate every address, then
+ * connect to the address that was validated. Backs the custom-tool isolate
+ * fetch bridge and inbound attachment fetches in `channel-media.ts`.
+ *
+ * Error messages are neutral — every caller shows them to a different
+ * audience, so the isolate bridge adds its own "ctx.fetch" label at its
+ * boundary in `runner.mjs`. Types live in the sibling `pinned-fetch.d.mts`;
+ * keep the two in sync.
  */
 
 import http from "node:http";
@@ -20,8 +27,14 @@ export const DENY_CIDRS = [
 ];
 
 // Resolve -> validate all resolved IPs -> pick one -> connect to that pinned IP.
-// Tests may inject lookup/createConnection through opts; production callers should
-// leave those unset so Node opens the socket directly to the validated address.
+// Tests may inject lookup/createConnection/allowAddresses/ca through opts;
+// production callers should leave those unset so Node opens the socket directly
+// to the validated address and verifies TLS against the system roots.
+// `allowAddresses` exempts exact addresses (the test loopback) from the
+// denylist — deliberately not a replacement for the check itself.
+// `binary: true` returns the body as bytes in `bodyBytes` instead of decoded
+// text in `bodyText`, and skips the body of a non-2xx answer entirely;
+// `bodyLimitBytes` overrides the default body cap.
 export async function guardedFetch(url, init, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs)
     ? Math.max(0, Number(opts.timeoutMs))
@@ -31,7 +44,7 @@ export async function guardedFetch(url, init, opts = {}) {
   const timeoutPromise = new Promise((_, reject) => {
     timeout = setTimeout(() => {
       controller.abort();
-      reject(new Error("ctx.fetch timed out"));
+      reject(new Error("timed out"));
     }, timeoutMs);
   });
   try {
@@ -46,7 +59,7 @@ export async function guardedFetch(url, init, opts = {}) {
     ]);
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error("ctx.fetch timed out");
+      throw new Error("timed out");
     }
     throw error;
   } finally {
@@ -56,15 +69,15 @@ export async function guardedFetch(url, init, opts = {}) {
 
 async function guardedFetchWithDeadline(url, init, state) {
   if (state.redirects > REDIRECT_LIMIT) {
-    throw new Error("fetch redirect limit exceeded");
+    throw new Error("redirect limit exceeded");
   }
   throwIfAborted(state.signal);
   const parsed = validateHttpUrl(url);
-  const pinned = await resolveAllowedAddress(parsed.hostname, state.lookup);
+  const pinned = await resolveAllowedAddress(parsed.hostname, state);
   const response = await requestPinned(parsed, pinned, init, state);
   if (isRedirect(response.status)) {
     const location = response.headers.location;
-    if (!location) throw new Error("fetch redirect missing location");
+    if (!location) throw new Error("redirect missing location");
 
     return guardedFetchWithDeadline(
       new URL(location, parsed).toString(),
@@ -81,33 +94,34 @@ async function guardedFetchWithDeadline(url, init, state) {
 
 function validateHttpUrl(value) {
   if (typeof value !== "string" && !(value instanceof URL)) {
-    throw new Error("ctx.fetch url must be a string or URL");
+    throw new Error("url must be a string or URL");
   }
   const parsed = new URL(value);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("ctx.fetch only supports http(s) URLs");
+    throw new Error("only http(s) URLs are supported");
   }
   if (!parsed.hostname) {
-    throw new Error("ctx.fetch URL must include a hostname");
+    throw new Error("URL must include a hostname");
   }
 
   return parsed;
 }
 
-async function resolveAllowedAddress(hostname, lookup) {
-  const resolver = lookup ?? defaultLookup;
+async function resolveAllowedAddress(hostname, state) {
+  const resolver = state.lookup ?? defaultLookup;
+  const allowed = state.allowAddresses ?? [];
   const addresses = await resolver(hostname, { all: true, verbatim: false });
   const normalized = Array.isArray(addresses) ? addresses : [addresses];
   if (normalized.length === 0) {
-    throw new Error("ctx.fetch hostname did not resolve");
+    throw new Error(`hostname ${hostname} did not resolve`);
   }
   for (const address of normalized) {
     if (
       !address ||
       typeof address.address !== "string" ||
-      isDeniedAddress(address.address)
+      (!allowed.includes(address.address) && isDeniedAddress(address.address))
     ) {
-      throw new Error("ctx.fetch blocked private or metadata address");
+      throw new Error(`blocked private or metadata address for ${hostname}`);
     }
   }
 
@@ -132,14 +146,31 @@ function requestPinned(parsed, pinned, init, state) {
         servername: parsed.hostname,
         signal: state.signal,
         createConnection: state.createConnection,
+        ca: state.ca,
         timeout: Math.max(1, state.deadlineAt - Date.now()),
       },
       async (response) => {
         try {
+          const status = response.statusCode ?? 0;
+          // A redirect's body is never surfaced, and a binary caller keeps
+          // only bytes it can use: skip the download instead of buffering up
+          // to the cap just to throw it away. Text callers still read error
+          // bodies — ctx.fetch hands those back to the tool.
+          const skipBody =
+            isRedirect(status) ||
+            (state.binary && (status < 200 || status >= 300));
+          const body = skipBody
+            ? new Uint8Array(0)
+            : await readBodyBytes(response, state.bodyLimitBytes);
+          if (skipBody) {
+            response.resume();
+          }
           resolve({
-            status: response.statusCode ?? 0,
+            status: status,
             headers: responseHeadersToRecord(response.headers),
-            bodyText: await readBodyText(response),
+            ...(state.binary
+              ? { bodyBytes: body }
+              : { bodyText: new TextDecoder().decode(body) }),
           });
         } catch (error) {
           reject(error);
@@ -147,7 +178,7 @@ function requestPinned(parsed, pinned, init, state) {
       },
     );
     request.on("timeout", () => {
-      request.destroy(new Error("ctx.fetch timed out"));
+      request.destroy(new Error("timed out"));
     });
     request.on("error", reject);
     try {
@@ -185,9 +216,7 @@ function normalizeRequestHeaders(headers) {
 
     return result;
   }
-  throw new Error(
-    "ctx.fetch init headers must be an object, array, or Headers",
-  );
+  throw new Error("init headers must be an object, array, or Headers");
 }
 
 function responseHeadersToRecord(headers) {
@@ -221,7 +250,7 @@ function writeRequestBody(request, body) {
 
     return;
   }
-  throw new Error("ctx.fetch init body must be a string or bytes");
+  throw new Error("init body must be a string or bytes");
 }
 
 function isIpv6LinkLocal(normalized) {
@@ -293,19 +322,33 @@ function isRedirect(status) {
   );
 }
 
-async function readBodyText(response) {
+// A declared Content-Length past the cap fails before any byte is read; a
+// missing or lying one fails the moment the read crosses the cap, and the
+// connection is torn down so the rest of the body is never downloaded.
+async function readBodyBytes(response, limitBytes) {
+  const limit = Number.isFinite(limitBytes) ? limitBytes : BODY_LIMIT_BYTES;
+  const declared = Number(response.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > limit) {
+    response.destroy();
+    throw new Error(bodyLimitMessage(limit));
+  }
   const chunks = [];
   let total = 0;
   for await (const chunk of response) {
     const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
     total += bytes.byteLength;
-    if (total > BODY_LIMIT_BYTES) {
-      throw new Error("ctx.fetch response body exceeded 5MB");
+    if (total > limit) {
+      response.destroy();
+      throw new Error(bodyLimitMessage(limit));
     }
     chunks.push(bytes);
   }
 
-  return new TextDecoder().decode(concatBytes(chunks, total));
+  return concatBytes(chunks, total);
+}
+
+function bodyLimitMessage(limitBytes) {
+  return `response body exceeded ${Math.round(limitBytes / (1024 * 1024))}MB`;
 }
 
 function concatBytes(chunks, total) {
@@ -322,7 +365,7 @@ function concatBytes(chunks, total) {
 function sanitizeFetchInit(init) {
   if (init == null) return {};
   if (typeof init !== "object" || Array.isArray(init)) {
-    throw new Error("ctx.fetch init must be an object");
+    throw new Error("init must be an object");
   }
   const result = {};
   if (init.method !== undefined) result.method = String(init.method);
@@ -334,6 +377,6 @@ function sanitizeFetchInit(init) {
 
 function throwIfAborted(signal) {
   if (signal?.aborted) {
-    throw new Error("ctx.fetch timed out");
+    throw new Error("timed out");
   }
 }

@@ -7,6 +7,11 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import type { Attachment } from "chat";
+import { readFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import type { Server } from "node:net";
+import type { AttachmentFetchTransport } from "../src/harness/channel-media.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
@@ -51,6 +56,16 @@ const ACCOUNT = "acct_1";
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
+);
+// A self-signed pair for `public.test`, minted for a hundred years so the TLS
+// test never starts flaking on expiry.
+const TLS_CERT = readFileSync(
+  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
+  "utf8",
+);
+const TLS_KEY = readFileSync(
+  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
+  "utf8",
 );
 
 beforeEach(() => {
@@ -414,13 +429,13 @@ function workspace(): ResolvedWorkspace {
   };
 }
 
+// Every test past the first runs against a real server on the loopback: the
+// transport seam maps the public names to 127.0.0.1 and exempts only that
+// address from the denylist, so the sockets, redirects, and TLS handshake are
+// the ones production opens — not an injected connection. The guard's own
+// behavior is covered in isolate-pinned-fetch.test.ts; these tests prove the
+// attachment path threads it correctly.
 describe("readAttachmentBytes URL guard", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
   it("refuses a host that resolves to a private address", async (): Promise<void> => {
     // The URL comes out of the webhook body, so the sender picks the host. A
     // literal here, but a public name pointed at 127.0.0.1 fails the same check.
@@ -429,59 +444,206 @@ describe("readAttachmentBytes URL guard", () => {
     ).rejects.toThrow(/private or metadata address/);
   });
 
-  it("refuses a redirect into the metadata endpoint", async (): Promise<void> => {
-    // The whole point of following redirects by hand: the first hop is public
-    // and passes, and `redirect: "follow"` would have fetched the second.
-    const calls: string[] = [];
-    globalThis.fetch = mock(async (input: unknown): Promise<Response> => {
-      calls.push(String(input));
+  it("carries binary bytes intact over a real socket, resolving the name once", async (): Promise<void> => {
+    const payload = Buffer.from(
+      Array.from({ length: 4096 }, (_, index) => index % 256),
+    );
+    const hostHeaders: string[] = [];
+    const server = createHttpServer((request, response) => {
+      hostHeaders.push(String(request.headers.host));
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.end(payload);
+    });
+    const lookups: string[] = [];
 
-      return new Response(null, {
-        status: 302,
-        headers: { location: "http://169.254.169.254/latest/meta-data/" },
+    await withServer(server, async (port): Promise<void> => {
+      const bytes = await readAttachmentBytes(
+        { type: "file", url: `http://public.test:${port}/blob.bin` },
+        loopbackTransport({ "public.test": "127.0.0.1" }, lookups),
+      );
+
+      // Byte-for-byte: the transport must never decode the body as text.
+      expect(bytes.equals(payload)).toBe(true);
+      // One lookup, one request carrying the original Host: nothing re-resolves
+      // the name after validation, which is the DNS-rebind window this
+      // transport exists to close.
+      expect(lookups).toEqual(["public.test"]);
+      expect(hostHeaders).toEqual([`public.test:${port}`]);
+    });
+  });
+
+  it("speaks TLS to the pinned address under the original name", async (): Promise<void> => {
+    // Connecting to an IP while verifying the certificate for `public.test`
+    // only works if the hostname still rides along as the SNI servername —
+    // the half of pinning that is easy to break without noticing.
+    const server = createHttpsServer(
+      { cert: TLS_CERT, key: TLS_KEY },
+      (_request, response) => {
+        response.writeHead(200, { "content-type": "image/png" });
+        response.end(PNG_BYTES);
+      },
+    );
+
+    await withServer(server, async (port): Promise<void> => {
+      const bytes = await readAttachmentBytes(
+        { type: "file", url: `https://public.test:${port}/photo.png` },
+        {
+          ...loopbackTransport({ "public.test": "127.0.0.1" }),
+          ca: TLS_CERT,
+        },
+      );
+
+      expect(bytes.equals(PNG_BYTES)).toBe(true);
+    });
+  });
+
+  it("follows a redirect by re-validating and re-pinning the next host", async (): Promise<void> => {
+    const finalServer = createHttpServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.end("moved-bytes");
+    });
+    const lookups: string[] = [];
+
+    await withServer(finalServer, async (finalPort): Promise<void> => {
+      const firstServer = createHttpServer((_request, response) => {
+        response.writeHead(302, {
+          location: `http://cdn.test:${finalPort}/blob.bin`,
+        });
+        response.end();
       });
-    }) as unknown as typeof fetch;
+      await withServer(firstServer, async (firstPort): Promise<void> => {
+        const bytes = await readAttachmentBytes(
+          { type: "file", url: `http://public.test:${firstPort}/blob.bin` },
+          loopbackTransport(
+            { "public.test": "127.0.0.1", "cdn.test": "127.0.0.1" },
+            lookups,
+          ),
+        );
 
-    await expect(
-      readAttachmentBytes({ type: "file", url: "http://93.184.216.34/a.png" }),
-    ).rejects.toThrow(/169\.254\.169\.254/);
-    expect(calls).toEqual(["http://93.184.216.34/a.png"]);
+        expect(bytes.toString()).toBe("moved-bytes");
+        expect(lookups).toEqual(["public.test", "cdn.test"]);
+      });
+    });
+  });
+
+  it("refuses a redirect into the metadata endpoint", async (): Promise<void> => {
+    // The first hop passes because only the loopback is exempted; the second
+    // has to fail on the production denylist the transport threads through
+    // every hop.
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(302, {
+        location: "http://metadata.test/latest/meta-data/",
+      });
+      response.end();
+    });
+
+    await withServer(server, async (port): Promise<void> => {
+      await expect(
+        readAttachmentBytes(
+          { type: "file", url: `http://public.test:${port}/a.png` },
+          loopbackTransport({
+            "public.test": "127.0.0.1",
+            "metadata.test": "169.254.169.254",
+          }),
+        ),
+      ).rejects.toThrow(/metadata\.test/);
+    });
+  });
+
+  it("reports a non-2xx answer instead of storing an error page", async (): Promise<void> => {
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(404, { "content-type": "text/plain" });
+      response.end("gone");
+    });
+
+    await withServer(server, async (port): Promise<void> => {
+      await expect(
+        readAttachmentBytes(
+          { type: "file", url: `http://public.test:${port}/a.png` },
+          loopbackTransport({ "public.test": "127.0.0.1" }),
+        ),
+      ).rejects.toThrow(/provider answered 404/);
+    });
+  });
+
+  it("refuses a Content-Length past the cap before reading the body", async (): Promise<void> => {
+    const server = createHttpServer((_request, response) => {
+      response.on("error", () => {});
+      response.writeHead(200, {
+        "content-length": String(26 * 1024 * 1024),
+        "content-type": "application/octet-stream",
+      });
+      response.write("start");
+    });
+
+    await withServer(server, async (port): Promise<void> => {
+      await expect(
+        readAttachmentBytes(
+          { type: "file", url: `http://public.test:${port}/big.bin` },
+          loopbackTransport({ "public.test": "127.0.0.1" }),
+        ),
+      ).rejects.toThrow(/exceeded 25MB/);
+    });
   });
 
   it("stops reading a body that outgrows the cap instead of buffering it whole", async (): Promise<void> => {
-    // No Content-Length, so the size is knowable only from the bytes: the read
-    // has to be the thing that stops, not a header check before it.
-    const chunk = new Uint8Array(5 * 1024 * 1024);
-    let sent = 0;
-    let cancelled = false;
-    globalThis.fetch = mock(
-      async (): Promise<Response> =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            pull: (controller): void => {
-              sent += 1;
-              if (sent > 8) {
-                controller.close();
+    // Chunked, so the size is knowable only from the bytes: the read has to be
+    // the thing that stops, not a header check before it. The server offers at
+    // most 30 MB, so the test failing open would still terminate.
+    const chunk = Buffer.alloc(1024 * 1024);
+    const server = createHttpServer((_request, response) => {
+      response.on("error", () => {});
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      let sent = 0;
+      const push = (): void => {
+        if (sent >= 30 || response.destroyed) {
+          response.end();
 
-                return;
-              }
-              controller.enqueue(chunk);
-            },
-            cancel: (): void => {
-              cancelled = true;
-            },
-          }),
-          { status: 200, headers: { "content-type": "image/png" } },
+          return;
+        }
+        sent += 1;
+        if (response.write(chunk)) {
+          setImmediate(push);
+        } else {
+          response.once("drain", push);
+        }
+      };
+      push();
+    });
+
+    await withServer(server, async (port): Promise<void> => {
+      await expect(
+        readAttachmentBytes(
+          { type: "file", url: `http://public.test:${port}/endless.bin` },
+          loopbackTransport({ "public.test": "127.0.0.1" }),
         ),
-    ) as unknown as typeof fetch;
-
-    await expect(
-      readAttachmentBytes({ type: "file", url: "http://93.184.216.34/a.png" }),
-    ).rejects.toThrow(/larger than/);
-    expect(cancelled).toBe(true);
-    expect(sent).toBeLessThan(8);
+      ).rejects.toThrow(/exceeded 25MB/);
+    });
   });
 });
+
+// Only the loopback exemption is granted; every other address still faces the
+// real denylist, so the metadata redirect above fails on the same check
+// production runs.
+function loopbackTransport(
+  hosts: Record<string, string>,
+  lookups?: string[],
+): AttachmentFetchTransport {
+  return {
+    allowAddresses: ["127.0.0.1"],
+    lookup: async (
+      hostname: string,
+    ): Promise<{ address: string; family: number }[]> => {
+      lookups?.push(hostname);
+      const address = hosts[hostname];
+      if (!address) {
+        throw new Error(`no test DNS entry for ${hostname}`);
+      }
+
+      return [{ address: address, family: 4 }];
+    },
+  };
+}
 
 function storedMessage(fileId: string): ModelMessage {
   return {
@@ -529,4 +691,20 @@ function telegramFetch(
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   return fetchMock;
+}
+
+async function withServer(
+  server: Server,
+  run: (port: number) => Promise<void>,
+): Promise<void> {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address !== "object") {
+    throw new Error("test server has no port");
+  }
+  try {
+    await run(address.port);
+  } finally {
+    server.close();
+  }
 }
