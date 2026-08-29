@@ -14,9 +14,11 @@ import {
 } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import {
+  attemptRecordingMiddleware,
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
   retryWithoutStoredItemsMiddleware,
+  type ModelAttempt,
 } from "../src/harness/provider.ts";
 
 type PromptMessage = { role: string; content: unknown };
@@ -303,5 +305,34 @@ describe("retryWithoutStoredItemsMiddleware", () => {
     await expect(
       retryCall(apiCallError("Rate limit reached for gpt-5.6")),
     ).rejects.toThrow("Rate limit reached");
+  });
+});
+
+describe("attemptRecordingMiddleware", () => {
+  it("records one attempt per doStream call and the error on failures", async () => {
+    const attempts: ModelAttempt[] = [];
+    const middleware = attemptRecordingMiddleware(
+      (attempt) => attempts.push(attempt),
+      (error) => `described: ${(error as Error).message}`,
+    );
+    const failing = middleware.wrapStream!({
+      doGenerate: async () => ({}) as never,
+      doStream: async () => {
+        throw new Error("resource exhausted");
+      },
+      params: {} as never,
+      model: {} as never,
+    });
+
+    await expect(failing).rejects.toThrow("resource exhausted");
+    await middleware.wrapStream!({
+      doGenerate: async () => ({}) as never,
+      doStream: async () => ({ stream: {} as never }),
+      params: {} as never,
+      model: {} as never,
+    });
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.error).toBe("described: resource exhausted");
+    expect(attempts[1]?.error).toBeUndefined();
   });
 });

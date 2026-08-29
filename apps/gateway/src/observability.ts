@@ -50,10 +50,16 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   WARN: 2,
   ERROR: 3,
 };
-const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+// Loki caps query ranges at 30d1h and Tempo search at 168h (their defaults);
+// a wider window is rejected with HTTP 400 and the backfill delivers nothing.
+const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
+// Span relay backpressure: re-check cadence and cap before shedding.
+const OBS_DRAIN_POLL_MS = 20;
+const OBS_DRAIN_MAX_WAIT_MS = 5_000;
 const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
@@ -109,6 +115,10 @@ export async function relayNatsMessages(
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
           sendObs(socket, { type: "log", entry: entry });
         } else {
+          // Replay outruns the tab's drain rate; shedding would drop the newest
+          // rows — the terminal spans that mark recent tasks finished. Logs skip
+          // the wait: they are small and Loki backfill restores a shed line.
+          await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",
             entry: parsed as ObservabilitySpanRow,
@@ -393,7 +403,10 @@ async function sendBackfill(
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    // Surface the failure instead of letting it look like empty history.
+    console.error(`observability ${stream} backfill failed:`, error);
+
     return false;
   }
 }
@@ -453,7 +466,7 @@ async function fetchTempoBackfill(
 ): Promise<ObservabilitySpanRow[]> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
-  const start = end - 90 * 24 * 60 * 60;
+  const start = end - TEMPO_BACKFILL_WINDOW_S;
   url.searchParams.set(
     "tags",
     `account_id=${scope.accountId} project=${scope.projectSlug} stage=${scope.stageSlug}`,
@@ -553,6 +566,22 @@ function cleanupObservabilityStream(
   } else if (stream === "traces" && state.tracesSub) {
     state.tracesSub.unsubscribe();
     state.tracesSub = null;
+  }
+}
+
+// Wait for a backed-up socket to drain below the shed threshold. Bounded so a
+// dead tab cannot pin the relay loop; on timeout the send falls through to
+// sendObs shedding.
+async function waitForObsDrain(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+): Promise<void> {
+  const deadline = Date.now() + OBS_DRAIN_MAX_WAIT_MS;
+  while (
+    socket.readyState === WebSocket.OPEN &&
+    socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, OBS_DRAIN_POLL_MS));
   }
 }
 
