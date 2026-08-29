@@ -35,7 +35,7 @@ import {
 } from "./sandbox/s3-mount.ts";
 
 /** Where an inbound attachment lands, relative to the workspace root. */
-const INBOX_DIRECTORY = ".inbox";
+const MEDIA_DIRECTORY = ".media";
 
 // One ceiling for everything stored, matching the public media route: past it
 // the route answers 413 and the link the model was handed would be dead.
@@ -97,7 +97,7 @@ export interface InboundMediaContext {
   accountId?: string;
   /** Names the channel in the note the agent reads, and in the logs. */
   channelName: string;
-  /** Scopes the inbox folder so two messages cannot overwrite each other. */
+  /** Scopes the media folder so two messages cannot overwrite each other. */
   eventId: string;
   /** Decides which media types go over as native parts. */
   provider?: AccountModelProviderName;
@@ -372,7 +372,7 @@ function formatBytes(bytes: number): string {
 // A workspace path an agent can read back, and a shell will not fight over.
 // The hash keeps two messages that both carry `image.jpg` apart without making
 // the name unreadable.
-function inboxPath(name: string, eventId: string, index: number): string {
+function mediaPath(name: string, eventId: string, index: number): string {
   const folder = createHash("sha256")
     .update(eventId)
     .digest("hex")
@@ -382,7 +382,7 @@ function inboxPath(name: string, eventId: string, index: number): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
 
-  return `${INBOX_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
+  return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
 function limitForMediaType(mediaType: string | undefined): number {
@@ -464,8 +464,8 @@ async function storeAttachment(
     if (!workspace || !context.accountId) {
       return { name: name, mediaType: mediaType, data: bytes };
     }
-    const path = inboxPath(name, context.eventId, index);
-    const url = await writeInboxObject(
+    const path = mediaPath(name, context.eventId, index);
+    const url = await writeMediaObject(
       workspace,
       context.accountId,
       path,
@@ -504,7 +504,7 @@ async function storeAttachment(
 // The link is what the model reads, so a deployment with no public base URL
 // stores the file and returns nothing: the agent can still open it, and no part
 // is built around a URL that would resolve nowhere.
-async function writeInboxObject(
+async function writeMediaObject(
   workspace: ResolvedWorkspace,
   accountId: string,
   path: string,

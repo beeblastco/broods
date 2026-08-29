@@ -60,7 +60,7 @@ Chat providers fetch the picture themselves rather than accepting an upload, and
 
 Media arriving on a channel is the mirror of the same path. A picture, document,
 voice note, video or sticker sent to the agent is read once while the turn runs,
-stored in the agent's default workspace under `.inbox/`, and handed to the model
+stored in the agent's default workspace under `.media/`, and handed to the model
 as the same durable `/media/{ticket}` link the outbound tools mint. Nothing is
 inlined as base64: the conversation is persisted as JSON, so a link is what
 still resolves when the turn is replayed months later.
