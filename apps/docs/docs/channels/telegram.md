@@ -82,6 +82,22 @@ A bare `/command` counts as addressing the agent, because Telegram only appends
 `@name` to a command when a group holds more than one bot. In a group with
 several bots, use `/command@name` so only the intended one answers.
 
+## Replies arrive quoted
+
+Telegram draws a reply as a quote of the message it answers, but the
+conversation an agent reads is a flat list in time order, so that quote is not
+in it. A reply therefore arrives with the answered message on the line above it:
+
+```text
+> Tracy: here is the template
+and with margin?
+```
+
+Without this the agent reads only `and with margin?` and has to guess what "it"
+means, the same way a person would after scrolling past the quote. A quote
+longer than 500 characters is cut short, and a reply to a message with no text
+of its own (a bare photo, a sticker) arrives unquoted.
+
 Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
 
 Channel tools support images and Telegram sticker IDs or URLs. They preserve the current forum topic.
