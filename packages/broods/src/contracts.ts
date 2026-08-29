@@ -33,7 +33,10 @@ import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channe
 
 // Per-channel inbound `source` shapes, inherited from the channel adapters so
 // the SDK hook typings cannot drift from what core actually emits.
-export type { TelegramSource } from "../../../apps/core/src/shared/telegram-channel.ts";
+export type {
+  TelegramReplySource,
+  TelegramSource,
+} from "../../../apps/core/src/shared/telegram-channel.ts";
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";

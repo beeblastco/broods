@@ -82,6 +82,42 @@ A bare `/command` counts as addressing the agent, because Telegram only appends
 `@name` to a command when a group holds more than one bot. In a group with
 several bots, use `/command@name` so only the intended one answers.
 
+## Knowing which message a reply answers
+
+When someone uses Telegram's reply feature, the inbound `event.source` carries
+the message they replied to on `replyTo`, so a hook can route on it instead of
+guessing from who spoke last:
+
+```ts
+replyTo: {
+  messageId: string;      // "<chatId>:<messageId>", same shape as source.messageId
+  fromUserId?: number;    // sender of the replied-to message
+  fromUsername?: string;  // that sender's @name — the bot's own, when replying to a bot
+  text?: string;          // the quoted message's text
+}
+```
+
+`replyTo` is absent when the message is not a reply. It is what lets one door
+bot route a group that holds several agents: a bare "and with margin?" names
+nobody, but `replyTo.fromUsername` says which bot it answers.
+
+```ts title="broods/index.ts"
+export const opsBot = defineAgent({
+  name: "ops-bot",
+  connections: [telegram],
+  hooks: {
+    // `event` is discriminated on `channel`, so after narrowing `event.source`
+    // is the strongly-typed Telegram source (with `replyTo`).
+    onMessageReceived: (ctx, event) => {
+      if (event.channel !== "telegram") return undefined;
+      const target = event.source.replyTo?.fromUsername;
+
+      return target ? { metadata: { addressed: target } } : undefined;
+    },
+  },
+});
+```
+
 Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
 
 Channel tools support images and Telegram sticker IDs or URLs. They preserve the current forum topic.

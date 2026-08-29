@@ -62,6 +62,19 @@ export interface TelegramSource {
   threadId: string;
   fromUserId?: number;
   fromUsername?: string;
+  replyTo?: TelegramReplySource;
+}
+
+/**
+ * The message a Telegram reply points at. Present only when the sender used
+ * Telegram's reply feature. `fromUsername` is how a hook tells which bot a
+ * no-name reply addresses in a group holding several of them.
+ */
+export interface TelegramReplySource {
+  messageId: string;
+  fromUserId?: number;
+  fromUsername?: string;
+  text?: string;
 }
 
 export function createTelegramChannel(
@@ -142,16 +155,7 @@ export function createTelegramChannel(
         message.sticker,
         parsed,
       );
-      const source: TelegramSource = {
-        chatId: message.chat.id,
-        messageId: parsed.id,
-        ...(message.message_thread_id !== undefined
-          ? { messageThreadId: message.message_thread_id }
-          : {}),
-        threadId: parsed.threadId,
-        fromUserId: message.from?.id,
-        fromUsername: message.from?.username,
-      };
+      const source = buildTelegramSource(message, parsed);
 
       return {
         kind: runAgent ? "message" : "context",
@@ -270,6 +274,44 @@ function addressesTelegramBot(
     mentionsTelegramBot(message, botUsername) ||
     repliesToTelegramBot(message, botUsername)
   );
+}
+
+/**
+ * The routing data an agent or hook gets for one inbound message.
+ *
+ * `replyTo` is what tells a multi-bot group which bot a bare "and with margin?"
+ * answers: Telegram carries that only on `reply_to_message`, and without it the
+ * only clue left is guessing at whoever spoke last. The Chat SDK already parses
+ * the replied-to message, so the composite id and the entity-applied text come
+ * from there, and the numeric sender id off the raw payload so it matches the
+ * top-level `fromUserId`.
+ */
+function buildTelegramSource(
+  message: TelegramMessage,
+  parsed: Message,
+): TelegramSource {
+  const repliedTo = message.reply_to_message;
+
+  return {
+    chatId: message.chat.id,
+    messageId: parsed.id,
+    ...(message.message_thread_id !== undefined
+      ? { messageThreadId: message.message_thread_id }
+      : {}),
+    threadId: parsed.threadId,
+    fromUserId: message.from?.id,
+    fromUsername: message.from?.username,
+    ...(parsed.replyTo && repliedTo
+      ? {
+          replyTo: {
+            messageId: parsed.replyTo.id,
+            fromUserId: repliedTo.from?.id,
+            fromUsername: repliedTo.from?.username,
+            text: parsed.replyTo.text,
+          },
+        }
+      : {}),
+  };
 }
 
 function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {

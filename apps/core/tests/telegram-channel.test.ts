@@ -302,6 +302,54 @@ describe("telegram channel adapter", () => {
     expect(toPerson.kind).toBe("context");
   });
 
+  it("carries the replied-to message on the source, and omits it otherwise", async () => {
+    const adapter = createGatedAdapter();
+
+    const reply = await adapter.parse(
+      createRequest({
+        update_id: 21,
+        message: createMessage({
+          message_id: 43,
+          text: "and with margin?",
+          chat: GROUP_CHAT,
+          reply_to_message: createMessage({
+            message_id: 41,
+            text: "here is the template",
+            chat: GROUP_CHAT,
+            from: {
+              id: 99,
+              first_name: "Tracy",
+              username: "tracy_bot",
+              is_bot: true,
+            },
+          }),
+        }),
+      }),
+    );
+
+    if (reply.kind !== "message") {
+      throw new Error("Expected a reply to the bot to be accepted");
+    }
+    expect(reply.message.source.replyTo).toEqual({
+      messageId: "123:41",
+      fromUserId: 99,
+      fromUsername: "tracy_bot",
+      text: "here is the template",
+    });
+
+    const plain = await adapter.parse(
+      createRequest({
+        update_id: 22,
+        message: createMessage({ text: "hello" }),
+      }),
+    );
+
+    if (plain.kind !== "message") {
+      throw new Error("Expected a private message to be accepted");
+    }
+    expect(plain.message.source.replyTo).toBeUndefined();
+  });
+
   it("answers a bare slash command and one aimed at it, not one aimed elsewhere", async () => {
     const adapter = createGatedAdapter();
 
