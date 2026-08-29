@@ -26,13 +26,10 @@ import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { channelAdapterFromConfig } from "./integrations.ts";
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
-import {
-  isDeniedAddress,
-  REDIRECT_LIMIT,
-} from "./isolate/runner/pinned-fetch.mjs";
+import type { GuardedFetchOptions } from "./isolate/runner/pinned-fetch.mjs";
+import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import { logWarn } from "../shared/log.ts";
 import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
 import { writeS3Object } from "../shared/s3.ts";
@@ -117,6 +114,17 @@ export interface IngestedMediaParts {
   stored: UserContentPart[];
   turn: UserContentPart[];
 }
+
+/**
+ * Test seam for the pinned attachment fetch: only `guardedFetch`'s injectable
+ * options, never its behavior switches. Production callers pass none, so the
+ * socket really opens to the address that was validated and TLS verifies
+ * against the system roots.
+ */
+export type AttachmentFetchTransport = Pick<
+  GuardedFetchOptions,
+  "allowAddresses" | "ca" | "lookup"
+>;
 
 /** A file a channel still holds, named well enough to ask for it again. */
 interface MediaReference {
@@ -229,6 +237,7 @@ export async function ingestInboundAttachments(
  */
 export async function readAttachmentBytes(
   attachment: Attachment,
+  transport?: AttachmentFetchTransport,
 ): Promise<Buffer> {
   if (attachment.data) {
     return Buffer.isBuffer(attachment.data)
@@ -242,7 +251,7 @@ export async function readAttachmentBytes(
     throw new Error("attachment carries neither data, a reader, nor a URL");
   }
 
-  return await fetchAttachmentUrl(attachment.url);
+  return await fetchAttachmentUrl(attachment.url, transport);
 }
 
 /**
@@ -294,37 +303,6 @@ export function resolveMediaType(
   }
 
   return sniffed ?? claimed ?? "application/octet-stream";
-}
-
-/**
- * The host to fetch an attachment from, once it resolves somewhere public.
- * The URL comes straight from the webhook body (Zalo, Pancake), so whoever
- * posts to the webhook picks the host, and a public name can resolve to a
- * private address. `fetch` re-resolves on connect, so this narrows the attack
- * to a DNS rebind between the two lookups; `guardedFetch` would close that
- * too, but reads every response as text and cannot carry a binary body.
- */
-async function allowedAttachmentUrl(raw: string): Promise<URL> {
-  const url = new URL(raw);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`refusing to fetch an attachment over ${url.protocol}`);
-  }
-  const addresses = await lookup(url.hostname, {
-    all: true,
-    verbatim: false,
-  });
-  if (addresses.length === 0) {
-    throw new Error(`attachment host ${url.hostname} did not resolve`);
-  }
-  for (const address of addresses) {
-    if (isDeniedAddress(address.address)) {
-      throw new Error(
-        `refusing to fetch an attachment from ${url.hostname}: private or metadata address`,
-      );
-    }
-  }
-
-  return url;
 }
 
 function assertWithinLimit(size: number, mediaType: string | null): void {
@@ -405,42 +383,43 @@ function attachmentNote(
   ].join("\n");
 }
 
-// The provider's own fetch, for an attachment named only by URL. Redirects are
-// followed by hand so every hop is checked, not just the first: `redirect:
-// "follow"` would let one 302 carry this to the metadata endpoint past a guard
-// that only ever saw the original host. Bounded so a lying Content-Length cannot
-// be used to exhaust the pod.
-async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
-  let url = await allowedAttachmentUrl(raw);
-  for (let hop = 0; hop <= REDIRECT_LIMIT; hop += 1) {
-    const response = await fetch(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
-    });
-    const location =
-      response.status >= 300 && response.status < 400
-        ? response.headers.get("location")
-        : null;
-    if (location) {
-      url = await allowedAttachmentUrl(new URL(location, url).toString());
-      continue;
-    }
-    if (!response.ok) {
-      throw new Error(`provider answered ${response.status}`);
-    }
-    const declared = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
-      throw new Error(
-        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
-      );
-    }
-    const bytes = await readCappedBody(response);
-    assertWithinLimit(bytes.byteLength, response.headers.get("content-type"));
-
-    return bytes;
+/**
+ * The provider's own fetch, for an attachment named only by URL. The URL is not
+ * trusted input: `zalo-channel` and `pancake-channel` both take it straight out
+ * of the inbound webhook body, so whoever posts to the webhook picks the host.
+ * Protocol alone is not the boundary, because a public name can resolve to a
+ * private address — and a name that resolves publicly once can resolve privately
+ * a moment later. `guardedFetch` closes both: it refuses private and metadata
+ * addresses on the original URL and on every redirect hop, and it opens the
+ * socket to the exact address it validated, so a DNS answer that changes
+ * between lookup and connect changes nothing. The body is counted as it
+ * arrives, so a missing or lying Content-Length cannot be used to exhaust the
+ * pod, ten attachments at a time.
+ */
+async function fetchAttachmentUrl(
+  raw: string,
+  transport?: AttachmentFetchTransport,
+): Promise<Buffer> {
+  const response = await guardedFetch(raw, undefined, {
+    ...transport,
+    binary: true,
+    bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+    timeoutMs: ATTACHMENT_FETCH_TIMEOUT_MS,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`provider answered ${response.status}`);
   }
+  // A zero-copy view, not Buffer.from(bytes): the guard already assembled the
+  // body into a fresh allocation nothing else references, and a second copy of
+  // a 25 MB attachment is pure waste.
+  const bytes = Buffer.from(
+    response.bodyBytes.buffer,
+    response.bodyBytes.byteOffset,
+    response.bodyBytes.byteLength,
+  );
+  assertWithinLimit(bytes.byteLength, response.headers["content-type"] ?? null);
 
-  throw new Error(`attachment redirected more than ${REDIRECT_LIMIT} times`);
+  return bytes;
 }
 
 function formatBytes(bytes: number): string {
@@ -581,35 +560,6 @@ function parseMediaReference(value: unknown): MediaReference | null {
       kind === "image" || kind === "audio" || kind === "video" ? kind : "file",
     url: value,
   };
-}
-
-// Counts the bytes as they arrive rather than calling `arrayBuffer()`, which
-// takes whatever the provider chooses to send before anyone can measure it: a
-// missing or lying Content-Length is otherwise enough on its own to exhaust the
-// pod, ten attachments at a time.
-async function readCappedBody(response: Response): Promise<Buffer> {
-  if (!response.body) {
-    throw new Error("provider answered without a body");
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    total += value.byteLength;
-    if (total > MAX_ATTACHMENT_BYTES) {
-      await reader.cancel();
-      throw new Error(
-        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
-      );
-    }
-    chunks.push(value);
-  }
-
-  return Buffer.concat(chunks);
 }
 
 // One stored message with its references read back. A reference the channel

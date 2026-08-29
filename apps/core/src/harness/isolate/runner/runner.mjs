@@ -583,8 +583,10 @@ async function runFetchBridgeHelper() {
     const result = await guardedFetch(url, init);
     process.stdout.write(JSON.stringify({ ok: true, result: result }));
   } catch (error) {
+    // guardedFetch throws neutral messages; the tool author should see which
+    // API failed, so the label is added here at the bridge boundary.
     process.stdout.write(
-      JSON.stringify({ ok: false, error: errorMessage(error) }),
+      JSON.stringify({ ok: false, error: `ctx.fetch ${errorMessage(error)}` }),
     );
     process.exitCode = 1;
   }
