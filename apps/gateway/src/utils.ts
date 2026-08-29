@@ -108,6 +108,12 @@ export function isOriginAllowed(
   });
 }
 
+/**
+ * Rate-limit key for a request. Trusts the rightmost forwarded address added by
+ * the ingress, never client input: an inbound `X-Real-Ip`, or a hop the caller
+ * prepended to `X-Forwarded-For`, would otherwise let one attacker mint a fresh
+ * limiter bucket per request. Matches `apps/core/src/server.ts`.
+ */
 export function clientIp(
   request: Request,
   fallback: string | undefined,
@@ -115,8 +121,11 @@ export function clientIp(
   const forwarded = request.headers.get("x-forwarded-for");
 
   return (
-    request.headers.get("x-real-ip")?.trim() ||
-    forwarded?.split(",")[0]?.trim() ||
+    forwarded
+      ?.split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .pop() ||
     fallback ||
     "unknown"
   );

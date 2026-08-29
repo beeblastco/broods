@@ -109,6 +109,39 @@ describe("handleMediaRequest", () => {
     expect(readS3BytesMock).not.toHaveBeenCalled();
   });
 
+  it("types the response from the extension, not from the stored object", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    // An account on a bring-your-own bucket sets this itself, so serving it back
+    // would let it host text/html on our own unauthenticated origin.
+    headS3ObjectMock.mockImplementation(async () => ({
+      contentLength: 12,
+      contentType: "text/html",
+    }));
+
+    const response = await handleMediaRequest(mediaRequest(ticket()));
+
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("sends an SVG as an attachment so it cannot script this origin", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    const svg = sealMediaTicket(
+      {
+        accountId: ACCOUNT,
+        workspaceId: "ws_a",
+        namespace: NS,
+        path: "pics/logo.svg",
+      },
+      SECRET,
+    );
+
+    const response = await handleMediaRequest(mediaRequest(svg));
+
+    expect(response.headers.get("content-type")).toBe("image/svg+xml");
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+  });
+
   it("404s once the file is gone", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
     headS3ObjectMock.mockImplementation(async () => null as never);
