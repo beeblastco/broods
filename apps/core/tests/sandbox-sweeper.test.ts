@@ -118,12 +118,12 @@ it("defers only what it could not release", async () => {
       _accountId: string,
       reservations: SandboxReservationRef[],
     ): Promise<SandboxReservationRef[]> =>
-      reservations.filter((one): boolean => one.reservationKey === "ns-gone"),
+      reservations.filter((one) => one.reservationKey === "ns-gone"),
   );
 
   expect(await sweepExpiredSandboxes()).toBe(1);
   const deferred = mutateCalls.find(
-    (call): boolean => call.name === "deferSandboxReservations",
+    (call) => call.name === "deferSandboxReservations",
   );
   expect(deferred?.args.reservations).toEqual([
     { provider: "sandbox", reservationKey: "ns-kept" },

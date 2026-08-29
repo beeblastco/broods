@@ -207,10 +207,10 @@ async function sweepAccount(
   try {
     const released = await releaseExpiredSandboxes(accountId, reservations);
     const done = new Set(
-      released.map((one): string => `${one.provider}:${one.reservationKey}`),
+      released.map((one) => `${one.provider}:${one.reservationKey}`),
     );
     pending = reservations.filter(
-      (one): boolean => !done.has(`${one.provider}:${one.reservationKey}`),
+      (one) => !done.has(`${one.provider}:${one.reservationKey}`),
     );
 
     return released.length;

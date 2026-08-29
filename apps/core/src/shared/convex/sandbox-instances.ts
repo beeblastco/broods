@@ -18,10 +18,7 @@ import { getConvexClient } from "./client.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 export type SandboxInstanceStatus =
-  | "running"
-  | "suspended"
-  | "terminating"
-  | "error";
+  "running" | "suspended" | "terminating" | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
@@ -41,64 +38,49 @@ export async function upsertSandboxInstance(
   options?: { ephemeral?: boolean },
 ): Promise<void> {
   if (!controlPlane) return;
+  const meta: SandboxRunMetadata = metadata ?? {};
+  const ephemeral = options?.ephemeral === true;
   try {
+    // The Convex client drops undefined object fields, so an unset optional
+    // stays absent on the row rather than becoming null.
     await getConvexClient().mutation(internal.sandbox.instances.upsert, {
       accountId: controlPlane.accountId as any,
-      ...(controlPlane.projectId
-        ? { projectId: controlPlane.projectId as any }
-        : {}),
-      ...(controlPlane.stageId ? { stageId: controlPlane.stageId as any } : {}),
+      projectId: controlPlane.projectId as any,
+      stageId: controlPlane.stageId as any,
       provider: provider,
       reservationKey: reservationKey,
       externalId: externalId,
       name: controlPlane.name,
       specs: controlPlane.specs,
-      ...(controlPlane.sandboxConfigId
-        ? { sandboxConfigId: controlPlane.sandboxConfigId as any }
-        : {}),
-      ...(controlPlane.snapshotId
-        ? { snapshotId: controlPlane.snapshotId }
-        : {}),
-      ...(controlPlane.egress ? { egress: controlPlane.egress } : {}),
-      ...(controlPlane.permissionMode
-        ? { permissionMode: controlPlane.permissionMode }
-        : {}),
-      ...(metadata?.traceId
-        ? {
-            lastUsedTraceId: metadata.traceId,
-            createdByTraceId: metadata.traceId,
-          }
-        : {}),
-      ...(metadata?.taskId
-        ? { lastUsedTaskId: metadata.taskId, createdByTaskId: metadata.taskId }
-        : {}),
-      ...(metadata?.agentId ? { agentId: metadata.agentId } : {}),
-      ...(metadata?.conversationKey
-        ? { conversationKey: metadata.conversationKey }
-        : {}),
-      ...(metadata?.workspaceName
-        ? { workspaceName: metadata.workspaceName }
-        : {}),
-      ...(metadata?.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
-      ...(options?.ephemeral ? { ephemeral: true } : {}),
+      sandboxConfigId: controlPlane.sandboxConfigId as any,
+      snapshotId: controlPlane.snapshotId,
+      egress: controlPlane.egress,
+      permissionMode: controlPlane.permissionMode,
+      lastUsedTraceId: meta.traceId,
+      createdByTraceId: meta.traceId,
+      lastUsedTaskId: meta.taskId,
+      createdByTaskId: meta.taskId,
+      agentId: meta.agentId,
+      conversationKey: meta.conversationKey,
+      workspaceName: meta.workspaceName,
+      workspaceId: meta.workspaceId,
+      ephemeral: ephemeral ? true : undefined,
     });
-    if (options?.ephemeral) return;
+    if (ephemeral) return;
     await recordSandboxAuditEvent({
       accountId: controlPlane.accountId,
-      ...(controlPlane.sandboxConfigId
-        ? { sandboxConfigId: controlPlane.sandboxConfigId }
-        : {}),
+      sandboxConfigId: controlPlane.sandboxConfigId,
       reservationKey: reservationKey,
       provider: provider,
       action: "reserve",
       result: "ok",
       status: "running",
       actor: {
-        source: metadata?.agentId ? "agent" : "service",
-        ...(metadata?.agentId ? { id: metadata.agentId } : {}),
+        source: meta.agentId ? "agent" : "service",
+        id: meta.agentId,
       },
-      ...(metadata?.traceId ? { traceId: metadata.traceId } : {}),
-      ...(metadata?.taskId ? { taskId: metadata.taskId } : {}),
+      traceId: meta.traceId,
+      taskId: meta.taskId,
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
