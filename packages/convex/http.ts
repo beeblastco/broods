@@ -158,6 +158,23 @@ http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
+http.route({ path: "/v1/mcp", method: "GET", handler: configHttp });
+http.route({ path: "/v1/mcp", method: "POST", handler: configHttp });
+http.route({
+  pathPrefix: "/v1/mcp/",
+  method: "GET",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/mcp/",
+  method: "PATCH",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/mcp/",
+  method: "DELETE",
+  handler: configHttp,
+});
 http.route({ path: "/v1/hooks", method: "GET", handler: configHttp });
 http.route({ path: "/v1/hooks", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/hooks/", method: "GET", handler: configHttp });

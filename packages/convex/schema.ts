@@ -253,6 +253,33 @@ export const accountToolsFields = {
   deletedAt: v.optional(v.number()),
 };
 
+/**
+ * Registered external MCP server (issue #331 phase 1). Core connects over the
+ * stateless HTTP transport, spec 2026-07-28 only. Rows are stage-scoped from
+ * day one; header values may be ${NAME} env refs resolved into the encrypted
+ * agent config at sync time, so secrets never sit on this row.
+ */
+export const mcpFields = {
+  accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  stageId: v.id("stages"),
+  /** Namespace prefix for the server's tools (`name__tool`); unique per stage. */
+  name: v.string(),
+  description: v.optional(v.string()),
+  /** Phase 2 adds a "hosted" variant carrying bundle fields. */
+  transport: v.literal("http"),
+  url: v.string(),
+  headers: v.optional(v.record(v.string(), v.string())),
+  /** Tool names the harness may register from this server; absent means all. */
+  allowedTools: v.optional(v.array(v.string())),
+  /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */
+  disabled: v.optional(v.boolean()),
+  status: v.union(v.literal("active"), v.literal("deleted")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  deletedAt: v.optional(v.number()),
+};
+
 export const accountHookEventValidator = v.union(
   v.literal("agent.started"),
   v.literal("agent.step.finished"),
@@ -710,6 +737,7 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("skill"),
   v.literal("tool"),
   v.literal("hook"),
+  v.literal("mcp"),
   v.literal("workspace"),
   v.literal("workspaceFile"),
   v.literal("cron"),
@@ -1205,6 +1233,10 @@ export default defineSchema({
   accountHooks: defineTable(accountHooksFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),
+  mcp: defineTable(mcpFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_stageId_and_status", ["stageId", "status"])
+    .index("by_stageId_and_name", ["stageId", "name"]),
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])

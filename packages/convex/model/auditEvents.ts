@@ -41,6 +41,7 @@ export type ConfigAuditResource = {
     | "skill"
     | "tool"
     | "hook"
+    | "mcp"
     | "workspace"
     | "workspaceFile"
     | "cron"
