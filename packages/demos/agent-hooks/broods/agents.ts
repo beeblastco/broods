@@ -20,8 +20,10 @@ export const hookedAgent = defineAgent({
     system: "You are a helpful assistant. Answer concisely.",
   },
   hooks: {
-    onStart: (ctx, event) => ({
-      system: `${event.system}\n\nIMPORTANT: End every response with a single 🐝 emoji.`,
+    // The returned system is appended to the assembled prompt, so return only
+    // the addition — echoing event.system back sends the whole prompt twice.
+    onStart: () => ({
+      system: "IMPORTANT: End every response with a single 🐝 emoji.",
     }),
   },
   publicAccess: true,
