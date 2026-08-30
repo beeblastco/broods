@@ -3,8 +3,8 @@
  * Keep official Zalo Bot API webhook normalization and outbound API calls here.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import type { Attachment } from "chat";
+import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -161,9 +161,10 @@ export function createZaloChannel(
     },
 
     authenticate: function (req) {
-      return verifyWebhookSecret(
-        req.headers["x-bot-api-secret-token"],
-        webhookSecret,
+      const secret = req.headers["x-bot-api-secret-token"];
+
+      return (
+        secret !== undefined && timingSafeStringEqual(secret, webhookSecret)
       );
     },
 
@@ -444,19 +445,6 @@ function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
   }
 
   return (raw && typeof raw === "object" ? raw : {}) as ZaloUpdate;
-}
-
-function verifyWebhookSecret(
-  header: string | undefined,
-  secret: string,
-): boolean {
-  if (!header) {
-    return false;
-  }
-  const actual = Buffer.from(header);
-  const expected = Buffer.from(secret);
-
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function zaloHttpUrl(raw: unknown): string | null {

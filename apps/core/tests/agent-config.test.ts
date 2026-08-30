@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   isChannelTraceEnabled,
+  mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   resolveSubagentMode,
@@ -315,5 +316,18 @@ describe("agent config validation", () => {
     expect(
       normalizeAgentConfig({ tools: { googleSearch: { enabled: true } } }),
     ).toMatchObject({ tools: { googleSearch: { enabled: true } } });
+  });
+  it("drops dangerous keys instead of rewriting the merged prototype", () => {
+    // JSON.parse makes "__proto__" an own key, so a plain assignment would
+    // route it to the setter and hide the value from every own-key walk,
+    // including the normalize pass that runs right after the merge.
+    const patch = JSON.parse('{"__proto__":{"polluted":"yes"},"name":"ok"}');
+    const merged = mergeAgentConfig({} as never, patch) as Record<
+      string,
+      unknown
+    >;
+
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect(merged.polluted).toBeUndefined();
   });
 });
