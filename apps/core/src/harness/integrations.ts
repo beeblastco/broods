@@ -1705,7 +1705,8 @@ function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
     channelName === "slack" ||
-    channelName === "telegram"
+    channelName === "telegram" ||
+    channelName === "zalo"
   );
 }
 
