@@ -92,7 +92,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install dependencies
-        run: bun install --ignore-scripts --no-save
+        run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Check gateway
         run: bun run --filter @broods/gateway check
