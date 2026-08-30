@@ -1,3 +1,5 @@
+import type { GuardedFetchOptions } from "../harness/isolate/runner/pinned-fetch.mjs";
+
 /**
  * The core HTTP contract every handler speaks, plus generic request/response
  * helpers. Handlers take a CoreRequest + RequestContext and return a Web
@@ -43,6 +45,17 @@ export interface RequestContext {
   deadlineMs: number;
   waitUntil(promise: Promise<unknown>): void;
 }
+
+/**
+ * Test seam for any pinned outbound fetch: only `guardedFetch`'s injectable
+ * options, never its behavior switches. Production callers pass none, so the
+ * socket really opens to the address that was validated and TLS verifies
+ * against the system roots.
+ */
+export type PinnedFetchTransport = Pick<
+  GuardedFetchOptions,
+  "allowAddresses" | "ca" | "lookup"
+>;
 
 export function jsonResponse(
   status: number,

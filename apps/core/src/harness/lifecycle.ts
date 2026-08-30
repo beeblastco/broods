@@ -9,6 +9,7 @@ import type {
   AgentConfig,
   AgentLifecycleEventName,
 } from "../shared/domain/agent-config.ts";
+import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logError } from "../shared/log.ts";
 import { fireWebhook } from "../shared/webhook.ts";
 import type { Session } from "./session.ts";
@@ -38,6 +39,7 @@ export function createAgentLifecycleEmitter(
     "accountId" | "agentId" | "eventId" | "conversationKey"
   >,
   agentConfig: AgentConfig,
+  transport?: PinnedFetchTransport,
 ): AgentLifecycleEmitter {
   // An agent can register several outbound webhooks; keep only deliverable ones
   // (enabled with both a URL and a signing secret).
@@ -75,6 +77,7 @@ export function createAgentLifecycleEmitter(
             await fireWebhook(
               { url: webhook.url, secret: webhook.secret },
               event,
+              transport,
             );
           } catch (err) {
             logError("Lifecycle webhook delivery failed", {

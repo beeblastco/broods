@@ -28,8 +28,8 @@ import { channelAdapterFromConfig } from "./integrations.ts";
 import { createHash } from "node:crypto";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
-import type { GuardedFetchOptions } from "./isolate/runner/pinned-fetch.mjs";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
+import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
 import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
 import { writeS3Object } from "../shared/s3.ts";
@@ -114,17 +114,6 @@ export interface IngestedMediaParts {
   stored: UserContentPart[];
   turn: UserContentPart[];
 }
-
-/**
- * Test seam for the pinned attachment fetch: only `guardedFetch`'s injectable
- * options, never its behavior switches. Production callers pass none, so the
- * socket really opens to the address that was validated and TLS verifies
- * against the system roots.
- */
-export type AttachmentFetchTransport = Pick<
-  GuardedFetchOptions,
-  "allowAddresses" | "ca" | "lookup"
->;
 
 /** A file a channel still holds, named well enough to ask for it again. */
 interface MediaReference {
@@ -237,7 +226,7 @@ export async function ingestInboundAttachments(
  */
 export async function readAttachmentBytes(
   attachment: Attachment,
-  transport?: AttachmentFetchTransport,
+  transport?: PinnedFetchTransport,
 ): Promise<Buffer> {
   if (attachment.data) {
     return Buffer.isBuffer(attachment.data)
@@ -398,7 +387,7 @@ function attachmentNote(
  */
 async function fetchAttachmentUrl(
   raw: string,
-  transport?: AttachmentFetchTransport,
+  transport?: PinnedFetchTransport,
 ): Promise<Buffer> {
   const response = await guardedFetch(raw, undefined, {
     ...transport,
