@@ -138,7 +138,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   ];
   const descriptions = [
     "Your serverless agent cloud is ready.",
-    "It's shown only once and can't be recovered — store it somewhere safe now.",
+    "It's shown only once and can't be recovered. Store it somewhere safe now.",
     "One command scaffolds a project and syncs it to your account.",
   ];
 
@@ -166,7 +166,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                 deploys and operates them for you.
               </p>
               <p>
-                This dashboard is where you watch and steer everything —
+                This dashboard is where you watch and steer everything:
                 architecture, runs, sandboxes, and schedules. Two quick things
                 first.
               </p>
@@ -210,7 +210,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 This secret is how you manage your account and resources through
-                the API — provisioning agents, crons, and workspaces straight
+                the API, provisioning agents, crons, and workspaces straight
                 from your own code.
               </p>
               <div className="flex items-center gap-4">

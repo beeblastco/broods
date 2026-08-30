@@ -104,7 +104,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Provisioning creates the backend tenant and issues a one-time Bearer
-            secret. Save the secret — it will not be shown again.
+            secret. Save it now. It will not be shown again.
           </p>
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
           <Button
@@ -194,7 +194,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Secrets are hashed at rest. Rotate to issue a new one — this
+            Secrets are hashed at rest. Rotating issues a new one and
             invalidates the previous secret immediately.
           </p>
         </div>
@@ -287,7 +287,7 @@ function NewSecretDialog({
         <DialogHeader>
           <DialogTitle>Save your new Bearer secret</DialogTitle>
           <DialogDescription>
-            Copy this token now — it will not be shown again.
+            Copy this token now. It will not be shown again.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-2">

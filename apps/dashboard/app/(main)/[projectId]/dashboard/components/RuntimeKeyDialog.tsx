@@ -299,7 +299,7 @@ export function RuntimeKeyView({
           </Button>
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Stored encrypted at rest — treat it like a password. Reopen it here
+          Stored encrypted at rest. Treat it like a password. Reopen it here
           anytime, or rotate it to invalidate the old one.
         </p>
       </section>
@@ -310,7 +310,7 @@ export function RuntimeKeyView({
           Add it to your environment
         </Label>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          The SDK reads <Mono>BROODS_API_KEY</Mono> by default — copy this into
+          The SDK reads <Mono>BROODS_API_KEY</Mono> by default. Copy this into
           your <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
         </p>
         <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
@@ -322,7 +322,7 @@ export function RuntimeKeyView({
           Stream the response
         </Label>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          The SDK streams over <Mono>SSE</Mono> by default — plain HTTP that
+          The SDK streams over <Mono>SSE</Mono> by default, plain HTTP that
           works through any proxy with zero setup. For the lowest latency and a
           full-duplex channel, opt into the WebSocket client.
         </p>
@@ -338,14 +338,14 @@ export function RuntimeKeyView({
           <TabsContent value="sse" className="grid gap-2">
             <CodeBlock code={SSE_SNIPPET} lang="ts" />
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Best for simple request/response runs — no connection to manage,
-              reconnects for free.
+              Best for simple request/response runs. No connection to manage,
+              and reconnects come for free.
             </p>
           </TabsContent>
           <TabsContent value="ws" className="grid gap-2">
             <CodeBlock code={WS_SNIPPET} lang="ts" />
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Best for live, interactive runs — full-duplex, lowest latency,
+              Best for live, interactive runs. Full-duplex, lowest latency,
               cancel mid-stream.
             </p>
           </TabsContent>
@@ -375,7 +375,7 @@ export function RuntimeKeyDialog({
             {justCreated ? "Your runtime API key is ready" : "Runtime API key"}
           </DialogTitle>
           <DialogDescription>
-            This key authenticates runtime calls for this stage — agent runs,
+            This key authenticates runtime calls for this stage: agent runs,
             streaming, and the observability views. Treat it like a password.
           </DialogDescription>
         </DialogHeader>

@@ -25,7 +25,7 @@ export function ObservabilityKeyPrompt({
         <p className="text-sm font-medium">Generate a viewing key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
           Streaming logs and traces needs this stage&apos;s runtime API key.
-          Generate one here to view them — no CLI required.
+          Generate one here to view them. No CLI required.
         </p>
       </div>
 

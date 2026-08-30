@@ -356,8 +356,8 @@ function BundleManagedNotice({
       </span>
       <p className="text-xs text-muted-foreground">
         This server was uploaded by the CLI or SDK, which bundles it from your
-        project. The source stays with your code — run <code>broods dev</code>{" "}
-        or <code>broods deploy</code> to change it.
+        project. The source stays with your code. Run <code>broods dev</code> or{" "}
+        <code>broods deploy</code> to change it.
       </p>
       <div className="flex flex-col gap-1.5">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">

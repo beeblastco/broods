@@ -162,7 +162,7 @@ export function LiveSandboxTerminal({
       </div>
       <p className="text-xs text-muted-foreground">
         {STATUS_LABEL[status]}
-        {error ? ` — ${error}` : ""}
+        {error ? `: ${error}` : ""}
       </p>
     </div>
   );

@@ -975,7 +975,7 @@ export function TokensUsagePanel({
 
       <Section
         title="Compute"
-        description="Harness runtime time and sandbox CPU — the agent's own sandbox vs the MCP sandbox that runs hosted MCP server bundles."
+        description="Harness runtime time and sandbox CPU, the agent's own sandbox against the MCP sandbox that runs hosted MCP server bundles."
       >
         <div className="mb-4 grid grid-cols-3 gap-3">
           <ComputeTile
