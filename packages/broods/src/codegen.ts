@@ -61,7 +61,7 @@ function idsForManifest(
     sandboxes: namesForKind(manifest, "sandbox"),
     crons: namesForKind(manifest, "cron"),
     skills: namesForKind(manifest, "skill"),
-    mcpServers: namesForKind(manifest, "mcp"),
+    mcp: namesForKind(manifest, "mcp"),
     policies: namesForKind(manifest, "policy"),
     channelRecords: namesForKind(manifest, "channelRecord"),
   };
@@ -73,7 +73,7 @@ function idsForManifest(
     crons: pickIds(ids.crons, namesByKind.crons),
     skills: pickIds(ids.skills, namesByKind.skills),
     hooks: {},
-    mcpServers: pickIds(ids.mcpServers, namesByKind.mcpServers),
+    mcp: pickIds(ids.mcp, namesByKind.mcp),
     policies: pickIds(ids.policies, namesByKind.policies),
     channelRecords: pickIds(ids.channelRecords, namesByKind.channelRecords),
   };

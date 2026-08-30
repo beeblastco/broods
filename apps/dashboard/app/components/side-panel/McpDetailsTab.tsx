@@ -2,7 +2,7 @@
 
 /**
  * Details tab for MCP nodes: name, derived server name, transport, checksum,
- * enabled switch, and the wire to the connected agent's `mcpServers` config.
+ * enabled switch, and the wire to the connected agent's `mcp` config.
  */
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -159,7 +159,7 @@ export function McpDetailsTab({
   );
 }
 
-/** Agents opt in through their config's `mcpServers` branch. */
+/** Agents opt in through their config's `mcp` branch. */
 function AgentWireRow({
   nodeId,
   server,
@@ -173,7 +173,7 @@ function AgentWireRow({
 
   const branch = readAgentBranch<Record<string, { enabled?: boolean }>>(
     agentConfig as FlatAgentConfig | undefined,
-    "mcpServers",
+    "mcp",
   );
   const enabledOnAgent = !!server && branch[server._id]?.enabled === true;
 
@@ -190,7 +190,7 @@ function AgentWireRow({
         delete next[server._id];
       }
       await updateBranch(
-        ["mcpServers"],
+        ["mcp"],
         Object.keys(next).length > 0 ? next : undefined,
       );
     } catch (err) {
@@ -209,7 +209,7 @@ function AgentWireRow({
           </span>
           <span className="text-[11px] text-muted-foreground">
             {agentConfig
-              ? "Writes mcpServers into the wired agent's config."
+              ? "Writes mcp into the wired agent's config."
               : "Wire this node to an agent first."}
           </span>
         </div>

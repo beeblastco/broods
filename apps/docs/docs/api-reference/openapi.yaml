@@ -1781,14 +1781,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/McpServerCreate"
+              $ref: "#/components/schemas/McpCreate"
       responses:
         "201":
           description: MCP server registered
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
         "400": { description: Missing project or stage, or invalid input }
         "404": { description: Project or stage not found }
     get:
@@ -1810,7 +1810,7 @@ paths:
                   servers:
                     type: array
                     items:
-                      $ref: "#/components/schemas/McpServer"
+                      $ref: "#/components/schemas/Mcp"
         "400": { description: Missing project or stage }
         "404": { description: Project or stage not found }
 
@@ -1827,7 +1827,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
         "404": { description: Not found }
     patch:
       tags: [MCP servers]
@@ -1839,14 +1839,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/McpServerUpdate"
+              $ref: "#/components/schemas/McpUpdate"
       responses:
         "200":
           description: Updated MCP server
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
     delete:
       tags: [MCP servers]
       summary: Delete external MCP server
@@ -3785,13 +3785,13 @@ components:
         Enables provider-defined tools by the name the configured AI SDK
         provider exposes on its `tools` namespace (for example `googleSearch`,
         `urlContext`, or `codeExecution` on `google`). Core ships no built-in
-        external tools; remote tools come from `mcpServers`. A name the
+        external tools; remote tools come from `mcp`. A name the
         configured provider does not expose is rejected when the agent runs.
         Omitting a key or setting `enabled: false` disables the tool.
       additionalProperties:
         $ref: "#/components/schemas/ProviderToolConfig"
 
-    McpServerCreate:
+    McpCreate:
       type: object
       required: [name]
       properties:
@@ -3828,7 +3828,7 @@ components:
             type: string
           description: Tool names agents may use from this server; omit to allow all.
 
-    McpServerUpdate:
+    McpUpdate:
       type: object
       properties:
         name:
@@ -3848,7 +3848,7 @@ components:
         disabled:
           type: boolean
 
-    McpServer:
+    Mcp:
       type: object
       properties:
         accountId:

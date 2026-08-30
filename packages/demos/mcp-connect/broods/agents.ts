@@ -30,6 +30,6 @@ export const assistant = defineAgent({
     system:
       "You are a helpful assistant. Use the search server's tools when the question needs external data.",
   },
-  mcpServers: { [search.name]: { enabled: true } },
+  mcp: { [search.name]: { enabled: true } },
   publicAccess: true,
 });

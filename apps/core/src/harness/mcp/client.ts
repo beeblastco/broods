@@ -168,7 +168,7 @@ export function mcpConnection(
   for (const [name, value] of Object.entries(headers)) {
     if (ENV_PLACEHOLDER_PATTERN.test(value)) {
       throw new Error(
-        `config.mcpServers.${record.serverId} header ${name} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
+        `config.mcp.${record.serverId} header ${name} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
       );
     }
   }

@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-/** `config.mcpServers` is keyed by mcp row id at rest, never by server name (#331). */
+/** `config.mcp` is keyed by mcp row id at rest, never by server name (#331). */
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -87,23 +87,21 @@ async function seedMcpServer(
     ids: {
       skills: {},
       hooks: {},
-      mcpServers: { [SERVER_NAME]: serverId },
+      mcp: { [SERVER_NAME]: serverId },
     },
   });
 
   return serverId;
 }
 
-function agentResource(
-  mcpServers: Record<string, unknown>,
-): CliManifestResource {
+function agentResource(mcp: Record<string, unknown>): CliManifestResource {
   return {
     kind: "agent",
     name: "mcp-agent",
     config: {
       model: { provider: "custom", modelId: "Qwen3.6-27B" },
       agent: { system: "Use the search server when asked." },
-      mcpServers: mcpServers,
+      mcp: mcp,
     },
   };
 }
@@ -112,16 +110,16 @@ function storedMcpServers(tt: T): Promise<Record<string, unknown>> {
   return tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
     const extra = config?.extraConfig as
-      | { mcpServers?: Record<string, unknown> }
+      | { mcp?: Record<string, unknown> }
       | undefined;
 
-    return extra?.mcpServers ?? {};
+    return extra?.mcp ?? {};
   });
 }
 
 const syncMcpServers = (
   tt: T,
-  mcpServers: Record<string, unknown>,
+  mcp: Record<string, unknown>,
 ): Promise<unknown> =>
   tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
@@ -129,11 +127,11 @@ const syncMcpServers = (
       version: 1 as const,
       project: PROJECT,
       stage: STAGE,
-      resources: [mcpResource, agentResource(mcpServers)],
+      resources: [mcpResource, agentResource(mcp)],
     },
   });
 
-describe("cli sync rewrites config.mcpServers names to mcp row ids", () => {
+describe("cli sync rewrites config.mcp names to mcp row ids", () => {
   // Agent config is written encrypted; the sync throws without a secret.
   beforeEach(() => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
@@ -149,7 +147,7 @@ describe("cli sync rewrites config.mcpServers names to mcp row ids", () => {
 
     await syncMcpServers(tt, { [SERVER_NAME]: { enabled: true } });
 
-    // A name left in place fails normalizeMcpServersConfig at the next write,
+    // A name left in place fails normalizeMcpConfig at the next write,
     // and the harness would never resolve the row.
     expect(await storedMcpServers(tt)).toEqual({
       [serverId]: { enabled: true },
@@ -163,10 +161,10 @@ describe("cli sync rewrites config.mcpServers names to mcp row ids", () => {
     const agent = (
       read!.manifest as { resources: Array<{ kind: string; config: unknown }> }
     ).resources.find((entry) => entry.kind === "agent");
-    expect((agent!.config as { mcpServers: unknown }).mcpServers).toEqual({
+    expect((agent!.config as { mcp: unknown }).mcp).toEqual({
       [SERVER_NAME]: { enabled: true },
     });
-    expect(read!.ids.mcpServers).toEqual({ [SERVER_NAME]: serverId });
+    expect(read!.ids.mcp).toEqual({ [SERVER_NAME]: serverId });
   });
 
   test("re-syncing an already-rewritten id is a no-op", async () => {

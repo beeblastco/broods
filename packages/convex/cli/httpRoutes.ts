@@ -61,7 +61,7 @@ type DesiredCron = Omit<CronResponse, "cronId"> & {
   resourceName: string;
 };
 
-type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcpServers">;
+type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
 /** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
@@ -498,9 +498,9 @@ function rewriteExternalConfigRefs(
       ),
     };
   }
-  const mcpServers = asOptionalRecord(result.mcpServers);
-  if (mcpServers) {
-    result.mcpServers = remapKeys(mcpServers, ids.mcpServers);
+  const mcp = asOptionalRecord(result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, ids.mcp);
   }
   if (
     asOptionalRecord(result.hooks) &&
@@ -615,7 +615,7 @@ async function syncExternalResources(
   const hasExternalResources = manifest.resources.some((entry) =>
     isExternalResourceKind(entry.kind),
   );
-  if (!hasExternalResources) return { skills: {}, hooks: {}, mcpServers: {} };
+  if (!hasExternalResources) return { skills: {}, hooks: {}, mcp: {} };
 
   const skills = await syncSkillResources(
     ctx,
@@ -628,7 +628,7 @@ async function syncExternalResources(
     manifest,
     prune,
   );
-  const mcpServers = await syncMcpResources(
+  const mcp = await syncMcpResources(
     ctx,
     accountId as Id<"accounts">,
     scope,
@@ -636,7 +636,7 @@ async function syncExternalResources(
     prune,
   );
 
-  return { skills: skills, hooks: hooks, mcpServers: mcpServers };
+  return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
 async function syncHookResources(

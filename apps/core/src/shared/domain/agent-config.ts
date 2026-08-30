@@ -131,7 +131,7 @@ export interface AgentConfig {
   channels?: AgentChannelsConfig;
   tools?: AgentToolsConfig;
   /** Connected MCP servers, keyed by their config-plane row id (#331). */
-  mcpServers?: AgentMcpServersConfig;
+  mcp?: AgentMcpConfig;
   /**
    * Tool names withheld for this run, applied after the tool set is built.
    * Set by a channel record; a channel can take a tool away, never add one.
@@ -384,9 +384,9 @@ export interface AgentToolConfig {
   [key: string]: unknown;
 }
 
-export type AgentMcpServersConfig = Record<string, AgentMcpServerConfig>;
+export type AgentMcpConfig = Record<string, AgentMcpEntry>;
 
-export interface AgentMcpServerConfig {
+export interface AgentMcpEntry {
   enabled?: boolean;
   /** Applies to every tool the server exposes. */
   needsApproval?: boolean;
@@ -589,7 +589,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     session,
     hooks,
     tools,
-    mcpServers,
+    mcp,
     denyTools,
     skills,
     subagent,
@@ -608,7 +608,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(session !== undefined ? { session: session } : {}),
     ...(hooks !== undefined ? { hooks: hooks } : {}),
     ...(tools !== undefined ? { tools: tools } : {}),
-    ...(mcpServers !== undefined ? { mcpServers: mcpServers } : {}),
+    ...(mcp !== undefined ? { mcp: mcp } : {}),
     ...(denyTools !== undefined ? { denyTools: denyTools } : {}),
     ...(skills !== undefined ? { skills: skills } : {}),
     ...(subagent !== undefined ? { subagent: subagent } : {}),
@@ -692,7 +692,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
-  normalizeMcpServersConfig(config.mcpServers);
+  normalizeMcpConfig(config.mcp);
   assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
@@ -1269,35 +1269,32 @@ function normalizeToolsConfig(value: unknown): void {
   }
 }
 
-function normalizeMcpServersConfig(value: unknown): void {
+function normalizeMcpConfig(value: unknown): void {
   if (value == null) {
     return;
   }
   if (!isPlainObject(value)) {
-    throw new Error("config.mcpServers must be an object");
+    throw new Error("config.mcp must be an object");
   }
 
   for (const [serverId, serverConfig] of Object.entries(value)) {
     if (!CONVEX_DOCUMENT_ID_PATTERN.test(serverId)) {
       throw new Error(
-        `config.mcpServers.${serverId} must be keyed by an MCP server id`,
+        `config.mcp.${serverId} must be keyed by an MCP server id`,
       );
     }
     if (!isPlainObject(serverConfig)) {
-      throw new Error(`config.mcpServers.${serverId} must be an object`);
+      throw new Error(`config.mcp.${serverId} must be an object`);
     }
     const config = serverConfig as Record<string, unknown>;
-    assertOptionalBoolean(
-      config.enabled,
-      `config.mcpServers.${serverId}.enabled`,
-    );
+    assertOptionalBoolean(config.enabled, `config.mcp.${serverId}.enabled`);
     assertOptionalBoolean(
       config.needsApproval,
-      `config.mcpServers.${serverId}.needsApproval`,
+      `config.mcp.${serverId}.needsApproval`,
     );
     if (config.headers !== undefined && !isStringRecord(config.headers)) {
       throw new Error(
-        `config.mcpServers.${serverId}.headers must be an object of string values`,
+        `config.mcp.${serverId}.headers must be an object of string values`,
       );
     }
   }

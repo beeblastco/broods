@@ -586,7 +586,23 @@ export const search = defineMcp({
 });
 ```
 
-Pass `path` instead of `url` to host the server on the platform: the module must default-export a fetch-style MCP handler, and the CLI bundles the TypeScript entrypoint into a self-contained ESM module and uploads it. Enable a server on an agent with `mcpServers: { [search.name]: { enabled: true } }`. `defineTool` (uploaded custom tools) is retired; hosted MCP servers replace it. See [External Tools](tools.md#connected-mcp-servers) for the full model.
+Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file:
+
+```ts
+import { defineMcp } from "broods";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+
+export const greeter = defineMcp({
+  name: "greeter",
+  handler: createMcpHandler(() => {
+    const server = new McpServer({ name: "greeter", version: "1.0.0" });
+    // server.registerTool(...) as usual
+    return server;
+  }),
+});
+```
+
+The CLI bundles the defining module into a self-contained ESM module and uploads it. Enable a server on an agent with `mcp: { [search.name]: { enabled: true } }`. `defineTool` (uploaded custom tools) is retired; hosted MCP servers replace it. See [External Tools](tools.md#connected-mcp-servers) for the full model.
 
 ## Cron Jobs
 

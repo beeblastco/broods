@@ -1544,29 +1544,6 @@ export const docs = defineSkill({
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
 });
 
-test("compileProject rejects hidden or secret-looking mcp bundle paths", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
-import { defineMcp } from "${RESOURCES_MODULE}";
-
-export const hiddenServer = defineMcp({
-  name: "hidden-server",
-  path: ".secret/server.mjs",
-});
-`,
-  );
-  await mkdir(join(cwd, "broods", ".secret"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", ".secret", "server.mjs"),
-    "export default {};\n",
-  );
-
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "looks like a hidden file or secret",
-  );
-});
-
 test("diffManifests reports create, update, and delete operations", () => {
   const local = {
     version: 1 as const,

@@ -196,7 +196,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
-  normalizeMcpServersConfig(config.mcpServers);
+  normalizeMcpConfig(config.mcp);
   assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
@@ -746,30 +746,26 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     throw new Error(`config.tools.${toolName}.config must be an object`);
 }
 
-function normalizeMcpServersConfig(value: unknown): void {
+function normalizeMcpConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.mcpServers must be an object");
+  if (!isPlainObject(value)) throw new Error("config.mcp must be an object");
   for (const [serverId, serverConfig] of Object.entries(value)) {
     if (!isNativeConvexDocumentId(serverId)) {
       throw new Error(
-        `config.mcpServers.${serverId} must be keyed by an MCP server id`,
+        `config.mcp.${serverId} must be keyed by an MCP server id`,
       );
     }
     if (!isPlainObject(serverConfig))
-      throw new Error(`config.mcpServers.${serverId} must be an object`);
+      throw new Error(`config.mcp.${serverId} must be an object`);
     const config = serverConfig as Record<string, unknown>;
-    assertOptionalBoolean(
-      config.enabled,
-      `config.mcpServers.${serverId}.enabled`,
-    );
+    assertOptionalBoolean(config.enabled, `config.mcp.${serverId}.enabled`);
     assertOptionalBoolean(
       config.needsApproval,
-      `config.mcpServers.${serverId}.needsApproval`,
+      `config.mcp.${serverId}.needsApproval`,
     );
     if (config.headers !== undefined && !isStringRecord(config.headers)) {
       throw new Error(
-        `config.mcpServers.${serverId}.headers must be an object of string values`,
+        `config.mcp.${serverId}.headers must be an object of string values`,
       );
     }
   }

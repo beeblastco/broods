@@ -1165,7 +1165,7 @@ describe("connected MCP servers", () => {
         policyMcpIdsByName: policyMcpIdsByName,
         approvalRequirements: approvals,
       },
-      { mcpServers: { [serverId]: { needsApproval: true } } },
+      { mcp: { [serverId]: { needsApproval: true } } },
     );
     expect(Object.keys(tools).sort()).toEqual([
       "search__fetch_doc",
@@ -1193,13 +1193,13 @@ describe("connected MCP servers", () => {
 
     setStorageForTests(storageWithMcp(mcpRecord({ allowedTools: ["query"] })));
     const filtered = await createTools(createToolContext(), {
-      mcpServers: { [serverId]: {} },
+      mcp: { [serverId]: {} },
     });
     expect(Object.keys(filtered)).toEqual(["search__query"]);
 
     setStorageForTests(storageWithMcp(mcpRecord({ disabled: true })));
     const disabled = await createTools(createToolContext(), {
-      mcpServers: { [serverId]: {} },
+      mcp: { [serverId]: {} },
     });
     expect(disabled).toEqual({});
   });
@@ -1220,7 +1220,7 @@ describe("connected MCP servers", () => {
     });
 
     const tools = await createTools(createToolContext(), {
-      mcpServers: { [serverId]: {} },
+      mcp: { [serverId]: {} },
     });
     await expect(
       (tools.search__query as unknown as ChannelTestTool).execute(
@@ -1244,7 +1244,7 @@ describe("connected MCP servers", () => {
     });
 
     await expect(
-      createTools(createToolContext(), { mcpServers: { [serverId]: {} } }),
+      createTools(createToolContext(), { mcp: { [serverId]: {} } }),
     ).rejects.toThrow("still carries a ${NAME} ref");
   });
 
@@ -1254,7 +1254,7 @@ describe("connected MCP servers", () => {
 
     await expect(
       createTools(createToolContext(), {
-        mcpServers: { k57unknown0000000000000000000000: {} },
+        mcp: { k57unknown0000000000000000000000: {} },
       }),
     ).rejects.toThrow("references an unknown MCP server");
   });
@@ -1271,7 +1271,7 @@ describe("connected MCP servers", () => {
     });
 
     const tools = await createTools(createToolContext(), {
-      mcpServers: { [serverId]: {} },
+      mcp: { [serverId]: {} },
     });
     expect(Object.keys(tools)).toEqual(["search__browser_navigate"]);
   });
@@ -1286,7 +1286,7 @@ describe("connected MCP servers", () => {
     });
 
     const tools = await createTools(createToolContext(), {
-      mcpServers: { [serverId]: {} },
+      mcp: { [serverId]: {} },
     });
     expect(Object.keys(tools)).toEqual([]);
   });
