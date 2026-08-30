@@ -55,6 +55,8 @@ On the first run this does everything for you:
 4. **Compiles and syncs** your resources to the `development` stage
 5. **Watches** `broods/` for changes and **live-tails** agent logs
 
+If your repo works with a coding agent (it has a `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agent/`, or `.agents/`), `dev` and `init` also install the broods skill at `.agents/skills/broods/`, where any agent harness can pick it up — instructions that teach the agent the CLI, docs, and SDK workflow, like Convex's AI rules files. It is written once; your edits to it are never overwritten.
+
 ```text
 Created starter broods/
 Deploy target: my-agent-project/development

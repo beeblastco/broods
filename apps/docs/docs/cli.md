@@ -233,24 +233,24 @@ seconds, and never fails a sync: an unreachable registry is silently skipped.
 
 ## Reference
 
-| Command                   | Purpose                                                           |
-| ------------------------- | ----------------------------------------------------------------- |
-| `init`                    | Create a `broods/` project shell                                  |
-| `login`                   | Authenticate through the dashboard                                |
-| `whoami`                  | Show the login, org, plan, project and stage in effect            |
-| `org list\|use\|create`   | Inspect and switch organizations                                  |
-| `project list\|delete`    | Inspect projects, delete one and its contents                     |
-| `stage list\|use\|create` | Inspect, switch and clone stages                                  |
-| `dev`                     | Watch, sync the current stage, live-tail logs                     |
-| `dev --once`              | Sync once and exit                                                |
-| `diff`                    | Local desired state against remote state, env drift included      |
-| `deploy`                  | Sync Production once (ignores `BROODS_STAGE`)                     |
-| `env set\|get\|list\|rm`  | Manage environment variables                                      |
-| `env sync`                | Push every `env("NAME")` the project references from `.env.local` |
-| `stream` / `logs`         | Live logs, with or without backfill                               |
-| `mcp`                     | Serve the config plane to an agent over MCP (stdio)               |
-| `agent list\|get`         | Inspect synced agents                                             |
-| `run <agent>`             | Chat with an agent in a terminal UI                               |
-| `update`                  | Install the newest broods release over this one                   |
+| Command                   | Purpose                                                               |
+| ------------------------- | --------------------------------------------------------------------- |
+| `init`                    | Create a `broods/` project shell, plus the agent skill in agent repos |
+| `login`                   | Authenticate through the dashboard                                    |
+| `whoami`                  | Show the login, org, plan, project and stage in effect                |
+| `org list\|use\|create`   | Inspect and switch organizations                                      |
+| `project list\|delete`    | Inspect projects, delete one and its contents                         |
+| `stage list\|use\|create` | Inspect, switch and clone stages                                      |
+| `dev`                     | Watch, sync the current stage, live-tail logs                         |
+| `dev --once`              | Sync once and exit                                                    |
+| `diff`                    | Local desired state against remote state, env drift included          |
+| `deploy`                  | Sync Production once (ignores `BROODS_STAGE`)                         |
+| `env set\|get\|list\|rm`  | Manage environment variables                                          |
+| `env sync`                | Push every `env("NAME")` the project references from `.env.local`     |
+| `stream` / `logs`         | Live logs, with or without backfill                                   |
+| `mcp`                     | Serve the config plane to an agent over MCP (stdio)                   |
+| `agent list\|get`         | Inspect synced agents                                                 |
+| `run <agent>`             | Chat with an agent in a terminal UI                                   |
+| `update`                  | Install the newest broods release over this one                       |
 
 `env` manages variables inside a stage. `stage` manages the stages themselves.
