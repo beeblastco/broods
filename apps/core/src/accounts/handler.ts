@@ -60,7 +60,7 @@ import {
 import {
   deleteAccountRuntimeData,
   deleteAccountSkills,
-  deleteAccountToolBundles,
+  deleteAccountBundles,
 } from "./cleanup.ts";
 
 type SandboxLifecycleAction =
@@ -148,7 +148,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     // Agent, skills, tools, hooks, workspace-file, cron, workspace, sandbox-config, and
     // policy CRUD moved to the Convex config plane (configHttp.ts, epic
     // #85 phase 9); the gateway routes those paths there. Runtime reads
-    // stay in src/shared/skills.ts, uploaded tool bundle loading,
+    // stay in src/shared/skills.ts, hosted MCP bundle loading,
     // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
     // harness cron-run leaf.
 
@@ -627,8 +627,7 @@ async function deleteAccountResponse(
     runtime,
     agentsDeleted,
     skillObjectsDeleted,
-    toolBundleObjectsDeleted,
-    accountToolsDeleted,
+    bundleObjectsDeleted,
     accountHooksDeleted,
     mcpDeleted,
     channelRecordsDeleted,
@@ -636,8 +635,7 @@ async function deleteAccountResponse(
     deleteAccountRuntimeData(disabled),
     getStorage().agents.removeAllForAccount(account.accountId),
     deleteAccountSkills(account.accountId),
-    deleteAccountToolBundles(account.accountId),
-    getStorage().accountTools.removeAllForAccount(account.accountId),
+    deleteAccountBundles(account.accountId),
     getStorage().accountHooks.removeAllForAccount(account.accountId),
     getStorage().mcp.removeAllForAccount(account.accountId),
     getStorage().channelRecords.removeAllForAccount(account.accountId),
@@ -650,8 +648,7 @@ async function deleteAccountResponse(
       ...runtime,
       agentsDeleted: agentsDeleted,
       skillObjectsDeleted: skillObjectsDeleted,
-      toolBundleObjectsDeleted: toolBundleObjectsDeleted,
-      accountToolsDeleted: accountToolsDeleted,
+      bundleObjectsDeleted: bundleObjectsDeleted,
       accountHooksDeleted: accountHooksDeleted,
       mcpDeleted: mcpDeleted,
       channelRecordsDeleted: channelRecordsDeleted,

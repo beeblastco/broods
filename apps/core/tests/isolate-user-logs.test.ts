@@ -13,10 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
-import {
-  FrameQueue,
-  parseToolRunnerFrame,
-} from "../src/harness/bundles/payload.ts";
+import { FrameQueue, parseRunnerFrame } from "../src/harness/frames.ts";
 import { isolateLogRecord } from "../src/harness/isolate/executor.ts";
 import {
   runWithObservabilityScope,
@@ -142,15 +139,15 @@ describe("isolateLogRecord", () => {
 describe("log frames on the wire", () => {
   it("is a frame the NDJSON parser accepts", () => {
     expect(
-      parseToolRunnerFrame(
+      parseRunnerFrame(
         JSON.stringify({ t: "log", level: "log", message: "hi" }),
       ),
     ).toEqual({ t: "log", level: "log", message: "hi" });
   });
 
   it("still rejects a line that is not a protocol frame", () => {
-    expect(parseToolRunnerFrame(JSON.stringify({ t: "nonsense" }))).toBeNull();
-    expect(parseToolRunnerFrame("not json at all")).toBeNull();
+    expect(parseRunnerFrame(JSON.stringify({ t: "nonsense" }))).toBeNull();
+    expect(parseRunnerFrame("not json at all")).toBeNull();
   });
 
   it("reaches a FrameQueue consumer alongside the result", async () => {
@@ -180,7 +177,7 @@ describe("log frames on the wire", () => {
     });
 
     expect(line.includes("\n")).toBe(false);
-    expect(parseToolRunnerFrame(line)).toEqual({
+    expect(parseRunnerFrame(line)).toEqual({
       t: "log",
       level: "log",
       message: "line one\nline two",

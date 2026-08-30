@@ -1,5 +1,5 @@
 /**
- * Public config-plane HTTP surface: agents, skills, tools, hooks, workspace
+ * Public config-plane HTTP surface: agents, skills, mcp, hooks, workspace
  * files, crons, workspaces, sandboxes, policies, and roles served straight
  * from Convex. The gateway forwards these paths here; response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
@@ -31,7 +31,6 @@ import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
 import { auditActorForAuth, json, requireAccount } from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
-import { handleToolRoute } from "./routes/tools";
 import {
   handleDownloadRedeemRoute,
   handleWorkspaceDownloadLinkRoute,
@@ -42,7 +41,6 @@ import { handleWorkspaceConfigRoute } from "./routes/workspaces";
 
 type ConfigRoute =
   | { kind: "skills"; name?: string }
-  | { kind: "tools"; toolId?: string }
   | { kind: "hooks"; hookId?: string }
   | { kind: "mcp"; serverId?: string }
   | { kind: "workspaceFiles"; workspaceId: string }
@@ -135,8 +133,6 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
   switch (route.kind) {
     case "skills":
       return apiResource("skills", route.name);
-    case "tools":
-      return apiResource("tools", route.toolId);
     case "hooks":
       return apiResource("hooks", route.hookId);
     case "mcp":
@@ -172,8 +168,6 @@ async function dispatchResourceRoute(
   switch (route.kind) {
     case "skills":
       return await handleSkillRoute(ctx, req, accountId, actor, route.name);
-    case "tools":
-      return await handleToolRoute(ctx, req, accountId, actor, route.toolId);
     case "hooks":
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
     case "mcp":
@@ -289,7 +283,6 @@ function isClientInputError(error: unknown): error is Error {
   if (error instanceof SyntaxError) return true;
 
   return [
-    "tool.",
     "Request body",
     "source must",
     "files must",
@@ -395,13 +388,6 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
     return {
       kind: "skills",
       ...(skills[1] ? { name: decodeURIComponent(skills[1]) } : {}),
-    };
-
-  const tools = pathname.match(/^\/v1\/tools(?:\/([^/]+))?$/);
-  if (tools)
-    return {
-      kind: "tools",
-      ...(tools[1] ? { toolId: decodeURIComponent(tools[1]) } : {}),
     };
 
   const mcp = pathname.match(/^\/v1\/mcp(?:\/([^/]+))?$/);

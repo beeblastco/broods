@@ -15,7 +15,7 @@ Shared Convex backend for the broods monorepo, used by two workspaces:
 ## Tables
 
 Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `stages`,
-`agentConfigs`, `canvasLayouts`, `agentDeployments`, `toolServices`,
+`agentConfigs`, `canvasLayouts`, `agentDeployments`, `mcp`,
 `deployKeys`.
 
 Agent-platform domain (shared with core): `accounts`, `agents`,
@@ -59,9 +59,9 @@ touched. A leaked Convex deploy key cannot trivially cross-tenant.
 ## AWS config plane (epic #85 phase 9)
 
 Convex owns the account config plane's AWS resources directly (no core proxy):
-skill bundles, tool bundles, and workspace files in S3. Account cron schedules
-live entirely in Convex (the crons component — see `agent/crons.ts`), with no
-AWS side at all. `model/aws.ts` assumes `ConvexAwsRole`
+skill bundles, hook and MCP bundles, and workspace files in S3. Account cron
+schedules live entirely in Convex (the crons component — see
+`agent/crons.ts`), with no AWS side at all. `model/aws.ts` assumes `ConvexAwsRole`
 (created by `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose
 only permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and
 the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
@@ -73,7 +73,7 @@ the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
 `POST /v1/account/rotate-secret`, `GET /accounts`,
 `GET/PATCH /accounts/{accountId}`, and
 `POST /accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
-`/v1/tools*`, `/v1/hooks*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
+`/v1/mcp*`, `/v1/hooks*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
 `/v1/policies*` — replacing core's former routes; the gateway forwards those
 paths here (`BROODS_CONFIG_URL`). Admin-gated account creation

@@ -40,7 +40,7 @@ A failure in any one sink never blocks the others, and never throws into the age
 
 ## User code
 
-`console.*` inside an uploaded hook or custom tool runs in a V8 isolate that has no
+`console.*` inside an uploaded hook runs in a V8 isolate that has no
 host logger of its own. The isolate sends each line back as a `log` frame on the
 same NDJSON protocol that carries results, and the host re-emits it through
 `emit()` while iterating that run's frames, so it inherits the run's observability

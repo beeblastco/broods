@@ -73,7 +73,7 @@ globalThis.TextDecoder = class TextDecoder {
   constructor(label, options) {
     const encoding = String(label === undefined ? "utf-8" : label).toLowerCase();
     if (encoding !== "utf-8" && encoding !== "utf8" && encoding !== "unicode-1-1-utf-8") {
-      throw new RangeError("custom tool isolates only decode utf-8");
+      throw new RangeError("isolates only decode utf-8");
     }
     this.encoding = "utf-8";
     this.fatal = Boolean(options && options.fatal);

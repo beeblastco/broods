@@ -1,6 +1,6 @@
 /**
  * One-off data migrations. Run each on every deployment (dev + production),
- * e.g. `bunx convex run migrations:deleteOrphanedTools`. Each is idempotent
+ * e.g. `bunx convex run migrations:backfillUsageRollupGrains`. Each is idempotent
  * and safe to re-run; completed migrations are deleted once every deployment
  * has run them.
  */
@@ -151,53 +151,5 @@ export const migrateCronsToConvexScheduler = internalMutation({
     }
 
     return { registered: registered, skipped: skipped, isDone: page.isDone };
-  },
-});
-
-// Drop custom tools no stage owns: unscoped rows from the old
-// account-scoped path, tombstones, and rows whose stage is gone.
-export const deleteOrphanedTools = internalMutation({
-  args: { dryRun: v.optional(v.boolean()) },
-  returns: v.object({
-    unscoped: v.number(),
-    softDeleted: v.number(),
-    danglingStage: v.number(),
-    kept: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const rows = await ctx.db.query("accountTools").collect();
-    let unscoped = 0;
-    let softDeleted = 0;
-    let danglingStage = 0;
-    let kept = 0;
-
-    for (const row of rows) {
-      let reason: "unscoped" | "softDeleted" | "danglingStage" | null = null;
-      if (row.status === "deleted") reason = "softDeleted";
-      else if (!row.stageId || !row.projectId) reason = "unscoped";
-      else {
-        // `create` rejects a pair whose stage sits under another project;
-        // a row that holds one anyway is scope corruption, not a live tool.
-        const stage = await ctx.db.get(row.stageId);
-        if (!stage || stage.projectId !== row.projectId)
-          reason = "danglingStage";
-      }
-
-      if (!reason) {
-        kept += 1;
-        continue;
-      }
-      if (reason === "unscoped") unscoped += 1;
-      if (reason === "softDeleted") softDeleted += 1;
-      if (reason === "danglingStage") danglingStage += 1;
-      if (args.dryRun !== true) await ctx.db.delete(row._id);
-    }
-
-    return {
-      unscoped: unscoped,
-      softDeleted: softDeleted,
-      danglingStage: danglingStage,
-      kept: kept,
-    };
   },
 });

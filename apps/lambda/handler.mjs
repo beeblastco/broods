@@ -1,9 +1,8 @@
 /**
- * AWS Lambda entry for the sandbox-tier tool runner. It resolves the uploaded
- * account tool bundle the invoke event addresses, then runs it in a
- * per-invocation child Node process with a scrubbed env and a fresh TMPDIR, and
- * streams the child's raw NDJSON frames to the core invoker as written, so an
- * async-generator tool's yields reach the agent loop live. The child is a
+ * AWS Lambda entry for the hosted MCP runner. It resolves the uploaded MCP
+ * server bundle the invoke event addresses, then runs it in a per-invocation
+ * child Node process with a scrubbed env and a fresh TMPDIR, and streams the
+ * child's raw NDJSON frames to the core invoker as written. The child is a
  * containment layer, not a trust boundary — it runs same-UID, so keep this
  * function's execution role empty and assume anything it can reach is reachable
  * by tenant code. Execution logic lives in child-runner.mjs; keep this file to
@@ -17,13 +16,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Hard bound on the whole invocation; the child self-aborts CHILD_GRACE_MS
-// earlier via TOOL_RUNNER_TIMEOUT_SECONDS so ctx.abortSignal fires (letting the
-// tool settle) before this SIGKILL. The Lambda's own timeout sits above both so
+// earlier via TOOL_RUNNER_TIMEOUT_SECONDS so the request signal fires (letting
+// the run settle) before this SIGKILL. The Lambda's own timeout sits above both so
 // the handler always wins and returns a clean error frame.
 const RUN_TIMEOUT_MS = 30_000;
 const CHILD_GRACE_MS = 2_000;
 // Deliberately far below Lambda's 200 MB streamed ceiling: every forwarded byte
-// lands in core's memory and then in an agent's context, so this bounds a tool.
+// lands in core's memory and then in an agent's context, so this bounds a run.
 const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
 // streamifyResponse is injected by the Node managed runtime. Falling back to the
@@ -37,11 +36,11 @@ export const handler = streamifyResponse(async (event, responseStream) => {
     typeof event !== "object" ||
     typeof event.toolName !== "string"
   ) {
-    endWithError(responseStream, "invalid tool runner event");
+    endWithError(responseStream, "invalid mcp runner event");
 
     return;
   }
-  const home = mkdtempSync(join(tmpdir(), "broods-tool-"));
+  const home = mkdtempSync(join(tmpdir(), "broods-mcp-"));
   try {
     // Started before the spawn so the S3 round trip overlaps Node's startup, and
     // done here rather than in the child because this process is warm across
@@ -66,13 +65,13 @@ async function readBundleSource(event) {
   }
   if (typeof event.bundleUrl !== "string") {
     throw new Error(
-      "tool runner event needs one of bundleSourceB64 or bundleUrl",
+      "mcp runner event needs one of bundleSourceB64 or bundleUrl",
     );
   }
   const response = await fetch(event.bundleUrl);
   if (!response.ok) {
     throw new Error(
-      `custom tool bundle fetch failed with HTTP ${response.status}`,
+      `mcp server bundle fetch failed with HTTP ${response.status}`,
     );
   }
 
@@ -134,7 +133,7 @@ async function runChild(event, home, responseStream, bundle) {
       killGroup(child);
     };
     const timeout = setTimeout(
-      () => stopForwarding("custom tool sandbox execution timed out"),
+      () => stopForwarding("mcp server run timed out"),
       RUN_TIMEOUT_MS,
     );
 
@@ -142,11 +141,11 @@ async function runChild(event, home, responseStream, bundle) {
       if (stopReason) return;
       forwardedBytes += chunk.length;
       if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
-        stopForwarding("custom tool sandbox output exceeded limit");
+        stopForwarding("mcp server output exceeded limit");
 
         return;
       }
-      // Pause on a full response buffer so a chatty tool cannot outrun the
+      // Pause on a full response buffer so a chatty child cannot outrun the
       // stream; the child's own stdout pipe then applies the backpressure.
       if (!responseStream.write(chunk)) {
         child.stdout.pause();

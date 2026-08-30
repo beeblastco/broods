@@ -740,8 +740,11 @@ export default $config({
       }),
     });
 
-    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
-    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
+    // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
+    // process. No VPC gives internet egress; core invokes it via
+    // TOOL_RUNNER_FUNCTION_NAME. The "ToolRunner" logical id and the
+    // tool-runner physical name predate the MCP role — renaming either
+    // replaces the deployed function, so they stay.
     const toolRunnerFn = new sst.aws.Function("ToolRunner", {
       handler: "../lambda/handler.handler",
       runtime: "nodejs22.x",

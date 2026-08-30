@@ -4,7 +4,7 @@
  */
 
 import { sha256Hex } from "./accountSecrets";
-import { inferAccountToolRuntime } from "./accountTools";
+import { isIsolateSafeBundle } from "./isolateSafety";
 import { isPlainObject } from "./objects";
 
 export const AGENT_HOOK_EVENT_NAMES = [
@@ -23,8 +23,8 @@ export const AGENT_HOOK_EVENT_NAMES = [
 ] as const;
 
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// Hooks only ever run in the isolate, inlined into core's own process, so they
-// keep the tighter of the two tool bounds (see accountTools.ts).
+// Hooks run in the isolate, inlined into core's own process, so the bound
+// stays tight.
 const MAX_BUNDLE_BYTES = 1_000_000;
 
 export interface AccountHookUploadInput {
@@ -123,7 +123,7 @@ function normalizeBundle(value: unknown): string {
   if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
     throw new Error(`hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
   }
-  if (inferAccountToolRuntime(value) === "sandbox") {
+  if (!isIsolateSafeBundle(value)) {
     throw new Error(
       "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
     );

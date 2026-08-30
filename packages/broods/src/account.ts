@@ -222,48 +222,10 @@ export interface ChannelRecordConfig {
   tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 }
 
-/** The stage a tool belongs to. Tools with the same name in two stages are two tools. */
-export interface ToolScope {
+/** The stage a resource belongs to. Same name in two stages = two resources. */
+export interface StageScope {
   project: string;
   stage: string;
-}
-
-/** Public uploaded-tool record returned by the tools routes. */
-export interface AccountTool {
-  accountId: string;
-  toolId: string;
-  projectId: string;
-  stageId: string;
-  name: string;
-  description: string;
-  inputSchema: unknown;
-  sha256: string;
-  runtime: "isolate" | "sandbox";
-  defaultConfig?: unknown;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt?: string;
-}
-
-/** Fields accepted by `POST /v1/tools`. `bundle` is already-bundled JavaScript module source. */
-export interface CreateToolInput {
-  name: string;
-  description: string;
-  inputSchema: unknown;
-  bundle: string;
-  runtime?: "isolate" | "sandbox";
-  defaultConfig?: unknown;
-}
-
-/** Fields accepted by `PATCH /v1/tools/{toolId}`; every field is optional. Omitting `bundle` keeps the stored one. */
-export interface UpdateToolInput {
-  name?: string;
-  description?: string;
-  inputSchema?: unknown;
-  bundle?: string;
-  runtime?: "isolate" | "sandbox";
-  defaultConfig?: unknown;
 }
 
 /** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
@@ -373,7 +335,7 @@ function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
 }
 
-function toolScopeQuery(scope: ToolScope): string {
+function stageScopeQuery(scope: StageScope): string {
   const query = new URLSearchParams({
     project: scope.project,
     stage: scope.stage,
@@ -898,60 +860,9 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Tools live in one stage, so the collection routes need a scope. Both fields are required. */
-  async listTools(scope: ToolScope): Promise<AccountTool[]> {
-    // A 404 here means the scope does not resolve, which is not an empty
-    // stage — collapsing the two would hide a typo in the scope.
-    const path = `/v1/tools${toolScopeQuery(scope)}`;
-    const result = await this.request<{ tools: AccountTool[] }>("GET", path);
-    if (!result) throw new BroodsAccountApiError("GET", path, 404, "Not found");
-
-    return result.tools ?? [];
-  }
-
-  async createTool(
-    scope: ToolScope,
-    input: CreateToolInput,
-  ): Promise<AccountTool> {
-    const path = `/v1/tools${toolScopeQuery(scope)}`;
-    const result = await this.request<AccountTool>("POST", path, input);
-    if (!result)
-      throw new BroodsAccountApiError("POST", path, 404, "Not found");
-
-    return result;
-  }
-
-  async getTool(toolId: string): Promise<AccountTool | null> {
-    return await this.request<AccountTool>(
-      "GET",
-      `/v1/tools/${encodeURIComponent(toolId)}`,
-    );
-  }
-
-  /** PATCH an uploaded tool. Omitting `bundle` keeps the stored bundle and runtime. Returns null when the tool is gone. */
-  async updateTool(
-    toolId: string,
-    patch: UpdateToolInput,
-  ): Promise<AccountTool | null> {
-    return await this.request<AccountTool>(
-      "PATCH",
-      `/v1/tools/${encodeURIComponent(toolId)}`,
-      patch,
-    );
-  }
-
-  async deleteTool(toolId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>(
-      "DELETE",
-      `/v1/tools/${encodeURIComponent(toolId)}`,
-    );
-
-    return result?.deleted ?? false;
-  }
-
-  /** MCP servers are stage-scoped like tools; both scope fields are required. */
-  async listMcpServers(scope: ToolScope): Promise<AccountMcpServer[]> {
-    const path = `/v1/mcp${toolScopeQuery(scope)}`;
+  /** MCP servers live in one stage, so the collection routes need a scope. */
+  async listMcpServers(scope: StageScope): Promise<AccountMcpServer[]> {
+    const path = `/v1/mcp${stageScopeQuery(scope)}`;
     const result = await this.request<{ servers: AccountMcpServer[] }>(
       "GET",
       path,
@@ -962,10 +873,10 @@ export class BroodsAccountClient {
   }
 
   async createMcpServer(
-    scope: ToolScope,
+    scope: StageScope,
     input: CreateMcpServerInput,
   ): Promise<AccountMcpServer> {
-    const path = `/v1/mcp${toolScopeQuery(scope)}`;
+    const path = `/v1/mcp${stageScopeQuery(scope)}`;
     const result = await this.request<AccountMcpServer>("POST", path, input);
     if (!result)
       throw new BroodsAccountApiError("POST", path, 404, "Not found");

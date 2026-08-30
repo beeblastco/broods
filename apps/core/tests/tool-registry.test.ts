@@ -14,7 +14,6 @@ import {
   setStorageForTests,
   type Storage,
 } from "../src/shared/storage.ts";
-import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
 import type { CronRecord, CronSummary } from "../src/shared/domain/cron.ts";
@@ -217,46 +216,16 @@ describe("createTools", () => {
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
 
-  it("withholds a custom tool by the name the model sees, not its tool id", async () => {
+  it("rejects a retired account-tool id key in config.tools", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const toolId = "qs78zwc4z4q5ysxm74fgrhd13s88xxt";
-    setStorageForTests(
-      storageWithAccountTool({
-        accountId: "acct_test",
-        toolId: toolId,
-        name: "lookup_invoice",
-        description: "Uploaded test tool.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        },
-        bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
-        sha256: "a".repeat(64),
-        runtime: "sandbox",
-        status: "active",
-        createdAt: "2026-06-06T00:00:00.000Z",
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      }),
-    );
 
-    // A record's deny list is written by a human reading the channel, so it
-    // names the tool the model is offered — the opaque id must not match.
-    expect(
-      Object.keys(
-        await createTools(createToolContext() as never, {
-          tools: { [toolId]: { enabled: true } },
-          denyTools: [toolId],
-        }),
-      ),
-    ).toEqual(["lookup_invoice"]);
-
-    expect(
-      await createTools(createToolContext() as never, {
-        tools: { [toolId]: { enabled: true } },
-        denyTools: ["lookup_invoice"],
+    // Custom tools are sunset (#331 phase 3): a stale Convex-id key left in
+    // config.tools is now just an unsupported tool, not a lookup.
+    await expect(
+      createTools(createToolContext() as never, {
+        tools: { qs78zwc4z4q5ysxm74fgrhd13s88xxt: { enabled: true } },
       }),
-    ).toEqual({});
+    ).rejects.toThrow("is not a provider-defined tool");
   });
 
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
@@ -773,9 +742,7 @@ describe("createTools", () => {
     const approvalRequirements = new Map<string, true>();
     const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
       (tools, asyncToolModes): ToolSet => {
-        expect([...asyncToolModes.entries()]).toEqual([
-          ["googleSearch", "built-in"],
-        ]);
+        expect([...asyncToolModes]).toEqual(["googleSearch"]);
         expect(
           (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
         ).toBeUndefined();
@@ -815,71 +782,6 @@ describe("createTools", () => {
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: { webSearch: {} },
     });
-  });
-
-  it("registers uploaded account tools by toolId and wraps async by uploaded name", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-    const approvalRequirements = new Map<string, true>();
-    setStorageForTests(
-      storageWithAccountTool({
-        accountId: "acct_test",
-        toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
-        name: "test_async",
-        description: "Uploaded async test tool.",
-        inputSchema: {
-          type: "object",
-          properties: {},
-          additionalProperties: false,
-        },
-        bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
-        sha256: "a".repeat(64),
-        runtime: "sandbox",
-        defaultConfig: { fromDefault: true },
-        status: "active",
-        createdAt: "2026-06-06T00:00:00.000Z",
-        updatedAt: "2026-06-06T00:00:00.000Z",
-      }),
-    );
-    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
-      (tools, asyncToolModes): ToolSet => {
-        expect(asyncToolModes).toEqual(new Map([["test_async", "uploaded"]]));
-
-        return {
-          ...tools,
-          test_async: Object.assign(tools.test_async!, { wrapped: true }),
-        };
-      },
-    );
-
-    const tools = await createTools(
-      Object.assign(
-        {},
-        createToolContext(undefined, "google", undefined, dispatch),
-        { approvalRequirements: approvalRequirements },
-      ) as never,
-      {
-        tools: {
-          qs78zwc4z4q5ysxm74fgrhd13s88xxt: {
-            enabled: true,
-            async: true,
-            needsApproval: true,
-            config: { fromAgent: true },
-          },
-          urlContext: { enabled: true },
-        },
-      },
-    );
-
-    expect(Object.keys(tools).sort()).toEqual([
-      "async_status",
-      "test_async",
-      "urlContext",
-    ]);
-    expect(tools.test_async?.description).toBe("Uploaded async test tool.");
-    expect(tools.test_async?.needsApproval).toBeUndefined();
-    expect(approvalRequirements.has("test_async")).toBe(true);
-    expect((tools.test_async as { wrapped?: boolean }).wrapped).toBe(true);
-    expect(urlContextMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a provider tool the configured provider does not ship", async () => {
@@ -1532,7 +1434,6 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     sandboxConfigs: {} as never,
     workspaceConfigs: {} as never,
     agentPolicies: {} as never,
-    accountTools: {} as never,
     accountHooks: {} as never,
     mcp: {} as never,
     roleSessions: {} as never,
@@ -1573,43 +1474,6 @@ function storageWithMcp(record: McpRecord): Storage {
       },
     },
   };
-}
-
-function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
-  return {
-    accounts: {} as never,
-    agents: {} as never,
-    channelRecords: {} as never,
-    agentDeployments: {
-      getByApiKeyHash: async function () {
-        return null;
-      },
-    },
-    crons: {} as never,
-    sandboxConfigs: {} as never,
-    workspaceConfigs: {} as never,
-    agentPolicies: {} as never,
-    accountTools: {
-      getById: async function (accountId: string, toolId: string) {
-        const record = accountTool as { accountId: string; toolId: string };
-
-        return record.accountId === accountId && record.toolId === toolId
-          ? accountTool
-          : null;
-      },
-      list: async function () {
-        return [accountTool];
-      },
-      create: mock() as never,
-      update: mock() as never,
-      remove: mock() as never,
-      removeAllForAccount: mock() as never,
-    },
-    accountHooks: {} as never,
-    mcp: {} as never,
-    roleSessions: {} as never,
-    taskUsage: { record: async function () {} },
-  } as Storage;
 }
 
 function sandboxContext(

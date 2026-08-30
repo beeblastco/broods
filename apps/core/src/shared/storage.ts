@@ -6,7 +6,6 @@
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
-import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
@@ -80,10 +79,10 @@ export interface TaskUsageInput {
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
-  /** Agent sandbox provider (sandbox/lambda metered), or "custom-tool-sandbox". */
+  /** Agent sandbox provider (sandbox/lambda metered), or "mcp-sandbox". */
   type: string;
   role: "agent" | "tool";
-  /** The custom tool that ran, when role is "tool". */
+  /** The model-facing tool that ran, when role is "tool". */
   toolName?: string;
   cpuUsec: number;
 }
@@ -197,12 +196,6 @@ interface WorkspaceConfigStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Account-scoped uploaded custom tool metadata. */
-interface AccountToolStore {
-  getById(accountId: string, toolId: string): Promise<AccountToolRecord | null>;
-  removeAllForAccount(accountId: string): Promise<number>;
-}
-
 /** Account-owned isolate code hooks. */
 interface AccountHookStore {
   getById(accountId: string, hookId: string): Promise<AccountHookRecord | null>;
@@ -243,7 +236,6 @@ export interface Storage {
   crons: CronStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
-  accountTools: AccountToolStore;
   accountHooks: AccountHookStore;
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;

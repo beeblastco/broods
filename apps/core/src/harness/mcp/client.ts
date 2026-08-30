@@ -39,6 +39,13 @@ export interface McpConnection {
   headers: Record<string, string>;
 }
 
+/** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
+ * terminal frame, so the harness can meter the run's compute. */
+export interface McpCallOptions {
+  abortSignal?: AbortSignal;
+  onCpuUsec?: (cpuUsec: number) => void;
+}
+
 interface CachedDiscover {
   discover: DiscoverResult;
   expiresAt: number;
@@ -67,7 +74,7 @@ export async function callMcpTool(
   connection: McpConnection,
   toolName: string,
   args: Record<string, unknown>,
-  options: { abortSignal?: AbortSignal } = {},
+  options: McpCallOptions = {},
 ): Promise<unknown> {
   const result = await callMcpToolResult(connection, toolName, args, options);
   if (result.isError) {
@@ -87,26 +94,33 @@ export async function callMcpToolResult(
   connection: McpConnection,
   toolName: string,
   args: Record<string, unknown>,
-  options: { abortSignal?: AbortSignal } = {},
+  options: McpCallOptions = {},
 ): Promise<CallToolResult> {
   if (testOverrides?.callTool) {
     return await testOverrides.callTool(connection, toolName, args);
   }
 
-  return await withClient(connection, (client) =>
-    client.callTool(
-      { name: toolName, arguments: args },
-      options.abortSignal ? { signal: options.abortSignal } : {},
-    ),
+  return await withClient(
+    connection,
+    (client) =>
+      client.callTool(
+        { name: toolName, arguments: args },
+        options.abortSignal ? { signal: options.abortSignal } : {},
+      ),
+    options.onCpuUsec,
   );
 }
 
 /**
  * List a server's tools, from the per-server cache when fresh. The cache
  * holds the in-flight promise, so concurrent cold runs share one listing;
- * its TTL is the listing's own ttlMs, clamped.
+ * its TTL is the listing's own ttlMs, clamped. A hosted server boots its
+ * bundle for a cold listing, so onCpuUsec meters that too.
  */
-export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
+export async function listMcpTools(
+  connection: McpConnection,
+  onCpuUsec?: (cpuUsec: number) => void,
+): Promise<Tool[]> {
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
   }
@@ -116,16 +130,18 @@ export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
     if (cached.expiresAt > Date.now()) return await cached.tools;
     toolListCache.delete(key);
   }
-  const pending = withClient(connection, (client) => client.listTools()).then(
-    (result) => {
-      const entry = toolListCache.get(key);
-      if (entry) {
-        entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
-      }
+  const pending = withClient(
+    connection,
+    (client) => client.listTools(),
+    onCpuUsec,
+  ).then((result) => {
+    const entry = toolListCache.get(key);
+    if (entry) {
+      entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
+    }
 
-      return result.tools;
-    },
-  );
+    return result.tools;
+  });
   pending.catch(() => toolListCache.delete(key));
   pruneCache(toolListCache);
   toolListCache.set(key, {
@@ -195,6 +211,7 @@ function clampTtlMs(ttlMs: unknown): number {
 async function connectClient(
   connection: McpConnection,
   key: string,
+  onCpuUsec?: (cpuUsec: number) => void,
 ): Promise<Client> {
   const hosted = connection.record.transport === "hosted";
   if (!hosted && !connection.record.url) {
@@ -209,7 +226,9 @@ async function connectClient(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: connection.headers },
-        ...(hosted ? { fetch: hostedMcpFetch(connection.record) } : {}),
+        ...(hosted
+          ? { fetch: hostedMcpFetch(connection.record, onCpuUsec) }
+          : {}),
       },
     );
     const client = new Client(CLIENT_INFO, {
@@ -282,8 +301,13 @@ function renderContent(content: CallToolResult["content"]): string {
 async function withClient<T>(
   connection: McpConnection,
   operation: (client: Client) => Promise<T>,
+  onCpuUsec?: (cpuUsec: number) => void,
 ): Promise<T> {
-  const client = await connectClient(connection, cacheKeyFor(connection));
+  const client = await connectClient(
+    connection,
+    cacheKeyFor(connection),
+    onCpuUsec,
+  );
   try {
     return await operation(client);
   } finally {

@@ -156,15 +156,15 @@ const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> =
     { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
   ];
 
-// Sandbox CPU split: the agent's own sandbox vs the custom-tool sandbox that
-// runs user-uploaded tool bundles.
+// Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
+// hosted MCP server bundles.
 const SANDBOX_CPU_SERIES: Array<{
   key: keyof Bucket;
   label: string;
   color: string;
 }> = [
   { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
-  { key: "toolSandboxCpuUsec", label: "Custom-tool sandbox", color: "#fb923c" },
+  { key: "toolSandboxCpuUsec", label: "MCP sandbox", color: "#fb923c" },
 ];
 
 function formatNumber(n: number): string {
@@ -975,7 +975,7 @@ export function TokensUsagePanel({
 
       <Section
         title="Compute"
-        description="Harness runtime time and sandbox CPU — the agent's own sandbox vs the custom-tool sandbox that runs uploaded tool bundles."
+        description="Harness runtime time and sandbox CPU — the agent's own sandbox vs the MCP sandbox that runs hosted MCP server bundles."
       >
         <div className="mb-4 grid grid-cols-3 gap-3">
           <ComputeTile
@@ -992,7 +992,7 @@ export function TokensUsagePanel({
             color="#2dd4bf"
           />
           <ComputeTile
-            label="Custom-tool sandbox CPU"
+            label="MCP sandbox CPU"
             value={formatCpuUsec(
               (compute?.toolSandboxCpuUsec ?? 0) +
                 liveOverlay.toolSandboxCpuUsec,

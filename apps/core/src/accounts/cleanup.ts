@@ -73,18 +73,15 @@ export async function deleteAccountSkills(accountId: string): Promise<number> {
 
 // Bundle metadata lives in Convex; only the executable module bytes are stored
 // under these account-prefixed S3 keys.
-export async function deleteAccountToolBundles(
-  accountId: string,
-): Promise<number> {
+export async function deleteAccountBundles(accountId: string): Promise<number> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const encodedAccountId = encodeURIComponent(accountId);
-  const [tools, hooks, mcp] = await Promise.all([
-    deleteS3Prefix(bucket, `account-tools/${encodedAccountId}/`),
+  const [hooks, mcp] = await Promise.all([
     deleteS3Prefix(bucket, `account-hooks/${encodedAccountId}/`),
     deleteS3Prefix(bucket, `account-mcp/${encodedAccountId}/`),
   ]);
 
-  return tools + hooks + mcp;
+  return hooks + mcp;
 }
 
 export async function deleteWorkspaceFilesystem(

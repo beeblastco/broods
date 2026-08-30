@@ -52,7 +52,6 @@ import {
   getAsyncToolResult,
   getDetachedAsyncToolGroup,
   listAsyncToolResultsByParentEvent,
-  sealDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
   type AsyncToolDelivery,
@@ -89,7 +88,6 @@ import {
   routeIncomingEvent,
   sendChannelReply,
   type AsyncDirectInboundEvent,
-  type AsyncToolCompletionInboundEvent,
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
@@ -143,7 +141,6 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   traceId?: string;
   approvals: ToolApprovalSummary[];
-  hasDetachedCallbacks: boolean;
 }
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -241,7 +238,6 @@ async function handleRequest(
         handleDirectRequest(directEvent, context),
       handleAsyncRequest: handleAsyncRequest,
       handleStatusRequest: handleStatusRequest,
-      handleAsyncToolCompletionRequest: handleAsyncToolCompletionRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: (channelEvent) =>
         handleChannelRequest(channelEvent, context),
@@ -345,59 +341,6 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
     }
     throw err;
   }
-}
-
-/**
- * Handle the account-auth async tool result completion request.
- * Requires account-scoped authentication and agent validation.
- */
-async function handleAsyncToolCompletionRequest(
-  event: AsyncToolCompletionInboundEvent,
-): Promise<Response> {
-  // Check for existing
-  const existing = await getAsyncToolResult(event.resultId);
-  if (!existing) {
-    return jsonResponse(404, { error: "Async tool result not found" });
-  }
-
-  // Check the event is for the same account and agent
-  const agentId = agentIdFromScopedKey(existing.parentEventId, event.accountId);
-  if (
-    !agentId ||
-    !isAccountScopedKey(existing.conversationKey, event.accountId, agentId)
-  ) {
-    return jsonResponse(404, { error: "Async tool result not found" });
-  }
-
-  // Check if the result is already processed
-  if (existing.status !== "processing") {
-    return jsonResponse(409, {
-      error: "Async tool result is already settled",
-      status: existing.status,
-    });
-  }
-
-  // Check if agent is valid
-  const agent = await getStorage().agents.getById(event.accountId, agentId);
-  if (!agent || agent.status !== "active") {
-    return jsonResponse(404, { error: "Agent not found" });
-  }
-
-  // Settle the tool result
-  const settled = await settleAsyncToolResultFromCallback({
-    resultId: event.resultId,
-    status: event.status,
-    ...(event.response !== undefined ? { response: event.response } : {}),
-    ...(event.error ? { error: event.error } : {}),
-  });
-  if (!settled) {
-    return jsonResponse(409, { error: "Async tool result settled got error" });
-  }
-
-  return continuationResponse(
-    settled,
-    await continueAfterAsyncToolSettlement(settled),
-  );
 }
 
 /**
@@ -893,13 +836,7 @@ async function handleAsyncWorkerRequest(
         error: result.failureText ?? AGENT_PROCESSING_FAILED,
       });
     }
-    if (result.hasDetachedCallbacks) {
-      await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-      await session.settleIngress("completed", {
-        result: { status: "waiting_for_async_tools" },
-      });
-      transferred = await dispatchNextIngress(session, event);
-    } else if (terminalSettled) {
+    if (terminalSettled) {
       transferred = await dispatchNextIngress(session, event);
     }
   } catch (err) {
@@ -1009,16 +946,9 @@ async function handleNatsWorkerRequest(
         waitUntilMs(context),
         { dispatchNextIngress: dispatchNextIngress },
       );
-      // Define the async tool mode application map.
       const asyncToolCoordinator = new AsyncToolCoordinator(
         session,
         waitUntilMs(context),
-        {
-          kind: "nats",
-          connectionId: connectionId,
-          publicEventId: event.publicEventId,
-          publicConversationKey: event.publicConversationKey,
-        },
       );
 
       const result = await runParentContinuationLoop({
@@ -1056,10 +986,7 @@ async function handleNatsWorkerRequest(
         await session.settleIngress("failed", {
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-      } else if (
-        result.approvals.length === 0 &&
-        !asyncToolCoordinator.hasDetachedCallbacks
-      ) {
+      } else if (result.approvals.length === 0) {
         await session.settleIngress(
           "completed",
           result.finalResponse !== undefined
@@ -1068,29 +995,16 @@ async function handleNatsWorkerRequest(
         );
       }
 
-      if (asyncToolCoordinator.hasDetachedCallbacks) {
-        await sealDetachedAsyncToolGroup(event.eventId);
-        await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
+      if (result.approvals.length > 0) {
         await session.settleIngress("completed", {
-          result: { status: "waiting_for_async_tools" },
+          result: {
+            status: "awaiting_approval",
+            approvals: result.approvals,
+          },
         });
-        await fencedPublisher.publish({
-          type: "waiting",
-          reason: "detached-async-tools",
-        });
-        transferred = await dispatchNextIngress(session, event);
-      } else {
-        if (result.approvals.length > 0) {
-          await session.settleIngress("completed", {
-            result: {
-              status: "awaiting_approval",
-              approvals: result.approvals,
-            },
-          });
-        }
-        await fencedPublisher.publish({ type: "done" });
-        transferred = await dispatchNextIngress(session, event);
       }
+      await fencedPublisher.publish({ type: "done" });
+      transferred = await dispatchNextIngress(session, event);
       // Release here, not in the finally: the crash path must settle the
       // envelope first, and settling requires still holding the lease.
       if (!transferred) {
@@ -1366,10 +1280,6 @@ async function handleChannelRequest(
               "completed",
               finalResult !== undefined ? { result: finalResult } : {},
             );
-          } else if (result.hasDetachedCallbacks) {
-            await session.settleIngress("completed", {
-              result: { status: "waiting_for_async_tools" },
-            });
           }
         }
       } catch (err) {
@@ -2113,71 +2023,6 @@ export async function drainInProcessWorkers(): Promise<void> {
   }
 }
 
-async function continueDetachedAsyncToolsIfReady(
-  event: DirectInboundEvent,
-  agentConfig: DirectInboundEvent["agentConfig"],
-): Promise<boolean> {
-  const dispatchGroup = await getDetachedAsyncToolGroup(event.eventId);
-  if (!dispatchGroup?.sealed) {
-    return false;
-  }
-
-  const toolResults = (
-    await Promise.all(
-      dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId)),
-    )
-  ).filter(
-    (result): result is AsyncToolResultRecord =>
-      result?.parentEventId === event.eventId,
-  );
-  if (
-    toolResults.length !== dispatchGroup.resultIds.length ||
-    toolResults.some((result) => result.status === "processing")
-  ) {
-    return false;
-  }
-
-  // Every result the model already saw via async_status is dropped here; if that
-  // leaves nothing, there is no continuation to run (avoids a duplicate answer).
-  const events = settledToolResultsToParentMessages(toolResults);
-  if (events.length === 0) {
-    return false;
-  }
-
-  const continuationEvent = {
-    ...event,
-    agentConfig: agentConfig,
-    eventId: asyncToolContinuationEventId(event.eventId),
-    ownerGeneration: undefined,
-    requestedMode: "followup",
-    idempotencyKey: asyncToolContinuationEventId(event.eventId),
-    ...(event.connectionId
-      ? {}
-      : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
-    events: events,
-  } satisfies DirectInboundEvent;
-
-  const ownedContinuation = await admitInternalContinuation(
-    continuationEvent,
-    continuationDelivery(continuationEvent),
-  );
-  if (!ownedContinuation) {
-    return false;
-  }
-  await createPendingAsyncAgentResult({
-    eventId: ownedContinuation.eventId,
-    conversationKey: ownedContinuation.conversationKey,
-  });
-
-  if (ownedContinuation.connectionId) {
-    await invokeNatsWorker(ownedContinuation);
-  } else {
-    await invokeAsyncWorker(ownedContinuation);
-  }
-
-  return true;
-}
-
 function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
@@ -2464,10 +2309,7 @@ function createDirectContinuationSseBody(
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
             transferred = await dispatchNextIngress(session, event);
-          } else if (
-            result.approvals.length === 0 &&
-            !result.hasDetachedCallbacks
-          ) {
+          } else if (result.approvals.length === 0) {
             await session.settleIngress(
               "completed",
               result.finalResponse !== undefined
@@ -2475,18 +2317,12 @@ function createDirectContinuationSseBody(
                 : {},
             );
             transferred = await dispatchNextIngress(session, event);
-          } else if (result.approvals.length > 0) {
+          } else {
             await session.settleIngress("completed", {
               result: {
                 status: "awaiting_approval",
                 approvals: result.approvals,
               },
-            });
-            transferred = await dispatchNextIngress(session, event);
-          } else if (result.hasDetachedCallbacks) {
-            await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-            await session.settleIngress("completed", {
-              result: { status: "waiting_for_async_tools" },
             });
             transferred = await dispatchNextIngress(session, event);
           }
@@ -2538,7 +2374,6 @@ async function runAgentLoopUntilSubagentsIdle(
 ): Promise<{
   didFail: boolean;
   failureText: string | null;
-  hasDetachedCallbacks: boolean;
   traceId?: string;
 }> {
   const subagentCoordinator = new SubagentCoordinator(
@@ -2550,7 +2385,6 @@ async function runAgentLoopUntilSubagentsIdle(
   const asyncToolCoordinator = new AsyncToolCoordinator(
     session,
     waitUntilMs(context),
-    session.delivery ?? { kind: "async" },
   );
   const result = await runParentContinuationLoop({
     session: session,
@@ -2565,18 +2399,12 @@ async function runAgentLoopUntilSubagentsIdle(
         await stream.consumeStream();
       }),
   });
-  const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
-  if (hasDetachedCallbacks) {
-    await sealDetachedAsyncToolGroup(session.eventId);
-  }
-
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
 
     return {
       didFail: false,
       failureText: null,
-      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2590,16 +2418,6 @@ async function runAgentLoopUntilSubagentsIdle(
     return {
       didFail: true,
       failureText: result.failureText,
-      hasDetachedCallbacks: hasDetachedCallbacks,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-    };
-  }
-
-  if (hasDetachedCallbacks) {
-    return {
-      didFail: false,
-      failureText: null,
-      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2611,7 +2429,6 @@ async function runAgentLoopUntilSubagentsIdle(
   return {
     didFail: false,
     failureText: null,
-    hasDetachedCallbacks: hasDetachedCallbacks,
     ...(result.traceId ? { traceId: result.traceId } : {}),
   };
 }
@@ -2619,10 +2436,9 @@ async function runAgentLoopUntilSubagentsIdle(
 /**
  * Runs parent model passes until there is no runnable injected work.
  *
- * Heartbeats are emitted only while this request or worker waits on in-process
- * subagents, built-in async tools, or uploaded async tools on SSE. Detached
- * uploaded async tools do not add pending work here, so the request or worker can
- * return after sealing the group.
+ * Heartbeats are emitted only while this request or worker waits on
+ * in-process subagents and async tools. Detached sandbox background jobs
+ * settle through their completion callback, not through pending work here.
  */
 async function runParentContinuationLoop(options: {
   session: Session;
@@ -2691,7 +2507,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
     if (stream.didFail()) {
@@ -2716,7 +2531,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -2737,7 +2551,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -2751,7 +2564,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
   }
@@ -2763,10 +2575,9 @@ async function runParentContinuationLoop(options: {
  * After the parent stream ends, subagent and async-tool results may already be
  * queued, still be running, or be absent. This helper waits for outstanding
  * in-process work, emits wait heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the request or worker deadline.
- * Detached uploaded async tools do not add in-memory pending work, so waiting
- * here only holds the request or worker for subagents, built-in async tools, and uploaded
- * async tools on SSE.
+ * parent-visible completions plus timeout notices near the request or worker
+ * deadline. Detached sandbox background jobs add no in-memory pending work, so
+ * waiting here only holds the request or worker for subagents and async tools.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
@@ -3113,26 +2924,6 @@ function eventPublicConversationKey(
   agentId?: string,
 ): string {
   return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
-}
-
-function agentIdFromScopedKey(value: string, accountId: string): string | null {
-  const prefix = `acct:${accountId}:agent:`;
-  if (!value.startsWith(prefix)) {
-    return null;
-  }
-
-  const rest = value.slice(prefix.length);
-  const separator = rest.indexOf(":");
-
-  return separator > 0 ? rest.slice(0, separator) : null;
-}
-
-function isAccountScopedKey(
-  value: string,
-  accountId: string,
-  agentId: string,
-): boolean {
-  return value.startsWith(`acct:${accountId}:agent:${agentId}:`);
 }
 
 function parseAccountAgentFromScopedKey(

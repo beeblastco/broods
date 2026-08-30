@@ -191,10 +191,10 @@ existing stage with `broods stage create staging --from development`. See the
 ## Next Steps
 
 - [CLI](cli.md) — Command reference, organizations, and stages
-- [Resource Configuration](resources.md) — Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, tools, and cron jobs
+- [Resource Configuration](resources.md) — Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, MCP servers, and cron jobs
 - [SDK & Runtime API](sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
 - [Workspace & Sandbox](workspace/index.md) — Persistent files, compute, and permission modes
-- [External Tools](tools.md) — Built-in tools and uploading custom tools
+- [External Tools](tools.md) — Provider-defined tools and MCP servers
 - [Skills](skills.md) — Instruction bundles and the skill panel
 - [Channels](channels/index.md) — Telegram, Discord, Slack, GitHub, Pancake, and Zalo
 - [Sub Agents](sub-agents.md) — Parallel child agents

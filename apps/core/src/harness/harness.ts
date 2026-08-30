@@ -271,7 +271,7 @@ export async function runAgentLoop(
       });
     }
   };
-  // Accumulated sandbox CPU split by role (agent's own sandbox vs uploaded tool
+  // Accumulated sandbox CPU split by role (agent's own sandbox vs hosted MCP
   // sandboxes), so the dashboard can stream the Compute chart live off the running
   // root span instead of waiting for the finalize write. Empty until a sandbox
   // exec reports CPU.
@@ -481,7 +481,6 @@ export async function runAgentLoop(
   }
 
   const configuredApprovals = new Map<string, true>();
-  const policyToolIdsByName = new Map<string, string>();
   const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
     session.delivery?.kind === "channel" ? session.delivery : undefined;
@@ -501,7 +500,6 @@ export async function runAgentLoop(
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,
-        policyToolIdsByName: policyToolIdsByName,
         policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: {
           traceId: traceId,
@@ -567,7 +565,6 @@ export async function runAgentLoop(
     },
     resolvedWorkspaces,
     {
-      toolIdsByName: policyToolIdsByName,
       mcpIdsByName: policyMcpIdsByName,
       ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
     },

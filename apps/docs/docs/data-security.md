@@ -29,7 +29,7 @@ The account API secret is never stored directly. It is returned once on create o
 
 Provider credentials and account-specific runtime options must be usable at runtime, so they cannot be hashed. They are stored inside encrypted account-owned agent config. Normal account and agent responses recursively redact secret-like field names such as `token`, `secret`, `privateKey`, and `apiKey`, including inside tool config.
 
-Workspace files, skill bundles, and uploaded tool bundles are stored as account-scoped S3 objects (workspace, skills, and tool-bundles buckets). The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, the scoped sandbox mount-s3 role, the MicroVM build/execution roles, and deployment roles for the active stage.
+Workspace files, skill bundles, and uploaded hook and hosted MCP server bundles are stored as account-scoped S3 objects (workspace, skills, and tool-bundles buckets). The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, the scoped sandbox mount-s3 role, the MicroVM build/execution roles, and deployment roles for the active stage.
 
 ## How Config Encryption Works
 
@@ -64,14 +64,13 @@ Normal account responses redact secret-like fields:
 
 If a client sends `********` back in a patch, the existing real secret is preserved.
 
-## Untrusted Custom Tool Execution
+## Untrusted Hosted MCP Server Execution
 
-Account-uploaded tool bundles are untrusted code and never run in the core process. They execute by runtime tier:
+Account-uploaded hosted MCP server bundles are untrusted code and never run in the core process. They execute on the platform tool-runner Lambda — a plain Node.js function that runs each bundle in a per-invocation child process with a scrubbed environment and a fresh `TMPDIR`. The child is a containment layer, not a trust boundary: it runs as the same OS user as the function, so server code can read the function's own environment. The protections that do hold are that this function's execution role grants nothing but CloudWatch Logs, that the bundle is imported from memory and never written to disk, and that the child is reaped as a process group so nothing it spawns survives into the next (cross-tenant) warm invocation. Treat anything the function can reach as reachable by tenant code. The function runs outside a VPC, so egress is open internet; the bundle arrives via a short-lived pre-signed URL, so the function holds no S3 or data-plane access.
 
-- **Isolate tier** (pure-compute / fetch-only bundles): a V8 `isolated-vm` isolate in a Node child of the core. No filesystem, no npm/native imports, and network only through an SSRF-guarded `fetch` (private and metadata ranges blocked, resolved addresses pinned against DNS rebinding).
-- **Sandbox tier** (node/npm/native bundles): the platform tool-runner Lambda — a plain Node.js function that runs each bundle in a per-invocation child process with a scrubbed environment and a fresh `TMPDIR`. The child is a containment layer, not a trust boundary: it runs as the same OS user as the function, so tool code can read the function's own environment. The protections that do hold are that this function's execution role grants nothing but CloudWatch Logs, that the bundle is imported from memory and never written to disk, and that the child is reaped as a process group so nothing it spawns survives into the next (cross-tenant) warm invocation. Treat anything the function can reach as reachable by tenant code. The function runs outside a VPC, so tool egress is open internet; the bundle arrives inline in the invoke payload, so the function holds no S3 or data-plane access.
+Bundles are size-capped (10 MB) and time-bounded, and their sha256 is checked on every invoke.
 
-Bundles are size-capped (1 MB) and time-bounded, and both tiers surface results over the same NDJSON frame protocol.
+Inline [code hooks](hooks.md) are the other untrusted-code tier: a V8 `isolated-vm` isolate in a Node child of the core. No filesystem, no npm/native imports, and network only through an SSRF-guarded `fetch` (private and metadata ranges blocked, resolved addresses pinned against DNS rebinding).
 
 ## Why Keep It This Way
 

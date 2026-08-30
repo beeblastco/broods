@@ -111,12 +111,3 @@ export interface Skill {
     size?: number;
   }>;
 }
-
-export interface CustomTool {
-  accountId: string;
-  toolId: string;
-  name: string;
-  description: string;
-  sha256: string;
-  runtime?: "isolate" | "sandbox";
-}

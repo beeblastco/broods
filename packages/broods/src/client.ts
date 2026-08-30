@@ -105,7 +105,6 @@ export interface ResourceApi {
   readonly sandboxes?: Record<string, unknown>;
   readonly crons?: Record<string, unknown>;
   readonly skills?: Record<string, unknown>;
-  readonly tools?: Record<string, unknown>;
   readonly policies?: Record<string, unknown>;
 }
 

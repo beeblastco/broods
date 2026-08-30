@@ -16,7 +16,7 @@ type StageScopedTable = Extract<
   | "canvasLayouts"
   | "agentDeployments"
   | "deployKeys"
-  | "accountTools"
+  | "mcp"
   | "environmentVariables"
   | "environmentVariableReveals"
   | "channelRecords"
@@ -36,7 +36,7 @@ const STAGE_SCOPED_TABLES: StageScopedTable[] = [
   "canvasLayouts",
   "agentDeployments",
   "deployKeys",
-  "accountTools",
+  "mcp",
   "environmentVariables",
   "environmentVariableReveals",
   "channelRecords",
@@ -122,15 +122,13 @@ async function seedFullStage(t: T) {
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.db.insert("accountTools", {
+    await ctx.db.insert("mcp", {
       accountId: accountId,
       projectId: projectId,
       stageId: stageId,
       name: "lookup",
-      description: "lookup tool",
-      inputSchema: {},
-      bundleStorageKey: "bundles/lookup.js",
-      sha256: "abc",
+      transport: "http" as const,
+      url: "https://mcp.example.com/mcp",
       status: "active" as const,
       createdAt: now,
       updatedAt: now,
