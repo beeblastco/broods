@@ -93,8 +93,8 @@ bun run docs
 ## Contributing
 
 Contributions are welcome. Open an issue first to align on the approach, then send a PR.
-This checkout uses the Bun canary channel selected by `.bun-version`; run
-`bun upgrade --canary` before the commands below until Bun 1.4 is stable.
+This checkout pins Bun to the version in `.bun-version`; run `bun upgrade`
+before the commands below if yours is older.
 
 ```bash
 bun install      # install all workspaces

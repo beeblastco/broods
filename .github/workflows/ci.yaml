@@ -43,12 +43,7 @@ jobs:
         # Skip workspace postinstall (`sst install`). This validation job does
         # not deploy infrastructure, and `bun run check` / `bun run build`
         # regenerate the prompt artifacts they need.
-        #
-        # --no-save, not --frozen-lockfile: `.bun-version` floats on `canary`,
-        # and a canary whose frozen check rejects even the lockfile it just
-        # wrote takes every runner job down at once. Resolutions still come
-        # from bun.lock; the Dockerfiles pin bun by digest and stay frozen.
-        run: bun install --ignore-scripts --no-save
+        run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Lint
         # Reported separately from `bun run check` (which also runs it) so a lint
