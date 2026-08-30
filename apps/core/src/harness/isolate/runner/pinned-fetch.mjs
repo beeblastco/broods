@@ -34,7 +34,10 @@ export const DENY_CIDRS = [
 // denylist — deliberately not a replacement for the check itself.
 // `binary: true` returns the body as bytes in `bodyBytes` instead of decoded
 // text in `bodyText`, and skips the body of a non-2xx answer entirely;
-// `bodyLimitBytes` overrides the default body cap.
+// `bodyLimitBytes` overrides the default body cap. `redirectLimit: 0` refuses
+// redirects outright, for callers that must reach the host they named and no
+// other: every hop is revalidated, but http is a valid hop, so a redirect can
+// still move a request off TLS.
 export async function guardedFetch(url, init, opts = {}) {
   const timeoutMs = Number.isFinite(opts.timeoutMs)
     ? Math.max(0, Number(opts.timeoutMs))
@@ -53,6 +56,9 @@ export async function guardedFetch(url, init, opts = {}) {
         ...opts,
         signal: controller.signal,
         deadlineAt: Date.now() + timeoutMs,
+        redirectLimit: Number.isInteger(opts.redirectLimit)
+          ? Math.max(0, opts.redirectLimit)
+          : REDIRECT_LIMIT,
         redirects: 0,
       }),
       timeoutPromise,
@@ -68,7 +74,7 @@ export async function guardedFetch(url, init, opts = {}) {
 }
 
 async function guardedFetchWithDeadline(url, init, state) {
-  if (state.redirects > REDIRECT_LIMIT) {
+  if (state.redirects > state.redirectLimit) {
     throw new Error("redirect limit exceeded");
   }
   throwIfAborted(state.signal);

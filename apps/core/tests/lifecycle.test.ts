@@ -282,6 +282,24 @@ describe("createAgentLifecycleEmitter", () => {
     });
   });
 
+  it("refuses to follow a redirect away from the host the account named", async () => {
+    // Every hop would be revalidated against the denylist, but http is a valid
+    // hop, so following one could carry the signed payload off TLS to a host
+    // the operator never configured.
+    await withWebhookServer(
+      async (url) => {
+        await expect(
+          fireWebhook(
+            { url: url("/hook"), secret: "secret" },
+            { type: "agent.started" },
+            transport(),
+          ),
+        ).rejects.toThrow(/redirect limit exceeded/);
+      },
+      { location: "http://example.com/elsewhere", status: 302 },
+    );
+  });
+
   it("refuses a webhook whose name resolves to a private address", async () => {
     // The name is public and passes the protocol check; only resolution reveals
     // the metadata address. A hostname string check cannot see this, which is
@@ -374,7 +392,7 @@ function transport(): PinnedFetchTransport {
 
 async function withWebhookServer(
   run: (url: (path: string) => string, deliveries: Delivery[]) => Promise<void>,
-  options: { status?: number } = {},
+  options: { location?: string; status?: number } = {},
 ): Promise<void> {
   const deliveries: Delivery[] = [];
   const server: Server = createHttpsServer(
@@ -390,7 +408,10 @@ async function withWebhookServer(
             | string
             | undefined,
         });
-        response.writeHead(options.status ?? 200);
+        response.writeHead(
+          options.status ?? 200,
+          options.location ? { location: options.location } : undefined,
+        );
         response.end();
       });
     },
