@@ -15,7 +15,7 @@ export function McpNode({ id, data }: NodeProps): React.JSX.Element {
   const { stageId } = useStage();
 
   const server = useQuery(
-    api.mcpService.getByNode,
+    api.mcp.getByNode,
     projectId && stageId
       ? {
           projectId: projectId as Id<"projects">,

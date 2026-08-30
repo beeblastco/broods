@@ -41,12 +41,12 @@ export function McpDetailsTab({
 }): React.JSX.Element {
   const canQuery = !!projectId && !!stageId;
   const server = useQuery(
-    api.mcpService.getByNode,
+    api.mcp.getByNode,
     canQuery
       ? { projectId: projectId, stageId: stageId, nodeId: nodeId }
       : "skip",
   );
-  const saveForNode = useAction(api.mcpService.saveForNode);
+  const saveForNode = useAction(api.mcp.saveForNode);
 
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);

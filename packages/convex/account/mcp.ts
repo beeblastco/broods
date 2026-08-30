@@ -7,12 +7,13 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields } from "../schema";
 
-const mcpDoc = v.object({
+/** Full mcp row validator, shared with the dashboard-facing mcp service. */
+export const mcpDoc = v.object({
   ...mcpFields,
   _id: v.id("mcp"),
   _creationTime: v.number(),
@@ -218,39 +219,67 @@ export const update = internalMutation({
       await requireNameFree(ctx, doc.stageId, args.name);
     }
 
-    await ctx.db.patch(normalized, {
-      ...(args.name !== undefined ? { name: args.name } : {}),
-      ...(args.description !== undefined
-        ? { description: args.description }
-        : {}),
-      ...(args.transport !== undefined ? { transport: args.transport } : {}),
-      ...(args.url !== undefined ? { url: args.url } : {}),
-      ...(args.bundleStorageKey !== undefined
-        ? { bundleStorageKey: args.bundleStorageKey }
-        : {}),
-      ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
-      ...(args.headers !== undefined ? { headers: args.headers } : {}),
-      ...(args.allowedTools !== undefined
-        ? { allowedTools: args.allowedTools }
-        : {}),
-      ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
-      ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
-      // A transport switch clears the other side's connection fields so a
-      // hosted row never carries a stale url and vice versa.
-      ...(args.transport === "hosted" ? { url: undefined } : {}),
-      ...(args.transport === "http"
-        ? {
-            bundleStorageKey: undefined,
-            sha256: undefined,
-            sourceCode: args.sourceCode,
-          }
-        : {}),
-      updatedAt: Date.now(),
-    });
+    await ctx.db.patch(normalized, updatePatch(args, doc));
 
     return null;
   },
 });
+
+/**
+ * The fields an update writes. Provided args win; a transport switch clears
+ * the other side's connection fields so a hosted row never carries a stale
+ * url and vice versa; a bundle change that brings no source (a CLI sync over
+ * a dashboard-authored row) clears the stored source rather than letting it
+ * drift from the running bundle.
+ */
+function updatePatch(
+  args: {
+    name?: string;
+    description?: string;
+    transport?: "http" | "hosted";
+    url?: string;
+    bundleStorageKey?: string;
+    sha256?: string;
+    headers?: Record<string, string>;
+    allowedTools?: string[];
+    disabled?: boolean;
+    sourceCode?: string;
+  },
+  doc: Doc<"mcp">,
+): Partial<Doc<"mcp">> {
+  return {
+    ...(args.name !== undefined ? { name: args.name } : {}),
+    ...(args.description !== undefined
+      ? { description: args.description }
+      : {}),
+    ...(args.transport !== undefined ? { transport: args.transport } : {}),
+    ...(args.url !== undefined ? { url: args.url } : {}),
+    ...(args.bundleStorageKey !== undefined
+      ? { bundleStorageKey: args.bundleStorageKey }
+      : {}),
+    ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
+    ...(args.headers !== undefined ? { headers: args.headers } : {}),
+    ...(args.allowedTools !== undefined
+      ? { allowedTools: args.allowedTools }
+      : {}),
+    ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
+    ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
+    ...(args.transport === "hosted" ? { url: undefined } : {}),
+    ...(args.transport === "http"
+      ? {
+          bundleStorageKey: undefined,
+          sha256: undefined,
+          sourceCode: undefined,
+        }
+      : {}),
+    ...(args.sha256 !== undefined &&
+    args.sha256 !== doc.sha256 &&
+    args.sourceCode === undefined
+      ? { sourceCode: undefined }
+      : {}),
+    updatedAt: Date.now(),
+  };
+}
 
 /** Throw when an active server already claims `name` on this stage. */
 async function requireNameFree(

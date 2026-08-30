@@ -17,7 +17,7 @@ import {
   parseJsonBody,
   type CoreRequest,
 } from "../shared/http.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isPlainObject, isStringRecord } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
 
 const RPC_TIMEOUT_MS = 30_000;
@@ -36,7 +36,7 @@ export async function handleMcpServiceRpc(
   accountId: string,
   request: CoreRequest,
 ): Promise<Response> {
-  const body = parseJsonBody(request.body ? request : { body: "{}" });
+  const body = parseJsonBody(request);
   if (!isPlainObject(body)) {
     return errorResponse(400, "Request body must be a JSON object");
   }
@@ -83,36 +83,32 @@ function parseProbe(value: unknown): McpProbe | string {
   if (!isPlainObject(value)) return "rpc needs a serverId or a probe object";
   const { name, transport, url, headers, bundleStorageKey, sha256 } = value;
   if (typeof name !== "string" || !name) return "probe needs a name";
+  if (headers !== undefined && !isStringRecord(headers)) {
+    return "probe headers must be a string record";
+  }
+  const shared = {
+    name: name,
+    ...(headers !== undefined ? { headers: headers } : {}),
+  };
   if (transport === "http") {
     if (typeof url !== "string" || !url) return "an http probe needs a url";
-  } else if (transport === "hosted") {
+
+    return { ...shared, transport: transport, url: url };
+  }
+  if (transport === "hosted") {
     if (typeof bundleStorageKey !== "string" || typeof sha256 !== "string") {
       return "a hosted probe needs bundleStorageKey and sha256";
     }
-  } else {
-    return "probe transport must be http or hosted";
-  }
-  if (headers !== undefined) {
-    if (
-      !isPlainObject(headers) ||
-      Object.values(headers).some((header) => typeof header !== "string")
-    ) {
-      return "probe headers must be a string record";
-    }
+
+    return {
+      ...shared,
+      transport: transport,
+      bundleStorageKey: bundleStorageKey,
+      sha256: sha256,
+    };
   }
 
-  return {
-    name: name,
-    transport: transport,
-    ...(typeof url === "string" ? { url: url } : {}),
-    ...(headers !== undefined
-      ? { headers: headers as Record<string, string> }
-      : {}),
-    ...(typeof bundleStorageKey === "string"
-      ? { bundleStorageKey: bundleStorageKey }
-      : {}),
-    ...(typeof sha256 === "string" ? { sha256: sha256 } : {}),
-  };
+  return "probe transport must be http or hosted";
 }
 
 /**

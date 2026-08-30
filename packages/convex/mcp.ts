@@ -13,22 +13,17 @@ import {
   internalQuery,
   query,
   type ActionCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { authKit } from "./auth";
-import { putMcpBundle } from "./model/bundles";
+import { mcpDoc } from "./account/mcp";
+import { storeMcpBundle } from "./model/bundles";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
 import { normalizeMcpInput, type McpInput } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { serviceEnv, serviceHeaders } from "./model/serviceBridge";
-import { mcpFields } from "./schema";
-
-const mcpDoc = v.object({
-  ...mcpFields,
-  _id: v.id("mcp"),
-  _creationTime: v.number(),
-});
 
 const scopeArgs = {
   projectId: v.id("projects"),
@@ -55,96 +50,6 @@ interface ResolvedConnection {
   bundleStorageKey?: string;
   sha256?: string;
 }
-
-/** The MCP server a canvas node owns, or null when it has never been saved. */
-export const getByNode = query({
-  args: scopeArgs,
-  returns: v.union(v.null(), mcpDoc),
-  handler: async (ctx, { projectId, stageId, nodeId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    // Resolve ownership without throwing: a deleted project/stage should
-    // yield null for this reactive query rather than crashing the canvas.
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) return null;
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return null;
-
-    const server = await ctx.db
-      .query("mcp")
-      .withIndex("by_stageId_and_nodeId", (q) =>
-        q.eq("stageId", stageId).eq("nodeId", nodeId),
-      )
-      .first();
-
-    return server?.status === "active" ? server : null;
-  },
-});
-
-/**
- * Save a canvas-authored MCP server: a `url` makes an external row, a
- * `bundle` a hosted one. An action, not a mutation — the bundle reaches S3
- * and passes core's tools/list probe before the row is written.
- */
-export const saveForNode = action({
-  args: {
-    ...scopeArgs,
-    nodeLabel: v.string(),
-    url: v.optional(v.string()),
-    headers: v.optional(v.record(v.string(), v.string())),
-    bundle: v.optional(v.string()),
-    sourceCode: v.optional(v.string()),
-    description: v.optional(v.string()),
-    disabled: v.optional(v.boolean()),
-  },
-  returns: v.object({
-    serverId: v.id("mcp"),
-    verified: v.boolean(),
-    tools: v.array(v.any()),
-  }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ serverId: Id<"mcp">; verified: boolean; tools: unknown[] }> => {
-    const context: NodeContext = await ctx.runQuery(
-      internal.mcpService.nodeContext,
-      { projectId: args.projectId, stageId: args.stageId, nodeId: args.nodeId },
-    );
-
-    const input = await normalizeMcpInput(
-      stripUndefined({
-        name: mcpNameFromLabel(args.nodeLabel),
-        url: args.url,
-        bundle: args.bundle,
-        headers: args.headers,
-        description: args.description,
-        disabled: args.disabled,
-      }),
-      { requireConnection: context.existing === null },
-    );
-    const connection = await resolveConnection(ctx, context, input);
-    const probe = await probeServer(
-      context.accountId,
-      input.name ?? context.existing?.name ?? "server",
-      connection,
-    );
-    const serverId = await writeRow(ctx, context, args, input, connection);
-
-    return { serverId: serverId, verified: probe.verified, tools: probe.tools };
-  },
-});
-
-/** The live tool listing for a node's server, through core's MCP client. */
-export const listTools = action({
-  args: scopeArgs,
-  returns: v.array(v.any()),
-  handler: async (ctx, args): Promise<unknown[]> => {
-    const server = await requireServer(ctx, args);
-
-    return await coreMcpListTools(server.accountId, { serverId: server._id });
-  },
-});
 
 /** Run one tool from the explorer; returns the raw MCP result, isError included. */
 export const callTool = action({
@@ -174,23 +79,33 @@ export const callTool = action({
   },
 });
 
-/** Soft-delete the node's server so a removed canvas node stops registering tools. */
-export const removeForNode = action({
+/** The MCP server a canvas node owns, or null when it has never been saved. */
+export const getByNode = query({
   args: scopeArgs,
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const context: NodeContext = await ctx.runQuery(
-      internal.mcpService.nodeContext,
-      { projectId: args.projectId, stageId: args.stageId, nodeId: args.nodeId },
-    );
-    if (context.existing) {
-      await ctx.runMutation(internal.account.mcp.remove, {
-        accountId: context.accountId,
-        serverId: context.existing._id,
-      });
-    }
+  returns: v.union(v.null(), mcpDoc),
+  handler: async (ctx, { projectId, stageId, nodeId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-    return null;
+    // Resolve ownership without throwing: a deleted project/stage should
+    // yield null for this reactive query rather than crashing the canvas.
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project) return null;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
+
+    return await activeServerByNode(ctx, stageId, nodeId);
+  },
+});
+
+/** The live tool listing for a node's server, through core's MCP client. */
+export const listTools = action({
+  args: scopeArgs,
+  returns: v.array(v.any()),
+  handler: async (ctx, args): Promise<unknown[]> => {
+    const server = await requireServer(ctx, args);
+
+    return await coreMcpListTools(server.accountId, { serverId: server._id });
   },
 });
 
@@ -218,19 +133,108 @@ export const nodeContext = internalQuery({
       .first();
     if (!account) throw new Error("Account not found for project org");
 
-    const existing = await ctx.db
-      .query("mcp")
-      .withIndex("by_stageId_and_nodeId", (q) =>
-        q.eq("stageId", stageId).eq("nodeId", nodeId),
-      )
-      .first();
-
     return {
       accountId: account._id,
-      existing: existing?.status === "active" ? existing : null,
+      existing: await activeServerByNode(ctx, stageId, nodeId),
     };
   },
 });
+
+/** Soft-delete the node's server so a removed canvas node stops registering tools. */
+export const removeForNode = action({
+  args: scopeArgs,
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const context: NodeContext = await ctx.runQuery(internal.mcp.nodeContext, {
+      projectId: args.projectId,
+      stageId: args.stageId,
+      nodeId: args.nodeId,
+    });
+    if (context.existing) {
+      await ctx.runMutation(internal.account.mcp.remove, {
+        accountId: context.accountId,
+        serverId: context.existing._id,
+      });
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Save a canvas-authored MCP server: a `url` makes an external row, a
+ * `bundle` a hosted one. An action, not a mutation — the bundle reaches S3
+ * and passes core's tools/list probe before the row is written. A
+ * metadata-only edit (the enabled toggle, a description) skips the probe, so
+ * an unreachable server can still be disabled.
+ */
+export const saveForNode = action({
+  args: {
+    ...scopeArgs,
+    nodeLabel: v.string(),
+    url: v.optional(v.string()),
+    headers: v.optional(v.record(v.string(), v.string())),
+    bundle: v.optional(v.string()),
+    sourceCode: v.optional(v.string()),
+    description: v.optional(v.string()),
+    disabled: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    serverId: v.id("mcp"),
+    verified: v.boolean(),
+    tools: v.array(v.any()),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ serverId: Id<"mcp">; verified: boolean; tools: unknown[] }> => {
+    const context: NodeContext = await ctx.runQuery(internal.mcp.nodeContext, {
+      projectId: args.projectId,
+      stageId: args.stageId,
+      nodeId: args.nodeId,
+    });
+
+    const input = await normalizeMcpInput(
+      stripUndefined({
+        name: mcpNameFromLabel(args.nodeLabel),
+        url: args.url,
+        bundle: args.bundle,
+        headers: args.headers,
+        description: args.description,
+        disabled: args.disabled,
+      }),
+      { requireConnection: context.existing === null },
+    );
+    const connection = await resolveConnection(ctx, context, input);
+    const touchesConnection =
+      context.existing === null ||
+      args.url !== undefined ||
+      args.bundle !== undefined ||
+      args.headers !== undefined;
+    const probe = touchesConnection
+      ? await probeServer(context.accountId, input.name!, connection)
+      : { verified: true, tools: [] };
+    const serverId = await writeRow(ctx, context, args, input, connection);
+
+    return { serverId: serverId, verified: probe.verified, tools: probe.tools };
+  },
+});
+
+/** The node's active server row, shared by the public query and the save path. */
+async function activeServerByNode(
+  ctx: QueryCtx,
+  stageId: Id<"stages">,
+  nodeId: string,
+): Promise<Doc<"mcp"> | null> {
+  const server = await ctx.db
+    .query("mcp")
+    .withIndex("by_stageId_and_nodeId", (q) =>
+      q.eq("stageId", stageId).eq("nodeId", nodeId),
+    )
+    .first();
+
+  return server?.status === "active" ? server : null;
+}
 
 /** tools/list through core, unwrapping the { tools } envelope. */
 async function coreMcpListTools(
@@ -317,7 +321,7 @@ async function requireServer(
   ctx: ActionCtx,
   args: NodeScope,
 ): Promise<Doc<"mcp">> {
-  const server = await ctx.runQuery(api.mcpService.getByNode, {
+  const server = await ctx.runQuery(api.mcp.getByNode, {
     projectId: args.projectId,
     stageId: args.stageId,
     nodeId: args.nodeId,
@@ -360,25 +364,22 @@ async function resolveConnection(
   });
 }
 
-/** Upload a changed bundle (the key is the digest, so unchanged bytes reuse it). */
+/** Upload a changed bundle, or carry the existing row's stored one forward. */
 async function storeBundle(
   ctx: ActionCtx,
   context: NodeContext,
   input: McpInput,
 ): Promise<{ bundleStorageKey: string; sha256: string } | null> {
-  const existing = context.existing;
-  if (input.bundle !== undefined && input.sha256 !== undefined) {
-    const bundleStorageKey =
-      existing?.sha256 === input.sha256 && existing.bundleStorageKey
-        ? existing.bundleStorageKey
-        : await putMcpBundle(ctx, {
-            accountId: context.accountId,
-            sha256: input.sha256,
-            bundle: input.bundle,
-          });
-
-    return { bundleStorageKey: bundleStorageKey, sha256: input.sha256 };
+  const bundleStorageKey = await storeMcpBundle(
+    ctx,
+    context.accountId,
+    input,
+    context.existing,
+  );
+  if (bundleStorageKey !== undefined) {
+    return { bundleStorageKey: bundleStorageKey, sha256: input.sha256! };
   }
+  const existing = context.existing;
   if (existing?.bundleStorageKey && existing.sha256) {
     return {
       bundleStorageKey: existing.bundleStorageKey,

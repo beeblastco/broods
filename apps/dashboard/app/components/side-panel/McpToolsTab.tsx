@@ -35,7 +35,7 @@ export function McpToolsTab({
   stageId: Id<"stages"> | null;
   nodeId: string;
 }): React.JSX.Element {
-  const listTools = useAction(api.mcpService.listTools);
+  const listTools = useAction(api.mcp.listTools);
 
   const [tools, setTools] = useState<RemoteTool[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -128,7 +128,7 @@ function ToolRow({
   nodeId: string;
   tool: RemoteTool;
 }): React.JSX.Element {
-  const callTool = useAction(api.mcpService.callTool);
+  const callTool = useAction(api.mcp.callTool);
 
   const [isOpen, setIsOpen] = useState(false);
   const [inputJson, setInputJson] = useState("{}");

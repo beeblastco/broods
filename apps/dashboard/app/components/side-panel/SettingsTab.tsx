@@ -5,7 +5,7 @@ import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useState } from "react";
 
-type NodeType =
+export type NodeType =
   | "agent"
   | "database"
   | "mcp"
@@ -85,8 +85,13 @@ export function SettingsTab({
   const [isDeleting, setIsDeleting] = useState(false);
   const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);
 
-  const descriptions = DELETE_DESCRIPTIONS[nodeType];
-  const typeLabel = NODE_TYPE_LABELS[nodeType];
+  // A stale stored layout can still carry a retired node type; fall back to
+  // generic copy instead of crashing the panel.
+  const descriptions = DELETE_DESCRIPTIONS[nodeType] ?? {
+    summary: "Remove this node from the canvas.",
+    detail: "Only the canvas node is removed.",
+  };
+  const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
   // Open the delete dialog when the parent bumps the trigger token (handled
   // during render rather than in an effect to avoid a cascading re-render).

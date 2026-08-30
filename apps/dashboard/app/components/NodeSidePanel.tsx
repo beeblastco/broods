@@ -15,12 +15,15 @@ import {
   WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
 import { SessionDetailsTab } from "@/app/components/side-panel/SessionDetailsTab";
-import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
+import {
+  SettingsTab,
+  type NodeType,
+} from "@/app/components/side-panel/SettingsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
 import { McpDetailsTab } from "@/app/components/side-panel/McpDetailsTab";
-import { McpServerTab } from "@/app/components/side-panel/McpServerTab";
+import { McpTab } from "@/app/components/side-panel/McpTab";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -122,13 +125,6 @@ const McpToolsTab = dynamic(loadMcpToolsTab, {
   ),
 });
 
-type NodeType =
-  | "agent"
-  | "database"
-  | "mcp"
-  | "workspace"
-  | "sandbox"
-  | "skill";
 type HeaderStatusBadge = {
   text: string;
   color: string;
@@ -263,7 +259,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   );
 
   const mcpServer = useQuery(
-    api.mcpService.getByNode,
+    api.mcp.getByNode,
     canQueryMcpStatus
       ? {
           projectId: projectId,
@@ -272,7 +268,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
       : "skip",
   );
-  const removeMcpForNode = useAction(api.mcpService.removeForNode);
+  const removeMcpForNode = useAction(api.mcp.removeForNode);
 
   // Editable name (agent uses agentConfig, others use canvas label)
   const [editName, setEditName] = useState("");
@@ -797,7 +793,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-medium text-foreground">
-            {PANEL_TITLES[nodeType]}
+            {PANEL_TITLES[nodeType] ?? "Node"}
           </h2>
           {headerStatus && (
             <Badge
@@ -1019,7 +1015,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               value="server"
               className="flex flex-col overflow-hidden"
             >
-              <McpServerTab
+              <McpTab
                 projectId={projectId}
                 stageId={stageId}
                 nodeId={node.id}

@@ -58,7 +58,7 @@ type SaveState =
   | { kind: "idle" }
   | { kind: "saved"; toolCount: number; verified: boolean };
 
-export function McpServerTab({
+export function McpTab({
   projectId,
   stageId,
   nodeId,
@@ -71,12 +71,12 @@ export function McpServerTab({
 }): React.JSX.Element {
   const canQuery = !!projectId && !!stageId;
   const server = useQuery(
-    api.mcpService.getByNode,
+    api.mcp.getByNode,
     canQuery
       ? { projectId: projectId, stageId: stageId, nodeId: nodeId }
       : "skip",
   );
-  const saveForNode = useAction(api.mcpService.saveForNode);
+  const saveForNode = useAction(api.mcp.saveForNode);
 
   const form = useServerForm(server);
   const {
@@ -127,12 +127,10 @@ export function McpServerTab({
       };
       let result: { verified: boolean; tools: unknown[] };
       if (activeTransport === "hosted") {
-        const formatted = await formatSource(sourceCode);
-        setSourceCode(formatted);
         result = await saveForNode({
           ...shared,
-          bundle: await bundleSource(formatted),
-          sourceCode: formatted,
+          bundle: await bundleSource(sourceCode),
+          sourceCode: sourceCode,
         });
       } else {
         result = await saveForNode({ ...shared, url: url.trim() });
