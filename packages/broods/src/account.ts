@@ -250,12 +250,17 @@ export interface AccountMcp {
   deletedAt?: string;
 }
 
-/** Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads. */
+/**
+ * Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads inline
+ * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first.
+ */
 export interface CreateMcpInput {
   name: string;
   description?: string;
   url?: string;
   bundle?: string;
+  bundleStorageId?: string;
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
 }
@@ -266,6 +271,8 @@ export interface UpdateMcpInput {
   description?: string;
   url?: string;
   bundle?: string;
+  bundleStorageId?: string;
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled?: boolean;
@@ -886,6 +893,55 @@ export class BroodsAccountClient {
       throw new BroodsAccountApiError("POST", path, 404, "Not found");
 
     return result;
+  }
+
+  /**
+   * Upload a hosted MCP bundle too large for the JSON body; returns the
+   * `bundleStorageId` + `sha256` pair `createMcp`/`updateMcp` accept.
+   */
+  async uploadMcpBundle(
+    bundle: string,
+  ): Promise<{ bundleStorageId: string; sha256: string }> {
+    const path = "/v1/mcp/uploads";
+    const minted = await this.request<{ uploadUrl: string }>("POST", path);
+    if (!minted?.uploadUrl)
+      throw new BroodsAccountApiError(
+        "POST",
+        path,
+        502,
+        "response omitted uploadUrl",
+      );
+    const stored = await this.fetchImpl(minted.uploadUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/javascript" },
+      body: bundle,
+    });
+    if (!stored.ok) {
+      throw new BroodsAccountApiError(
+        "POST",
+        path,
+        stored.status,
+        await stored.text(),
+      );
+    }
+    const { storageId } = (await stored.json()) as { storageId?: string };
+    if (!storageId)
+      throw new BroodsAccountApiError(
+        "POST",
+        path,
+        502,
+        "upload response omitted storageId",
+      );
+    // Web crypto, not node:crypto: this module stays edge-runtime pure.
+    const digestBytes = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(bundle),
+    );
+    const digest = Array.from(new Uint8Array(digestBytes))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    return { bundleStorageId: storageId, sha256: digest };
   }
 
   async getMcp(serverId: string): Promise<AccountMcp | null> {

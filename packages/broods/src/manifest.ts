@@ -111,10 +111,14 @@ export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
-// The server bounds uploaded bundles: 1 MB for isolate-run hooks, 10 MB for
-// hosted MCP server bundles. The CLI enforces the larger bound and lets the
-// server reject an oversized hook bundle with its own limit named.
+// Server bounds: 1 MB for isolate-run hooks, 50 MB for hosted MCP bundles
+// (#190); past the inline threshold a bundle travels through an upload URL
+// instead of the manifest body (sync.ts). The MCP values mirror
+// packages/convex/model/mcp.ts (the published CLI cannot import the backend)
+// — change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
+export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
+export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
 const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
@@ -1667,9 +1671,9 @@ async function normalizeMcpConfig(
     await rm(shimDir, { recursive: true, force: true });
   }
   const bundleSize = Buffer.byteLength(bundle);
-  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
+  if (bundleSize > MAX_MCP_BUNDLE_BYTES) {
     throw new Error(
-      `MCP server bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+      `MCP server bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_MCP_BUNDLE_BYTES})`,
     );
   }
   await assertServableMcpBundle(manifestPath, bundle);
@@ -1882,7 +1886,7 @@ function isUnsafeBundlePath(path: string): boolean {
   );
 }
 
-function sha256Hex(value: string | Buffer): string {
+export function sha256Hex(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 

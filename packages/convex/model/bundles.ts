@@ -24,28 +24,47 @@ export async function putHookBundle(
 }
 
 /**
- * Content-addressed store for a hosted MCP server's bundle: when the sha256
- * matches the existing row, its stored key is reused; a connection-only input
- * (no bundle) stores nothing.
+ * Content-addressed store for a hosted MCP server's bundle: a sha256 matching
+ * the existing row reuses its stored key; a connection-only input stores
+ * nothing. Large bundles arrive pre-uploaded as `bundleStorageId` (#190) and
+ * the S3 writer verifies their declared sha256 against the bytes.
  */
 export async function storeMcpBundle(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  input: Pick<McpInput, "bundle" | "sha256">,
+  input: Pick<McpInput, "bundle" | "bundleStorageId" | "sha256">,
   existing: Pick<Doc<"mcp">, "sha256" | "bundleStorageKey"> | null,
 ): Promise<string | undefined> {
-  if (input.bundle === undefined || input.sha256 === undefined) {
+  if (
+    (input.bundle === undefined && input.bundleStorageId === undefined) ||
+    input.sha256 === undefined
+  ) {
     return undefined;
   }
   if (existing?.sha256 === input.sha256 && existing.bundleStorageKey) {
+    if (input.bundleStorageId !== undefined) {
+      await ctx.storage.delete(input.bundleStorageId as Id<"_storage">);
+    }
+
     return existing.bundleStorageKey;
   }
-
-  return await putBundle(ctx, internal.aws.bundles.putMcpBundle, {
-    accountId: accountId,
-    sha256: input.sha256,
-    bundle: input.bundle,
-  });
+  // One courier path for both inputs: an inline bundle is stored first, a
+  // pre-uploaded one already lives there; the blob is deleted pass or fail.
+  const storageId =
+    input.bundleStorageId !== undefined
+      ? (input.bundleStorageId as Id<"_storage">)
+      : await ctx.storage.store(
+          new Blob([input.bundle!], { type: BUNDLE_CONTENT_TYPE }),
+        );
+  try {
+    return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
+      accountId: accountId,
+      sha256: input.sha256,
+      storageId: storageId,
+    });
+  } finally {
+    await ctx.storage.delete(storageId);
+  }
 }
 
 // Couriers the bytes through Convex storage, runs the S3 writer action, and

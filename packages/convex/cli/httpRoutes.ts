@@ -33,6 +33,7 @@ export type CliAuth =
 
 export type RouteParts =
   | { kind: "manifest"; project: string; stage: string }
+  | { kind: "mcpBundleUpload"; project: string; stage: string }
   | { kind: "logs"; project: string; stage: string }
   | { kind: "runtimeKey"; project: string; stage: string }
   | { kind: "envList"; project: string; stage: string }
@@ -174,6 +175,23 @@ export async function handleManifestRoute(
     return await handleManifestSync(ctx, req, route, auth);
 
   return json({ error: "Method not allowed" }, 405);
+}
+
+/**
+ * Mint a storage upload URL for a large hosted-MCP bundle (#190); the CLI
+ * passes the returned storage id as `bundleStorageId` in the manifest.
+ */
+export async function handleMcpBundleUploadRoute(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  const uploadUrl = await ctx.runMutation(
+    internal.account.mcp.generateBundleUploadUrl,
+    {},
+  );
+
+  return json({ uploadUrl: uploadUrl });
 }
 
 /** DELETE one manifest-managed resource by kind and name. */

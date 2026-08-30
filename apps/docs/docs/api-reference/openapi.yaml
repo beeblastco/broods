@@ -1814,6 +1814,30 @@ paths:
         "400": { description: Missing project or stage }
         "404": { description: Project or stage not found }
 
+  /v1/mcp/uploads:
+    post:
+      tags: [MCP servers]
+      summary: Mint a bundle upload URL
+      description: >-
+        Mints a short-lived upload URL for a hosted MCP server bundle too
+        large to ride the JSON request body (over 10 MB, up to 50 MB). POST
+        the bundled module source there with content type
+        `application/javascript`; the response's `storageId` then registers
+        the server as `bundleStorageId` (with its `sha256`) via `POST
+        /v1/mcp` or `PATCH /v1/mcp/{serverId}`. The declared sha256 is
+        verified against the uploaded bytes before anything is stored.
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Upload URL minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploadUrl:
+                    type: string
+
   /v1/mcp/{serverId}:
     get:
       tags: [MCP servers]
@@ -3813,8 +3837,22 @@ components:
           description: >-
             Hosted alternative to url (`transport: hosted`): bundled JavaScript
             module whose default export is a fetch-style MCP handler
-            (createMcpHandler). Max 10 MB; the tool-runner Lambda hosts it, one
-            invoke per request.
+            (createMcpHandler). Max 10 MB inline; the tool-runner Lambda hosts
+            it, one invoke per request. Larger bundles (up to 50 MB) go through
+            `POST /v1/mcp/uploads` and are registered with bundleStorageId +
+            sha256 instead.
+        bundleStorageId:
+          type: string
+          description: >-
+            Storage id returned by POSTing the module source to an upload URL
+            from `POST /v1/mcp/uploads`; the large-bundle alternative to
+            `bundle`. Requires `sha256`. Exactly one of url, bundle or
+            bundleStorageId connects the server.
+        sha256:
+          type: string
+          description: >-
+            Hex sha256 of the uploaded module source; required with
+            bundleStorageId and verified server-side against the bytes.
         headers:
           type: object
           additionalProperties:

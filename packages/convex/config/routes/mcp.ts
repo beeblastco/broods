@@ -72,6 +72,23 @@ export async function handleMcpRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
+/**
+ * `POST /v1/mcp/uploads`: mint a storage upload URL for a bundle too large to
+ * ride the JSON body (#190); register the result as `bundleStorageId`.
+ */
+export async function handleMcpUploadsRoute(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const uploadUrl = await ctx.runMutation(
+    internal.account.mcp.generateBundleUploadUrl,
+    {},
+  );
+
+  return json({ uploadUrl: uploadUrl });
+}
+
 /** Collection verbs: list the stage's servers on GET, register on POST. */
 async function handleMcpCollectionRoute(
   ctx: ActionCtx,

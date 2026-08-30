@@ -25,7 +25,7 @@ import { handleChannelRecordRoute } from "./routes/channels";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
-import { handleMcpRoute } from "./routes/mcp";
+import { handleMcpRoute, handleMcpUploadsRoute } from "./routes/mcp";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
@@ -43,6 +43,7 @@ type ConfigRoute =
   | { kind: "skills"; name?: string }
   | { kind: "hooks"; hookId?: string }
   | { kind: "mcp"; serverId?: string }
+  | { kind: "mcpBundleUpload" }
   | { kind: "workspaceFiles"; workspaceId: string }
   | { kind: "workspaceDownloadLinks"; workspaceId: string }
   | { kind: "crons"; cronId?: string; runs: boolean }
@@ -137,6 +138,10 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("hooks", route.hookId);
     case "mcp":
       return apiResource("mcp", route.serverId);
+    // Minting an upload URL authorizes like a collection-level MCP write, not
+    // like an operation on a server named "uploads".
+    case "mcpBundleUpload":
+      return apiResource("mcp", undefined);
     case "workspaceFiles":
     case "workspaceDownloadLinks":
     case "workspaces":
@@ -172,6 +177,8 @@ async function dispatchResourceRoute(
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
     case "mcp":
       return await handleMcpRoute(ctx, req, accountId, actor, route.serverId);
+    case "mcpBundleUpload":
+      return await handleMcpUploadsRoute(ctx, req);
     case "workspaceFiles":
       return await handleWorkspaceFilesRoute(
         ctx,
@@ -389,6 +396,9 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
       kind: "skills",
       ...(skills[1] ? { name: decodeURIComponent(skills[1]) } : {}),
     };
+
+  // Before the generic mcp match: `uploads` is a route, not a server id.
+  if (pathname === "/v1/mcp/uploads") return { kind: "mcpBundleUpload" };
 
   const mcp = pathname.match(/^\/v1\/mcp(?:\/([^/]+))?$/);
   if (mcp)

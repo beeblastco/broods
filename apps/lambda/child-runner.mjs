@@ -1,16 +1,17 @@
 /**
- * Node-native runner for hosted MCP server bundles (#331). Runs the uploaded
- * bundle in a real Node process — full fetch/timers/AbortController, node:
- * builtins, and any npm deps the bundler inlined. It is spawned per invocation
- * by handler.mjs with a scrubbed env and answers over the NDJSON frame protocol
- * (final/error) the core invoker parses. The run request arrives on stdin; the
- * bundle arrives as raw bytes on fd 3.
+ * Node-native runner for hosted MCP server bundles (#331, warm reuse #189).
+ * Runs the uploaded bundle in a real Node process. The bundle arrives on fd 3
+ * once at spawn; requests arrive as NDJSON lines on stdin, one per Lambda
+ * invocation, each answered with one terminal frame (final/error) on stdout.
+ * A `final` frame keeps the process alive for the next same-tenant request;
+ * any error, timeout, or unhandled rejection retires it by exiting.
  */
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { registerHooks } from "node:module";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 // The bundle rides its own pipe rather than base64 inside the request JSON:
@@ -18,7 +19,7 @@ import { pathToFileURL } from "node:url";
 // sides of the pipe, for nothing.
 const BUNDLE_FD = 3;
 
-// Wall-clock deadline for the whole run; the handler also hard-kills the child,
+// Wall-clock deadline for one request; the handler also hard-kills the child,
 // this is the cooperative in-process bound that trips the request signal first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
@@ -30,53 +31,91 @@ const BUNDLE_URL = pathToFileURL(
   join(process.env.LAMBDA_TASK_ROOT ?? process.cwd(), "broods-mcp-bundle.mjs"),
 ).href;
 
-// The timeout and the run's own completion race: process.exit is deferred to the
-// stdout flush callback, so without this the aborted run emits a second terminal
-// frame after the timeout already wrote one.
-let settled = false;
+// The run and the timeout race to write the terminal frame; first one wins.
+// `true` also means idle — nothing in flight before or between requests.
+let settled = true;
 
-// Stray timers/promises in user code must not crash the runner after the
-// terminal frame is on stdout; still log to stderr so real bugs stay visible.
+// The emitted frame carried an exit code: the process exits once it flushes,
+// so the loop must not read another request.
+let retiring = false;
+
+// A stray rejection must not crash the runner mid-frame, but it must not
+// serve another call either: mid-request the child retires after the frame
+// flushes, idle it exits on the spot, and a retiring child is left alone (its
+// exit is already pending on the flush).
+let poisoned = false;
 process.on("unhandledRejection", (reason) => {
   console.error("[mcp-runner] unhandled rejection:", reason);
+  poisoned = true;
+  if (settled && !retiring) process.exit(1);
 });
 
-await runMcpRequest();
+await runRequestLoop();
 
-async function runMcpRequest() {
-  const controller = new AbortController();
-  const timeoutMs = runTimeoutMs();
-  const timeout = setTimeout(() => {
-    controller.abort(new Error("mcp server run timed out"));
-    emitTerminal({ t: "error", error: "mcp server run timed out" }, 1);
-  }, timeoutMs);
-  try {
-    // Both pipes at once: the handler writes the request immediately and the
-    // bundle whenever its S3 fetch lands, so neither should gate the other.
-    const [request, bundle] = await Promise.all([
-      readAllStdin(),
-      readBundleBytes(),
-    ]);
-    const payload = parsePayload(JSON.parse(request));
-    const actualSha = createHash("sha256").update(bundle).digest("hex");
-    if (actualSha !== payload.expectedSha256) {
-      throw new Error("bundle hash mismatch inside mcp runner");
+async function runRequestLoop() {
+  // Released after the first import: the module lives in V8's cache, so the
+  // raw bytes (up to 50 MB) need not stay pinned for the child's lifetime.
+  let bundle = await readBundleBytes();
+  const actualSha = createHash("sha256").update(bundle).digest("hex");
+  let handlerModule;
+  // One request per line; the handler serializes invocations, so by the time a
+  // line arrives the previous request has already emitted its terminal frame.
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (line.trim() === "") continue;
+    settled = false;
+    const cpuBaseline = process.cpuUsage();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error("mcp server run timed out"));
+      emitTerminal(
+        { t: "error", error: "mcp server run timed out" },
+        cpuBaseline,
+        1,
+      );
+    }, runTimeoutMs());
+    try {
+      const payload = parsePayload(JSON.parse(line));
+      if (payload.expectedSha256 !== actualSha) {
+        throw new Error("bundle hash mismatch inside mcp runner");
+      }
+      // Fresh scratch dir per request: nothing a call writes to HOME/TMPDIR
+      // is visible to the next call.
+      if (payload.home !== undefined) {
+        process.env.HOME = payload.home;
+        process.env.TMPDIR = payload.home;
+      }
+      if (handlerModule === undefined) {
+        handlerModule = await importBundle(bundle);
+        bundle = null;
+      }
+      const result = await runMcpBundle(
+        handlerModule,
+        payload,
+        controller.signal,
+      );
+      clearTimeout(timeout);
+      emitTerminal(
+        { t: "final", result: result },
+        cpuBaseline,
+        poisoned ? 1 : null,
+      );
+    } catch (error) {
+      clearTimeout(timeout);
+      emitTerminal({ t: "error", error: errorMessage(error) }, cpuBaseline, 1);
     }
-    const result = await runMcpBundle(payload, bundle, controller.signal);
-    clearTimeout(timeout);
-    emitTerminal({ t: "final", result: result }, 0);
-  } catch (error) {
-    clearTimeout(timeout);
-    emitTerminal({ t: "error", error: errorMessage(error) }, 1);
+    // A retiring run has its frame on the wire and its exit pending in the
+    // flush callback; reading another line would race the exit.
+    if (retiring) return;
   }
+  process.exit(0);
 }
 
 // The bundle default-exports a fetch-style MCP handler (e.g.
-// `createMcpHandler(...)` from @modelcontextprotocol/server). One invoke
+// `createMcpHandler(...)` from @modelcontextprotocol/server). One request
 // carries exactly one web request; the stateless 2026-07-28 transport is what
 // makes that mapping complete.
-async function runMcpBundle(payload, bundle, abortSignal) {
-  const module = await importBundle(bundle);
+async function runMcpBundle(module, payload, abortSignal) {
   const handler = module.default;
   const fetchLike =
     handler && typeof handler.fetch === "function"
@@ -109,14 +148,6 @@ async function runMcpBundle(payload, bundle, abortSignal) {
   };
 }
 
-async function readAllStdin() {
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) input += chunk;
-
-  return input.trim();
-}
-
 async function readBundleBytes() {
   const chunks = [];
   for await (const chunk of createReadStream(null, { fd: BUNDLE_FD })) {
@@ -145,19 +176,23 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// The terminal frame carries this run's CPU. The child is one process per
-// request, so its own cpuUsage is exactly what the call cost, S3 fetch and
-// parse in.
-function emitTerminal(frame, code) {
+// CPU is a delta from the request start, so a reused child reports exactly
+// what one call cost. `exitCode` null keeps the process alive; a number
+// retires it after the frame flushes, so the pipe write is never truncated.
+// `t` must stay the frame's first key: handler.mjs classifies terminal frames
+// by line prefix without parsing them.
+function emitTerminal(frame, cpuBaseline, exitCode) {
   if (settled) return;
   settled = true;
-  const cpu = process.cpuUsage();
+  if (exitCode !== null) retiring = true;
+  const cpu = process.cpuUsage(cpuBaseline);
   const stamped = { ...frame, cpuUsec: cpu.user + cpu.system };
-  // Flush the terminal frame before exiting so a pipe write is never truncated,
-  // and force-exit so user code's lingering handles cannot keep the child alive.
-  process.stdout.write(`${JSON.stringify(stamped)}\n`, () =>
-    process.exit(code),
-  );
+  const line = `${JSON.stringify(stamped)}\n`;
+  if (exitCode === null) {
+    process.stdout.write(line);
+  } else {
+    process.stdout.write(line, () => process.exit(exitCode));
+  }
 }
 
 function errorMessage(error) {
@@ -183,6 +218,7 @@ function parsePayload(payload) {
     mode: "mcp",
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
+    ...(typeof payload.home === "string" ? { home: payload.home } : {}),
     mcpRequest: {
       method: mcp.method,
       headers:
