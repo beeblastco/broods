@@ -182,8 +182,8 @@ describe("MCP servers are scoped to a stage", () => {
 });
 
 describe("normalizeMcpInput", () => {
-  test("accepts a full registration", () => {
-    const input = normalizeMcpInput(
+  test("accepts a full registration", async () => {
+    const input = await normalizeMcpInput(
       {
         name: "search",
         description: "Company search backend.",
@@ -197,28 +197,28 @@ describe("normalizeMcpInput", () => {
     expect(input.allowedTools).toEqual(["query", "fetch_doc"]);
   });
 
-  test("requires name and url on create", () => {
-    expect(() =>
+  test("requires name and url on create", async () => {
+    await expect(
       normalizeMcpInput({ url: SERVER_URL }, { requireConnection: true }),
-    ).toThrow("name must be provided");
-    expect(() =>
+    ).rejects.toThrow("name must be provided");
+    await expect(
       normalizeMcpInput({ name: "search" }, { requireConnection: true }),
-    ).toThrow("url must be provided");
+    ).rejects.toThrow("url must be provided");
   });
 
-  test("rejects names that break the server__tool namespace", () => {
+  test("rejects names that break the server__tool namespace", async () => {
     for (const name of ["Search", "se_arch", "1search", "a".repeat(33), ""]) {
-      expect(() =>
+      await expect(
         normalizeMcpInput(
           { name: name, url: SERVER_URL },
           { requireConnection: true },
         ),
-      ).toThrow("name must be");
+      ).rejects.toThrow("name must be");
     }
   });
 
-  test("rejects inline secrets in credential headers", () => {
-    expect(() =>
+  test("rejects inline secrets in credential headers", async () => {
+    await expect(
       normalizeMcpInput(
         {
           name: "search",
@@ -227,8 +227,8 @@ describe("normalizeMcpInput", () => {
         },
         { requireConnection: true },
       ),
-    ).toThrow("headers values for Authorization must reference");
-    expect(() =>
+    ).rejects.toThrow("headers values for Authorization must reference");
+    await expect(
       normalizeMcpInput(
         {
           name: "search",
@@ -237,32 +237,32 @@ describe("normalizeMcpInput", () => {
         },
         { requireConnection: true },
       ),
-    ).toThrow("headers values for X-Api-Key must reference");
+    ).rejects.toThrow("headers values for X-Api-Key must reference");
   });
 
-  test("rejects urls embedding credentials", () => {
-    expect(() =>
+  test("rejects urls embedding credentials", async () => {
+    await expect(
       normalizeMcpInput(
         { name: "search", url: "https://user:pass@mcp.example.com/mcp" },
         { requireConnection: true },
       ),
-    ).toThrow("url must not embed credentials");
+    ).rejects.toThrow("url must not embed credentials");
   });
 
-  test("rejects non-http urls and header injection", () => {
-    expect(() =>
+  test("rejects non-http urls and header injection", async () => {
+    await expect(
       normalizeMcpInput(
         { name: "search", url: "ftp://mcp.example.com" },
         { requireConnection: true },
       ),
-    ).toThrow("url must use http or https");
-    expect(() =>
+    ).rejects.toThrow("url must use http or https");
+    await expect(
       normalizeMcpInput(
         { name: "search", url: "not a url" },
         { requireConnection: true },
       ),
-    ).toThrow("url must be a valid absolute URL");
-    expect(() =>
+    ).rejects.toThrow("url must be a valid absolute URL");
+    await expect(
       normalizeMcpInput(
         {
           name: "search",
@@ -271,14 +271,66 @@ describe("normalizeMcpInput", () => {
         },
         { requireConnection: true },
       ),
-    ).toThrow("headers values must be single-line");
+    ).rejects.toThrow("headers values must be single-line");
   });
 
-  test("a patch may carry any subset", () => {
-    const input = normalizeMcpInput(
+  test("a patch may carry any subset", async () => {
+    const input = await normalizeMcpInput(
       { disabled: true },
       { requireConnection: false },
     );
     expect(input).toEqual({ disabled: true });
+  });
+
+  test("a bundle makes a hosted server; url and bundle never mix", async () => {
+    const hosted = await normalizeMcpInput(
+      { name: "hosted", bundle: "export default () => new Response()" },
+      { requireConnection: true },
+    );
+    expect(hosted.transport).toBe("hosted");
+    expect(hosted.url).toBeUndefined();
+    expect(hosted.sha256).toMatch(/^[0-9a-f]{64}$/);
+    await expect(
+      normalizeMcpInput(
+        { name: "both", url: SERVER_URL, bundle: "export default 1" },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("url and bundle are mutually exclusive");
+    await expect(
+      normalizeMcpInput({ name: "neither" }, { requireConnection: true }),
+    ).rejects.toThrow("url must be provided, or bundle for a hosted server");
+  });
+});
+
+describe("hosted rows", () => {
+  test("create enforces the per-transport connection fields", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+
+    await expect(
+      tt.mutation(internal.account.mcp.create, {
+        accountId: scope.accountId,
+        projectId: scope.projectId,
+        stageId: scope.stageId,
+        name: "hosted",
+        transport: "hosted",
+      }),
+    ).rejects.toThrow("hosted MCP servers need bundleStorageKey and sha256");
+
+    const serverId = await tt.mutation(internal.account.mcp.create, {
+      accountId: scope.accountId,
+      projectId: scope.projectId,
+      stageId: scope.stageId,
+      name: "hosted",
+      transport: "hosted",
+      bundleStorageKey: "account-mcp/acct/bundles/x.mjs",
+      sha256: "a".repeat(64),
+    });
+    const listed = await tt.query(internal.account.mcp.listForStage, {
+      stageId: scope.stageId,
+    });
+    expect(listed[0]?._id).toBe(serverId);
+    expect(listed[0]?.transport).toBe("hosted");
+    expect(listed[0]?.url).toBeUndefined();
   });
 });

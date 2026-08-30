@@ -274,8 +274,11 @@ export interface AccountMcpServer {
   stageId: string;
   name: string;
   description?: string;
-  transport: "http";
-  url: string;
+  transport: "http" | "hosted";
+  /** External servers only; a hosted row has no endpoint of its own. */
+  url?: string;
+  /** Hosted servers only: content hash of the uploaded bundle. */
+  sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled: boolean;
@@ -285,11 +288,12 @@ export interface AccountMcpServer {
   deletedAt?: string;
 }
 
-/** Fields accepted by `POST /v1/mcp`. */
+/** Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads. */
 export interface CreateMcpServerInput {
   name: string;
   description?: string;
-  url: string;
+  url?: string;
+  bundle?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
 }
@@ -299,6 +303,7 @@ export interface UpdateMcpServerInput {
   name?: string;
   description?: string;
   url?: string;
+  bundle?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
   disabled?: boolean;

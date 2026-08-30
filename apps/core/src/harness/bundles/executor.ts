@@ -11,6 +11,7 @@ import {
   LambdaClient,
 } from "@aws-sdk/client-lambda";
 import { requireEnv } from "../../shared/env.ts";
+import type { McpHostPayload } from "../mcp/hosted.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { emitIsolateLog } from "../isolate/executor.ts";
 import {
@@ -141,7 +142,7 @@ export async function* streamInLambda(
   throw new Error("custom tool sandbox runner did not return a result");
 }
 
-function defaultClient(): LambdaClient {
+export function defaultClient(): LambdaClient {
   // Bound every invoke: the SDK's default connection/request timeouts are 0
   // (off). requestTimeout sits above the Lambda's own 35s so the function's
   // graceful error wins normally; connectionTimeout fails a stalled dial fast.
@@ -154,10 +155,11 @@ function defaultClient(): LambdaClient {
 
 // Invoke the runner Lambda and push its raw NDJSON payload chunks into the queue
 // as they arrive. Surfaces a Lambda-side failure (InvokeComplete.ErrorCode) as a
-// thrown error; tool-side failures arrive as an `error` frame instead.
-async function drainInvokeStream(
+// thrown error; tool-side failures arrive as an `error` frame instead. The
+// payload is serialized verbatim.
+export async function drainInvokeStream(
   client: LambdaClient,
-  payload: RunnerPayload,
+  payload: RunnerPayload | McpHostPayload,
   abortSignal: AbortSignal | undefined,
   queue: FrameQueue,
 ): Promise<void> {

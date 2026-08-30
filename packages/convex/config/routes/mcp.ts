@@ -1,8 +1,8 @@
 /**
  * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
- * collection, get/patch/delete by id. No bundle path — phase 1 rows describe
- * an external server core connects to; secrets stay in account env vars as
- * ${NAME} refs on the header values.
+ * collection, get/patch/delete by id. A `url` registers an external server
+ * core connects to; a `bundle` uploads a hosted one for the Lambda host.
+ * Secrets stay in account env vars as ${NAME} refs on the header values.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -13,6 +13,7 @@ import {
   type ConfigAuditActor,
 } from "../../model/auditEvents";
 import { normalizeMcpInput } from "../../model/mcp";
+import { storeMcpBundle } from "../../model/bundles";
 import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
@@ -92,15 +93,20 @@ async function handleMcpCollectionRoute(
     });
   }
   if (req.method === "POST") {
-    const input = normalizeMcpInput(await req.json(), {
+    const input = await normalizeMcpInput(await req.json(), {
       requireConnection: true,
     });
+    const bundleStorageKey = await storeMcpBundle(ctx, accountId, input, null);
     const createdId = await ctx.runMutation(internal.account.mcp.create, {
       accountId: accountId,
       projectId: scope.projectId,
       stageId: scope.stageId,
       name: input.name!,
-      url: input.url!,
+      ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(bundleStorageKey !== undefined
+        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+        : {}),
       ...(input.description !== undefined
         ? { description: input.description }
         : {}),
@@ -148,9 +154,15 @@ async function patchMcpRoute(
     serverId: serverId,
   });
   if (!existing) return json({ error: "MCP server not found" }, 404);
-  const input = normalizeMcpInput(await req.json(), {
+  const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
+  const bundleStorageKey = await storeMcpBundle(
+    ctx,
+    accountId,
+    input,
+    existing,
+  );
   await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
     serverId: serverId,
@@ -158,7 +170,11 @@ async function patchMcpRoute(
     ...(input.description !== undefined
       ? { description: input.description }
       : {}),
+    ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
+    ...(bundleStorageKey !== undefined
+      ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+      : {}),
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
     ...(input.allowedTools !== undefined
       ? { allowedTools: input.allowedTools }
@@ -243,7 +259,8 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
       ? { description: record.description }
       : {}),
     transport: record.transport,
-    url: record.url,
+    ...(record.url !== undefined ? { url: record.url } : {}),
+    ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     ...(record.allowedTools !== undefined
       ? { allowedTools: record.allowedTools }

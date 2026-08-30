@@ -15,7 +15,7 @@ import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
 
 // The runner fetches at the start of a 35s-bounded invocation, so the grant only
 // has to outlive a cold start.
-const BUNDLE_URL_TTL_SECONDS = 120;
+export const BUNDLE_URL_TTL_SECONDS = 120;
 // Inline bundles are keyed by sha256, so a hit is the same bytes by definition
 // and there is nothing to invalidate — only a size bound to keep.
 const BUNDLE_CACHE_MAX_BYTES = 64 * 1024 * 1024;

@@ -1383,6 +1383,38 @@ describe("connected MCP servers", () => {
       }),
     ).rejects.toThrow("references an unknown MCP server");
   });
+
+  it("sanitizes remote tool names to the model-safe charset", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    setMcpForTests({
+      listTools: async function () {
+        return [
+          { name: "browser.navigate", inputSchema: { type: "object" } },
+        ] as never;
+      },
+    });
+
+    const tools = await createTools(createToolContext(), {
+      mcpServers: { [serverId]: {} },
+    });
+    expect(Object.keys(tools)).toEqual(["search__browser_navigate"]);
+  });
+
+  it("skips a server whose listing fails instead of killing the run", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    setMcpForTests({
+      listTools: async function () {
+        throw new Error("connect ECONNREFUSED");
+      },
+    });
+
+    const tools = await createTools(createToolContext(), {
+      mcpServers: { [serverId]: {} },
+    });
+    expect(Object.keys(tools)).toEqual([]);
+  });
 });
 
 function createToolContext(

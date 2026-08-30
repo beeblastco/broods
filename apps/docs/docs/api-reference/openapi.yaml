@@ -4040,7 +4040,7 @@ components:
 
     McpServerCreate:
       type: object
-      required: [name, url]
+      required: [name]
       properties:
         name:
           type: string
@@ -4052,7 +4052,16 @@ components:
           type: string
         url:
           type: string
-          description: The server's MCP endpoint. http(s) only, no embedded credentials.
+          description: >-
+            External server's MCP endpoint (`transport: http`). http(s) only,
+            no embedded credentials. Exactly one of url or bundle is required.
+        bundle:
+          type: string
+          description: >-
+            Hosted alternative to url (`transport: hosted`): bundled JavaScript
+            module whose default export is a fetch-style MCP handler
+            (createMcpHandler). Max 10 MB; the tool-runner Lambda hosts it, one
+            invoke per request.
         headers:
           type: object
           additionalProperties:
@@ -4103,9 +4112,12 @@ components:
           type: string
         transport:
           type: string
-          enum: [http]
+          enum: [http, hosted]
         url:
           type: string
+        sha256:
+          type: string
+          description: Hosted-only; sha256 of the uploaded server bundle.
         headers:
           type: object
           additionalProperties:

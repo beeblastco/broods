@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { accountHookBundleStorageKey } from "../model/accountHooks";
 import { accountToolBundleStorageKey } from "../model/accountTools";
+import { mcpBundleStorageKey } from "../model/mcp";
 import { getS3ObjectUrl, writeS3Object } from "../model/s3";
 
 /**
@@ -66,6 +67,35 @@ export const putHookBundle = internalAction({
     }
 
     const key = accountHookBundleStorageKey(args.accountId, args.sha256);
+    await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
+      contentType: "application/javascript",
+      executable: false,
+    });
+
+    return key;
+  },
+});
+
+/**
+ * Store a hosted MCP server bundle in the account tool bundles bucket, under
+ * its own account-mcp/ prefix (#331 phase 2).
+ */
+export const putMcpBundle = internalAction({
+  args: {
+    accountId: v.id("accounts"),
+    sha256: v.string(),
+    storageId: v.id("_storage"),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
+    if (!bucket) {
+      throw new Error(
+        "TOOL_BUNDLES_BUCKET_NAME is required to write mcp bundles",
+      );
+    }
+
+    const key = mcpBundleStorageKey(args.accountId, args.sha256);
     await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
       contentType: "application/javascript",
       executable: false,

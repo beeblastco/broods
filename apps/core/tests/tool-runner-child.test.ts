@@ -151,7 +151,7 @@ describe("sandbox child-runner", () => {
     expect(result.frames).toEqual([
       {
         t: "error",
-        error: "custom tool bundle hash mismatch inside sandbox runner",
+        error: "bundle hash mismatch inside sandbox runner",
       },
     ]);
     expect(result.exitCode).toBe(1);

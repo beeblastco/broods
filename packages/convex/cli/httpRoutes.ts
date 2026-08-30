@@ -12,8 +12,8 @@ import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeAccountToolUpload } from "../model/accountTools";
 import { normalizeMcpInput } from "../model/mcp";
-import { putHookBundle, putToolBundle } from "../model/bundles";
-import { remapKeys, stripUndefined } from "../model/objects";
+import { putHookBundle, putToolBundle, storeMcpBundle } from "../model/bundles";
+import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -655,88 +655,6 @@ async function syncExternalResources(
   return { skills: skills, tools: tools, hooks: hooks, mcpServers: mcpServers };
 }
 
-/**
- * Upsert the manifest's MCP server registrations by name within the stage, and
- * prune rows whose name is no longer desired (#331). No bundle path: rows are
- * connection metadata only.
- */
-async function syncMcpResources(
-  ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  scope: ProjectStageScope,
-  manifest: CliManifest,
-  prune: boolean,
-): Promise<Record<string, string>> {
-  const desired = manifest.resources.filter((entry) => entry.kind === "mcp");
-  if (desired.length === 0) return {};
-  const existingServers = await ctx.runQuery(
-    internal.account.mcp.listForStage,
-    {
-      stageId: scope.stageId,
-    },
-  );
-  const existing = new Map(
-    existingServers.map((server) => [server.name, server]),
-  );
-  const desiredNames = new Set(desired.map((resource) => resource.name));
-  const ids: Record<string, string> = {};
-
-  for (const resource of desired) {
-    const config = asRecord(resource.config, `mcp:${resource.name}`);
-    const input = normalizeMcpInput(
-      {
-        name: resource.name,
-        ...(resource.description !== undefined
-          ? { description: resource.description }
-          : {}),
-        ...config,
-      },
-      { requireConnection: true },
-    );
-    const current = existing.get(resource.name);
-    const patch = {
-      name: input.name!,
-      url: input.url!,
-      ...(input.description !== undefined
-        ? { description: input.description }
-        : {}),
-      ...(input.headers !== undefined ? { headers: input.headers } : {}),
-      ...(input.allowedTools !== undefined
-        ? { allowedTools: input.allowedTools }
-        : {}),
-    };
-    if (current) {
-      await ctx.runMutation(internal.account.mcp.update, {
-        accountId: accountId,
-        serverId: current._id,
-        ...patch,
-      });
-      ids[resource.name] = current._id;
-    } else {
-      const serverId = await ctx.runMutation(internal.account.mcp.create, {
-        accountId: accountId,
-        projectId: scope.projectId,
-        stageId: scope.stageId,
-        ...patch,
-      });
-      ids[resource.name] = serverId;
-    }
-  }
-
-  if (prune === true) {
-    for (const server of existing.values()) {
-      if (!desiredNames.has(server.name)) {
-        await ctx.runMutation(internal.account.mcp.remove, {
-          accountId: accountId,
-          serverId: server._id,
-        });
-      }
-    }
-  }
-
-  return ids;
-}
-
 async function syncHookResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -817,6 +735,106 @@ async function syncHookResources(
         await ctx.runMutation(internal.account.hooks.remove, {
           accountId: accountId,
           hookId: hook._id,
+        });
+      }
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Upsert the manifest's MCP server registrations by name within the stage, and
+ * prune rows whose name is no longer desired (#331). A hosted server's bundle
+ * is content-addressed and re-uploads only when its sha256 changed.
+ */
+async function syncMcpResources(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  scope: ProjectStageScope,
+  manifest: CliManifest,
+  prune: boolean,
+): Promise<Record<string, string>> {
+  const desired = manifest.resources.filter((entry) => entry.kind === "mcp");
+  if (desired.length === 0) return {};
+  const existingServers = await ctx.runQuery(
+    internal.account.mcp.listForStage,
+    {
+      stageId: scope.stageId,
+    },
+  );
+  const existing = new Map(
+    existingServers.map((server) => [server.name, server]),
+  );
+  const desiredNames = new Set(desired.map((resource) => resource.name));
+  const ids: Record<string, string> = {};
+
+  for (const resource of desired) {
+    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    const input = await normalizeMcpInput(
+      {
+        name: resource.name,
+        ...(resource.description !== undefined
+          ? { description: resource.description }
+          : {}),
+        ...config,
+      },
+      { requireConnection: true },
+    );
+    const current = existing.get(resource.name);
+    const bundleStorageKey = await storeMcpBundle(
+      ctx,
+      accountId,
+      input,
+      current ?? null,
+    );
+    const patch = {
+      name: input.name!,
+      ...(input.transport !== undefined ? { transport: input.transport } : {}),
+      ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(bundleStorageKey !== undefined
+        ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
+        : {}),
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+      ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      ...(input.allowedTools !== undefined
+        ? { allowedTools: input.allowedTools }
+        : {}),
+    };
+    if (current) {
+      // An identical patch is skipped: a write would bump updatedAt, which is
+      // core's MCP cache identity, and re-probe every server on the next run.
+      const row = current as unknown as Record<string, unknown>;
+      const unchanged = Object.entries(patch).every(
+        ([key, value]) => stableJson(value) === stableJson(row[key]),
+      );
+      if (!unchanged) {
+        await ctx.runMutation(internal.account.mcp.update, {
+          accountId: accountId,
+          serverId: current._id,
+          ...patch,
+        });
+      }
+      ids[resource.name] = current._id;
+    } else {
+      const serverId = await ctx.runMutation(internal.account.mcp.create, {
+        accountId: accountId,
+        projectId: scope.projectId,
+        stageId: scope.stageId,
+        ...patch,
+      });
+      ids[resource.name] = serverId;
+    }
+  }
+
+  if (prune === true) {
+    for (const server of existing.values()) {
+      if (!desiredNames.has(server.name)) {
+        await ctx.runMutation(internal.account.mcp.remove, {
+          accountId: accountId,
+          serverId: server._id,
         });
       }
     }
