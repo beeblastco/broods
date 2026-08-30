@@ -15,6 +15,7 @@ import {
   handleEnvRoute,
   handleLogsRoute,
   handleManifestRoute,
+  handleMcpBundleUploadRoute,
   handleResourceDeleteRoute,
   handleRuntimeKeyRoute,
   json,
@@ -39,6 +40,8 @@ export const handle = httpAction(async (ctx, req) => {
     switch (route.kind) {
       case "manifest":
         return await handleManifestRoute(ctx, req, route, authResult);
+      case "mcpBundleUpload":
+        return await handleMcpBundleUploadRoute(ctx, req);
       case "logs":
         return handleLogsRoute(req);
       case "runtimeKey":
@@ -99,6 +102,9 @@ function parseRoute(pathname: string): RouteParts | null {
 
   if (rest.length === 1 && rest[0] === "manifest") {
     return { kind: "manifest", project: project, stage: stage };
+  }
+  if (rest.length === 1 && rest[0] === "mcp-bundle-uploads") {
+    return { kind: "mcpBundleUpload", project: project, stage: stage };
   }
   if (rest.length === 2 && rest[0] === "env") {
     return { kind: "env", project: project, stage: stage, name: rest[1] };

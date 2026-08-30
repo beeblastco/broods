@@ -13,8 +13,16 @@ import { sha256Hex } from "./accountSecrets";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
 const MAX_ALLOWED_TOOLS = 256;
-/** Matches the uploaded-package ceiling from #190 (the sandbox tool cap). */
-const MAX_BUNDLE_BYTES = 10_000_000;
+/**
+ * An inline `bundle` string rides the JSON request body, which Convex caps at
+ * ~20 MB; anything bigger goes through Convex file storage as a
+ * `bundleStorageId` instead (#190).
+ */
+const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
+/** Ceiling for a hosted MCP server bundle by either upload path (#190). */
+export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_DESCRIPTION_LENGTH = 2000;
 const MAX_HEADERS = 16;
 const MAX_HEADER_VALUE_LENGTH = 2048;
@@ -52,6 +60,12 @@ export interface McpInput {
   url?: string;
   /** Hosted-only: bundled server module source; sha256 derived from it. */
   bundle?: string;
+  /**
+   * Hosted-only alternative to `bundle` for large uploads: the Convex storage
+   * id of module source POSTed to an upload URL, with its sha256 declared by
+   * the client and verified against the bytes before the S3 write.
+   */
+  bundleStorageId?: string;
   sha256?: string;
   headers?: Record<string, string>;
   allowedTools?: string[];
@@ -89,7 +103,9 @@ export async function normalizeMcpInput(
   }
   normalizeConnection(record, input);
   // Hash here (async: Convex's runtime only offers web crypto) so every
-  // write path gets sha256 with the bundle instead of deriving it later.
+  // write path gets sha256 with the bundle instead of deriving it later. A
+  // storage-id upload declares its sha256 instead — normalizeConnection
+  // validated it — and the S3 writer verifies it against the actual bytes.
   if (input.bundle !== undefined) {
     input.sha256 = await sha256Hex(input.bundle);
   }
@@ -107,7 +123,11 @@ export async function normalizeMcpInput(
   }
   if (options.requireConnection) {
     if (input.name === undefined) throw new Error("name must be provided");
-    if (input.url === undefined && input.bundle === undefined) {
+    if (
+      input.url === undefined &&
+      input.bundle === undefined &&
+      input.bundleStorageId === undefined
+    ) {
       throw new Error("url must be provided, or bundle for a hosted server");
     }
   }
@@ -144,14 +164,20 @@ function normalizeBundle(value: unknown): string {
     throw new Error("bundle must be a non-empty string of module source");
   }
   // TextEncoder, not Buffer: this runs in Convex's V8 isolate too.
-  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-    throw new Error(`bundle must be at most ${MAX_BUNDLE_BYTES} bytes`);
+  if (new TextEncoder().encode(value).byteLength > MAX_INLINE_BUNDLE_BYTES) {
+    throw new Error(
+      `inline bundle must be at most ${MAX_INLINE_BUNDLE_BYTES} bytes; upload larger bundles (up to ${MAX_MCP_BUNDLE_BYTES}) to an upload URL and pass bundleStorageId`,
+    );
   }
 
   return value;
 }
 
-/** A `url` makes an "http" row, a `bundle` a "hosted" one; never both. */
+/**
+ * A `url` makes an "http" row; a `bundle` (inline source) or a
+ * `bundleStorageId` (upload-URL courier, with its sha256 declared) a
+ * "hosted" one. Exactly one connection may be given.
+ */
 function normalizeConnection(
   record: Record<string, unknown>,
   input: McpInput,
@@ -160,11 +186,34 @@ function normalizeConnection(
   if (record.bundle !== undefined) {
     input.bundle = normalizeBundle(record.bundle);
   }
-  if (input.url !== undefined && input.bundle !== undefined) {
-    throw new Error("url and bundle are mutually exclusive");
+  if (record.bundleStorageId !== undefined) {
+    if (
+      typeof record.bundleStorageId !== "string" ||
+      record.bundleStorageId.length === 0
+    ) {
+      throw new Error("bundleStorageId must be a non-empty storage id");
+    }
+    if (
+      typeof record.sha256 !== "string" ||
+      !SHA256_HEX_PATTERN.test(record.sha256)
+    ) {
+      throw new Error(
+        "bundleStorageId needs sha256, the hex digest of the uploaded bytes",
+      );
+    }
+    input.bundleStorageId = record.bundleStorageId;
+    input.sha256 = record.sha256;
+  }
+  const connections = [input.url, input.bundle, input.bundleStorageId].filter(
+    (value) => value !== undefined,
+  );
+  if (connections.length > 1) {
+    throw new Error("url, bundle and bundleStorageId are mutually exclusive");
   }
   if (input.url !== undefined) input.transport = "http";
-  if (input.bundle !== undefined) input.transport = "hosted";
+  if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
+    input.transport = "hosted";
+  }
 }
 
 function normalizeDescription(value: unknown): string {

@@ -295,10 +295,44 @@ describe("normalizeMcpInput", () => {
         { name: "both", url: SERVER_URL, bundle: "export default 1" },
         { requireConnection: true },
       ),
-    ).rejects.toThrow("url and bundle are mutually exclusive");
+    ).rejects.toThrow("url, bundle and bundleStorageId are mutually exclusive");
     await expect(
       normalizeMcpInput({ name: "neither" }, { requireConnection: true }),
     ).rejects.toThrow("url must be provided, or bundle for a hosted server");
+  });
+
+  test("a bundleStorageId makes a hosted server and requires its sha256", async () => {
+    const sha = "a".repeat(64);
+    const input = await normalizeMcpInput(
+      { name: "big", bundleStorageId: "st_123", sha256: sha },
+      { requireConnection: true },
+    );
+    expect(input.transport).toBe("hosted");
+    expect(input.bundleStorageId).toBe("st_123");
+    expect(input.sha256).toBe(sha);
+    await expect(
+      normalizeMcpInput(
+        { name: "big", bundleStorageId: "st_123" },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("bundleStorageId needs sha256");
+    await expect(
+      normalizeMcpInput(
+        { name: "big", bundleStorageId: "st_123", sha256: "not-hex" },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("bundleStorageId needs sha256");
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "both",
+          bundle: "export default 1",
+          bundleStorageId: "st_123",
+          sha256: sha,
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("url, bundle and bundleStorageId are mutually exclusive");
   });
 });
 

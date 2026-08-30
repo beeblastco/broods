@@ -26,25 +26,46 @@ export async function putHookBundle(
 /**
  * Content-addressed store for a hosted MCP server's bundle: when the sha256
  * matches the existing row, its stored key is reused; a connection-only input
- * (no bundle) stores nothing.
+ * (no bundle) stores nothing. Large bundles arrive pre-uploaded to Convex
+ * storage as `bundleStorageId` (#190); the S3 writer verifies their declared
+ * sha256 against the bytes, and the courier blob is deleted either way.
  */
 export async function storeMcpBundle(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  input: Pick<McpInput, "bundle" | "sha256">,
+  input: Pick<McpInput, "bundle" | "bundleStorageId" | "sha256">,
   existing: Pick<Doc<"mcp">, "sha256" | "bundleStorageKey"> | null,
 ): Promise<string | undefined> {
-  if (input.bundle === undefined || input.sha256 === undefined) {
+  if (
+    (input.bundle === undefined && input.bundleStorageId === undefined) ||
+    input.sha256 === undefined
+  ) {
     return undefined;
   }
   if (existing?.sha256 === input.sha256 && existing.bundleStorageKey) {
+    if (input.bundleStorageId !== undefined) {
+      await ctx.storage.delete(input.bundleStorageId as Id<"_storage">);
+    }
+
     return existing.bundleStorageKey;
+  }
+  if (input.bundleStorageId !== undefined) {
+    const storageId = input.bundleStorageId as Id<"_storage">;
+    try {
+      return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
+        accountId: accountId,
+        sha256: input.sha256,
+        storageId: storageId,
+      });
+    } finally {
+      await ctx.storage.delete(storageId);
+    }
   }
 
   return await putBundle(ctx, internal.aws.bundles.putMcpBundle, {
     accountId: accountId,
     sha256: input.sha256,
-    bundle: input.bundle,
+    bundle: input.bundle!,
   });
 }
 

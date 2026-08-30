@@ -32,6 +32,19 @@ export async function handleMcpRoute(
   if (!serverId)
     return await handleMcpCollectionRoute(ctx, req, accountId, actor);
 
+  // `uploads` mints a storage upload URL for a bundle too large to ride the
+  // JSON body (#190): POST the module source there, then register it by
+  // passing the returned storageId as `bundleStorageId` with its sha256.
+  if (serverId === "uploads") {
+    if (req.method !== "POST") return methodNotAllowed(["POST"]);
+    const uploadUrl = await ctx.runMutation(
+      internal.account.mcp.generateBundleUploadUrl,
+      {},
+    );
+
+    return json({ uploadUrl: uploadUrl });
+  }
+
   if (req.method === "GET") {
     const record = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,

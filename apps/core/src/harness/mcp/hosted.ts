@@ -39,10 +39,15 @@ export interface HostedMcpResponse {
   body: string;
 }
 
-/** mcp-mode invoke payload; the Lambda handler dispatches on `mode`. */
+/**
+ * mcp-mode invoke payload; the Lambda handler dispatches on `mode`.
+ * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189):
+ * a repeat call for the same tenant bundle skips fetch, parse, and spawn.
+ */
 export interface McpHostPayload {
   mode: "mcp";
   toolName: string;
+  accountId: string;
   expectedSha256: string;
   bundleUrl: string;
   mcpRequest: HostedMcpRequest;
@@ -186,6 +191,7 @@ async function invokeLambda(
   const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
+    accountId: record.accountId,
     expectedSha256: record.sha256,
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),

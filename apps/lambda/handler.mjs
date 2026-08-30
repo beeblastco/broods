@@ -1,11 +1,14 @@
 /**
  * AWS Lambda entry for the hosted MCP runner. It resolves the uploaded MCP
- * server bundle the invoke event addresses, then runs it in a per-invocation
- * child Node process with a scrubbed env and a fresh TMPDIR, and streams the
- * child's raw NDJSON frames to the core invoker as written. The child is a
- * containment layer, not a trust boundary — it runs same-UID, so keep this
- * function's execution role empty and assume anything it can reach is reachable
- * by tenant code. Execution logic lives in child-runner.mjs; keep this file to
+ * server bundle the invoke event addresses, runs the request in a child Node
+ * process with a scrubbed env and a fresh per-call TMPDIR, and streams the
+ * child's raw NDJSON frames to the core invoker as written. The child is kept
+ * warm across invocations keyed by accountId + sha256 (#189): a repeat call
+ * skips the S3 fetch, the V8 parse, and the spawn. Reuse is bounded (max
+ * calls, idle TTL) and any failure retires the child; it is a containment
+ * layer, not a trust boundary — it runs same-UID, so keep this function's
+ * execution role empty and assume anything it can reach is reachable by
+ * tenant code. Execution logic lives in child-runner.mjs; keep this file to
  * spawn + forward + clean up.
  */
 
@@ -25,6 +28,23 @@ const CHILD_GRACE_MS = 2_000;
 // lands in core's memory and then in an agent's context, so this bounds a run.
 const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
+// Reuse bounds (#189): a warm child serves at most this many calls and never
+// outlives this idle gap, so a poisoned child is short-lived by construction.
+// Env-overridable for tests and as an operational dial; MCP_CHILD_REUSE=0 is
+// the kill switch back to one process per invocation.
+const DEFAULT_MAX_CHILD_CALLS = 64;
+const DEFAULT_CHILD_IDLE_SECONDS = 300;
+
+// Terminal frames are the only lines child-runner.mjs itself writes, and it
+// writes them with `t` first; matching the line prefix is what lets the
+// handler spot the end of a run without parsing a multi-megabyte frame.
+const TERMINAL_PREFIXES = ['{"t":"final"', '{"t":"error"'];
+const TERMINAL_PREFIX_BYTES = 12;
+
+// The one warm child this execution environment may hold. Lambda serializes
+// invocations per environment, so a single slot is the whole pool.
+let warm = null;
+
 // streamifyResponse is injected by the Node managed runtime. Falling back to the
 // identity wrapper keeps the module importable (and testable) off Lambda.
 const streamifyResponse =
@@ -42,14 +62,30 @@ export const handler = streamifyResponse(async (event, responseStream) => {
   }
   const home = mkdtempSync(join(tmpdir(), "broods-mcp-"));
   try {
-    // Started before the spawn so the S3 round trip overlaps Node's startup, and
-    // done here rather than in the child because this process is warm across
-    // invocations and keeps its connection to S3; a fresh child would pay a TLS
-    // handshake every call.
-    const bundle = readBundleSource(event);
-    bundle.catch(() => {});
-    await runChild(event, home, responseStream, bundle);
+    const key = reuseKey(event);
+    let state = key !== null && matchesWarm(key) ? warm : null;
+    if (warm && !state) retireWarm();
+    if (!state) {
+      // Started before the spawn so the S3 round trip overlaps Node's startup,
+      // and done here rather than in the child because this process is warm
+      // across invocations and keeps its connection to S3; a fresh child would
+      // pay a TLS handshake every call.
+      const bundle = readBundleSource(event);
+      bundle.catch(() => {});
+      state = spawnChild(home, bundle);
+    }
+    const keep = await runRequest(state, event, home, responseStream);
+    if (keep && key !== null && state.dead !== true) {
+      state.key = key;
+      state.callsServed += 1;
+      state.lastUsedAt = Date.now();
+      warm = state;
+    } else {
+      warm = state;
+      retireWarm();
+    }
   } catch (error) {
+    retireWarm();
     endWithError(
       responseStream,
       error instanceof Error ? error.message : String(error),
@@ -78,55 +114,57 @@ async function readBundleSource(event) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function runChild(event, home, responseStream, bundle) {
+// One invocation against one child: write the request line, forward stdout
+// until the terminal frame line, settle. Resolves true when the run ended on a
+// clean `final` frame and the child may serve another call; false retires it.
+async function runRequest(state, event, home, responseStream) {
   return await new Promise((resolve) => {
-    // detached puts the child in its own process group so killGroup can reap the
-    // grandchildren too; a survivor outlives the invocation in a warm sandbox.
-    // The fourth pipe carries the bundle bytes; see child-runner.mjs BUNDLE_FD.
-    const child = spawn(process.execPath, [childRunnerPath()], {
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: scrubbedEnv(home),
-      detached: true,
-    });
+    const child = state.child;
     let forwardedBytes = 0;
-    let stderr = "";
     let stopReason;
-    let exit;
+    let terminal = null;
     let drained = false;
-    // A failed spawn emits "error" and may still emit "exit", so finalizing runs
-    // once: writing to an already-ended response stream throws.
     let settled = false;
-    const finish = (error) => {
+    // Bytes of the current stdout line seen so far, capped at the prefix
+    // length: enough to recognize a terminal frame at the next newline.
+    const linePrefix = Buffer.alloc(TERMINAL_PREFIX_BYTES);
+    let linePrefixLen = 0;
+    const finish = (error, keep) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      child.stdout.removeListener("data", onStdout);
+      child.stdout.removeListener("end", onStdoutEnd);
+      state.onExit = null;
       if (error) endWithError(responseStream, error);
       else responseStream.end();
-      resolve();
+      resolve(keep === true && !error);
     };
-    // Settle on both the exit and the last byte of stdout. "exit" alone can fire
-    // with output still buffered behind a backpressure pause; stdout's "end"
-    // alone can never arrive, because a detached grandchild holds the pipe's
-    // write end open until killGroup runs on exit.
-    const settle = () => {
-      if (!exit || !drained) return;
-      // A killed run is a failure even when chunks already went out, so it ends
-      // on an error frame rather than a clean close the caller reads as success.
-      if (stopReason) {
+    // A dead child settles on both the exit and the last byte of stdout:
+    // "exit" alone can fire with output still buffered behind a backpressure
+    // pause; stdout's "end" alone can never arrive while a detached grandchild
+    // holds the pipe's write end open, which is what killGroup releases.
+    const settleDead = () => {
+      if (!state.dead || !drained) return;
+      if (terminal !== null) {
+        // The frame made it out before the exit (an error frame, or a final
+        // one from a child that then retired itself); deliver it as written.
+        finish(undefined, false);
+      } else if (stopReason) {
         finish(stopReason);
       } else if (forwardedBytes === 0) {
         finish(
-          stderr.trim() ||
-            (exit.signal
-              ? `signal ${exit.signal}`
-              : `exit ${exit.code ?? "unknown"}`),
+          state.stderr.trim() ||
+            (state.exit?.signal
+              ? `signal ${state.exit.signal}`
+              : `exit ${state.exit?.code ?? "unknown"}`),
         );
       } else {
-        finish();
+        finish(undefined, false);
       }
     };
-    // Abandon forwarding and let the pipe run dry: a paused stdout never reaches
-    // "end", so the run would never settle.
+    // Abandon forwarding and let the pipe run dry: a paused stdout never
+    // reaches its end, so the run would never settle.
     const stopForwarding = (reason) => {
       stopReason = reason;
       child.stdout.resume();
@@ -137,9 +175,37 @@ async function runChild(event, home, responseStream, bundle) {
       RUN_TIMEOUT_MS,
     );
 
-    child.stdout.on("data", (chunk) => {
-      if (stopReason) return;
-      forwardedBytes += chunk.length;
+    const onStdout = (chunk) => {
+      if (stopReason || terminal !== null) return;
+      // Scan complete lines for a terminal-frame prefix; everything up to and
+      // including that frame's newline is forwarded, later bytes in the same
+      // chunk are noise from the tenant's own stray writers and are dropped.
+      let cut = chunk.length;
+      let index = 0;
+      while (index < chunk.length) {
+        const newline = chunk.indexOf(0x0a, index);
+        const lineEnd = newline === -1 ? chunk.length : newline;
+        if (linePrefixLen < TERMINAL_PREFIX_BYTES) {
+          const copied = chunk.copy(
+            linePrefix,
+            linePrefixLen,
+            index,
+            Math.min(lineEnd, index + TERMINAL_PREFIX_BYTES - linePrefixLen),
+          );
+          linePrefixLen += copied;
+        }
+        if (newline === -1) break;
+        const prefix = linePrefix.toString("latin1", 0, linePrefixLen);
+        linePrefixLen = 0;
+        index = newline + 1;
+        if (TERMINAL_PREFIXES.includes(prefix)) {
+          terminal = prefix;
+          cut = index;
+          break;
+        }
+      }
+      const forwarded = cut === chunk.length ? chunk : chunk.subarray(0, cut);
+      forwardedBytes += forwarded.length;
       if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
         stopForwarding("mcp server output exceeded limit");
 
@@ -147,51 +213,106 @@ async function runChild(event, home, responseStream, bundle) {
       }
       // Pause on a full response buffer so a chatty child cannot outrun the
       // stream; the child's own stdout pipe then applies the backpressure.
-      if (!responseStream.write(chunk)) {
+      const flushed = responseStream.write(forwarded);
+      if (terminal !== null) {
+        finish(undefined, terminal === TERMINAL_PREFIXES[0]);
+
+        return;
+      }
+      if (!flushed) {
         child.stdout.pause();
         responseStream.once("drain", () => child.stdout.resume());
       }
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-      if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
-    });
-    child.once("error", (error) => {
-      finish(error instanceof Error ? error.message : String(error));
-    });
-    child.stdout.once("end", () => {
+    };
+    const onStdoutEnd = () => {
       drained = true;
-      settle();
-    });
-    child.once("exit", (code, signal) => {
-      exit = { code: code, signal: signal };
-      // The child is gone, but anything it spawned is not. Reap the group here
-      // rather than on "close": a grandchild holding the pipe open would stop
-      // stdout ending, and reaping is what lets the remaining bytes arrive.
-      killGroup(child);
-      settle();
-    });
+      settleDead();
+    };
+    child.stdout.on("data", onStdout);
+    child.stdout.once("end", onStdoutEnd);
+    state.onExit = () => settleDead();
+    if (state.dead) {
+      drained = true;
+      settleDead();
 
-    // A child that exits before reading a pipe makes end() emit EPIPE; an
-    // unhandled stream error would crash the handler instead of returning a frame.
-    const bundleStream = child.stdio[3];
-    child.stdin.on("error", () => {});
-    bundleStream.on("error", () => {});
-    // The request does not wait on the fetch: the child parses it while the
-    // bundle is still in flight.
-    child.stdin.end(
-      `${JSON.stringify({ ...event, bundleSourceB64: undefined, bundleUrl: undefined })}\n`,
+      return;
+    }
+
+    // The request does not wait on the bundle fetch: the child parses it while
+    // the bundle is still in flight. stdin stays open for the next request.
+    child.stdin.write(
+      `${JSON.stringify({
+        ...event,
+        bundleSourceB64: undefined,
+        bundleUrl: undefined,
+        home: home,
+      })}\n`,
     );
-    void bundle.then(
-      (bytes) => bundleStream.end(bytes),
-      (error) => {
-        // The child is blocked on a pipe that will never arrive, so the same stop
-        // path a timeout takes is what settles the run on an error frame.
-        stopForwarding(error instanceof Error ? error.message : String(error));
-      },
-    );
+    if (state.bundle) {
+      const bundle = state.bundle;
+      state.bundle = null;
+      void bundle.then(
+        (bytes) => state.bundleStream.end(bytes),
+        (error) => {
+          // The child is blocked on a pipe that will never arrive, so the same
+          // stop path a timeout takes is what settles the run on an error frame.
+          stopForwarding(
+            error instanceof Error ? error.message : String(error),
+          );
+        },
+      );
+    }
   });
+}
+
+// Spawn the runner child. detached puts it in its own process group so
+// killGroup can reap the grandchildren too when the child retires; a survivor
+// would outlive its tenant's turn in the warm sandbox. The fourth pipe carries
+// the bundle bytes; see child-runner.mjs BUNDLE_FD.
+function spawnChild(home, bundle) {
+  const child = spawn(process.execPath, [childRunnerPath()], {
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+    env: scrubbedEnv(home),
+    detached: true,
+  });
+  const state = {
+    key: null,
+    child: child,
+    bundle: bundle,
+    bundleStream: child.stdio[3],
+    callsServed: 0,
+    lastUsedAt: Date.now(),
+    stderr: "",
+    dead: false,
+    exit: null,
+    onExit: null,
+  };
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    state.stderr += chunk;
+    if (state.stderr.length > 16 * 1024)
+      state.stderr = state.stderr.slice(-16 * 1024);
+  });
+  child.once("error", (error) => {
+    state.dead = true;
+    state.stderr ||= error instanceof Error ? error.message : String(error);
+    state.onExit?.();
+  });
+  child.once("exit", (code, signal) => {
+    state.dead = true;
+    state.exit = { code: code, signal: signal };
+    if (warm === state) warm = null;
+    // The child is gone, but anything it spawned is not. Reaping the group is
+    // also what lets a held-open stdout pipe end and the remaining bytes land.
+    killGroup(child);
+    state.onExit?.();
+  });
+  // A child that exits before reading a pipe makes writes emit EPIPE; an
+  // unhandled stream error would crash the handler instead of returning a frame.
+  child.stdin.on("error", () => {});
+  state.bundleStream.on("error", () => {});
+
+  return state;
 }
 
 function childRunnerPath() {
@@ -234,8 +355,56 @@ function killGroup(child) {
   }
 }
 
+// A warm child is only handed a call for the exact accountId + sha256 it was
+// spawned for, and never past its call or idle bounds.
+function matchesWarm(key) {
+  if (!warm || warm.dead || warm.key !== key) return false;
+  if (
+    warm.callsServed >=
+    positiveEnvInt("MCP_CHILD_MAX_CALLS", DEFAULT_MAX_CHILD_CALLS)
+  ) {
+    return false;
+  }
+  const idleSeconds = positiveEnvInt(
+    "MCP_CHILD_IDLE_SECONDS",
+    DEFAULT_CHILD_IDLE_SECONDS,
+  );
+
+  return Date.now() - warm.lastUsedAt <= idleSeconds * 1000;
+}
+
+function positiveEnvInt(name, fallback) {
+  const value = Number(process.env[name]);
+
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+// Reuse needs the tenant identity in the key: without accountId the call runs
+// in a one-shot child exactly as before. `reuse: false` is the per-call
+// opt-out; MCP_CHILD_REUSE=0 turns the whole environment off.
+function reuseKey(event) {
+  if (process.env.MCP_CHILD_REUSE === "0") return null;
+  if (event.reuse === false) return null;
+  if (
+    typeof event.accountId !== "string" ||
+    typeof event.expectedSha256 !== "string"
+  ) {
+    return null;
+  }
+
+  return `${event.accountId}:${event.expectedSha256}`;
+}
+
+function retireWarm() {
+  if (!warm) return;
+  const retired = warm;
+  warm = null;
+  killGroup(retired.child);
+}
+
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code
-// cannot reach the execution role; HOME/TMPDIR point at the per-run scratch dir.
+// cannot reach the execution role; HOME/TMPDIR start at the first call's
+// scratch dir and every request line re-points them at its own fresh one.
 function scrubbedEnv(home) {
   return {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",

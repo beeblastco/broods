@@ -2,8 +2,10 @@
  * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
  */
 
+import { createHash } from "node:crypto";
 import type { CliManifest, GeneratedIds } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { INLINE_MCP_BUNDLE_BYTES } from "./manifest.ts";
 
 export interface SyncClientOptions {
   /**
@@ -146,6 +148,7 @@ export class BroodsSyncClient {
     prune: boolean,
     rotateRuntimeKey = false,
   ): Promise<RemoteManifestResponse> {
+    const uploaded = await this.externalizeLargeMcpBundles(manifest);
     const response = await this.request(
       manifest.project,
       manifest.stage,
@@ -154,7 +157,7 @@ export class BroodsSyncClient {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          manifest: manifest,
+          manifest: uploaded,
           prune: prune,
           rotateRuntimeKey: rotateRuntimeKey,
         }),
@@ -163,6 +166,81 @@ export class BroodsSyncClient {
     await assertOk(response, "Sync manifest failed");
 
     return (await response.json()) as RemoteManifestResponse;
+  }
+
+  /**
+   * An MCP bundle past the inline threshold cannot ride the manifest JSON
+   * (the config plane caps request bodies around 20 MB), so it travels
+   * through Convex file storage instead: mint an upload URL, POST the module
+   * source, and swap the resource's `bundle` for the returned storage id
+   * plus its sha256 (#190). Small bundles stay inline, one request as before.
+   */
+  private async externalizeLargeMcpBundles(
+    manifest: CliManifest,
+  ): Promise<CliManifest> {
+    const large = manifest.resources.filter(
+      (resource) =>
+        resource.kind === "mcp" &&
+        typeof (resource.config as { bundle?: unknown })?.bundle === "string" &&
+        Buffer.byteLength((resource.config as { bundle: string }).bundle) >
+          INLINE_MCP_BUNDLE_BYTES,
+    );
+    if (large.length === 0) return manifest;
+
+    const resources = await Promise.all(
+      manifest.resources.map(async (resource) => {
+        if (!large.includes(resource)) return resource;
+        const config = resource.config as { bundle: string } & Record<
+          string,
+          unknown
+        >;
+        const { bundle, ...rest } = config;
+        const storageId = await this.uploadMcpBundle(
+          manifest.project,
+          manifest.stage,
+          bundle,
+        );
+
+        return {
+          ...resource,
+          config: {
+            ...rest,
+            bundleStorageId: storageId,
+            sha256: createHash("sha256").update(bundle).digest("hex"),
+          },
+        };
+      }),
+    );
+
+    return { ...manifest, resources: resources };
+  }
+
+  /** POST one bundle's module source to a minted upload URL; returns the storage id. */
+  private async uploadMcpBundle(
+    project: string,
+    stage: string,
+    bundle: string,
+  ): Promise<string> {
+    const minted = await this.request(project, stage, "/mcp-bundle-uploads", {
+      method: "POST",
+    });
+    await assertOk(minted, "Mint bundle upload URL failed");
+    const { uploadUrl } = (await minted.json()) as { uploadUrl?: string };
+    if (!uploadUrl)
+      throw new Error(
+        "Mint bundle upload URL failed: response omitted uploadUrl",
+      );
+    const stored = await this.fetchImpl(uploadUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/javascript" },
+      body: bundle,
+    });
+    await assertOk(stored, "Bundle upload failed");
+    const { storageId } = (await stored.json()) as { storageId?: string };
+    if (!storageId)
+      throw new Error("Bundle upload failed: response omitted storageId");
+
+    return storageId;
   }
 
   /**
