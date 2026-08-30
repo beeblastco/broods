@@ -161,23 +161,45 @@ not a terminal:
 claude mcp add broods -- broods mcp
 ```
 
-Nine tools cover the plane. `broods_list`, `broods_get`, `broods_create`,
-`broods_update` and `broods_delete` take a `resource` naming one of agents,
-crons, sandboxes, workspaces, policies, roles, channels, skills, tools, mcp or
-env. `broods_cron_runs` reads a cron's run history, `broods_sandbox_action`
-drives a sandbox's lifecycle, `broods_assume_role` mints a scoped session, and
-`broods_whoami` names the account in reach. `tools` and `mcp` live in one stage,
-so listing or creating those also takes `project` and `stage`.
+Tool names mirror the SDK's methods in kebab-case, so `listAgents` is
+`list-agents` and `createCron` is `create-cron`. Every resource the config
+plane serves gets the five it supports: agents, crons, sandboxes, workspaces,
+policies, roles, channels, skills, tools and MCP servers. Around those sit the
+calls that do not fit that shape — `list-cron-runs`, the sandbox lifecycle
+(`suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox`,
+`open-sandbox-terminal`), env (`list-env-vars`, `set-env-var`,
+`delete-env-var`), and the account itself (`get-account`, `update-account`,
+`rotate-secret`, `assume-role`).
 
-Three guards are built in rather than left to the agent: a delete needs
-`confirm: true` and takes one id, env has no read route because the plane
-stores values write-only, and a stage-scoped resource refuses a collection call
-with no scope.
+`tools` and `mcp-servers` live in one stage, so listing or creating those also
+takes `project` and `stage`.
+
+Four guards are built in rather than left to the agent: a delete needs
+`confirm: true` and takes one id, `rotate-secret` needs the same because it
+breaks every deployment still holding the old secret, env has no read tool
+because the plane stores values write-only, and a stage-scoped resource refuses
+a collection call with no scope.
+
+### Org, project and stage
+
+With a stored `broods login`, the server also registers `list-orgs`,
+`create-org`, `select-org`, `list-projects`, `delete-project`, `list-stages`
+and `create-stage`. Creating a stage under a project name that does not exist
+creates the project too, which is the only way to make one without deploying a
+manifest.
+
+These seven are the exception to the credential rule below. They live behind
+the CLI router, which resolves login tokens only, so an account secret or a
+role session gets a 401 from them and the tools are left unregistered when no
+login is stored. Everything else on this server, and the sync routes behind
+`deploy` and `dev`, take the account secret.
+
+### Credentials
 
 Auth resolves from the environment exactly as the SDK does. Prefer a role
-session in `BROODS_SESSION_TOKEN` so the role's policy bounds what the agent can
-reach; `BROODS_ACCOUNT_SECRET` is the full-tenant fallback. The credential is
-read once at startup and never travels through a tool argument. See
+session in `BROODS_SESSION_TOKEN` so the role's policy bounds what the agent
+can reach; `BROODS_ACCOUNT_SECRET` is the full-tenant fallback. The credential
+is read once at startup and never travels through a tool argument. See
 [Account Roles](./roles.md) for minting one.
 
 ## update

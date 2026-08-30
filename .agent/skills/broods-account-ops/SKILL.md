@@ -27,7 +27,7 @@ The CLI needs a login token, from `broods login` or `BROODS_TOKEN`. A role sessi
 
 ## Then the MCP server
 
-For everything the CLI has no command for, prefer the MCP server over the raw API. `broods mcp` serves the config plane on stdio, and a client adds it once with `claude mcp add broods -- broods mcp`. If you have tools named `broods_list`, `broods_get`, `broods_create`, `broods_update`, `broods_delete`, `broods_cron_runs`, `broods_sandbox_action`, `broods_assume_role` or `broods_whoami`, that is this server and you should use them: they carry the confirm-before-delete and scope rules below as code, so a mistake fails instead of landing.
+For everything the CLI has no command for, prefer the MCP server over the raw API. `broods mcp` serves the config plane on stdio, and a client adds it once with `claude mcp add broods -- broods mcp`. Its tool names mirror the SDK: `list-agents`, `create-cron`, `update-agent`, `delete-sandbox`, `assume-role`, `get-account` and so on. If you have those, use them over the script: they carry the confirm-before-delete and scope rules below as code, so a mistake fails instead of landing.
 
 ## Calling the API
 

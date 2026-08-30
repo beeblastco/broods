@@ -16,6 +16,7 @@ import {
   GENERATED_DIR,
   PROJECT_DIR,
   gatewayUrlForDashboard,
+  readStoredAuth,
   stageFromEnv,
   writeStoredAuth,
   type StoredAuthConfig,
@@ -2643,9 +2644,15 @@ async function mcp(): Promise<void> {
   loadBroodsRuntimeConfig();
   const { createBroodsMcpServer } = await import("../mcp.ts");
   const { serveStdio } = await import("@modelcontextprotocol/server/stdio");
+  // A stored login adds the org, project and stage tools; those routes live
+  // behind the CLI router, which rejects an account secret or role session.
+  const auth = await readStoredAuth();
+  const cli = auth
+    ? new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
+    : null;
   // Constructed once, before serving, so a missing credential fails loudly
   // here instead of on the first tool call.
-  const server = createBroodsMcpServer();
+  const server = createBroodsMcpServer(undefined, cli);
   serveStdio(() => server);
   await new Promise<void>((resolve) => {
     process.stdin.on("close", resolve);
