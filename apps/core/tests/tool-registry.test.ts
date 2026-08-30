@@ -16,7 +16,7 @@ import {
 } from "../src/shared/storage.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
-import type { CronRecord, CronSummary } from "../src/shared/domain/cron.ts";
+import type { CronRecord } from "../src/shared/domain/cron.ts";
 
 interface ChannelTestTool {
   execute: ToolExecuteFunction<
@@ -828,7 +828,7 @@ describe("createTools", () => {
 
   it("schedules a cron bound to the calling conversation", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const create = mock(async function (): Promise<CronSummary> {
+    const create = mock(async function (): Promise<CronRecord> {
       return cronSummary();
     });
     setStorageForTests(storageWithCronCreate(create));
@@ -873,7 +873,7 @@ describe("createTools", () => {
 
   it("schedules a one-time task and rejects a malformed expression", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const create = mock(async function (): Promise<CronSummary> {
+    const create = mock(async function (): Promise<CronRecord> {
       return {
         ...cronSummary(),
         scheduleExpression: "at(2027-01-01T09:00:00)",
@@ -942,7 +942,7 @@ describe("createTools", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     // Every field the success line quotes differs from the stored record, so
     // the test fails if the message is built from the pre-update read.
-    const update = mock(async function (): Promise<CronSummary> {
+    const update = mock(async function (): Promise<CronRecord> {
       return {
         ...cronSummary(),
         cronId: "cron_mine",
@@ -1010,7 +1010,7 @@ describe("createTools", () => {
 
   it("rewrites instructions only from the conversation the task answers in", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const update = mock(async function (): Promise<CronSummary> {
+    const update = mock(async function (): Promise<CronRecord> {
       return { ...cronSummary(), cronId: "cron_elsewhere" };
     });
     setStorageForTests(
@@ -1059,7 +1059,7 @@ describe("createTools", () => {
 
   it("validates its own input because the AI SDK does not enforce the schema", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const update = mock(async function (): Promise<CronSummary> {
+    const update = mock(async function (): Promise<CronRecord> {
       return cronSummary();
     });
     setStorageForTests(
@@ -1334,7 +1334,7 @@ function cronRecord(overrides: Partial<CronRecord> = {}): CronRecord {
   };
 }
 
-function cronSummary(): CronSummary {
+function cronSummary(): CronRecord {
   return {
     accountId: "acct_test",
     cronId: "cron_test",
@@ -1398,7 +1398,7 @@ function storageWithCrons(
   remove: Storage["crons"]["remove"] = async function (): Promise<boolean> {
     return true;
   },
-  update: Storage["crons"]["update"] = async function (): Promise<CronSummary> {
+  update: Storage["crons"]["update"] = async function (): Promise<CronRecord> {
     return cronSummary();
   },
 ): Storage {

@@ -26,7 +26,7 @@ import type {
   ChannelRecord,
   ChannelRecordConfig,
 } from "../domain/channel-record.ts";
-import type { CronRecord, CronSummary } from "../domain/cron.ts";
+import type { CronRecord } from "../domain/cron.ts";
 import type {
   SandboxConfig,
   SandboxConfigRecord,
@@ -305,7 +305,7 @@ const crons: Storage["crons"] = {
     return (await getConvexClient().mutation(internal.agent.crons.create, {
       accountId: accountId as any,
       input: input,
-    })) as CronSummary;
+    })) as CronRecord;
   },
   getById: async function (accountId, cronId) {
     const doc = await getConvexClient().query(internal.agent.crons.getById, {
@@ -339,7 +339,7 @@ const crons: Storage["crons"] = {
       accountId: accountId as any,
       cronId: cronId as any,
       patch: patch,
-    })) as CronSummary | null;
+    })) as CronRecord | null;
   },
   markStarted: async function (accountId, cronId) {
     await getConvexClient().mutation(internal.agent.crons.recordInvocation, {

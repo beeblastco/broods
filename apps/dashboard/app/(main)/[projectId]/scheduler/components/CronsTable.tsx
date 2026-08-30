@@ -11,7 +11,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { useAction } from "convex/react";
+import { useMutation } from "convex/react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { CronDialog } from "./CronDialog";
@@ -61,7 +61,7 @@ function statusBadge(status: Doc<"crons">["lastStatus"]) {
 }
 
 export function CronsTable({ crons, agents }: Props): React.JSX.Element {
-  const remove = useAction(api.agent.cronsPublic.remove);
+  const remove = useMutation(api.agent.cronsPublic.remove);
 
   const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
   const [deleting, setDeleting] = useState<Doc<"crons"> | null>(null);

@@ -8,9 +8,8 @@
  * `crons.ts`, which is the Convex platform cron registry.
  */
 
-import { Crons } from "@convex-dev/crons";
 import { v } from "convex/values";
-import { components, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalAction,
@@ -25,14 +24,17 @@ import { accountIdForProject } from "../model/auditEvents";
 import {
   normalizeCreateCronInput,
   normalizeUpdateCronInput,
-  translateScheduleExpression,
 } from "../model/cronRules";
+import {
+  cronSchedules,
+  registerSchedule,
+  unregisterSchedule,
+} from "../model/cronSchedules";
 import { getProjectForRole } from "../model/ownership/project";
 import { cronsInProject } from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
+import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields } from "../schema";
-
-const cronSchedules = new Crons(components.crons);
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const PRUNE_BATCH_SIZE = 100;
@@ -66,12 +68,12 @@ type Ctx = QueryCtx | MutationCtx;
 export const dispatch = internalAction({
   args: { accountId: v.id("accounts"), cronId: v.id("crons") },
   returns: v.null(),
-  handler: async (ctx, args) => {
-    const cron = await ctx.runQuery(internal.agent.crons.getById, {
+  handler: async (ctx, args): Promise<null> => {
+    const live = await ctx.runQuery(internal.agent.crons.isLive, {
       accountId: args.accountId,
       cronId: args.cronId,
     });
-    if (!cron) {
+    if (!live) {
       // The row is gone (a cascade that could not reach the registration, or
       // a crash between the two) — retire the schedule instead of firing it
       // at a deleted job forever.
@@ -82,19 +84,10 @@ export const dispatch = internalAction({
       return null;
     }
 
-    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!url || !secret) {
-      throw new Error(
-        "Cron dispatch requires BROODS_ACCOUNT_MANAGE_URL and BROODS_SERVICE_AUTH_SECRET",
-      );
-    }
-    const response = await fetch(`${url.replace(/\/+$/, "")}/v1/cron-runs`, {
+    const service = serviceEnv();
+    const response = await fetch(`${service.url}/v1/cron-runs`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-      },
+      headers: serviceHeaders(args.accountId, service.secret),
       body: JSON.stringify({
         kind: "cron",
         accountId: args.accountId,
@@ -149,14 +142,11 @@ export const completeRun = internalMutation({
  * @returns the public cron record
  */
 export const create = internalMutation({
-  args: { accountId: v.id("accounts"), input: v.any() },
+  args: { accountId: v.id("accounts"), input: v.record(v.string(), v.any()) },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     const normalized = normalizeCreateCronInput(args.input);
-    const agent = await ctx.db.get(normalized.agentId as Id<"agents">);
-    if (!agent || agent.accountId !== args.accountId) {
-      throw new Error("Cron job agentId must reference an existing agent");
-    }
+    const agent = await getOwnedAgent(ctx, args.accountId, normalized.agentId);
 
     const now = Date.now();
     const cronId = await ctx.db.insert("crons", {
@@ -174,10 +164,15 @@ export const create = internalMutation({
     });
     const created = await ctx.db.get(cronId);
     if (!created) throw new Error("Failed to fetch created cron job");
-    await registerSchedule(ctx, created, { requireFuture: true });
-    const registered = await ctx.db.get(cronId);
+    const schedule = await registerSchedule(ctx, created, {
+      onPastAt: "throw",
+    });
+    if (schedule.scheduledRunId !== undefined) {
+      await ctx.db.patch(cronId, { scheduledRunId: schedule.scheduledRunId });
+      created.scheduledRunId = schedule.scheduledRunId;
+    }
 
-    return toCronResponse(registered ?? created);
+    return toCronResponse(created);
   },
 });
 
@@ -238,6 +233,17 @@ export const getById = internalQuery({
   },
   returns: v.union(cronDoc, v.null()),
   handler: (ctx, { accountId, cronId }) => getOwned(ctx, accountId, cronId),
+});
+
+/** Whether the job still exists, without shipping its stored events. */
+export const isLive = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.id("crons"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, { accountId, cronId }) =>
+    (await getOwned(ctx, accountId, cronId)) !== null,
 });
 
 /** Every cron job of an account, or only one agent's when `agentId` is given. */
@@ -386,7 +392,7 @@ export const recordInvocation = internalMutation({
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), cronId: v.string() },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const cron = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!cron) return false;
     await unregisterSchedule(ctx, cron);
@@ -439,17 +445,18 @@ export const removeRunsCascade = internalMutation({
  * @returns the refreshed public cron record, or null when the job is missing
  */
 export const update = internalMutation({
-  args: { accountId: v.id("accounts"), cronId: v.string(), patch: v.any() },
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.string(),
+    patch: v.record(v.string(), v.any()),
+  },
   returns: v.any(),
   handler: async (ctx, args): Promise<Record<string, unknown> | null> => {
     const existing = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!existing) return null;
     const patch = normalizeUpdateCronInput(args.patch);
     if (patch.agentId !== undefined) {
-      const agent = await ctx.db.get(patch.agentId as Id<"agents">);
-      if (!agent || agent.accountId !== args.accountId) {
-        throw new Error("Cron job agentId must reference an existing agent");
-      }
+      await getOwnedAgent(ctx, args.accountId, patch.agentId);
     }
 
     const defined = Object.fromEntries(
@@ -457,27 +464,32 @@ export const update = internalMutation({
         .filter(([, value]) => value !== undefined)
         .map(([key, value]) => [key, value === null ? undefined : value]),
     );
-    await ctx.db.patch(existing._id, { ...defined, updatedAt: Date.now() });
-    const updated = await ctx.db.get(existing._id);
-    if (!updated) return null;
+    const updated: Doc<"crons"> = {
+      ...existing,
+      ...defined,
+      updatedAt: Date.now(),
+    };
 
     // The registration encodes the schedule, timezone, and active state, so a
     // patch touching any of them replaces it; other fields leave it alone.
-    if (
+    const scheduleChanged =
       patch.scheduleExpression !== undefined ||
       patch.timezone !== undefined ||
-      patch.status !== undefined
-    ) {
-      await unregisterSchedule(ctx, updated);
-      if (updated.status === "active") {
-        await registerSchedule(ctx, updated, {
-          requireFuture: patch.scheduleExpression !== undefined,
-        });
-      }
+      patch.status !== undefined;
+    if (scheduleChanged) {
+      await unregisterSchedule(ctx, existing);
+      const schedule = await registerSchedule(ctx, updated, {
+        onPastAt: patch.scheduleExpression !== undefined ? "throw" : "run",
+      });
+      updated.scheduledRunId = schedule.scheduledRunId;
     }
-    const registered = await ctx.db.get(existing._id);
+    await ctx.db.patch(existing._id, {
+      ...defined,
+      updatedAt: updated.updatedAt,
+      ...(scheduleChanged ? { scheduledRunId: updated.scheduledRunId } : {}),
+    });
 
-    return toCronResponse(registered ?? updated);
+    return toCronResponse(updated);
   },
 });
 
@@ -521,52 +533,17 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
-/**
- * Register the schedule that fires one cron job. Recurring schedules become a
- * crons-component registration named by the row id; a one-time at(...) job
- * becomes a Convex scheduler run whose id the row records for cancellation.
- */
-async function registerSchedule(
+/** Resolves an agent id string to the account's agent row, or throws. */
+async function getOwnedAgent(
   ctx: MutationCtx,
-  cron: Doc<"crons">,
-  options: { requireFuture: boolean },
-): Promise<void> {
-  const schedule = translateScheduleExpression(
-    cron.scheduleExpression,
-    cron.timezone,
-  );
-  if (schedule.kind !== "at") {
-    await cronSchedules.register(
-      ctx,
-      schedule,
-      internal.agent.crons.dispatch,
-      { accountId: cron.accountId, cronId: cron._id },
-      cron._id,
-    );
+  accountId: Id<"accounts">,
+  agentId: string,
+): Promise<Doc<"agents">> {
+  const normalized = ctx.db.normalizeId("agents", agentId);
+  const agent = normalized ? await ctx.db.get(normalized) : null;
+  if (!agent || agent.accountId !== accountId) {
+    throw new Error("Cron job agentId must reference an existing agent");
+  }
 
-    return;
-  }
-  if (options.requireFuture && schedule.timestamp <= Date.now()) {
-    throw new Error("at(...) time must be in the future");
-  }
-  const scheduledRunId = await ctx.scheduler.runAt(
-    schedule.timestamp,
-    internal.agent.crons.dispatch,
-    { accountId: cron.accountId, cronId: cron._id },
-  );
-  await ctx.db.patch(cron._id, { scheduledRunId: scheduledRunId });
-}
-
-/** Deschedule whatever fires this cron job; a missing schedule is done. */
-async function unregisterSchedule(
-  ctx: MutationCtx,
-  cron: Doc<"crons">,
-): Promise<void> {
-  if (cron.scheduledRunId) {
-    await ctx.scheduler.cancel(cron.scheduledRunId);
-    await ctx.db.patch(cron._id, { scheduledRunId: undefined });
-  }
-  if (await cronSchedules.get(ctx, { name: cron._id })) {
-    await cronSchedules.delete(ctx, { name: cron._id });
-  }
+  return agent;
 }

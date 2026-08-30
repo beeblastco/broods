@@ -15,7 +15,6 @@ import type {
   CreateCronInput,
   CronRecord,
   CronRunRecord,
-  CronSummary,
   UpdateCronInput,
 } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
@@ -144,7 +143,7 @@ interface AgentDeploymentStore {
 interface CronStore {
   // Creates the crons row and its registered schedule in the config plane;
   // the runtime path for it is the schedule tool.
-  create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
+  create(accountId: string, input: CreateCronInput): Promise<CronRecord>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
@@ -155,7 +154,7 @@ interface CronStore {
     accountId: string,
     cronId: string,
     patch: UpdateCronInput,
-  ): Promise<CronSummary | null>;
+  ): Promise<CronRecord | null>;
   markStarted(accountId: string, cronId: string): Promise<void>;
   markCompleted(accountId: string, cronId: string): Promise<void>;
   markFailed(accountId: string, cronId: string, error: string): Promise<void>;

@@ -31,6 +31,16 @@ const DAY_OF_WEEK_NAMES = new Set([
 
 export type CronStatus = "active" | "paused";
 
+/** A schedule the Convex crons component can register. */
+export type ComponentCronSchedule =
+  | { kind: "cron"; cronspec: string; tz?: string }
+  | { kind: "interval"; ms: number };
+
+/** A translated schedule: recurring for the component, or a one-time instant. */
+export type TranslatedCronSchedule =
+  | ComponentCronSchedule
+  | { kind: "at"; timestamp: number };
+
 /** Normalized create payload: `input`/`events` collapsed to a stored events list. */
 export interface NormalizedCronCreate {
   name: string;
@@ -147,16 +157,6 @@ export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
   return normalized;
 }
 
-/** A schedule the Convex crons component can register. */
-export type ComponentCronSchedule =
-  | { kind: "cron"; cronspec: string; tz?: string }
-  | { kind: "interval"; ms: number };
-
-/** A translated schedule: recurring for the component, or a one-time instant. */
-export type TranslatedCronSchedule =
-  | ComponentCronSchedule
-  | { kind: "at"; timestamp: number };
-
 /**
  * Translate a stored schedule expression — the public contract keeps the
  * `cron(...)` / `rate(...)` / `at(...)` forms — into what the Convex crons
@@ -173,7 +173,7 @@ export function translateScheduleExpression(
 ): TranslatedCronSchedule {
   const rate = /^rate\((\d+)\s+([a-z]+)\)$/.exec(expression);
   if (rate) {
-    const unitMs = RATE_MS_PER_UNIT[rate[2] as string];
+    const unitMs = RATE_MS_PER_UNIT[rate[2] ?? ""];
     const count = Number(rate[1]);
     if (!unitMs || count < 1) {
       throw new Error(
@@ -198,7 +198,7 @@ export function translateScheduleExpression(
 
   return {
     kind: "cron",
-    cronspec: cronExpressionToCronspec((cron[1] as string).trim()),
+    cronspec: cronExpressionToCronspec((cron[1] ?? "").trim()),
     ...(timezone ? { tz: timezone } : {}),
   };
 }
@@ -217,18 +217,18 @@ function cronExpressionToCronspec(fields: string): string {
       "cron(...) must have six fields: minute hour day-of-month month day-of-week year",
     );
   }
-  const [minute, hour, dayOfMonth, month, dayOfWeek, year] = parts as [
-    string,
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
+  const [
+    minute = "",
+    hour = "",
+    dayOfMonth = "",
+    month = "",
+    dayOfWeek = "",
+    year = "",
+  ] = parts;
   if (year !== "*") {
     throw new Error("cron(...) year field must be * — years cannot be pinned");
   }
-  for (const field of [minute, hour, dayOfMonth, month]) {
+  for (const field of [minute, hour, dayOfMonth, month, dayOfWeek]) {
     if (/[LW#]/i.test(field)) {
       throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
     }
@@ -246,9 +246,6 @@ function cronExpressionToCronspec(fields: string): string {
 /** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
 function convertDayOfWeek(field: string): string {
   if (field === "?" || field === "*") return "*";
-  if (/[LW#]/i.test(field)) {
-    throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
-  }
 
   return field
     .split(",")
@@ -268,6 +265,7 @@ function convertDayOfWeek(field: string): string {
     .join(",");
 }
 
+/** Parses an AWS numeric day-of-week token (1-7, 1 = Sunday), or throws. */
 function requireDayOfWeekNumber(token: string): number {
   const value = Number(token);
   if (!Number.isInteger(value) || value < 1 || value > 7) {
@@ -294,15 +292,15 @@ function atExpressionToTimestamp(
   if (!match) {
     throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
   }
-  const [, year, month, day, hour, minute, second] = match as unknown as [
-    string,
-    string,
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
+  const [
+    ,
+    year = "",
+    month = "",
+    day = "",
+    hour = "",
+    minute = "",
+    second = "",
+  ] = match;
   const asUtc = Date.UTC(
     Number(year),
     Number(month) - 1,
@@ -321,19 +319,25 @@ function atExpressionToTimestamp(
   return asUtc - timezoneOffsetMs(adjusted, timezone);
 }
 
+const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
 function timezoneOffsetMs(timestamp: number, timezone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts: Record<string, string> = {};
+  let formatter = timezoneFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    timezoneFormatters.set(timezone, formatter);
+  }
+  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
   for (const part of formatter.formatToParts(new Date(timestamp))) {
     parts[part.type] = part.value;
   }
