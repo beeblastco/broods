@@ -1,6 +1,6 @@
 # Code Hooks
 
-Code hooks are small JavaScript callbacks you declare inline in `defineAgent`. Each runs in the same hardened V8 isolate as [custom tools](tools.md) at a specific point in the agent's lifecycle, and its return value is folded back into what the agent does — inject a system prompt, deny or edit a tool call, transform the final output, reshape a subagent result, or filter a channel message.
+Code hooks are small JavaScript callbacks you declare inline in `defineAgent`. Each runs in core's hardened V8 isolate at a specific point in the agent's lifecycle, and its return value is folded back into what the agent does — inject a system prompt, deny or edit a tool call, transform the final output, reshape a subagent result, or filter a channel message.
 
 They are the code counterpart to [Lifecycle Webhooks](webhook.md): webhooks are outbound, fire-and-forget notifications; code hooks run inline and **mutate** the run. Both live under `config.hooks` and can be used together.
 
@@ -43,7 +43,7 @@ export const agent = defineAgent({
 });
 ```
 
-`ctx` exposes the isolate surface: an SSRF-guarded `ctx.fetch`, read-only `ctx.config`, and a mutable `ctx.state` (below) — the same surface custom tools get. At deploy the SDK serializes your handlers into one bundle and uploads it; nothing else to wire.
+`ctx` exposes the isolate surface: an SSRF-guarded `ctx.fetch`, read-only `ctx.config`, and a mutable `ctx.state` (below). At deploy the SDK serializes your handlers into one bundle and uploads it; nothing else to wire.
 
 ## Sharing state across a run — `ctx.state`
 
