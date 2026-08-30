@@ -18,7 +18,7 @@ afterEach(async () => {
 
 test("compileProject bundles a servable hosted MCP server", async () => {
   const cwd = await mcpFixture(
-    `export default (request) => new Response("{}", { status: 200 });\n`,
+    `handler: (request) => new Response("{}", { status: 200 }),`,
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
@@ -27,8 +27,8 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   expect(typeof bundle).toBe("string");
 });
 
-test("compileProject rejects a bundle without a fetch-style default export", async () => {
-  const cwd = await mcpFixture(`export default 42;\n`);
+test("compileProject rejects a handler that is not fetch-style", async () => {
+  const cwd = await mcpFixture(`handler: 42,`);
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "default export must be a fetch handler",
@@ -38,32 +38,43 @@ test("compileProject rejects a bundle without a fetch-style default export", asy
 test("compileProject rejects a server that crashes on import", async () => {
   // The project scan imports every broods/ module, so an import-time crash
   // surfaces with the author's own error before bundling even starts.
-  const cwd = await mcpFixture(`throw new Error("boom at import");\n`);
+  const cwd = await mcpFixture(
+    `handler: (request) => new Response("{}"),`,
+    `throw new Error("boom at import");\n`,
+  );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "boom at import",
   );
 });
 
-async function mcpFixture(serverSource: string): Promise<string> {
+test("compileProject rejects a server with neither url nor handler", async () => {
+  const cwd = await mcpFixture("");
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "needs url (external) or handler (hosted)",
+  );
+});
+
+async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {
   const cwd = await realpath(
     await mkdtemp(join(tmpdir(), "broods-mcp-fixture-")),
   );
   tempDirs.push(cwd);
   const projectDir = join(cwd, "broods");
-  await mkdir(join(projectDir, "servers"), { recursive: true });
+  await mkdir(projectDir, { recursive: true });
   await writeFile(
     join(projectDir, "broods.config.ts"),
     `import { defineBroods } from "${RESOURCES_MODULE}";\n` +
       `export default defineBroods({ project: "mcp-app" });\n`,
   );
-  await writeFile(join(projectDir, "servers", "search.ts"), serverSource);
   await writeFile(
     join(projectDir, "agents.ts"),
     `import { defineMcp } from "${RESOURCES_MODULE}";\n` +
+      prelude +
       `export const search = defineMcp({\n` +
       `  name: "search",\n` +
-      `  path: "servers/search.ts",\n` +
+      `  ${handlerLine}\n` +
       `});\n`,
   );
 

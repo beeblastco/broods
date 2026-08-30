@@ -4,14 +4,14 @@ This guide covers agent-configured external tools: provider-defined tools and MC
 
 Core ships **no built-in external tools**. Every `config.tools` key is a **provider-defined tool** — a tool the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
 
-Everything else comes from **MCP servers** (`config.mcpServers`, see [MCP Servers](#connected-mcp-servers) below): core resolves a registered server's tools at registration time and offers each as `<server>__<tool>`. Anything the provider does not execute itself belongs in an MCP server — connect one the service already runs (`defineMcp` with `url`), or write the handler yourself and let the platform host it (`defineMcp` with `path`).
+Everything else comes from **MCP servers** (`config.mcp`, see [MCP Servers](#connected-mcp-servers) below): core resolves a registered server's tools at registration time and offers each as `<server>__<tool>`. Anything the provider does not execute itself belongs in an MCP server — connect one the service already runs (`defineMcp` with `url`), or write the handler yourself and let the platform host it (`defineMcp` with an inline `handler`).
 
 Account-uploaded custom tools are retired; see [Custom Tools (Retired)](#custom-tools-retired) below.
 
 ```mermaid
 flowchart LR
   Config["config.tools.<providerTool>"] --> Registry["tools/index.ts"]
-  Mcp["config.mcpServers.<serverId>"] --> Registry
+  Mcp["config.mcp.<serverId>"] --> Registry
   Registry --> Model["streamText tools"]
   Model --> Call["model calls tool"]
   Call --> Provider["provider-defined<br/>executed by the provider"]
@@ -21,11 +21,11 @@ flowchart LR
 
 ## Current Tools
 
-| Tool                  | File                                                                                                                                       | External dependency                                                         | Config key                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- | ------------------------------ |
-| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                      | `config.tools.<providerTool>`  |
-| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                              | —                              |
-| MCP server tool       | [`src/harness/mcp/mcp.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/mcp/mcp.tool.ts)                       | The registered MCP server; the tool-runner Lambda for `transport: "hosted"` | `config.mcpServers.<serverId>` |
+| Tool                  | File                                                                                                                                       | External dependency                                                         | Config key                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------- |
+| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                      | `config.tools.<providerTool>` |
+| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                              | —                             |
+| MCP server tool       | [`src/harness/mcp/mcp.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/mcp/mcp.tool.ts)                       | The registered MCP server; the tool-runner Lambda for `transport: "hosted"` | `config.mcp.<serverId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
@@ -44,7 +44,7 @@ Tool registry path:
 3. `run_subagent` comes only from `config.subagent`.
 4. `load_skill` comes from `config.skills`.
 5. Every remaining key is resolved against the configured provider's `tools` namespace; the config keys other than `enabled`/`needsApproval`/`async` are passed through as that tool's arguments.
-6. `config.mcpServers` entries connect the registered server and add its tools as `<server>__<tool>` (see [MCP Servers](#connected-mcp-servers)).
+6. `config.mcp` entries connect the registered server and add its tools as `<server>__<tool>` (see [MCP Servers](#connected-mcp-servers)).
 7. `needsApproval` is applied before tools are passed to `streamText()`.
 8. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
 
@@ -105,7 +105,7 @@ whose AI SDK package returns a client-executed `Tool` with a JavaScript
 `execute` — cannot travel through config at all, because a function does not
 serialize. Expose those through an MCP server instead: connect one the service
 already runs (`defineMcp` with `url`), or write the handler yourself and host it
-on the platform (`defineMcp` with `path`). See [MCP Servers](#connected-mcp-servers).
+on the platform (`defineMcp` with an inline `handler`). See [MCP Servers](#connected-mcp-servers).
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 
@@ -113,7 +113,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 ## Custom Tools (Retired)
 
-Account-uploaded custom tools (`defineTool`, `POST /v1/tools`) are retired in favor of MCP servers. The replacement for an uploaded bundle is a **hosted MCP server**: write the same handler code as an MCP server, pass `defineMcp` a `path`, and the platform runs the bundle on the same tool-runner Lambda that ran custom tools. When the service already runs its own MCP endpoint, connect it with `defineMcp` and a `url`. See [MCP Servers](#connected-mcp-servers) below, [Resource Configuration](resources.md#mcp-servers) for the resource shape, and [`packages/demos/mcp-connect`](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect) for a runnable example.
+Account-uploaded custom tools (`defineTool`, `POST /v1/tools`) are retired in favor of MCP servers. The replacement for an uploaded bundle is a **hosted MCP server**: write the same handler code as an MCP server, pass it to `defineMcp` as an inline `handler`, and the platform runs the bundle on the same tool-runner Lambda that ran custom tools. When the service already runs its own MCP endpoint, connect it with `defineMcp` and a `url`. See [MCP Servers](#connected-mcp-servers) below, [Resource Configuration](resources.md#mcp-servers) for the resource shape, and [`packages/demos/mcp-connect`](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect) for a runnable example.
 
 ## Add a Built-In Tool
 
@@ -190,11 +190,11 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 
 An external [MCP](https://modelcontextprotocol.io) server (spec **2026-07-28**, stateless Streamable HTTP only) can be registered per project stage and enabled per agent. Core is the MCP client: at agent registration it connects, lists the server's tools (cached per the listing's own `ttlMs`), and offers each as `<server>__<tool>` alongside every other tool kind. `tools/call` is request/response — one POST per call, no session.
 
-Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcp` synced by `broods deploy`, or `account.createMcpServer`), then enable it on an agent:
+Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcp` synced by `broods deploy`, or `account.createMcp`), then enable it on an agent:
 
 ```jsonc
 {
-  "mcpServers": {
+  "mcp": {
     "<serverId>": { "enabled": true, "needsApproval": false },
   },
 }
@@ -214,7 +214,7 @@ export const search = defineMcp({
 export const agent = defineAgent({
   name: "assistant",
   // ...model/provider...
-  mcpServers: { [search.name]: { enabled: true } },
+  mcp: { [search.name]: { enabled: true } },
 });
 ```
 
@@ -227,4 +227,4 @@ Rules that follow from the transport and the policy layer:
 
 ### Hosted MCP servers
 
-A server can also be uploaded instead of connected: give `defineMcp` a `path` (or `POST /v1/mcp` a `bundle`) whose module default-exports a fetch-style MCP handler — `export default createMcpHandler(() => server)` from `@modelcontextprotocol/server` (pass a factory: the server is constructed per request, matching the stateless transport). `broods deploy` imports the built bundle and fails the deploy if that default export is missing or not a fetch handler, so a broken server never uploads. The row becomes `transport: "hosted"`, the bundle (capped at 10 MB) lands under the `account-mcp/` S3 prefix, and the tool-runner Lambda hosts it: one invoke per request, run in a per-invocation child process with a scrubbed environment, a sha256 integrity check on the bundle, and CPU metered as tool compute (`tool.compute.type: "mcp-sandbox"`, billed into the account's tool-sandbox CPU usage). Because the 2026-07-28 transport is stateless, per-invoke hosting is a complete implementation, not an approximation — agents use hosted and external servers identically. See [data security](./data-security.md) for the containment model.
+A server can also be uploaded instead of connected: give `defineMcp` an inline `handler` — `handler: createMcpHandler(() => server)` from `@modelcontextprotocol/server`, right in the defining file (pass a factory: the server is constructed per request, matching the stateless transport) — or `POST /v1/mcp` a `bundle` whose module default-exports that fetch-style handler. The CLI bundles the defining module, so the whole server is one file; `broods deploy` imports the built bundle and fails the deploy if the handler is missing or not fetch-style, so a broken server never uploads. The row becomes `transport: "hosted"`, the bundle (capped at 10 MB) lands under the `account-mcp/` S3 prefix, and the tool-runner Lambda hosts it: one invoke per request, run in a per-invocation child process with a scrubbed environment, a sha256 integrity check on the bundle, and CPU metered as tool compute (`tool.compute.type: "mcp-sandbox"`, billed into the account's tool-sandbox CPU usage). Because the 2026-07-28 transport is stateless, per-invoke hosting is a complete implementation, not an approximation — agents use hosted and external servers identically. See [data security](./data-security.md) for the containment model.

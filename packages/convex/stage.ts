@@ -141,11 +141,11 @@ export async function deleteStageContents(
 
   // MCP servers are stage-scoped resources, so they go with it. The S3
   // bundle is left to the account-level sweep; nothing else references it.
-  const mcpServers = await ctx.db
+  const mcpRows = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_status", (q) => q.eq("stageId", stageId))
     .collect();
-  for (const server of mcpServers) await ctx.db.delete(server._id);
+  for (const server of mcpRows) await ctx.db.delete(server._id);
 
   const variables = await ctx.db
     .query("environmentVariables")
@@ -233,7 +233,7 @@ export async function duplicateStageContents(
   targetStageId: Id<"stages">,
   now: number,
 ): Promise<void> {
-  // 1. Clone MCP servers first: agent configs key `extraConfig.mcpServers` by
+  // 1. Clone MCP servers first: agent configs key `extraConfig.mcp` by
   // row id, so the clones need the new ids before step 2 remaps them.
   const sourceMcpServers = await ctx.db
     .query("mcp")
@@ -298,10 +298,10 @@ export async function duplicateStageContents(
       changed = true;
     }
 
-    const mcpServers = asRecord(extraConfig.mcpServers);
-    if (Object.keys(mcpServers).length > 0 && mcpIdMap.size > 0) {
-      nextExtra.mcpServers = Object.fromEntries(
-        Object.entries(mcpServers).map(([key, value]) => [
+    const mcp = asRecord(extraConfig.mcp);
+    if (Object.keys(mcp).length > 0 && mcpIdMap.size > 0) {
+      nextExtra.mcp = Object.fromEntries(
+        Object.entries(mcp).map(([key, value]) => [
           mcpIdMap.get(key) ?? key,
           value,
         ]),

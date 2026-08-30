@@ -229,7 +229,7 @@ export interface StageScope {
 }
 
 /** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
-export interface AccountMcpServer {
+export interface AccountMcp {
   accountId: string;
   serverId: string;
   projectId: string;
@@ -251,7 +251,7 @@ export interface AccountMcpServer {
 }
 
 /** Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads. */
-export interface CreateMcpServerInput {
+export interface CreateMcpInput {
   name: string;
   description?: string;
   url?: string;
@@ -261,7 +261,7 @@ export interface CreateMcpServerInput {
 }
 
 /** Fields accepted by `PATCH /v1/mcp/{serverId}`; every field is optional. */
-export interface UpdateMcpServerInput {
+export interface UpdateMcpInput {
   name?: string;
   description?: string;
   url?: string;
@@ -861,48 +861,45 @@ export class BroodsAccountClient {
   }
 
   /** MCP servers live in one stage, so the collection routes need a scope. */
-  async listMcpServers(scope: StageScope): Promise<AccountMcpServer[]> {
+  async listMcp(scope: StageScope): Promise<AccountMcp[]> {
     const path = `/v1/mcp${stageScopeQuery(scope)}`;
-    const result = await this.request<{ servers: AccountMcpServer[] }>(
-      "GET",
-      path,
-    );
+    const result = await this.request<{ servers: AccountMcp[] }>("GET", path);
     if (!result) throw new BroodsAccountApiError("GET", path, 404, "Not found");
 
     return result.servers ?? [];
   }
 
-  async createMcpServer(
+  async createMcp(
     scope: StageScope,
-    input: CreateMcpServerInput,
-  ): Promise<AccountMcpServer> {
+    input: CreateMcpInput,
+  ): Promise<AccountMcp> {
     const path = `/v1/mcp${stageScopeQuery(scope)}`;
-    const result = await this.request<AccountMcpServer>("POST", path, input);
+    const result = await this.request<AccountMcp>("POST", path, input);
     if (!result)
       throw new BroodsAccountApiError("POST", path, 404, "Not found");
 
     return result;
   }
 
-  async getMcpServer(serverId: string): Promise<AccountMcpServer | null> {
-    return await this.request<AccountMcpServer>(
+  async getMcp(serverId: string): Promise<AccountMcp | null> {
+    return await this.request<AccountMcp>(
       "GET",
       `/v1/mcp/${encodeURIComponent(serverId)}`,
     );
   }
 
-  async updateMcpServer(
+  async updateMcp(
     serverId: string,
-    patch: UpdateMcpServerInput,
-  ): Promise<AccountMcpServer | null> {
-    return await this.request<AccountMcpServer>(
+    patch: UpdateMcpInput,
+  ): Promise<AccountMcp | null> {
+    return await this.request<AccountMcp>(
       "PATCH",
       `/v1/mcp/${encodeURIComponent(serverId)}`,
       patch,
     );
   }
 
-  async deleteMcpServer(serverId: string): Promise<boolean> {
+  async deleteMcp(serverId: string): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/mcp/${encodeURIComponent(serverId)}`,
