@@ -1,5 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -78,4 +86,22 @@ test("init leaves an existing skill install alone", async () => {
   expect(await runInit(cwd)).toBe(0);
 
   expect(await readFile(join(cwd, SKILL_PATH), "utf8")).toBe("local edits\n");
+});
+
+test("init refuses to write the skill through a symlink", async () => {
+  const cwd = await makeWorkdir();
+  const outside = await makeWorkdir();
+  await writeFile(join(cwd, "CLAUDE.md"), "# rules\n");
+  await mkdir(join(cwd, ".agents", "skills", "broods", "scripts"), {
+    recursive: true,
+  });
+  await symlink(
+    join(outside, "clobbered"),
+    join(cwd, ".agents", "skills", "broods", "scripts", "onboard.sh"),
+  );
+
+  expect(await runInit(cwd)).toBe(0);
+
+  await expect(stat(join(cwd, SKILL_PATH))).rejects.toThrow();
+  await expect(stat(join(outside, "clobbered"))).rejects.toThrow();
 });

@@ -5,6 +5,7 @@
 
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -12,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -1151,12 +1152,43 @@ async function ensureAgentSkill(force: boolean): Promise<void> {
   const root = resolve(cwd, AGENT_SKILL_DIR);
   if (!force && (await pathExists(resolve(root, "SKILL.md")))) return;
 
+  // A cloned repo can ship a symlink anywhere under .agents, and init runs
+  // without executing repo code, so refuse to write through one.
+  const skillRel = join(AGENT_SKILL_DIR, "SKILL.md");
+  const onboardRel = join(AGENT_SKILL_DIR, "scripts", "onboard.sh");
+  for (const rel of [skillRel, onboardRel]) {
+    if (await hasSymlinkComponent(cwd, rel)) {
+      printWarning(`Skipped the agent skill: ${rel} crosses a symlink.`);
+
+      return;
+    }
+  }
+
   await mkdir(resolve(root, "scripts"), { recursive: true });
   await writeFile(resolve(root, "SKILL.md"), agentSkillText);
   const onboardPath = resolve(root, "scripts", "onboard.sh");
   await writeFile(onboardPath, agentSkillOnboardText);
   await chmod(onboardPath, 0o755);
   console.log(`Installed the broods agent skill at ${AGENT_SKILL_DIR}/`);
+}
+
+/** True when any existing component of relPath under cwd is a symlink. */
+async function hasSymlinkComponent(
+  cwd: string,
+  relPath: string,
+): Promise<boolean> {
+  let current = cwd;
+  for (const segment of relPath.split(sep)) {
+    current = resolve(current, segment);
+    try {
+      if ((await lstat(current)).isSymbolicLink()) return true;
+    } catch {
+      // Nothing past a missing component can exist, symlinks included.
+      return false;
+    }
+  }
+
+  return false;
 }
 
 async function pathExists(path: string): Promise<boolean> {
