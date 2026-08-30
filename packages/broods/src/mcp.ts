@@ -17,7 +17,7 @@ import { z } from "zod";
 import {
   BroodsAccountApiError,
   BroodsAccountClient,
-  type ToolScope,
+  type StageScope,
   type UpdateAgentInput,
 } from "./account.ts";
 import type { CreateCronInput } from "./contracts.ts";
@@ -37,18 +37,18 @@ interface ResourceSpec {
   plural: string;
   /** What the id argument names, quoted in its description. */
   key: string;
-  /** Collection routes need a project/stage; tools and MCP servers live in one stage. */
+  /** Collection routes need a project/stage; MCP servers live in one stage. */
   scoped?: boolean;
   /** Names the update tool when the SDK calls it something else. */
   updateVerb?: string;
   /** Appended to the create tool's description, naming the fields that trip people up. */
   createHint?: string;
-  list?: (client: BroodsAccountClient, scope?: ToolScope) => Promise<unknown>;
+  list?: (client: BroodsAccountClient, scope?: StageScope) => Promise<unknown>;
   get?: (client: BroodsAccountClient, id: string) => Promise<unknown>;
   create?: (
     client: BroodsAccountClient,
     body: JsonBody,
-    scope?: ToolScope,
+    scope?: StageScope,
   ) => Promise<unknown>;
   update?: (
     client: BroodsAccountClient,
@@ -185,36 +185,19 @@ const RESOURCES: ResourceSpec[] = [
     remove: (client, id) => client.deleteSkill(id),
   },
   {
-    singular: "tool",
-    plural: "tools",
-    key: "toolId",
-    scoped: true,
-    list: (client, scope) => client.listTools(scope as ToolScope),
-    get: (client, id) => client.getTool(id),
-    create: (client, body, scope) =>
-      client.createTool(
-        scope as ToolScope,
-        body as unknown as Parameters<BroodsAccountClient["createTool"]>[1],
-      ),
-    update: (client, id, body) => client.updateTool(id, body),
-    remove: (client, id) => client.deleteTool(id),
-  },
-  {
-    singular: "mcp-server",
-    plural: "mcp-servers",
+    singular: "mcp",
+    plural: "mcp",
     key: "serverId",
     scoped: true,
-    list: (client, scope) => client.listMcpServers(scope as ToolScope),
-    get: (client, id) => client.getMcpServer(id),
+    list: (client, scope) => client.listMcp(scope as StageScope),
+    get: (client, id) => client.getMcp(id),
     create: (client, body, scope) =>
-      client.createMcpServer(
-        scope as ToolScope,
-        body as unknown as Parameters<
-          BroodsAccountClient["createMcpServer"]
-        >[1],
+      client.createMcp(
+        scope as StageScope,
+        body as unknown as Parameters<BroodsAccountClient["createMcp"]>[1],
       ),
-    update: (client, id, body) => client.updateMcpServer(id, body),
-    remove: (client, id) => client.deleteMcpServer(id),
+    update: (client, id, body) => client.updateMcp(id, body),
+    remove: (client, id) => client.deleteMcp(id),
   },
 ];
 
@@ -250,7 +233,7 @@ function requireScope(
   spec: ResourceSpec,
   project: string | undefined,
   stage: string | undefined,
-): ToolScope | undefined {
+): StageScope | undefined {
   if (!spec.scoped) return undefined;
   if (!project || !stage)
     throw new Error(
