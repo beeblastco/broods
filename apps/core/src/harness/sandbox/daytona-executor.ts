@@ -9,7 +9,7 @@ import { Daytona, type Sandbox } from "@daytona/sdk";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { logWarn } from "../../shared/log.ts";
-import { isPlainObject, isStringRecord } from "../../shared/object.ts";
+import { isPlainObject } from "../../shared/object.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -53,6 +53,7 @@ import {
   isSandboxGoneError,
   sandboxReservationKey,
   shellQuote,
+  stringRecord,
   truncateText,
   workspacePath,
 } from "./utils.ts";
@@ -434,7 +435,7 @@ async function daytonaCreateOptions(
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
   const baseEnv = {
-    ...(isStringRecord(config.envVars) ? config.envVars : {}),
+    ...stringRecord(config.envVars),
     ...request.envVars,
   };
   const envVars = await daytonaEnvVars(config, request, baseEnv);
