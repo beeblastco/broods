@@ -51,7 +51,6 @@ export interface PolicyDecisionInput {
   /** Ids of the channel record's roles the user holds, when one is configured. */
   userRoles?: string[];
   toolName?: string;
-  toolId?: string;
   /** MCP registration id behind the tool, when the tool is a remote MCP tool. */
   mcpId?: string;
   workspaceId?: string;

@@ -1,6 +1,6 @@
 /**
  * Generic provider-defined tool resolution.
- * Any config.tools key that is not an uploaded account tool id is resolved
+ * Every config.tools key is resolved
  * against the configured AI SDK provider's `tools` namespace, so every
  * provider-executed tool a provider ships is configurable without core code.
  */
@@ -30,7 +30,7 @@ export function providerDefinedTool(
     throw new Error(
       `config.tools.${toolName} is not a provider-defined tool on config.model.provider '${context.modelProviderName}' ` +
         `(available: ${availableToolNames(factories)}). ` +
-        `Upload a custom tool for anything the provider does not execute itself.`,
+        `Connect an MCP server for anything the provider does not execute itself.`,
     );
   }
 

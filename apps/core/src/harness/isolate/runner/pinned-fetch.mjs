@@ -1,6 +1,6 @@
 /**
  * SSRF-guarded pinned fetch: resolve the name, validate every address, then
- * connect to the address that was validated. Backs the custom-tool isolate
+ * connect to the address that was validated. Backs the isolate
  * fetch bridge and inbound attachment fetches in `channel-media.ts`.
  *
  * Error messages are neutral — every caller shows them to a different
