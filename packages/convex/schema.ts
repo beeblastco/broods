@@ -215,14 +215,7 @@ export const cliExternalResourcesFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
-  kind: v.union(
-    v.literal("skill"),
-    // Retired (#331 phase 3): stored rows only; migrations:sunsetCustomTools
-    // deletes them, then the literal can go.
-    v.literal("tool"),
-    v.literal("hook"),
-    v.literal("mcp"),
-  ),
+  kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
   name: v.string(),
   description: v.optional(v.string()),
   externalId: v.string(),
@@ -720,8 +713,6 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("agent"),
   v.literal("skill"),
-  // Retired kind (#331 phase 3), kept so historical audit rows stay valid.
-  v.literal("tool"),
   v.literal("hook"),
   v.literal("mcp"),
   v.literal("workspace"),

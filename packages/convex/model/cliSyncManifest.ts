@@ -301,20 +301,12 @@ export async function resourcesForStage(
           workspaceNames: workspaceNames,
         }),
       })),
-    // A stored kind "tool" snapshot is retired (#331 phase 3) and never
-    // round-trips; migrations:sunsetCustomTools deletes the rows.
-    ...externalResources.flatMap((resource): CliResource[] =>
-      resource.kind === "tool"
-        ? []
-        : [
-            {
-              kind: resource.kind,
-              name: resource.name,
-              description: resource.description,
-              config: resource.config,
-            },
-          ],
-    ),
+    ...externalResources.map((resource): CliResource => ({
+      kind: resource.kind,
+      name: resource.name,
+      description: resource.description,
+      config: resource.config,
+    })),
     ...sandboxResources,
     ...workspaces
       .filter((workspace) => workspace.managedBy === "cli")

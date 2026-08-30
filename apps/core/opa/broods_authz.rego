@@ -122,10 +122,6 @@ resources_match(rule) if object.get(rule, "resources", null) == null
 resources_match(rule) if {
   resources := object.get(rule, "resources", {})
   selector_missing_or_matches(object.get(resources, "toolNames", null), object.get(input, "toolName", null), false)
-  # toolIds is retired (#331 phase 3). The line stays so a stored rule that
-  # still carries it keeps failing to match (input.toolId is never set now)
-  # instead of silently broadening to every tool call.
-  selector_missing_or_matches(object.get(resources, "toolIds", null), object.get(input, "toolId", null), false)
   selector_missing_or_matches(object.get(resources, "mcpIds", null), object.get(input, "mcpId", null), false)
   selector_missing_or_matches(object.get(resources, "workspaceIds", null), object.get(input, "workspaceId", null), false)
   selector_missing_or_matches(object.get(resources, "workspaceNames", null), object.get(input, "workspaceName", null), false)

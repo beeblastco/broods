@@ -1,11 +1,10 @@
 /**
  * One-off data migrations. Run each on every deployment (dev + production),
- * e.g. `bunx convex run migrations:sunsetCustomTools`. Each is idempotent
+ * e.g. `bunx convex run migrations:backfillUsageRollupGrains`. Each is idempotent
  * and safe to re-run; completed migrations are deleted once every deployment
  * has run them.
  */
 
-import type { AnyDataModel, GenericDatabaseWriter } from "convex/server";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
@@ -68,56 +67,5 @@ export const backfillUsageRollupGrains = internalMutation({
     }
 
     return { patched: patched, isDone: page.isDone };
-  },
-});
-
-// #331 phase 3: custom tools are sunset; MCP servers replace them. Deletes
-// every accountTools row (the table is out of the schema, so it is reached
-// untyped), the cliExternalResources snapshots of kind "tool", and any
-// canvas-layout nodes still typed "tool" (plus their edges). Run once per
-// deployment after the cutover deploy; the account-tools/ S3 prefix is swept
-// separately (aws s3 rm --recursive s3://<ToolBundles>/account-tools/).
-export const sunsetCustomTools = internalMutation({
-  args: { dryRun: v.optional(v.boolean()) },
-  returns: v.object({
-    toolRows: v.number(),
-    cliSnapshots: v.number(),
-    layoutsPruned: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const db = ctx.db as unknown as GenericDatabaseWriter<AnyDataModel>;
-    const toolRows = await db.query("accountTools").collect();
-    for (const row of toolRows) {
-      if (args.dryRun !== true) await db.delete(row._id);
-    }
-
-    const snapshots = (
-      await ctx.db.query("cliExternalResources").collect()
-    ).filter((row) => row.kind === "tool");
-    for (const row of snapshots) {
-      if (args.dryRun !== true) await ctx.db.delete(row._id);
-    }
-
-    let layoutsPruned = 0;
-    const layouts = await ctx.db.query("canvasLayouts").collect();
-    for (const layout of layouts) {
-      const nodes = layout.nodes as Array<Record<string, unknown>>;
-      const kept = nodes.filter((node) => node.type !== "tool");
-      if (kept.length === nodes.length) continue;
-      const keptIds = new Set(kept.map((node) => node.id));
-      const edges = (layout.edges as Array<Record<string, unknown>>).filter(
-        (edge) => keptIds.has(edge.source) && keptIds.has(edge.target),
-      );
-      layoutsPruned += 1;
-      if (args.dryRun !== true) {
-        await ctx.db.patch(layout._id, { nodes: kept, edges: edges });
-      }
-    }
-
-    return {
-      toolRows: toolRows.length,
-      cliSnapshots: snapshots.length,
-      layoutsPruned: layoutsPruned,
-    };
   },
 });

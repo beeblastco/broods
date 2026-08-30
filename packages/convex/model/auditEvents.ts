@@ -39,7 +39,6 @@ export type ConfigAuditResource = {
     | "account"
     | "agent"
     | "skill"
-    | "tool"
     | "hook"
     | "mcp"
     | "workspace"
