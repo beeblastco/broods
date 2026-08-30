@@ -7,7 +7,6 @@
  * here is synchronous.
  */
 
-import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
   AgentDiscordChannelConfig,
@@ -79,7 +78,6 @@ export type ResourceKind =
   | "sandbox"
   | "cron"
   | "skill"
-  | "tool"
   | "mcp"
   | "policy"
   | "channelRecord";
@@ -145,52 +143,6 @@ export interface SkillDefinitionConfig {
    * resolved from the `broods/` project directory.
    */
   path: string;
-}
-
-/** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
-export interface ToolExecuteContext {
-  /** Resolved tool config, `env("NAME")` already substituted. Where secrets arrive. */
-  config: Record<string, unknown>;
-  /** SSRF-guarded fetch. Also installed as the global `fetch`. */
-  fetch: typeof fetch;
-  /** Per-run scratchpad. Read back after hooks; empty and unused for tools. */
-  state: Record<string, unknown>;
-}
-
-/** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
-export interface ToolExecuteOptions {
-  toolCallId?: string;
-  context: ToolExecuteContext;
-  abortSignal?: AbortSignal;
-  /** Conversation so far. Truncated from the front to the newest 512 KB. */
-  messages: ModelMessage[];
-  experimental_context?: unknown;
-}
-
-export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
-  /**
-   * Optional module file exporting the tool implementation, resolved from the
-   * `broods/` project directory. Omit it and declare `execute` inline instead —
-   * the CLI then bundles the module this tool is exported from.
-   */
-  path?: string;
-  /**
-   * Runs in the isolate or the sandbox runner, not locally. Shaped like the AI
-   * SDK's `tool({ execute })`: the input first, call options second. Annotate
-   * the parameter to type it — `inputSchema` is JSON Schema, so it cannot be
-   * inferred.
-   */
-  execute?: (input: Input, options: ToolExecuteOptions) => unknown;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  runtime?: "isolate" | "sandbox";
-  /**
-   * Account-wide, non-secret defaults. Environment variable references are
-   * rejected here; put `env("NAME")` under the enabling agent's
-   * `tools.<tool>.config` so the value is resolved per stage and stored with
-   * encrypted agent config.
-   */
-  defaultConfig?: Record<string, unknown>;
 }
 
 export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
@@ -665,11 +617,6 @@ export type SkillResource<Name extends string = string> = ResourceDefinition<
   Name,
   SkillDefinitionConfig
 >;
-export type ToolResource<Name extends string = string> = ResourceDefinition<
-  "tool",
-  Name,
-  ToolDefinitionConfig
->;
 export type McpServerResource<Name extends string = string> =
   ResourceDefinition<"mcp", Name, McpServerDefinitionConfig>;
 export type PolicyResource<Name extends string = string> = ResourceDefinition<
@@ -695,7 +642,6 @@ export type AnyResource =
   | SandboxResource
   | CronResource
   | SkillResource
-  | ToolResource
   | McpServerResource
   | PolicyResource
   | ChannelResource;
@@ -957,22 +903,6 @@ export function defineSkill<const Name extends string>(
     name,
     description,
     config as SkillDefinitionConfig,
-  );
-}
-
-// `description` is the model-facing text, so it stays inside the tool config
-// rather than becoming the resource-level human description.
-export function defineTool<
-  const Name extends string,
-  Input = Record<string, unknown>,
->(input: { name: Name } & ToolDefinitionConfig<Input>): ToolResource<Name> {
-  const { name, ...config } = input;
-
-  return defineResource(
-    "tool",
-    name,
-    undefined,
-    config as ToolDefinitionConfig,
   );
 }
 

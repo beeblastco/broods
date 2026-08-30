@@ -517,12 +517,7 @@ function snapshotResource(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
   const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (
-    resource.kind !== "skill" &&
-    resource.kind !== "tool" &&
-    resource.kind !== "hook"
-  )
-    return normalized;
+  if (resource.kind !== "skill" && resource.kind !== "hook") return normalized;
 
   return {
     ...normalized,

@@ -71,22 +71,6 @@ export type ResourceAliases = Partial<
   Record<AnyResource["kind"], Record<string, string>>
 >;
 
-// Stands in for the SDK inside an inline tool's bundle: the resource helpers
-// only shape config at author time, so returning the input is enough.
-const SDK_STUB_SOURCE = `const passthrough = (input) => input;
-export const defineTool = passthrough;
-export const defineAgent = passthrough;
-export const defineHarness = passthrough;
-export const defineWorkspace = passthrough;
-export const defineSandbox = passthrough;
-export const defineSkill = passthrough;
-export const definePolicy = passthrough;
-export const defineCron = passthrough;
-export const defineBroods = passthrough;
-export const env = (name) => ({ __beeblastEnv: true, name });
-export default {};
-`;
-
 type ExportedValue = {
   exportName: string;
   file: string;
@@ -99,10 +83,9 @@ type ExportedResource = {
   resource: AnyResource;
 };
 
-// The server bounds a tool bundle per tier: 1 MB on the isolate tier, 10 MB on
-// the sandbox tier, which streams its bundle rather than inlining it. The CLI
-// cannot classify the tier, so it enforces the larger bound and lets the server
-// reject an oversized isolate bundle with the tier named.
+// The server bounds uploaded bundles: 1 MB for isolate-run hooks, 10 MB for
+// hosted MCP server bundles. The CLI enforces the larger bound and lets the
+// server reject an oversized hook bundle with its own limit named.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
@@ -1012,20 +995,6 @@ async function normalizeConfig(
     return rewriteValues(config);
   }
 
-  if (resource.kind === "tool") {
-    return await normalizeToolConfig(
-      entry,
-      resource.config as {
-        path?: string;
-        description: string;
-        inputSchema: Record<string, unknown>;
-        runtime?: "isolate" | "sandbox";
-        defaultConfig?: Record<string, unknown>;
-      },
-      projectRoot,
-    );
-  }
-
   if (resource.kind === "mcp") {
     return await normalizeMcpConfig(
       entry,
@@ -1675,83 +1644,6 @@ async function normalizeMcpConfig(
   };
 }
 
-async function normalizeToolConfig(
-  entry: ExportedResource,
-  config: {
-    path?: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-    runtime?: "isolate" | "sandbox";
-    defaultConfig?: Record<string, unknown>;
-  },
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
-  const defaultConfigEnvRefs = new Set<string>();
-  collectEnvRefNamesFromValue(config.defaultConfig, defaultConfigEnvRefs);
-  if (defaultConfigEnvRefs.size > 0) {
-    throw new Error(
-      `Tool "${entry.resource.name}" defaultConfig cannot contain env("NAME") references; put environment variable values in the agent's tools.<tool>.config so they stay encrypted and stage-scoped`,
-    );
-  }
-
-  // No `path` means the tool declared `execute` inline: bundle the module that
-  // exported it and address the export by name, the way Convex ships actions.
-  const bundlePath = config.path
-    ? resolveContainedResourcePath(projectRoot, config.path, "Tool")
-    : entry.file;
-  const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
-  assertSafeBundlePath(manifestPath, "Tool");
-  const sourceSize = Buffer.byteLength(await readFile(bundlePath));
-  if (sourceSize > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(
-      `Tool source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
-    );
-  }
-  // Emit the AI SDK calling convention at build time: authors write
-  // execute(ctx, input); the runtime calls execute(input, options) with ctx at
-  // options.context. A shim entrypoint keeps that one generated line in one place.
-  const shimDir = await mkdtemp(join(tmpdir(), "broods-tool-"));
-  const shimPath = join(shimDir, "tool-adapter.mjs");
-  await writeFile(
-    shimPath,
-    toolShimSource(bundlePath, config.path, entry),
-    "utf8",
-  );
-  if (!config.path) {
-    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
-  }
-  let bundle: string;
-  try {
-    bundle = await buildBundleModule({
-      entryPoint: shimPath,
-      label: "Tool bundle",
-      manifestPath: manifestPath,
-      plugins: config.path ? [] : [sdkStubPlugin(shimDir)],
-    });
-  } finally {
-    await rm(shimDir, { recursive: true, force: true });
-  }
-  bundle = normalizeBundleComments(bundle, bundlePath, manifestPath);
-  const bundleSize = Buffer.byteLength(bundle);
-  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(
-      `Tool bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
-    );
-  }
-
-  return {
-    path: manifestPath,
-    description: config.description,
-    inputSchema: config.inputSchema,
-    ...(config.runtime !== undefined ? { runtime: config.runtime } : {}),
-    ...(config.defaultConfig !== undefined
-      ? { defaultConfig: config.defaultConfig }
-      : {}),
-    bundle: bundle,
-    sha256: sha256Hex(bundle),
-  };
-}
-
 /**
  * Normalizes one agent `workspaces` entry into the manifest wire shape
  * `{ name, workspaceId, sandbox? }`. Accepts a bare `defineWorkspace(...)`
@@ -1794,7 +1686,7 @@ function normalizeWorkspaceRef(
 function resolveContainedResourcePath(
   projectRoot: string,
   resourcePath: string,
-  kind: "Skill" | "Tool" | "MCP server",
+  kind: "Skill" | "MCP server",
 ): string {
   if (resourcePath.trim().length === 0)
     throw new Error(`${kind} path is required`);
@@ -1904,7 +1796,7 @@ function shouldSkipBundleEntry(name: string): boolean {
 
 function assertSafeBundlePath(
   path: string,
-  kind: "Skill" | "Tool" | "MCP server",
+  kind: "Skill" | "MCP server",
 ): void {
   if (isUnsafeBundlePath(path)) {
     throw new Error(
@@ -1942,63 +1834,6 @@ function contentTypeForPath(path: string): string {
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
 
   return "application/octet-stream";
-}
-
-// Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
-// those imports to inert stubs so the bundle carries the tool, not the client.
-function sdkStubPlugin(shimDir: string): Plugin {
-  const stub = join(shimDir, "broods-stub.mjs");
-
-  return {
-    name: "broods-sdk-stub",
-    setup: function (build) {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
-    },
-  };
-}
-
-// A `path` tool default-exports its implementation and is called execute(ctx,
-// input); an inline tool is a named export already shaped like the AI SDK's tool().
-function toolShimSource(
-  bundlePath: string,
-  explicitPath: string | undefined,
-  entry: ExportedResource,
-): string {
-  const from = JSON.stringify(bundlePath);
-  if (explicitPath) {
-    return (
-      `import __toolModule from ${from};\n` +
-      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
-      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`
-    );
-  }
-
-  return (
-    `import { ${entry.exportName} as __tool } from ${from};\n` +
-    `export default { name: ${JSON.stringify(entry.resource.name)}, execute: (input, options) => __tool.execute(input, options) };\n`
-  );
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Bun stamps each module's path into the bundle as a comment. Those paths vary
-// with the random shim tempdir and the cwd, so identical source would rehash.
-function normalizeBundleComments(
-  bundle: string,
-  bundlePath: string,
-  manifestPath: string,
-): string {
-  const sourceComment = new RegExp(
-    `^// .*${escapeRegExp(basename(bundlePath))}$`,
-    "gm",
-  );
-
-  return bundle
-    .replace(/^\/\/ .*tool-adapter\.mjs$/gm, () => "// tool-adapter.mjs")
-    .replace(/^\/\/ .*broods-stub\.mjs$/gm, () => "// broods-stub.mjs")
-    .replace(sourceComment, () => `// ${manifestPath}`);
 }
 
 function normalizeProjectName(name: string): string {
