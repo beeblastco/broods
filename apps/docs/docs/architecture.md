@@ -42,7 +42,7 @@ flowchart TD
 
 Runtime boundary:
 
-- SST provisions the AWS data plane, IAM, Scheduler, and the cron-runs bus + API destination; the container deployment lives in the infra repo.
+- SST provisions the AWS data plane and IAM; the container deployment lives in the infra repo.
 - Handlers receive `CoreRequest` and return Web `Response` objects.
 - `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
 
@@ -64,8 +64,7 @@ flowchart TD
   Core --> AccountStore["Convex: accounts<br/>account metadata + secretHash"]
   Core --> AgentStore["Convex: agents<br/>encrypted agent configs"]
   ConfigPlane["Convex config plane<br/>skills / tools / files / crons CRUD"] -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
-  ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons"]
-  ConfigPlane -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
+  ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons<br/>+ crons component schedules"]
   AccountStore -->|Authentication| Core
   AgentStore -->|agentId config lookup| Core
   Core --> Integrations["integrations.ts<br/>account auth + routing"]
@@ -84,8 +83,7 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["Convex: runtimeAsyncAgentResults"]
   AsyncTools --> AsyncToolResult["Convex: runtimeAsyncToolResults + groups"]
-  Scheduler --> CronBus["cron-runs event bus"]
-  CronBus -->|"HTTPS API destination"| Gateway
+  Crons -->|"cron dispatch POST /v1/cron-runs"| Gateway
   Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
@@ -217,14 +215,13 @@ Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys 
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler publishes onto the cron-runs event bus, whose rule forwards the event to the HTTPS API destination; the destination POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): the account-scoped `crons` row and its schedule — a Convex crons component registration for recurring jobs, a Convex scheduler run for one-time `at(...)` jobs — are written in the same transaction, so neither can orphan the other. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
   Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
-  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler --> CronBus["cron-runs event bus"]
-  CronBus -->|"HTTPS API destination"| Gateway["gateway"]
+  Config --> Component["Convex crons component<br/>schedule lifecycle"]
+  Component -->|"dispatch action POST"| Gateway["gateway"]
   Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness

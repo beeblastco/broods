@@ -9,6 +9,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
+import { unregisterSchedule } from "./cronSchedules";
 import { cronsInProject } from "./projectScope";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
@@ -55,7 +56,14 @@ export async function deleteAccountContentsBatch(
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE);
     if (rows.length > 0) {
-      for (const row of rows) await ctx.db.delete(row._id);
+      for (const row of rows) {
+        // Cron rows own a live schedule; deleting the row alone would leave
+        // it firing at a job that no longer exists.
+        if (table === "crons") {
+          await unregisterSchedule(ctx, row as Doc<"crons">);
+        }
+        await ctx.db.delete(row._id);
+      }
 
       return false;
     }
@@ -123,20 +131,16 @@ export async function purgeProject(
   projectId: Id<"projects">,
 ): Promise<void> {
   // Crons hang off the project's agents, so gather them before the stage
-  // cascade deletes those agents. Rows go now; run history can exceed one
-  // transaction, so a scheduled mutation drains it in bounded batches after
-  // this commits, and the EventBridge schedule needs AWS credentials, so a
-  // scheduled action removes it too.
+  // cascade deletes those agents. Rows and their schedules go now, in this
+  // transaction; run history can exceed one transaction, so a scheduled
+  // mutation drains it in bounded batches after this commits.
   const crons = await cronsForProject(ctx, projectId);
   for (const cron of crons) {
     await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
       accountId: cron.accountId,
       cronId: cron._id,
     });
-    await ctx.scheduler.runAfter(0, internal.aws.crons.removeSchedule, {
-      schedulerName: cron.schedulerName,
-      schedulerGroupName: cron.schedulerGroupName,
-    });
+    await unregisterSchedule(ctx, cron);
     await ctx.db.delete(cron._id);
   }
 

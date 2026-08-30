@@ -8,6 +8,7 @@
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { cronSchedules, registerSchedule } from "./model/cronSchedules";
 import { USAGE_GRAIN_MS, foldRollupBucket } from "./usage";
 
 /**
@@ -67,5 +68,71 @@ export const backfillUsageRollupGrains = internalMutation({
     }
 
     return { patched: patched, isDone: page.isDone };
+  },
+});
+
+/**
+ * Cut per-account cron scheduling over from EventBridge Scheduler to the
+ * Convex crons component: register every live cron row through the component
+ * (one-time at(...) jobs go to the Convex scheduler) and unset the dead
+ * EventBridge identifiers. Idempotent — rows already registered are skipped —
+ * and paginated with a self-reschedule, like the other backfills. The
+ * EventBridge schedules themselves die with the schedule group when the
+ * updated sst.config.ts deploys; run this right after the Convex deploy so
+ * no schedule window is missed.
+ * @returns rows registered and skipped in this batch, and whether the walk finished
+ */
+export const migrateCronsToConvexScheduler = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    registered: v.number(),
+    skipped: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("crons")
+      .paginate({ numItems: 50, cursor: args.cursor ?? null });
+
+    let registered = 0;
+    let skipped = 0;
+    for (const cron of page.page) {
+      const unsetEventBridge =
+        cron.schedulerName !== undefined
+          ? { schedulerName: undefined, schedulerGroupName: undefined }
+          : {};
+      const alreadyRegistered =
+        cron.status === "active" &&
+        (cron.scheduledRunId !== undefined ||
+          (await cronSchedules.get(ctx, { name: cron._id })) !== null);
+      if (cron.status !== "active" || alreadyRegistered) {
+        if (cron.schedulerName !== undefined) {
+          await ctx.db.patch(cron._id, unsetEventBridge);
+        }
+        skipped += 1;
+        continue;
+      }
+      // "skip" a one-time job whose instant already passed: it fired (or was
+      // missed) under EventBridge, and re-registering would fire it again.
+      const schedule = await registerSchedule(ctx, cron, { onPastAt: "skip" });
+      await ctx.db.patch(cron._id, {
+        ...unsetEventBridge,
+        ...(schedule.scheduledRunId !== undefined
+          ? { scheduledRunId: schedule.scheduledRunId }
+          : {}),
+      });
+      if (schedule.registered) registered += 1;
+      else skipped += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.migrateCronsToConvexScheduler,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { registered: registered, skipped: skipped, isDone: page.isDone };
   },
 });

@@ -15,7 +15,6 @@ import type {
   CreateCronInput,
   CronRecord,
   CronRunRecord,
-  CronSummary,
   UpdateCronInput,
 } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
@@ -142,20 +141,20 @@ interface AgentDeploymentStore {
 
 /** Account-scoped cron job schedules. */
 interface CronStore {
-  // Creates the crons row and its EventBridge schedule in the config plane;
+  // Creates the crons row and its registered schedule in the config plane;
   // the runtime path for it is the schedule tool.
-  create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
+  create(accountId: string, input: CreateCronInput): Promise<CronRecord>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
-  // Patches the EventBridge schedule before the row, so a rejected expression
+  // Patches the row and its registered schedule together, so a rejected expression
   // leaves the stored job untouched. Null means the job is gone: either it
   // never existed, or it was deleted while the patch was in flight.
   update(
     accountId: string,
     cronId: string,
     patch: UpdateCronInput,
-  ): Promise<CronSummary | null>;
+  ): Promise<CronRecord | null>;
   markStarted(accountId: string, cronId: string): Promise<void>;
   markCompleted(accountId: string, cronId: string): Promise<void>;
   markFailed(accountId: string, cronId: string, error: string): Promise<void>;

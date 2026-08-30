@@ -162,7 +162,7 @@ export interface DirectInboundEvent {
   // rebuilds the sender from the agent config via sendChannelReply.
   replyTarget?: { channelName: string; source: Record<string, unknown> };
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
-  // this run settles, because EventBridge has already dropped the schedule.
+  // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
 }
 

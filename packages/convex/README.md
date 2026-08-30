@@ -59,12 +59,13 @@ touched. A leaked Convex deploy key cannot trivially cross-tenant.
 ## AWS config plane (epic #85 phase 9)
 
 Convex owns the account config plane's AWS resources directly (no core proxy):
-skill bundles, hook and MCP bundles, and workspace files in S3, plus account cron
-schedules in EventBridge Scheduler. `model/aws.ts` assumes `ConvexAwsRole`
+skill bundles, hook and MCP bundles, and workspace files in S3. Account cron
+schedules live entirely in Convex (the crons component — see
+`agent/crons.ts`), with no AWS side at all. `model/aws.ts` assumes `ConvexAwsRole`
 (created by `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose
 only permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and
 the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
-`aws/workspaceFiles.ts`, `aws/crons.ts`, `skillsPublic.ts`,
+`aws/workspaceFiles.ts`, `skillsPublic.ts`,
 `workspace/filesPublic.ts`).
 
 `config/http.ts` serves the public config API on this deployment's
@@ -96,18 +97,12 @@ Deployment environment variables:
   `broods-convex`).
 - `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME` —
   the stage's S3 buckets (sst outputs).
-- `CRON_SCHEDULER_TARGET_ARN` — what schedules invoke (sst output
-  `cronSchedulerTargetArn`; the harness today, the gateway cron-run API
-  destination after cutover).
-- `CRON_SCHEDULER_ROLE_ARN` — the role schedules assume (sst output
-  `cronSchedulerRoleArn`).
-- `CRON_SCHEDULER_GROUP_NAME` — the stage's schedule group (sst output
-  `cronScheduleGroupName`).
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for agent and sandbox config CRUD.
 - `ADMIN_ACCOUNT_SECRET` — admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
-  account-manage URL and shared bearer secret used for sandbox delete cleanup.
+  account-manage URL and shared bearer secret, used for sandbox delete cleanup
+  and to POST fired cron runs to the gateway `/v1/cron-runs` leaf.
 
 ## Workflow
 

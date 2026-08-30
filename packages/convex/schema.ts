@@ -993,9 +993,9 @@ export const sandboxReservationsFields = {
 /**
  * Per-account scheduled agent runs. Mirrors core's CronRecord
  * (apps/core/src/shared/domain/cron.ts) so the SaaS dashboard can manage them
- * directly via Convex live queries. The schedulerName / schedulerGroupName
- * are still the AWS EventBridge Scheduler identifiers — Convex stores them
- * for visibility but broods Lambda is what actually invokes EBS.
+ * directly via Convex live queries. Recurring jobs are registered with the
+ * Convex crons component under the row id; a one-time at(...) job stores the
+ * Convex scheduler run that will fire it in `scheduledRunId`.
  */
 export const cronsFields = {
   accountId: v.id("accounts"),
@@ -1007,8 +1007,10 @@ export const cronsFields = {
   scheduleExpression: v.string(),
   timezone: v.optional(v.string()),
   status: v.union(v.literal("active"), v.literal("paused")),
-  schedulerName: v.string(),
-  schedulerGroupName: v.string(),
+  scheduledRunId: v.optional(v.id("_scheduled_functions")),
+  // Dead EventBridge Scheduler identifiers; the crons migration unsets them.
+  schedulerName: v.optional(v.string()),
+  schedulerGroupName: v.optional(v.string()),
   lastInvokedAt: v.optional(v.number()),
   lastStatus: v.optional(
     v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),

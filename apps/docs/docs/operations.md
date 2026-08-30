@@ -158,11 +158,10 @@ bun run deploy
 Deploy outputs include:
 
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
-- `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ## Container Runtime (Phase 9a)
 
-The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane. Core does not talk to EventBridge Scheduler — the Convex config plane owns every schedule, including the account-deletion sweep.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane. Core does not schedule anything itself — the Convex crons component owns every schedule, including the account-deletion cascade.
 
 ```mermaid
 flowchart LR
@@ -178,7 +177,7 @@ Runtime notes:
 - Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`).
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
-- Cron schedules publish onto the cron-runs event bus from SST output `cronSchedulerTargetArn`; the bus rule forwards to the API destination, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the bus ARN at cutover with no code change.
+- Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload to `/v1/cron-runs` through the gateway, authenticated with `BROODS_SERVICE_AUTH_SECRET` against `BROODS_ACCOUNT_MANAGE_URL` (both already in the Convex deployment env). No AWS scheduler infrastructure is involved.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 

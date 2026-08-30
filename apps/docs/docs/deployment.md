@@ -85,7 +85,6 @@ bun run deploy
 Deploy outputs include:
 
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
-- `cronScheduleGroupName`, `cronSchedulerTargetArn`, and `cronSchedulerRoleArn`
 
 ### Using the CLI with Self-Hosted
 

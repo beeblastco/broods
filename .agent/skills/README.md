@@ -13,7 +13,7 @@ The exploration behind this design (config plane, harness, auth) found the platf
 
 | Capability                                                                                       | Status                                                                                                                            |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Cron pipeline (EventBridge → gateway → core `POST /v1/cron-runs`)                                | complete                                                                                                                          |
+| Cron pipeline (Convex crons component → gateway → core `POST /v1/cron-runs`)                     | complete                                                                                                                          |
 | Agent self-scheduling tools (`schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`) | complete, gated on `config.scheduler.enabled`, fenced so a fired run cannot reschedule itself                                     |
 | Config-plane CRUD for agents, crons, sandboxes, skills, tools, policies, env, workspaces         | complete, account secret bearer                                                                                                   |
 | SDK (`BroodsAccountClient`, ~60 methods)                                                         | complete                                                                                                                          |

@@ -21,7 +21,6 @@ import type * as agent_deployments from "../agent/deployments.js";
 import type * as agent_policies from "../agent/policies.js";
 import type * as auth from "../auth.js";
 import type * as aws_bundles from "../aws/bundles.js";
-import type * as aws_crons from "../aws/crons.js";
 import type * as aws_skills from "../aws/skills.js";
 import type * as aws_workspaceFiles from "../aws/workspaceFiles.js";
 import type * as canvas from "../canvas.js";
@@ -146,7 +145,6 @@ declare const fullApi: ApiFromModules<{
   "agent/policies": typeof agent_policies;
   auth: typeof auth;
   "aws/bundles": typeof aws_bundles;
-  "aws/crons": typeof aws_crons;
   "aws/skills": typeof aws_skills;
   "aws/workspaceFiles": typeof aws_workspaceFiles;
   canvas: typeof canvas;
@@ -281,4 +279,5 @@ export declare const internal: FilterApi<
 export declare const components: {
   workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
   stripe: import("@convex-dev/stripe/_generated/component.js").ComponentApi<"stripe">;
+  crons: import("@convex-dev/crons/_generated/component.js").ComponentApi<"crons">;
 };

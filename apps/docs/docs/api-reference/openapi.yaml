@@ -662,7 +662,6 @@ paths:
                       reservedSandboxesReleased: 0
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
-                      cronsDeleted: 0
                       bundleObjectsDeleted: 0
 
   /accounts/{accountId}/rotate-secret:
@@ -2975,7 +2974,7 @@ components:
           description: Optional public conversation key. Defaults to `cron:{cronId}`.
         scheduleExpression:
           type: string
-          description: EventBridge Scheduler expression, such as `cron(...)`, `rate(...)`, or `at(...)`
+          description: Schedule expression, such as `cron(...)`, `rate(...)`, or `at(...)`
         timezone:
           type: string
         status:
@@ -3116,8 +3115,6 @@ components:
             agentsDeleted:
               type: integer
             skillObjectsDeleted:
-              type: integer
-            cronsDeleted:
               type: integer
             bundleObjectsDeleted:
               type: integer

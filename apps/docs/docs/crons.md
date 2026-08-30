@@ -1,14 +1,13 @@
 # Cron Jobs
 
-Cron jobs start account agents on a schedule. Cron CRUD lives in the Convex config plane (`/v1/crons` is forwarded there by the gateway); execution stays in the core harness, invoked by EventBridge Scheduler.
+Cron jobs start account agents on a schedule. Cron CRUD lives in the Convex config plane (`/v1/crons` is forwarded there by the gateway); execution stays in the core harness, invoked by the Convex crons component. The `crons` row and its schedule are written in the same Convex transaction, so neither can ever orphan the other.
 
 ```mermaid
 flowchart TD
-  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(config/http + aws/crons)"]
+  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(config/http + agent/crons)"]
   Config --> Jobs["crons table (Convex)"]
-  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler --> Bus["cron-runs event bus"]
-  Bus -->|"HTTPS API destination"| Gateway["gateway"]
+  Config --> Component["Convex crons component<br/>schedule lifecycle"]
+  Component -->|"dispatch action POST"| Gateway["gateway"]
   Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
@@ -40,7 +39,7 @@ A cron never reaches a conversation belonging to another account or agent, and a
 
 ### What A Fired Run Sees
 
-The stored instructions arrive as a user turn that nobody typed, so the runtime frames them before the model reads them: the first user message is prefixed with the task name, the schedule and its timezone, the instant the scheduler fired, when the task was set up, whether it fires again, and the fact that nobody is sitting in the conversation waiting on a reply. The instructions themselves are passed through untouched. Its trace root is `agent.cron`, not `agent.task`, and the log line for the dispatch carries `dispatchLagMs` — how long the Scheduler → event bus → API destination → gateway hops took, so a late answer can be attributed to the pipeline or to the run itself.
+The stored instructions arrive as a user turn that nobody typed, so the runtime frames them before the model reads them: the first user message is prefixed with the task name, the schedule and its timezone, the instant the scheduler fired, when the task was set up, whether it fires again, and the fact that nobody is sitting in the conversation waiting on a reply. The instructions themselves are passed through untouched. Its trace root is `agent.cron`, not `agent.task`, and the log line for the dispatch carries `dispatchLagMs` — how long the Convex dispatch → gateway hops took, so a late answer can be attributed to the pipeline or to the run itself.
 
 A fired run carries **no scheduling tools at all** — not `schedule`, `update_schedule`, `list_schedules`, or `cancel_schedule` — however the agent is configured. A model reading its own stored instructions takes them for a fresh request, so every one of those tools is a way for it to act on the schedule it is currently running. A subagent dispatched by a fired run inherits the same restriction. Scheduling stays with the turns a person actually asked for.
 
@@ -103,7 +102,7 @@ curl -X POST "$BROODS_BASE_URL/v1/crons" \
   }'
 ```
 
-Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(...)`, `rate(...)`, and `at(...)`. The cron form is `cron(minutes hours day-of-month month day-of-week year)` — one of day-of-month / day-of-week must be `?`.
+Supported schedule expressions keep the familiar `cron(...)`, `rate(...)`, and `at(...)` forms. The cron form is `cron(minutes hours day-of-month month day-of-week year)` — one of day-of-month / day-of-week may be `?`, and the year field must be `*`. The calendar extensions plain cron cannot express (`L`, `W`, `#`, a pinned year) are rejected at create/update time.
 
 | Cadence                 | Expression                |
 | ----------------------- | ------------------------- |
@@ -113,9 +112,9 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 | Yearly, Jan 1 09:00     | `cron(0 9 1 1 ? *)`       |
 | Once, at a fixed time   | `at(2027-01-01T09:00:00)` |
 
-A one-time `at(...)` job is **self-deleting**: EventBridge drops the schedule as soon as it has fired, and the runtime deletes the cron job and its run history once that single run settles. `GET /v1/crons/{cronId}` returns 404 from then on, so read the result through the conversation or the async status API rather than the job. Recurring jobs are never deleted on their own.
+A one-time `at(...)` job is **self-deleting**: its scheduled run is spent as soon as it has fired, and the runtime deletes the cron job and its run history once that single run settles. `GET /v1/crons/{cronId}` returns 404 from then on, so read the result through the conversation or the async status API rather than the job. Recurring jobs are never deleted on their own.
 
-`timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. It controls schedule evaluation, and the fired run is told which timezone its schedule was read in — it never changes how the agent itself is configured.
+`timezone` sets the IANA timezone the schedule is evaluated in, DST shifts included. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. It controls schedule evaluation, and the fired run is told which timezone its schedule was read in — it never changes how the agent itself is configured.
 
 Pause a job:
 
@@ -172,7 +171,7 @@ Withhold any of them from one channel with `denyTools: ["cancel_schedule"]` (or 
 
 ## SDK and Dynamic Creation
 
-Cron jobs are not limited to declarative `defineCron` resources synced by `broods dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so EventBridge Scheduler stays in sync):
+Cron jobs are not limited to declarative `defineCron` resources synced by `broods dev` — clients can create, update, and delete them at runtime through the SDK, which calls the same account API (so the registered schedules stay in sync):
 
 ```ts
 import { BroodsClient } from "broods";

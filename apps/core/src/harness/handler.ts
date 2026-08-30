@@ -125,8 +125,8 @@ interface CronInvocation {
   kind: "cron";
   accountId: string;
   cronId: string;
-  // The instant Scheduler meant to fire, substituted into the target payload by
-  // awsCrons. Absent on schedules created before that was added.
+  // The dispatch instant, stamped by agent/crons.dispatch in Convex when the
+  // schedule fires; dispatchLagMs measures the Convex → gateway hop from it.
   scheduledTime?: string;
 }
 
@@ -287,7 +287,7 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
 }
 
 /**
- * Handle scheduled cron jobs invoked by EventBridge Scheduler.
+ * Handle scheduled cron jobs dispatched by the Convex crons component.
  */
 async function handleScheduledCron(event: CronInvocation): Promise<void> {
   const crons = getStorage().crons;
@@ -320,8 +320,8 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       agentId: job.agentId,
       eventId: result.eventId,
       conversationKey: result.conversationKey,
-      // Cost of the Scheduler → bus → API destination → gateway hops, which
-      // nothing else reports: without it a late reply reads as a slow model.
+      // Cost of the Convex dispatch → gateway hops, which nothing else
+      // reports: without it a late reply reads as a slow model.
       dispatchLagMs: Date.now() - firedAt.getTime(),
     });
     await crons.markCompleted(job.accountId, job.cronId);
@@ -2028,8 +2028,8 @@ function asyncToolContinuationEventId(parentEventId: string): string {
 }
 
 /**
- * Records a cron run's outcome, and retires a one-time job with it: EventBridge
- * already dropped that schedule, so the row can never fire again.
+ * Records a cron run's outcome, and retires a one-time job with it: its
+ * scheduled run is spent, so the row can never fire again.
  */
 export async function settleCronRun(
   accountId: string,
