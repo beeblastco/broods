@@ -117,6 +117,25 @@ describe("create/update/remove", () => {
     expect(registration?.args).toMatchObject({ cronId: created.cronId });
   });
 
+  test("rejects a timezone Intl does not know, even on a paused job", async () => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+
+    await expect(
+      tt.mutation(internal.agent.crons.create, {
+        accountId: accountId,
+        input: {
+          name: "bad-zone",
+          agentId: agentId,
+          input: "never",
+          scheduleExpression: "rate(1 hour)",
+          timezone: "Not/AZone",
+          status: "paused",
+        },
+      }),
+    ).rejects.toThrow("timezone must be a valid IANA timezone");
+  });
+
   test("create rolls the row back when the schedule is rejected", async () => {
     const tt = t();
     const { accountId, agentId } = await seed(tt);

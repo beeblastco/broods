@@ -287,6 +287,11 @@ function normalizeTimezone(value: unknown): string {
   if (!TIMEZONE_PATTERN.test(timezone)) {
     throw new Error("timezone contains unsupported characters");
   }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new Error("timezone must be a valid IANA timezone");
+  }
 
   return timezone;
 }
