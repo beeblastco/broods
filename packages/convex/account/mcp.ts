@@ -41,8 +41,9 @@ export const list = internalQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("mcp")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .filter((q) => q.eq(q.field("status"), "active"))
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
       .collect();
   },
 });

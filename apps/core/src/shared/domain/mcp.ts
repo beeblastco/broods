@@ -6,15 +6,7 @@
  * tool registration live in harness/mcp/.
  */
 
-export type { McpInput } from "@broods/convex/model/mcp";
-
-/**
- * `${NAME}` account env ref shape. Single home is
- * packages/convex/model/agentConfigCodec.ts (ACCOUNT_ENV_PLACEHOLDER_PATTERN);
- * duplicated here because a value import would drag the whole codec into
- * core's stricter typecheck (see the storage adapter's require() note).
- */
-export const ENV_PLACEHOLDER_PATTERN = /\$\{[A-Z][A-Z0-9_]*\}/;
+export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 
 export type McpStatus = "active" | "deleted";
 

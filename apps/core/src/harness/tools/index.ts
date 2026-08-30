@@ -451,43 +451,57 @@ async function registerMcpTools(
   agentConfig: AgentConfig,
   context: Omit<ToolContext, "config">,
 ): Promise<void> {
-  for (const [serverId, serverConfig] of Object.entries(
-    agentConfig.mcpServers ?? {},
-  )) {
-    if (serverConfig === undefined || serverConfig.enabled === false) {
-      continue;
-    }
-    if (!context.accountId) {
-      throw new Error(
-        `config.mcpServers.${serverId} requires an account-scoped session`,
-      );
-    }
-    const record = await getStorage().mcp.getById(context.accountId, serverId);
-    if (!record || record.status !== "active") {
-      throw new Error(
-        `config.mcpServers.${serverId} references an unknown MCP server`,
-      );
-    }
-    if (record.disabled) {
-      continue;
-    }
-    const connection = mcpConnection(record, serverConfig.headers);
-    const remoteTools = (await listMcpTools(connection)).filter(
-      (remote) =>
-        !record.allowedTools || record.allowedTools.includes(remote.name),
+  const entries = Object.entries(agentConfig.mcpServers ?? {}).filter(
+    ([, serverConfig]) => serverConfig.enabled !== false,
+  );
+  if (entries.length === 0) return;
+  const accountId = context.accountId;
+  if (!accountId) {
+    throw new Error(
+      `config.mcpServers.${entries[0]![0]} requires an account-scoped session`,
     );
-    for (const remote of remoteTools) {
-      const name = mcpToolName(record.name, remote.name);
-      if (tools[name]) {
+  }
+
+  // Resolve rows and listings in parallel; the merge below stays sequential
+  // in config order so name-conflict detection is deterministic.
+  const resolved = await Promise.all(
+    entries.map(async ([serverId, serverConfig]) => {
+      const record = await getStorage().mcp.getById(accountId, serverId);
+      if (!record || record.status !== "active") {
         throw new Error(
-          `config.mcpServers.${serverId} model-facing name '${name}' conflicts with another tool`,
+          `config.mcpServers.${serverId} references an unknown MCP server`,
         );
       }
-      if (serverConfig.needsApproval === true)
+      if (record.disabled) return null;
+      const connection = mcpConnection(record, serverConfig.headers);
+      const remoteTools = (await listMcpTools(connection)).filter(
+        (remote) =>
+          !record.allowedTools || record.allowedTools.includes(remote.name),
+      );
+
+      return {
+        serverId: serverId,
+        serverConfig: serverConfig,
+        record: record,
+        connection: connection,
+        remoteTools: remoteTools,
+      };
+    }),
+  );
+  for (const server of resolved) {
+    if (server === null) continue;
+    for (const remote of server.remoteTools) {
+      const name = mcpToolName(server.record.name, remote.name);
+      if (tools[name]) {
+        throw new Error(
+          `config.mcpServers.${server.serverId} model-facing name '${name}' conflicts with another tool`,
+        );
+      }
+      if (server.serverConfig.needsApproval === true)
         context.approvalRequirements?.set(name, true);
-      context.policyMcpServerIdsByName?.set(name, serverId);
+      context.policyMcpServerIdsByName?.set(name, server.serverId);
     }
-    Object.assign(tools, mcpServerTools(connection, remoteTools));
+    Object.assign(tools, mcpServerTools(server.connection, server.remoteTools));
   }
 }
 

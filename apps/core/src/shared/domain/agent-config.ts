@@ -1296,17 +1296,10 @@ function normalizeMcpServersConfig(value: unknown): void {
       config.needsApproval,
       `config.mcpServers.${serverId}.needsApproval`,
     );
-    if (config.headers !== undefined) {
-      if (
-        !isPlainObject(config.headers) ||
-        Object.values(config.headers).some(
-          (headerValue) => typeof headerValue !== "string",
-        )
-      ) {
-        throw new Error(
-          `config.mcpServers.${serverId}.headers must be an object of string values`,
-        );
-      }
+    if (config.headers !== undefined && !isStringRecord(config.headers)) {
+      throw new Error(
+        `config.mcpServers.${serverId}.headers must be an object of string values`,
+      );
     }
   }
 }
