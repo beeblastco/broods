@@ -28,6 +28,8 @@ interface RunnerEvent {
   accountId?: string;
   bundle: string;
   reuse?: boolean;
+  /** Pause after this invocation, for state that settles between calls. */
+  waitMs?: number;
 }
 
 // A module-level counter is exactly the state process reuse preserves: a
@@ -68,6 +70,7 @@ async function invokeSequence(
       toolName: "server-under-test",
       ...(event.accountId !== undefined ? { accountId: event.accountId } : {}),
       ...(event.reuse !== undefined ? { reuse: event.reuse } : {}),
+      ...(event.waitMs !== undefined ? { waitMs: event.waitMs } : {}),
       expectedSha256: new Bun.CryptoHasher("sha256")
         .update(event.bundle)
         .digest("hex"),
@@ -81,7 +84,7 @@ async function invokeSequence(
         `import { handler } from ${JSON.stringify(handlerPath)};`,
         `const events = ${JSON.stringify(driverEvents)};`,
         `const runs = [];`,
-        `for (const event of events) {`,
+        `for (const { waitMs, ...event } of events) {`,
         `  const responseStream = new PassThrough();`,
         `  let stdout = "";`,
         `  const consumed = (async () => {`,
@@ -90,6 +93,7 @@ async function invokeSequence(
         `  await handler(event, responseStream);`,
         `  await consumed;`,
         `  runs.push(stdout);`,
+        `  if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));`,
         `}`,
         `process.stdout.write(JSON.stringify({ runs }));`,
         `process.exit(0);`,
@@ -225,6 +229,29 @@ describe("mcp-runner warm reuse", () => {
     expect(terminalFrame(runs[0])?.t).toBe("error");
     expect(terminalFrame(runs[1])?.t).toBe("error");
     expect(terminalFrame(runs[1])?.error).toBe("boom-1");
+  }, 30_000);
+
+  it("retires an idle child on an unhandled rejection instead of serving another call", async () => {
+    // A stray timer rejecting after the response flushed poisons the process
+    // while it sits warm. The child must exit on the spot: the next call gets
+    // a fresh child (counter back to 1), never a turn inside the poisoned one.
+    const bundle = [
+      `let calls = 0;`,
+      `export default () => {`,
+      `  calls += 1;`,
+      `  if (calls === 1) setTimeout(() => Promise.reject(new Error("late")), 50);`,
+      `  return new Response(JSON.stringify({ calls: calls }));`,
+      `};`,
+    ].join("\n");
+
+    const { runs } = await invokeSequence([
+      { accountId: "acct-1", bundle: bundle, waitMs: 400 },
+      { accountId: "acct-1", bundle: bundle },
+    ]);
+
+    expect(
+      runs.map((run) => (finalBody(run) as { calls: number }).calls),
+    ).toEqual([1, 1]);
   }, 30_000);
 
   it("enforces the max-calls bound", async () => {

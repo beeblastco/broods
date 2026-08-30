@@ -36,16 +36,21 @@ const BUNDLE_URL = pathToFileURL(
 
 // The request in flight and the timeout race to write the terminal frame; the
 // first one wins and the loser is dropped, so a timed-out run never emits a
-// second frame after the abort already wrote one.
-let settled = false;
+// second frame after the abort already wrote one. `true` also means idle —
+// nothing is in flight before the first request or between requests.
+let settled = true;
 
 // User code that leaves a rejected promise behind must not crash the runner
-// mid-frame, but it also must not serve another call: the child retires as
-// soon as the current request's frame is flushed.
+// mid-frame, but it also must not serve another call. Mid-request, the child
+// retires as soon as the current frame is flushed; idle — a stray timer
+// rejecting between requests — it exits on the spot, so the next request can
+// never run inside the poisoned process. `"exiting"` is left alone: an exit
+// is already pending on that frame's flush.
 let poisoned = false;
 process.on("unhandledRejection", (reason) => {
   console.error("[mcp-runner] unhandled rejection:", reason);
   poisoned = true;
+  if (settled === true) process.exit(1);
 });
 
 await runRequestLoop();
