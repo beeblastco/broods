@@ -223,12 +223,6 @@ jobs:
 
       - name: Deploy SST app
         working-directory: apps/core
-        env:
-          # Plain env vars read directly by sst.config.ts (no SST secret store).
-          # Required by sst.config.ts for cron API destination auth.
-          SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
-          # Public gateway URL used by the cron API destination and runtime callbacks.
-          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -297,16 +291,6 @@ jobs:
             echo "Mirroring sandbox image from $source_region to $target_region"
             crane copy "$source_image" "$target_image"
           }
-
-          for name in \
-            SERVICE_AUTH_SECRET \
-            PUBLIC_BASE_URL
-          do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing required environment value: $name" >&2
-              exit 1
-            fi
-          done
 
           while IFS='|' read -r target_stage target_region target_sandbox_ready; do
             if [[ -z "${target_stage:-}" ]]; then

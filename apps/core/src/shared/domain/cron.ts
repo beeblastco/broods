@@ -10,9 +10,9 @@ import {
 } from "@broods/convex/model/cronRules";
 import type { JSONValue, ModelMessage } from "ai";
 
-// Whether a schedule fires exactly once (an at(...) expression). EventBridge
-// deletes such a schedule itself once it has run, so the stored job is dropped
-// with it.
+// Whether a schedule fires exactly once (an at(...) expression). Its
+// scheduled run is spent once it has fired, so the stored job is dropped when
+// that run settles.
 export { isOneTimeSchedule };
 
 export type CronStatus = "active" | "paused";
@@ -29,8 +29,6 @@ export interface CronRecord {
   scheduleExpression: string;
   timezone?: string;
   status: CronStatus;
-  schedulerName: string;
-  schedulerGroupName: string;
   createdAt: string;
   updatedAt: string;
   lastInvokedAt?: string;
@@ -38,14 +36,8 @@ export interface CronRecord {
   lastError?: string;
 }
 
-/**
- * Public cron shape the config plane returns from create/update. It withholds
- * the EventBridge Scheduler names a stored record carries.
- */
-export type CronSummary = Omit<
-  CronRecord,
-  "schedulerName" | "schedulerGroupName"
->;
+/** Public cron shape the config plane returns from create/update. */
+export type CronSummary = CronRecord;
 
 export interface CronRunRecord {
   accountId: string;

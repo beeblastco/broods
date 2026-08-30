@@ -71,8 +71,6 @@ async function seed(tt: T) {
         events: [],
         scheduleExpression: "rate(1 day)",
         status: "active" as const,
-        schedulerName: "s-" + name,
-        schedulerGroupName: "g",
         createdAt: now,
         updatedAt: now,
       });

@@ -150,8 +150,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     // #85 phase 9); the gateway routes those paths there. Runtime reads
     // stay in src/shared/skills.ts, uploaded tool bundle loading,
     // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
-    // harness cron-run leaf; account deletion still sweeps leftover
-    // schedules (deleteAccountCrons).
+    // harness cron-run leaf.
 
     const mcpServiceResponse = await handleMcpServiceRoute(
       auth,
@@ -622,12 +621,13 @@ async function deleteAccountResponse(
     return jsonResponse(404, { error: "Account not found" });
   }
 
+  // Cron rows and their registered schedules go with the Convex account
+  // cascade (deleteAccountContents) — nothing to sweep from core anymore.
   const [
     runtime,
     agentsDeleted,
     skillObjectsDeleted,
     toolBundleObjectsDeleted,
-    cronsDeleted,
     accountToolsDeleted,
     accountHooksDeleted,
     mcpDeleted,
@@ -637,7 +637,6 @@ async function deleteAccountResponse(
     getStorage().agents.removeAllForAccount(account.accountId),
     deleteAccountSkills(account.accountId),
     deleteAccountToolBundles(account.accountId),
-    deleteAccountCrons(account.accountId),
     getStorage().accountTools.removeAllForAccount(account.accountId),
     getStorage().accountHooks.removeAllForAccount(account.accountId),
     getStorage().mcp.removeAllForAccount(account.accountId),
@@ -652,23 +651,12 @@ async function deleteAccountResponse(
       agentsDeleted: agentsDeleted,
       skillObjectsDeleted: skillObjectsDeleted,
       toolBundleObjectsDeleted: toolBundleObjectsDeleted,
-      cronsDeleted: cronsDeleted,
       accountToolsDeleted: accountToolsDeleted,
       accountHooksDeleted: accountHooksDeleted,
       mcpDeleted: mcpDeleted,
       channelRecordsDeleted: channelRecordsDeleted,
     },
   });
-}
-
-async function deleteAccountCrons(accountId: string): Promise<number> {
-  const cronsStore = getStorage().crons;
-  const crons = await cronsStore.list(accountId);
-  await Promise.all(
-    crons.map((cron) => cronsStore.remove(accountId, cron.cronId)),
-  );
-
-  return crons.length;
 }
 
 function requireAccountAuth(

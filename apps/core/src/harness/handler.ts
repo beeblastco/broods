@@ -291,7 +291,7 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
 }
 
 /**
- * Handle scheduled cron jobs invoked by EventBridge Scheduler.
+ * Handle scheduled cron jobs dispatched by the Convex crons component.
  */
 async function handleScheduledCron(event: CronInvocation): Promise<void> {
   const crons = getStorage().crons;
@@ -324,7 +324,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       agentId: job.agentId,
       eventId: result.eventId,
       conversationKey: result.conversationKey,
-      // Cost of the Scheduler → bus → API destination → gateway hops, which
+      // Cost of the Convex dispatch → gateway hops, which
       // nothing else reports: without it a late reply reads as a slow model.
       dispatchLagMs: Date.now() - firedAt.getTime(),
     });
@@ -2183,8 +2183,8 @@ function asyncToolContinuationEventId(parentEventId: string): string {
 }
 
 /**
- * Records a cron run's outcome, and retires a one-time job with it: EventBridge
- * already dropped that schedule, so the row can never fire again.
+ * Records a cron run's outcome, and retires a one-time job with it: its
+ * scheduled run is spent, so the row can never fire again.
  */
 export async function settleCronRun(
   accountId: string,

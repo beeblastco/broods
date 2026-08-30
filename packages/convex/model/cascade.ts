@@ -5,11 +5,14 @@
  * mutation→mutation calls and to keep one source of truth for the ownership graph.
  */
 
+import { Crons } from "@convex-dev/crons";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { internal } from "../_generated/api";
+import { components, internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { cronsInProject } from "./projectScope";
+
+const cronSchedules = new Crons(components.crons);
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 const accountScopedTables = [
@@ -56,7 +59,14 @@ export async function deleteAccountContentsBatch(
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE);
     if (rows.length > 0) {
-      for (const row of rows) await ctx.db.delete(row._id);
+      for (const row of rows) {
+        // Cron rows own a live schedule; deleting the row alone would leave
+        // it firing at a job that no longer exists.
+        if (table === "crons") {
+          await descheduleCron(ctx, row as Doc<"crons">);
+        }
+        await ctx.db.delete(row._id);
+      }
 
       return false;
     }
@@ -124,20 +134,16 @@ export async function purgeProject(
   projectId: Id<"projects">,
 ): Promise<void> {
   // Crons hang off the project's agents, so gather them before the stage
-  // cascade deletes those agents. Rows go now; run history can exceed one
-  // transaction, so a scheduled mutation drains it in bounded batches after
-  // this commits, and the EventBridge schedule needs AWS credentials, so a
-  // scheduled action removes it too.
+  // cascade deletes those agents. Rows and their schedules go now, in this
+  // transaction; run history can exceed one transaction, so a scheduled
+  // mutation drains it in bounded batches after this commits.
   const crons = await cronsForProject(ctx, projectId);
   for (const cron of crons) {
     await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
       accountId: cron.accountId,
       cronId: cron._id,
     });
-    await ctx.scheduler.runAfter(0, internal.aws.crons.removeSchedule, {
-      schedulerName: cron.schedulerName,
-      schedulerGroupName: cron.schedulerGroupName,
-    });
+    await descheduleCron(ctx, cron);
     await ctx.db.delete(cron._id);
   }
 
@@ -279,6 +285,21 @@ export async function purgeUser(
   }
 
   await ctx.db.delete(user._id);
+}
+
+/**
+ * Deschedule whatever fires one cron job: its crons-component registration
+ * (named by the row id) and, for a one-time job, its scheduled run. Both are
+ * ordinary mutation writes, so every deletion path can cascade them.
+ */
+async function descheduleCron(
+  ctx: MutationCtx,
+  cron: Doc<"crons">,
+): Promise<void> {
+  if (cron.scheduledRunId) await ctx.scheduler.cancel(cron.scheduledRunId);
+  if (await cronSchedules.get(ctx, { name: cron._id })) {
+    await cronSchedules.delete(ctx, { name: cron._id });
+  }
 }
 
 // Crons are account-scoped, so the project's org resolves the account that

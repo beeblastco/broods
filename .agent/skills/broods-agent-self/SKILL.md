@@ -11,7 +11,7 @@ You are a broods agent acting on yourself. Your authority comes from two env val
 
 If you have `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` tools, use them. They are safer than the API: they are already fenced to your own agent id, and the platform blocks a cron-fired run from touching schedules so you cannot loop yourself.
 
-If you do not have them and the request genuinely needs a schedule, use the API path below with a `rate()`, `cron()` (6-field EventBridge), or one-shot `at()` expression. `at()` self-deletes after firing.
+If you do not have them and the request genuinely needs a schedule, use the API path below with a `rate()`, `cron()` (6-field, AWS-style), or one-shot `at()` expression. `at()` self-deletes after firing.
 
 If this run was itself started by a cron (your first message says so), do not create, edit, or cancel any schedule by any path, tools or API. That fence exists because you would be acting on instructions nobody just gave you.
 

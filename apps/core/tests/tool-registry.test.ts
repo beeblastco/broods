@@ -1192,33 +1192,6 @@ describe("createTools", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("reports a task whose schedule is already gone as unchangeable", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-    const update = mock(async function (): Promise<CronSummary> {
-      throw new Error(
-        "[CONVEX A(aws/crons:update)] Uncaught ResourceNotFoundException: Schedule not found",
-      );
-    });
-    setStorageForTests(
-      storageWithCrons(
-        [cronRecord({ cronId: "cron_fired" })],
-        undefined,
-        update,
-      ),
-    );
-
-    const tools = await createTools(schedulerToolContext(), {
-      scheduler: { enabled: true },
-    });
-
-    await expect(
-      channelToolExecute(tools.update_schedule, {
-        cronId: "cron_fired",
-        schedule: "at(2027-01-01T09:00:00)",
-      }),
-    ).rejects.toThrow("has no live schedule any more");
-  });
-
   it("cancels its own scheduled task and refuses another agent's", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const remove = mock(async function (): Promise<boolean> {
@@ -1455,8 +1428,6 @@ function cronRecord(overrides: Partial<CronRecord> = {}): CronRecord {
   return {
     ...cronSummary(),
     timezone: undefined,
-    schedulerName: "acct_test-abc",
-    schedulerGroupName: "broods-crons",
     ...overrides,
   };
 }

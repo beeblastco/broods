@@ -2,8 +2,8 @@
 
 /**
  * Create-or-edit dialog for a single cron job. Validates the schedule
- * expression client-side, then calls cronPublic.create or .update which
- * proxy to broods for the dual-write to EventBridge + Convex.
+ * expression client-side, then calls cronPublic.create or .update, which
+ * write the crons row and its registered schedule in one transaction.
  */
 
 import { Button } from "@/app/components/ui/button";
@@ -166,7 +166,7 @@ export function CronDialog({
             {mode === "create" ? "New cron job" : "Edit cron job"}
           </DialogTitle>
           <DialogDescription>
-            Schedules an agent run via AWS EventBridge Scheduler.
+            Schedules an agent run on the Convex scheduler.
           </DialogDescription>
         </DialogHeader>
 

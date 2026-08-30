@@ -307,7 +307,7 @@ async function deleteCronByName(
   });
   const cron = existing.find((job) => job.name === name);
   if (!cron) return;
-  await ctx.runAction(internal.aws.crons.remove, {
+  await ctx.runMutation(internal.agent.crons.remove, {
     accountId: accountId,
     cronId: cron._id,
   });
@@ -562,7 +562,7 @@ function stringField(value: unknown, label: string): string {
 
 /**
  * Reconcile manifest cron resources against the account's cron jobs using the
- * Convex-native cron plane (crons table + EventBridge Scheduler via awsCrons).
+ * transactional cron mutations in agent/crons.
  */
 async function syncCrons(
   ctx: ActionCtx,
@@ -583,14 +583,14 @@ async function syncCrons(
   for (const job of desired) {
     const existingJob = existingByName.get(job.name);
     if (existingJob) {
-      await ctx.runAction(internal.aws.crons.update, {
+      await ctx.runMutation(internal.agent.crons.update, {
         accountId: accountId,
         cronId: existingJob._id,
         patch: cronBody(job),
       });
       cronIds[job.resourceName] = existingJob._id;
     } else {
-      const created = (await ctx.runAction(internal.aws.crons.create, {
+      const created = (await ctx.runMutation(internal.agent.crons.create, {
         accountId: accountId,
         input: cronBody(job),
       })) as { cronId: string };
@@ -603,7 +603,7 @@ async function syncCrons(
     for (const job of existing) {
       if (!stageAgentIds.has(job.agentId) || desiredNames.has(job.name))
         continue;
-      await ctx.runAction(internal.aws.crons.remove, {
+      await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,
         cronId: job._id,
       });

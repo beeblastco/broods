@@ -264,8 +264,6 @@ function cron(): CronRecord {
     ...(conversationKey ? { conversationKey: conversationKey } : {}),
     scheduleExpression: scheduleExpression,
     status: "active",
-    schedulerName: "acct_1-abc",
-    schedulerGroupName: "broods-crons",
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   };

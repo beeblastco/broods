@@ -1,7 +1,7 @@
 /**
  * Public action wrappers for cron CRUD used by the dashboard. These call the
- * Convex-native cron plane (aws/crons) directly, so the crons table and
- * EventBridge Scheduler stay in sync without proxying through core.
+ * transactional cron mutations in agent/crons directly, so the crons table
+ * and the registered schedules can never drift apart.
  */
 
 import { v } from "convex/values";
@@ -10,7 +10,7 @@ import { action } from "../_generated/server";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 
-/** Creates a cron job (crons row + EventBridge schedule) for the active org. */
+/** Creates a cron job (crons row + registered schedule) for the active org. */
 export const create = action({
   args: {
     name: v.string(),
@@ -27,7 +27,7 @@ export const create = action({
     const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
     if (!account) throw new Error("No active org / account not provisioned");
 
-    const cron = (await ctx.runAction(internal.aws.crons.create, {
+    const cron = (await ctx.runMutation(internal.agent.crons.create, {
       accountId: account.accountId,
       input: args,
     })) as { cronId: string };
@@ -36,7 +36,7 @@ export const create = action({
   },
 });
 
-/** Updates a cron job and its EventBridge schedule for the active org. */
+/** Updates a cron job and its registered schedule for the active org. */
 export const update = action({
   args: {
     cronId: v.string(),
@@ -55,7 +55,7 @@ export const update = action({
     const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
     if (!account) throw new Error("No active org / account not provisioned");
 
-    const updated = await ctx.runAction(internal.aws.crons.update, {
+    const updated = await ctx.runMutation(internal.agent.crons.update, {
       accountId: account.accountId,
       cronId: cronId,
       patch: patch,
@@ -66,7 +66,7 @@ export const update = action({
   },
 });
 
-/** Removes a cron job and its EventBridge schedule for the active org. */
+/** Removes a cron job and its registered schedule for the active org. */
 export const remove = action({
   args: { cronId: v.string() },
   returns: v.null(),
@@ -74,7 +74,7 @@ export const remove = action({
     const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
     if (!account) throw new Error("No active org / account not provisioned");
 
-    const removed = await ctx.runAction(internal.aws.crons.remove, {
+    const removed = await ctx.runMutation(internal.agent.crons.remove, {
       accountId: account.accountId,
       cronId: args.cronId,
     });

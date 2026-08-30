@@ -136,8 +136,6 @@ interface ConvexCronDoc {
   scheduleExpression: string;
   timezone?: string;
   status: "active" | "paused";
-  schedulerName: string;
-  schedulerGroupName: string;
   createdAt: number;
   updatedAt: number;
   lastInvokedAt?: number;
@@ -159,8 +157,6 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
     scheduleExpression: doc.scheduleExpression,
     ...(doc.timezone ? { timezone: doc.timezone } : {}),
     status: doc.status,
-    schedulerName: doc.schedulerName,
-    schedulerGroupName: doc.schedulerGroupName,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
     ...(doc.lastInvokedAt
@@ -304,10 +300,10 @@ const agentDeployments: Storage["agentDeployments"] = {
 };
 
 const crons: Storage["crons"] = {
-  // awsCrons.create is a Node action that inserts the row and creates the
-  // EventBridge schedule, rolling the row back when the schedule fails.
+  // agent/crons.create inserts the row and registers its schedule in one
+  // transaction, so neither can orphan the other.
   create: async function (accountId, input) {
-    return (await getConvexClient().action(internal.aws.crons.create, {
+    return (await getConvexClient().mutation(internal.agent.crons.create, {
       accountId: accountId as any,
       input: input,
     })) as CronSummary;
@@ -328,19 +324,19 @@ const crons: Storage["crons"] = {
 
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
-  // awsCrons.remove is a Node action that drops the EventBridge schedule and the
-  // row together, so a schedule can never outlive the cron row that names it.
+  // agent/crons.remove drops the registered schedule and the row together, so
+  // a schedule can never outlive the cron row that names it.
   remove: async function (accountId, cronId) {
-    return (await getConvexClient().action(internal.aws.crons.remove, {
+    return (await getConvexClient().mutation(internal.agent.crons.remove, {
       accountId: accountId as any,
       cronId: cronId as any,
     })) as boolean;
   },
-  // awsCrons.update is a Node action that updates the EventBridge schedule
-  // first and only then patches the row, so a schedule EventBridge rejects
-  // never reaches the stored job.
+  // agent/crons.update patches the row and replaces the registered schedule
+  // in one transaction, so a schedule the scheduler rejects never reaches the
+  // stored job.
   update: async function (accountId, cronId, patch) {
-    return (await getConvexClient().action(internal.aws.crons.update, {
+    return (await getConvexClient().mutation(internal.agent.crons.update, {
       accountId: accountId as any,
       cronId: cronId as any,
       patch: patch,

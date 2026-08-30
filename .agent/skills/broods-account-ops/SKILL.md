@@ -42,7 +42,7 @@ For project-shaped work (a repo with a `broods/` dir), prefer the CLI over raw A
 ## What lives where
 
 - `/v1/agents` also serves per-agent channel directories at `/v1/agents/{id}/channels/{channel}/directory`.
-- Cron schedules use EventBridge syntax: `rate(...)`, `cron(...)` (6 fields), or one-shot `at(...)` which self-deletes after firing. `conversationKey` decides where the result goes: a live channel key resumes that channel session and posts back to it; anything else runs in its own conversation, readable via the async status API.
+- Cron schedules use AWS-style syntax: `rate(...)`, `cron(...)` (6 fields), or one-shot `at(...)` which self-deletes after firing. `conversationKey` decides where the result goes: a live channel key resumes that channel session and posts back to it; anything else runs in its own conversation, readable via the async status API.
 - Sandbox CRUD is config plane, lifecycle verbs are core: `POST /v1/sandboxes/{id}/suspend|resume|terminate|snapshot|refresh|exec|terminal`.
 - Skill bundles upload as `source: "files"` (base64), `"json"`, or `"github"` (public repo URL, fetched server-side). The stored name comes from the `SKILL.md` frontmatter, not the folder.
 - Policies (`/v1/policies`) are agent-runtime policy documents (what a running agent may do: `tool.call`, `skill.load`, `workspace.exec`, ...). They are not API-key scoping; that is the role system.

@@ -11,9 +11,6 @@ import { runtime } from "../src/shared/convex/runtime.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
-const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
-const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
-const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
 const originalSkillsBucketName = process.env.SKILLS_BUCKET_NAME;
 const originalToolBundlesBucketName = process.env.TOOL_BUNDLES_BUCKET_NAME;
 const originalRuntimeMutate = runtime.mutate;
@@ -29,21 +26,6 @@ afterEach(() => {
     delete process.env.SERVICE_AUTH_SECRET;
   } else {
     process.env.SERVICE_AUTH_SECRET = originalServiceSecret;
-  }
-  if (originalSchedulerRoleArn === undefined) {
-    delete process.env.CRON_SCHEDULER_ROLE_ARN;
-  } else {
-    process.env.CRON_SCHEDULER_ROLE_ARN = originalSchedulerRoleArn;
-  }
-  if (originalSchedulerTargetArn === undefined) {
-    delete process.env.CRON_SCHEDULER_TARGET_ARN;
-  } else {
-    process.env.CRON_SCHEDULER_TARGET_ARN = originalSchedulerTargetArn;
-  }
-  if (originalSchedulerGroupName === undefined) {
-    delete process.env.CRON_SCHEDULER_GROUP_NAME;
-  } else {
-    process.env.CRON_SCHEDULER_GROUP_NAME = originalSchedulerGroupName;
   }
   if (originalSkillsBucketName === undefined)
     delete process.env.SKILLS_BUCKET_NAME;
@@ -593,7 +575,6 @@ function successfulDeletionResponse() {
       agentsDeleted: 0,
       skillObjectsDeleted: 0,
       toolBundleObjectsDeleted: 0,
-      cronsDeleted: 0,
       accountToolsDeleted: 0,
       accountHooksDeleted: 0,
       mcpDeleted: 0,
