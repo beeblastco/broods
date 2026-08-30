@@ -131,8 +131,8 @@ broods stage create staging --from development
 broods stage use staging
 ```
 
-`create --from <stage>` deep-copies the source stage: agent configs, custom
-tools, the canvas layout, and every environment variable. This is the same copy
+`create --from <stage>` deep-copies the source stage: agent configs, MCP
+servers, the canvas layout, and every environment variable. This is the same copy
 the dashboard's duplicate button performs. Without `--from`, the new stage is
 empty. Pass `--use` to switch to the new stage immediately.
 
@@ -163,16 +163,18 @@ claude mcp add broods -- broods mcp
 
 Tool names mirror the SDK's methods in kebab-case, so `listAgents` is
 `list-agents` and `createCron` is `create-cron`. Every resource the config
-plane serves gets the five it supports: agents, crons, sandboxes, workspaces,
-policies, roles, channels, skills, tools and MCP servers. Around those sit the
-calls that do not fit that shape — `list-cron-runs`, the sandbox lifecycle
+plane serves gets the verbs it supports: agents, crons, sandboxes, workspaces,
+policies, roles, channels, skills and MCP servers (`list-mcp`, `create-mcp`,
+...). Around those sit the calls that do not fit that shape —
+`list-cron-runs`, `upload-skill` (a full PUT replace), the sandbox lifecycle
 (`suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox`,
 `open-sandbox-terminal`), env (`list-env-vars`, `set-env-var`,
 `delete-env-var`), and the account itself (`get-account`, `update-account`,
 `rotate-secret`, `assume-role`).
 
-`tools` and `mcp-servers` live in one stage, so listing or creating those also
-takes `project` and `stage`.
+MCP servers live in one stage, so listing or creating those also takes
+`project` and `stage` — defaulted from `BROODS_PROJECT` / `BROODS_STAGE` when
+the server starts inside a configured project directory.
 
 Four guards are built in rather than left to the agent: a delete needs
 `confirm: true` and takes one id, `rotate-secret` needs the same because it

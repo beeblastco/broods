@@ -15,8 +15,9 @@
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
-  BroodsAccountApiError,
   BroodsAccountClient,
+  type CreateMcpInput,
+  type SkillUploadInput,
   type StageScope,
   type UpdateAgentInput,
 } from "./account.ts";
@@ -25,6 +26,33 @@ import type { BroodsSyncClient } from "./sync.ts";
 
 /** Arbitrary JSON object arriving over the wire, before a route types it. */
 type JsonBody = Record<string, unknown>;
+
+/** Default project/stage for scoped calls; explicit arguments win. */
+export interface McpScopeDefaults {
+  project?: string;
+  stage?: string;
+}
+
+export interface BroodsMcpServerOptions {
+  /** Login-scoped client; registers the org/project/stage tools when set. */
+  cli?: BroodsSyncClient | null;
+  /** Scope defaults from the runtime config (BROODS_PROJECT / BROODS_STAGE). */
+  scope?: McpScopeDefaults;
+}
+
+const SCOPE_FIELDS = {
+  project: z.string().optional(),
+  stage: z.string().optional(),
+};
+
+const LIFECYCLE_FIELDS = {
+  sandboxId: z.string().min(1),
+  reservationKey: z.string().min(1),
+};
+
+const CONFIRM_FIELD = z
+  .boolean()
+  .describe("Must be true, after the owner has agreed to this delete.");
 
 /**
  * One config-plane resource. The names drive the tool names, so `agent` plus
@@ -39,10 +67,10 @@ interface ResourceSpec {
   key: string;
   /** Collection routes need a project/stage; MCP servers live in one stage. */
   scoped?: boolean;
-  /** Names the update tool when the SDK calls it something else. */
-  updateVerb?: string;
   /** Appended to the create tool's description, naming the fields that trip people up. */
   createHint?: string;
+  /** Appended to the delete tool's description, naming what else goes away. */
+  deleteHint?: string;
   list?: (client: BroodsAccountClient, scope?: StageScope) => Promise<unknown>;
   get?: (client: BroodsAccountClient, id: string) => Promise<unknown>;
   create?: (
@@ -58,18 +86,14 @@ interface ResourceSpec {
   remove?: (client: BroodsAccountClient, id: string) => Promise<boolean>;
 }
 
-/**
- * The MCP boundary is untyped JSON by protocol, so each route casts the
- * validated object to the SDK's input type at the call. The config plane
- * validates the body again and returns a 400 naming the bad field, which is a
- * better error than anything a mirrored schema here would produce.
- */
+/** Wire bodies are untyped JSON; the config plane re-validates each one. */
 const RESOURCES: ResourceSpec[] = [
   {
     singular: "agent",
     plural: "agents",
     key: "agentId",
     createHint: "Needs name and config; a 409 returns the existing agentId.",
+    deleteHint: "Deleting an agent also drops its runtime rows.",
     list: (client) => client.listAgents(),
     get: (client, id) => client.getAgent(id),
     create: (client, body) =>
@@ -168,20 +192,12 @@ const RESOURCES: ResourceSpec[] = [
     singular: "skill",
     plural: "skills",
     key: "skillName",
-    updateVerb: "upload",
     createHint:
       'source is "files" (base64), "json" or "github". The stored name comes from the SKILL.md frontmatter.',
     list: (client) => client.listSkills(),
     get: (client, id) => client.getSkill(id),
     create: (client, body) =>
-      client.createSkill(
-        body as unknown as Parameters<BroodsAccountClient["createSkill"]>[0],
-      ),
-    update: (client, id, body) =>
-      client.uploadSkill(
-        id,
-        body as unknown as Parameters<BroodsAccountClient["uploadSkill"]>[1],
-      ),
+      client.createSkill(body as unknown as SkillUploadInput),
     remove: (client, id) => client.deleteSkill(id),
   },
   {
@@ -192,14 +208,34 @@ const RESOURCES: ResourceSpec[] = [
     list: (client, scope) => client.listMcp(scope as StageScope),
     get: (client, id) => client.getMcp(id),
     create: (client, body, scope) =>
-      client.createMcp(
-        scope as StageScope,
-        body as unknown as Parameters<BroodsAccountClient["createMcp"]>[1],
-      ),
+      client.createMcp(scope as StageScope, body as unknown as CreateMcpInput),
     update: (client, id, body) => client.updateMcp(id, body),
     remove: (client, id) => client.deleteMcp(id),
   },
 ];
+
+/**
+ * Build the server. One instance per stdio connection; the client is
+ * constructed once and reused, so the credential is read from the environment
+ * at startup and never travels through a tool argument.
+ */
+export function createBroodsMcpServer(
+  options: BroodsMcpServerOptions = {},
+): McpServer {
+  const client = new BroodsAccountClient({});
+  const server = new McpServer(
+    { name: "broods", version: "1" },
+    { capabilities: { tools: {} } },
+  );
+
+  for (const spec of RESOURCES) {
+    registerResource(server, client, spec, options.scope ?? {});
+  }
+  registerExtras(server, client);
+  if (options.cli) registerCliScope(server, options.cli);
+
+  return server;
+}
 
 /** MCP wants one text block; JSON keeps the shape the SDK returned. */
 function reply(value: unknown): CallToolResult {
@@ -210,14 +246,19 @@ function reply(value: unknown): CallToolResult {
 
 /** An API error is the agent's to read and act on, not a transport failure. */
 function failure(error: unknown): CallToolResult {
-  const text =
-    error instanceof BroodsAccountApiError
-      ? `${error.message} (${error.status})`
-      : error instanceof Error
-        ? error.message
-        : String(error);
+  const text = error instanceof Error ? error.message : String(error);
 
   return { content: [{ type: "text", text: text }], isError: true };
+}
+
+/** The one gate every destructive tool passes; `consequence` names the blast radius. */
+function assertConfirmed(
+  confirm: boolean | undefined,
+  consequence: string,
+): void {
+  if (!confirm) {
+    throw new Error(`Refusing without confirm:true. ${consequence}`);
+  }
 }
 
 async function attempt(run: () => Promise<unknown>): Promise<CallToolResult> {
@@ -228,49 +269,43 @@ async function attempt(run: () => Promise<unknown>): Promise<CallToolResult> {
   }
 }
 
-/** Collection routes on a stage-scoped resource need both halves of the scope. */
+/**
+ * Collection routes on a stage-scoped resource need both halves of the scope;
+ * arguments win over the defaults the runtime config supplied at startup.
+ */
 function requireScope(
   spec: ResourceSpec,
+  defaults: McpScopeDefaults,
   project: string | undefined,
   stage: string | undefined,
 ): StageScope | undefined {
   if (!spec.scoped) return undefined;
-  if (!project || !stage)
+  const resolvedProject = project ?? defaults.project;
+  const resolvedStage = stage ?? defaults.stage;
+  if (!resolvedProject || !resolvedStage)
     throw new Error(
       `${spec.plural} live in one stage, so this call needs both 'project' and 'stage'`,
     );
 
-  return { project: project, stage: stage };
+  return { project: resolvedProject, stage: resolvedStage };
 }
-
-const SCOPE_FIELDS = {
-  project: z.string().optional(),
-  stage: z.string().optional(),
-};
-
-const LIFECYCLE_FIELDS = {
-  sandboxId: z.string().min(1),
-  reservationKey: z.string().min(1),
-};
-
-const CONFIRM_FIELD = z
-  .boolean()
-  .describe("Must be true, after the owner has agreed to this delete.");
 
 /** Register list/get/create/update/delete for one resource, skipping absent verbs. */
 function registerResource(
   server: McpServer,
   client: BroodsAccountClient,
   spec: ResourceSpec,
+  defaults: McpScopeDefaults,
 ): void {
   const idField = z.string().min(1).describe(`The ${spec.key}.`);
   const scopeNote = spec.scoped
     ? ` ${spec.plural} live in one stage, so this also takes 'project' and 'stage'.`
     : "";
+  const { list, get, create, update, remove } = spec;
 
   // Scoped and unscoped register separately so each handler's arguments stay
   // typed; a conditional shape widens them to unknown.
-  if (spec.list) {
+  if (list) {
     const description = `List every ${spec.singular} on the account.${scopeNote}`;
     if (spec.scoped) {
       server.registerTool(
@@ -279,30 +314,30 @@ function registerResource(
         async ({ project, stage }) =>
           await attempt(
             async () =>
-              await spec.list!(client, requireScope(spec, project, stage)),
+              await list(client, requireScope(spec, defaults, project, stage)),
           ),
       );
     } else {
       server.registerTool(
         `list-${spec.plural}`,
         { description: description, inputSchema: {} },
-        async () => await attempt(async () => await spec.list!(client)),
+        async () => await attempt(async () => await list(client)),
       );
     }
   }
 
-  if (spec.get) {
+  if (get) {
     server.registerTool(
       `get-${spec.singular}`,
       {
         description: `Read one ${spec.singular} by ${spec.key}.`,
         inputSchema: { id: idField },
       },
-      async ({ id }) => await attempt(async () => await spec.get!(client, id)),
+      async ({ id }) => await attempt(async () => await get(client, id)),
     );
   }
 
-  if (spec.create) {
+  if (create) {
     const description =
       `Create one ${spec.singular}. 'body' is the request body the config plane documents.` +
       (spec.createHint ? ` ${spec.createHint}` : "") +
@@ -319,10 +354,10 @@ function registerResource(
         async ({ body, project, stage }) =>
           await attempt(
             async () =>
-              await spec.create!(
+              await create(
                 client,
                 body,
-                requireScope(spec, project, stage),
+                requireScope(spec, defaults, project, stage),
               ),
           ),
       );
@@ -331,14 +366,14 @@ function registerResource(
         `create-${spec.singular}`,
         { description: description, inputSchema: { body: body } },
         async ({ body }) =>
-          await attempt(async () => await spec.create!(client, body)),
+          await attempt(async () => await create(client, body)),
       );
     }
   }
 
-  if (spec.update) {
+  if (update) {
     server.registerTool(
-      `${spec.updateVerb ?? "update"}-${spec.singular}`,
+      `update-${spec.singular}`,
       {
         description:
           `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back. ` +
@@ -349,19 +384,17 @@ function registerResource(
         },
       },
       async ({ id, body }) =>
-        await attempt(async () => await spec.update!(client, id, body)),
+        await attempt(async () => await update(client, id, body)),
     );
   }
 
-  if (spec.remove) {
+  if (remove) {
     server.registerTool(
       `delete-${spec.singular}`,
       {
         description:
           `Delete one ${spec.singular}. Requires confirm:true, and takes one ${spec.key} per call: never loop this over a list.` +
-          (spec.singular === "agent"
-            ? " Deleting an agent also drops its runtime rows."
-            : ""),
+          (spec.deleteHint ? ` ${spec.deleteHint}` : ""),
         inputSchema: {
           id: idField,
           confirm: CONFIRM_FIELD,
@@ -369,12 +402,12 @@ function registerResource(
       },
       async ({ id, confirm }) =>
         await attempt(async () => {
-          if (!confirm)
-            throw new Error(
-              `Refusing to delete ${spec.singular} '${id}' without confirm:true. Name what goes away, get the owner's agreement, then retry.`,
-            );
+          assertConfirmed(
+            confirm,
+            `Deleting ${spec.singular} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,
+          );
 
-          return { deleted: await spec.remove!(client, id), id: id };
+          return { deleted: await remove(client, id), id: id };
         }),
     );
   }
@@ -402,42 +435,46 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       ),
   );
 
-  server.registerTool(
-    "suspend-sandbox",
-    {
-      description: "Suspend a persistent sandbox reservation.",
-      inputSchema: LIFECYCLE_FIELDS,
-    },
-    async ({ sandboxId, reservationKey }) =>
-      await attempt(
-        async () => await client.suspendSandbox(sandboxId, reservationKey),
-      ),
-  );
-
-  server.registerTool(
-    "resume-sandbox",
-    {
-      description: "Resume a suspended sandbox reservation.",
-      inputSchema: LIFECYCLE_FIELDS,
-    },
-    async ({ sandboxId, reservationKey }) =>
-      await attempt(
-        async () => await client.resumeSandbox(sandboxId, reservationKey),
-      ),
-  );
-
-  server.registerTool(
-    "terminate-sandbox",
-    {
-      description:
-        "Terminate a sandbox reservation and drop its live-instance row. Terminate only a sandbox you created, and never one holding state you did not put there.",
-      inputSchema: LIFECYCLE_FIELDS,
-    },
-    async ({ sandboxId, reservationKey }) =>
-      await attempt(
-        async () => await client.terminateSandbox(sandboxId, reservationKey),
-      ),
-  );
+  const lifecycleTools: Array<
+    [
+      string,
+      string,
+      (sandboxId: string, reservationKey: string) => Promise<unknown>,
+    ]
+  > = [
+    [
+      "suspend-sandbox",
+      "Suspend a persistent sandbox reservation.",
+      (sandboxId, reservationKey) =>
+        client.suspendSandbox(sandboxId, reservationKey),
+    ],
+    [
+      "resume-sandbox",
+      "Resume a suspended sandbox reservation.",
+      (sandboxId, reservationKey) =>
+        client.resumeSandbox(sandboxId, reservationKey),
+    ],
+    [
+      "terminate-sandbox",
+      "Terminate a sandbox reservation and drop its live-instance row. Terminate only a sandbox you created, and never one holding state you did not put there.",
+      (sandboxId, reservationKey) =>
+        client.terminateSandbox(sandboxId, reservationKey),
+    ],
+    [
+      "open-sandbox-terminal",
+      "Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox.",
+      (sandboxId, reservationKey) =>
+        client.openSandboxTerminal(sandboxId, reservationKey),
+    ],
+  ];
+  for (const [name, description, call] of lifecycleTools) {
+    server.registerTool(
+      name,
+      { description: description, inputSchema: LIFECYCLE_FIELDS },
+      async ({ sandboxId, reservationKey }) =>
+        await attempt(async () => await call(sandboxId, reservationKey)),
+    );
+  }
 
   server.registerTool(
     "snapshot-sandbox",
@@ -458,15 +495,19 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
   );
 
   server.registerTool(
-    "open-sandbox-terminal",
+    "upload-skill",
     {
       description:
-        "Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox.",
-      inputSchema: LIFECYCLE_FIELDS,
+        "Replace one skill's bundle wholesale (PUT, not a merge) by skillName. 'body' is the same source shape create-skill takes.",
+      inputSchema: {
+        id: z.string().min(1).describe("The skillName."),
+        body: z.record(z.string(), z.unknown()),
+      },
     },
-    async ({ sandboxId, reservationKey }) =>
+    async ({ id, body }) =>
       await attempt(
-        async () => await client.openSandboxTerminal(sandboxId, reservationKey),
+        async () =>
+          await client.uploadSkill(id, body as unknown as SkillUploadInput),
       ),
   );
 
@@ -509,10 +550,10 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     },
     async ({ name, confirm }) =>
       await attempt(async () => {
-        if (!confirm)
-          throw new Error(
-            `Refusing to delete env var '${name}' without confirm:true. Anything referencing \${${name}} breaks.`,
-          );
+        assertConfirmed(
+          confirm,
+          `Anything referencing \${${name}} breaks the moment this env var goes.`,
+        );
 
         return { deleted: await client.deleteEnvVar(name), name: name };
       }),
@@ -567,10 +608,10 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     },
     async ({ confirm }) =>
       await attempt(async () => {
-        if (!confirm)
-          throw new Error(
-            "Refusing to rotate the account secret without confirm:true. Everything holding the current secret breaks the moment this runs.",
-          );
+        assertConfirmed(
+          confirm,
+          "Everything holding the current secret breaks the moment this runs.",
+        );
 
         return await client.rotateSecret();
       }),
@@ -651,10 +692,10 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     },
     async ({ projectId, confirm }) =>
       await attempt(async () => {
-        if (!confirm)
-          throw new Error(
-            `Refusing to delete project '${projectId}' without confirm:true. Name the project and everything under it, get the owner's agreement, then retry.`,
-          );
+        assertConfirmed(
+          confirm,
+          `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
+        );
 
         return await cli.deleteProject(projectId);
       }),
@@ -687,25 +728,4 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     async ({ project, name, from }) =>
       await attempt(async () => await cli.createStage(project, name, from)),
   );
-}
-
-/**
- * Build the server. One instance per stdio connection; the client is
- * constructed once and reused, so the credential is read from the environment
- * at startup and never travels through a tool argument.
- */
-export function createBroodsMcpServer(
-  client: BroodsAccountClient = new BroodsAccountClient({}),
-  cli: BroodsSyncClient | null = null,
-): McpServer {
-  const server = new McpServer(
-    { name: "broods", version: "1" },
-    { capabilities: { tools: {} } },
-  );
-
-  for (const spec of RESOURCES) registerResource(server, client, spec);
-  registerExtras(server, client);
-  if (cli) registerCliScope(server, cli);
-
-  return server;
 }
