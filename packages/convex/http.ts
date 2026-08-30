@@ -96,7 +96,7 @@ http.route({
 });
 
 // Public config-plane surface: account metadata/rotation,
-// agents, skills, tools, hooks, workspace files, crons, workspaces, sandbox configs,
+// agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
@@ -153,11 +153,6 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
-http.route({ path: "/v1/tools", method: "GET", handler: configHttp });
-http.route({ path: "/v1/tools", method: "POST", handler: configHttp });
-http.route({ pathPrefix: "/v1/tools/", method: "GET", handler: configHttp });
-http.route({ pathPrefix: "/v1/tools/", method: "PATCH", handler: configHttp });
-http.route({ pathPrefix: "/v1/tools/", method: "DELETE", handler: configHttp });
 http.route({ path: "/v1/mcp", method: "GET", handler: configHttp });
 http.route({ path: "/v1/mcp", method: "POST", handler: configHttp });
 http.route({

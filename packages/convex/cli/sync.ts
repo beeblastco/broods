@@ -76,7 +76,6 @@ const resourceValidator = v.object({
     v.literal("sandbox"),
     v.literal("cron"),
     v.literal("skill"),
-    v.literal("tool"),
     v.literal("hook"),
     v.literal("mcp"),
     v.literal("policy"),
@@ -100,7 +99,6 @@ const idsValidator = v.object({
   sandboxes: v.record(v.string(), v.string()),
   crons: v.record(v.string(), v.string()),
   skills: v.record(v.string(), v.string()),
-  tools: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
   mcpServers: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
@@ -279,7 +277,6 @@ export const syncManifestBySecretHash = internalMutation({
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
       policyIds: policyIds,
-      toolIds: externalIds.tools,
       mcpIds: externalIds.mcpServers,
       envValues: envValues,
       missingPolicies: missingPolicies,
@@ -319,7 +316,6 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxes: sandboxIds,
       crons: {},
       skills: externalIds.skills,
-      tools: externalIds.tools,
       hooks: externalIds.hooks,
       mcpServers: externalIds.mcpServers,
       policies: policyIds,
@@ -438,7 +434,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   },
 });
 
-// The HTTP action needs these ids before it uploads tools, so tool rows land in
+// The HTTP action needs these ids before it uploads bundles, so rows land in
 // the right stage instead of matching by name across the whole account.
 export const ensureScopeBySecretHash = internalMutation({
   args: {
@@ -471,7 +467,6 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     resources: v.array(resourceValidator),
     ids: v.object({
       skills: v.record(v.string(), v.string()),
-      tools: v.record(v.string(), v.string()),
       hooks: v.record(v.string(), v.string()),
       mcpServers: v.record(v.string(), v.string()),
     }),
@@ -500,7 +495,6 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     // id map here is a type error, not a row written under the wrong kind.
     const idsByKind: Record<ExternalResourceKind, Record<string, string>> = {
       skill: args.ids.skills,
-      tool: args.ids.tools,
       hook: args.ids.hooks,
       mcp: args.ids.mcpServers,
     };

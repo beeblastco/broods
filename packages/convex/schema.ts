@@ -217,6 +217,8 @@ export const cliExternalResourcesFields = {
   stageId: v.id("stages"),
   kind: v.union(
     v.literal("skill"),
+    // Retired (#331 phase 3): stored rows only; migrations:sunsetCustomTools
+    // deletes them, then the literal can go.
     v.literal("tool"),
     v.literal("hook"),
     v.literal("mcp"),
@@ -226,36 +228,6 @@ export const cliExternalResourcesFields = {
   externalId: v.string(),
   config: v.any(),
   updatedAt: v.number(),
-};
-
-/** Project-scoped custom tool metadata; bundle bytes live in S3. */
-export const accountToolsFields = {
-  accountId: v.id("accounts"),
-  // Optional only so the widened schema deploys against rows written before
-  // tools were scoped; `migrations:deleteOrphanedTools` drops what is left.
-  projectId: v.optional(v.id("projects")),
-  stageId: v.optional(v.id("stages")),
-  /** Inline source for dashboard-authored tools; CLI tools bundle locally instead. */
-  sourceCode: v.optional(v.string()),
-  /**
-   * Canvas node this tool was authored on. Set for dashboard-authored tools,
-   * which are created by dropping a node before they have a name; CLI tools
-   * derive their node from the manifest name instead.
-   */
-  nodeId: v.optional(v.string()),
-  /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */
-  disabled: v.optional(v.boolean()),
-  name: v.string(),
-  description: v.string(),
-  inputSchema: v.any(),
-  bundleStorageKey: v.string(),
-  sha256: v.string(),
-  runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
-  defaultConfig: v.optional(v.any()),
-  status: v.union(v.literal("active"), v.literal("deleted")),
-  createdAt: v.number(),
-  updatedAt: v.number(),
-  deletedAt: v.optional(v.number()),
 };
 
 /**
@@ -748,6 +720,7 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("agent"),
   v.literal("skill"),
+  // Retired kind (#331 phase 3), kept so historical audit rows stay valid.
   v.literal("tool"),
   v.literal("hook"),
   v.literal("mcp"),
@@ -1110,7 +1083,8 @@ export const taskUsageFields = {
   /**
    * CPU consumed in sandboxes during the task, one entry per sandbox context:
    * the agent's own sandbox (role "agent") and the uploaded-tool runner (role
-   * "tool"), tagged by compute `type` ("sandbox", "lambda", "custom-tool-sandbox").
+   * "tool"), tagged by compute `type` ("sandbox", "lambda", "mcp-sandbox";
+   * retired rows carry "custom-tool-sandbox").
    * cpuUsec comes from the workdir exec report, the MicroVM getrusage report, and
    * the tool child's own cpuUsage respectively; others store 0.
    */
@@ -1239,12 +1213,6 @@ export default defineSchema({
   agents: defineTable(agentsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"]),
-  accountTools: defineTable(accountToolsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_stageId_and_status", ["stageId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"])
-    .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   accountHooks: defineTable(accountHooksFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),

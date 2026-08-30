@@ -86,7 +86,6 @@ async function seedMcpServer(
     resources: [mcpResource],
     ids: {
       skills: {},
-      tools: {},
       hooks: {},
       mcpServers: { [SERVER_NAME]: serverId },
     },
@@ -180,5 +179,30 @@ describe("cli sync rewrites config.mcpServers names to mcp row ids", () => {
     expect(await storedMcpServers(tt)).toEqual({
       [serverId]: { enabled: true },
     });
+  });
+
+  test("draws a canvas node for a synced mcp server and links its row", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const serverId = await seedMcpServer(tt, accountId);
+
+    await syncMcpServers(tt, { [SERVER_NAME]: { enabled: true } });
+
+    const layout = await tt.run(
+      async (ctx) => await ctx.db.query("canvasLayouts").first(),
+    );
+    const mcpNode = (
+      (layout?.nodes ?? []) as Array<{
+        id: string;
+        type: string;
+        data?: { resourceId?: string };
+      }>
+    ).find((node) => node.type === "mcp" && node.data?.resourceId === serverId);
+    const server = await tt.run(async (ctx) => await ctx.db.get(serverId));
+
+    // The dashboard panel resolves through getByNode (by_stageId_and_nodeId),
+    // so without this link a CLI-defined server is invisible on the canvas.
+    expect(mcpNode).toBeDefined();
+    expect(server!.nodeId).toBe(mcpNode!.id);
   });
 });

@@ -1,10 +1,11 @@
 /**
  * One-off data migrations. Run each on every deployment (dev + production),
- * e.g. `bunx convex run migrations:deleteOrphanedTools`. Each is idempotent
+ * e.g. `bunx convex run migrations:sunsetCustomTools`. Each is idempotent
  * and safe to re-run; completed migrations are deleted once every deployment
  * has run them.
  */
 
+import type { AnyDataModel, GenericDatabaseWriter } from "convex/server";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
@@ -70,50 +71,53 @@ export const backfillUsageRollupGrains = internalMutation({
   },
 });
 
-// Drop custom tools no stage owns: unscoped rows from the old
-// account-scoped path, tombstones, and rows whose stage is gone.
-export const deleteOrphanedTools = internalMutation({
+// #331 phase 3: custom tools are sunset; MCP servers replace them. Deletes
+// every accountTools row (the table is out of the schema, so it is reached
+// untyped), the cliExternalResources snapshots of kind "tool", and any
+// canvas-layout nodes still typed "tool" (plus their edges). Run once per
+// deployment after the cutover deploy; the account-tools/ S3 prefix is swept
+// separately (aws s3 rm --recursive s3://<ToolBundles>/account-tools/).
+export const sunsetCustomTools = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   returns: v.object({
-    unscoped: v.number(),
-    softDeleted: v.number(),
-    danglingStage: v.number(),
-    kept: v.number(),
+    toolRows: v.number(),
+    cliSnapshots: v.number(),
+    layoutsPruned: v.number(),
   }),
   handler: async (ctx, args) => {
-    const rows = await ctx.db.query("accountTools").collect();
-    let unscoped = 0;
-    let softDeleted = 0;
-    let danglingStage = 0;
-    let kept = 0;
+    const db = ctx.db as unknown as GenericDatabaseWriter<AnyDataModel>;
+    const toolRows = await db.query("accountTools").collect();
+    for (const row of toolRows) {
+      if (args.dryRun !== true) await db.delete(row._id);
+    }
 
-    for (const row of rows) {
-      let reason: "unscoped" | "softDeleted" | "danglingStage" | null = null;
-      if (row.status === "deleted") reason = "softDeleted";
-      else if (!row.stageId || !row.projectId) reason = "unscoped";
-      else {
-        // `create` rejects a pair whose stage sits under another project;
-        // a row that holds one anyway is scope corruption, not a live tool.
-        const stage = await ctx.db.get(row.stageId);
-        if (!stage || stage.projectId !== row.projectId)
-          reason = "danglingStage";
-      }
-
-      if (!reason) {
-        kept += 1;
-        continue;
-      }
-      if (reason === "unscoped") unscoped += 1;
-      if (reason === "softDeleted") softDeleted += 1;
-      if (reason === "danglingStage") danglingStage += 1;
+    const snapshots = (
+      await ctx.db.query("cliExternalResources").collect()
+    ).filter((row) => row.kind === "tool");
+    for (const row of snapshots) {
       if (args.dryRun !== true) await ctx.db.delete(row._id);
     }
 
+    let layoutsPruned = 0;
+    const layouts = await ctx.db.query("canvasLayouts").collect();
+    for (const layout of layouts) {
+      const nodes = layout.nodes as Array<Record<string, unknown>>;
+      const kept = nodes.filter((node) => node.type !== "tool");
+      if (kept.length === nodes.length) continue;
+      const keptIds = new Set(kept.map((node) => node.id));
+      const edges = (layout.edges as Array<Record<string, unknown>>).filter(
+        (edge) => keptIds.has(edge.source) && keptIds.has(edge.target),
+      );
+      layoutsPruned += 1;
+      if (args.dryRun !== true) {
+        await ctx.db.patch(layout._id, { nodes: kept, edges: edges });
+      }
+    }
+
     return {
-      unscoped: unscoped,
-      softDeleted: softDeleted,
-      danglingStage: danglingStage,
-      kept: kept,
+      toolRows: toolRows.length,
+      cliSnapshots: snapshots.length,
+      layoutsPruned: layoutsPruned,
     };
   },
 });

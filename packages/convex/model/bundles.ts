@@ -2,7 +2,7 @@
  * Bundle bytes reach S3 through Convex file storage instead of riding along as
  * an action argument. A "use node" action caps arguments at 5 MiB — that is
  * Lambda's invoke-payload quota showing through — which would cap an uploaded
- * tool bundle well below what the runtime can actually execute. The stored blob
+ * bundle well below what the runtime can actually execute. The stored blob
  * is only a courier: whoever stores it deletes it, pass or fail.
  */
 
@@ -12,23 +12,6 @@ import type { ActionCtx } from "../_generated/server";
 import type { McpInput } from "./mcp";
 
 const BUNDLE_CONTENT_TYPE = "application/javascript";
-
-/** Stores a tool bundle in S3 and returns its object key. */
-export async function putToolBundle(
-  ctx: ActionCtx,
-  options: { accountId: Id<"accounts">; sha256: string; bundle: string },
-): Promise<string> {
-  const storageId = await courier(ctx, options.bundle);
-  try {
-    return await ctx.runAction(internal.aws.bundles.putToolBundle, {
-      accountId: options.accountId,
-      sha256: options.sha256,
-      storageId: storageId,
-    });
-  } finally {
-    await ctx.storage.delete(storageId);
-  }
-}
 
 /** Stores a code hook bundle in S3 and returns its object key. */
 export async function putHookBundle(
