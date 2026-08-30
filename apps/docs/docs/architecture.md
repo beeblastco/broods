@@ -213,7 +213,7 @@ flowchart TD
   Inject --> Continue["continue parent agent"]
 ```
 
-Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Account-authenticated async tool completions arrive at `POST /async-tools/{resultId}/complete`; sandbox jobs use the token-authenticated `POST /sandbox-jobs/{resultId}/complete` instead.
+Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /sandbox-jobs/{resultId}/complete`.
 
 ## Cron Jobs
 

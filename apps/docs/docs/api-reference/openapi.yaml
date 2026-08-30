@@ -368,77 +368,6 @@ paths:
                   value:
                     error: Unauthorized
 
-  /async-tools/{resultId}/complete:
-    post:
-      tags:
-        - Direct API
-      summary: Complete async tool callback
-      description: Compatibility callback for settling one `AsyncToolResult` row through account bearer auth. Platform-managed sandbox jobs use `/sandbox-jobs/{resultId}/complete` with a per-result token.
-      parameters:
-        - name: resultId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/ToolCompletionSuccess"
-                - $ref: "#/components/schemas/ToolCompletionFailure"
-            examples:
-              success:
-                summary: Tool completed
-                value:
-                  status: completed
-                  response:
-                    answer: done
-                    data:
-                      - 1
-                      - 2
-                      - 3
-              failure:
-                summary: Tool failed
-                value:
-                  status: failed
-                  error: External service timeout after 30s
-      responses:
-        "202":
-          description: "Result accepted (`status: accepted` when settled, `status: waiting_for_async_tools` with `pendingCount` while siblings are outstanding)"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  pendingCount:
-                    type: integer
-              examples:
-                accepted:
-                  value:
-                    status: accepted
-                waiting:
-                  value:
-                    status: waiting_for_async_tools
-                    pendingCount: 2
-        "404":
-          description: Unknown resultId
-        "409":
-          description: Result already settled
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                unauthorized:
-                  value:
-                    error: Unauthorized
-
   /sandbox-jobs/{resultId}/complete:
     post:
       tags:
@@ -734,7 +663,7 @@ paths:
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
                       cronsDeleted: 0
-                      accountToolsDeleted: 0
+                      bundleObjectsDeleted: 0
 
   /accounts/{accountId}/rotate-secret:
     post:
@@ -3190,7 +3119,7 @@ components:
               type: integer
             cronsDeleted:
               type: integer
-            accountToolsDeleted:
+            bundleObjectsDeleted:
               type: integer
 
     AgentConfig:
@@ -3372,7 +3301,7 @@ components:
       type: object
       properties:
         toolNames: { type: array, items: { type: string } }
-        toolIds: { type: array, items: { type: string } }
+        mcpIds: { type: array, items: { type: string } }
         workspaceIds: { type: array, items: { type: string } }
         workspaceNames: { type: array, items: { type: string } }
         filePaths: { type: array, items: { type: string } }
@@ -3394,7 +3323,7 @@ components:
           description: >-
             Trusted runtime attribute or dotted path. Examples include accountId,
             project, stage, agentId, channel, channelId, threadId, userId,
-            userName, userRoles, toolName, toolId, filePath, workspaceName,
+            userName, userRoles, toolName, mcpId, filePath, workspaceName,
             sandboxPermissionMode, tool.input.command, tool.input.file_path, and
             tool.inputKeys. On an array attribute such as userRoles, `contains`
             means membership and `in`/`notIn` test overlap.

@@ -50,7 +50,7 @@ Tool registry path:
 
 Provider-defined tools are executed by the provider during the model call, not by core. MCP server tools are request/response: `tools/call` has no streaming analog, so each call is one POST to the external server, or one tool-runner Lambda invoke for a hosted server (see [MCP Servers](#connected-mcp-servers)).
 
-The async coordination subsystem creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results into the same active agent loop. Detached completions settle through `POST /async-tools/{resultId}/complete` (account-authenticated, built-in async tools) and `POST /sandbox-jobs/{resultId}/complete` (token-authenticated, `bash` background jobs).
+The async coordination subsystem creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results into the same active agent loop. Detached completions settle through `POST /sandbox-jobs/{resultId}/complete` (token-authenticated, `bash` background jobs).
 
 Notes:
 
