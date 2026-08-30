@@ -2,11 +2,13 @@
 # Self-management API calls for a deployed broods agent.
 # usage: self-api.sh METHOD PATH [JSON_BODY]
 # env:
-#   BROODS_BASE_URL         gateway url (default https://gateway.broods.app)
-#   BROODS_SELF_TOKEN       pre-scoped credential injected by the operator (interim path)
-#   BROODS_API_KEY          stage runtime key, used with BROODS_ACCOUNT_ROLE_ID once
-#   BROODS_ACCOUNT_ROLE_ID  role to assume for the session
-# Session tokens are cached in this process's env only, never written to disk.
+#   BROODS_BASE_URL          gateway url (default https://gateway.broods.app)
+#   BROODS_SESSION_TOKEN     role session minted by the operator; used as is
+#   BROODS_API_KEY           stage runtime key, exchanged with BROODS_ROLE_ID
+#   BROODS_ROLE_ID           role to assume, pinned to this deployment's stage
+#   BROODS_ROLE_TTL_SECONDS  session lifetime to request (default 3600, max 43200)
+# Exchanged sessions are cached in a private file for their lifetime, so a run
+# of many calls mints one session instead of one per call.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -15,46 +17,44 @@ if [ "$#" -lt 2 ]; then
 fi
 
 BASE_URL="${BROODS_BASE_URL:-https://gateway.broods.app}"
-METHOD="$1"
-REQUEST_PATH="$2"
-BODY="${3:-}"
+TOKEN="${BROODS_SESSION_TOKEN:-}"
 
-resolve_token() {
-  if [ -n "${BROODS_SELF_TOKEN:-}" ]; then
-    printf '%s' "$BROODS_SELF_TOKEN"
-
-    return
-  fi
-  if [ -z "${BROODS_API_KEY:-}" ] || [ -z "${BROODS_ACCOUNT_ROLE_ID:-}" ]; then
-    echo "error: set BROODS_SELF_TOKEN, or BROODS_API_KEY + BROODS_ACCOUNT_ROLE_ID" >&2
+if [ -z "$TOKEN" ]; then
+  if [ -z "${BROODS_API_KEY:-}" ] || [ -z "${BROODS_ROLE_ID:-}" ]; then
+    echo "error: set BROODS_SESSION_TOKEN, or BROODS_API_KEY + BROODS_ROLE_ID" >&2
     exit 1
   fi
-  # Exchange the runtime key + role id for a short-lived session (phase 1 endpoint).
-  RESPONSE="$(curl -sS --fail-with-body -X POST \
-    -H "Authorization: Bearer $BROODS_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"roleId\":\"$BROODS_ACCOUNT_ROLE_ID\"}" \
-    "$BASE_URL/v1/account/assume-role")"
-  TOKEN="$(printf '%s' "$RESPONSE" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  TTL="${BROODS_ROLE_TTL_SECONDS:-3600}"
+  CACHE_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+  CACHE="$CACHE_DIR/.broods-session-$(printf '%s' "$BASE_URL/$BROODS_ROLE_ID" | cksum | cut -d' ' -f1)"
+  NOW="$(date +%s)"
+
+  if [ -r "$CACHE" ]; then
+    read -r EXPIRES CACHED < "$CACHE" || true
+    if [ -n "${CACHED:-}" ] && [ "$NOW" -lt "${EXPIRES:-0}" ]; then TOKEN="$CACHED"; fi
+  fi
+
   if [ -z "$TOKEN" ]; then
-    echo "error: assume-role returned no token: $RESPONSE" >&2
-    exit 1
+    # Exchange the runtime key and role id for a short-lived session.
+    RESPONSE="$(curl -sS --fail-with-body -X POST \
+      -H "Authorization: Bearer $BROODS_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"roleId\":\"$BROODS_ROLE_ID\",\"ttlSeconds\":$TTL}" \
+      "$BASE_URL/v1/account/assume-role")"
+    # sed, not jq: no sandbox image is guaranteed to ship jq.
+    TOKEN="$(printf '%s' "$RESPONSE" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    if [ -z "$TOKEN" ]; then
+      echo "error: assume-role returned no token: $RESPONSE" >&2
+      exit 1
+    fi
+    (umask 077; printf '%s %s\n' "$((NOW + TTL - 60))" "$TOKEN" > "$CACHE")
   fi
-  printf '%s' "$TOKEN"
-}
-
-TOKEN="$(resolve_token)"
-
-CURL_ARGS=(
-  -sS
-  --fail-with-body
-  -X "$METHOD"
-  -H "Authorization: Bearer $TOKEN"
-  -H "Content-Type: application/json"
-)
-if [ -n "$BODY" ]; then
-  CURL_ARGS+=(-d "$BODY")
 fi
 
-curl "${CURL_ARGS[@]}" "$BASE_URL$REQUEST_PATH"
+CURL=(curl -sS --fail-with-body -X "$1"
+  -H "Authorization: Bearer $TOKEN"
+  -H "Content-Type: application/json")
+if [ -n "${3:-}" ]; then CURL+=(-d "$3"); fi
+
+"${CURL[@]}" "$BASE_URL$2"
 echo

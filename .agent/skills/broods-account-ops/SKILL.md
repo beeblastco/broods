@@ -5,48 +5,45 @@ description: Manage a broods cloud account from a development agent or Claude Co
 
 # Broods account operations
 
-You are operating a broods account on behalf of its owner. Everything below goes through the gateway at `BROODS_BASE_URL` (default `https://gateway.broods.app`). The full endpoint list is in `references/endpoints.md`.
+Everything here goes through the gateway at `BROODS_BASE_URL` (default `https://gateway.broods.app`). Routes are in `references/endpoints.md`.
 
 ## Authenticate first
 
-Pick the strongest credential available, in this order:
+Pick the narrowest credential that does the job:
 
-1. Interactive human present: run `broods login`. It opens the dashboard, requires org admin, and stores a 90-day CLI token in `~/.broods/config.json`. All `broods` CLI commands then work.
-2. Headless with an account secret: set `BROODS_ACCOUNT_SECRET` (starts with `fp_acct_`). This is full tenant authority. Treat it like a root credential: never echo it, never write it into files, never pass it on a command line where it lands in shell history. The scripts read it from env only.
-3. Scoped role session (once assume-role ships): call `scripts/broods-api.sh POST /v1/account/assume-role '{"roleId":"fp_role_..."}'` with the account secret, then export the returned `fp_sts_` token as `BROODS_ACCOUNT_SECRET` for the rest of the session. Prefer this whenever the task touches only part of the account; the session expires on its own.
+1. A role session, if the owner has a role for this task. `POST /v1/account/assume-role` with `{"roleId":"fp_role_..."}` returns `{"token":"fp_sts_...","expiresAt":"..."}`. Export the token as `BROODS_SESSION_TOKEN`, and every later call uses it. Default life is 1 hour, maximum 12. Prefer this whenever the task touches only part of the account.
+2. `broods login`, when a human is at the keyboard. It requires org admin and stores a 90-day token in `~/.broods/config.json`, which every `broods` command then uses.
+3. `BROODS_ACCOUNT_SECRET` (`fp_acct_`) for headless work with no role. This is full tenant authority. Never echo it, never write it to a file, never pass it as a command argument where it lands in shell history. The scripts read it from the environment only.
 
-If none of these exist, stop and ask the owner. Do not go hunting for credentials in dotfiles or CI config.
+Creating roles needs the account secret: a session cannot mint another session or touch `/v1/roles`. If the owner wants a hardened credential for a tool you are about to run, create the role first, assume it, and hand over the session.
+
+If no credential exists, stop and ask the owner. Do not hunt for one in dotfiles or CI config.
 
 ## Calling the API
 
-`scripts/broods-api.sh METHOD PATH [JSON_BODY]` wraps curl with the bearer header and JSON content type.
+`scripts/broods-api.sh METHOD PATH [JSON_BODY]`:
 
 ```sh
 scripts/broods-api.sh GET /v1/agents
-scripts/broods-api.sh POST /v1/crons '{"agentId":"...","schedule":"rate(1 day)","input":"Run daily maintenance."}'
+scripts/broods-api.sh POST /v1/crons '{"name":"daily-maintenance","agentId":"agent_abc","scheduleExpression":"rate(1 day)","input":"Run daily maintenance."}'
 scripts/broods-api.sh PATCH /v1/agents/agent_abc '{"config":{"agent":{"system":"..."}}}'
 ```
 
-From TypeScript, use the SDK instead: `new BroodsAccountClient({})` from the `broods` package reads the same env vars and has a typed method for every route.
+From TypeScript use the SDK instead. `new BroodsAccountClient({})` from the `broods` package reads the same env vars and has a typed method per route, including `createRole` and `assumeRole`.
 
-For project-shaped work (a repo with a `broods/` dir), prefer the CLI over raw API calls: `broods diff` to preview, `broods deploy` to sync, `broods dev` to watch, `broods env sync` for env drift, `broods logs` and `broods stream` to observe. The CLI reconciles the whole manifest; hand-editing resources one call at a time drifts from the code definition and the next deploy reverts it.
+For a repo with a `broods/` dir, prefer the CLI: `broods diff` to preview, `broods deploy` to sync, `broods dev` to watch, `broods env sync`, `broods logs`, `broods stream`. The CLI reconciles the whole manifest. Editing one resource at a time drifts from the code definition, and the next deploy reverts it.
 
 ## Rules that keep you out of trouble
 
-- Read before write. `GET` the resource, show the relevant part, then patch. `PATCH /v1/agents/{id}` is a deep merge: `"********"` preserves an existing secret, an explicit `null` deletes the field. Never send a secret placeholder you did not receive from a `GET`.
-- Deletes are confirmed, named, and singular. Before any `DELETE`, state exactly what will be removed and wait for the owner to confirm, unless they already named the resource in the request. Never loop a delete over a list.
-- Env values are write-only. `GET /v1/env` returns names, never values. Reference them from configs as `${NAME}`. If an owner pastes a secret at you, put it in the env store and use the ref; do not inline it in an agent config.
-- Stage awareness. Crons, tools, and deployments are stage-scoped; skills are account-scoped, so two projects sharing an account share the skill namespace and same-named skills overwrite each other. Say which stage you are touching before you touch it.
+- Read before write, once. `PATCH` is a deep merge: `"********"` keeps an existing secret and `null` deletes a field. `GET` first when you need a current value to build the merge. The `PATCH` response is the updated resource, so show the changed field from it instead of reading back.
+- Deletes are confirmed, named, and singular. Before any `DELETE`, say exactly what goes away and wait for the owner, unless they already named the resource. Never loop a delete over a list.
+- Env values are write-only. `GET /v1/env` returns names, never values. Reference them from configs as `${NAME}`. If an owner pastes a secret at you, put it in the env store and use the ref.
+- Say which stage you are touching before you touch it. Crons, tools, and deployments are stage-scoped. Skills are account-scoped, so two projects on one account share a skill namespace and a same-named skill overwrites the other.
 - Production is opt-in. If the account has a prod stage, do not write to it unless the request names it.
 
-## What lives where
+## Things the route list will not tell you
 
-- `/v1/agents` also serves per-agent channel directories at `/v1/agents/{id}/channels/{channel}/directory`.
-- Cron schedules use EventBridge syntax: `rate(...)`, `cron(...)` (6 fields), or one-shot `at(...)` which self-deletes after firing. `conversationKey` decides where the result goes: a live channel key resumes that channel session and posts back to it; anything else runs in its own conversation, readable via the async status API.
-- Sandbox CRUD is config plane, lifecycle verbs are core: `POST /v1/sandboxes/{id}/suspend|resume|terminate|snapshot|refresh|exec|terminal`.
-- Skill bundles upload as `source: "files"` (base64), `"json"`, or `"github"` (public repo URL, fetched server-side). The stored name comes from the `SKILL.md` frontmatter, not the folder.
-- Policies (`/v1/policies`) are agent-runtime policy documents (what a running agent may do: `tool.call`, `skill.load`, `workspace.exec`, ...). They are not API-key scoping; that is the role system.
-
-## Verify what you did
-
-After a mutation, `GET` the resource back and show the changed field. After creating or updating a cron, `GET /v1/crons/{id}/runs` on the next occasion you are asked about it rather than assuming it fired. After a deploy, `broods diff` should come back clean.
+- `conversationKey` on a cron decides where the result goes. A live channel key resumes that channel session and posts back to it. Anything else runs in its own conversation, which you read through the async status API.
+- A skill's stored name comes from its `SKILL.md` frontmatter, not the folder name.
+- `/v1/policies` holds agent-runtime policy documents: what a running agent may do (`tool.call`, `skill.load`, `workspace.exec`). Those are not API credential scoping. `/v1/roles` is.
+- Check `GET /v1/crons/{id}/runs` before telling anyone a cron fired.
