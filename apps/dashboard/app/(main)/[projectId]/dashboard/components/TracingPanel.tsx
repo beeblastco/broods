@@ -329,7 +329,7 @@ function TaskDurationBar({
           group.root.status === "error"
             ? "bg-red-500/70"
             : live
-              ? cn(barColor, "animate-pulse")
+              ? cn(barColor, "ring-1 ring-inset ring-foreground/40")
               : barColor,
         )}
         style={{ width: `${widthPct}%` }}
@@ -401,7 +401,10 @@ function TimelineBar({
             stale
               ? "bg-muted-foreground/25"
               : live
-                ? cn(kindBarColor(span.kind), "animate-pulse")
+                ? cn(
+                    kindBarColor(span.kind),
+                    "ring-1 ring-inset ring-foreground/40",
+                  )
                 : kindBarColor(span.kind),
           )}
         />

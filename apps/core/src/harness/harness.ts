@@ -74,6 +74,7 @@ import {
   parkAiSdkHarnessSession,
 } from "./ai-sdk-harness/index.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
+import type { PinnedFetchTransport } from "../shared/http.ts";
 import {
   channelPolicyIdentity,
   createPolicyToolApproval,
@@ -204,6 +205,9 @@ export interface AgentLoopOptions {
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
   hooks?: HookDispatcher;
+  // Test seam for lifecycle webhook delivery, which opens its own pinned
+  // socket rather than going through a mockable global.
+  webhookTransport?: PinnedFetchTransport;
 }
 
 // The agent stream plus the run's control surface: the accessors report loop
@@ -231,7 +235,11 @@ export async function runAgentLoop(
   let failureText: string | null = null;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(agentConfig);
-  const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
+  const lifecycle = createAgentLifecycleEmitter(
+    session,
+    agentConfig,
+    options.webhookTransport,
+  );
   const hooks =
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));

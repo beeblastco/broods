@@ -4,10 +4,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { readFileSync } from "node:fs";
+import { createServer as createHttpsServer, type Server } from "node:https";
 import type { SystemModelMessage } from "ai";
 import * as actualAi from "ai";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
+import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   setStorageForTests,
@@ -755,13 +758,11 @@ describe("runAgentLoop", () => {
 
   it("sends configured lifecycle webhooks for agent events", async () => {
     installHarnessEnv();
-    const fetchMock = mock(
-      async (
-        _input: Parameters<typeof fetch>[0],
-        _init?: Parameters<typeof fetch>[1],
-      ) => new Response(null, { status: 200 }),
-    );
-    globalThis.fetch = fetchMock as never;
+    // Delivery opens its own pinned socket, so it is steered by resolving the
+    // hook's name to the loopback the test server listens on rather than by
+    // replacing a global.
+    const delivered: HookDelivery[] = [];
+    const { server, port } = await startHookServer(delivered);
     const { runAgentLoop } = await import("../src/harness/harness.ts");
 
     const stream = await runAgentLoop(
@@ -800,21 +801,22 @@ describe("runAgentLoop", () => {
           webhooks: [
             {
               enabled: true,
-              url: "https://hooks.example/agent-events",
+              url: `https://public.test:${port}/agent-events`,
               secret: "hook-secret",
               events: ["agent.started", "agent.failed"],
             },
           ],
         },
       },
+      undefined,
+      { webhookTransport: hookTransport() },
     );
 
     await stream.consumeStream();
+    server.close();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const payloads = fetchMock.mock.calls.map((call) =>
-      JSON.parse(String(call[1]?.body)),
-    );
+    expect(delivered).toHaveLength(2);
+    const payloads = delivered.map((entry) => JSON.parse(entry.body));
     expect(payloads.map((payload) => payload.type)).toEqual([
       "agent.started",
       "agent.failed",
@@ -830,15 +832,9 @@ describe("runAgentLoop", () => {
         messageCount: 1,
       },
     });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://hooks.example/agent-events",
-    );
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-      "Content-Type": "application/json",
-    });
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toHaveProperty(
-      "X-Webhook-Signature",
-    );
+    expect(delivered[0]?.path).toBe("/agent-events");
+    expect(delivered[0]?.contentType).toBe("application/json");
+    expect(delivered[0]?.signature).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 
   it("keeps the provider error when the stream also finishes with empty text", async () => {
@@ -2446,3 +2442,63 @@ describe("tool.call span duration", () => {
     expect(toolSpanDurationMs(1_000, 6_000, -12)).toBe(0);
   });
 });
+
+// The lifecycle webhook opens a pinned socket, so the test resolves the hook's
+// name to the loopback address its own TLS server listens on. Only loopback is
+// exempted; every other address still meets the real denylist.
+const HOOK_TLS_CERT = readFileSync(
+  new URL("./helpers/fixtures/attachment-tls-cert.pem", import.meta.url),
+  "utf8",
+);
+const HOOK_TLS_KEY = readFileSync(
+  new URL("./helpers/fixtures/attachment-tls-key.pem", import.meta.url),
+  "utf8",
+);
+
+function hookTransport(): PinnedFetchTransport {
+  return {
+    allowAddresses: ["127.0.0.1"],
+    ca: HOOK_TLS_CERT,
+    lookup: async (): Promise<{ address: string; family: number }[]> => [
+      { address: "127.0.0.1", family: 4 },
+    ],
+  };
+}
+
+interface HookDelivery {
+  body: string;
+  contentType: string | undefined;
+  path: string;
+  signature: string | undefined;
+}
+
+async function startHookServer(
+  delivered: HookDelivery[],
+): Promise<{ port: number; server: Server }> {
+  const server = createHttpsServer(
+    { cert: HOOK_TLS_CERT, key: HOOK_TLS_KEY },
+    (request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        delivered.push({
+          body: Buffer.concat(chunks).toString("utf8"),
+          contentType: request.headers["content-type"],
+          path: request.url ?? "",
+          signature: request.headers["x-webhook-signature"] as
+            | string
+            | undefined,
+        });
+        response.writeHead(200);
+        response.end();
+      });
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address !== "object") {
+    throw new Error("hook server has no port");
+  }
+
+  return { port: address.port, server: server };
+}

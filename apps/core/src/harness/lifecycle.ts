@@ -58,7 +58,7 @@ export function createAgentLifecycleEmitter(
         return;
       }
 
-      const event = {
+      const event: AgentLifecycleEvent = {
         type: type,
         timestamp: new Date().toISOString(),
         ...(session.accountId ? { accountId: session.accountId } : {}),
@@ -66,7 +66,7 @@ export function createAgentLifecycleEmitter(
         eventId: session.eventId,
         conversationKey: session.conversationKey,
         payload: payload,
-      } satisfies AgentLifecycleEvent;
+      };
 
       await Promise.all(
         targets.map(async (webhook) => {

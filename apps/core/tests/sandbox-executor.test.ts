@@ -1465,10 +1465,13 @@ describe("createSandboxExecutor", () => {
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       `mountpoint -q '/mnt/workspaces/${NS}' || sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" '--allow-delete' '--allow-overwrite' '--allow-other' '--prefix' '${NS}/' '--region' 'us-east-1' 'workspace-bucket' '/mnt/workspaces/${NS}'`,
     );
+    // The account's env reaches the command itself, not only sandbox creation:
+    // the reconnect path never builds create options, so an edited env would
+    // otherwise never apply to an existing persistent sandbox.
     expect(daytonaExecuteCommandMock).toHaveBeenCalledWith(
       "echo hi && ls",
       `/mnt/workspaces/${NS}`,
-      undefined,
+      { MY_API_BASE: "https://api.example.com" },
       45,
     );
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);

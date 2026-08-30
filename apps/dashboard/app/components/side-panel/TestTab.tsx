@@ -735,19 +735,16 @@ function ToolInvocationBlock({
   );
 }
 
-/** Animated thinking dots shown while waiting for the first assistant chunk. */
+/**
+ * Shown while waiting for the first assistant chunk. Deliberately static: this
+ * sits on screen for as long as the model runs, and five elements pulsing in
+ * step repaint the whole turn on a high-refresh display.
+ */
 function ThinkingIndicator({ nodeColor }: { nodeColor?: string }) {
   return (
     <div className="flex items-start gap-2">
-      <AgentAvatar color={nodeColor} className="animate-pulse" />
-      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-        <span className="animate-pulse">Thinking</span>
-        <span className="inline-flex">
-          <span className="animate-pulse [animation-delay:0ms]">.</span>
-          <span className="animate-pulse [animation-delay:150ms]">.</span>
-          <span className="animate-pulse [animation-delay:300ms]">.</span>
-        </span>
-      </div>
+      <AgentAvatar color={nodeColor} />
+      <div className="text-sm text-muted-foreground">Thinking...</div>
     </div>
   );
 }

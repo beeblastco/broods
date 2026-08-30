@@ -428,7 +428,7 @@ async function continueAfterAsyncToolSettlement(
     return { kind: "skip" };
   }
 
-  const continuationEvent = {
+  const continuationEvent: DirectInboundEvent = {
     accountId: scope.accountId,
     agentId: scope.agentId,
     agentConfig: toRuntimeAgentConfig(agent.config),
@@ -454,7 +454,7 @@ async function continueAfterAsyncToolSettlement(
     events: events,
     requestedMode: "followup",
     idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
-  } satisfies DirectInboundEvent;
+  };
 
   const ownedContinuation = await admitInternalContinuation(
     continuationEvent,

@@ -455,13 +455,13 @@ async function handleHttpRequest(
     });
   }
 
-  const channelRequest = {
+  const channelRequest: ChannelRequest = {
     method: method,
     rawPath: request.path,
     rawQueryString: request.search,
     headers: headers,
     body: request.body,
-  } satisfies ChannelRequest;
+  };
 
   // Background-job completion: authenticated by the per-job token, not an account
   // secret, so the sandbox never needs to hold account credentials.

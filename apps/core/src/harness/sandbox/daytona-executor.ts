@@ -81,7 +81,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       const response = await sandbox.process.executeCommand(
         request.code,
         workspacePath(request),
-        undefined,
+        // Per exec, not only at create: `daytonaCreateOptions` never runs on
+        // the reconnect path, so without this an edited env never reaches an
+        // existing persistent sandbox. Every other provider applies them here.
+        this.#execEnvVars(request),
         request.timeoutSeconds,
       );
       const stdout = truncateText(
@@ -321,6 +324,15 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       throw new Error("failed to reserve daytona sandbox (lost create race)");
 
     return this.#reconnect(client, winner);
+  }
+
+  #execEnvVars(request: SandboxRunRequest): Record<string, string> | undefined {
+    const env = {
+      ...stringRecord(this.#config.envVars),
+      ...stringRecord(request.envVars),
+    };
+
+    return Object.keys(env).length > 0 ? env : undefined;
   }
 
   async #jobContext(
