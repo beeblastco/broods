@@ -17,8 +17,11 @@ import {
   resolveSubagentMode,
   type AccountModelProviderName,
   type AgentConfig,
+  type AgentMcpServerConfig,
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
+import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -38,7 +41,11 @@ import type {
   SandboxExecutorConfig,
 } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
-import { listMcpTools, mcpConnection } from "../mcp/client.ts";
+import {
+  listMcpTools,
+  mcpConnection,
+  type McpConnection,
+} from "../mcp/client.ts";
 import { mcpServerTools, mcpToolName } from "../mcp/mcp.tool.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
@@ -441,6 +448,15 @@ function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
   }
 }
 
+/** One resolved server: its row, connection, and the filtered remote tools. */
+interface ResolvedMcpServer {
+  serverId: string;
+  serverConfig: AgentMcpServerConfig;
+  record: McpRecord;
+  connection: McpConnection;
+  remoteTools: RemoteMcpTool[];
+}
+
 /**
  * Register every enabled connected MCP server's tools (#331). Listings come
  * from the per-server TTL cache in mcp/client.ts, so steady-state runs skip
@@ -465,28 +481,30 @@ async function registerMcpTools(
   // Resolve rows and listings in parallel; the merge below stays sequential
   // in config order so name-conflict detection is deterministic.
   const resolved = await Promise.all(
-    entries.map(async ([serverId, serverConfig]) => {
-      const record = await getStorage().mcp.getById(accountId, serverId);
-      if (!record || record.status !== "active") {
-        throw new Error(
-          `config.mcpServers.${serverId} references an unknown MCP server`,
+    entries.map(
+      async ([serverId, serverConfig]): Promise<ResolvedMcpServer | null> => {
+        const record = await getStorage().mcp.getById(accountId, serverId);
+        if (!record || record.status !== "active") {
+          throw new Error(
+            `config.mcpServers.${serverId} references an unknown MCP server`,
+          );
+        }
+        if (record.disabled) return null;
+        const connection = mcpConnection(record, serverConfig.headers);
+        const remoteTools = (await listMcpTools(connection)).filter(
+          (remote) =>
+            !record.allowedTools || record.allowedTools.includes(remote.name),
         );
-      }
-      if (record.disabled) return null;
-      const connection = mcpConnection(record, serverConfig.headers);
-      const remoteTools = (await listMcpTools(connection)).filter(
-        (remote) =>
-          !record.allowedTools || record.allowedTools.includes(remote.name),
-      );
 
-      return {
-        serverId: serverId,
-        serverConfig: serverConfig,
-        record: record,
-        connection: connection,
-        remoteTools: remoteTools,
-      };
-    }),
+        return {
+          serverId: serverId,
+          serverConfig: serverConfig,
+          record: record,
+          connection: connection,
+          remoteTools: remoteTools,
+        };
+      },
+    ),
   );
   for (const server of resolved) {
     if (server === null) continue;

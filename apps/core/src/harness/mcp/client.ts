@@ -25,6 +25,10 @@ const DEFAULT_LIST_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_LIST_TTL_MS = 60 * 60_000;
 
+const discoverCache = new Map<string, DiscoverResult>();
+const toolListCache = new Map<string, CachedListing>();
+let testOverrides: McpTestOverrides | null = null;
+
 /** One server's resolved connection: the row plus the final request headers. */
 export interface McpConnection {
   record: McpRecord;
@@ -44,10 +48,6 @@ type McpTestOverrides = {
     args: Record<string, unknown>,
   ) => Promise<CallToolResult>;
 };
-
-const discoverCache = new Map<string, DiscoverResult>();
-const toolListCache = new Map<string, CachedListing>();
-let testOverrides: McpTestOverrides | null = null;
 
 /**
  * Call one remote tool. Stateless: a fresh client and POST per call. An
@@ -170,7 +170,9 @@ async function connectClient(
   connection: McpConnection,
   key: string,
 ): Promise<Client> {
-  const makeClient = async (discover: DiscoverResult | undefined) => {
+  const makeClient = async (
+    discover: DiscoverResult | undefined,
+  ): Promise<Client> => {
     const transport = new StreamableHTTPClientTransport(
       new URL(connection.record.url),
       { requestInit: { headers: connection.headers } },

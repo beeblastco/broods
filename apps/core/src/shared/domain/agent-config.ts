@@ -1279,6 +1279,8 @@ function normalizeMcpServersConfig(value: unknown): void {
   }
 
   for (const [serverId, serverConfig] of Object.entries(value)) {
+    // isAccountToolId is the shared Convex-document-id shape check; mcp rows
+    // use the same id format as account tools.
     if (!isAccountToolId(serverId)) {
       throw new Error(
         `config.mcpServers.${serverId} must be keyed by an MCP server id`,

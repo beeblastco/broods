@@ -1557,12 +1557,15 @@ function storageWithMcp(record: McpRecord): Storage {
   return {
     ...storageWithCronStore({}),
     mcp: {
-      getById: async function (accountId: string, serverId: string) {
+      getById: async function (
+        accountId: string,
+        serverId: string,
+      ): Promise<McpRecord | null> {
         return record.accountId === accountId && record.serverId === serverId
           ? record
           : null;
       },
-      removeAllForAccount: async function () {
+      removeAllForAccount: async function (): Promise<number> {
         return 0;
       },
     },

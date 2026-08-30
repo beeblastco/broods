@@ -13,8 +13,7 @@
 import { isPlainObject } from "./objects";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
-// Non-global so `.test()` carries no lastIndex state; global clones are built
-// where iteration/replacement needs them.
+// Global clone of the shared pattern for iteration/replacement.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
