@@ -5,7 +5,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 ## Workspaces
 
 - `apps/core` (`@broods/core`) — agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
-- `apps/lambda` — two plain `.mjs` files: the AWS Lambda that runs account-uploaded custom tools needing node/npm. no build, not a workspace; `apps/core/sst.config.ts` deploys it.
+- `apps/lambda` — two plain `.mjs` files: the AWS Lambda that runs account-uploaded hosted MCP server bundles. no build, not a workspace; `apps/core/sst.config.ts` deploys it.
 - `apps/gateway` (`@broods/gateway`) — the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
 - `apps/discord-forwarder` (`@broods/discord-forwarder`) — the Discord Gateway sockets. Discord only POSTs interactions to a webhook; regular messages arrive over a socket, so without this a Discord agent answers `/new` and ignores every mention. one socket per bot token, one deployment, single replica.
 - `apps/dashboard` (`@broods/dashboard`) — Next.js UI. drives core through Convex.

@@ -11,7 +11,7 @@ Broods is a serverless AI agent platform. Define agents, workspaces, sandboxes, 
 ## Quick Start
 
 - **[Getting Started](getting-started.md)** — Install the CLI, define your first agent, and run it in 5 minutes
-- **[Resource Configuration](resources.md)** — Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs
+- **[Resource Configuration](resources.md)** — Full reference for `defineAgent`, `defineSandbox`, channels, skills, MCP servers, and cron jobs
 - **[SDK & Runtime API](sdk.md)** — Typed SDK usage, curl equivalents, and WebSocket streaming
 - **[API Reference](/api-reference)** — Interactive OpenAPI docs for all endpoints
 
@@ -19,7 +19,7 @@ Broods is a serverless AI agent platform. Define agents, workspaces, sandboxes, 
 
 - **[Workspace & Sandbox](workspace/index.md)** — Persistent files, compute backends, and permission modes
 - **[Skills](skills.md)** — Account-scoped instruction bundles and the runtime skill panel
-- **[External Tools](tools.md)** — Built-in tools and uploading custom tools
+- **[External Tools](tools.md)** — Provider-defined tools and MCP servers
 - **[Sub Agents](sub-agents.md)** — Parallel child agents with parent continuation
 - **[Channels](channels/index.md)** — Telegram, Discord, Slack, GitHub, Pancake, and Zalo
 - **[Cron Jobs](crons.md)** — Scheduled agent runs

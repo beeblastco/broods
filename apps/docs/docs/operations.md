@@ -120,13 +120,13 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 
 Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
-Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, per-tool credentials are configured per agent under `config.tools.<tool>`, or supplied to an uploaded custom tool through its `config`. This allows different users to use their own API keys.
+Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, per-tool credentials are configured per agent under `config.tools.<tool>`, and MCP server credentials ride the registered server's headers as account env-var references. This allows different users to use their own API keys.
 
 Manual account creation through `POST /accounts` requires `AdminAccountSecret` and creates a standalone Convex account with an admin-owned synthetic org id. Normal hosted onboarding continues to use the dashboard-authenticated Convex config plane and a real WorkOS organization.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
-OPA-backed agent policy is optional. When an agent has no assigned policy IDs, runtime behavior is unchanged and no policy decision is requested. When policies are assigned, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. Inputs include action/resource context plus sanitized tool-call details (`toolName`, `toolId`, `tool.input.*`) so policies can match specific functions and parameters. Each policy document carries a `mode` that picks its own rollout stage: `audit` (default) evaluates and records every decision without blocking; `enforce` lets that policy's deny rules refuse, switches the places it is attached to over to default-deny, and fails closed when OPA is unavailable. Policies attached to the same place can mix, so a new rule can watch while an established one refuses.
+OPA-backed agent policy is optional. When an agent has no assigned policy IDs, runtime behavior is unchanged and no policy decision is requested. When policies are assigned, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. Inputs include action/resource context plus sanitized tool-call details (`toolName`, `mcpId`, `tool.input.*`) so policies can match specific functions and parameters. Each policy document carries a `mode` that picks its own rollout stage: `audit` (default) evaluates and records every decision without blocking; `enforce` lets that policy's deny rules refuse, switches the places it is attached to over to default-deny, and fails closed when OPA is unavailable. Policies attached to the same place can mix, so a new rule can watch while an established one refuses.
 
 ## Local Setup
 
@@ -412,6 +412,6 @@ Common fields:
 - `model.step.finished` carries per-model-call `durationMs`, the AI SDK `usage`, response ID/model/timestamp, provider metadata, warning counts, and tool call/result counts
 - `model.invocation.finished` and `model.invocation.failed` carry final turn status, whole-run `durationMs`, AI SDK total token `usage`, step count, tool call count, `toolsUsed`, per-tool `toolUsage`, and compact `toolCalls` summaries
 - `toolName`, `toolCallId`, and `durationMs` for tool events
-- A `tool.call` span for an uploaded tool that ran off-process also carries `tool.compute.type` and `tool.compute.cpu_usec`, so a trace shows which runtime served the call and what it cost. Their absence means the call ran in-process.
+- A `tool.call` span for a hosted MCP server tool also carries `tool.compute.type` (`"mcp-sandbox"`, the tool-runner Lambda) and `tool.compute.cpu_usec`, so a trace shows which runtime served the call and what it cost. Their absence means the call ran in-process.
 
 Prompts, full tool inputs, tool outputs, request bodies, response bodies, and response headers are not logged by default. This keeps the CloudWatch stream useful for usage visualization while avoiding high-volume or sensitive payloads.
