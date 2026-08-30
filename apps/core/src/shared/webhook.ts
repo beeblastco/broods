@@ -4,7 +4,8 @@
  */
 
 import { createHmac } from "node:crypto";
-import { assertPublicHttpsUrl } from "./http.ts";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
+import { assertPublicHttpsUrl, type PinnedFetchTransport } from "./http.ts";
 
 export interface WebhookConfig {
   url: string;
@@ -14,23 +15,32 @@ export interface WebhookConfig {
 export async function fireWebhook(
   config: WebhookConfig,
   payload: unknown,
+  transport?: PinnedFetchTransport,
 ): Promise<void> {
-  // Re-checked at delivery (configs may predate validation); redirects are
-  // refused so a public URL cannot 302 into a private address.
+  // Protocol only, because a name is all this can see: configs may predate
+  // validation, and `guardedFetch` accepts http as well as https.
   assertPublicHttpsUrl(config.url, "webhook url");
   const body = JSON.stringify(payload);
   const signature = createWebhookSignature(config.secret, body);
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Webhook-Signature": signature,
+  // The address is the boundary, not the name. `guardedFetch` resolves once,
+  // refuses every private and metadata address the name resolves to, and pins
+  // the socket to the address it validated, so a name that resolves publicly
+  // during the check cannot resolve privately at connect. It revalidates each
+  // redirect too, which is why the old `redirect: "error"` is gone.
+  const response = await guardedFetch(
+    config.url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Webhook-Signature": signature,
+      },
+      body: body,
     },
-    body: body,
-    redirect: "error",
-  });
+    transport,
+  );
 
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(`Webhook delivery failed with HTTP ${response.status}`);
   }
 }

@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
-import type { AttachmentFetchTransport } from "../src/harness/channel-media.ts";
+import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
@@ -628,7 +628,7 @@ describe("readAttachmentBytes URL guard", () => {
 function loopbackTransport(
   hosts: Record<string, string>,
   lookups?: string[],
-): AttachmentFetchTransport {
+): PinnedFetchTransport {
   return {
     allowAddresses: ["127.0.0.1"],
     lookup: async (
