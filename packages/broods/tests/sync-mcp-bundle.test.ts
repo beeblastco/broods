@@ -1,8 +1,7 @@
 /**
- * Large hosted-MCP bundles must not ride the manifest JSON (#190): past the
- * inline threshold, putManifest mints an upload URL, POSTs the module source
- * there, and syncs the resource as bundleStorageId + sha256 instead. Small
- * bundles keep the single-request path byte-for-byte.
+ * Past the inline threshold, putManifest uploads the MCP bundle to a minted
+ * URL and syncs bundleStorageId + sha256 (#190); small bundles keep the
+ * single-request path byte-for-byte.
  */
 
 import { createHash } from "node:crypto";

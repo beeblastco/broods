@@ -169,10 +169,8 @@ export class BroodsSyncClient {
 
   /**
    * An MCP bundle past the inline threshold cannot ride the manifest JSON
-   * (the config plane caps request bodies around 20 MB), so it travels
-   * through Convex file storage instead: mint an upload URL, POST the module
-   * source, and swap the resource's `bundle` for the returned storage id
-   * plus its sha256 (#190). Small bundles stay inline, one request as before.
+   * (the config plane caps bodies ~20 MB): upload it to a minted URL and swap
+   * `bundle` for the storage id plus sha256 (#190). Small bundles stay inline.
    */
   private async externalizeLargeMcpBundles(
     manifest: CliManifest,
@@ -717,10 +715,7 @@ async function assertOk(response: Response, message: string): Promise<void> {
   throw new Error(`${message}: ${response.status} ${reason}`);
 }
 
-/**
- * The one place the "is this MCP bundle too large to inline" predicate lives:
- * returns the bundle source when the resource must be externalized, else null.
- */
+/** The bundle source when the MCP resource must be externalized, else null. */
 function largeBundleOf(
   resource: CliManifest["resources"][number],
 ): string | null {

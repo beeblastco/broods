@@ -178,9 +178,8 @@ export async function handleManifestRoute(
 }
 
 /**
- * Mint a Convex storage upload URL for a large hosted-MCP bundle (#190). The
- * CLI POSTs the module source there and passes the returned storage id as
- * `bundleStorageId` in the manifest; the S3 writer verifies size and sha256.
+ * Mint a storage upload URL for a large hosted-MCP bundle (#190); the CLI
+ * passes the returned storage id as `bundleStorageId` in the manifest.
  */
 export async function handleMcpBundleUploadRoute(
   ctx: ActionCtx,

@@ -111,15 +111,11 @@ export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
-// The server bounds uploaded bundles: 1 MB for isolate-run hooks, 50 MB for
-// hosted MCP server bundles (#190). The CLI enforces the hook/skill bound
-// here and lets the server reject an oversized hook bundle with its own limit
-// named; MCP bundles get their own ceiling, and anything past the inline
-// threshold travels through an upload URL instead of the manifest body
-// (sync.ts), which Convex caps at ~20 MB. The MCP values mirror
-// MAX_MCP_BUNDLE_BYTES / MAX_INLINE_BUNDLE_BYTES in
-// packages/convex/model/mcp.ts — the published CLI cannot import the backend,
-// so change both or the CLI accepts what the config plane rejects.
+// Server bounds: 1 MB for isolate-run hooks, 50 MB for hosted MCP bundles
+// (#190); past the inline threshold a bundle travels through an upload URL
+// instead of the manifest body (sync.ts). The MCP values mirror
+// packages/convex/model/mcp.ts (the published CLI cannot import the backend)
+// — change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;

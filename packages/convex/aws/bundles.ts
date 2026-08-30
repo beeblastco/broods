@@ -3,9 +3,8 @@
 /**
  * Node-runtime S3 bundle writers for Convex config-plane resources. Bundles
  * arrive by storage id, never as an argument — see model/bundles.ts for why.
- * The MCP writer is also the verification point for client-uploaded bundles:
- * the declared sha256 is checked against the actual bytes and the size cap is
- * enforced here, where the bytes are read anyway.
+ * The MCP writer also verifies client-uploaded bundles (sha256 and size cap)
+ * here, where the bytes are read anyway.
  */
 
 import { createHash } from "node:crypto";
@@ -38,13 +37,10 @@ export const putHookBundle = internalAction({
 });
 
 /**
- * Store a hosted MCP server bundle in the account bundles bucket, under its
- * own account-mcp/ prefix (#331 phase 2). The bundle may have been uploaded
- * by the client directly (#190), so the declared sha256 and the size cap are
- * verified against the raw bytes — one read, hashed and stored as-is, no
- * string decode — before anything reaches S3: the runner child rejects a hash
- * mismatch at invoke time, and failing here instead turns a corrupt upload
- * into an upload error rather than a broken server.
+ * Store a hosted MCP server bundle under the account-mcp/ prefix (#331 phase
+ * 2). The bundle may be a direct client upload (#190), so the declared sha256
+ * and the size cap are verified against the raw bytes first — failing here
+ * turns a corrupt upload into an upload error instead of a broken server.
  */
 export const putMcpBundle = internalAction({
   args: {

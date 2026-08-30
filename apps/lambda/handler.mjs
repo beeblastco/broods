@@ -1,15 +1,11 @@
 /**
- * AWS Lambda entry for the hosted MCP runner. It resolves the uploaded MCP
- * server bundle the invoke event addresses, runs the request in a child Node
- * process with a scrubbed env and a fresh per-call TMPDIR, and streams the
- * child's raw NDJSON frames to the core invoker as written. The child is kept
- * warm across invocations keyed by accountId + sha256 (#189): a repeat call
- * skips the S3 fetch, the V8 parse, and the spawn. Reuse is bounded (max
- * calls, idle TTL) and any failure retires the child; it is a containment
- * layer, not a trust boundary — it runs same-UID, so keep this function's
- * execution role empty and assume anything it can reach is reachable by
- * tenant code. Execution logic lives in child-runner.mjs; keep this file to
- * spawn + forward + clean up.
+ * AWS Lambda entry for the hosted MCP runner. Resolves the uploaded bundle,
+ * runs the request in a child Node process with a scrubbed env and a fresh
+ * per-call TMPDIR, and streams the child's raw NDJSON frames to core. The
+ * child stays warm keyed by accountId + sha256 (#189), bounded and retired on
+ * any failure. It is a containment layer, not a trust boundary — same-UID, so
+ * keep the execution role empty. Execution logic lives in child-runner.mjs;
+ * keep this file to spawn + forward + clean up.
  */
 
 import { spawn } from "node:child_process";
@@ -28,18 +24,14 @@ const CHILD_GRACE_MS = 2_000;
 // lands in core's memory and then in an agent's context, so this bounds a run.
 const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
-// Reuse bounds (#189): a warm child serves at most this many calls and never
-// outlives this idle gap, so a poisoned child is short-lived by construction.
-// Env-overridable for tests and as an operational dial; MCP_CHILD_REUSE=0 is
-// the kill switch back to one process per invocation.
+// Reuse bounds (#189), env-overridable; MCP_CHILD_REUSE=0 is the kill switch
+// back to one process per invocation.
 const DEFAULT_MAX_CHILD_CALLS = 64;
 const DEFAULT_CHILD_IDLE_SECONDS = 300;
 
-// Terminal frames are the only lines child-runner.mjs itself writes, and it
-// writes them with `t` first (its emitTerminal pins that key order); matching
-// the line prefix is what lets the handler spot the end of a run without
-// parsing a multi-megabyte frame. Buffers, not strings: the scan runs per
-// stdout line and a byte compare allocates nothing.
+// Terminal frames are the only lines the child itself writes, with `t` first
+// (emitTerminal pins that key order), so a byte compare on the line prefix
+// spots the end of a run without parsing a multi-megabyte frame.
 const FINAL_PREFIX = Buffer.from('{"t":"final"', "latin1");
 const ERROR_PREFIX = Buffer.from('{"t":"error"', "latin1");
 const TERMINAL_PREFIX_BYTES = FINAL_PREFIX.length;
@@ -117,8 +109,8 @@ async function readBundleSource(event) {
 }
 
 // One invocation against one child: write the request line, forward stdout
-// until the terminal frame line, settle. Resolves true when the run ended on a
-// clean `final` frame and the child may serve another call; false retires it.
+// until the terminal frame line, settle. Resolves true only when the run
+// ended on a clean `final` frame, so the child may serve another call.
 async function runRequest(state, event, home, responseStream) {
   return await new Promise((resolve) => {
     const child = state.child;
@@ -127,8 +119,7 @@ async function runRequest(state, event, home, responseStream) {
     let terminal = null;
     let drained = false;
     let settled = false;
-    // Bytes of the current stdout line seen so far, capped at the prefix
-    // length: enough to recognize a terminal frame at the next newline.
+    // First bytes of the current stdout line, enough to spot a terminal frame.
     const linePrefix = Buffer.alloc(TERMINAL_PREFIX_BYTES);
     let linePrefixLen = 0;
     const finish = (error, keep) => {
@@ -149,8 +140,7 @@ async function runRequest(state, event, home, responseStream) {
     const settleDead = () => {
       if (!state.dead || !drained) return;
       if (terminal !== null) {
-        // The frame made it out before the exit (an error frame, or a final
-        // one from a child that then retired itself); deliver it as written.
+        // The frame made it out before the exit; deliver it as written.
         finish(undefined, false);
       } else if (stopReason) {
         finish(stopReason);
@@ -179,8 +169,7 @@ async function runRequest(state, event, home, responseStream) {
 
     const onStdout = (chunk) => {
       if (stopReason || terminal !== null) return;
-      // Scan complete lines for a terminal-frame prefix; everything up to and
-      // including that frame's newline is forwarded, later bytes in the same
+      // Forward through the terminal frame's newline; later bytes in the same
       // chunk are noise from the tenant's own stray writers and are dropped.
       let cut = chunk.length;
       let index = 0;
@@ -242,8 +231,8 @@ async function runRequest(state, event, home, responseStream) {
       return;
     }
 
-    // The request does not wait on the bundle fetch: the child parses it while
-    // the bundle is still in flight. stdin stays open for the next request.
+    // The request does not wait on the bundle fetch; stdin stays open for the
+    // next request.
     child.stdin.write(
       `${JSON.stringify({
         ...event,
@@ -269,18 +258,15 @@ async function runRequest(state, event, home, responseStream) {
   });
 }
 
-// Spawn the runner child. detached puts it in its own process group so
-// killGroup can reap the grandchildren too when the child retires; a survivor
-// would outlive its tenant's turn in the warm sandbox. The fourth pipe carries
-// the bundle bytes; see child-runner.mjs BUNDLE_FD.
+// Spawn the runner child, detached so killGroup can reap grandchildren on
+// retire. The fourth pipe carries the bundle bytes (child-runner.mjs BUNDLE_FD).
 function spawnChild(key, home, bundle) {
   const child = spawn(process.execPath, [childRunnerPath()], {
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     env: scrubbedEnv(home),
     detached: true,
   });
-  // `key` is fixed for the child's lifetime: matchesWarm rejects any other key
-  // before a live child is ever handed a call. null means one-shot, never kept.
+  // `key` is fixed for the child's lifetime; null means one-shot, never kept.
   const state = {
     key: key,
     child: child,
@@ -361,8 +347,8 @@ function killGroup(child) {
   }
 }
 
-// A warm child is only handed a call for the exact accountId + sha256 it was
-// spawned for, and never past its call or idle bounds.
+// Only the exact accountId + sha256 the child was spawned for, and never past
+// its call or idle bounds.
 function matchesWarm(key) {
   if (!warm || warm.dead || warm.key !== key) return false;
   if (
@@ -385,16 +371,14 @@ function positiveEnvInt(name, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-// Dispose one child: clear the warm slot if it holds it, and SIGKILL its
-// whole group so nothing it spawned survives it.
+// Dispose one child: clear the warm slot if it holds it, SIGKILL its group.
 function retire(state) {
   if (warm === state) warm = null;
   killGroup(state.child);
 }
 
 // Reuse needs the tenant identity in the key: without accountId the call runs
-// in a one-shot child exactly as before. MCP_CHILD_REUSE=0 turns the whole
-// environment off.
+// in a one-shot child exactly as before.
 function reuseKey(event) {
   if (process.env.MCP_CHILD_REUSE === "0") return null;
   if (

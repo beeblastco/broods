@@ -1,13 +1,10 @@
 /**
  * Node-native runner for hosted MCP server bundles (#331, warm reuse #189).
- * Runs the uploaded bundle in a real Node process — full fetch/timers/
- * AbortController, node: builtins, and any npm deps the bundler inlined. The
- * bundle arrives as raw bytes on fd 3 once at spawn; requests then arrive as
- * NDJSON lines on stdin, one per Lambda invocation, and each is answered with
- * one terminal frame (final/error) on stdout. A `final` frame keeps the
- * process alive for the next same-tenant request; any error, timeout, or
- * unhandled rejection retires it by exiting, so a poisoned child never serves
- * another call.
+ * Runs the uploaded bundle in a real Node process. The bundle arrives on fd 3
+ * once at spawn; requests arrive as NDJSON lines on stdin, one per Lambda
+ * invocation, each answered with one terminal frame (final/error) on stdout.
+ * A `final` frame keeps the process alive for the next same-tenant request;
+ * any error, timeout, or unhandled rejection retires it by exiting.
  */
 
 import { createHash } from "node:crypto";
@@ -34,22 +31,18 @@ const BUNDLE_URL = pathToFileURL(
   join(process.env.LAMBDA_TASK_ROOT ?? process.cwd(), "broods-mcp-bundle.mjs"),
 ).href;
 
-// The request in flight and the timeout race to write the terminal frame; the
-// first one wins and the loser is dropped, so a timed-out run never emits a
-// second frame after the abort already wrote one. `true` also means idle —
-// nothing is in flight before the first request or between requests.
+// The run and the timeout race to write the terminal frame; first one wins.
+// `true` also means idle — nothing in flight before or between requests.
 let settled = true;
 
-// Set when the emitted frame carries an exit code: the process is retiring as
-// soon as that frame is flushed, so the loop must not read another request.
+// The emitted frame carried an exit code: the process exits once it flushes,
+// so the loop must not read another request.
 let retiring = false;
 
-// User code that leaves a rejected promise behind must not crash the runner
-// mid-frame, but it also must not serve another call. Mid-request, the child
-// retires as soon as the current frame is flushed; idle — a stray timer
-// rejecting between requests — it exits on the spot, so the next request can
-// never run inside the poisoned process. A retiring child is left alone: its
-// exit is already pending on the terminal frame's flush.
+// A stray rejection must not crash the runner mid-frame, but it must not
+// serve another call either: mid-request the child retires after the frame
+// flushes, idle it exits on the spot, and a retiring child is left alone (its
+// exit is already pending on the flush).
 let poisoned = false;
 process.on("unhandledRejection", (reason) => {
   console.error("[mcp-runner] unhandled rejection:", reason);
@@ -60,9 +53,8 @@ process.on("unhandledRejection", (reason) => {
 await runRequestLoop();
 
 async function runRequestLoop() {
-  // Mutable on purpose: once the first import resolves, the module lives in
-  // V8's cache and the load hook never fires again, so the raw bytes (up to
-  // 50 MB) are released rather than pinned for the warm child's lifetime.
+  // Released after the first import: the module lives in V8's cache, so the
+  // raw bytes (up to 50 MB) need not stay pinned for the child's lifetime.
   let bundle = await readBundleBytes();
   const actualSha = createHash("sha256").update(bundle).digest("hex");
   let handlerModule;
@@ -87,9 +79,8 @@ async function runRequestLoop() {
       if (payload.expectedSha256 !== actualSha) {
         throw new Error("bundle hash mismatch inside mcp runner");
       }
-      // The per-request scratch dir replaces the spawn-time one so nothing a
-      // call writes to HOME/TMPDIR is visible to the next call. Module-level
-      // state the bundle itself hoists is the documented reuse trade-off.
+      // Fresh scratch dir per request: nothing a call writes to HOME/TMPDIR
+      // is visible to the next call.
       if (payload.home !== undefined) {
         process.env.HOME = payload.home;
         process.env.TMPDIR = payload.home;
@@ -185,14 +176,11 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// The terminal frame carries this request's CPU as a delta from the request
-// start, so a reused child still reports exactly what one call cost (the
-// first call's delta includes boot and parse, as before). `exitCode` null
-// keeps the process alive for the next request; a number retires it after the
-// frame is flushed, so a pipe write is never truncated and user code's
-// lingering handles cannot keep a failed child around.
+// CPU is a delta from the request start, so a reused child reports exactly
+// what one call cost. `exitCode` null keeps the process alive; a number
+// retires it after the frame flushes, so the pipe write is never truncated.
 // `t` must stay the frame's first key: handler.mjs classifies terminal frames
-// by the `{"t":"final"` / `{"t":"error"` line prefix without parsing them.
+// by line prefix without parsing them.
 function emitTerminal(frame, cpuBaseline, exitCode) {
   if (settled) return;
   settled = true;

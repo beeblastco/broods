@@ -1,10 +1,7 @@
 /**
- * Warm child reuse in the hosted-MCP runner (#189), driven under real Node.
- * The handler keeps one child per accountId + sha256 and hands it repeat
- * calls; these tests pin the boxes that reuse must tick: the bundle is
- * fetched and parsed once, TMPDIR/HOME are fresh per call, a different tenant
- * or bundle never sees a used child, a failed run retires it, and the call
- * bound is enforced.
+ * Warm child reuse in the hosted-MCP runner (#189), driven under real Node:
+ * one fetch/parse per child, fresh TMPDIR per call, strict per-tenant keying,
+ * retire-on-failure, and the call bound.
  */
 
 import { describe, expect, it } from "bun:test";

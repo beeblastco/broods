@@ -73,9 +73,8 @@ export async function handleMcpRoute(
 }
 
 /**
- * `POST /v1/mcp/uploads` mints a storage upload URL for a bundle too large to
- * ride the JSON body (#190): POST the module source there, then register it
- * by passing the returned storageId as `bundleStorageId` with its sha256.
+ * `POST /v1/mcp/uploads`: mint a storage upload URL for a bundle too large to
+ * ride the JSON body (#190); register the result as `bundleStorageId`.
  */
 export async function handleMcpUploadsRoute(
   ctx: ActionCtx,

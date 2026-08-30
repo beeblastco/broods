@@ -252,8 +252,7 @@ export interface AccountMcp {
 
 /**
  * Fields accepted by `POST /v1/mcp`: `url` connects, `bundle` uploads inline
- * (≤10 MB). A larger bundle (≤50 MB) goes through `uploadMcpBundle` first and
- * is registered by its `bundleStorageId` + `sha256` instead.
+ * (≤10 MB); a larger bundle goes through `uploadMcpBundle` first.
  */
 export interface CreateMcpInput {
   name: string;
@@ -897,9 +896,8 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Upload a hosted MCP bundle too large for the JSON body: mints an upload
-   * URL (`POST /v1/mcp/uploads`), POSTs the module source there, and returns
-   * the `bundleStorageId` + `sha256` pair `createMcp`/`updateMcp` accept.
+   * Upload a hosted MCP bundle too large for the JSON body; returns the
+   * `bundleStorageId` + `sha256` pair `createMcp`/`updateMcp` accept.
    */
   async uploadMcpBundle(
     bundle: string,

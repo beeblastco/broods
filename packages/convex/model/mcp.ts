@@ -14,12 +14,10 @@ import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
 const MAX_ALLOWED_TOOLS = 256;
 /**
- * An inline `bundle` string rides the JSON request body, which Convex caps at
- * ~20 MB; anything bigger goes through Convex file storage as a
- * `bundleStorageId` instead (#190). Both values mirror
- * INLINE_MCP_BUNDLE_BYTES / MAX_MCP_BUNDLE_BYTES in
- * packages/broods/src/manifest.ts — the published CLI cannot import this
- * package, so change both or the CLI accepts what the config plane rejects.
+ * An inline `bundle` rides the JSON body, which Convex caps at ~20 MB; bigger
+ * goes through file storage as `bundleStorageId` (#190). Both values mirror
+ * packages/broods/src/manifest.ts (the published CLI cannot import this
+ * package) — change both or the CLI accepts what the config plane rejects.
  */
 const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */
@@ -64,9 +62,9 @@ export interface McpInput {
   /** Hosted-only: bundled server module source; sha256 derived from it. */
   bundle?: string;
   /**
-   * Hosted-only alternative to `bundle` for large uploads: the Convex storage
-   * id of module source POSTed to an upload URL, with its sha256 declared by
-   * the client and verified against the bytes before the S3 write.
+   * Hosted-only alternative to `bundle` for large uploads: storage id of
+   * module source POSTed to an upload URL; its declared sha256 is verified
+   * against the bytes before the S3 write.
    */
   bundleStorageId?: string;
   sha256?: string;
@@ -106,9 +104,8 @@ export async function normalizeMcpInput(
   }
   normalizeConnection(record, input);
   // Hash here (async: Convex's runtime only offers web crypto) so every
-  // write path gets sha256 with the bundle instead of deriving it later. A
-  // storage-id upload declares its sha256 instead — normalizeConnection
-  // validated it — and the S3 writer verifies it against the actual bytes.
+  // write path gets sha256 with the bundle; a storage-id upload declares its
+  // own, which the S3 writer verifies against the bytes.
   if (input.bundle !== undefined) {
     input.sha256 = await sha256Hex(input.bundle);
   }
@@ -177,9 +174,8 @@ function normalizeBundle(value: unknown): string {
 }
 
 /**
- * A `url` makes an "http" row; a `bundle` (inline source) or a
- * `bundleStorageId` (upload-URL courier, with its sha256 declared) a
- * "hosted" one. Exactly one connection may be given.
+ * A `url` makes an "http" row; a `bundle` or `bundleStorageId` a "hosted"
+ * one. Exactly one connection may be given.
  */
 function normalizeConnection(
   record: Record<string, unknown>,

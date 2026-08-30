@@ -24,11 +24,10 @@ export async function putHookBundle(
 }
 
 /**
- * Content-addressed store for a hosted MCP server's bundle: when the sha256
- * matches the existing row, its stored key is reused; a connection-only input
- * (no bundle) stores nothing. Large bundles arrive pre-uploaded to Convex
- * storage as `bundleStorageId` (#190); the S3 writer verifies their declared
- * sha256 against the bytes, and the courier blob is deleted either way.
+ * Content-addressed store for a hosted MCP server's bundle: a sha256 matching
+ * the existing row reuses its stored key; a connection-only input stores
+ * nothing. Large bundles arrive pre-uploaded as `bundleStorageId` (#190) and
+ * the S3 writer verifies their declared sha256 against the bytes.
  */
 export async function storeMcpBundle(
   ctx: ActionCtx,
@@ -49,9 +48,8 @@ export async function storeMcpBundle(
 
     return existing.bundleStorageKey;
   }
-  // One courier path for both inputs: an inline bundle is stored into Convex
-  // storage first, a pre-uploaded one already lives there; either way the S3
-  // writer runs on a storage id and the blob is deleted pass or fail.
+  // One courier path for both inputs: an inline bundle is stored first, a
+  // pre-uploaded one already lives there; the blob is deleted pass or fail.
   const storageId =
     input.bundleStorageId !== undefined
       ? (input.bundleStorageId as Id<"_storage">)
