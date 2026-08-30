@@ -1548,6 +1548,86 @@ async function normalizeSkillConfig(
 }
 
 /**
+ * Import the built bundle and require the fetch-style default export the
+ * Lambda host expects (same shape check the child-runner applies), so a
+ * server that can never serve throws at deploy time instead of uploading.
+ */
+async function assertServableMcpBundle(
+  manifestPath: string,
+  bundle: string,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "broods-mcp-"));
+  try {
+    const file = join(dir, "server.mjs");
+    await writeFile(file, bundle, "utf8");
+    let serverModule: Record<string, unknown>;
+    try {
+      serverModule = (await import(pathToFileURL(file).href)) as Record<
+        string,
+        unknown
+      >;
+    } catch (error) {
+      throw new Error(
+        `MCP server bundle ${manifestPath} failed to import: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const handler = serverModule.default;
+    const servable =
+      typeof handler === "function" ||
+      (typeof handler === "object" &&
+        handler !== null &&
+        typeof (handler as { fetch?: unknown }).fetch === "function");
+    if (!servable) {
+      throw new Error(
+        `MCP server bundle ${manifestPath} default export must be a fetch handler (createMcpHandler)`,
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Run one esbuild bundle build, mapping failures to a deploy-time error. */
+async function buildBundleModule(options: {
+  entryPoint: string;
+  label: string;
+  manifestPath: string;
+  plugins?: Plugin[];
+}): Promise<string> {
+  const build = await esbuild({
+    entryPoints: [options.entryPoint],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    minify: false,
+    write: false,
+    logLevel: "silent",
+    plugins: options.plugins ?? [],
+  }).catch((error: unknown) => {
+    // esbuild throws BuildFailure for source errors, but a plain Error for
+    // install/platform problems — surface that cause instead of masking it.
+    const details = isBuildFailure(error)
+      ? error.errors
+          .map((entry) => entry.text)
+          .filter(Boolean)
+          .join("; ")
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    throw new Error(
+      `${options.label} ${options.manifestPath} failed to build${details ? `: ${details}` : ""}`,
+    );
+  });
+  if (build.outputFiles.length !== 1) {
+    throw new Error(
+      `${options.label} ${options.manifestPath} failed to build: expected one output file`,
+    );
+  }
+
+  return build.outputFiles[0]!.text;
+}
+
+/**
  * An mcp resource with `url` syncs as-is (external server); one with `path`
  * bundles the module whose default export is a fetch-style MCP handler, and
  * the row becomes `transport: "hosted"` on the backend (#331 phase 2).
@@ -1585,36 +1665,22 @@ async function normalizeMcpConfig(
   );
   const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  const build = await esbuild({
-    entryPoints: [bundlePath],
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    minify: false,
-    write: false,
-    logLevel: "silent",
-  }).catch((error: unknown) => {
-    const details = isBuildFailure(error)
-      ? error.errors
-          .map((buildEntry) => buildEntry.text)
-          .filter(Boolean)
-          .join("; ")
-      : error instanceof Error
-        ? error.message
-        : String(error);
-    throw new Error(
-      `MCP server bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
-    );
+  const bundle = await buildBundleModule({
+    entryPoint: bundlePath,
+    label: "MCP server bundle",
+    manifestPath: manifestPath,
   });
-  if (build.outputFiles.length !== 1) {
+  const bundleSize = Buffer.byteLength(bundle);
+  if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
     throw new Error(
-      `MCP server bundle ${manifestPath} failed to build: expected one output file`,
+      `MCP server bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
     );
   }
+  await assertServableMcpBundle(manifestPath, bundle);
 
   return {
     ...(rewriteValues(rest) as Record<string, unknown>),
-    bundle: build.outputFiles[0]!.text,
+    bundle: bundle,
   };
 }
 
@@ -1665,36 +1731,12 @@ async function normalizeToolConfig(
   }
   let bundle: string;
   try {
-    const build = await esbuild({
-      entryPoints: [shimPath],
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      minify: false,
-      write: false,
-      logLevel: "silent",
+    bundle = await buildBundleModule({
+      entryPoint: shimPath,
+      label: "Tool bundle",
+      manifestPath: manifestPath,
       plugins: config.path ? [] : [sdkStubPlugin(shimDir)],
-    }).catch((error: unknown) => {
-      // esbuild throws BuildFailure for source errors, but a plain Error for
-      // install/platform problems — surface that cause instead of masking it.
-      const details = isBuildFailure(error)
-        ? error.errors
-            .map((entry) => entry.text)
-            .filter(Boolean)
-            .join("; ")
-        : error instanceof Error
-          ? error.message
-          : String(error);
-      throw new Error(
-        `Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
-      );
     });
-    if (build.outputFiles.length !== 1) {
-      throw new Error(
-        `Tool bundle ${manifestPath} failed to build: expected one output file`,
-      );
-    }
-    bundle = build.outputFiles[0]!.text;
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }

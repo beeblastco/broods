@@ -696,13 +696,13 @@ async function syncMcpResources(
     const current = existing.get(resource.name);
     // A hosted server re-uploads only when its bundle content changed.
     let bundleStorageKey: string | undefined;
-    if (input.bundle !== undefined) {
+    if (input.bundle !== undefined && input.sha256 !== undefined) {
       bundleStorageKey =
-        current?.sha256 === input.sha256
+        current !== undefined && current.sha256 === input.sha256
           ? current.bundleStorageKey
           : await putMcpBundle(ctx, {
               accountId: accountId,
-              sha256: input.sha256!,
+              sha256: input.sha256,
               bundle: input.bundle,
             });
     }

@@ -1,22 +1,30 @@
 /**
  * Hosted MCP server transport (#331 phase 2). A hosted row's endpoint is the
  * tool-runner Lambda: this fetch adapter serializes one web request into an
- * mcp-mode runner payload, invokes the Lambda over InvokeWithResponseStream,
- * and rebuilds the child's serialized response. Stateless: one invoke per
+ * mcp-mode runner payload, invokes the Lambda through the shared tool-runner
+ * client and frame reader (bundles/executor.ts, bundles/payload.ts), and
+ * rebuilds the child's serialized response. Stateless: one invoke per
  * request, matching the 2026-07-28 transport exactly.
  */
 
-import {
-  InvokeWithResponseStreamCommand,
-  LambdaClient,
-} from "@aws-sdk/client-lambda";
-import { requireEnv } from "../../shared/env.ts";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
-import { parseToolRunnerFrame, toolBundlesBucket } from "../bundles/payload.ts";
+import { defaultClient, drainInvokeStream } from "../bundles/executor.ts";
+import {
+  BUNDLE_URL_TTL_SECONDS,
+  FrameQueue,
+  toolBundlesBucket,
+} from "../bundles/payload.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
+
+/** One serialized web request, as the mcp-mode child receives it. */
+interface HostedMcpRequest {
+  method: string;
+  headers: Record<string, string>;
+  body: string | undefined;
+}
 
 interface HostedMcpResponse {
   status: number;
@@ -26,15 +34,11 @@ interface HostedMcpResponse {
 
 type HostedMcpInvoke = (
   record: McpRecord,
-  request: {
-    method: string;
-    headers: Record<string, string>;
-    body: string | undefined;
-  },
+  request: HostedMcpRequest,
+  abortSignal: AbortSignal | undefined,
 ) => Promise<HostedMcpResponse>;
 
 let invokeOverride: HostedMcpInvoke | null = null;
-let sharedClient: LambdaClient | undefined;
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
@@ -44,16 +48,16 @@ export function hostedMcpFetch(record: McpRecord): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input as never, init);
     const body = request.method === "GET" ? undefined : await request.text();
-    const headers: Record<string, string> = {};
-    request.headers.forEach((value, name) => {
-      headers[name] = value;
-    });
     const invoke = invokeOverride ?? invokeLambda;
-    const result = await invoke(record, {
-      method: request.method,
-      headers: headers,
-      body: body,
-    });
+    const result = await invoke(
+      record,
+      {
+        method: request.method,
+        headers: Object.fromEntries(request.headers),
+        body: body,
+      },
+      request.signal,
+    );
 
     return new Response(result.body, {
       status: result.status,
@@ -71,11 +75,8 @@ export function setHostedMcpInvokeForTests(
 
 async function invokeLambda(
   record: McpRecord,
-  request: {
-    method: string;
-    headers: Record<string, string>;
-    body: string | undefined;
-  },
+  request: HostedMcpRequest,
+  abortSignal: AbortSignal | undefined,
 ): Promise<HostedMcpResponse> {
   if (!record.bundleStorageKey || !record.sha256) {
     throw new Error(
@@ -89,68 +90,51 @@ async function invokeLambda(
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),
       record.bundleStorageKey,
-      { expiresInSeconds: 60 },
+      { expiresInSeconds: BUNDLE_URL_TTL_SECONDS },
     ),
     mcpRequest: request,
   };
-  const client = (sharedClient ??= new LambdaClient({
-    requestHandler: { connectionTimeout: 5_000, requestTimeout: 45_000 },
-  }));
-  const result = await client.send(
-    new InvokeWithResponseStreamCommand({
-      FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
-      InvocationType: "RequestResponse",
-      Payload: new TextEncoder().encode(JSON.stringify(payload)),
-    }),
-  );
-  const decoder = new TextDecoder();
-  let output = "";
-  for await (const event of result.EventStream ?? []) {
-    const chunk = event.PayloadChunk?.Payload;
-    if (chunk) {
-      output += decoder.decode(chunk, { stream: true });
-      continue;
+  const queue = new FrameQueue();
+  let transportError: unknown;
+  const pump = drainInvokeStream(defaultClient(), payload, abortSignal, queue)
+    .catch((error: unknown) => {
+      transportError = error;
+    })
+    .finally(() => queue.close());
+  try {
+    for await (const frame of queue.frames()) {
+      if (frame.t === "error") {
+        throw new Error(
+          frame.error || `hosted MCP server ${record.name} run failed`,
+        );
+      }
+      if (frame.t === "final") {
+        return finalHostedResponse(record.name, frame.result);
+      }
     }
-    const errorCode = event.InvokeComplete?.ErrorCode;
-    if (errorCode) {
-      throw new Error(
-        `mcp host Lambda failed: ${event.InvokeComplete?.ErrorDetails || errorCode}`,
-      );
-    }
+  } finally {
+    await pump;
   }
-  output += decoder.decode();
+  if (transportError) throw transportError;
 
-  return finalResponseFromFrames(record.name, output);
+  throw new Error(`hosted MCP server ${record.name} returned no response`);
 }
 
 /** The child answers with one terminal frame carrying the serialized response. */
-function finalResponseFromFrames(
+function finalHostedResponse(
   serverName: string,
-  output: string,
+  result: unknown,
 ): HostedMcpResponse {
-  for (const line of output.split("\n")) {
-    const frame = parseToolRunnerFrame(line);
-    if (!frame) continue;
-    if (frame.t === "error") {
-      throw new Error(
-        frame.error || `hosted MCP server ${serverName} run failed`,
-      );
-    }
-    if (frame.t === "final") {
-      const result = frame.result as HostedMcpResponse | undefined;
-      if (
-        !result ||
-        typeof result.status !== "number" ||
-        typeof result.body !== "string"
-      ) {
-        throw new Error(
-          `hosted MCP server ${serverName} returned a malformed response`,
-        );
-      }
-
-      return result;
-    }
+  const response = result as HostedMcpResponse | undefined;
+  if (
+    !response ||
+    typeof response.status !== "number" ||
+    typeof response.body !== "string"
+  ) {
+    throw new Error(
+      `hosted MCP server ${serverName} returned a malformed response`,
+    );
   }
 
-  throw new Error(`hosted MCP server ${serverName} returned no response`);
+  return response;
 }

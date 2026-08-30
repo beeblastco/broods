@@ -78,13 +78,13 @@ export async function deleteAccountToolBundles(
 ): Promise<number> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const encodedAccountId = encodeURIComponent(accountId);
-  const [toolsDeleted, hooksDeleted] = await Promise.all([
-    deleteS3Prefix(bucket, `account-tools/${encodedAccountId}/`),
-    deleteS3Prefix(bucket, `account-hooks/${encodedAccountId}/`),
-    deleteS3Prefix(bucket, `account-mcp/${encodedAccountId}/`),
-  ]);
+  const deleted = await Promise.all(
+    ["account-tools", "account-hooks", "account-mcp"].map((prefix) =>
+      deleteS3Prefix(bucket, `${prefix}/${encodedAccountId}/`),
+    ),
+  );
 
-  return toolsDeleted + hooksDeleted;
+  return deleted.reduce((total, count) => total + count, 0);
 }
 
 export async function deleteWorkspaceFilesystem(

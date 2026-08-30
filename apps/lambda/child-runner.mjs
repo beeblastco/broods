@@ -62,6 +62,10 @@ async function runToolRequest() {
       readBundleBytes(),
     ]);
     const payload = parsePayload(JSON.parse(request));
+    const actualSha = createHash("sha256").update(bundle).digest("hex");
+    if (actualSha !== payload.expectedSha256) {
+      throw new Error("bundle hash mismatch inside sandbox runner");
+    }
     const result =
       payload.mode === "mcp"
         ? await runMcpBundle(payload, bundle, controller.signal)
@@ -78,11 +82,6 @@ async function runToolRequest() {
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
 async function runBundle(payload, bundle, abortSignal) {
-  const actualSha = createHash("sha256").update(bundle).digest("hex");
-  if (actualSha !== payload.expectedSha256) {
-    throw new Error("custom tool bundle hash mismatch inside sandbox runner");
-  }
-
   const module = await importBundle(bundle);
 
   let definition = module.default;
@@ -133,11 +132,6 @@ async function runBundle(payload, bundle, abortSignal) {
 // One invoke carries exactly one web request; the stateless 2026-07-28
 // transport is what makes that mapping complete.
 async function runMcpBundle(payload, bundle, abortSignal) {
-  const actualSha = createHash("sha256").update(bundle).digest("hex");
-  if (actualSha !== payload.expectedSha256) {
-    throw new Error("mcp server bundle hash mismatch inside sandbox runner");
-  }
-
   const module = await importBundle(bundle);
   const handler = module.default;
   const fetchLike =
