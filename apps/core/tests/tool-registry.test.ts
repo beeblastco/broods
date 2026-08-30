@@ -15,6 +15,8 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { setMcpForTests } from "../src/harness/mcp/client.ts";
 import type { CronRecord, CronSummary } from "../src/shared/domain/cron.ts";
 
 interface ChannelTestTool {
@@ -1255,6 +1257,134 @@ describe("createTools", () => {
   });
 });
 
+describe("connected MCP servers", () => {
+  const serverId = "k57mcpserver00000000000000000000";
+
+  afterEach(() => {
+    setMcpForTests(null);
+  });
+
+  it("registers remote tools as server__tool and fills the policy map", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    setMcpForTests({
+      listTools: async function () {
+        return [
+          { name: "query", inputSchema: { type: "object" } },
+          { name: "fetch_doc", inputSchema: { type: "object" } },
+        ] as never;
+      },
+      callTool: async function () {
+        return {
+          content: [{ type: "text", text: "ok" }],
+          structuredContent: { hits: 3 },
+        } as never;
+      },
+    });
+
+    const policyMcpIdsByName = new Map<string, string>();
+    const approvals = new Map<string, true>();
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        policyMcpIdsByName: policyMcpIdsByName,
+        approvalRequirements: approvals,
+      },
+      { mcpServers: { [serverId]: { needsApproval: true } } },
+    );
+    expect(Object.keys(tools).sort()).toEqual([
+      "search__fetch_doc",
+      "search__query",
+    ]);
+    expect(policyMcpIdsByName.get("search__query")).toBe(serverId);
+    expect(approvals.get("search__query")).toBe(true);
+
+    const result = await (
+      tools.search__query as unknown as ChannelTestTool
+    ).execute({ q: "invoices" }, {} as never);
+    expect(result).toEqual({ hits: 3 });
+  });
+
+  it("filters by the row's allowedTools and skips disabled rows", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setMcpForTests({
+      listTools: async function () {
+        return [
+          { name: "query", inputSchema: { type: "object" } },
+          { name: "admin_reset", inputSchema: { type: "object" } },
+        ] as never;
+      },
+    });
+
+    setStorageForTests(storageWithMcp(mcpRecord({ allowedTools: ["query"] })));
+    const filtered = await createTools(createToolContext(), {
+      mcpServers: { [serverId]: {} },
+    });
+    expect(Object.keys(filtered)).toEqual(["search__query"]);
+
+    setStorageForTests(storageWithMcp(mcpRecord({ disabled: true })));
+    const disabled = await createTools(createToolContext(), {
+      mcpServers: { [serverId]: {} },
+    });
+    expect(disabled).toEqual({});
+  });
+
+  it("surfaces an isError tool result as a thrown error", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+    setMcpForTests({
+      listTools: async function () {
+        return [{ name: "query", inputSchema: { type: "object" } }] as never;
+      },
+      callTool: async function () {
+        return {
+          content: [{ type: "text", text: "backend down" }],
+          isError: true,
+        } as never;
+      },
+    });
+
+    const tools = await createTools(createToolContext(), {
+      mcpServers: { [serverId]: {} },
+    });
+    await expect(
+      (tools.search__query as unknown as ChannelTestTool).execute(
+        {},
+        {} as never,
+      ),
+    ).rejects.toThrow("MCP tool search.query failed: backend down");
+  });
+
+  it("refuses headers that still carry a ${NAME} ref", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(
+      storageWithMcp(
+        mcpRecord({ headers: { Authorization: "Bearer ${SEARCH_TOKEN}" } }),
+      ),
+    );
+    setMcpForTests({
+      listTools: async function () {
+        return [] as never;
+      },
+    });
+
+    await expect(
+      createTools(createToolContext(), { mcpServers: { [serverId]: {} } }),
+    ).rejects.toThrow("still carries a ${NAME} ref");
+  });
+
+  it("rejects an unknown server id", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(storageWithMcp(mcpRecord()));
+
+    await expect(
+      createTools(createToolContext(), {
+        mcpServers: { k57unknown0000000000000000000000: {} },
+      }),
+    ).rejects.toThrow("references an unknown MCP server");
+  });
+});
+
 function createToolContext(
   googleSearch: ((options: unknown) => unknown) | undefined = mock(
     (_options: unknown) => ({ provider: "googleSearch" }),
@@ -1401,8 +1531,44 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     agentPolicies: {} as never,
     accountTools: {} as never,
     accountHooks: {} as never,
+    mcp: {} as never,
     roleSessions: {} as never,
     taskUsage: {} as never,
+  };
+}
+
+function mcpRecord(overrides: Partial<McpRecord> = {}): McpRecord {
+  return {
+    accountId: "acct_test",
+    serverId: "k57mcpserver00000000000000000000",
+    projectId: "proj_test",
+    stageId: "stage_test",
+    name: "search",
+    transport: "http",
+    url: "https://mcp.example.com/mcp",
+    status: "active",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function storageWithMcp(record: McpRecord): Storage {
+  return {
+    ...storageWithCronStore({}),
+    mcp: {
+      getById: async function (
+        accountId: string,
+        serverId: string,
+      ): Promise<McpRecord | null> {
+        return record.accountId === accountId && record.serverId === serverId
+          ? record
+          : null;
+      },
+      removeAllForAccount: async function (): Promise<number> {
+        return 0;
+      },
+    },
   };
 }
 
@@ -1437,6 +1603,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
+    mcp: {} as never,
     roleSessions: {} as never,
     taskUsage: { record: async function () {} },
   } as Storage;

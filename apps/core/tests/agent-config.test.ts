@@ -4,9 +4,21 @@ import {
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   resolveSubagentMode,
+  toRuntimeAgentConfig,
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
+  // toRuntimeAgentConfig rebuilds from an explicit whitelist; a branch missing
+  // there silently never reaches the harness.
+  it("keeps mcpServers in the runtime projection", () => {
+    const serverId = "k57mcpserver00000000000000000000";
+    const runtime = toRuntimeAgentConfig({
+      model: { provider: "vertex", modelId: "gemini-3.7-flash" },
+      mcpServers: { [serverId]: { enabled: true } },
+    });
+    expect(runtime.mcpServers).toEqual({ [serverId]: { enabled: true } });
+  });
+
   it("validates one reach pair for every provider and rejects the retired keys", () => {
     expect(
       normalizeAgentConfig({

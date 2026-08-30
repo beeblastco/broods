@@ -11,10 +11,9 @@
  */
 
 import { isPlainObject } from "./objects";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
-// Non-global so `.test()` carries no lastIndex state; global clones are built
-// where iteration/replacement needs them.
-export const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
+// Global clone of the shared pattern for iteration/replacement.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
@@ -33,6 +32,7 @@ const NESTED_BRANCHES = [
   "hooks",
   "channels",
   "tools",
+  "mcpServers",
   "skills",
   "subagent",
   "policy",
@@ -291,6 +291,7 @@ function assembleNestedConfig(
     ...(extra.hooks ? { hooks: extra.hooks } : {}),
     ...(extra.channels ? { channels: extra.channels } : {}),
     ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
+    ...(extra.mcpServers ? { mcpServers: extra.mcpServers } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
     ...(extra.policy ? { policy: extra.policy } : {}),

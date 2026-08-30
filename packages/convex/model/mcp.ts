@@ -9,7 +9,7 @@
  * secret.
  */
 
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./agentConfigCodec";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_DESCRIPTION_LENGTH = 2000;

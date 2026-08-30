@@ -547,6 +547,12 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       },
       ...(overrides.accountHooks as Record<string, unknown> | undefined),
     },
+    mcp: {
+      removeAllForAccount: async function () {
+        return 0;
+      },
+      ...(overrides.mcp as Record<string, unknown> | undefined),
+    },
   } as never;
 }
 
@@ -590,6 +596,7 @@ function successfulDeletionResponse() {
       cronsDeleted: 0,
       accountToolsDeleted: 0,
       accountHooksDeleted: 0,
+      mcpDeleted: 0,
       channelRecordsDeleted: 0,
     },
   };

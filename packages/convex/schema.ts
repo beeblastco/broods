@@ -1236,7 +1236,7 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),
   mcp: defineTable(mcpFields)
-    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_stageId_and_status", ["stageId", "status"])
     .index("by_stageId_and_name", ["stageId", "name"]),
   agentPolicies: defineTable(agentPoliciesFields)
