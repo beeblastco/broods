@@ -24,6 +24,13 @@ const e2bRunMock = mock(
   },
 );
 const e2bKillMock = mock(async () => {});
+const e2bConnectMock = mock(async (sandboxId: string) => ({
+  sandboxId: sandboxId,
+  commands: {
+    run: e2bRunMock,
+  },
+  kill: e2bKillMock,
+}));
 const e2bCreateMock = mock(async (_options: Record<string, unknown>) => ({
   sandboxId: "e2b-sandbox",
   commands: {
@@ -92,6 +99,15 @@ let storedSandboxExternalId: string | null = null;
 const getSandboxExternalIdMock = mock(
   async (_provider: string, _key: string) => storedSandboxExternalId,
 );
+const getSandboxReservationRecordMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+  ): Promise<{ externalId: string; claimedAt: number } | null> =>
+    storedSandboxExternalId === null
+      ? null
+      : { externalId: storedSandboxExternalId, claimedAt: Date.now() },
+);
 const claimSandboxInstanceMock = mock(
   async (_provider: string, _key: string, externalId: string) => {
     storedSandboxExternalId = externalId;
@@ -104,9 +120,16 @@ const saveSandboxInstanceMock = mock(
     storedSandboxExternalId = externalId;
   },
 );
-const deleteSandboxInstanceMock = mock(async () => {
-  storedSandboxExternalId = null;
-});
+const deleteSandboxInstanceMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+    _accountId?: string,
+    _externalId?: string,
+  ) => {
+    storedSandboxExternalId = null;
+  },
+);
 let resolveSandboxInstanceUpsert: (() => void) | undefined;
 let waitForSandboxInstanceUpsert = false;
 const removeSandboxInstanceMock = mock(async () => {});
@@ -223,6 +246,8 @@ const microvmRunInput = (): Record<string, unknown> => {
 mock.module("e2b", () => ({
   Sandbox: {
     create: e2bCreateMock,
+    connect: e2bConnectMock,
+    kill: e2bKillMock,
   },
 }));
 
@@ -246,6 +271,7 @@ mock.module("@vercel/sandbox", () => ({
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
+  getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
@@ -304,6 +330,7 @@ beforeEach(() => {
   e2bDisconnectMock.mockClear();
   e2bKillMock.mockClear();
   e2bCreateMock.mockClear();
+  e2bConnectMock.mockClear();
   daytonaExecuteCommandMock.mockClear();
   daytonaDeleteMock.mockClear();
   daytonaCreateMock.mockClear();
@@ -316,6 +343,7 @@ beforeEach(() => {
   vercelGetOrCreateMock.mockClear();
   storedSandboxExternalId = null;
   getSandboxExternalIdMock.mockClear();
+  getSandboxReservationRecordMock.mockClear();
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
@@ -1851,6 +1879,57 @@ describe("classifyVercelError", () => {
       "connection reset",
     );
   });
+});
+
+describe("persistent acquire teardown", () => {
+  // workdir and microvm already tear down on a failed claim; these three did
+  // not, so a rejected persistence call left a live sandbox nobody could reach
+  // and no reservation row pointing at it.
+  const cases = [
+    {
+      provider: "e2b",
+      destroy: e2bKillMock,
+      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+    },
+    {
+      provider: "daytona",
+      destroy: daytonaDeleteMock,
+      options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces" },
+    },
+    {
+      provider: "vercel",
+      destroy: vercelDeleteMock,
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    },
+  ];
+
+  for (const { provider, destroy, options } of cases) {
+    it(`destroys the ${provider} sandbox it just created when the claim fails`, async () => {
+      upsertSandboxInstanceMock.mockImplementationOnce(async () => {
+        throw new Error("post-claim persistence failed");
+      });
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+      const executor = createSandboxExecutor({
+        provider: provider,
+        persistent: true,
+        options: options,
+      });
+
+      await expect(
+        executor.run({
+          code: "echo ok",
+          namespace: NS,
+          timeoutSeconds: 30,
+          outputLimitBytes: 4096,
+        }),
+      ).rejects.toThrow("post-claim persistence failed");
+
+      expect(destroy).toHaveBeenCalled();
+      expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);
+    });
+  }
 });
 
 describe("workspaceNamespacePrefix", () => {

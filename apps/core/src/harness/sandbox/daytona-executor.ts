@@ -278,23 +278,39 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       client,
       await daytonaCreateOptions(this.#config, request, true),
     );
-    if (
-      await claimSandboxInstance(
-        "daytona",
-        ns,
-        sandbox.id,
-        this.#config.controlPlane?.accountId,
-      )
-    ) {
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "daytona",
-        ns,
-        sandbox.id,
-        request.metadata,
-      );
+    try {
+      if (
+        await claimSandboxInstance(
+          "daytona",
+          ns,
+          sandbox.id,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "daytona",
+          ns,
+          sandbox.id,
+          request.metadata,
+        );
 
-      return sandbox;
+        return sandbox;
+      }
+    } catch (error) {
+      // The claim may already have committed even when its caller rejects. Tear
+      // down both sides conditionally so a failed acquisition cannot leak the
+      // newly created sandbox or erase a concurrent winner's reservation.
+      await Promise.allSettled([
+        sandbox.delete(),
+        deleteSandboxInstance(
+          "daytona",
+          ns,
+          this.#config.controlPlane?.accountId,
+          sandbox.id,
+        ),
+      ]);
+      throw error;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
