@@ -482,7 +482,7 @@ export async function runAgentLoop(
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
-  const policyMcpServerIdsByName = new Map<string, string>();
+  const policyMcpIdsByName = new Map<string, string>();
   const channelDelivery =
     session.delivery?.kind === "channel" ? session.delivery : undefined;
   const builtTools = {
@@ -502,7 +502,7 @@ export async function runAgentLoop(
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,
         policyToolIdsByName: policyToolIdsByName,
-        policyMcpServerIdsByName: policyMcpServerIdsByName,
+        policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: {
           traceId: traceId,
           taskId: session.eventId,
@@ -568,7 +568,7 @@ export async function runAgentLoop(
     resolvedWorkspaces,
     {
       toolIdsByName: policyToolIdsByName,
-      mcpServerIdsByName: policyMcpServerIdsByName,
+      mcpIdsByName: policyMcpIdsByName,
       ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
     },
   );

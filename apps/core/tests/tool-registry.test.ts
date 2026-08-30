@@ -1282,12 +1282,12 @@ describe("connected MCP servers", () => {
       },
     });
 
-    const policyMcpServerIdsByName = new Map<string, string>();
+    const policyMcpIdsByName = new Map<string, string>();
     const approvals = new Map<string, true>();
     const tools = await createTools(
       {
         ...createToolContext(),
-        policyMcpServerIdsByName: policyMcpServerIdsByName,
+        policyMcpIdsByName: policyMcpIdsByName,
         approvalRequirements: approvals,
       },
       { mcpServers: { [serverId]: { needsApproval: true } } },
@@ -1296,7 +1296,7 @@ describe("connected MCP servers", () => {
       "search__fetch_doc",
       "search__query",
     ]);
-    expect(policyMcpServerIdsByName.get("search__query")).toBe(serverId);
+    expect(policyMcpIdsByName.get("search__query")).toBe(serverId);
     expect(approvals.get("search__query")).toBe(true);
 
     const result = await (

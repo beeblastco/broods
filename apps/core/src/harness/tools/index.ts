@@ -113,7 +113,7 @@ export interface ToolContext {
   approvalRequirements?: Map<string, true>;
   policyToolIdsByName?: Map<string, string>;
   /** Model-facing tool name → MCP server row id, for per-server policy rules. */
-  policyMcpServerIdsByName?: Map<string, string>;
+  policyMcpIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
 }
 
@@ -517,7 +517,7 @@ async function registerMcpTools(
       }
       if (server.serverConfig.needsApproval === true)
         context.approvalRequirements?.set(name, true);
-      context.policyMcpServerIdsByName?.set(name, server.serverId);
+      context.policyMcpIdsByName?.set(name, server.serverId);
     }
     Object.assign(tools, mcpServerTools(server.connection, server.remoteTools));
   }
