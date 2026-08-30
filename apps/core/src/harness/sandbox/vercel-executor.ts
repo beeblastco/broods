@@ -315,18 +315,19 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Tear
-      // down both sides conditionally so a failed acquisition cannot leak the
-      // newly created sandbox or erase a concurrent winner's reservation.
-      await Promise.allSettled([
-        sandbox.delete(),
-        deleteSandboxInstance(
-          "vercel",
-          key,
-          this.#config.controlPlane?.accountId,
-          name,
-        ),
-      ]);
+      // The claim may already have committed even when its caller rejects, so
+      // release the reservation; passing the name keeps a concurrent winner's
+      // row intact. The sandbox itself stays: `getOrCreate` derives its name
+      // from the key alone, so every caller for this key shares this one and
+      // deleting it here would pull it out from under whoever else holds it.
+      // Nothing is orphaned either, since the next acquire reaches the same
+      // name again.
+      await deleteSandboxInstance(
+        "vercel",
+        key,
+        this.#config.controlPlane?.accountId,
+        name,
+      ).catch(() => {});
       throw error;
     }
     const winner = await getSandboxExternalId("vercel", key);

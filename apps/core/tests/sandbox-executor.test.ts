@@ -1896,11 +1896,6 @@ describe("persistent acquire teardown", () => {
       destroy: daytonaDeleteMock,
       options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces" },
     },
-    {
-      provider: "vercel",
-      destroy: vercelDeleteMock,
-      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
-    },
   ];
 
   for (const { provider, destroy, options } of cases) {
@@ -1930,6 +1925,37 @@ describe("persistent acquire teardown", () => {
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);
     });
   }
+
+  // Vercel derives the sandbox name from the reservation key alone and reaches
+  // it with `getOrCreate`, so every caller for a key shares one sandbox and a
+  // loser returns it rather than making its own. Deleting it on a failed claim
+  // would take it away from whoever still holds it, and it cannot be orphaned:
+  // the next acquire resolves the same name.
+  it("releases the vercel reservation but leaves the shared sandbox alone", async () => {
+    upsertSandboxInstanceMock.mockImplementationOnce(async () => {
+      throw new Error("post-claim persistence failed");
+    });
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "vercel",
+      persistent: true,
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    });
+
+    await expect(
+      executor.run({
+        code: "echo ok",
+        namespace: NS,
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toThrow("post-claim persistence failed");
+
+    expect(vercelDeleteMock).not.toHaveBeenCalled();
+    expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe("vercel");
+  });
 });
 
 describe("workspaceNamespacePrefix", () => {
