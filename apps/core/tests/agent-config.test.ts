@@ -9,8 +9,7 @@ import {
 
 describe("agent config validation", () => {
   // toRuntimeAgentConfig rebuilds from an explicit whitelist; a branch missing
-  // there silently never reaches the harness. The local E2E caught mcpServers
-  // being dropped exactly this way (#331).
+  // there silently never reaches the harness.
   it("keeps mcpServers in the runtime projection", () => {
     const serverId = "k57mcpserver00000000000000000000";
     const runtime = toRuntimeAgentConfig({

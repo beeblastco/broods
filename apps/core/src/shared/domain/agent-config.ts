@@ -38,7 +38,7 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
-import { isAccountToolId } from "./account-tools.ts";
+import { isConvexDocumentId } from "./account-tools.ts";
 import { normalizePolicyIds } from "./policy.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
@@ -1279,9 +1279,7 @@ function normalizeMcpServersConfig(value: unknown): void {
   }
 
   for (const [serverId, serverConfig] of Object.entries(value)) {
-    // isAccountToolId is the shared Convex-document-id shape check; mcp rows
-    // use the same id format as account tools.
-    if (!isAccountToolId(serverId)) {
+    if (!isConvexDocumentId(serverId)) {
       throw new Error(
         `config.mcpServers.${serverId} must be keyed by an MCP server id`,
       );
@@ -1363,7 +1361,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     throw new Error(`config.tools.${toolName} must be an object`);
   }
 
-  if (!isAccountToolId(toolName) && !isProviderToolName(toolName)) {
+  if (!isConvexDocumentId(toolName) && !isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
 

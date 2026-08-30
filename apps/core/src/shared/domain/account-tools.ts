@@ -74,7 +74,7 @@ const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */
-export function isAccountToolId(value: string): boolean {
+export function isConvexDocumentId(value: string): boolean {
   return CONVEX_DOCUMENT_ID_PATTERN.test(value);
 }
 

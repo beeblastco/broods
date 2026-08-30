@@ -11,7 +11,7 @@
  */
 
 import type { ToolSet } from "ai";
-import { isAccountToolId } from "../../shared/domain/account-tools.ts";
+import { isConvexDocumentId } from "../../shared/domain/account-tools.ts";
 import {
   isProviderToolName,
   resolveSubagentMode,
@@ -353,7 +353,7 @@ export async function createTools(
   // configured provider executes itself, resolved off its `tools` namespace.
   for (const [toolName, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
-  ).filter(([key]) => !isAccountToolId(key))) {
+  ).filter(([key]) => !isConvexDocumentId(key))) {
     if (!isProviderToolName(toolName)) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
@@ -375,7 +375,7 @@ export async function createTools(
 
   for (const [toolId, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
-  ).filter(([key]) => isAccountToolId(key))) {
+  ).filter(([key]) => isConvexDocumentId(key))) {
     if (!isToolEnabled(toolConfig)) {
       continue;
     }
@@ -410,9 +410,6 @@ export async function createTools(
     addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
   }
 
-  // Connected MCP servers: each entry names a config-plane row; the server's
-  // tools resolve over the stateless HTTP transport at registration time and
-  // register as `server__tool` (#331).
   await registerMcpTools(tools, agentConfig, context);
 
   // Auto-add the background-job status tool when the agent has any async tool or
