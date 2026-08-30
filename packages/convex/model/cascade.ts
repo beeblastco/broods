@@ -31,7 +31,6 @@ const accountScopedTables = [
   "runtimeAsyncToolResults",
   "runtimeAsyncToolGroups",
   "sandboxReservations",
-  "crons",
   "cliAuthCodes",
   "cliTokens",
   "cliExternalResources",
@@ -56,17 +55,25 @@ export async function deleteAccountContentsBatch(
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE);
     if (rows.length > 0) {
-      for (const row of rows) {
-        // Cron rows own a live schedule; deleting the row alone would leave
-        // it firing at a job that no longer exists.
-        if (table === "crons") {
-          await unregisterSchedule(ctx, row as Doc<"crons">);
-        }
-        await ctx.db.delete(row._id);
-      }
+      for (const row of rows) await ctx.db.delete(row._id);
 
       return false;
     }
+  }
+
+  // Cron rows own a live schedule; deleting the row alone would leave it
+  // firing at a job that no longer exists.
+  const crons = await ctx.db
+    .query("crons")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .take(ACCOUNT_DELETE_BATCH_SIZE);
+  if (crons.length > 0) {
+    for (const cron of crons) {
+      await unregisterSchedule(ctx, cron);
+      await ctx.db.delete(cron._id);
+    }
+
+    return false;
   }
 
   const cronRuns = await ctx.db

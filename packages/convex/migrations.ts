@@ -100,15 +100,14 @@ export const migrateCronsToConvexScheduler = internalMutation({
       const unsetEventBridge =
         cron.schedulerName !== undefined
           ? { schedulerName: undefined, schedulerGroupName: undefined }
-          : {};
-      const alreadyRegistered =
-        cron.status === "active" &&
-        (cron.scheduledRunId !== undefined ||
-          (await cronSchedules.get(ctx, { name: cron._id })) !== null);
-      if (cron.status !== "active" || alreadyRegistered) {
-        if (cron.schedulerName !== undefined) {
-          await ctx.db.patch(cron._id, unsetEventBridge);
-        }
+          : null;
+      // Short-circuit keeps the component lookup off non-active rows.
+      if (
+        cron.status !== "active" ||
+        cron.scheduledRunId !== undefined ||
+        (await cronSchedules.get(ctx, { name: cron._id })) !== null
+      ) {
+        if (unsetEventBridge) await ctx.db.patch(cron._id, unsetEventBridge);
         skipped += 1;
         continue;
       }

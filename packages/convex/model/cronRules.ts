@@ -6,9 +6,12 @@
  * in ./responses.ts.
  */
 
+import type { CronInfo } from "@convex-dev/crons";
 import { isPlainObject } from "./objects";
 
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
+
+const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
 
 const RATE_MS_PER_UNIT: Record<string, number> = {
   minute: 60_000,
@@ -32,9 +35,7 @@ const DAY_OF_WEEK_NAMES = new Set([
 export type CronStatus = "active" | "paused";
 
 /** A schedule the Convex crons component can register. */
-export type ComponentCronSchedule =
-  | { kind: "cron"; cronspec: string; tz?: string }
-  | { kind: "interval"; ms: number };
+export type ComponentCronSchedule = CronInfo["schedule"];
 
 /** A translated schedule: recurring for the component, or a one-time instant. */
 export type TranslatedCronSchedule =
@@ -204,156 +205,6 @@ export function translateScheduleExpression(
 }
 
 /**
- * Convert the six-field cron form — minute hour day-of-month month day-of-week
- * year — to the five-field unix cronspec the crons component parses. `?` maps
- * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
- * @throws for the calendar forms unix cron has no equivalent for (`L`, `W`,
- * `#`, or a constrained year)
- */
-function cronExpressionToCronspec(fields: string): string {
-  const parts = fields.split(/\s+/);
-  if (parts.length !== 6) {
-    throw new Error(
-      "cron(...) must have six fields: minute hour day-of-month month day-of-week year",
-    );
-  }
-  const [
-    minute = "",
-    hour = "",
-    dayOfMonth = "",
-    month = "",
-    dayOfWeek = "",
-    year = "",
-  ] = parts;
-  if (year !== "*") {
-    throw new Error("cron(...) year field must be * — years cannot be pinned");
-  }
-  for (const field of [minute, hour, dayOfMonth, month, dayOfWeek]) {
-    if (/[LW#]/i.test(field)) {
-      throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
-    }
-  }
-
-  return [
-    minute,
-    hour,
-    dayOfMonth === "?" ? "*" : dayOfMonth,
-    month,
-    convertDayOfWeek(dayOfWeek),
-  ].join(" ");
-}
-
-/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
-function convertDayOfWeek(field: string): string {
-  if (field === "?" || field === "*") return "*";
-
-  return field
-    .split(",")
-    .map((item) =>
-      item
-        .split("-")
-        .map((token) => {
-          const [base, step] = token.split("/") as [string, string | undefined];
-          const converted = DAY_OF_WEEK_NAMES.has(base.toUpperCase())
-            ? base
-            : String(requireDayOfWeekNumber(base) - 1);
-
-          return step === undefined ? converted : `${converted}/${step}`;
-        })
-        .join("-"),
-    )
-    .join(",");
-}
-
-/** Parses an AWS numeric day-of-week token (1-7, 1 = Sunday), or throws. */
-function requireDayOfWeekNumber(token: string): number {
-  const value = Number(token);
-  if (!Number.isInteger(value) || value < 1 || value > 7) {
-    throw new Error(
-      `cron(...) day-of-week must be 1-7 (1 = Sunday) or SUN-SAT, got '${token}'`,
-    );
-  }
-
-  return value;
-}
-
-/**
- * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
- * wall-clock time is read in `timezone` when given, UTC otherwise — the same
- * semantics EventBridge Scheduler applied.
- */
-function atExpressionToTimestamp(
-  expression: string,
-  timezone: string | undefined,
-): number {
-  const match = /^at\((\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\)$/.exec(
-    expression,
-  );
-  if (!match) {
-    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
-  }
-  const [
-    ,
-    year = "",
-    month = "",
-    day = "",
-    hour = "",
-    minute = "",
-    second = "",
-  ] = match;
-  const asUtc = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-  );
-  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
-  if (!timezone) return asUtc;
-
-  // Two passes pin the wall clock to the zone's offset at the target instant,
-  // which the first guess (the UTC reading) can miss across a DST boundary.
-  const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
-
-  return asUtc - timezoneOffsetMs(adjusted, timezone);
-}
-
-const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
-
-/** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
-function timezoneOffsetMs(timestamp: number, timezone: string): number {
-  let formatter = timezoneFormatters.get(timezone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    timezoneFormatters.set(timezone, formatter);
-  }
-  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
-  for (const part of formatter.formatToParts(new Date(timestamp))) {
-    parts[part.type] = part.value;
-  }
-  const asUtc = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(parts.hour === "24" ? "0" : parts.hour),
-    Number(parts.minute),
-    Number(parts.second),
-  );
-
-  return asUtc - timestamp;
-}
-
-/**
  * Whether a schedule fires exactly once. Single home for this rule — core
  * re-exports it from apps/core/src/shared/domain/cron.ts.
  * @param expression a normalized schedule expression
@@ -472,4 +323,152 @@ function optionalString(
     throw new Error(`${name} must be at most ${maxLength} characters`);
 
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Convert the six-field cron form — minute hour day-of-month month day-of-week
+ * year — to the five-field unix cronspec the crons component parses. `?` maps
+ * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
+ * @throws for the calendar forms unix cron has no equivalent for (`L`, `W`,
+ * `#`, or a constrained year)
+ */
+function cronExpressionToCronspec(fields: string): string {
+  const parts = fields.split(/\s+/);
+  if (parts.length !== 6) {
+    throw new Error(
+      "cron(...) must have six fields: minute hour day-of-month month day-of-week year",
+    );
+  }
+  const [
+    minute = "",
+    hour = "",
+    dayOfMonth = "",
+    month = "",
+    dayOfWeek = "",
+    year = "",
+  ] = parts;
+  if (year !== "*") {
+    throw new Error("cron(...) year field must be * — years cannot be pinned");
+  }
+  for (const field of [minute, hour, dayOfMonth, month, dayOfWeek]) {
+    if (/[LW#]/i.test(field)) {
+      throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
+    }
+  }
+
+  return [
+    minute,
+    hour,
+    dayOfMonth === "?" ? "*" : dayOfMonth,
+    month,
+    convertDayOfWeek(dayOfWeek),
+  ].join(" ");
+}
+
+/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
+function convertDayOfWeek(field: string): string {
+  if (field === "?" || field === "*") return "*";
+
+  return field
+    .split(",")
+    .map((item) =>
+      item
+        .split("-")
+        .map((token) => {
+          const [base, step] = token.split("/") as [string, string | undefined];
+          const converted = DAY_OF_WEEK_NAMES.has(base.toUpperCase())
+            ? base
+            : String(requireDayOfWeekNumber(base) - 1);
+
+          return step === undefined ? converted : `${converted}/${step}`;
+        })
+        .join("-"),
+    )
+    .join(",");
+}
+
+/** Parses an AWS numeric day-of-week token (1-7, 1 = Sunday), or throws. */
+function requireDayOfWeekNumber(token: string): number {
+  const value = Number(token);
+  if (!Number.isInteger(value) || value < 1 || value > 7) {
+    throw new Error(
+      `cron(...) day-of-week must be 1-7 (1 = Sunday) or SUN-SAT, got '${token}'`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
+ * wall-clock time is read in `timezone` when given, UTC otherwise — the same
+ * semantics EventBridge Scheduler applied.
+ */
+function atExpressionToTimestamp(
+  expression: string,
+  timezone: string | undefined,
+): number {
+  const match = /^at\((\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\)$/.exec(
+    expression,
+  );
+  if (!match) {
+    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
+  }
+  const [
+    ,
+    year = "",
+    month = "",
+    day = "",
+    hour = "",
+    minute = "",
+    second = "",
+  ] = match;
+  const asUtc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
+  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
+  if (!timezone) return asUtc;
+
+  // Two passes pin the wall clock to the zone's offset at the target instant,
+  // which the first guess (the UTC reading) can miss across a DST boundary.
+  const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
+
+  return asUtc - timezoneOffsetMs(adjusted, timezone);
+}
+
+/** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
+function timezoneOffsetMs(timestamp: number, timezone: string): number {
+  let formatter = timezoneFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    timezoneFormatters.set(timezone, formatter);
+  }
+  const parts: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
+  for (const part of formatter.formatToParts(new Date(timestamp))) {
+    parts[part.type] = part.value;
+  }
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour === "24" ? "0" : parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+
+  return asUtc - timestamp;
 }

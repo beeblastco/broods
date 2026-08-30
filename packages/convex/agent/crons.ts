@@ -26,7 +26,7 @@ import {
   normalizeUpdateCronInput,
 } from "../model/cronRules";
 import {
-  cronSchedules,
+  deleteRegistrationIfExists,
   registerSchedule,
   unregisterSchedule,
 } from "../model/cronSchedules";
@@ -77,9 +77,7 @@ export const dispatch = internalAction({
       // The row is gone (a cascade that could not reach the registration, or
       // a crash between the two) — retire the schedule instead of firing it
       // at a deleted job forever.
-      if (await cronSchedules.get(ctx, { name: args.cronId })) {
-        await cronSchedules.delete(ctx, { name: args.cronId });
-      }
+      await deleteRegistrationIfExists(ctx, args.cronId);
 
       return null;
     }
@@ -169,7 +167,6 @@ export const create = internalMutation({
     });
     if (schedule.scheduledRunId !== undefined) {
       await ctx.db.patch(cronId, { scheduledRunId: schedule.scheduledRunId });
-      created.scheduledRunId = schedule.scheduledRunId;
     }
 
     return toCronResponse(created);
@@ -471,15 +468,20 @@ export const update = internalMutation({
     };
 
     // The registration encodes the schedule, timezone, and active state, so a
-    // patch touching any of them replaces it; other fields leave it alone.
+    // patch changing any of their values replaces it; a patch resending the
+    // same values (a full-body `broods dev` sync) leaves it alone, keeping a
+    // rate(...) job's phase.
     const scheduleChanged =
-      patch.scheduleExpression !== undefined ||
-      patch.timezone !== undefined ||
-      patch.status !== undefined;
+      updated.scheduleExpression !== existing.scheduleExpression ||
+      updated.timezone !== existing.timezone ||
+      updated.status !== existing.status;
     if (scheduleChanged) {
       await unregisterSchedule(ctx, existing);
       const schedule = await registerSchedule(ctx, updated, {
-        onPastAt: patch.scheduleExpression !== undefined ? "throw" : "run",
+        onPastAt:
+          updated.scheduleExpression !== existing.scheduleExpression
+            ? "throw"
+            : "run",
       });
       updated.scheduledRunId = schedule.scheduledRunId;
     }
@@ -522,17 +524,6 @@ async function getOwned(
   return cron && cron.accountId === accountId ? cron : null;
 }
 
-/** Like getOwned, treating a malformed id string as missing. */
-async function getOwnedByString(
-  ctx: MutationCtx,
-  accountId: Id<"accounts">,
-  cronId: string,
-): Promise<Doc<"crons"> | null> {
-  const normalized = ctx.db.normalizeId("crons", cronId);
-
-  return normalized ? await getOwned(ctx, accountId, normalized) : null;
-}
-
 /** Resolves an agent id string to the account's agent row, or throws. */
 async function getOwnedAgent(
   ctx: MutationCtx,
@@ -546,4 +537,15 @@ async function getOwnedAgent(
   }
 
   return agent;
+}
+
+/** Like getOwned, treating a malformed id string as missing. */
+async function getOwnedByString(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  cronId: string,
+): Promise<Doc<"crons"> | null> {
+  const normalized = ctx.db.normalizeId("crons", cronId);
+
+  return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
