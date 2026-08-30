@@ -1,88 +1,45 @@
-# Config plane and runtime endpoints
+# Config plane and runtime routes
 
-All paths are relative to `BROODS_BASE_URL` (default `https://gateway.broods.app`). Auth is `Authorization: Bearer <credential>`. The gateway routes config-plane paths to Convex and everything else to core; you never need to know which is which, but mixed routes are flagged below.
+All paths are relative to `BROODS_BASE_URL` (default `https://gateway.broods.app`). Auth is `Authorization: Bearer <credential>`. The gateway sends config-plane paths to Convex and everything else to core; the split matters only where noted.
 
-## Agents
+Request and response schemas live in the OpenAPI spec (`/api-reference` in the docs). This file carries the route map, the fields that are easy to get wrong, and the credential table.
 
-| Method and path                                         | Notes                                                                     |
-| ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `POST /v1/agents`                                       | create; 409 returns the existing `agentId` so you can adopt it            |
-| `GET /v1/agents`                                        | list, configs redacted                                                    |
-| `GET /v1/agents/{agentId}`                              |                                                                           |
-| `PATCH /v1/agents/{agentId}`                            | deep merge; `"********"` keeps an existing secret, `null` deletes a field |
-| `DELETE /v1/agents/{agentId}`                           | also deletes the agent's runtime rows                                     |
-| `GET /v1/agents/{agentId}/channels/{channel}/directory` |                                                                           |
+## Config plane
 
-## Crons
+Every resource below has the same five routes unless the notes say otherwise: `POST /v1/<resource>`, `GET /v1/<resource>`, and `GET`/`PATCH`/`DELETE` on `/v1/<resource>/{id}`.
 
-| Method and path               | Notes                                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/crons`              | body: `agentId`, `schedule` (`rate()`/`cron()`/`at()`), `input` or `events`, optional `conversationKey`, `timezone` |
-| `GET /v1/crons`               |                                                                                                                     |
-| `GET /v1/crons/{cronId}`      |                                                                                                                     |
-| `PATCH /v1/crons/{cronId}`    |                                                                                                                     |
-| `DELETE /v1/crons/{cronId}`   |                                                                                                                     |
-| `GET /v1/crons/{cronId}/runs` | run history                                                                                                         |
+| Resource     | Notes                                                                                                                                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents`     | create returns 409 with the existing `agentId`, so you can adopt it. list redacts configs. delete also drops the agent's runtime rows. `GET /v1/agents/{id}/channels/{channel}/directory` serves the channel directory |
+| `crons`      | create needs `name`, `agentId`, `scheduleExpression`, and `input` or `events`. optional `conversationKey`, `timezone`, `description`. `GET /v1/crons/{id}/runs` is the run history                                     |
+| `sandboxes`  | CRUD here, lifecycle in core (below)                                                                                                                                                                                   |
+| `skills`     | keyed by name: `PUT`/`DELETE /v1/skills/{name}`. create takes `source: "files"` (base64), `"json"`, or `"github"` (public repo, fetched server-side)                                                                   |
+| `tools`      |                                                                                                                                                                                                                        |
+| `mcp`        | `/v1/mcp/{serverId}`                                                                                                                                                                                                   |
+| `policies`   | agent-runtime policy documents, not credential scoping                                                                                                                                                                 |
+| `channels`   | records carry `instructions`, `policies`, `denyTools`, `sandboxImages`                                                                                                                                                 |
+| `hooks`      |                                                                                                                                                                                                                        |
+| `workspaces` | plus `/v1/workspaces/{id}/files` (upload, rename, delete) and `/download-links`                                                                                                                                        |
+| `roles`      | account secret only. a role session cannot read or write roles                                                                                                                                                         |
+| `env`        | `GET /v1/env` lists names, values are write-only. `PUT`/`DELETE /v1/env/{name}`. reference from configs as `${NAME}`                                                                                                   |
 
-## Sandboxes
+`GET`/`PATCH /v1/account`, `POST /v1/account/rotate-secret`, and `POST /v1/account/assume-role` (body `{ roleId, ttlSeconds? }`, returns `{ token, expiresAt }`) round out the plane.
 
-CRUD is config plane, lifecycle verbs are core.
+Schedule expressions are AWS-style syntax: `rate(...)`, `cron(...)` with 6 fields, or one-shot `at(...)`, which deletes itself after firing.
 
-| Method and path                               | Notes                                           |
-| --------------------------------------------- | ----------------------------------------------- |
-| `POST /v1/sandboxes` / `GET /v1/sandboxes`    |                                                 |
-| `GET /v1/sandboxes/{id}` / `PATCH` / `DELETE` |                                                 |
-| `POST /v1/sandboxes/{id}/suspend`             | core                                            |
-| `POST /v1/sandboxes/{id}/resume`              | core                                            |
-| `POST /v1/sandboxes/{id}/terminate`           | core                                            |
-| `POST /v1/sandboxes/{id}/snapshot`            | core                                            |
-| `POST /v1/sandboxes/{id}/refresh`             | core                                            |
-| `POST /v1/sandboxes/{id}/exec`                | core                                            |
-| `POST /v1/sandboxes/{id}/terminal`            | core, returns a 2-minute sealed terminal ticket |
+## Core
 
-## Skills, tools, policies, channels, hooks
+Sandbox lifecycle: `POST /v1/sandboxes/{id}/` + `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec`, or `terminal`. The last returns a 2-minute sealed terminal ticket. `refresh` and `exec` are not in the OpenAPI spec yet.
 
-| Method and path                                      | Notes                                                                          |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `GET /v1/skills` / `POST /v1/skills`                 | create accepts `source: "files" \| "json" \| "github"`                         |
-| `PUT /v1/skills/{name}` / `DELETE /v1/skills/{name}` | name comes from `SKILL.md` frontmatter                                         |
-| `GET /v1/tools` and per-tool routes                  | tools are stage-scoped, unlike skills                                          |
-| `GET /v1/policies` and per-policy routes             | agent-runtime policy documents                                                 |
-| `GET /v1/channels` and per-channel routes            | channel records carry `instructions`, `policies`, `denyTools`, `sandboxImages` |
-| `GET /v1/hooks` and per-hook routes                  |                                                                                |
+Runtime invoke, with a stage key: `POST /` for a synchronous SSE run, `POST /async` for an `eventId`, `GET /status/{eventId}` to poll it, an upgrade at `POST /v1/agents/{endpointId}/ws`, and channel ingress at `/webhooks/{account}/{channel}`.
 
-## Env and workspaces
+## Credentials
 
-| Method and path                                | Notes                                             |
-| ---------------------------------------------- | ------------------------------------------------- |
-| `GET /v1/env`                                  | names only, values are write-only                 |
-| `PUT /v1/env/{name}` / `DELETE /v1/env/{name}` | reference from configs as `${NAME}`               |
-| `GET /v1/workspaces` and per-workspace routes  |                                                   |
-| `GET /v1/workspaces/{id}/files`                | plus upload, rename, delete, download-link routes |
-
-## Account
-
-| Method and path                         | Notes                                                                                                    |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `GET /v1/account` / `PATCH /v1/account` |                                                                                                          |
-| `POST /v1/account/assume-role`          | phase 1, see the folder README; exchanges a credential plus `roleId` for a short-lived `fp_sts_` session |
-
-## Runtime (core, `BROODS_API_KEY` stage key)
-
-| Method and path                           | Notes                   |
-| ----------------------------------------- | ----------------------- |
-| `POST /`                                  | synchronous run, SSE    |
-| `POST /async`                             | returns `eventId`       |
-| `GET /status/{eventId}`                   |                         |
-| `POST /v1/agents/{endpointId}/ws` upgrade | agent WebSocket         |
-| `/webhooks/{account}/{channel}`           | channel webhook ingress |
-
-## Credential cheat sheet
-
-| Prefix       | What it is                         | Where it works                                  |
-| ------------ | ---------------------------------- | ----------------------------------------------- |
-| `fp_acct_`   | account secret, full tenant        | config plane + core account routes              |
-| `fp_agent_`  | stage runtime key                  | runtime invoke only; config plane rejects it    |
-| `fp_cli_`    | CLI login token (90 days)          | CLI ingress, resolves to account authority      |
-| `fp_deploy_` | CI deploy key, project/stage bound | CLI ingress                                     |
-| `fp_sts_`    | role session (phase 1)             | config plane + core, limited by the role policy |
+| Prefix       | What it is                         | Where it works                                                                                   |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `fp_acct_`   | account secret, full tenant        | config plane + core account routes                                                               |
+| `fp_agent_`  | stage runtime key                  | runtime invoke, and assume-role into a role pinned to its own stage. the config plane rejects it |
+| `fp_cli_`    | CLI login token, 90 days           | CLI ingress, resolves to account authority                                                       |
+| `fp_deploy_` | CI deploy key, project/stage bound | CLI ingress                                                                                      |
+| `fp_role_`   | role id, never sent as a bearer    | names the policy you assume                                                                      |
+| `fp_sts_`    | role session, 1h default, 12h max  | config plane + core, every request checked against the role policy                               |

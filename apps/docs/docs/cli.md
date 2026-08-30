@@ -131,8 +131,8 @@ broods stage create staging --from development
 broods stage use staging
 ```
 
-`create --from <stage>` deep-copies the source stage: agent configs, custom
-tools, the canvas layout, and every environment variable. This is the same copy
+`create --from <stage>` deep-copies the source stage: agent configs, MCP
+servers, the canvas layout, and every environment variable. This is the same copy
 the dashboard's duplicate button performs. Without `--from`, the new stage is
 empty. Pass `--use` to switch to the new stage immediately.
 
@@ -145,6 +145,64 @@ after switching to sync them into the new stage.
 
 The names `development` and `production` are reserved: they always become the
 `Development` and `Production` stages with their matching kinds.
+
+## mcp
+
+```bash
+broods mcp
+```
+
+Serves the account config plane to a development agent over MCP on stdio, so
+Claude Code and other agents drive broods through typed tools instead of raw
+HTTP. It speaks the protocol on stdin and stdout, so an MCP client starts it,
+not a terminal:
+
+```bash
+claude mcp add broods -- broods mcp
+```
+
+Tool names mirror the SDK's methods in kebab-case, so `listAgents` is
+`list-agents` and `createCron` is `create-cron`. Every resource the config
+plane serves gets the verbs it supports: agents, crons, sandboxes, workspaces,
+policies, roles, channels, skills and MCP servers (`list-mcp`, `create-mcp`,
+...). Around those sit the calls that do not fit that shape —
+`list-cron-runs`, `upload-skill` (a full PUT replace), the sandbox lifecycle
+(`suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox`,
+`open-sandbox-terminal`), env (`list-env-vars`, `set-env-var`,
+`delete-env-var`), and the account itself (`get-account`, `update-account`,
+`rotate-secret`, `assume-role`).
+
+MCP servers live in one stage, so listing or creating those also takes
+`project` and `stage` — defaulted from `BROODS_PROJECT` / `BROODS_STAGE` when
+the server starts inside a configured project directory.
+
+Four guards are built in rather than left to the agent: a delete needs
+`confirm: true` and takes one id, `rotate-secret` needs the same because it
+breaks every deployment still holding the old secret, env has no read tool
+because the plane stores values write-only, and a stage-scoped resource refuses
+a collection call with no scope.
+
+### Org, project and stage
+
+With a stored `broods login`, the server also registers `list-orgs`,
+`create-org`, `select-org`, `list-projects`, `delete-project`, `list-stages`
+and `create-stage`. Creating a stage under a project name that does not exist
+creates the project too, which is the only way to make one without deploying a
+manifest.
+
+These seven are the exception to the credential rule below. They live behind
+the CLI router, which resolves login tokens only, so an account secret or a
+role session gets a 401 from them and the tools are left unregistered when no
+login is stored. Everything else on this server, and the sync routes behind
+`deploy` and `dev`, take the account secret.
+
+### Credentials
+
+Auth resolves from the environment exactly as the SDK does. Prefer a role
+session in `BROODS_SESSION_TOKEN` so the role's policy bounds what the agent
+can reach; `BROODS_ACCOUNT_SECRET` is the full-tenant fallback. The credential
+is read once at startup and never travels through a tool argument. See
+[Account Roles](./roles.md) for minting one.
 
 ## update
 
@@ -178,6 +236,7 @@ seconds, and never fails a sync: an unreachable registry is silently skipped.
 | `env set\|get\|list\|rm`  | Manage environment variables                                      |
 | `env sync`                | Push every `env("NAME")` the project references from `.env.local` |
 | `stream` / `logs`         | Live logs, with or without backfill                               |
+| `mcp`                     | Serve the config plane to an agent over MCP (stdio)               |
 | `agent list\|get`         | Inspect synced agents                                             |
 | `run <agent>`             | Chat with an agent in a terminal UI                               |
 | `update`                  | Install the newest broods release over this one                   |

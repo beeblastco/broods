@@ -1,74 +1,42 @@
-# Agent skills for broods self-management (issue #58)
+# Agent skills for broods self-management
 
-This folder is the design and the deliverable for [#58](https://github.com/beeblastco/broods/issues/58): skills that let an agent operate the broods platform itself. Two bundles, both in the open Agent Skills format the platform already parses (`SKILL.md` with `name` and `description` frontmatter, optional scripts staged executable in the sandbox):
+The deliverable for [#58](https://github.com/beeblastco/broods/issues/58): two skill bundles that let an agent operate the broods platform itself. Both use the Agent Skills format the platform already parses, a `SKILL.md` with `name` and `description` frontmatter plus optional scripts staged executable in the sandbox.
 
-- `broods-account-ops/` is the account-scope skill. Give it to Claude Code or any development agent working on behalf of a human. It covers the whole config plane: agents, crons, sandboxes, skills, tools, policies, env, workspaces. Auth is the account secret today, a scoped role session once phase 1 lands.
-- `broods-agent-self/` is the agent-scope skill. Give it to a deployed broods agent. It covers self-scheduling, self-configuration, sandbox lifecycle, and the dreaming loop. It assumes the narrowest credential the platform can mint and refuses to escalate.
+- `broods-account-ops/` is account scope. Give it to Claude Code or a development agent working for a human. It covers the config plane: agents, crons, sandboxes, skills, tools, policies, env, workspaces.
+- `broods-agent-self/` is agent scope. Give it to a deployed agent. It covers self-scheduling, self-configuration, sandbox lifecycle, and the dreaming loop.
 
-Both bundles pass the platform validator (name regex, `SKILL.md` at root, allowed extensions). To deploy one to an account, copy the folder into a `broods/` project dir and register it with `defineSkill`; `resolveContainedResourcePath` requires the bundle to live inside the project dir, so this folder is the source of truth and the project copy is vendored.
+To deploy one, copy the folder into a `broods/` project dir and register it with `defineSkill`. `resolveContainedResourcePath` needs the bundle inside the project dir, so this folder is the source of truth and the project copy is vendored. Nothing checks the copies for drift yet.
 
-## What exists today
+## Credentials
 
-The exploration behind this design (config plane, harness, auth) found the platform closer to done than the issue implies. The gap is almost entirely authorization, not capability.
+Account roles shipped in [#355](https://github.com/beeblastco/broods/pull/355). A role is a scoped credential you exchange for a short-lived session, and it is what both bundles authenticate with. `apps/docs/docs/roles.md` is the reference; the skills do not restate it.
 
-| Capability                                                                                       | Status                                                                                                                            |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Cron pipeline (Convex crons component → gateway → core `POST /v1/cron-runs`)                     | complete                                                                                                                          |
-| Agent self-scheduling tools (`schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`) | complete, gated on `config.scheduler.enabled`, fenced so a fired run cannot reschedule itself                                     |
-| Config-plane CRUD for agents, crons, sandboxes, skills, tools, policies, env, workspaces         | complete, account secret bearer                                                                                                   |
-| SDK (`BroodsAccountClient`, ~60 methods)                                                         | complete                                                                                                                          |
-| Runtime policy engine (`agentPolicies`, OPA rego, `tool.call` / `skill.load` / etc.)             | complete for in-run decisions                                                                                                     |
-| Scoped or policied API keys                                                                      | missing. Every credential is all-or-nothing                                                                                       |
-| Agent access to the config plane                                                                 | missing. The stage runtime key (`fp_agent_`) is rejected by `configHttp.ts` (`kind:"deployment"` is stripped of scope and denied) |
-| `sandboxImages` on channel records                                                               | dead config. Validated and stored, read by nothing (`applyChannelRecord` never touches it)                                        |
-| Dreaming / self-improvement                                                                      | does not exist                                                                                                                    |
+For the agent bundle, mint a role pinned to the agent's own stage and hand the agent either a session token or the runtime key plus the role id, through the env store.
 
-## Auth design: account roles and assume-role
+## What the skills ask for but nothing enforces
 
-The issue asks for two things: a hardened way to hand a development agent less than the full account secret, and a way for a deployed agent to act on itself under a policy "stricted by account-role-id". One mechanism serves both. Model it on AWS STS.
+Each of these is prose in a `SKILL.md` today. An agent that ignores it meets no error, so treat this as the work left on #58, not as behavior you can rely on.
 
-New table `accountRoles` in `packages/convex/schema.ts`:
+| Rule                                                                                   | Where it would belong                                                                                               |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| An agent may not patch the fields that bound it (`policies`, `denyTools`, `scheduler`) | field granularity in the agents PATCH normalizer, or its own action in `API_POLICY_ACTIONS`                         |
+| An agent may only patch its own id                                                     | an agent binding on `accountRoles`, which today scopes by project and stage only                                    |
+| A cron-fired run may not touch schedules                                               | `apps/core/src/harness/tools/index.ts` fences the tools, `/v1/crons` does not. deny `crons:write` in the run's role |
+| A sandbox may only use an image the channel record allows                              | `sandboxImages` is stored and validated but read by no runtime code                                                 |
+
+## Remaining phases
+
+- Sandbox images: `applyChannelRecord` copies `sandboxImages` onto the runtime config, and provisioning rejects anything outside it, as an allow-list rather than a default (see #74).
+- A self-handle tool in `apps/core/src/harness/tools/`, exposing a deployed agent to itself for self-update and self-configuration. It does the role exchange server-side, so a raw token never reaches the model loop, and it takes the agent id from the run context the way `schedule.tool.ts` already does, which turns three of the four prose rules above into code. The agent-scope counterpart to the MCP server: MCP serves agents outside the platform, a built-in tool serves the one inside it, because only the built-in tool knows which agent is calling.
+- Dreaming as a documented preset rather than new infrastructure. The operator sets it up once:
 
 ```ts
-accountRolesFields = {
-  accountId, projectId?, stageId?,        // structural scope, same shape as deployKeys
-  roleId,                                  // fp_role_...
-  name, status,                            // active | disabled
-  policy,                                  // PolicyDocument, version 1
-}
+defineCron({
+  name: "dream",
+  agent: myAgent,
+  scheduleExpression: "cron(0 3 * * ? *)",
+  input: "Dream: run the dreaming loop from the broods-agent-self skill.",
+});
 ```
 
-The policy document reuses the existing `PolicyRule { effect, actions, resources }` shape from `apps/core/src/shared/domain/policy.ts`, with a new action namespace for the API surface: `agents:read`, `agents:write`, `crons:write`, `sandboxes:write`, `skills:read`, and so on, one pair per resource route. Reusing the shape means the normalizer, the validator mirror in `packages/convex/model/policyRules.ts`, and the dashboard editor all extend instead of fork.
-
-New endpoint `POST /v1/account/assume-role`, body `{ roleId, ttlSeconds? }`. Three credentials may call it:
-
-1. The account secret (`fp_acct_`). This is the human path: hold the master credential, mint a narrow session for the tool you are about to hand it to.
-2. A CLI login token (`fp_cli_`). Same, for `broods` CLI users.
-3. A stage runtime key (`fp_agent_`). This is the agent path. The role's `projectId`/`stageId` must match the key's, so a leaked runtime key can only assume roles already scoped to its own stage.
-
-The response is a session token `fp_sts_...` with a hash-stored row (`roleSessions`: tokenHash, roleId, accountId, expiresAt, default TTL 1h, max 12h). `resolveBearerAuth` in `packages/convex/configHttp.ts` learns a fourth kind, `role`, carrying `{ accountId, roleId, scope, policy }`. Enforcement is one function, `authorizeRoleAction(auth, action, resource)`, called at the top of each route handler. That funnel already exists; every handler goes through `requireAccount` today, and `role` slots in beside it. Core's `handleHttpRequest` (`apps/core/src/harness/integrations.ts:404`) gets the same check for the sandbox lifecycle verbs it serves directly.
-
-Deliberate choices, and why:
-
-- Exchange, not scoped long-lived keys. Minting a policied permanent key is simpler but leaves narrow-but-immortal credentials scattered everywhere. Short sessions expire on their own, and revocation is "disable the role", one row.
-- One decision contract, in-process backing. Every enforcement point calls a single interface, `authorize(principal, action, resource) -> allow | deny`, whose input shape matches an OPA query. Phase 1 backs it with an in-process table lookup, because API authorization is a per-request allow/deny over a small closed action set: the rego sidecar earns its cost for in-run tool decisions with conditions, and a network hop plus a tier-0 OPA dependency on every CRUD call buys nothing today. Handlers never read the roles table directly, only the interface.
-- Central OPA service: deferred, interface-compatible. Deploying OPA as a cluster service that both core and a self-hosted Convex reach is buildable, but managed Convex cannot reach it (forking the code path by topology), and it makes OPA availability equal API availability. When a trigger lands (ABAC conditions on API routes, a third enforcement plane, unified decision logs for compliance, or self-hosted Convex becoming the primary topology) the swap is a backend change behind `authorize()` plus a rego package; the shared `PolicyRule` document shape already parses on both sides.
-- The runtime key never gains direct config-plane power. It only gets `assume-role`, and only into stage-matched roles. The blast radius of a leaked `fp_agent_` stays exactly one stage, same as today.
-
-## Plan
-
-Phase 0, this PR: this folder. Both skills work now for everything with an existing endpoint. `broods-account-ops` is fully functional with `BROODS_ACCOUNT_SECRET`. `broods-agent-self` works where the operator injects credentials via the env store (`/v1/env` refs into tool or sandbox config), which is the documented interim path.
-
-Phase 1, account roles: `accountRoles` + `roleSessions` tables, `POST /v1/account/assume-role`, `kind:"role"` in `resolveBearerAuth`, `authorizeRoleAction` at the config-plane funnel and in core `handleHttpRequest`. Dashboard CRUD for roles, `broods role` CLI subcommand. Contract move, so: `openapi.yaml`, docs, SDK (`assumeRole()` on both clients), demos.
-
-Phase 2, agent self-service: accept `fp_agent_` at `assume-role` (stage-matched roles only). Ship a built-in `broods_self` tool in `apps/core/src/harness/tools/` that performs the exchange server-side and exposes typed self-management calls (get own config, patch own config, sandbox lifecycle), so the common path never handles raw tokens in the model loop. The scripts in `broods-agent-self` remain the escape hatch for anything the tool does not cover.
-
-Phase 3, sandbox images: wire the dead `sandboxImages` field. `applyChannelRecord` (`apps/core/src/shared/domain/channel-record.ts`) copies it onto the runtime `AgentConfig`; sandbox provisioning validates any requested image against it (allow-list, not default, per #74). The agent-initiated path is a `provision_sandbox` request through `broods_self` or the REST script; the runtime rejects images outside the list regardless of who asks.
-
-Phase 4, dreaming: a documented preset, not new infrastructure. A `defineCron` template fires the agent on a schedule with instructions to run the loop in `broods-agent-self/references/dreaming.md`: review recent conversations and memory, extract what worked and what failed, patch its own instructions and skills through its role, log the diff. The existing cron fences already prevent the failure mode that matters (a fired run cannot touch schedules), and the role policy caps what a bad reflection can break.
-
-## Open decisions
-
-- Session TTL bounds (proposed 1h default, 12h max) and whether sessions are revocable individually or only via role disable.
-- Whether `assume-role` lives in the config plane (natural, it owns the tables) or core (natural, it owns `resolveBearerAuth` for runtime routes). Proposed: config plane mints, both planes validate, shared by the same secret-hash lookup pattern crons already use.
-- Whether the dashboard needs role-session visibility at launch or just role CRUD. Proposed: role CRUD only, sessions are ephemeral.
+The fired run reads `broods-agent-self/references/dreaming.md`: review the window, extract one lesson, patch its own instructions or skills, log the diff.

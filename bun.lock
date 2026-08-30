@@ -212,7 +212,9 @@
         "broods": "dist/cli/index.js",
       },
       "dependencies": {
+        "@modelcontextprotocol/server": "2.0.0",
         "esbuild": "^0.28.2",
+        "zod": "^4.4.3",
       },
       "devDependencies": {
         "@ai-sdk/tui": "1.0.78",
