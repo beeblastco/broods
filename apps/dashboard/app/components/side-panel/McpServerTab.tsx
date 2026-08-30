@@ -211,8 +211,8 @@ export function McpServerTab({
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            Pre-existing servers work as they are: modern and legacy MCP
-            protocol revisions are both negotiated automatically.
+            The server must speak MCP spec 2026-07-28; older protocol revisions
+            are refused at save with a negotiation error.
           </p>
         </>
       )}
