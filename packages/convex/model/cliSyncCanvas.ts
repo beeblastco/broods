@@ -79,7 +79,7 @@ export async function syncCanvasLayoutForManifest(
     agentConfigs.map((entry) => [entry.name, entry]),
   );
   // Servers resolve by name here: the manifest reaching this mutation already
-  // had `config.mcpServers` keys rewritten to ids, so the node needs the row
+  // had `config.mcp` keys rewritten to ids, so the node needs the row
   // to map back.
   const mcpByName = new Map(
     (
@@ -195,7 +195,7 @@ function addAgentSubagentEdges(
   }
 }
 
-/** Agent→mcp edges. `config.mcpServers` is keyed by server row id. */
+/** Agent→mcp edges. `config.mcp` is keyed by server row id. */
 function addAgentMcpEdges(
   agentConfig: Record<string, unknown>,
   agentNodeId: string,
@@ -203,9 +203,9 @@ function addAgentMcpEdges(
   mcpNameById: Map<string, string>,
   desiredEdges: Map<string, CanvasEdge>,
 ): void {
-  const mcpServers = agentConfig.mcpServers;
-  if (!isPlainObject(mcpServers)) return;
-  for (const [serverId, serverConfig] of Object.entries(mcpServers)) {
+  const mcp = agentConfig.mcp;
+  if (!isPlainObject(mcp)) return;
+  for (const [serverId, serverConfig] of Object.entries(mcp)) {
     const name = mcpNameById.get(serverId);
     if (!name) continue;
     if (isPlainObject(serverConfig) && serverConfig.enabled === false) continue;

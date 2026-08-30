@@ -14,7 +14,12 @@ import type {
   CliManifest,
   CliManifestResource,
 } from "./contracts.ts";
-import { build as esbuild, transformSync, type BuildFailure } from "esbuild";
+import {
+  build as esbuild,
+  transformSync,
+  type BuildFailure,
+  type Plugin,
+} from "esbuild";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -30,7 +35,7 @@ import {
   type AgentHooks,
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
-  type McpServerDefinitionConfig,
+  type McpDefinitionConfig,
   type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
@@ -77,6 +82,34 @@ type ExportedResource = {
   file: string;
   resource: AnyResource;
 };
+
+// Stands in for the SDK inside a hosted MCP handler's bundle: the resource
+// helpers only shape config at author time, so returning the input is enough.
+const SDK_STUB_SOURCE = `const passthrough = (input) => input;
+export const defineAgent = passthrough;
+export const defineBroods = passthrough;
+export const defineCron = passthrough;
+export const defineDiscordChannel = passthrough;
+export const defineDiscordConnection = passthrough;
+export const defineGitHubChannel = passthrough;
+export const defineGitHubConnection = passthrough;
+export const defineHarness = passthrough;
+export const defineMcp = passthrough;
+export const definePancakeChannel = passthrough;
+export const definePancakeConnection = passthrough;
+export const definePolicy = passthrough;
+export const defineSandbox = passthrough;
+export const defineSkill = passthrough;
+export const defineSlackChannel = passthrough;
+export const defineSlackConnection = passthrough;
+export const defineTelegramChannel = passthrough;
+export const defineTelegramConnection = passthrough;
+export const defineWorkspace = passthrough;
+export const defineZaloChannel = passthrough;
+export const defineZaloConnection = passthrough;
+export const env = (name) => ({ __beeblastEnv: true, name });
+export default {};
+`;
 
 // The server bounds uploaded bundles: 1 MB for isolate-run hooks, 10 MB for
 // hosted MCP server bundles. The CLI enforces the larger bound and lets the
@@ -338,7 +371,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "hooks",
   "connections",
   "tools",
-  "mcpServers",
+  "mcp",
   "denyTools",
   "sandbox",
   "workspaces",
@@ -355,8 +388,7 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   skill: "skills",
   policy: "policies",
   tool: "tools",
-  mcp: "mcpServers",
-  mcpServer: "mcpServers",
+  mcpServers: "mcp",
   channel: "connections",
   channels: "connections",
   hook: "hooks",
@@ -993,7 +1025,7 @@ async function normalizeConfig(
   if (resource.kind === "mcp") {
     return await normalizeMcpConfig(
       entry,
-      resource.config as McpServerDefinitionConfig,
+      resource.config as McpDefinitionConfig,
       projectRoot,
     );
   }
@@ -1530,6 +1562,7 @@ async function buildBundleModule(options: {
   entryPoint: string;
   label: string;
   manifestPath: string;
+  plugins?: Plugin[];
 }): Promise<string> {
   const build = await esbuild({
     entryPoints: [options.entryPoint],
@@ -1539,6 +1572,7 @@ async function buildBundleModule(options: {
     minify: false,
     write: false,
     logLevel: "silent",
+    plugins: options.plugins ?? [],
   }).catch((error: unknown) => {
     // esbuild throws BuildFailure for source errors, but a plain Error for
     // install/platform problems — surface that cause instead of masking it.
@@ -1586,43 +1620,52 @@ async function normalizeSkillConfig(
 }
 
 /**
- * An mcp resource with `url` syncs as-is (external server); one with `path`
- * bundles the module whose default export is a fetch-style MCP handler, and
- * the row becomes `transport: "hosted"` on the backend (#331 phase 2).
+ * An mcp resource with `url` syncs as-is (external server); one with `handler`
+ * bundles the module that declared it — the handler stays inline next to the
+ * `defineMcp` call, one file per server — and the row becomes
+ * `transport: "hosted"` on the backend (#331 phase 2).
  */
 async function normalizeMcpConfig(
   entry: ExportedResource,
-  config: McpServerDefinitionConfig,
+  config: McpDefinitionConfig,
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const { path: serverPath, ...rest } = config;
-  if (serverPath !== undefined && config.url !== undefined) {
+  const { handler, ...rest } = config;
+  if (handler !== undefined && config.url !== undefined) {
     throw new Error(
-      `MCP server "${entry.resource.name}" declares both url and path; pick one`,
+      `MCP server "${entry.resource.name}" declares both url and handler; pick one`,
     );
   }
-  if (serverPath === undefined) {
+  if (handler === undefined) {
     if (config.url === undefined) {
       throw new Error(
-        `MCP server "${entry.resource.name}" needs url (external) or path (hosted)`,
+        `MCP server "${entry.resource.name}" needs url (external) or handler (hosted)`,
       );
     }
 
     return rewriteValues(rest) as Record<string, unknown>;
   }
 
-  const bundlePath = resolveContainedResourcePath(
-    projectRoot,
-    serverPath,
-    "MCP server",
-  );
-  const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
+  const manifestPath = relative(projectRoot, entry.file).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "MCP server");
-  const bundle = await buildBundleModule({
-    entryPoint: bundlePath,
-    label: "MCP server bundle",
-    manifestPath: manifestPath,
-  });
+  // The defining module imports the SDK for defineMcp/defineAgent; a shim
+  // entrypoint picks the handler off the resource export and the stub plugin
+  // keeps the SDK client out of the bundle.
+  const shimDir = await mkdtemp(join(tmpdir(), "broods-mcp-shim-"));
+  let bundle: string;
+  try {
+    const shimPath = join(shimDir, "mcp-handler.mjs");
+    await writeFile(shimPath, mcpShimSource(entry), "utf8");
+    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
+    bundle = await buildBundleModule({
+      entryPoint: shimPath,
+      label: "MCP server bundle",
+      manifestPath: manifestPath,
+      plugins: [sdkStubPlugin(shimDir)],
+    });
+  } finally {
+    await rm(shimDir, { recursive: true, force: true });
+  }
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
     throw new Error(
@@ -1634,6 +1677,31 @@ async function normalizeMcpConfig(
   return {
     ...(rewriteValues(rest) as Record<string, unknown>),
     bundle: bundle,
+  };
+}
+
+// The stub replaces "broods" imports (see SDK_STUB_SOURCE), so `defineMcp`
+// passes its input through and the handler sits flat on the export; a module
+// importing the SDK source directly still nests it under `config`.
+function mcpShimSource(entry: ExportedResource): string {
+  return (
+    `import * as __exports from ${JSON.stringify(entry.file)};\n` +
+    `const __mcp = __exports[${JSON.stringify(entry.exportName)}];\n` +
+    `export default __mcp?.config?.handler ?? __mcp?.handler;\n`
+  );
+}
+
+// Hosted MCP handlers live beside `defineAgent(...)` calls that import the
+// SDK. Alias those imports to inert stubs so the bundle carries the handler,
+// not the client.
+function sdkStubPlugin(shimDir: string): Plugin {
+  const stub = join(shimDir, "broods-stub.mjs");
+
+  return {
+    name: "broods-sdk-stub",
+    setup: function (build) {
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+    },
   };
 }
 

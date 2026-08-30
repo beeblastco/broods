@@ -464,8 +464,8 @@ export function rewriteIdsToNames(
       ),
     };
   }
-  if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = remapKeys(result.mcpServers, mcpNames);
+  if (isPlainObject(result.mcp)) {
+    result.mcp = remapKeys(result.mcp, mcpNames);
   }
   if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
     result.hooks = {
@@ -543,10 +543,10 @@ export function rewriteResourceRefs(
       ),
     };
   }
-  // `config.mcpServers` keys must end up as mcp row ids; a name that fails to
-  // map fails normalizeMcpServersConfig loudly rather than being left behind.
-  if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = remapKeys(result.mcpServers, mcpIds);
+  // `config.mcp` keys must end up as mcp row ids; a name that fails to
+  // map fails normalizeMcpConfig loudly rather than being left behind.
+  if (isPlainObject(result.mcp)) {
+    result.mcp = remapKeys(result.mcp, mcpIds);
   }
 
   return result;

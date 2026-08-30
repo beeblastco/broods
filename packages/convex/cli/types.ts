@@ -29,7 +29,7 @@ export type GeneratedIds = {
   crons: Record<string, string>;
   skills: Record<string, string>;
   hooks: Record<string, string>;
-  mcpServers: Record<string, string>;
+  mcp: Record<string, string>;
   policies: Record<string, string>;
   channelRecords: Record<string, string>;
 };

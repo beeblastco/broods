@@ -12,7 +12,7 @@ import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
 
-export function mcpServerTools(
+export function mcpTools(
   connection: McpConnection,
   remoteTools: McpTool[],
   onSandboxCpu?: (sample: SandboxCpuSample) => void,

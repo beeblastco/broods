@@ -150,23 +150,31 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
 };
 
 /**
- * MCP server registration (#331) — external (`url`) or hosted (`path`).
+ * Fetch-style MCP handler for a hosted server: what
+ * `createMcpHandler(...)` from @modelcontextprotocol/server returns —
+ * either the request function itself or an object exposing it as `fetch`.
+ */
+export type McpHandler =
+  | ((request: Request) => Response | Promise<Response>)
+  | { fetch(request: Request): Response | Promise<Response> };
+
+/**
+ * MCP server registration (#331) — external (`url`) or hosted (`handler`).
  * Either way the server's tools are offered as `<name>__<tool>`; an external
  * row is dialed over the stateless HTTP transport (spec 2026-07-28) at agent
  * registration time. The name namespaces those tools, so it must be 1-32
  * lowercase letters, digits, or hyphens, starting with a letter.
  */
-export interface McpServerDefinitionConfig {
+export interface McpDefinitionConfig {
   /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
   /**
-   * Hosted alternative to `url`: a module (resolved from the `broods/`
-   * directory) whose default export is a fetch-style MCP handler —
-   * `export default createMcpHandler(...)` from @modelcontextprotocol/server.
-   * The CLI bundles it and the tool-runner Lambda hosts it, one invoke per
-   * request.
+   * Hosted alternative to `url`: declare the server inline —
+   * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
+   * right next to the `defineMcp` call. The CLI bundles the defining module
+   * and the tool-runner Lambda hosts it, one invoke per request.
    */
-  path?: string;
+  handler?: McpHandler;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var — e.g.
@@ -563,7 +571,7 @@ export type ProviderConfigInput = Partial<
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "session" | "tools" | "mcpServers"
+    "agent" | "model" | "scheduler" | "session" | "tools" | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;
@@ -617,8 +625,11 @@ export type SkillResource<Name extends string = string> = ResourceDefinition<
   Name,
   SkillDefinitionConfig
 >;
-export type McpServerResource<Name extends string = string> =
-  ResourceDefinition<"mcp", Name, McpServerDefinitionConfig>;
+export type McpResource<Name extends string = string> = ResourceDefinition<
+  "mcp",
+  Name,
+  McpDefinitionConfig
+>;
 export type PolicyResource<Name extends string = string> = ResourceDefinition<
   "policy",
   Name,
@@ -642,7 +653,7 @@ export type AnyResource =
   | SandboxResource
   | CronResource
   | SkillResource
-  | McpServerResource
+  | McpResource
   | PolicyResource
   | ChannelResource;
 
@@ -907,15 +918,15 @@ export function defineSkill<const Name extends string>(
 }
 
 export function defineMcp<const Name extends string>(
-  input: ResourceInput<Name, McpServerDefinitionConfig>,
-): McpServerResource<Name> {
+  input: ResourceInput<Name, McpDefinitionConfig>,
+): McpResource<Name> {
   const { name, description, ...config } = input;
 
   return defineResource(
     "mcp",
     name,
     description,
-    config as McpServerDefinitionConfig,
+    config as McpDefinitionConfig,
   );
 }
 

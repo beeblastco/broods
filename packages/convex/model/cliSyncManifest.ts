@@ -23,7 +23,7 @@ export async function externalIdsForStage(
 ): Promise<{
   skills: Record<string, string>;
   hooks: Record<string, string>;
-  mcpServers: Record<string, string>;
+  mcp: Record<string, string>;
 }> {
   const resources = await ctx.db
     .query("cliExternalResources")
@@ -43,7 +43,7 @@ export async function externalIdsForStage(
         .filter((entry) => entry.kind === "hook")
         .map((entry) => [entry.name, entry.externalId]),
     ),
-    mcpServers: Object.fromEntries(
+    mcp: Object.fromEntries(
       resources
         .filter((entry) => entry.kind === "mcp")
         .map((entry) => [entry.name, entry.externalId]),
@@ -121,7 +121,7 @@ export async function idsForStage(
     ),
     skills: externalIds.skills,
     hooks: externalIds.hooks,
-    mcpServers: externalIds.mcpServers,
+    mcp: externalIds.mcp,
     policies: Object.fromEntries(
       policies
         .filter(

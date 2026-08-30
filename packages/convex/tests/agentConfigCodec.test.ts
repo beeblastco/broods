@@ -20,9 +20,9 @@ describe("agent config codec", () => {
   });
 
   // Same failure mode as scheduler: without a NESTED_BRANCHES entry the
-  // mcpServers branch is dropped on write and never reaches core (#331).
-  test("round-trips the mcpServers branch", () => {
-    const mcpServers = {
+  // mcp branch is dropped on write and never reaches core (#331).
+  test("round-trips the mcp branch", () => {
+    const mcp = {
       k57mcpserver00000000000000000000: {
         enabled: true,
         headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
@@ -30,10 +30,10 @@ describe("agent config codec", () => {
     };
     const flat = fromNestedAgentConfig({
       model: { provider: "custom", modelId: "deepseek-v4-pro" },
-      mcpServers: mcpServers,
+      mcp: mcp,
     });
 
-    expect(flat.extraConfig).toMatchObject({ mcpServers: mcpServers });
-    expect(toNestedAgentConfig(flat).mcpServers).toEqual(mcpServers);
+    expect(flat.extraConfig).toMatchObject({ mcp: mcp });
+    expect(toNestedAgentConfig(flat).mcp).toEqual(mcp);
   });
 });

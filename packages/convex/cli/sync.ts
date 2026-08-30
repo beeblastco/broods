@@ -100,7 +100,7 @@ const idsValidator = v.object({
   crons: v.record(v.string(), v.string()),
   skills: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
-  mcpServers: v.record(v.string(), v.string()),
+  mcp: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
   channelRecords: v.record(v.string(), v.string()),
 });
@@ -277,7 +277,7 @@ export const syncManifestBySecretHash = internalMutation({
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
       policyIds: policyIds,
-      mcpIds: externalIds.mcpServers,
+      mcpIds: externalIds.mcp,
       envValues: envValues,
       missingPolicies: missingPolicies,
     });
@@ -317,7 +317,7 @@ export const syncManifestBySecretHash = internalMutation({
       crons: {},
       skills: externalIds.skills,
       hooks: externalIds.hooks,
-      mcpServers: externalIds.mcpServers,
+      mcp: externalIds.mcp,
       policies: policyIds,
       channelRecords: channelRecordIds,
     };
@@ -468,7 +468,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     ids: v.object({
       skills: v.record(v.string(), v.string()),
       hooks: v.record(v.string(), v.string()),
-      mcpServers: v.record(v.string(), v.string()),
+      mcp: v.record(v.string(), v.string()),
     }),
     prune: v.optional(v.boolean()),
   },
@@ -496,7 +496,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     const idsByKind: Record<ExternalResourceKind, Record<string, string>> = {
       skill: args.ids.skills,
       hook: args.ids.hooks,
-      mcp: args.ids.mcpServers,
+      mcp: args.ids.mcp,
     };
 
     for (const resource of desired) {
