@@ -425,6 +425,77 @@ describe("telegram channel adapter", () => {
     expect(other.kind).toBe("context");
   });
 
+  it("carries the bare command token past the @name suffix and the reply frame", async () => {
+    const adapter = createGatedAdapter();
+
+    const suffixed = await adapter.parse(
+      createRequest({
+        update_id: 24,
+        message: createMessage({
+          text: "/clear@tracy_bot",
+          chat: GROUP_CHAT,
+          entities: entityFor(
+            "/clear@tracy_bot",
+            "/clear@tracy_bot",
+            "bot_command",
+          ),
+        }),
+      }),
+    );
+    if (suffixed.kind !== "message") {
+      throw new Error("Expected the suffixed command to be accepted");
+    }
+    expect(suffixed.message.source.commandToken).toBe("/clear");
+
+    const reply = await adapter.parse(
+      createRequest({
+        update_id: 25,
+        message: createMessage({
+          text: "/clear",
+          chat: GROUP_CHAT,
+          entities: entityFor("/clear", "/clear", "bot_command"),
+          reply_to_message: createMessage({
+            text: "here is the template",
+            chat: GROUP_CHAT,
+            from: {
+              id: 99,
+              first_name: "Tracy",
+              username: "tracy_bot",
+              is_bot: true,
+            },
+          }),
+        }),
+      }),
+    );
+    if (reply.kind !== "message") {
+      throw new Error("Expected the reply command to be accepted");
+    }
+    // The frame wraps the content, so the token has to ride on the source.
+    expect(reply.message.content).toContain("<replying-to");
+    expect(reply.message.source.commandToken).toBe("/clear");
+  });
+
+  it("leaves the command token off a mid-message slash", async () => {
+    const adapter = createGatedAdapter();
+    const text = "please run /clear for me";
+
+    const parsed = await adapter.parse(
+      createRequest({
+        update_id: 26,
+        message: createMessage({
+          text: text,
+          chat: GROUP_CHAT,
+          entities: entityFor(text, "/clear", "bot_command"),
+        }),
+      }),
+    );
+
+    if (parsed.kind !== "message") {
+      throw new Error("Expected the message to be accepted");
+    }
+    expect(parsed.message.source.commandToken).toBeUndefined();
+  });
+
   it("answers a private chat with no tag at all", async () => {
     const adapter = createGatedAdapter();
 

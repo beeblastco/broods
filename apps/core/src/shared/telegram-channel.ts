@@ -59,6 +59,7 @@ interface TelegramSticker {
 
 export interface TelegramSource {
   chatId: number;
+  commandToken?: string;
   messageId: string;
   messageThreadId?: number;
   threadId: string;
@@ -144,8 +145,10 @@ export function createTelegramChannel(
         message.sticker,
         parsed,
       );
+      const commandToken = telegramCommandToken(message, botUsername);
       const source: TelegramSource = {
         chatId: message.chat.id,
+        ...(commandToken !== undefined ? { commandToken: commandToken } : {}),
         messageId: parsed.id,
         ...(message.message_thread_id !== undefined
           ? { messageThreadId: message.message_thread_id }
@@ -340,6 +343,37 @@ function telegramAttachments(
       fetchMetadata: { fileId: sticker.file_id },
     }),
   ];
+}
+
+/**
+ * The slash command opening the message, bare of any `@name` suffix, or
+ * undefined when the message does not open with a command for this bot. Read
+ * from the entity Telegram tags rather than the assembled content: the reply
+ * frame and the `@name` a client appends in a group would both hide the token
+ * from the exact-match command parser downstream.
+ */
+function telegramCommandToken(
+  message: TelegramMessage,
+  botUsername: string | null,
+): string | undefined {
+  const entity = telegramEntities(message).find(
+    (candidate) =>
+      candidate.type === BOT_COMMAND_ENTITY && candidate.offset === 0,
+  );
+  if (!entity) {
+    return undefined;
+  }
+  const [command, target] = telegramMessageText(message)
+    .slice(0, entity.length)
+    .split("@");
+  // A command aimed at another bot is that bot's to answer; without a
+  // configured botUsername the target cannot be checked, matching the
+  // answer-everything stance the mention gate takes in that case.
+  if (target && botUsername && target.toLowerCase() !== botUsername) {
+    return undefined;
+  }
+
+  return command;
 }
 
 // Entities are indexed against whichever of the two text fields carries the

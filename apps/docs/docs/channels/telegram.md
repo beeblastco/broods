@@ -80,7 +80,10 @@ shares a group with people who are not talking to it.
 
 A bare `/command` counts as addressing the agent, because Telegram only appends
 `@name` to a command when a group holds more than one bot. In a group with
-several bots, use `/command@name` so only the intended one answers.
+several bots, use `/command@name` so only the intended one answers. Either
+shape runs the command itself, not the agent: the token is read from the
+`bot_command` entity Telegram tags, so the `@name` suffix a client appends and
+the frame around a command sent as a reply both stay out of its way.
 
 ## Replies arrive framed
 
