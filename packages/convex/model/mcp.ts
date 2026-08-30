@@ -16,7 +16,10 @@ const MAX_ALLOWED_TOOLS = 256;
 /**
  * An inline `bundle` string rides the JSON request body, which Convex caps at
  * ~20 MB; anything bigger goes through Convex file storage as a
- * `bundleStorageId` instead (#190).
+ * `bundleStorageId` instead (#190). Both values mirror
+ * INLINE_MCP_BUNDLE_BYTES / MAX_MCP_BUNDLE_BYTES in
+ * packages/broods/src/manifest.ts — the published CLI cannot import this
+ * package, so change both or the CLI accepts what the config plane rejects.
  */
 const MAX_INLINE_BUNDLE_BYTES = 10_000_000;
 /** Ceiling for a hosted MCP server bundle by either upload path (#190). */

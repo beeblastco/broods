@@ -2,10 +2,9 @@
  * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
  */
 
-import { createHash } from "node:crypto";
 import type { CliManifest, GeneratedIds } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
-import { INLINE_MCP_BUNDLE_BYTES } from "./manifest.ts";
+import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 
 export interface SyncClientOptions {
   /**
@@ -178,23 +177,20 @@ export class BroodsSyncClient {
   private async externalizeLargeMcpBundles(
     manifest: CliManifest,
   ): Promise<CliManifest> {
-    const large = manifest.resources.filter(
-      (resource) =>
-        resource.kind === "mcp" &&
-        typeof (resource.config as { bundle?: unknown })?.bundle === "string" &&
-        Buffer.byteLength((resource.config as { bundle: string }).bundle) >
-          INLINE_MCP_BUNDLE_BYTES,
-    );
-    if (large.length === 0) return manifest;
+    if (
+      manifest.resources.every((resource) => largeBundleOf(resource) === null)
+    ) {
+      return manifest;
+    }
 
     const resources = await Promise.all(
       manifest.resources.map(async (resource) => {
-        if (!large.includes(resource)) return resource;
-        const config = resource.config as { bundle: string } & Record<
+        const bundle = largeBundleOf(resource);
+        if (bundle === null) return resource;
+        const { bundle: _bundle, ...rest } = resource.config as Record<
           string,
           unknown
         >;
-        const { bundle, ...rest } = config;
         const storageId = await this.uploadMcpBundle(
           manifest.project,
           manifest.stage,
@@ -206,7 +202,7 @@ export class BroodsSyncClient {
           config: {
             ...rest,
             bundleStorageId: storageId,
-            sha256: createHash("sha256").update(bundle).digest("hex"),
+            sha256: sha256Hex(bundle),
           },
         };
       }),
@@ -719,4 +715,18 @@ async function assertOk(response: Response, message: string): Promise<void> {
   }
 
   throw new Error(`${message}: ${response.status} ${reason}`);
+}
+
+/**
+ * The one place the "is this MCP bundle too large to inline" predicate lives:
+ * returns the bundle source when the resource must be externalized, else null.
+ */
+function largeBundleOf(
+  resource: CliManifest["resources"][number],
+): string | null {
+  if (resource.kind !== "mcp") return null;
+  const bundle = (resource.config as { bundle?: unknown })?.bundle;
+  if (typeof bundle !== "string") return null;
+
+  return Buffer.byteLength(bundle) > INLINE_MCP_BUNDLE_BYTES ? bundle : null;
 }

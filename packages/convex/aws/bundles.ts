@@ -31,10 +31,9 @@ export const putHookBundle = internalAction({
   returns: v.string(),
   handler: async (ctx, args) =>
     await writeBundleObject(
-      ctx,
       args,
       accountHookBundleStorageKey,
-      await bundleSource(ctx, args.storageId),
+      await bundleBytes(ctx, args.storageId),
     ),
 });
 
@@ -42,9 +41,10 @@ export const putHookBundle = internalAction({
  * Store a hosted MCP server bundle in the account bundles bucket, under its
  * own account-mcp/ prefix (#331 phase 2). The bundle may have been uploaded
  * by the client directly (#190), so the declared sha256 and the size cap are
- * verified against the bytes before anything reaches S3: the runner child
- * rejects a hash mismatch at invoke time, and failing here instead turns a
- * corrupt upload into an upload error rather than a broken server.
+ * verified against the raw bytes — one read, hashed and stored as-is, no
+ * string decode — before anything reaches S3: the runner child rejects a hash
+ * mismatch at invoke time, and failing here instead turns a corrupt upload
+ * into an upload error rather than a broken server.
  */
 export const putMcpBundle = internalAction({
   args: {
@@ -54,29 +54,37 @@ export const putMcpBundle = internalAction({
   },
   returns: v.string(),
   handler: async (ctx, args) => {
-    const source = await bundleSource(ctx, args.storageId);
-    const bytes = Buffer.byteLength(source);
-    if (bytes > MAX_MCP_BUNDLE_BYTES) {
+    const bytes = await bundleBytes(ctx, args.storageId);
+    if (bytes.byteLength > MAX_MCP_BUNDLE_BYTES) {
       throw new Error(
-        `bundle must be at most ${MAX_MCP_BUNDLE_BYTES} bytes (got ${bytes})`,
+        `bundle must be at most ${MAX_MCP_BUNDLE_BYTES} bytes (got ${bytes.byteLength})`,
       );
     }
-    const actualSha = createHash("sha256").update(source).digest("hex");
+    const actualSha = createHash("sha256").update(bytes).digest("hex");
     if (actualSha !== args.sha256) {
       throw new Error(
         "bundle sha256 does not match the uploaded bytes; re-upload and retry",
       );
     }
 
-    return await writeBundleObject(ctx, args, mcpBundleStorageKey, source);
+    return await writeBundleObject(args, mcpBundleStorageKey, bytes);
   },
 });
 
-async function writeBundleObject(
+async function bundleBytes(
   ctx: { storage: { get: (id: string) => Promise<Blob | null> } },
-  args: { accountId: string; sha256: string; storageId: string },
+  storageId: string,
+): Promise<Buffer> {
+  const blob = await ctx.storage.get(storageId);
+  if (!blob) throw new Error("bundle is missing from Convex storage");
+
+  return Buffer.from(await blob.arrayBuffer());
+}
+
+async function writeBundleObject(
+  args: { accountId: string; sha256: string },
   keyFor: (accountId: string, sha256: string) => string,
-  source: string,
+  source: Buffer,
 ): Promise<string> {
   const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
   if (!bucket) {
@@ -90,14 +98,4 @@ async function writeBundleObject(
   });
 
   return key;
-}
-
-async function bundleSource(
-  ctx: { storage: { get: (id: string) => Promise<Blob | null> } },
-  storageId: string,
-): Promise<string> {
-  const blob = await ctx.storage.get(storageId);
-  if (!blob) throw new Error("bundle is missing from Convex storage");
-
-  return await blob.text();
 }

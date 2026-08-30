@@ -40,23 +40,30 @@ const BUNDLE_URL = pathToFileURL(
 // nothing is in flight before the first request or between requests.
 let settled = true;
 
+// Set when the emitted frame carries an exit code: the process is retiring as
+// soon as that frame is flushed, so the loop must not read another request.
+let retiring = false;
+
 // User code that leaves a rejected promise behind must not crash the runner
 // mid-frame, but it also must not serve another call. Mid-request, the child
 // retires as soon as the current frame is flushed; idle — a stray timer
 // rejecting between requests — it exits on the spot, so the next request can
-// never run inside the poisoned process. `"exiting"` is left alone: an exit
-// is already pending on that frame's flush.
+// never run inside the poisoned process. A retiring child is left alone: its
+// exit is already pending on the terminal frame's flush.
 let poisoned = false;
 process.on("unhandledRejection", (reason) => {
   console.error("[mcp-runner] unhandled rejection:", reason);
   poisoned = true;
-  if (settled === true) process.exit(1);
+  if (settled && !retiring) process.exit(1);
 });
 
 await runRequestLoop();
 
 async function runRequestLoop() {
-  const bundle = await readBundleBytes();
+  // Mutable on purpose: once the first import resolves, the module lives in
+  // V8's cache and the load hook never fires again, so the raw bytes (up to
+  // 50 MB) are released rather than pinned for the warm child's lifetime.
+  let bundle = await readBundleBytes();
   const actualSha = createHash("sha256").update(bundle).digest("hex");
   let handlerModule;
   // One request per line; the handler serializes invocations, so by the time a
@@ -87,7 +94,10 @@ async function runRequestLoop() {
         process.env.HOME = payload.home;
         process.env.TMPDIR = payload.home;
       }
-      handlerModule ??= await importBundle(bundle);
+      if (handlerModule === undefined) {
+        handlerModule = await importBundle(bundle);
+        bundle = null;
+      }
       const result = await runMcpBundle(
         handlerModule,
         payload,
@@ -103,9 +113,9 @@ async function runRequestLoop() {
       clearTimeout(timeout);
       emitTerminal({ t: "error", error: errorMessage(error) }, cpuBaseline, 1);
     }
-    // A timed-out run has its frame on the wire and its exit pending in the
+    // A retiring run has its frame on the wire and its exit pending in the
     // flush callback; reading another line would race the exit.
-    if (settled === "exiting") return;
+    if (retiring) return;
   }
   process.exit(0);
 }
@@ -181,9 +191,12 @@ async function importBundle(source) {
 // keeps the process alive for the next request; a number retires it after the
 // frame is flushed, so a pipe write is never truncated and user code's
 // lingering handles cannot keep a failed child around.
+// `t` must stay the frame's first key: handler.mjs classifies terminal frames
+// by the `{"t":"final"` / `{"t":"error"` line prefix without parsing them.
 function emitTerminal(frame, cpuBaseline, exitCode) {
   if (settled) return;
-  settled = exitCode === null ? true : "exiting";
+  settled = true;
+  if (exitCode !== null) retiring = true;
   const cpu = process.cpuUsage(cpuBaseline);
   const stamped = { ...frame, cpuUsec: cpu.user + cpu.system };
   const line = `${JSON.stringify(stamped)}\n`;

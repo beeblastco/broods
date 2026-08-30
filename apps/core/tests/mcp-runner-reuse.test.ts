@@ -27,7 +27,6 @@ interface HostedResponse {
 interface RunnerEvent {
   accountId?: string;
   bundle: string;
-  reuse?: boolean;
   /** Pause after this invocation, for state that settles between calls. */
   waitMs?: number;
 }
@@ -69,7 +68,6 @@ async function invokeSequence(
       mode: "mcp",
       toolName: "server-under-test",
       ...(event.accountId !== undefined ? { accountId: event.accountId } : {}),
-      ...(event.reuse !== undefined ? { reuse: event.reuse } : {}),
       ...(event.waitMs !== undefined ? { waitMs: event.waitMs } : {}),
       expectedSha256: new Bun.CryptoHasher("sha256")
         .update(event.bundle)
@@ -95,7 +93,7 @@ async function invokeSequence(
         `  runs.push(stdout);`,
         `  if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));`,
         `}`,
-        `process.stdout.write(JSON.stringify({ runs }));`,
+        `process.stdout.write(JSON.stringify({ runs: runs }));`,
         `process.exit(0);`,
       ].join("\n"),
     );

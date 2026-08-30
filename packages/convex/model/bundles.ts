@@ -49,24 +49,24 @@ export async function storeMcpBundle(
 
     return existing.bundleStorageKey;
   }
-  if (input.bundleStorageId !== undefined) {
-    const storageId = input.bundleStorageId as Id<"_storage">;
-    try {
-      return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
-        accountId: accountId,
-        sha256: input.sha256,
-        storageId: storageId,
-      });
-    } finally {
-      await ctx.storage.delete(storageId);
-    }
+  // One courier path for both inputs: an inline bundle is stored into Convex
+  // storage first, a pre-uploaded one already lives there; either way the S3
+  // writer runs on a storage id and the blob is deleted pass or fail.
+  const storageId =
+    input.bundleStorageId !== undefined
+      ? (input.bundleStorageId as Id<"_storage">)
+      : await ctx.storage.store(
+          new Blob([input.bundle!], { type: BUNDLE_CONTENT_TYPE }),
+        );
+  try {
+    return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
+      accountId: accountId,
+      sha256: input.sha256,
+      storageId: storageId,
+    });
+  } finally {
+    await ctx.storage.delete(storageId);
   }
-
-  return await putBundle(ctx, internal.aws.bundles.putMcpBundle, {
-    accountId: accountId,
-    sha256: input.sha256,
-    bundle: input.bundle!,
-  });
 }
 
 // Couriers the bytes through Convex storage, runs the S3 writer action, and

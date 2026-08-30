@@ -116,7 +116,10 @@ export default {};
 // here and lets the server reject an oversized hook bundle with its own limit
 // named; MCP bundles get their own ceiling, and anything past the inline
 // threshold travels through an upload URL instead of the manifest body
-// (sync.ts), which Convex caps at ~20 MB.
+// (sync.ts), which Convex caps at ~20 MB. The MCP values mirror
+// MAX_MCP_BUNDLE_BYTES / MAX_INLINE_BUNDLE_BYTES in
+// packages/convex/model/mcp.ts — the published CLI cannot import the backend,
+// so change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
@@ -1887,7 +1890,7 @@ function isUnsafeBundlePath(path: string): boolean {
   );
 }
 
-function sha256Hex(value: string | Buffer): string {
+export function sha256Hex(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 

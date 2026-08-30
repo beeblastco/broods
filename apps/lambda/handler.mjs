@@ -36,10 +36,13 @@ const DEFAULT_MAX_CHILD_CALLS = 64;
 const DEFAULT_CHILD_IDLE_SECONDS = 300;
 
 // Terminal frames are the only lines child-runner.mjs itself writes, and it
-// writes them with `t` first; matching the line prefix is what lets the
-// handler spot the end of a run without parsing a multi-megabyte frame.
-const TERMINAL_PREFIXES = ['{"t":"final"', '{"t":"error"'];
-const TERMINAL_PREFIX_BYTES = 12;
+// writes them with `t` first (its emitTerminal pins that key order); matching
+// the line prefix is what lets the handler spot the end of a run without
+// parsing a multi-megabyte frame. Buffers, not strings: the scan runs per
+// stdout line and a byte compare allocates nothing.
+const FINAL_PREFIX = Buffer.from('{"t":"final"', "latin1");
+const ERROR_PREFIX = Buffer.from('{"t":"error"', "latin1");
+const TERMINAL_PREFIX_BYTES = FINAL_PREFIX.length;
 
 // The one warm child this execution environment may hold. Lambda serializes
 // invocations per environment, so a single slot is the whole pool.
@@ -61,10 +64,11 @@ export const handler = streamifyResponse(async (event, responseStream) => {
     return;
   }
   const home = mkdtempSync(join(tmpdir(), "broods-mcp-"));
+  let state = null;
   try {
     const key = reuseKey(event);
-    let state = key !== null && matchesWarm(key) ? warm : null;
-    if (warm && !state) retireWarm();
+    state = matchesWarm(key) ? warm : null;
+    if (warm && !state) retire(warm);
     if (!state) {
       // Started before the spawn so the S3 round trip overlaps Node's startup,
       // and done here rather than in the child because this process is warm
@@ -72,20 +76,18 @@ export const handler = streamifyResponse(async (event, responseStream) => {
       // pay a TLS handshake every call.
       const bundle = readBundleSource(event);
       bundle.catch(() => {});
-      state = spawnChild(home, bundle);
+      state = spawnChild(key, home, bundle);
     }
     const keep = await runRequest(state, event, home, responseStream);
     if (keep && key !== null && state.dead !== true) {
-      state.key = key;
       state.callsServed += 1;
       state.lastUsedAt = Date.now();
       warm = state;
     } else {
-      warm = state;
-      retireWarm();
+      retire(state);
     }
   } catch (error) {
-    retireWarm();
+    if (state) retire(state);
     endWithError(
       responseStream,
       error instanceof Error ? error.message : String(error),
@@ -195,11 +197,13 @@ async function runRequest(state, event, home, responseStream) {
           linePrefixLen += copied;
         }
         if (newline === -1) break;
-        const prefix = linePrefix.toString("latin1", 0, linePrefixLen);
+        const complete = linePrefixLen === TERMINAL_PREFIX_BYTES;
+        const isFinal = complete && linePrefix.equals(FINAL_PREFIX);
+        const isError = complete && linePrefix.equals(ERROR_PREFIX);
         linePrefixLen = 0;
         index = newline + 1;
-        if (TERMINAL_PREFIXES.includes(prefix)) {
-          terminal = prefix;
+        if (isFinal || isError) {
+          terminal = isFinal ? "final" : "error";
           cut = index;
           break;
         }
@@ -215,7 +219,7 @@ async function runRequest(state, event, home, responseStream) {
       // stream; the child's own stdout pipe then applies the backpressure.
       const flushed = responseStream.write(forwarded);
       if (terminal !== null) {
-        finish(undefined, terminal === TERMINAL_PREFIXES[0]);
+        finish(undefined, terminal === "final");
 
         return;
       }
@@ -269,14 +273,16 @@ async function runRequest(state, event, home, responseStream) {
 // killGroup can reap the grandchildren too when the child retires; a survivor
 // would outlive its tenant's turn in the warm sandbox. The fourth pipe carries
 // the bundle bytes; see child-runner.mjs BUNDLE_FD.
-function spawnChild(home, bundle) {
+function spawnChild(key, home, bundle) {
   const child = spawn(process.execPath, [childRunnerPath()], {
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     env: scrubbedEnv(home),
     detached: true,
   });
+  // `key` is fixed for the child's lifetime: matchesWarm rejects any other key
+  // before a live child is ever handed a call. null means one-shot, never kept.
   const state = {
-    key: null,
+    key: key,
     child: child,
     bundle: bundle,
     bundleStream: child.stdio[3],
@@ -379,12 +385,18 @@ function positiveEnvInt(name, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
+// Dispose one child: clear the warm slot if it holds it, and SIGKILL its
+// whole group so nothing it spawned survives it.
+function retire(state) {
+  if (warm === state) warm = null;
+  killGroup(state.child);
+}
+
 // Reuse needs the tenant identity in the key: without accountId the call runs
-// in a one-shot child exactly as before. `reuse: false` is the per-call
-// opt-out; MCP_CHILD_REUSE=0 turns the whole environment off.
+// in a one-shot child exactly as before. MCP_CHILD_REUSE=0 turns the whole
+// environment off.
 function reuseKey(event) {
   if (process.env.MCP_CHILD_REUSE === "0") return null;
-  if (event.reuse === false) return null;
   if (
     typeof event.accountId !== "string" ||
     typeof event.expectedSha256 !== "string"
@@ -393,13 +405,6 @@ function reuseKey(event) {
   }
 
   return `${event.accountId}:${event.expectedSha256}`;
-}
-
-function retireWarm() {
-  if (!warm) return;
-  const retired = warm;
-  warm = null;
-  killGroup(retired.child);
 }
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code
