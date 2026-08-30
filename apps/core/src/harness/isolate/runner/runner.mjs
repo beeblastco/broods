@@ -1,5 +1,5 @@
 /**
- * Node-only isolated-vm runner for uploaded account tools.
+ * Node-only isolated-vm runner for uploaded account code (hooks).
  * Core spawns this file because Bun runs on JavaScriptCore and cannot load the
  * V8-native isolated-vm addon.
  */

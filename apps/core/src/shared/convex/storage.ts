@@ -8,7 +8,6 @@
 
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { AccountToolRecord } from "../domain/account-tools.ts";
 import type { McpRecord } from "../domain/mcp.ts";
 import {
   createAccountId,
@@ -635,48 +634,6 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
   },
 };
 
-interface ConvexAccountToolDoc {
-  _id: string;
-  accountId: string;
-  name: string;
-  description: string;
-  inputSchema: AccountToolRecord["inputSchema"];
-  bundleStorageKey: string;
-  sha256: string;
-  runtime?: "isolate" | "sandbox";
-  defaultConfig?: Record<string, unknown>;
-  status: "active" | "deleted";
-  createdAt: number;
-  updatedAt: number;
-  deletedAt?: number;
-}
-
-function accountToolFromConvex(
-  doc: ConvexAccountToolDoc | null,
-): AccountToolRecord | null {
-  if (!doc) return null;
-
-  return {
-    accountId: doc.accountId,
-    toolId: doc._id,
-    name: doc.name,
-    description: doc.description,
-    inputSchema: doc.inputSchema,
-    bundleStorageKey: doc.bundleStorageKey,
-    sha256: doc.sha256,
-    runtime: doc.runtime === "isolate" ? "isolate" : "sandbox",
-    ...(doc.defaultConfig !== undefined
-      ? { defaultConfig: doc.defaultConfig }
-      : {}),
-    status: doc.status,
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.deletedAt
-      ? { deletedAt: new Date(doc.deletedAt).toISOString() }
-      : {}),
-  };
-}
-
 interface ConvexMcpDoc {
   _id: string;
   accountId: string;
@@ -802,30 +759,6 @@ const agentPolicies: Storage["agentPolicies"] = {
   },
 };
 
-const accountTools: Storage["accountTools"] = {
-  getById: async function (accountId, toolId) {
-    const doc = await getConvexClient().query(internal.account.tools.getById, {
-      accountId: accountId as any,
-      toolId: toolId as any,
-    });
-
-    return accountToolFromConvex(doc as ConvexAccountToolDoc | null);
-  },
-  removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.account.tools.list, {
-      accountId: accountId as any,
-    })) as ConvexAccountToolDoc[];
-    await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.account.tools.remove, {
-        accountId: accountId as any,
-        toolId: doc._id as any,
-      }),
-    );
-
-    return docs.length;
-  },
-};
-
 const mcp: Storage["mcp"] = {
   getById: async function (accountId, serverId) {
     const doc = await getConvexClient().query(internal.account.mcp.getById, {
@@ -894,7 +827,6 @@ export const convexStorage: Storage = {
   sandboxConfigs: sandboxConfigs,
   workspaceConfigs: workspaceConfigs,
   agentPolicies: agentPolicies,
-  accountTools: accountTools,
   accountHooks: accountHooks,
   mcp: mcp,
   roleSessions: roleSessions,

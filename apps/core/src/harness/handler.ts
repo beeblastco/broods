@@ -52,7 +52,6 @@ import {
   getAsyncToolResult,
   getDetachedAsyncToolGroup,
   listAsyncToolResultsByParentEvent,
-  sealDetachedAsyncToolGroup,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
   type AsyncToolDelivery,
@@ -143,7 +142,6 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   traceId?: string;
   approvals: ToolApprovalSummary[];
-  hasDetachedCallbacks: boolean;
 }
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -893,13 +891,7 @@ async function handleAsyncWorkerRequest(
         error: result.failureText ?? AGENT_PROCESSING_FAILED,
       });
     }
-    if (result.hasDetachedCallbacks) {
-      await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-      await session.settleIngress("completed", {
-        result: { status: "waiting_for_async_tools" },
-      });
-      transferred = await dispatchNextIngress(session, event);
-    } else if (terminalSettled) {
+    if (terminalSettled) {
       transferred = await dispatchNextIngress(session, event);
     }
   } catch (err) {
@@ -1056,10 +1048,7 @@ async function handleNatsWorkerRequest(
         await session.settleIngress("failed", {
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-      } else if (
-        result.approvals.length === 0 &&
-        !asyncToolCoordinator.hasDetachedCallbacks
-      ) {
+      } else if (result.approvals.length === 0) {
         await session.settleIngress(
           "completed",
           result.finalResponse !== undefined
@@ -1068,29 +1057,16 @@ async function handleNatsWorkerRequest(
         );
       }
 
-      if (asyncToolCoordinator.hasDetachedCallbacks) {
-        await sealDetachedAsyncToolGroup(event.eventId);
-        await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
+      if (result.approvals.length > 0) {
         await session.settleIngress("completed", {
-          result: { status: "waiting_for_async_tools" },
+          result: {
+            status: "awaiting_approval",
+            approvals: result.approvals,
+          },
         });
-        await fencedPublisher.publish({
-          type: "waiting",
-          reason: "detached-async-tools",
-        });
-        transferred = await dispatchNextIngress(session, event);
-      } else {
-        if (result.approvals.length > 0) {
-          await session.settleIngress("completed", {
-            result: {
-              status: "awaiting_approval",
-              approvals: result.approvals,
-            },
-          });
-        }
-        await fencedPublisher.publish({ type: "done" });
-        transferred = await dispatchNextIngress(session, event);
       }
+      await fencedPublisher.publish({ type: "done" });
+      transferred = await dispatchNextIngress(session, event);
       // Release here, not in the finally: the crash path must settle the
       // envelope first, and settling requires still holding the lease.
       if (!transferred) {
@@ -1366,10 +1342,6 @@ async function handleChannelRequest(
               "completed",
               finalResult !== undefined ? { result: finalResult } : {},
             );
-          } else if (result.hasDetachedCallbacks) {
-            await session.settleIngress("completed", {
-              result: { status: "waiting_for_async_tools" },
-            });
           }
         }
       } catch (err) {
@@ -2113,71 +2085,6 @@ export async function drainInProcessWorkers(): Promise<void> {
   }
 }
 
-async function continueDetachedAsyncToolsIfReady(
-  event: DirectInboundEvent,
-  agentConfig: DirectInboundEvent["agentConfig"],
-): Promise<boolean> {
-  const dispatchGroup = await getDetachedAsyncToolGroup(event.eventId);
-  if (!dispatchGroup?.sealed) {
-    return false;
-  }
-
-  const toolResults = (
-    await Promise.all(
-      dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId)),
-    )
-  ).filter(
-    (result): result is AsyncToolResultRecord =>
-      result?.parentEventId === event.eventId,
-  );
-  if (
-    toolResults.length !== dispatchGroup.resultIds.length ||
-    toolResults.some((result) => result.status === "processing")
-  ) {
-    return false;
-  }
-
-  // Every result the model already saw via async_status is dropped here; if that
-  // leaves nothing, there is no continuation to run (avoids a duplicate answer).
-  const events = settledToolResultsToParentMessages(toolResults);
-  if (events.length === 0) {
-    return false;
-  }
-
-  const continuationEvent = {
-    ...event,
-    agentConfig: agentConfig,
-    eventId: asyncToolContinuationEventId(event.eventId),
-    ownerGeneration: undefined,
-    requestedMode: "followup",
-    idempotencyKey: asyncToolContinuationEventId(event.eventId),
-    ...(event.connectionId
-      ? {}
-      : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
-    events: events,
-  } satisfies DirectInboundEvent;
-
-  const ownedContinuation = await admitInternalContinuation(
-    continuationEvent,
-    continuationDelivery(continuationEvent),
-  );
-  if (!ownedContinuation) {
-    return false;
-  }
-  await createPendingAsyncAgentResult({
-    eventId: ownedContinuation.eventId,
-    conversationKey: ownedContinuation.conversationKey,
-  });
-
-  if (ownedContinuation.connectionId) {
-    await invokeNatsWorker(ownedContinuation);
-  } else {
-    await invokeAsyncWorker(ownedContinuation);
-  }
-
-  return true;
-}
-
 function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
@@ -2464,10 +2371,7 @@ function createDirectContinuationSseBody(
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
             transferred = await dispatchNextIngress(session, event);
-          } else if (
-            result.approvals.length === 0 &&
-            !result.hasDetachedCallbacks
-          ) {
+          } else if (result.approvals.length === 0) {
             await session.settleIngress(
               "completed",
               result.finalResponse !== undefined
@@ -2475,18 +2379,12 @@ function createDirectContinuationSseBody(
                 : {},
             );
             transferred = await dispatchNextIngress(session, event);
-          } else if (result.approvals.length > 0) {
+          } else {
             await session.settleIngress("completed", {
               result: {
                 status: "awaiting_approval",
                 approvals: result.approvals,
               },
-            });
-            transferred = await dispatchNextIngress(session, event);
-          } else if (result.hasDetachedCallbacks) {
-            await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
-            await session.settleIngress("completed", {
-              result: { status: "waiting_for_async_tools" },
             });
             transferred = await dispatchNextIngress(session, event);
           }
@@ -2538,7 +2436,6 @@ async function runAgentLoopUntilSubagentsIdle(
 ): Promise<{
   didFail: boolean;
   failureText: string | null;
-  hasDetachedCallbacks: boolean;
   traceId?: string;
 }> {
   const subagentCoordinator = new SubagentCoordinator(
@@ -2565,18 +2462,12 @@ async function runAgentLoopUntilSubagentsIdle(
         await stream.consumeStream();
       }),
   });
-  const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
-  if (hasDetachedCallbacks) {
-    await sealDetachedAsyncToolGroup(session.eventId);
-  }
-
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
 
     return {
       didFail: false,
       failureText: null,
-      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2590,16 +2481,6 @@ async function runAgentLoopUntilSubagentsIdle(
     return {
       didFail: true,
       failureText: result.failureText,
-      hasDetachedCallbacks: hasDetachedCallbacks,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-    };
-  }
-
-  if (hasDetachedCallbacks) {
-    return {
-      didFail: false,
-      failureText: null,
-      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2611,7 +2492,6 @@ async function runAgentLoopUntilSubagentsIdle(
   return {
     didFail: false,
     failureText: null,
-    hasDetachedCallbacks: hasDetachedCallbacks,
     ...(result.traceId ? { traceId: result.traceId } : {}),
   };
 }
@@ -2691,7 +2571,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
     if (stream.didFail()) {
@@ -2716,7 +2595,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -2737,7 +2615,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
 
@@ -2751,7 +2628,6 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
-        hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
   }

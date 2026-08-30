@@ -13,10 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
-import {
-  FrameQueue,
-  parseToolRunnerFrame,
-} from "../src/harness/bundles/payload.ts";
+import { FrameQueue, parseToolRunnerFrame } from "../src/harness/frames.ts";
 import { isolateLogRecord } from "../src/harness/isolate/executor.ts";
 import {
   runWithObservabilityScope,

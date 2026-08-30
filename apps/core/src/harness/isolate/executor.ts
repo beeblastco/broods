@@ -1,7 +1,7 @@
 /**
- * Node-hosted V8 isolate execution for account-uploaded user code (custom tools
- * and hooks). Bun cannot load isolated-vm, so core spawns a Node runner
- * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../bundles/payload.ts.
+ * Node-hosted V8 isolate execution for account-uploaded user code (hooks).
+ * Bun cannot load isolated-vm, so core spawns a Node runner
+ * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../frames.ts.
  *
  * Two paths share this file. The default is a pool of long-lived hardened
  * workers keeping a tenant-keyed warm isolate cache (Convex-Funrun style) —
@@ -15,34 +15,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { optionalEnv, positiveIntegerEnv } from "../../shared/env.ts";
 import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
-import {
-  FrameQueue,
-  abortSignalFromOptions,
-  createRunnerPayload,
-  experimentalContextFromOptions,
-  messagesFromOptions,
-  toolBundlesBucket,
-  toolCallIdFromOptions,
-  type ExecuteAccountToolOptions,
-} from "../bundles/payload.ts";
+import { FrameQueue } from "../frames.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
-export async function* streamAccountToolInIsolate(
-  options: ExecuteAccountToolOptions,
-): AsyncGenerator<unknown, void, void> {
-  const runPayload = await buildRunPayload(options);
-  yield* streamIsolatePayload(options.accountId, runPayload, {
-    abortSignal: abortSignalFromOptions(options.options),
-  });
-}
-
 /**
- * Run a pre-built runner payload (tool or hook) in the isolate, tenant-scoped by
- * accountId, and stream its frames. Tool bundles run execute(ctx, input); hook
- * bundles (payload.hookEvent set) run the matching event handler. Used by the
- * custom-tool path above and by harness/hook-runner.ts.
+ * Run a pre-built runner payload in the isolate, tenant-scoped by accountId,
+ * and stream its frames. Hook bundles (payload.hookEvent set) run the matching
+ * event handler. Used by harness/hook-runner.ts.
  */
 export async function* streamIsolatePayload(
   accountId: string | undefined,
@@ -71,26 +52,6 @@ function runnerTimeoutMs(): number {
       DEFAULT_TIMEOUT_SECONDS,
     ) * 1000
   );
-}
-
-async function buildRunPayload({
-  tool,
-  input,
-  config,
-  options,
-}: ExecuteAccountToolOptions): Promise<Record<string, unknown>> {
-  const payload = await createRunnerPayload({
-    bucket: toolBundlesBucket(),
-    tool: tool,
-    input: input,
-    config: config,
-    toolCallId: toolCallIdFromOptions(options),
-    messages: messagesFromOptions(options),
-    experimentalContext: experimentalContextFromOptions(options),
-    bundleTransport: "inline",
-  });
-
-  return { ...payload };
 }
 
 // Bridges the AI SDK abortSignal into the runner process: SIGUSR2 trips the
@@ -145,7 +106,7 @@ async function* streamViaOneShot(
       queue.push(
         JSON.stringify({
           t: "error",
-          error: "custom tool isolate execution timed out",
+          error: "isolate execution timed out",
         }) + "\n",
       );
       queue.close();
@@ -169,7 +130,7 @@ async function* streamViaOneShot(
         queue.push(
           JSON.stringify({
             t: "error",
-            error: "custom tool isolate output exceeded limit",
+            error: "isolate output exceeded limit",
           }) + "\n",
         );
         queue.close();
@@ -227,7 +188,7 @@ async function* streamViaOneShot(
       // send must not read as a failed call with no error to explain it.
       if (frame.t !== "error") continue;
 
-      throw new Error(frame.error || "custom tool isolate execution failed");
+      throw new Error(frame.error || "isolate execution failed");
     }
 
     const exit = await exited;
@@ -237,9 +198,7 @@ async function* streamViaOneShot(
         (exit.signal
           ? `signal ${exit.signal}`
           : `exit ${exit.code ?? "unknown"}`);
-      throw new Error(
-        `custom tool isolate runner did not return a result: ${detail}`,
-      );
+      throw new Error(`isolate runner did not return a result: ${detail}`);
     }
   } finally {
     detachAbort?.();
@@ -370,9 +329,7 @@ class IsolateWorker {
     this.child.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
-    this.child.once("exit", () =>
-      die(new Error("custom tool isolate worker exited")),
-    );
+    this.child.once("exit", () => die(new Error("isolate worker exited")));
     this.child.stdin.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
@@ -382,7 +339,7 @@ class IsolateWorker {
     this.#stdoutBytes += Buffer.byteLength(chunk);
     if (this.#stdoutBytes > RUNNER_OUTPUT_LIMIT_BYTES) {
       this.kill();
-      this.#sink?.fail(new Error("custom tool isolate output exceeded limit"));
+      this.#sink?.fail(new Error("isolate output exceeded limit"));
 
       return;
     }
@@ -609,7 +566,7 @@ async function* streamViaPool(
       }
       if (frame.t === "error") {
         terminalReceived = true;
-        throw new Error(frame.error || "custom tool isolate execution failed");
+        throw new Error(frame.error || "isolate execution failed");
       }
     }
   } finally {

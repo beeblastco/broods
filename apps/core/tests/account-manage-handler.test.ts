@@ -529,12 +529,6 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       },
       ...(overrides.workspaceConfigs as Record<string, unknown> | undefined),
     },
-    accountTools: {
-      removeAllForAccount: async function () {
-        return 0;
-      },
-      ...(overrides.accountTools as Record<string, unknown> | undefined),
-    },
     channelRecords: {
       removeAllForAccount: async function () {
         return 0;
@@ -592,9 +586,8 @@ function successfulDeletionResponse() {
       reservedSandboxesReleased: 0,
       agentsDeleted: 0,
       skillObjectsDeleted: 0,
-      toolBundleObjectsDeleted: 0,
+      bundleObjectsDeleted: 0,
       cronsDeleted: 0,
-      accountToolsDeleted: 0,
       accountHooksDeleted: 0,
       mcpDeleted: 0,
       channelRecordsDeleted: 0,

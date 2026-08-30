@@ -1,8 +1,8 @@
 /**
  * User code hook execution.
  * Loads an uploaded accountHooks bundle, runs the handler for a fired event in
- * the V8 isolate pool (same hardened runner as custom tools), and returns the
- * validated, field-scoped mutation the caller folds into harness state. Hooks
+ * the V8 isolate pool, and returns the validated, field-scoped mutation the
+ * caller folds into harness state. Hooks
  * are non-fatal: a throw/timeout logs and yields no mutation so the agent run is
  * never broken. Fire-point wiring lives in harness.ts / integrations.ts; this
  * file owns only "run one hook, sanitize its return".
@@ -15,7 +15,7 @@ import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
-import { toolBundlesBucket } from "./bundles/payload.ts";
+import { toolBundlesBucket } from "./frames.ts";
 
 // A hook's return is capped before it re-enters the harness so a runaway hook
 // cannot balloon the conversation or a channel payload.

@@ -4,7 +4,7 @@
  */
 
 import type { JSONValue, ToolSet, UserModelMessage } from "ai";
-import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
+import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
   markAsyncToolResultCompleted,
@@ -51,8 +51,8 @@ interface AsyncToolCall extends AsyncToolPendingMetadata {
 
 type ToolEntry = ToolSet[string];
 
-export type AsyncToolSource = "built-in" | "uploaded";
-export type AsyncToolModeMap = Map<string, AsyncToolSource>;
+/** Model-facing names of tools configured `async: true`. */
+export type AsyncToolModeMap = Set<string>;
 export type RunAsyncToolDispatch = (
   tools: ToolSet,
   asyncToolModes: AsyncToolModeMap,
@@ -66,7 +66,6 @@ export class AsyncToolCoordinator {
     AsyncToolPendingMetadata
   >();
   private readonly waiters = new Set<() => void>();
-  private detachedCallbackCount = 0;
 
   constructor(
     private readonly parentSession: Session,
@@ -84,23 +83,15 @@ export class AsyncToolCoordinator {
     }
 
     return Object.fromEntries(
-      Object.entries(tools).map(([toolName, entry]) => {
-        const source = asyncToolModes.get(toolName);
-
-        return [
-          toolName,
-          source ? this.wrapTool(toolName, entry, source) : entry,
-        ];
-      }),
+      Object.entries(tools).map(([toolName, entry]) => [
+        toolName,
+        asyncToolModes.has(toolName) ? this.wrapTool(toolName, entry) : entry,
+      ]),
     );
   };
 
   get pendingCount(): number {
     return this.pending.size;
-  }
-
-  get hasDetachedCallbacks(): boolean {
-    return this.detachedCallbackCount > 0;
   }
 
   async waitForIdle(
@@ -181,11 +172,7 @@ export class AsyncToolCoordinator {
     return batch.length;
   }
 
-  private wrapTool(
-    toolName: string,
-    entry: ToolEntry,
-    source: AsyncToolSource,
-  ): ToolEntry {
+  private wrapTool(toolName: string, entry: ToolEntry): ToolEntry {
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
         toolName: toolName,
@@ -197,8 +184,6 @@ export class AsyncToolCoordinator {
     }
 
     const originalExecute = entry.execute.bind(entry) as ToolExecute;
-    const detachedCallback =
-      source === "uploaded" && this.delivery !== undefined;
     const wrapped = {
       ...entry,
       outputSchema: undefined,
@@ -211,9 +196,6 @@ export class AsyncToolCoordinator {
         options: Parameters<ToolExecute>[1],
       ): Promise<AsyncToolPendingResult> => {
         const resultId = `async_tool_${crypto.randomUUID()}`;
-        const completionToken = detachedCallback
-          ? crypto.randomUUID()
-          : undefined;
         await createPendingAsyncToolResult({
           resultId: resultId,
           parentEventId: this.parentSession.eventId,
@@ -221,37 +203,19 @@ export class AsyncToolCoordinator {
           toolName: toolName,
           toolCallId: options.toolCallId,
           input: input,
-          ...(detachedCallback && this.delivery
-            ? { delivery: this.delivery }
-            : {}),
-          ...(completionToken ? { completionToken: completionToken } : {}),
         });
         const executeOptions = withAsyncToolMetadata(options, {
           resultId: resultId,
           parentEventId: this.parentSession.eventId,
           conversationKey: this.parentSession.conversationKey,
-          ...(detachedCallback ? { detached: true } : {}),
-          ...(completionToken ? { completionToken: completionToken } : {}),
         });
-
-        if (detachedCallback) {
-          this.detachedCallbackCount++;
-          await this.dispatchDetachedToolCall({
-            resultId: resultId,
-            toolName: toolName,
-            toolCallId: options.toolCallId,
-            input: input,
-            execute: () => originalExecute(input, executeOptions),
-          });
-        } else {
-          this.startToolCall({
-            resultId: resultId,
-            toolName: toolName,
-            toolCallId: options.toolCallId,
-            input: input,
-            execute: () => originalExecute(input, executeOptions),
-          });
-        }
+        this.startToolCall({
+          resultId: resultId,
+          toolName: toolName,
+          toolCallId: options.toolCallId,
+          input: input,
+          execute: () => originalExecute(input, executeOptions),
+        });
 
         return { resultId: resultId, status: "running" };
       },
@@ -283,40 +247,6 @@ export class AsyncToolCoordinator {
       toolName: options.toolName,
       input: options.input,
     });
-  }
-
-  private async dispatchDetachedToolCall(
-    options: AsyncToolCall,
-  ): Promise<void> {
-    logInfo("Detached async tool started", {
-      parentEventId: this.parentSession.eventId,
-      resultId: options.resultId,
-      toolName: options.toolName,
-      toolCallId: options.toolCallId,
-    });
-
-    try {
-      await resolveToolOutput(options.execute());
-      logDebug("Detached async tool launch completed", {
-        parentEventId: this.parentSession.eventId,
-        resultId: options.resultId,
-        toolName: options.toolName,
-        toolCallId: options.toolCallId,
-      });
-    } catch (error) {
-      await markAsyncToolResultFailed({
-        resultId: options.resultId,
-        error: error instanceof Error ? error.message : String(error),
-      }).catch((markError) => {
-        logError("Failed to mark detached async tool failed", {
-          resultId: options.resultId,
-          toolName: options.toolName,
-          error:
-            markError instanceof Error ? markError.message : String(markError),
-        });
-      });
-      throw error;
-    }
   }
 
   private async runToolCall(options: AsyncToolCall): Promise<void> {
@@ -501,8 +431,6 @@ function withAsyncToolMetadata(
     resultId: string;
     parentEventId: string;
     conversationKey: string;
-    detached?: boolean;
-    completionToken?: string;
   },
 ): Parameters<ToolExecute>[1] {
   return {
@@ -511,14 +439,7 @@ function withAsyncToolMetadata(
       resultId: metadata.resultId,
       parentEventId: metadata.parentEventId,
       conversationKey: metadata.conversationKey,
-      completePath:
-        metadata.detached === true
-          ? `/sandbox-jobs/${encodeURIComponent(metadata.resultId)}/complete`
-          : `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
-      ...(metadata.detached === true ? { detached: true } : {}),
-      ...(metadata.completionToken
-        ? { completionToken: metadata.completionToken }
-        : {}),
+      completePath: `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
     },
   } as Parameters<ToolExecute>[1];
 }
