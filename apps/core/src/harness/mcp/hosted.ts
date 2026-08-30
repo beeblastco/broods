@@ -32,6 +32,15 @@ export interface HostedMcpResponse {
   body: string;
 }
 
+/** mcp-mode invoke payload; the Lambda handler dispatches on `mode`. */
+export interface McpHostPayload {
+  mode: "mcp";
+  toolName: string;
+  expectedSha256: string;
+  bundleUrl: string;
+  mcpRequest: HostedMcpRequest;
+}
+
 type HostedMcpInvoke = (
   record: McpRecord,
   request: HostedMcpRequest,
@@ -115,7 +124,7 @@ async function invokeLambda(
       `hosted MCP server ${record.name} is missing its uploaded bundle`,
     );
   }
-  const payload = {
+  const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
     expectedSha256: record.sha256,

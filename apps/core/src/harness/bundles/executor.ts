@@ -11,6 +11,7 @@ import {
   LambdaClient,
 } from "@aws-sdk/client-lambda";
 import { requireEnv } from "../../shared/env.ts";
+import type { McpHostPayload } from "../mcp/hosted.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { emitIsolateLog } from "../isolate/executor.ts";
 import {
@@ -22,6 +23,7 @@ import {
   toolBundlesBucket,
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
+  type RunnerPayload,
 } from "./payload.ts";
 
 interface DetachedAsyncToolMetadata {
@@ -154,11 +156,10 @@ export function defaultClient(): LambdaClient {
 // Invoke the runner Lambda and push its raw NDJSON payload chunks into the queue
 // as they arrive. Surfaces a Lambda-side failure (InvokeComplete.ErrorCode) as a
 // thrown error; tool-side failures arrive as an `error` frame instead. The
-// payload is serialized verbatim: its shape is owned by the caller (tool runs
-// send a RunnerPayload, the hosted MCP transport its mcp-mode payload).
+// payload is serialized verbatim.
 export async function drainInvokeStream(
   client: LambdaClient,
-  payload: object,
+  payload: RunnerPayload | McpHostPayload,
   abortSignal: AbortSignal | undefined,
   queue: FrameQueue,
 ): Promise<void> {

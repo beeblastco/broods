@@ -12,8 +12,8 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
-import { normalizeMcpInput, type McpInput } from "../../model/mcp";
-import { putMcpBundle } from "../../model/bundles";
+import { normalizeMcpInput } from "../../model/mcp";
+import { storeMcpBundle } from "../../model/bundles";
 import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
@@ -245,31 +245,6 @@ async function resolveMcpScope(
     projectId: scope.projectId,
     stageId: scope.stageId,
   };
-}
-
-/**
- * Upload a hosted server bundle when the input carries one. The storage key
- * is content-addressed, so an unchanged bundle reuses the row's existing key
- * instead of re-writing identical bytes through storage and S3.
- */
-async function storeMcpBundle(
-  ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  input: McpInput,
-  existing: Doc<"mcp"> | null,
-): Promise<string | undefined> {
-  if (input.bundle === undefined || input.sha256 === undefined) {
-    return undefined;
-  }
-  if (existing?.sha256 === input.sha256 && existing.bundleStorageKey) {
-    return existing.bundleStorageKey;
-  }
-
-  return await putMcpBundle(ctx, {
-    accountId: accountId,
-    sha256: input.sha256,
-    bundle: input.bundle,
-  });
 }
 
 /** Map an mcp document to its public API shape. */

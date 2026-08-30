@@ -39,7 +39,6 @@ export interface McpConnection {
   headers: Record<string, string>;
 }
 
-/** A cached version probe, expiring at the discover result's own ttlMs. */
 interface CachedDiscover {
   discover: DiscoverResult;
   expiresAt: number;
@@ -197,8 +196,6 @@ async function connectClient(
   connection: McpConnection,
   key: string,
 ): Promise<Client> {
-  // A hosted row has no external endpoint: the same stateless transport runs,
-  // but every request routes through the Lambda host instead of the network.
   const hosted = connection.record.transport === "hosted";
   if (!hosted && !connection.record.url) {
     throw new Error(
@@ -226,9 +223,9 @@ async function connectClient(
     return client;
   };
   const cached = discoverCache.get(key);
-  if (cached && cached.expiresAt <= Date.now()) discoverCache.delete(key);
-  const prior =
-    cached && cached.expiresAt > Date.now() ? cached.discover : undefined;
+  const fresh = cached !== undefined && cached.expiresAt > Date.now();
+  if (cached && !fresh) discoverCache.delete(key);
+  const prior = fresh ? cached.discover : undefined;
   let client: Client;
   try {
     client = await makeClient(prior);

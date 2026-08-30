@@ -46,7 +46,7 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../mcp/client.ts";
-import { mcpServerTools, mcpToolName } from "../mcp/mcp.tool.ts";
+import { mcpServerTools } from "../mcp/mcp.tool.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
@@ -520,8 +520,15 @@ async function registerMcpTools(
   );
   for (const server of resolved) {
     if (server === null) continue;
-    for (const remote of server.remoteTools) {
-      const name = mcpToolName(server.record.name, remote.name);
+    const serverTools = mcpServerTools(server.connection, server.remoteTools);
+    // Sanitized names collapsing within one server surface here too: the map
+    // then has fewer keys than the listing had tools.
+    if (Object.keys(serverTools).length !== server.remoteTools.length) {
+      throw new Error(
+        `config.mcpServers.${server.serverId} has remote tools whose sanitized model-facing names collide`,
+      );
+    }
+    for (const name of Object.keys(serverTools)) {
       if (tools[name]) {
         throw new Error(
           `config.mcpServers.${server.serverId} model-facing name '${name}' conflicts with another tool`,
@@ -531,7 +538,7 @@ async function registerMcpTools(
         context.approvalRequirements?.set(name, true);
       context.policyMcpIdsByName?.set(name, server.serverId);
     }
-    Object.assign(tools, mcpServerTools(server.connection, server.remoteTools));
+    Object.assign(tools, serverTools);
   }
 }
 

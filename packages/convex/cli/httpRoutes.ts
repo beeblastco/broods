@@ -12,8 +12,8 @@ import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeAccountToolUpload } from "../model/accountTools";
 import { normalizeMcpInput } from "../model/mcp";
-import { putHookBundle, putMcpBundle, putToolBundle } from "../model/bundles";
-import { remapKeys, stripUndefined } from "../model/objects";
+import { putHookBundle, putToolBundle, storeMcpBundle } from "../model/bundles";
+import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -782,18 +782,12 @@ async function syncMcpResources(
       { requireConnection: true },
     );
     const current = existing.get(resource.name);
-    // A hosted server re-uploads only when its bundle content changed.
-    let bundleStorageKey: string | undefined;
-    if (input.bundle !== undefined && input.sha256 !== undefined) {
-      bundleStorageKey =
-        current !== undefined && current.sha256 === input.sha256
-          ? current.bundleStorageKey
-          : await putMcpBundle(ctx, {
-              accountId: accountId,
-              sha256: input.sha256,
-              bundle: input.bundle,
-            });
-    }
+    const bundleStorageKey = await storeMcpBundle(
+      ctx,
+      accountId,
+      input,
+      current ?? null,
+    );
     const patch = {
       name: input.name!,
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
@@ -810,11 +804,19 @@ async function syncMcpResources(
         : {}),
     };
     if (current) {
-      await ctx.runMutation(internal.account.mcp.update, {
-        accountId: accountId,
-        serverId: current._id,
-        ...patch,
-      });
+      // An identical patch is skipped: a write would bump updatedAt, which is
+      // core's MCP cache identity, and re-probe every server on the next run.
+      const row = current as unknown as Record<string, unknown>;
+      const unchanged = Object.entries(patch).every(
+        ([key, value]) => stableJson(value) === stableJson(row[key]),
+      );
+      if (!unchanged) {
+        await ctx.runMutation(internal.account.mcp.update, {
+          accountId: accountId,
+          serverId: current._id,
+          ...patch,
+        });
+      }
       ids[resource.name] = current._id;
     } else {
       const serverId = await ctx.runMutation(internal.account.mcp.create, {
@@ -840,6 +842,7 @@ async function syncMcpResources(
 
   return ids;
 }
+
 /**
  * Stores CLI-bundled skill files in Convex storage and mirrors them into workspaceFiles.
  */
