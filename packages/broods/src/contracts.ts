@@ -87,6 +87,7 @@ export type CliResourceKind =
   | "cron"
   | "skill"
   | "tool"
+  | "mcp"
   | "policy"
   | "channelRecord";
 

@@ -266,6 +266,44 @@ export interface UpdateToolInput {
   defaultConfig?: unknown;
 }
 
+/** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
+export interface AccountMcpServer {
+  accountId: string;
+  serverId: string;
+  projectId: string;
+  stageId: string;
+  name: string;
+  description?: string;
+  transport: "http";
+  url: string;
+  headers?: Record<string, string>;
+  allowedTools?: string[];
+  disabled: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
+/** Fields accepted by `POST /v1/mcp`. */
+export interface CreateMcpServerInput {
+  name: string;
+  description?: string;
+  url: string;
+  headers?: Record<string, string>;
+  allowedTools?: string[];
+}
+
+/** Fields accepted by `PATCH /v1/mcp/{serverId}`; every field is optional. */
+export interface UpdateMcpServerInput {
+  name?: string;
+  description?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  allowedTools?: string[];
+  disabled?: boolean;
+}
+
 /**
  * Body of a skill upload (`POST /v1/skills`, `PUT /v1/skills/{skillName}`).
  * `json` needs `name`/`description`/`content`; `files` needs base64 `files`
@@ -901,6 +939,57 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/tools/${encodeURIComponent(toolId)}`,
+    );
+
+    return result?.deleted ?? false;
+  }
+
+  /** MCP servers are stage-scoped like tools; both scope fields are required. */
+  async listMcpServers(scope: ToolScope): Promise<AccountMcpServer[]> {
+    const path = `/v1/mcp${toolScopeQuery(scope)}`;
+    const result = await this.request<{ servers: AccountMcpServer[] }>(
+      "GET",
+      path,
+    );
+    if (!result) throw new BroodsAccountApiError("GET", path, 404, "Not found");
+
+    return result.servers ?? [];
+  }
+
+  async createMcpServer(
+    scope: ToolScope,
+    input: CreateMcpServerInput,
+  ): Promise<AccountMcpServer> {
+    const path = `/v1/mcp${toolScopeQuery(scope)}`;
+    const result = await this.request<AccountMcpServer>("POST", path, input);
+    if (!result)
+      throw new BroodsAccountApiError("POST", path, 404, "Not found");
+
+    return result;
+  }
+
+  async getMcpServer(serverId: string): Promise<AccountMcpServer | null> {
+    return await this.request<AccountMcpServer>(
+      "GET",
+      `/v1/mcp/${encodeURIComponent(serverId)}`,
+    );
+  }
+
+  async updateMcpServer(
+    serverId: string,
+    patch: UpdateMcpServerInput,
+  ): Promise<AccountMcpServer | null> {
+    return await this.request<AccountMcpServer>(
+      "PATCH",
+      `/v1/mcp/${encodeURIComponent(serverId)}`,
+      patch,
+    );
+  }
+
+  async deleteMcpServer(serverId: string): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/mcp/${encodeURIComponent(serverId)}`,
     );
 
     return result?.deleted ?? false;

@@ -1926,6 +1926,102 @@ paths:
       responses:
         "200": { description: Deleted }
 
+  /v1/mcp:
+    post:
+      tags: [MCP servers]
+      summary: Register external MCP server
+      description: >-
+        Register an external MCP server (spec 2026-07-28, stateless HTTP
+        transport). Core connects at agent registration time and offers the
+        server's tools as `<name>__<tool>`. A server belongs to one project
+        stage; the name is unique per stage because it namespaces the tools.
+        Credential-bearing headers (Authorization, X-Api-Key, ...) must
+        reference an account env var like `Bearer ${NAME}`; inline secrets and
+        URL userinfo are rejected.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: project, in: query, required: true, schema: { type: string } }
+        - { name: stage, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpServerCreate"
+      responses:
+        "201":
+          description: MCP server registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+        "400": { description: Missing project or stage, or invalid input }
+        "404": { description: Project or stage not found }
+    get:
+      tags: [MCP servers]
+      summary: List external MCP servers
+      description: Lists the MCP servers of one project stage. Both query parameters are required.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: project, in: query, required: true, schema: { type: string } }
+        - { name: stage, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: MCP server list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  servers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/McpServer"
+        "400": { description: Missing project or stage }
+        "404": { description: Project or stage not found }
+
+  /v1/mcp/{serverId}:
+    get:
+      tags: [MCP servers]
+      summary: Get external MCP server
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: serverId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: MCP server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+        "404": { description: Not found }
+    patch:
+      tags: [MCP servers]
+      summary: Update external MCP server
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: serverId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpServerUpdate"
+      responses:
+        "200":
+          description: Updated MCP server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+    delete:
+      tags: [MCP servers]
+      summary: Delete external MCP server
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: serverId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+
   /v1/policies:
     post:
       tags: [Policies]
@@ -3932,6 +4028,94 @@ components:
           enum: [isolate, sandbox]
         defaultConfig:
           type: object
+        status:
+          type: string
+          enum: [active, deleted]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        deletedAt:
+          type: string
+
+    McpServerCreate:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          description: >-
+            Namespace prefix for the server's tools (`name__tool`). 1-32
+            lowercase letters, digits or hyphens, starting with a letter.
+          example: search
+        description:
+          type: string
+        url:
+          type: string
+          description: The server's MCP endpoint. http(s) only, no embedded credentials.
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Extra request headers. Credential-bearing header values must
+            reference an account env var (`Bearer ${NAME}`).
+        allowedTools:
+          type: array
+          items:
+            type: string
+          description: Tool names agents may use from this server; omit to allow all.
+
+    McpServerUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        allowedTools:
+          type: array
+          items:
+            type: string
+        disabled:
+          type: boolean
+
+    McpServer:
+      type: object
+      properties:
+        accountId:
+          type: string
+        serverId:
+          type: string
+        projectId:
+          type: string
+        stageId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        transport:
+          type: string
+          enum: [http]
+        url:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        allowedTools:
+          type: array
+          items:
+            type: string
+        disabled:
+          type: boolean
         status:
           type: string
           enum: [active, deleted]

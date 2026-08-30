@@ -8,10 +8,12 @@ import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
+import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeAccountToolUpload } from "../model/accountTools";
+import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, putToolBundle } from "../model/bundles";
-import { stripUndefined } from "../model/objects";
+import { remapKeys, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -60,7 +62,10 @@ type DesiredCron = Omit<CronResponse, "cronId"> & {
   resourceName: string;
 };
 
-type ExternalIds = Pick<GeneratedIds, "skills" | "tools" | "hooks">;
+type ExternalIds = Pick<
+  GeneratedIds,
+  "skills" | "tools" | "hooks" | "mcpServers"
+>;
 
 /** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
@@ -497,14 +502,13 @@ function rewriteExternalConfigRefs(
       ),
     };
   }
-  if (asOptionalRecord(result.tools)) {
-    const tools = asOptionalRecord(result.tools)!;
-    result.tools = Object.fromEntries(
-      Object.entries(tools).map(([key, value]) => [
-        ids.tools[key] ?? key,
-        value,
-      ]),
-    );
+  const tools = asOptionalRecord(result.tools);
+  if (tools) {
+    result.tools = remapKeys(tools, ids.tools);
+  }
+  const mcpServers = asOptionalRecord(result.mcpServers);
+  if (mcpServers) {
+    result.mcpServers = remapKeys(mcpServers, ids.mcpServers);
   }
   if (
     asOptionalRecord(result.hooks) &&
@@ -616,11 +620,11 @@ async function syncExternalResources(
   manifest: CliManifest,
   prune: boolean,
 ): Promise<ExternalIds> {
-  const hasExternalResources = manifest.resources.some(
-    (entry) =>
-      entry.kind === "skill" || entry.kind === "tool" || entry.kind === "hook",
+  const hasExternalResources = manifest.resources.some((entry) =>
+    isExternalResourceKind(entry.kind),
   );
-  if (!hasExternalResources) return { skills: {}, tools: {}, hooks: {} };
+  if (!hasExternalResources)
+    return { skills: {}, tools: {}, hooks: {}, mcpServers: {} };
 
   const skills = await syncSkillResources(
     ctx,
@@ -640,8 +644,97 @@ async function syncExternalResources(
     manifest,
     prune,
   );
+  const mcpServers = await syncMcpResources(
+    ctx,
+    accountId as Id<"accounts">,
+    scope,
+    manifest,
+    prune,
+  );
 
-  return { skills: skills, tools: tools, hooks: hooks };
+  return { skills: skills, tools: tools, hooks: hooks, mcpServers: mcpServers };
+}
+
+/**
+ * Upsert the manifest's MCP server registrations by name within the stage, and
+ * prune rows whose name is no longer desired (#331). No bundle path: rows are
+ * connection metadata only.
+ */
+async function syncMcpResources(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  scope: ProjectStageScope,
+  manifest: CliManifest,
+  prune: boolean,
+): Promise<Record<string, string>> {
+  const desired = manifest.resources.filter((entry) => entry.kind === "mcp");
+  if (desired.length === 0) return {};
+  const existingServers = await ctx.runQuery(
+    internal.account.mcp.listForStage,
+    {
+      stageId: scope.stageId,
+    },
+  );
+  const existing = new Map(
+    existingServers.map((server) => [server.name, server]),
+  );
+  const desiredNames = new Set(desired.map((resource) => resource.name));
+  const ids: Record<string, string> = {};
+
+  for (const resource of desired) {
+    const config = asRecord(resource.config, `mcp:${resource.name}`);
+    const input = normalizeMcpInput(
+      {
+        name: resource.name,
+        ...(resource.description !== undefined
+          ? { description: resource.description }
+          : {}),
+        ...config,
+      },
+      { requireConnection: true },
+    );
+    const current = existing.get(resource.name);
+    const patch = {
+      name: input.name!,
+      url: input.url!,
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+      ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      ...(input.allowedTools !== undefined
+        ? { allowedTools: input.allowedTools }
+        : {}),
+    };
+    if (current) {
+      await ctx.runMutation(internal.account.mcp.update, {
+        accountId: accountId,
+        serverId: current._id,
+        ...patch,
+      });
+      ids[resource.name] = current._id;
+    } else {
+      const serverId = await ctx.runMutation(internal.account.mcp.create, {
+        accountId: accountId,
+        projectId: scope.projectId,
+        stageId: scope.stageId,
+        ...patch,
+      });
+      ids[resource.name] = serverId;
+    }
+  }
+
+  if (prune === true) {
+    for (const server of existing.values()) {
+      if (!desiredNames.has(server.name)) {
+        await ctx.runMutation(internal.account.mcp.remove, {
+          accountId: accountId,
+          serverId: server._id,
+        });
+      }
+    }
+  }
+
+  return ids;
 }
 
 async function syncHookResources(

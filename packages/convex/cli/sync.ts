@@ -29,8 +29,10 @@ import {
   ensureProject,
   ensureStage,
   envName,
+  isExternalResourceKind,
   resourceName,
   snapshotExternalConfig,
+  type ExternalResourceKind,
 } from "../model/cliSync";
 import {
   canvasNodeId,
@@ -76,6 +78,7 @@ const resourceValidator = v.object({
     v.literal("skill"),
     v.literal("tool"),
     v.literal("hook"),
+    v.literal("mcp"),
     v.literal("policy"),
     v.literal("channelRecord"),
   ),
@@ -99,6 +102,7 @@ const idsValidator = v.object({
   skills: v.record(v.string(), v.string()),
   tools: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
+  mcpServers: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
   channelRecords: v.record(v.string(), v.string()),
 });
@@ -276,6 +280,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
       policyIds: policyIds,
       toolIds: externalIds.tools,
+      mcpIds: externalIds.mcpServers,
       envValues: envValues,
       missingPolicies: missingPolicies,
     });
@@ -316,6 +321,7 @@ export const syncManifestBySecretHash = internalMutation({
       skills: externalIds.skills,
       tools: externalIds.tools,
       hooks: externalIds.hooks,
+      mcpServers: externalIds.mcpServers,
       policies: policyIds,
       channelRecords: channelRecordIds,
     };
@@ -467,6 +473,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       skills: v.record(v.string(), v.string()),
       tools: v.record(v.string(), v.string()),
       hooks: v.record(v.string(), v.string()),
+      mcpServers: v.record(v.string(), v.string()),
     }),
     prune: v.optional(v.boolean()),
   },
@@ -483,29 +490,25 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       )
       .collect();
     const desired = args.resources.filter(
-      (entry) =>
-        entry.kind === "skill" ||
-        entry.kind === "tool" ||
-        entry.kind === "hook",
+      (entry): entry is typeof entry & { kind: ExternalResourceKind } =>
+        isExternalResourceKind(entry.kind),
     );
     const desiredKeys = new Set(
       desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`),
     );
+    // No fallback branch: a kind added to EXTERNAL_RESOURCE_KINDS without an
+    // id map here is a type error, not a row written under the wrong kind.
+    const idsByKind: Record<ExternalResourceKind, Record<string, string>> = {
+      skill: args.ids.skills,
+      tool: args.ids.tools,
+      hook: args.ids.hooks,
+      mcp: args.ids.mcpServers,
+    };
 
     for (const resource of desired) {
       const name = resourceName(resource.name);
-      let kind: "skill" | "tool" | "hook";
-      let externalId: string | undefined;
-      if (resource.kind === "skill") {
-        kind = "skill";
-        externalId = args.ids.skills[name];
-      } else if (resource.kind === "tool") {
-        kind = "tool";
-        externalId = args.ids.tools[name];
-      } else {
-        kind = "hook";
-        externalId = args.ids.hooks[name];
-      }
+      const kind = resource.kind;
+      const externalId: string | undefined = idsByKind[kind][name];
       if (!externalId)
         throw new Error(
           `${resource.kind}:${name} did not return an external id`,

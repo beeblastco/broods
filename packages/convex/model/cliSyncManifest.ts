@@ -24,6 +24,7 @@ export async function externalIdsForStage(
   skills: Record<string, string>;
   tools: Record<string, string>;
   hooks: Record<string, string>;
+  mcpServers: Record<string, string>;
 }> {
   const resources = await ctx.db
     .query("cliExternalResources")
@@ -46,6 +47,11 @@ export async function externalIdsForStage(
     hooks: Object.fromEntries(
       resources
         .filter((entry) => entry.kind === "hook")
+        .map((entry) => [entry.name, entry.externalId]),
+    ),
+    mcpServers: Object.fromEntries(
+      resources
+        .filter((entry) => entry.kind === "mcp")
         .map((entry) => [entry.name, entry.externalId]),
     ),
   };
@@ -122,6 +128,7 @@ export async function idsForStage(
     skills: externalIds.skills,
     tools: externalIds.tools,
     hooks: externalIds.hooks,
+    mcpServers: externalIds.mcpServers,
     policies: Object.fromEntries(
       policies
         .filter(
@@ -214,6 +221,11 @@ export async function resourcesForStage(
       .filter((entry) => entry.kind === "hook")
       .map((entry) => [entry.externalId, entry.name]),
   );
+  const mcpNames = Object.fromEntries(
+    externalResources
+      .filter((entry) => entry.kind === "mcp")
+      .map((entry) => [entry.externalId, entry.name]),
+  );
   const policyNames = Object.fromEntries(
     policies
       .filter((entry) => entry.managedBy === "cli" && entry.status === "active")
@@ -266,13 +278,16 @@ export async function resourcesForStage(
               | Record<string, unknown>
               | undefined,
           }),
-          workspaceNames,
-          sandboxNames,
-          agentNames,
-          skillNames,
-          toolNames,
-          hookNames,
-          policyNames,
+          {
+            workspaces: workspaceNames,
+            sandboxes: sandboxNames,
+            agents: agentNames,
+            skills: skillNames,
+            tools: toolNames,
+            hooks: hookNames,
+            mcp: mcpNames,
+            policies: policyNames,
+          },
         ),
       })),
     ...policies

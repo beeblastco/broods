@@ -215,7 +215,12 @@ export const cliExternalResourcesFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
-  kind: v.union(v.literal("skill"), v.literal("tool"), v.literal("hook")),
+  kind: v.union(
+    v.literal("skill"),
+    v.literal("tool"),
+    v.literal("hook"),
+    v.literal("mcp"),
+  ),
   name: v.string(),
   description: v.optional(v.string()),
   externalId: v.string(),
