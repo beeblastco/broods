@@ -43,14 +43,24 @@ export interface S3Access {
 const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
 
+let defaultClient: AwsS3Client | undefined;
+
+// The default (env-configured) client is shared so the credential chain
+// resolves once per process, not per call; access-scoped clients carry their
+// own credentials and stay per-call.
 function awsClient(access?: S3Access): AwsS3Client {
-  return new AwsS3Client({
-    region: access?.region ?? process.env.AWS_REGION,
-    ...(access?.endpoint
-      ? { endpoint: access.endpoint, forcePathStyle: true }
-      : {}),
-    ...(access?.credentials ? { credentials: access.credentials } : {}),
-  });
+  if (access) {
+    return new AwsS3Client({
+      region: access.region ?? process.env.AWS_REGION,
+      ...(access.endpoint
+        ? { endpoint: access.endpoint, forcePathStyle: true }
+        : {}),
+      ...(access.credentials ? { credentials: access.credentials } : {}),
+    });
+  }
+  defaultClient ??= new AwsS3Client({ region: process.env.AWS_REGION });
+
+  return defaultClient;
 }
 
 export async function readS3Text(

@@ -42,7 +42,7 @@ flowchart TD
 
 Runtime boundary:
 
-- SST provisions the AWS data plane, IAM, Scheduler, and the cron-runs bus + API destination; the container deployment lives in the infra repo.
+- SST provisions the AWS data plane and IAM; the container deployment lives in the infra repo.
 - Handlers receive `CoreRequest` and return Web `Response` objects.
 - `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
 
@@ -64,8 +64,7 @@ flowchart TD
   Core --> AccountStore["Convex: accounts<br/>account metadata + secretHash"]
   Core --> AgentStore["Convex: agents<br/>encrypted agent configs"]
   ConfigPlane["Convex config plane<br/>skills / tools / files / crons CRUD"] -->|"Manage Skills"| SkillStore["S3: Skills<br/>account-scoped skill bundles"]
-  ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons"]
-  ConfigPlane -->|"Create/update/delete schedules"| Scheduler["EventBridge Scheduler"]
+  ConfigPlane -->|"Manage Cron Jobs"| Crons["Convex: crons<br/>+ crons component schedules"]
   AccountStore -->|Authentication| Core
   AgentStore -->|agentId config lookup| Core
   Core --> Integrations["integrations.ts<br/>account auth + routing"]
@@ -84,8 +83,7 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["Convex: runtimeAsyncAgentResults"]
   AsyncTools --> AsyncToolResult["Convex: runtimeAsyncToolResults + groups"]
-  Scheduler --> CronBus["cron-runs event bus"]
-  CronBus -->|"HTTPS API destination"| Gateway
+  Crons -->|"cron dispatch POST /v1/cron-runs"| Gateway
   Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
@@ -199,34 +197,31 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. Uploaded custom tools execute by runtime tier — pure-compute / fetch-only bundles in the in-core V8 isolate, node/npm/native bundles in the tool-runner Lambda — and both are synchronous request/response; async ones are waited on for SSE and non-detached paths. Detached-async uploaded tools have no background path yet (deferred to #82).
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response — one POST to an external server, or one tool-runner Lambda invoke for a hosted server.
 
 ```mermaid
 flowchart TD
   Parent["parent model pass"] --> Kind{"child work type"}
   Kind -->|"subagent"| InMemory["in-memory pending work"]
   Kind -->|"built-in async tool"| InMemory
-  Kind -->|"uploaded async tool on SSE (isolate or sandbox)"| InMemory
   Kind -->|"bash background job (sandbox)"| External["sandbox background runner"]
-  Kind -.->|"uploaded detached async"| Deferred["deferred #82<br/>no background path"]
   InMemory -->|"wait only while pendingCount > 0"| Inject["inject result into conversation"]
   External -->|"sandbox-jobs complete endpoint"| Group["sealed detached group<br/>all siblings settled"]
   Group --> Inject
   Inject --> Continue["continue parent agent"]
 ```
 
-Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Account-authenticated async tool completions arrive at `POST /async-tools/{resultId}/complete`; sandbox jobs use the token-authenticated `POST /sandbox-jobs/{resultId}/complete` instead.
+Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /sandbox-jobs/{resultId}/complete`.
 
 ## Cron Jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): it stores the account-scoped cron job in the `crons` table and creates, updates, or deletes the matching EventBridge Scheduler schedule. EventBridge Scheduler publishes onto the cron-runs event bus, whose rule forwards the event to the HTTPS API destination; the destination POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): the account-scoped `crons` row and its schedule — a Convex crons component registration for recurring jobs, a Convex scheduler run for one-time `at(...)` jobs — are written in the same transaction, so neither can orphan the other. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
   Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
-  Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
-  Scheduler --> CronBus["cron-runs event bus"]
-  CronBus -->|"HTTPS API destination"| Gateway["gateway"]
+  Config --> Component["Convex crons component<br/>schedule lifecycle"]
+  Component -->|"dispatch action POST"| Gateway["gateway"]
   Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
@@ -417,7 +412,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `AccountConfig`: account metadata and account secret hash.
 - `AgentConfig`: account-owned encrypted runtime config payloads.
 - `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
-- `AccountTool`: uploaded custom tool records (bundles live in the ToolBundles S3 bucket).
+- `Mcp`: registered MCP server records — external endpoints and hosted rows (hosted bundles live in the ToolBundles S3 bucket under the `account-mcp/` prefix).
 - `Crons`: scheduled agent runs managed by the Convex config plane.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
@@ -427,8 +422,8 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `PersistentSandboxInstance`: reserved sandbox instances for persistent sandbox/lambda/daytona/e2b/vercel providers.
 - S3 workspace bucket: workspace files (namespaced by `accountId:workspaceId`) and staged skill bundles.
 - S3 skills bucket: account-scoped skill bundles under `<accountId>/<skill-name>`.
-- S3 tool-bundles bucket: uploaded custom tool bundles.
+- S3 tool-bundles bucket: code hook bundles and hosted MCP server bundles.
 
-Every stage stores config domains and runtime state in Convex. S3 remains the byte store for workspace files, skills, and tool bundles.
+Every stage stores config domains and runtime state in Convex. S3 remains the byte store for workspace files, skills, and hook/MCP bundles.
 
-Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute by runtime tier: pure-compute / fetch-only bundles run in the in-core V8 isolate (a Node child of the core), while node/npm/native bundles run in the platform tool-runner Lambda. `async: true` only changes the lifecycle: built-in async stays in the current request or worker, and uploaded async waits on SSE and non-detached paths. Detached-async uploaded tools have no background path yet (deferred to #82). Subagents are in-process child agent loops; they do not require child workers.
+Built-in tool execution is inline in `harness-processing`. MCP server tools are request/response: an external server is one POST per `tools/call`, and a hosted server's bundle runs on the platform tool-runner Lambda, one invoke per request. Inline code hooks run in the in-core V8 isolate (a Node child of the core). `async: true` only changes the lifecycle: built-in async stays in the current request or worker. Subagents are in-process child agent loops; they do not require child workers.

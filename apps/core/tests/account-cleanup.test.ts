@@ -93,27 +93,37 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
   expect(attempts).toBe(100);
 });
 
-// aws/crons.remove is the action that deletes the EventBridge schedule and the
-// row together; assert it is a registered internal action at the expected path.
-it("registers aws/crons.remove as an internal action", () => {
-  const registered = require("@broods/convex/aws/crons") as Record<
+// agent/crons.remove is the mutation that drops the registered schedule and
+// the row in one transaction; assert it is registered at the expected path.
+it("registers agent/crons.remove as an internal mutation", () => {
+  // agent/crons reaches ../auth, which constructs AuthKit and validates these
+  // at import time. Dummy values only — nothing here authenticates.
+  process.env.WORKOS_CLIENT_ID ||= "client_test";
+  process.env.WORKOS_API_KEY ||= "sk_test";
+  process.env.WORKOS_WEBHOOK_SECRET ||= "whsec_test";
+  const registered = require("@broods/convex/agent/crons") as Record<
     string,
-    { isInternal?: boolean; isAction?: boolean } | undefined
+    { isInternal?: boolean; isMutation?: boolean } | undefined
   >;
   const internal = require("@broods/convex/_generated/api").internal;
 
-  expect(registered.remove).toMatchObject({ isInternal: true, isAction: true });
-  expect(getFunctionName(internal.aws.crons.remove)).toBe("aws/crons:remove");
+  expect(registered.remove).toMatchObject({
+    isInternal: true,
+    isMutation: true,
+  });
+  expect(getFunctionName(internal.agent.crons.remove)).toBe(
+    "agent/crons:remove",
+  );
 });
 
-// The adapter reaches this reference through an any-typed require, so nothing but
-// this check catches a rewire that stops deleting EventBridge schedules.
-it("crons.remove delegates to internal.aws.crons.remove via action", async () => {
+// The adapter reaches this reference through an any-typed require, so nothing
+// but this check catches a rewire that stops descheduling deleted crons.
+it("crons.remove delegates to internal.agent.crons.remove via mutation", async () => {
   process.env.CONVEX_URL ||= "https://example.convex.cloud";
   process.env.CONVEX_DEPLOY_KEY ||= "test-deploy-key";
   const calls: Array<{ ref: unknown; args: unknown }> = [];
   const client = getConvexClient();
-  (client as unknown as { action: unknown }).action = async (
+  (client as unknown as { mutation: unknown }).mutation = async (
     ref: unknown,
     args: unknown,
   ) => {
@@ -127,7 +137,7 @@ it("crons.remove delegates to internal.aws.crons.remove via action", async () =>
   expect(removed).toBe(true);
   expect(calls).toHaveLength(1);
   // The generated API is a proxy, so assert by registered name, not identity.
-  expect(getFunctionName(calls[0]?.ref as never)).toBe("aws/crons:remove");
+  expect(getFunctionName(calls[0]?.ref as never)).toBe("agent/crons:remove");
   expect(calls[0]?.args).toMatchObject({
     accountId: "acct_1",
     cronId: "cron_1",

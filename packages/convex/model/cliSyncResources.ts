@@ -210,7 +210,6 @@ export async function syncAgentResources(
     workspaceIds: Record<string, string>;
     sandboxIds: Record<string, string>;
     policyIds: Record<string, string>;
-    toolIds: Record<string, string>;
     mcpIds: Record<string, string>;
     envValues: Record<string, string>;
     missingPolicies: Set<string>;
@@ -224,7 +223,6 @@ export async function syncAgentResources(
     workspaceIds,
     sandboxIds,
     policyIds,
-    toolIds,
     mcpIds,
     envValues,
     missingPolicies,
@@ -275,7 +273,6 @@ export async function syncAgentResources(
       workspaces: workspaceIds,
       sandboxes: sandboxIds,
       policies: policyIds,
-      tools: toolIds,
       mcp: mcpIds,
     });
     const flat = fromNestedAgentConfig(nested);

@@ -162,7 +162,7 @@ export interface DirectInboundEvent {
   // rebuilds the sender from the agent config via sendChannelReply.
   replyTarget?: { channelName: string; source: Record<string, unknown> };
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
-  // this run settles, because EventBridge has already dropped the schedule.
+  // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
 }
 
@@ -193,14 +193,6 @@ export interface StatusInboundEvent {
   agentId: string;
   eventId: string;
   publicEventId: string;
-}
-
-export interface AsyncToolCompletionInboundEvent {
-  accountId: string;
-  resultId: string;
-  status: "completed" | "failed";
-  response?: JSONValue;
-  error?: string;
 }
 
 // Background-job completion posted by the detached job itself. Authenticated by
@@ -257,9 +249,6 @@ interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<Response>;
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<Response>;
   handleStatusRequest?(event: StatusInboundEvent): Promise<Response>;
-  handleAsyncToolCompletionRequest?(
-    event: AsyncToolCompletionInboundEvent,
-  ): Promise<Response>;
   handleSandboxJobCompletionRequest?(
     event: SandboxJobCompletionInboundEvent,
   ): Promise<Response>;
@@ -473,33 +462,6 @@ async function handleHttpRequest(
     headers: headers,
     body: request.body,
   } satisfies ChannelRequest;
-
-  // Check for the tool async results return
-  const asyncToolCompletionMatch = request.path.match(
-    /^\/async-tools\/([^/]+)\/complete$/,
-  );
-  if (asyncToolCompletionMatch?.[1]) {
-    const auth = await context.authResolver(request.headers);
-    const account = auth?.kind === "account" ? auth.account : null;
-    if (!account) {
-      return unauthorizedResponse();
-    }
-    if (!handlers.handleAsyncToolCompletionRequest) {
-      return notFoundResponse();
-    }
-
-    try {
-      return handlers.handleAsyncToolCompletionRequest(
-        parseAsyncToolCompletionPayload(
-          asyncToolCompletionMatch[1],
-          request.body,
-          account,
-        ),
-      );
-    } catch (err) {
-      return badRequestResponse(err);
-    }
-  }
 
   // Background-job completion: authenticated by the per-job token, not an account
   // secret, so the sandbox never needs to hold account credentials.
@@ -2125,47 +2087,6 @@ function parseStatusPath(
     agentId: agentId,
     eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
     publicEventId: publicEventId,
-  };
-}
-
-function parseAsyncToolCompletionPayload(
-  rawResultId: string,
-  bodyText: string,
-  account: AccountRecord,
-): AsyncToolCompletionInboundEvent {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(bodyText);
-  } catch (err) {
-    throw new Error(
-      `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  if (!isPlainObject(parsed)) {
-    throw new Error("Async tool completion body must be an object");
-  }
-
-  const record = parsed;
-  if (record.status !== "completed" && record.status !== "failed") {
-    throw new Error("Async tool completion status must be completed or failed");
-  }
-
-  if (record.status === "failed" && typeof record.error !== "string") {
-    throw new Error(
-      "Async tool completion error must be a string when status is failed",
-    );
-  }
-
-  return {
-    accountId: account.accountId,
-    resultId: decodeURIComponent(rawResultId),
-    status: record.status,
-    ...(record.response !== undefined
-      ? { response: record.response as JSONValue }
-      : {}),
-    ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
 

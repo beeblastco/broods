@@ -16,11 +16,11 @@ import {
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 
 describe("agent rules", () => {
-  it("validates config.mcpServers entries", () => {
+  it("validates config.mcp entries", () => {
     const serverId = "k57mcpserver00000000000000000000";
     expect(
       normalizeAgentConfig({
-        mcpServers: {
+        mcp: {
           [serverId]: {
             enabled: true,
             needsApproval: true,
@@ -29,7 +29,7 @@ describe("agent rules", () => {
         },
       }),
     ).toEqual({
-      mcpServers: {
+      mcp: {
         [serverId]: {
           enabled: true,
           needsApproval: true,
@@ -37,15 +37,15 @@ describe("agent rules", () => {
         },
       },
     });
-    expect(() =>
-      normalizeAgentConfig({ mcpServers: { "not-an-id": {} } }),
-    ).toThrow("config.mcpServers.not-an-id must be keyed by an MCP server id");
+    expect(() => normalizeAgentConfig({ mcp: { "not-an-id": {} } })).toThrow(
+      "config.mcp.not-an-id must be keyed by an MCP server id",
+    );
     expect(() =>
       normalizeAgentConfig({
-        mcpServers: { [serverId]: { headers: { Authorization: 5 } } },
+        mcp: { [serverId]: { headers: { Authorization: 5 } } },
       }),
     ).toThrow(
-      `config.mcpServers.${serverId}.headers must be an object of string values`,
+      `config.mcp.${serverId}.headers must be an object of string values`,
     );
   });
 

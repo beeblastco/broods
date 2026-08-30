@@ -78,8 +78,6 @@ jobs:
       # Mirrors deploy.yaml env block for SST/Pulumi to compose the same
       # identity, runtime, and Convex credentials it sees on a normal deploy.
       CI: "true"
-      SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
-      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
       CONVEX_URL: ${{ secrets.CONVEX_URL }}
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup — drift should

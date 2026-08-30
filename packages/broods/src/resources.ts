@@ -7,7 +7,6 @@
  * here is synchronous.
  */
 
-import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
   AgentDiscordChannelConfig,
@@ -79,7 +78,6 @@ export type ResourceKind =
   | "sandbox"
   | "cron"
   | "skill"
-  | "tool"
   | "mcp"
   | "policy"
   | "channelRecord";
@@ -147,74 +145,36 @@ export interface SkillDefinitionConfig {
   path: string;
 }
 
-/** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
-export interface ToolExecuteContext {
-  /** Resolved tool config, `env("NAME")` already substituted. Where secrets arrive. */
-  config: Record<string, unknown>;
-  /** SSRF-guarded fetch. Also installed as the global `fetch`. */
-  fetch: typeof fetch;
-  /** Per-run scratchpad. Read back after hooks; empty and unused for tools. */
-  state: Record<string, unknown>;
-}
-
-/** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
-export interface ToolExecuteOptions {
-  toolCallId?: string;
-  context: ToolExecuteContext;
-  abortSignal?: AbortSignal;
-  /** Conversation so far. Truncated from the front to the newest 512 KB. */
-  messages: ModelMessage[];
-  experimental_context?: unknown;
-}
-
-export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
-  /**
-   * Optional module file exporting the tool implementation, resolved from the
-   * `broods/` project directory. Omit it and declare `execute` inline instead —
-   * the CLI then bundles the module this tool is exported from.
-   */
-  path?: string;
-  /**
-   * Runs in the isolate or the sandbox runner, not locally. Shaped like the AI
-   * SDK's `tool({ execute })`: the input first, call options second. Annotate
-   * the parameter to type it — `inputSchema` is JSON Schema, so it cannot be
-   * inferred.
-   */
-  execute?: (input: Input, options: ToolExecuteOptions) => unknown;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  runtime?: "isolate" | "sandbox";
-  /**
-   * Account-wide, non-secret defaults. Environment variable references are
-   * rejected here; put `env("NAME")` under the enabling agent's
-   * `tools.<tool>.config` so the value is resolved per stage and stored with
-   * encrypted agent config.
-   */
-  defaultConfig?: Record<string, unknown>;
-}
-
 export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
   version?: PolicyDocument["version"];
 };
 
 /**
- * MCP server registration (#331) — external (`url`) or hosted (`path`).
+ * Fetch-style MCP handler for a hosted server: what
+ * `createMcpHandler(...)` from @modelcontextprotocol/server returns —
+ * either the request function itself or an object exposing it as `fetch`.
+ */
+export type McpHandler =
+  | ((request: Request) => Response | Promise<Response>)
+  | { fetch(request: Request): Response | Promise<Response> };
+
+/**
+ * MCP server registration (#331) — external (`url`) or hosted (`handler`).
  * Either way the server's tools are offered as `<name>__<tool>`; an external
  * row is dialed over the stateless HTTP transport (spec 2026-07-28) at agent
  * registration time. The name namespaces those tools, so it must be 1-32
  * lowercase letters, digits, or hyphens, starting with a letter.
  */
-export interface McpServerDefinitionConfig {
+export interface McpDefinitionConfig {
   /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
   /**
-   * Hosted alternative to `url`: a module (resolved from the `broods/`
-   * directory) whose default export is a fetch-style MCP handler —
-   * `export default createMcpHandler(...)` from @modelcontextprotocol/server.
-   * The CLI bundles it and the tool-runner Lambda hosts it, one invoke per
-   * request.
+   * Hosted alternative to `url`: declare the server inline —
+   * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
+   * right next to the `defineMcp` call. The CLI bundles the defining module
+   * and the tool-runner Lambda hosts it, one invoke per request.
    */
-  path?: string;
+  handler?: McpHandler;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
    * X-Api-Key, ...) must reference an account env var — e.g.
@@ -611,7 +571,7 @@ export type ProviderConfigInput = Partial<
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "session" | "tools" | "mcpServers"
+    "agent" | "model" | "scheduler" | "session" | "tools" | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;
@@ -665,13 +625,11 @@ export type SkillResource<Name extends string = string> = ResourceDefinition<
   Name,
   SkillDefinitionConfig
 >;
-export type ToolResource<Name extends string = string> = ResourceDefinition<
-  "tool",
+export type McpResource<Name extends string = string> = ResourceDefinition<
+  "mcp",
   Name,
-  ToolDefinitionConfig
+  McpDefinitionConfig
 >;
-export type McpServerResource<Name extends string = string> =
-  ResourceDefinition<"mcp", Name, McpServerDefinitionConfig>;
 export type PolicyResource<Name extends string = string> = ResourceDefinition<
   "policy",
   Name,
@@ -695,8 +653,7 @@ export type AnyResource =
   | SandboxResource
   | CronResource
   | SkillResource
-  | ToolResource
-  | McpServerResource
+  | McpResource
   | PolicyResource
   | ChannelResource;
 
@@ -960,32 +917,16 @@ export function defineSkill<const Name extends string>(
   );
 }
 
-// `description` is the model-facing text, so it stays inside the tool config
-// rather than becoming the resource-level human description.
-export function defineTool<
-  const Name extends string,
-  Input = Record<string, unknown>,
->(input: { name: Name } & ToolDefinitionConfig<Input>): ToolResource<Name> {
-  const { name, ...config } = input;
-
-  return defineResource(
-    "tool",
-    name,
-    undefined,
-    config as ToolDefinitionConfig,
-  );
-}
-
 export function defineMcp<const Name extends string>(
-  input: ResourceInput<Name, McpServerDefinitionConfig>,
-): McpServerResource<Name> {
+  input: ResourceInput<Name, McpDefinitionConfig>,
+): McpResource<Name> {
   const { name, description, ...config } = input;
 
   return defineResource(
     "mcp",
     name,
     description,
-    config as McpServerDefinitionConfig,
+    config as McpDefinitionConfig,
   );
 }
 

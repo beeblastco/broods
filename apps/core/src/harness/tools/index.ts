@@ -5,19 +5,18 @@
  * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
  * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
  * toolApproval in the harness.
- * Core ships no built-in external tools: a config.tools key is either an
- * uploaded account tool id or a provider-defined tool resolved off the
- * configured AI SDK provider (see provider-tool.ts).
+ * Core ships no built-in external tools: a config.tools key names a
+ * provider-defined tool resolved off the configured AI SDK provider (see
+ * provider-tool.ts); remote tools come from config.mcp.
  */
 
 import type { ToolSet } from "ai";
-import { isConvexDocumentId } from "../../shared/domain/account-tools.ts";
 import {
   isProviderToolName,
   resolveSubagentMode,
   type AccountModelProviderName,
   type AgentConfig,
-  type AgentMcpServerConfig,
+  type AgentMcpEntry,
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
 import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
@@ -29,11 +28,7 @@ import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type {
-  AsyncToolModeMap,
-  AsyncToolSource,
-  RunAsyncToolDispatch,
-} from "../async-tools.ts";
+import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type {
@@ -46,8 +41,7 @@ import {
   mcpConnection,
   type McpConnection,
 } from "../mcp/client.ts";
-import { mcpServerTools } from "../mcp/mcp.tool.ts";
-import accountTool from "./custom.tool.ts";
+import { mcpTools } from "../mcp/mcp.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import {
@@ -107,11 +101,10 @@ export interface ToolContext {
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
-  // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
+  // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
-  policyToolIdsByName?: Map<string, string>;
   /** Model-facing tool name → MCP server row id, for per-server policy rules. */
   policyMcpIdsByName?: Map<string, string>;
   channel?: ChannelToolContext;
@@ -235,7 +228,7 @@ export async function createTools(
     }
   }
   Object.assign(tools, sandboxTools);
-  const asyncModes: AsyncToolModeMap = new Map();
+  const asyncToolNames: AsyncToolNames = new Set();
 
   if (context.channel) {
     Object.assign(
@@ -349,11 +342,11 @@ export async function createTools(
     );
   }
 
-  // Provider-defined tools: every non-account-tool key names a tool the
-  // configured provider executes itself, resolved off its `tools` namespace.
+  // Provider-defined tools: every config.tools key names a tool the configured
+  // provider executes itself, resolved off its `tools` namespace.
   for (const [toolName, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
-  ).filter(([key]) => !isConvexDocumentId(key))) {
+  )) {
     if (!isProviderToolName(toolName)) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
@@ -370,51 +363,14 @@ export async function createTools(
         config: externalToolRuntimeConfig(toolConfig),
       }),
     );
-    addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
-  }
-
-  for (const [toolId, toolConfig] of Object.entries(
-    agentConfig.tools ?? {},
-  ).filter(([key]) => isConvexDocumentId(key))) {
-    if (!isToolEnabled(toolConfig)) {
-      continue;
-    }
-    if (!context.accountId) {
-      throw new Error(
-        `config.tools.${toolId} requires an account-scoped session`,
-      );
-    }
-    const accountId = context.accountId;
-    const record = await getStorage().accountTools.getById(accountId, toolId);
-    if (!record || record.status !== "active") {
-      throw new Error(
-        `config.tools.${toolId} references an unknown account tool`,
-      );
-    }
-    if (tools[record.name]) {
-      throw new Error(
-        `config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`,
-      );
-    }
-    if (toolConfig.needsApproval === true)
-      context.approvalRequirements?.set(record.name, true);
-    context.policyToolIdsByName?.set(record.name, toolId);
-    Object.assign(
-      tools,
-      accountTool(record, {
-        ...context,
-        accountId: accountId,
-        config: externalToolRuntimeConfig(toolConfig),
-      }),
-    );
-    addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
+    if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
   await registerMcpTools(tools, agentConfig, context);
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
-  if (asyncModes.size > 0 || hasBackgroundWorkspace) {
+  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({
@@ -428,12 +384,12 @@ export async function createTools(
     );
   }
 
-  // Withhold last, so a channel's deny list covers sandbox and account tools too
-  // — those are derived from workspaces and ids, never from config.tools.
+  // Withhold last, so a channel's deny list covers sandbox and MCP tools too
+  // — those are derived from workspaces and server rows, never from config.tools.
   withholdTools(tools, agentConfig.denyTools);
 
   return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncModes)
+    ? context.dispatchAsyncTools(tools, asyncToolNames)
     : tools;
 }
 
@@ -448,7 +404,7 @@ function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
 /** One resolved server: its row, connection, and the filtered remote tools. */
 interface ResolvedMcpServer {
   serverId: string;
-  serverConfig: AgentMcpServerConfig;
+  serverConfig: AgentMcpEntry;
   record: McpRecord;
   connection: McpConnection;
   remoteTools: RemoteMcpTool[];
@@ -464,14 +420,14 @@ async function registerMcpTools(
   agentConfig: AgentConfig,
   context: Omit<ToolContext, "config">,
 ): Promise<void> {
-  const entries = Object.entries(agentConfig.mcpServers ?? {}).filter(
+  const entries = Object.entries(agentConfig.mcp ?? {}).filter(
     ([, serverConfig]) => serverConfig.enabled !== false,
   );
   if (entries.length === 0) return;
   const accountId = context.accountId;
   if (!accountId) {
     throw new Error(
-      `config.mcpServers.${entries[0]![0]} requires an account-scoped session`,
+      `config.mcp.${entries[0]![0]} requires an account-scoped session`,
     );
   }
 
@@ -483,7 +439,7 @@ async function registerMcpTools(
         const record = await getStorage().mcp.getById(accountId, serverId);
         if (!record || record.status !== "active") {
           throw new Error(
-            `config.mcpServers.${serverId} references an unknown MCP server`,
+            `config.mcp.${serverId} references an unknown MCP server`,
           );
         }
         if (record.disabled) return null;
@@ -493,7 +449,18 @@ async function registerMcpTools(
         // (unknown id, unresolved header) still throw.
         let listing: RemoteMcpTool[];
         try {
-          listing = await listMcpTools(connection);
+          listing = await listMcpTools(
+            connection,
+            context.onSandboxCpu
+              ? (cpuUsec: number): void =>
+                  context.onSandboxCpu!({
+                    type: "mcp-sandbox",
+                    role: "tool",
+                    toolName: record.name,
+                    cpuUsec: cpuUsec,
+                  })
+              : undefined,
+          );
         } catch (error) {
           logWarn("MCP server tool listing failed; skipping its tools", {
             serverId: serverId,
@@ -520,18 +487,22 @@ async function registerMcpTools(
   );
   for (const server of resolved) {
     if (server === null) continue;
-    const serverTools = mcpServerTools(server.connection, server.remoteTools);
+    const serverTools = mcpTools(
+      server.connection,
+      server.remoteTools,
+      context.onSandboxCpu,
+    );
     // Sanitized names collapsing within one server surface here too: the map
     // then has fewer keys than the listing had tools.
     if (Object.keys(serverTools).length !== server.remoteTools.length) {
       throw new Error(
-        `config.mcpServers.${server.serverId} has remote tools whose sanitized model-facing names collide`,
+        `config.mcp.${server.serverId} has remote tools whose sanitized model-facing names collide`,
       );
     }
     for (const name of Object.keys(serverTools)) {
       if (tools[name]) {
         throw new Error(
-          `config.mcpServers.${server.serverId} model-facing name '${name}' conflicts with another tool`,
+          `config.mcp.${server.serverId} model-facing name '${name}' conflicts with another tool`,
         );
       }
       if (server.serverConfig.needsApproval === true)
@@ -546,17 +517,6 @@ function isToolEnabled(
   config: AgentToolConfig | undefined,
 ): config is AgentToolConfig {
   return config !== undefined && config.enabled !== false;
-}
-
-function addAsyncModeIfConfigured(
-  modes: AsyncToolModeMap,
-  modelToolName: string,
-  config: AgentToolConfig,
-  source: AsyncToolSource,
-): void {
-  if (config.async === true) {
-    modes.set(modelToolName, source);
-  }
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {

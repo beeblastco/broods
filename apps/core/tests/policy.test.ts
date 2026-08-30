@@ -126,17 +126,22 @@ describe("agent policy input", () => {
     });
   });
 
-  it("maps uploaded tool model names to stable tool ids when provided", () => {
+  it("maps MCP tool model names to their server row ids when provided", () => {
     expect(
-      policyInputForTool("customer_lookup", { email: "a@example.com" }, [], {
-        toolIdsByName: new Map([
-          ["customer_lookup", "qs78zwc4z4q5ysxm74fgrhd13s88xxt"],
-        ]),
-      }),
+      policyInputForTool(
+        "crm__customer_lookup",
+        { email: "a@example.com" },
+        [],
+        {
+          mcpIdsByName: new Map([
+            ["crm__customer_lookup", "qs78zwc4z4q5ysxm74fgrhd13s88xxt"],
+          ]),
+        },
+      ),
     ).toEqual({
       action: "tool.call",
-      toolName: "customer_lookup",
-      toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
+      toolName: "crm__customer_lookup",
+      mcpId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
       tool: {
         input: { email: "a@example.com" },
         inputKeys: ["email"],

@@ -22,12 +22,7 @@ import { stageNameEquals } from "./projectScope";
  * `cliExternalResources`. The one list behind every "is this external" filter
  * and the per-kind id lookups, so adding a kind cannot half-land.
  */
-export const EXTERNAL_RESOURCE_KINDS = [
-  "skill",
-  "tool",
-  "hook",
-  "mcp",
-] as const;
+export const EXTERNAL_RESOURCE_KINDS = ["skill", "hook", "mcp"] as const;
 
 export type CliResource = CliManifestResource;
 
@@ -408,7 +403,6 @@ export function rewriteIdsToNames(
     sandboxes: Record<string, string>;
     agents?: Record<string, string>;
     skills?: Record<string, string>;
-    tools?: Record<string, string>;
     hooks?: Record<string, string>;
     mcp?: Record<string, string>;
     policies?: Record<string, string>;
@@ -419,7 +413,6 @@ export function rewriteIdsToNames(
     sandboxes: sandboxNames,
     agents: agentNames = {},
     skills: skillNames = {},
-    tools: toolNames = {},
     hooks: hookNames = {},
     mcp: mcpNames = {},
     policies: policyNames = {},
@@ -471,11 +464,8 @@ export function rewriteIdsToNames(
       ),
     };
   }
-  if (isPlainObject(result.tools)) {
-    result.tools = remapKeys(result.tools, toolNames);
-  }
-  if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = remapKeys(result.mcpServers, mcpNames);
+  if (isPlainObject(result.mcp)) {
+    result.mcp = remapKeys(result.mcp, mcpNames);
   }
   if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
     result.hooks = {
@@ -511,7 +501,6 @@ export function rewriteResourceRefs(
     workspaces: Record<string, string>;
     sandboxes: Record<string, string>;
     policies: Record<string, string>;
-    tools: Record<string, string>;
     mcp?: Record<string, string>;
   },
 ): Record<string, unknown> {
@@ -519,7 +508,6 @@ export function rewriteResourceRefs(
     workspaces: workspaceIds,
     sandboxes: sandboxIds,
     policies: policyIds,
-    tools: toolIds,
     mcp: mcpIds = {},
   } = ids;
   const result = { ...config };
@@ -555,15 +543,10 @@ export function rewriteResourceRefs(
       ),
     };
   }
-  // `config.tools` is keyed by account tool id at rest: a key left as a name is
-  // read at runtime as a provider tool. Unknown keys are provider tools, so stay.
-  if (isPlainObject(result.tools)) {
-    result.tools = remapKeys(result.tools, toolIds);
-  }
-  // `config.mcpServers` keys must end up as mcp row ids; a name that fails to
-  // map fails normalizeMcpServersConfig loudly rather than being left behind.
-  if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = remapKeys(result.mcpServers, mcpIds);
+  // `config.mcp` keys must end up as mcp row ids; a name that fails to
+  // map fails normalizeMcpConfig loudly rather than being left behind.
+  if (isPlainObject(result.mcp)) {
+    result.mcp = remapKeys(result.mcp, mcpIds);
   }
 
   return result;

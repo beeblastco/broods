@@ -6,7 +6,6 @@
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { McpRecord } from "./domain/mcp.ts";
-import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
@@ -80,10 +79,10 @@ export interface TaskUsageInput {
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
-  /** Agent sandbox provider (sandbox/lambda metered), or "custom-tool-sandbox". */
+  /** Agent sandbox provider (sandbox/lambda metered), or "mcp-sandbox". */
   type: string;
   role: "agent" | "tool";
-  /** The custom tool that ran, when role is "tool". */
+  /** The model-facing tool that ran, when role is "tool". */
   toolName?: string;
   cpuUsec: number;
 }
@@ -143,13 +142,13 @@ interface AgentDeploymentStore {
 
 /** Account-scoped cron job schedules. */
 interface CronStore {
-  // Creates the crons row and its EventBridge schedule in the config plane;
+  // Creates the crons row and its registered schedule in the config plane;
   // the runtime path for it is the schedule tool.
   create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
-  // Patches the EventBridge schedule before the row, so a rejected expression
+  // Patches the row and its registered schedule together, so a rejected expression
   // leaves the stored job untouched. Null means the job is gone: either it
   // never existed, or it was deleted while the patch was in flight.
   update(
@@ -197,12 +196,6 @@ interface WorkspaceConfigStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/** Account-scoped uploaded custom tool metadata. */
-interface AccountToolStore {
-  getById(accountId: string, toolId: string): Promise<AccountToolRecord | null>;
-  removeAllForAccount(accountId: string): Promise<number>;
-}
-
 /** Account-owned isolate code hooks. */
 interface AccountHookStore {
   getById(accountId: string, hookId: string): Promise<AccountHookRecord | null>;
@@ -243,7 +236,6 @@ export interface Storage {
   crons: CronStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
-  accountTools: AccountToolStore;
   accountHooks: AccountHookStore;
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;

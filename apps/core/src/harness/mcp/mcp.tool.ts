@@ -8,16 +8,19 @@
 import type { Tool as McpTool } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
+import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
 
-export function mcpServerTools(
+export function mcpTools(
   connection: McpConnection,
   remoteTools: McpTool[],
+  onSandboxCpu?: (sample: SandboxCpuSample) => void,
 ): ToolSet {
   const tools: ToolSet = {};
   for (const remote of remoteTools) {
-    tools[mcpToolName(connection.record.name, remote.name)] = tool({
+    const name = mcpToolName(connection.record.name, remote.name);
+    tools[name] = tool({
       description: remote.description ?? "",
       inputSchema: jsonSchema(remote.inputSchema as JSONSchema7),
       toModelOutput: ({ output }): ToolResultOutput =>
@@ -27,7 +30,24 @@ export function mcpServerTools(
           connection,
           remote.name,
           (input ?? {}) as Record<string, unknown>,
-          { abortSignal: options.abortSignal },
+          {
+            abortSignal: options.abortSignal,
+            // Only a hosted row's Lambda reports CPU; metered under the
+            // dedicated tool-compute type so it never files as the agent's
+            // own sandbox.
+            ...(onSandboxCpu
+              ? {
+                  onCpuUsec: (cpuUsec: number): void =>
+                    onSandboxCpu({
+                      type: "mcp-sandbox",
+                      role: "tool",
+                      toolName: name,
+                      toolCallId: options.toolCallId,
+                      cpuUsec: cpuUsec,
+                    }),
+                }
+              : {}),
+          },
         );
       },
     });

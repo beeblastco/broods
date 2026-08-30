@@ -1134,10 +1134,8 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/env/OVH_API_KEY", "DELETE")).toBe(true);
   expect(isConfigHttpPath("/v1/skills")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
-  expect(isConfigHttpPath("/v1/tools")).toBe(true);
-  expect(isConfigHttpPath("/v1/tools/qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(
-    true,
-  );
+  // /v1/tools is retired (#331 phase 3); it no longer routes to the config plane.
+  expect(isConfigHttpPath("/v1/tools")).toBe(false);
   expect(isConfigHttpPath("/v1/mcp")).toBe(true);
   expect(isConfigHttpPath("/v1/mcp/k57mcpserver00000000000000000000")).toBe(
     true,

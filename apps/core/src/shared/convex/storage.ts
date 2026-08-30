@@ -8,7 +8,6 @@
 
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { AccountToolRecord } from "../domain/account-tools.ts";
 import type { McpRecord } from "../domain/mcp.ts";
 import {
   createAccountId,
@@ -136,8 +135,6 @@ interface ConvexCronDoc {
   scheduleExpression: string;
   timezone?: string;
   status: "active" | "paused";
-  schedulerName: string;
-  schedulerGroupName: string;
   createdAt: number;
   updatedAt: number;
   lastInvokedAt?: number;
@@ -159,8 +156,6 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
     scheduleExpression: doc.scheduleExpression,
     ...(doc.timezone ? { timezone: doc.timezone } : {}),
     status: doc.status,
-    schedulerName: doc.schedulerName,
-    schedulerGroupName: doc.schedulerGroupName,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
     ...(doc.lastInvokedAt
@@ -304,10 +299,10 @@ const agentDeployments: Storage["agentDeployments"] = {
 };
 
 const crons: Storage["crons"] = {
-  // awsCrons.create is a Node action that inserts the row and creates the
-  // EventBridge schedule, rolling the row back when the schedule fails.
+  // agent/crons.create inserts the row and registers its schedule in one
+  // transaction, so neither can orphan the other.
   create: async function (accountId, input) {
-    return (await getConvexClient().action(internal.aws.crons.create, {
+    return (await getConvexClient().mutation(internal.agent.crons.create, {
       accountId: accountId as any,
       input: input,
     })) as CronSummary;
@@ -328,19 +323,19 @@ const crons: Storage["crons"] = {
 
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
-  // awsCrons.remove is a Node action that drops the EventBridge schedule and the
-  // row together, so a schedule can never outlive the cron row that names it.
+  // agent/crons.remove drops the registered schedule and the row together, so
+  // a schedule can never outlive the cron row that names it.
   remove: async function (accountId, cronId) {
-    return (await getConvexClient().action(internal.aws.crons.remove, {
+    return (await getConvexClient().mutation(internal.agent.crons.remove, {
       accountId: accountId as any,
       cronId: cronId as any,
     })) as boolean;
   },
-  // awsCrons.update is a Node action that updates the EventBridge schedule
-  // first and only then patches the row, so a schedule EventBridge rejects
-  // never reaches the stored job.
+  // agent/crons.update patches the row and replaces the registered schedule
+  // in one transaction, so a schedule the scheduler rejects never reaches the
+  // stored job.
   update: async function (accountId, cronId, patch) {
-    return (await getConvexClient().action(internal.aws.crons.update, {
+    return (await getConvexClient().mutation(internal.agent.crons.update, {
       accountId: accountId as any,
       cronId: cronId as any,
       patch: patch,
@@ -635,48 +630,6 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
   },
 };
 
-interface ConvexAccountToolDoc {
-  _id: string;
-  accountId: string;
-  name: string;
-  description: string;
-  inputSchema: AccountToolRecord["inputSchema"];
-  bundleStorageKey: string;
-  sha256: string;
-  runtime?: "isolate" | "sandbox";
-  defaultConfig?: Record<string, unknown>;
-  status: "active" | "deleted";
-  createdAt: number;
-  updatedAt: number;
-  deletedAt?: number;
-}
-
-function accountToolFromConvex(
-  doc: ConvexAccountToolDoc | null,
-): AccountToolRecord | null {
-  if (!doc) return null;
-
-  return {
-    accountId: doc.accountId,
-    toolId: doc._id,
-    name: doc.name,
-    description: doc.description,
-    inputSchema: doc.inputSchema,
-    bundleStorageKey: doc.bundleStorageKey,
-    sha256: doc.sha256,
-    runtime: doc.runtime === "isolate" ? "isolate" : "sandbox",
-    ...(doc.defaultConfig !== undefined
-      ? { defaultConfig: doc.defaultConfig }
-      : {}),
-    status: doc.status,
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.deletedAt
-      ? { deletedAt: new Date(doc.deletedAt).toISOString() }
-      : {}),
-  };
-}
-
 interface ConvexMcpDoc {
   _id: string;
   accountId: string;
@@ -802,30 +755,6 @@ const agentPolicies: Storage["agentPolicies"] = {
   },
 };
 
-const accountTools: Storage["accountTools"] = {
-  getById: async function (accountId, toolId) {
-    const doc = await getConvexClient().query(internal.account.tools.getById, {
-      accountId: accountId as any,
-      toolId: toolId as any,
-    });
-
-    return accountToolFromConvex(doc as ConvexAccountToolDoc | null);
-  },
-  removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.account.tools.list, {
-      accountId: accountId as any,
-    })) as ConvexAccountToolDoc[];
-    await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.account.tools.remove, {
-        accountId: accountId as any,
-        toolId: doc._id as any,
-      }),
-    );
-
-    return docs.length;
-  },
-};
-
 const mcp: Storage["mcp"] = {
   getById: async function (accountId, serverId) {
     const doc = await getConvexClient().query(internal.account.mcp.getById, {
@@ -894,7 +823,6 @@ export const convexStorage: Storage = {
   sandboxConfigs: sandboxConfigs,
   workspaceConfigs: workspaceConfigs,
   agentPolicies: agentPolicies,
-  accountTools: accountTools,
   accountHooks: accountHooks,
   mcp: mcp,
   roleSessions: roleSessions,

@@ -2381,7 +2381,6 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     sandboxConfigs: null as never,
     workspaceConfigs: null as never,
     agentPolicies: null as never,
-    accountTools: null as never,
     accountHooks: null as never,
     mcp: null as never,
     roleSessions: null as never,

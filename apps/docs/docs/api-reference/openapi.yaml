@@ -7,19 +7,19 @@ info:
     - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
     - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
 
-    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, tools) automatically via `broods dev` and `broods deploy`. You do not need to call these account-management endpoints manually. This reference is for:
+    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) automatically via `broods dev` and `broods deploy`. You do not need to call these account-management endpoints manually. This reference is for:
     > - Runtime invocation (`/`, `/async`, `/status/{eventId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, tools, workspace files, crons, workspaces, sandboxes, policies, and roles are served by the config plane and have no admin path variants. Account roles (`fp_role_...` ids under `/v1/roles*`) are exchanged at `/v1/account/assume-role` for short-lived `fp_sts_...` session tokens that authenticate like the account secret but are limited to the role's policy.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles are served by the config plane and have no admin path variants. Account roles (`fp_role_...` ids under `/v1/roles*`) are exchanged at `/v1/account/assume-role` for short-lived `fp_sts_...` session tokens that authenticate like the account secret but are limited to the role's policy.
   version: 0.1.0
 
 servers:
   - url: https://gateway.broods.app
     description: Managed gateway (default SDK host)
   - url: http://localhost:3000
-    description: Locally-run core container (`cd apps/core && bun run serve`; agents/skills/tools/workspace-files/crons/workspaces/sandboxes/policies CRUD routes are served by the Convex config plane, not a local core)
+    description: Locally-run core container (`cd apps/core && bun run serve`; agents/skills/mcp/workspace-files/crons/workspaces/sandboxes/policies CRUD routes are served by the Convex config plane, not a local core)
 
 security:
   - BearerAuth: []
@@ -41,8 +41,6 @@ tags:
     description: Account-owned sandbox execution configs.
   - name: Workspaces
     description: Account-owned workspace configs.
-  - name: Tools
-    description: Account-uploaded custom tool bundles.
   - name: Policies
     description: Account-owned reusable runtime authorization policies.
   - name: Channels
@@ -370,83 +368,12 @@ paths:
                   value:
                     error: Unauthorized
 
-  /async-tools/{resultId}/complete:
-    post:
-      tags:
-        - Direct API
-      summary: Complete async tool callback
-      description: Compatibility callback for settling one `AsyncToolResult` row through account bearer auth. Platform-managed sandbox jobs use `/sandbox-jobs/{resultId}/complete` with a per-result token.
-      parameters:
-        - name: resultId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              oneOf:
-                - $ref: "#/components/schemas/ToolCompletionSuccess"
-                - $ref: "#/components/schemas/ToolCompletionFailure"
-            examples:
-              success:
-                summary: Tool completed
-                value:
-                  status: completed
-                  response:
-                    answer: done
-                    data:
-                      - 1
-                      - 2
-                      - 3
-              failure:
-                summary: Tool failed
-                value:
-                  status: failed
-                  error: External service timeout after 30s
-      responses:
-        "202":
-          description: "Result accepted (`status: accepted` when settled, `status: waiting_for_async_tools` with `pendingCount` while siblings are outstanding)"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  pendingCount:
-                    type: integer
-              examples:
-                accepted:
-                  value:
-                    status: accepted
-                waiting:
-                  value:
-                    status: waiting_for_async_tools
-                    pendingCount: 2
-        "404":
-          description: Unknown resultId
-        "409":
-          description: Result already settled
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                unauthorized:
-                  value:
-                    error: Unauthorized
-
   /sandbox-jobs/{resultId}/complete:
     post:
       tags:
         - Direct API
       summary: Complete sandbox job callback
-      description: Token-authenticated completion callback used by detached sandbox background jobs and detached uploaded tools. Authenticated with the per-job `x-job-token` header minted at launch, not an account secret. Unknown ids and bad tokens both return 404.
+      description: Token-authenticated completion callback used by detached sandbox background jobs. Authenticated with the per-job `x-job-token` header minted at launch, not an account secret. Unknown ids and bad tokens both return 404.
       parameters:
         - name: resultId
           in: path
@@ -735,8 +662,7 @@ paths:
                       reservedSandboxesReleased: 0
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
-                      cronsDeleted: 0
-                      accountToolsDeleted: 0
+                      bundleObjectsDeleted: 0
 
   /accounts/{accountId}/rotate-secret:
     post:
@@ -1834,98 +1760,6 @@ paths:
         "302": { description: Redirect to the file }
         "404": { description: Unknown, expired or revoked token }
 
-  /v1/tools:
-    post:
-      tags: [Tools]
-      summary: Create uploaded custom tool
-      description: >-
-        Upload an already-bundled JavaScript tool bundle and model-facing manifest.
-        A tool belongs to one project stage, so `project` and `stage`
-        are required; two stages may each define a tool of the same name.
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: project, in: query, required: true, schema: { type: string } }
-        - { name: stage, in: query, required: true, schema: { type: string } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AccountToolCreate"
-      responses:
-        "201":
-          description: Tool created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or stage }
-        "404": { description: Project or stage not found }
-    get:
-      tags: [Tools]
-      summary: List uploaded custom tools
-      description: Lists the tools of one project stage. Both query parameters are required.
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: project, in: query, required: true, schema: { type: string } }
-        - { name: stage, in: query, required: true, schema: { type: string } }
-      responses:
-        "200":
-          description: Tool list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  tools:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or stage }
-        "404": { description: Project or stage not found }
-
-  /v1/tools/{toolId}:
-    get:
-      tags: [Tools]
-      summary: Get uploaded custom tool
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: toolId, in: path, required: true, schema: { type: string } }
-      responses:
-        "200":
-          description: Tool
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountTool"
-        "404": { description: Not found }
-    patch:
-      tags: [Tools]
-      summary: Update uploaded custom tool
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: toolId, in: path, required: true, schema: { type: string } }
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AccountToolUpdate"
-      responses:
-        "200":
-          description: Updated tool
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountTool"
-    delete:
-      tags: [Tools]
-      summary: Delete uploaded custom tool
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - { name: toolId, in: path, required: true, schema: { type: string } }
-      responses:
-        "200": { description: Deleted }
-
   /v1/mcp:
     post:
       tags: [MCP servers]
@@ -1947,14 +1781,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/McpServerCreate"
+              $ref: "#/components/schemas/McpCreate"
       responses:
         "201":
           description: MCP server registered
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
         "400": { description: Missing project or stage, or invalid input }
         "404": { description: Project or stage not found }
     get:
@@ -1976,7 +1810,7 @@ paths:
                   servers:
                     type: array
                     items:
-                      $ref: "#/components/schemas/McpServer"
+                      $ref: "#/components/schemas/Mcp"
         "400": { description: Missing project or stage }
         "404": { description: Project or stage not found }
 
@@ -1993,7 +1827,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
         "404": { description: Not found }
     patch:
       tags: [MCP servers]
@@ -2005,14 +1839,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/McpServerUpdate"
+              $ref: "#/components/schemas/McpUpdate"
       responses:
         "200":
           description: Updated MCP server
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/McpServer"
+                $ref: "#/components/schemas/Mcp"
     delete:
       tags: [MCP servers]
       summary: Delete external MCP server
@@ -3140,7 +2974,7 @@ components:
           description: Optional public conversation key. Defaults to `cron:{cronId}`.
         scheduleExpression:
           type: string
-          description: EventBridge Scheduler expression, such as `cron(...)`, `rate(...)`, or `at(...)`
+          description: Schedule expression, such as `cron(...)`, `rate(...)`, or `at(...)`
         timezone:
           type: string
         status:
@@ -3282,9 +3116,7 @@ components:
               type: integer
             skillObjectsDeleted:
               type: integer
-            cronsDeleted:
-              type: integer
-            accountToolsDeleted:
+            bundleObjectsDeleted:
               type: integer
 
     AgentConfig:
@@ -3445,8 +3277,6 @@ components:
                 sandboxes:write,
                 skills:read,
                 skills:write,
-                tools:read,
-                tools:write,
                 workspaces:read,
                 workspaces:write,
               ]
@@ -3468,7 +3298,7 @@ components:
       type: object
       properties:
         toolNames: { type: array, items: { type: string } }
-        toolIds: { type: array, items: { type: string } }
+        mcpIds: { type: array, items: { type: string } }
         workspaceIds: { type: array, items: { type: string } }
         workspaceNames: { type: array, items: { type: string } }
         filePaths: { type: array, items: { type: string } }
@@ -3490,7 +3320,7 @@ components:
           description: >-
             Trusted runtime attribute or dotted path. Examples include accountId,
             project, stage, agentId, channel, channelId, threadId, userId,
-            userName, userRoles, toolName, toolId, filePath, workspaceName,
+            userName, userRoles, toolName, mcpId, filePath, workspaceName,
             sandboxPermissionMode, tool.input.command, tool.input.file_path, and
             tool.inputKeys. On an array attribute such as userRoles, `contains`
             means membership and `in`/`notIn` test overlap.
@@ -3952,93 +3782,16 @@ components:
     ToolsConfig:
       type: object
       description: >-
-        Enables uploaded account tools by `toolId` key and provider-defined
-        tools by the name the configured AI SDK provider exposes on its `tools`
-        namespace (for example `googleSearch`, `urlContext`, or `codeExecution`
-        on `google`). Core ships no built-in external tools. A name the
+        Enables provider-defined tools by the name the configured AI SDK
+        provider exposes on its `tools` namespace (for example `googleSearch`,
+        `urlContext`, or `codeExecution` on `google`). Core ships no built-in
+        external tools; remote tools come from `mcp`. A name the
         configured provider does not expose is rejected when the agent runs.
         Omitting a key or setting `enabled: false` disables the tool.
       additionalProperties:
-        oneOf:
-          - $ref: "#/components/schemas/UploadedToolConfig"
-          - $ref: "#/components/schemas/ProviderToolConfig"
+        $ref: "#/components/schemas/ProviderToolConfig"
 
-    AccountToolCreate:
-      type: object
-      required: [name, description, inputSchema, bundle]
-      properties:
-        name:
-          type: string
-          description: Model-facing tool name.
-        description:
-          type: string
-        inputSchema:
-          type: object
-          description: JSON Schema for the AI SDK tool input.
-        bundle:
-          type: string
-          description: Already-bundled JavaScript module source.
-        runtime:
-          type: string
-          enum: [isolate, sandbox]
-          description: Execution tier. Inferred from the bundle on create when omitted.
-        defaultConfig:
-          type: object
-          description: Non-secret default runtime config.
-
-    AccountToolUpdate:
-      type: object
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        inputSchema:
-          type: object
-        bundle:
-          type: string
-        runtime:
-          type: string
-          enum: [isolate, sandbox]
-        defaultConfig:
-          type: object
-
-    AccountTool:
-      type: object
-      properties:
-        accountId:
-          type: string
-        toolId:
-          type: string
-          example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
-        projectId:
-          type: string
-        stageId:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        inputSchema:
-          type: object
-        sha256:
-          type: string
-        runtime:
-          type: string
-          enum: [isolate, sandbox]
-        defaultConfig:
-          type: object
-        status:
-          type: string
-          enum: [active, deleted]
-        createdAt:
-          type: string
-        updatedAt:
-          type: string
-        deletedAt:
-          type: string
-
-    McpServerCreate:
+    McpCreate:
       type: object
       required: [name]
       properties:
@@ -4075,7 +3828,7 @@ components:
             type: string
           description: Tool names agents may use from this server; omit to allow all.
 
-    McpServerUpdate:
+    McpUpdate:
       type: object
       properties:
         name:
@@ -4095,7 +3848,7 @@ components:
         disabled:
           type: boolean
 
-    McpServer:
+    Mcp:
       type: object
       properties:
         accountId:
@@ -4137,20 +3890,6 @@ components:
           type: string
         deletedAt:
           type: string
-
-    UploadedToolConfig:
-      type: object
-      description: "Config for an account-uploaded custom tool. The object key is the returned `toolId`."
-      properties:
-        enabled:
-          type: boolean
-        async:
-          type: boolean
-        needsApproval:
-          type: boolean
-        config:
-          type: object
-          description: "Runtime config merged over the tool's upload-time `defaultConfig`."
 
     ProviderToolConfig:
       type: object

@@ -22,9 +22,8 @@ export async function externalIdsForStage(
   stageId: Id<"stages">,
 ): Promise<{
   skills: Record<string, string>;
-  tools: Record<string, string>;
   hooks: Record<string, string>;
-  mcpServers: Record<string, string>;
+  mcp: Record<string, string>;
 }> {
   const resources = await ctx.db
     .query("cliExternalResources")
@@ -39,17 +38,12 @@ export async function externalIdsForStage(
         .filter((entry) => entry.kind === "skill")
         .map((entry) => [entry.name, entry.externalId]),
     ),
-    tools: Object.fromEntries(
-      resources
-        .filter((entry) => entry.kind === "tool")
-        .map((entry) => [entry.name, entry.externalId]),
-    ),
     hooks: Object.fromEntries(
       resources
         .filter((entry) => entry.kind === "hook")
         .map((entry) => [entry.name, entry.externalId]),
     ),
-    mcpServers: Object.fromEntries(
+    mcp: Object.fromEntries(
       resources
         .filter((entry) => entry.kind === "mcp")
         .map((entry) => [entry.name, entry.externalId]),
@@ -126,9 +120,8 @@ export async function idsForStage(
       ),
     ),
     skills: externalIds.skills,
-    tools: externalIds.tools,
     hooks: externalIds.hooks,
-    mcpServers: externalIds.mcpServers,
+    mcp: externalIds.mcp,
     policies: Object.fromEntries(
       policies
         .filter(
@@ -211,11 +204,6 @@ export async function resourcesForStage(
       .filter((entry) => entry.kind === "skill")
       .map((entry) => [entry.externalId, entry.name]),
   );
-  const toolNames = Object.fromEntries(
-    externalResources
-      .filter((entry) => entry.kind === "tool")
-      .map((entry) => [entry.externalId, entry.name]),
-  );
   const hookNames = Object.fromEntries(
     externalResources
       .filter((entry) => entry.kind === "hook")
@@ -283,7 +271,6 @@ export async function resourcesForStage(
             sandboxes: sandboxNames,
             agents: agentNames,
             skills: skillNames,
-            tools: toolNames,
             hooks: hookNames,
             mcp: mcpNames,
             policies: policyNames,

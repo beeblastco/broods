@@ -942,80 +942,6 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject keeps uploaded tool bundles intact beside typed channels", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
-import { defineAgent, defineGitHubConnection, defineTool, env } from "${RESOURCES_MODULE}";
-export const github = defineGitHubConnection({
-  allowedChannelIds: ["*"],
-  appId: env("GITHUB_APP_ID"),
-  privateKey: env("GITHUB_PRIVATE_KEY"),
-  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-});
-export const helper = defineTool({
-  name: "helper",
-  path: "tools/helper.ts",
-  description: "Returns a result",
-  inputSchema: { type: "object", properties: {} },
-});
-export const support = defineAgent({
-  name: "support",
-  connections: [github], tools: { [helper.name]: { enabled: true, needsApproval: false } },
-});
-`,
-  );
-  await mkdir(join(cwd, "broods", "tools"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", "tools", "helper.ts"),
-    "export default { execute: async (_ctx: unknown, input: { value?: string }) => ({ ok: true, value: input.value }) };\n",
-  );
-
-  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const tool = manifest.resources.find((resource) => resource.kind === "tool");
-  const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent",
-  );
-  expect(tool?.config).toMatchObject({
-    path: "tools/helper.ts",
-    description: "Returns a result",
-  });
-  expect(typeof (tool?.config as { bundle?: unknown }).bundle).toBe("string");
-  expect((tool?.config as { bundle: string }).bundle).not.toContain(
-    "_ctx: unknown",
-  );
-  expect(agent?.config).toMatchObject({
-    channels: { github: {} },
-    tools: { helper: { enabled: true, needsApproval: false } },
-  });
-});
-
-test("compileProject rejects env refs in account-wide tool defaults", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
-import { defineAgent, defineTool, env } from "${RESOURCES_MODULE}";
-export const helper = defineTool({
-  name: "helper",
-  description: "Returns a configured value",
-  inputSchema: { type: "object", properties: {} },
-  defaultConfig: { apiToken: env("TOOL_API_TOKEN") },
-  execute(_input, options) {
-    return { configured: options.context.config.apiToken };
-  },
-});
-export const support = defineAgent({
-  name: "support",
-  tools: { [helper.name]: { enabled: true } },
-});
-`,
-  );
-
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    `Tool "helper" defaultConfig cannot contain env("NAME") references; put environment variable values in the agent's tools.<tool>.config`,
-  );
-});
-
 test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
   const cwd = await fixtureProject(
     "",
@@ -1377,7 +1303,7 @@ export const support = defineAgent({
   expect(manifest.stage).toBe("production");
 });
 
-test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
+test("compileProject maps workspace overrides, subagents, and skills", async () => {
   const cwd = await fixtureProject(
     `
 import { defineBroods } from "${RESOURCES_MODULE}";
@@ -1385,17 +1311,11 @@ import { defineBroods } from "${RESOURCES_MODULE}";
 export default defineBroods({ project: "typed-app" });
 `,
     `
-import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${RESOURCES_MODULE}";
+import { defineAgent, defineSkill, defineWorkspace, defineSandbox } from "${RESOURCES_MODULE}";
 
 export const docs = defineSkill({
   name: "greeting-skill",
   path: "skills/greeting-skill",
-});
-export const progress = defineTool({
-  name: "stream_progress",
-  path: "tools/stream_progress.mjs",
-  description: "Streams progress updates.",
-  inputSchema: { type: "object", properties: { steps: { type: "number" } } },
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" } });
 export const readonly = defineWorkspace({ name: "readonly", storage: { provider: "s3" } });
@@ -1418,7 +1338,6 @@ export const support = defineAgent({
   workspaces: [repo, { workspace: readonly, sandbox: null }],
   skills: { enabled: true, allowed: [docs] },
   subagent: { enabled: true, allowed: [helper] },
-  tools: { [progress.name]: { enabled: true } },
 });
 `,
   );
@@ -1435,11 +1354,6 @@ description: Says hello.
 # Greeting
 `,
   );
-  await mkdir(join(cwd, "broods", "tools"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", "tools", "stream_progress.mjs"),
-    "export default { name: 'stream_progress' };\n",
-  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const support = manifest.resources.find(
@@ -1448,10 +1362,6 @@ description: Says hello.
   const skill = manifest.resources.find(
     (resource) =>
       resource.kind === "skill" && resource.name === "greeting-skill",
-  );
-  const tool = manifest.resources.find(
-    (resource) =>
-      resource.kind === "tool" && resource.name === "stream_progress",
   );
 
   expect(support?.config).toMatchObject({
@@ -1473,7 +1383,6 @@ description: Says hello.
     ],
     skills: { enabled: true, allowed: ["greeting-skill"] },
     subagent: { enabled: true, allowed: ["helper"] },
-    tools: { stream_progress: { enabled: true } },
   });
   expect(skill?.config).toMatchObject({
     source: "files",
@@ -1485,18 +1394,6 @@ description: Says hello.
       }),
     ],
   });
-  expect((tool?.config as Record<string, unknown>).path).toBe(
-    "tools/stream_progress.mjs",
-  );
-  expect((tool?.config as Record<string, unknown>).description).toBe(
-    "Streams progress updates.",
-  );
-  expect((tool?.config as Record<string, unknown>).bundle).toContain(
-    'name: "stream_progress"',
-  );
-  expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe(
-    "string",
-  );
 });
 
 test("compileProject maps policy resources and agent policy refs", async () => {
@@ -1598,22 +1495,15 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject rejects skill and tool paths outside broods project root", async () => {
+test("compileProject rejects skill paths outside broods project root", async () => {
   const cwd = await fixtureProject(
     "",
     `
-import { defineSkill, defineTool } from "${RESOURCES_MODULE}";
+import { defineSkill } from "${RESOURCES_MODULE}";
 
 export const escapedSkill = defineSkill({
   name: "escaped-skill",
   path: "../outside-skill",
-});
-
-export const escapedTool = defineTool({
-  name: "escaped_tool",
-  path: "../outside-tool.mjs",
-  description: "Should not bundle.",
-  inputSchema: { type: "object" },
 });
 `,
   );
@@ -1652,31 +1542,6 @@ export const docs = defineSkill({
   ).map((file) => file.path);
 
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
-});
-
-test("compileProject rejects hidden or secret-looking tool bundle paths", async () => {
-  const cwd = await fixtureProject(
-    "",
-    `
-import { defineTool } from "${RESOURCES_MODULE}";
-
-export const hiddenTool = defineTool({
-  name: "hidden_tool",
-  path: ".secret/tool.mjs",
-  description: "Should not bundle.",
-  inputSchema: { type: "object" },
-});
-`,
-  );
-  await mkdir(join(cwd, "broods", ".secret"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", ".secret", "tool.mjs"),
-    "export default {};\n",
-  );
-
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "looks like a hidden file or secret",
-  );
 });
 
 test("diffManifests reports create, update, and delete operations", () => {
@@ -1992,56 +1857,6 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   });
 });
 
-test("compileProject emits the SDK calling-convention adapter for defineTool bundles", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "broods-test-"));
-  tempDirs.push(cwd);
-  const projectDir = join(cwd, "broods");
-  await mkdir(join(projectDir, "tools"), { recursive: true });
-  await writeFile(
-    join(projectDir, "broods.config.ts"),
-    `import { defineBroods } from "${RESOURCES_MODULE}";\nexport default defineBroods({ project: "tool-app" });\n`,
-  );
-  // Authoring stays broods-native: execute(ctx, input).
-  await writeFile(
-    join(projectDir, "tools", "echo.ts"),
-    `export default { name: "echo_tool", async execute(ctx, input) { return { echo: input, cfgSeen: ctx.config }; } };\n`,
-  );
-  await writeFile(
-    join(projectDir, "tools.ts"),
-    `import { defineTool } from "${RESOURCES_MODULE}";
-export const echoTool = defineTool({
-  name: "echo_tool",
-  path: "tools/echo.ts", description: "Echo", inputSchema: { type: "object" },
-});
-`,
-  );
-
-  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const tool = manifest.resources.find((resource) => resource.kind === "tool");
-  const bundle = (tool?.config as { bundle?: string } | undefined)?.bundle;
-  expect(typeof bundle).toBe("string");
-
-  // The runtime calls execute(input, options) with ctx at options.context; the
-  // emitted adapter must map that back to the author's execute(ctx, input).
-  const builtDir = await mkdtemp(join(tmpdir(), "broods-built-"));
-  tempDirs.push(builtDir);
-  const builtPath = join(builtDir, "tool.mjs");
-  await writeFile(builtPath, bundle!, "utf8");
-  const mod = await import(builtPath);
-  // The shim forwards the author's name so the isolate runner's manifest-name
-  // integrity check still fires for adapter-built tools.
-  expect(mod.default.name).toBe("echo_tool");
-  const result = await mod.default.execute(
-    { q: "hi" },
-    { context: { config: { a: 1 } }, toolCallId: "call_1" },
-  );
-  expect(result).toEqual({ echo: { q: "hi" }, cfgSeen: { a: 1 } });
-});
-
-// A channel record is the one resource that binds a place to an agent rather
-// than describing the agent, so its refs must survive compilation by name — the
-// backend resolves them to ids, and a raw agent name reaching Convex would bind
-// to nothing.
 test("compileProject lowers a channel onto its connection, agents and policy", async () => {
   const cwd = await fixtureProject(
     undefined,

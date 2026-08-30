@@ -70,7 +70,6 @@ export async function createPolicyToolApproval(
   baseInput: Omit<PolicyDecisionInput, "action">,
   workspaces: ResolvedWorkspace[],
   options: {
-    toolIdsByName?: ReadonlyMap<string, string>;
     mcpIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
   } = {},
@@ -133,7 +132,7 @@ export async function createPolicyToolApproval(
           reason: reason,
           toolInputKeys: policyInput.tool?.inputKeys,
           toolInputPreview: policyInput.tool?.inputPreview,
-          toolId: policyInput.toolId,
+          mcpId: policyInput.mcpId,
           workspaceId: policyInput.workspaceId,
           workspaceName: policyInput.workspaceName,
           filePath: policyInput.filePath,
@@ -335,7 +334,6 @@ export function policyInputForTool(
   input: unknown,
   workspaces: ResolvedWorkspace[],
   options: {
-    toolIdsByName?: ReadonlyMap<string, string>;
     mcpIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
   } = {},
@@ -343,7 +341,6 @@ export function policyInputForTool(
   PolicyDecisionInput,
   | "action"
   | "toolName"
-  | "toolId"
   | "mcpId"
   | "workspaceId"
   | "workspaceName"
@@ -388,9 +385,6 @@ export function policyInputForTool(
         : undefined;
   const base = {
     toolName: toolName,
-    ...(options.toolIdsByName?.get(toolName)
-      ? { toolId: options.toolIdsByName.get(toolName)! }
-      : {}),
     ...(options.mcpIdsByName?.get(toolName)
       ? { mcpId: options.mcpIdsByName.get(toolName)! }
       : {}),

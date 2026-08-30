@@ -1,23 +1,30 @@
 /**
  * Hosted MCP server transport (#331 phase 2). A hosted row's endpoint is the
  * tool-runner Lambda: this fetch adapter serializes one web request into an
- * mcp-mode runner payload, invokes the Lambda through the shared tool-runner
- * client and frame reader (bundles/executor.ts, bundles/payload.ts), and
- * rebuilds the child's serialized response. Stateless: one invoke per
- * request, matching the 2026-07-28 transport exactly.
+ * mcp-mode runner payload, invokes the Lambda over InvokeWithResponseStream,
+ * reads the NDJSON frames back (../frames.ts), and rebuilds the child's
+ * serialized response. Stateless: one invoke per request, matching the
+ * 2026-07-28 transport exactly.
  */
 
-import type { McpRecord } from "../../shared/domain/mcp.ts";
-import { defaultClient, drainInvokeStream } from "../bundles/executor.ts";
 import {
-  BUNDLE_URL_TTL_SECONDS,
-  FrameQueue,
-  toolBundlesBucket,
-} from "../bundles/payload.ts";
+  InvokeWithResponseStreamCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
+import { requireEnv } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
+import { FrameQueue, toolBundlesBucket } from "../frames.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
+
+// The runner fetches at the start of a 35s-bounded invocation, so the grant
+// only has to outlive a cold start.
+const BUNDLE_URL_TTL_SECONDS = 120;
+
+let sharedClient: LambdaClient | undefined;
+let invokeOverride: HostedMcpInvoke | null = null;
 
 /** One serialized web request, as the mcp-mode child receives it. */
 interface HostedMcpRequest {
@@ -45,15 +52,18 @@ type HostedMcpInvoke = (
   record: McpRecord,
   request: HostedMcpRequest,
   abortSignal: AbortSignal | undefined,
+  onCpuUsec?: (cpuUsec: number) => void,
 ) => Promise<HostedMcpResponse>;
-
-let invokeOverride: HostedMcpInvoke | null = null;
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
- * request through the Lambda host instead of the network.
+ * request through the Lambda host instead of the network. The child stamps its
+ * CPU on the terminal frame; onCpuUsec reports it for usage metering.
  */
-export function hostedMcpFetch(record: McpRecord): typeof fetch {
+export function hostedMcpFetch(
+  record: McpRecord,
+  onCpuUsec?: (cpuUsec: number) => void,
+): typeof fetch {
   return (async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -79,6 +89,7 @@ export function hostedMcpFetch(record: McpRecord): typeof fetch {
         body: body,
       },
       request.signal,
+      onCpuUsec,
     );
 
     return new Response(result.body, {
@@ -93,6 +104,53 @@ export function setHostedMcpInvokeForTests(
   invoke: HostedMcpInvoke | null,
 ): void {
   invokeOverride = invoke;
+}
+
+function defaultClient(): LambdaClient {
+  // Bound every invoke: the SDK's default connection/request timeouts are 0
+  // (off). requestTimeout sits above the Lambda's own 35s so the function's
+  // graceful error wins normally; connectionTimeout fails a stalled dial fast.
+  sharedClient ??= new LambdaClient({
+    requestHandler: { connectionTimeout: 5_000, requestTimeout: 45_000 },
+  });
+
+  return sharedClient;
+}
+
+// Invoke the runner Lambda and push its raw NDJSON payload chunks into the queue
+// as they arrive. Surfaces a Lambda-side failure (InvokeComplete.ErrorCode) as a
+// thrown error; server-side failures arrive as an `error` frame instead.
+async function drainInvokeStream(
+  client: LambdaClient,
+  payload: McpHostPayload,
+  abortSignal: AbortSignal | undefined,
+  queue: FrameQueue,
+): Promise<void> {
+  const result = await client.send(
+    new InvokeWithResponseStreamCommand({
+      FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
+      InvocationType: "RequestResponse",
+      Payload: new TextEncoder().encode(JSON.stringify(payload)),
+    }),
+    abortSignal ? { abortSignal: abortSignal } : {},
+  );
+  // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
+  // to carry state across them.
+  const decoder = new TextDecoder();
+  for await (const event of result.EventStream ?? []) {
+    const chunk = event.PayloadChunk?.Payload;
+    if (chunk) {
+      queue.push(decoder.decode(chunk, { stream: true }));
+      continue;
+    }
+    const errorCode = event.InvokeComplete?.ErrorCode;
+    if (errorCode) {
+      throw new Error(
+        `tool runner Lambda failed: ${event.InvokeComplete?.ErrorDetails || errorCode}`,
+      );
+    }
+  }
+  queue.push(decoder.decode());
 }
 
 /** The child answers with one terminal frame carrying the serialized response. */
@@ -118,6 +176,7 @@ async function invokeLambda(
   record: McpRecord,
   request: HostedMcpRequest,
   abortSignal: AbortSignal | undefined,
+  onCpuUsec?: (cpuUsec: number) => void,
 ): Promise<HostedMcpResponse> {
   if (!record.bundleStorageKey || !record.sha256) {
     throw new Error(
@@ -142,14 +201,22 @@ async function invokeLambda(
       transportError = error;
     })
     .finally(() => queue.close());
+  // A failed run still burned CPU, so the sample is reported off the terminal
+  // frame either way — before the error path throws.
+  const reportCpu = (cpuUsec: number | undefined): void => {
+    if (typeof cpuUsec === "number" && cpuUsec > 0) onCpuUsec?.(cpuUsec);
+  };
   try {
     for await (const frame of queue.frames()) {
       if (frame.t === "error") {
+        reportCpu(frame.cpuUsec);
         throw new Error(
           frame.error || `hosted MCP server ${record.name} run failed`,
         );
       }
       if (frame.t === "final") {
+        reportCpu(frame.cpuUsec);
+
         return finalHostedResponse(record.name, frame.result);
       }
     }

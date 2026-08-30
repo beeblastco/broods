@@ -13,7 +13,6 @@ export type CliManifestResource = {
     | "sandbox"
     | "cron"
     | "skill"
-    | "tool"
     | "hook"
     | "mcp"
     | "policy"
@@ -29,9 +28,8 @@ export type GeneratedIds = {
   sandboxes: Record<string, string>;
   crons: Record<string, string>;
   skills: Record<string, string>;
-  tools: Record<string, string>;
   hooks: Record<string, string>;
-  mcpServers: Record<string, string>;
+  mcp: Record<string, string>;
   policies: Record<string, string>;
   channelRecords: Record<string, string>;
 };

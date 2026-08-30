@@ -1,7 +1,7 @@
 /**
  * Model-facing schedules: create, list, update, cancel. Every schedule belongs
  * to the calling agent and the conversation it was created from.
- * Cron rows and EventBridge lifecycle stay in the config plane (awsCrons).
+ * Cron rows and schedule lifecycle stay in the config plane (agent/crons).
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
@@ -9,14 +9,13 @@ import {
   normalizeUpdateCronInput,
   type CronRecord,
   type CronStatus,
-  type CronSummary,
   type UpdateCronInput,
 } from "../../shared/domain/cron.ts";
 import { getStorage } from "../../shared/storage.ts";
 import { toolError, toolText } from "./utils.ts";
 
 const SCHEDULE_EXPRESSION_DESCRIPTION =
-  "EventBridge Scheduler expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).";
+  "Schedule expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).";
 const SCHEDULE_PATTERN = /^(cron|rate|at)\(.+\)$/;
 
 export interface ScheduleContext {
@@ -278,7 +277,11 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
             `Scheduled task ${cronId} answers in another conversation, so its instructions can only be rewritten there. Its name, schedule, timezone and status can be changed from here.`,
           );
         }
-        const updated = await updateOwnedCron(context.accountId, cronId, patch);
+        const updated = await getStorage().crons.update(
+          context.accountId,
+          cronId,
+          patch,
+        );
         if (!updated) {
           return toolError(`Scheduled task ${cronId} no longer exists`);
         }
@@ -304,27 +307,4 @@ function toScheduleSummary(cron: CronRecord): ScheduleSummary {
     ...(cron.lastStatus ? { lastStatus: cron.lastStatus } : {}),
     ...(cron.lastInvokedAt ? { lastInvokedAt: cron.lastInvokedAt } : {}),
   };
-}
-
-/**
- * Applies the patch through the config plane. A fired at(...) job deletes its
- * own EventBridge schedule but can leave the row behind, and the config plane
- * refuses to patch a schedule that is gone; that is the one failure the model
- * can act on, and it only reaches core as a message.
- */
-async function updateOwnedCron(
-  accountId: string,
-  cronId: string,
-  patch: UpdateCronInput,
-): Promise<CronSummary | null> {
-  try {
-    return await getStorage().crons.update(accountId, cronId, patch);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("ResourceNotFoundException")) throw error;
-
-    return toolError(
-      `Scheduled task ${cronId} has no live schedule any more, so it cannot be changed. Cancel it and schedule a new one.`,
-    );
-  }
 }

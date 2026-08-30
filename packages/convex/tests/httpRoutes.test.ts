@@ -51,7 +51,7 @@ const SURFACES: Array<{
     item: ["GET", "PUT", "DELETE"],
   },
   {
-    path: "/v1/tools",
+    path: "/v1/mcp",
     collection: ["GET", "POST"],
     item: ["GET", "PATCH", "DELETE"],
   },

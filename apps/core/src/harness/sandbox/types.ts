@@ -95,7 +95,7 @@ export interface SandboxRunRequest {
   // working directory and S3 mount prefix.
   namespace?: string;
   // Stable identity for a reserved sandbox. Use this when persistence identity is
-  // not a workspace filesystem namespace, e.g. account-uploaded custom tools.
+  // not a workspace filesystem namespace.
   reservationKey?: string;
   workspaceRoot?: string;
   timeoutSeconds: number;
@@ -137,15 +137,16 @@ export interface SandboxRunResult {
   cpuUsec?: number;
 }
 
-// The uploaded-tool runner is its own compute type, not one of the agent sandbox
-// providers — metering it as "lambda" would file it under the agent's sandbox.
-export type ToolComputeProvider = "custom-tool-sandbox";
+// The hosted-MCP runner Lambda is its own compute type, not one of the agent
+// sandbox providers — metering it as "lambda" would file it under the agent's
+// sandbox. (Retired custom-tool rows stored "custom-tool-sandbox" here.)
+export type ToolComputeProvider = "mcp-sandbox";
 
 /** One sandbox exec's CPU, tagged by sandbox type and role for usage metering. */
 export interface SandboxCpuSample {
   type: SandboxProvider | ToolComputeProvider;
   role: "agent" | "tool";
-  /** The custom tool that ran, when role is "tool". */
+  /** The model-facing tool that ran, when role is "tool". */
   toolName?: string;
   /** The AI SDK call this CPU belongs to, so a trace span can carry its cost. */
   toolCallId?: string;

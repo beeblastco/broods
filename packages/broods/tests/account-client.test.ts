@@ -268,61 +268,6 @@ test("sandbox lifecycle throws on a missing sandbox (404)", async () => {
   );
 });
 
-test("tools: create posts JSON with the bundle and delete returns the flag", async () => {
-  const { client, calls } = mockClient([
-    {
-      status: 201,
-      body: {
-        toolId: "qs78zwc4z4q5ysxm74fgrhd13s88xxt",
-        name: "sum",
-        runtime: "isolate",
-      },
-    },
-    { status: 200, body: { deleted: true } },
-  ]);
-
-  const created = await client.createTool(
-    { project: "demo", stage: "development" },
-    {
-      name: "sum",
-      description: "adds",
-      inputSchema: {},
-      bundle: "export default {}",
-    },
-  );
-  expect(created.toolId).toBe("qs78zwc4z4q5ysxm74fgrhd13s88xxt");
-  expect(calls[0]?.url).toBe(
-    "https://gateway.example.com/v1/tools?project=demo&stage=development",
-  );
-  expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
-  expect(JSON.parse(calls[0]?.body ?? "{}").bundle).toBe("export default {}");
-
-  expect(await client.deleteTool("qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
-});
-
-test("tools: list carries the stage scope and encodes it", async () => {
-  const { client, calls } = mockClient([
-    { status: 200, body: { tools: [{ toolId: "tool_1", name: "sum" }] } },
-  ]);
-
-  expect(
-    (await client.listTools({ project: "acme", stage: "My Env" }))[0]?.toolId,
-  ).toBe("tool_1");
-  expect(calls[0]?.url).toBe(
-    "https://gateway.example.com/v1/tools?project=acme&stage=My+Env",
-  );
-});
-
-test("tools: list throws on an unresolvable scope instead of returning empty", async () => {
-  const { client } = mockClient([
-    { status: 404, body: { error: "Stage not found" } },
-  ]);
-
-  expect(
-    client.listTools({ project: "acme", stage: "typo" }),
-  ).rejects.toThrow();
-});
-
 test("policies: list/create unwrap and get returns null on 404", async () => {
   const { client } = mockClient([
     { status: 200, body: { policies: [{ policyId: "pol_1", name: "guard" }] } },

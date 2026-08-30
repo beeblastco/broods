@@ -1,6 +1,6 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-// SST provisions the AWS data plane, container runtime IAM user, and cron API destination.
+// SST provisions the AWS data plane and the container runtime IAM user.
 // The runtime itself is the Bun container deployed from the infra repo.
 // AWS account + project identity for resource names, IAM role ARNs, and tags.
 // No in-source defaults — provided via repo vars / local env (see .env.example).
@@ -22,13 +22,6 @@ const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
-// Service token shared with the core container; the EventBridge cron connection
-// sends it as the Authorization bearer so core accepts the cron POSTs.
-const SERVICE_AUTH_SECRET = requiredEnv("SERVICE_AUTH_SECRET");
-// Public base URL of the gateway (e.g. https://gateway.broods.app). EventBridge
-// cron API destination POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs`, and the
-// container reads the same value at runtime for callbacks/status URLs.
-const PUBLIC_BASE_URL = requiredEnv("PUBLIC_BASE_URL");
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
@@ -220,7 +213,6 @@ export default $config({
       );
     }
     const names = {
-      cronSchedules: resourceName("cron-schedules", stage, region),
       filesystem: accountRegionalBucketName("filesystem", stage, region),
       skills: accountRegionalBucketName("skills", stage, region),
       toolBundles: accountRegionalBucketName("tool-bundles", stage, region),
@@ -748,8 +740,11 @@ export default $config({
       }),
     });
 
-    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
-    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
+    // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
+    // process. No VPC gives internet egress; core invokes it via
+    // TOOL_RUNNER_FUNCTION_NAME. The "ToolRunner" logical id and the
+    // tool-runner physical name predate the MCP role — renaming either
+    // replaces the deployed function, so they stay.
     const toolRunnerFn = new sst.aws.Function("ToolRunner", {
       handler: "../lambda/handler.handler",
       runtime: "nodejs22.x",
@@ -878,136 +873,8 @@ export default $config({
         : []),
     ];
 
-    const cronScheduleGroup = new aws.scheduler.ScheduleGroup(
-      "CronScheduleGroup",
-      {
-        name: names.cronSchedules,
-      },
-    );
-
-    const cronSchedulerRole = new aws.iam.Role("CronSchedulerRole", {
-      name: resourceName("cron-scheduler", stage, region),
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Principal: { Service: "scheduler.amazonaws.com" },
-            Action: "sts:AssumeRole",
-          },
-        ],
-      }),
-    });
-
-    // Cron schedules invoke core over HTTPS. EventBridge Scheduler cannot
-    // target an API destination directly (CreateSchedule rejects the ARN), so
-    // schedules publish onto a dedicated bus (templated PutEvents target) and
-    // a rule forwards the event detail — the CronInvocation JSON — to the API
-    // destination, which POSTs it to the gateway /v1/cron-runs with the
-    // service token. Source/DetailType constants match awsCrons.ts.
-    const cronRunBus = new aws.cloudwatch.EventBus("CronRunBus", {
-      name: resourceName("cron-runs", stage, region),
-    });
-    const cronRunConnection = new aws.cloudwatch.EventConnection(
-      "CronRunConnection",
-      {
-        name: resourceName("cron-run", stage, region),
-        authorizationType: "API_KEY",
-        authParameters: {
-          apiKey: {
-            key: "Authorization",
-            value: `Bearer ${SERVICE_AUTH_SECRET}`,
-          },
-        },
-      },
-    );
-    const cronRunApiDestination = new aws.cloudwatch.EventApiDestination(
-      "CronRunApiDestination",
-      {
-        name: resourceName("cron-run", stage, region),
-        connectionArn: cronRunConnection.arn,
-        invocationEndpoint: `${PUBLIC_BASE_URL}/v1/cron-runs`,
-        httpMethod: "POST",
-      },
-    );
-    const cronRunInvokeRole = new aws.iam.Role("CronRunInvokeRole", {
-      name: resourceName("cron-run-invoke", stage, region),
-      assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Principal: { Service: "events.amazonaws.com" },
-            Action: "sts:AssumeRole",
-          },
-        ],
-      }),
-    });
-    new aws.iam.RolePolicy("CronRunInvokeRolePolicy", {
-      role: cronRunInvokeRole.id,
-      policy: cronRunApiDestination.arn.apply((arn) =>
-        JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Effect: "Allow",
-              Action: ["events:InvokeApiDestination"],
-              Resource: [arn],
-            },
-          ],
-        }),
-      ),
-    });
-    const cronRunRule = new aws.cloudwatch.EventRule("CronRunRule", {
-      name: resourceName("cron-run", stage, region),
-      eventBusName: cronRunBus.name,
-      eventPattern: JSON.stringify({
-        source: ["broods.crons"],
-        "detail-type": ["cron-run"],
-      }),
-    });
-    new aws.cloudwatch.EventTarget("CronRunRuleTarget", {
-      rule: cronRunRule.name,
-      eventBusName: cronRunBus.name,
-      arn: cronRunApiDestination.arn,
-      roleArn: cronRunInvokeRole.arn,
-      // Deliver only the event detail so the core leaf receives the exact
-      // {kind, accountId, cronId} payload.
-      inputPath: "$.detail",
-    });
-
-    new aws.iam.RolePolicy("CronSchedulerRolePolicy", {
-      role: cronSchedulerRole.id,
-      policy: cronRunBus.arn.apply((arn) =>
-        JSON.stringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Effect: "Allow",
-              Action: ["events:PutEvents"],
-              Resource: [arn],
-            },
-          ],
-        }),
-      ),
-    });
-
     // Also granted to CoreRuntimeUser below, same as harnessPermissions.
     const accountManagePermissions = [
-      {
-        actions: [
-          "scheduler:CreateSchedule",
-          "scheduler:DeleteSchedule",
-          "scheduler:UpdateSchedule",
-        ],
-        resources: [
-          $interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`,
-        ],
-      },
-      {
-        actions: ["iam:PassRole"],
-        resources: [cronSchedulerRole.arn],
-      },
       {
         actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
         resources: [`${filesystemBucketArn}/*`],
@@ -1083,9 +950,8 @@ export default $config({
     // AWS directly, no core proxy). Convex node actions assume ConvexAwsRole with a
     // minimal bootstrap user's static key (minted out of band, stored in the Convex
     // deployment env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY + CONVEX_AWS_ROLE_ARN)
-    // and get short-lived credentials scoped to: the skills/tool-bundle/workspace S3
-    // buckets, and EventBridge Scheduler for account cron jobs (targeting core's
-    // cron-run endpoint). The role ARN is also allow-listed in
+    // and get short-lived credentials scoped to the skills/tool-bundle/workspace
+    // S3 buckets. The role ARN is also allow-listed in
     // denyUnlessProjectPrincipal so its S3 calls are not denied.
     const convexAwsPermissions = [
       {
@@ -1104,22 +970,6 @@ export default $config({
       {
         actions: ["s3:ListBucket"],
         resources: [skillsBucketArn, toolBundlesBucketArn, filesystemBucketArn],
-      },
-      {
-        actions: [
-          "scheduler:CreateSchedule",
-          "scheduler:UpdateSchedule",
-          "scheduler:DeleteSchedule",
-          "scheduler:GetSchedule",
-        ],
-        resources: [
-          $interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`,
-        ],
-      },
-      {
-        // Convex creates schedules that run as the cron scheduler role.
-        actions: ["iam:PassRole"],
-        resources: [cronSchedulerRole.arn],
       },
     ];
     const convexAwsRole = new aws.iam.Role("ConvexAwsRole", {
@@ -1165,11 +1015,6 @@ export default $config({
     });
 
     return {
-      cronScheduleGroupName: cronScheduleGroup.name,
-      // Convex awsCrons.ts uses this verbatim as the schedule Target Arn (the
-      // cron-runs event bus; the bus rule forwards to the API destination).
-      cronSchedulerTargetArn: cronRunBus.arn,
-      cronSchedulerRoleArn: cronSchedulerRole.arn,
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,

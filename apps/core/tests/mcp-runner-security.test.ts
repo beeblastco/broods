@@ -1,9 +1,9 @@
 /**
- * Sandbox tool-runner handler regressions, driven under real Node (handler.mjs
+ * Hosted-MCP runner handler regressions, driven under real Node (handler.mjs
  * spawns process.execPath). Containment: the runner Lambda is shared by every
  * account and its warm execution environment is reused across tenants, so a run
- * must leave nothing on disk and no live process behind. Delivery: frames must
- * reach the response stream as the child writes them, not in one final flush.
+ * must leave nothing on disk and no live process behind. Delivery: the terminal
+ * frame must arrive even under backpressure or a leaked grandchild pipe.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -17,6 +17,12 @@ import { fileURLToPath } from "node:url";
 const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
+
+interface HostedResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
 
 // cpuUsec rides the terminal frame for usage metering and is inherently
 // variable, so it is dropped here and the frame bodies stay exactly assertable.
@@ -37,10 +43,18 @@ function parseFrames(
     });
 }
 
+function finalBody(stdout: string | undefined): unknown {
+  const frame = parseFrames(stdout).at(-1) as
+    | { t: string; result?: HostedResponse }
+    | undefined;
+  expect(frame?.t).toBe("final");
+
+  return JSON.parse(frame!.result!.body);
+}
+
 // A bundle the runner will accept: sha256 must match what the child recomputes.
 async function invokeHandler(
   bundle: string,
-  event: Record<string, unknown>,
   parentEnv: Record<string, string> = {},
   // Read the response slowly against a small buffer to force the handler's
   // backpressure path, where a paused stdout can outlive the child's exit.
@@ -59,6 +73,11 @@ async function invokeHandler(
     (bundleAddress && bundleAddress !== "served"
       ? bundleAddress.url
       : undefined);
+  const event = {
+    mode: "mcp",
+    toolName: "server-under-test",
+    mcpRequest: { method: "POST", headers: {}, body: "{}" },
+  };
   try {
     const driver = join(dir, "driver.mjs");
     await writeFile(
@@ -120,7 +139,7 @@ async function invokeHandler(
   }
 }
 
-describe("tool-runner containment", () => {
+describe("mcp-runner containment", () => {
   it("never writes the tenant bundle to disk", async () => {
     // The bundle hunts its own source through TMPDIR/HOME. Nothing should match:
     // /tmp survives in a warm sandbox, so a bundle on disk outlives its run.
@@ -139,79 +158,37 @@ describe("tool-runner containment", () => {
       `  }`,
       `  return hits;`,
       `}`,
-      `export default {`,
-      `  name: "hunter",`,
-      `  execute() {`,
-      `    return { hits: [...hunt(process.env.TMPDIR), ...hunt(process.env.HOME)] };`,
-      `  },`,
-      `};`,
+      `export default () => new Response(JSON.stringify({`,
+      `  hits: [...hunt(process.env.TMPDIR), ...hunt(process.env.HOME)],`,
+      `}));`,
     ].join("\n");
 
-    const result = await invokeHandler(bundle, { toolName: "hunter" });
-    const frames = parseFrames(result.stdout);
+    const result = await invokeHandler(bundle);
 
-    expect(frames.at(-1)).toEqual({ t: "final", result: { hits: [] } });
+    expect(finalBody(result.stdout)).toEqual({ hits: [] });
   }, 30_000);
 
   it("hides the function's AWS credentials from the tenant bundle's env", async () => {
     // Scrubbing the child's env is not a boundary on its own (same-UID /proc
     // still reaches the parent), but the env copy itself must not carry through.
     const bundle = [
-      `export default {`,
-      `  name: "envprobe",`,
-      `  execute() {`,
-      `    return {`,
-      `      secret: process.env.AWS_SECRET_ACCESS_KEY ?? null,`,
-      `      token: process.env.AWS_SESSION_TOKEN ?? null,`,
-      `      runtimeApi: process.env.AWS_LAMBDA_RUNTIME_API ?? null,`,
-      `    };`,
-      `  },`,
-      `};`,
+      `export default () => new Response(JSON.stringify({`,
+      `  secret: process.env.AWS_SECRET_ACCESS_KEY ?? null,`,
+      `  token: process.env.AWS_SESSION_TOKEN ?? null,`,
+      `  runtimeApi: process.env.AWS_LAMBDA_RUNTIME_API ?? null,`,
+      `}));`,
     ].join("\n");
 
-    const result = await invokeHandler(
-      bundle,
-      { toolName: "envprobe" },
-      {
-        AWS_SECRET_ACCESS_KEY: "shouldnotleak",
-        AWS_SESSION_TOKEN: "shouldnotleak",
-        AWS_LAMBDA_RUNTIME_API: "127.0.0.1:9001",
-      },
-    );
-    const frames = parseFrames(result.stdout);
-
-    expect(frames.at(-1)).toEqual({
-      t: "final",
-      result: { secret: null, token: null, runtimeApi: null },
+    const result = await invokeHandler(bundle, {
+      AWS_SECRET_ACCESS_KEY: "shouldnotleak",
+      AWS_SESSION_TOKEN: "shouldnotleak",
+      AWS_LAMBDA_RUNTIME_API: "127.0.0.1:9001",
     });
-  }, 30_000);
 
-  it("passes configured secrets only through tool context, never process.env", async () => {
-    const bundle = [
-      `export default {`,
-      `  name: "configured",`,
-      `  execute(_input, options) {`,
-      `    return {`,
-      `      configured: options.context.config.apiToken,`,
-      `      leaked: process.env.ACCOUNT_TOOL_API_TOKEN ?? null,`,
-      `    };`,
-      `  },`,
-      `};`,
-    ].join("\n");
-
-    const result = await invokeHandler(
-      bundle,
-      {
-        toolName: "configured",
-        config: { apiToken: "scoped-tool-secret" },
-      },
-      { ACCOUNT_TOOL_API_TOKEN: "parent-secret-must-not-leak" },
-    );
-    const frames = parseFrames(result.stdout);
-
-    expect(frames.at(-1)).toEqual({
-      t: "final",
-      result: { configured: "scoped-tool-secret", leaked: null },
+    expect(finalBody(result.stdout)).toEqual({
+      secret: null,
+      token: null,
+      runtimeApi: null,
     });
   }, 30_000);
 
@@ -223,19 +200,16 @@ describe("tool-runner containment", () => {
       const marker = join(dir, "survived.txt");
       const bundle = [
         `import { spawn } from "node:child_process";`,
-        `export default {`,
-        `  name: "spawner",`,
-        `  execute() {`,
-        `    const code = "setTimeout(() => require('fs').writeFileSync(" +`,
-        `      ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
-        `    spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
-        `    return { spawned: true };`,
-        `  },`,
+        `export default () => {`,
+        `  const code = "setTimeout(() => require('fs').writeFileSync(" +`,
+        `    ${JSON.stringify(JSON.stringify(marker))} + ", 'survived'), 1500)";`,
+        `  spawn(process.execPath, ["-e", code], { stdio: "ignore" });`,
+        `  return new Response(JSON.stringify({ spawned: true }));`,
         `};`,
       ].join("\n");
 
-      const result = await invokeHandler(bundle, { toolName: "spawner" });
-      expect(result.stdout).toContain('"spawned":true');
+      const result = await invokeHandler(bundle);
+      expect(finalBody(result.stdout)).toEqual({ spawned: true });
 
       await new Promise((resolve) => setTimeout(resolve, 3_000));
       expect(existsSync(marker)).toBe(false);
@@ -245,35 +219,23 @@ describe("tool-runner containment", () => {
   }, 30_000);
 });
 
-describe("tool-runner bundle addressing", () => {
+describe("mcp-runner bundle addressing", () => {
   it("resolves a bundle the event only addresses by URL", async () => {
     // Core spends its 6 MB invoke quota on a presigned GET rather than the
     // bytes; the handler fetches so the per-invocation child does not.
-    const bundle = `export default { name: "byurl", execute: () => ({ ok: true }) };`;
+    const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
 
-    const result = await invokeHandler(
-      bundle,
-      { toolName: "byurl" },
-      {},
-      0,
-      "served",
-    );
+    const result = await invokeHandler(bundle, {}, 0, "served");
 
-    expect(parseFrames(result.stdout)).toEqual([
-      { t: "final", result: { ok: true } },
-    ]);
+    expect(finalBody(result.stdout)).toEqual({ ok: true });
   }, 30_000);
 
   it("fails loudly when the bundle URL is refused", async () => {
     // What an expired presigned URL looks like: the run has to end on an error
     // frame rather than hang or report an empty result.
-    const result = await invokeHandler(
-      "export default {};",
-      { toolName: "expired" },
-      {},
-      0,
-      { url: "https://example.invalid/expired-bundle.mjs" },
-    );
+    const result = await invokeHandler("export default {};", {}, 0, {
+      url: "https://example.invalid/expired-bundle.mjs",
+    });
     const frames = (result.stdout ?? "")
       .trim()
       .split("\n")
@@ -284,80 +246,41 @@ describe("tool-runner bundle addressing", () => {
   }, 30_000);
 });
 
-describe("tool-runner response streaming", () => {
-  it("forwards each yield as the child writes it, not in one final flush", async () => {
-    // The bundle stalls between yields. A buffering handler delivers everything
-    // at the end, so every arrival lands within a few ms of the last one.
-    const bundle = [
-      `const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));`,
-      `export default {`,
-      `  name: "ticker",`,
-      `  async *execute() {`,
-      `    yield { tick: 1 };`,
-      `    await sleep(700);`,
-      `    yield { tick: 2 };`,
-      `  },`,
-      `};`,
-    ].join("\n");
-
-    const result = await invokeHandler(bundle, { toolName: "ticker" });
-    const arrivals = result.arrivalsMs ?? [];
-    const frames = parseFrames(result.stdout);
-
-    expect(frames).toEqual([
-      { t: "chunk", output: { tick: 1 } },
-      { t: "chunk", output: { tick: 2 } },
-      { t: "final", result: { tick: 2 } },
-    ]);
-    expect(arrivals.length).toBeGreaterThan(1);
-    expect(arrivals.at(-1)! - arrivals[0]!).toBeGreaterThan(500);
-  }, 30_000);
-
-  it("loses nothing when the reader is slower than the tool", async () => {
+describe("mcp-runner response delivery", () => {
+  it("loses nothing when the reader is slower than the response", async () => {
     // Backpressure pauses child stdout, and a paused pipe still holds data when
     // the child exits — so finalizing on "exit" silently truncates the run.
-    const yields = 2000;
     const bundle = [
-      `export default {`,
-      `  name: "chatty",`,
-      `  async *execute() {`,
-      `    for (let i = 0; i < ${yields}; i++) yield { i: i, pad: "x".repeat(400) };`,
-      `  },`,
-      `};`,
+      `export default () => new Response(JSON.stringify({`,
+      `  pad: "x".repeat(600_000),`,
+      `}));`,
     ].join("\n");
 
-    const result = await invokeHandler(bundle, { toolName: "chatty" }, {}, 5);
-    const frames = (result.stdout ?? "")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { t: string });
+    const result = await invokeHandler(bundle, {}, 5);
+    const body = finalBody(result.stdout) as { pad: string };
 
-    expect(frames.filter((frame) => frame.t === "chunk")).toHaveLength(yields);
-    expect(frames.at(-1)?.t).toBe("final");
+    expect(body.pad).toHaveLength(600_000);
   }, 30_000);
 
   it("settles promptly when a grandchild inherits the stdout pipe", async () => {
     // The grandchild holds the pipe's write end open, so stdout never ends on
     // its own. Waiting for it without reaping the group first would stall the
-    // run until the 30s kill, turning a fast tool into a timeout.
+    // run until the 30s kill, turning a fast request into a timeout.
     const bundle = [
       `import { spawn } from "node:child_process";`,
-      `export default {`,
-      `  name: "leaky",`,
-      `  execute() {`,
+      `export default () => {`,
       // inherit: the grandchild gets this process's stdout, not a fresh pipe.
-      `    spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
-      `      stdio: "inherit",`,
-      `    });`,
-      `    return { spawned: true };`,
-      `  },`,
+      `  spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
+      `    stdio: "inherit",`,
+      `  });`,
+      `  return new Response(JSON.stringify({ spawned: true }));`,
       `};`,
     ].join("\n");
 
     const startedAt = Date.now();
-    const result = await invokeHandler(bundle, { toolName: "leaky" });
+    const result = await invokeHandler(bundle);
 
-    expect(result.stdout).toContain('"spawned":true');
+    expect(finalBody(result.stdout)).toEqual({ spawned: true });
     expect(Date.now() - startedAt).toBeLessThan(15_000);
   }, 40_000);
 });

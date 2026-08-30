@@ -1,31 +1,21 @@
 /// <reference types="vite/client" />
+import cronsComponent from "@convex-dev/crons/test";
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { purgeProject } from "../model/cascade";
 import { workspaceNamespace } from "../model/workspaceRules";
 import schema from "../schema";
 
-const { mockS3Client, mockSend, mockSchedulerClient, mockSchedulerSend } =
-  vi.hoisted(() => {
-    const mockSend = vi.fn(async () => ({ Contents: [] }));
-    const mockS3Client = vi.fn(async () => ({ send: mockSend }));
-    const mockSchedulerSend = vi.fn(async () => ({}));
-    const mockSchedulerClient = vi.fn(async () => ({
-      send: mockSchedulerSend,
-    }));
+const { mockS3Client, mockSend } = vi.hoisted(() => {
+  const mockSend = vi.fn(async () => ({ Contents: [] }));
+  const mockS3Client = vi.fn(async () => ({ send: mockSend }));
 
-    return {
-      mockS3Client: mockS3Client,
-      mockSend: mockSend,
-      mockSchedulerClient: mockSchedulerClient,
-      mockSchedulerSend: mockSchedulerSend,
-    };
-  });
+  return { mockS3Client: mockS3Client, mockSend: mockSend };
+});
 
 vi.mock("../model/aws", () => ({
   assumeScopedS3Credentials: vi.fn(),
   s3Client: mockS3Client,
-  schedulerClient: mockSchedulerClient,
 }));
 
 const modules = import.meta.glob("../**/*.ts");
@@ -130,11 +120,10 @@ test("project deletion purges its managed workspace namespace", async () => {
 
 test("project deletion drains cron run history in scheduled batches", async () => {
   vi.useFakeTimers();
-  mockSchedulerClient.mockClear();
-  mockSchedulerSend.mockClear();
 
   try {
     const t = convexTest(schema, modules);
+    cronsComponent.register(t);
     const { accountId, projectId, cronId } = await t.run(async (ctx) => {
       const now = Date.now();
       const orgId = await ctx.db.insert("orgs", {
@@ -188,8 +177,6 @@ test("project deletion drains cron run history in scheduled batches", async () =
         events: [],
         scheduleExpression: "cron(0 0 * * ? *)",
         status: "active",
-        schedulerName: "broods-cron-nightly",
-        schedulerGroupName: "broods-crons",
         createdAt: now,
         updatedAt: now,
       });
@@ -230,8 +217,6 @@ test("project deletion drains cron run history in scheduled batches", async () =
         .collect();
       expect(runs).toHaveLength(0);
     });
-    // The EventBridge schedule removal ran once for the deleted cron.
-    expect(mockSchedulerSend).toHaveBeenCalledTimes(1);
   } finally {
     vi.useRealTimers();
   }

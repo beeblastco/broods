@@ -3,8 +3,8 @@
 /**
  * Cron jobs management page. Lists the scheduled runs of this project's
  * agents and lets the user create, edit, and remove them. CRUD goes through
- * Convex actions that proxy to broods's /v1/crons HTTP endpoints
- * to keep EventBridge Scheduler in sync.
+ * Convex actions that write the crons row and its registered schedule in one
+ * transaction.
  *
  * Scoped to the project in the URL, not the whole org: a cron's project is
  * derived from the agent it runs, so the picker and the table only ever show
@@ -52,7 +52,7 @@ export default function CronsPage({
             <span className="font-medium text-foreground">
               {project?.name ?? "this project"}
             </span>
-            , powered by AWS EventBridge Scheduler.
+            , powered by the Convex scheduler.
           </p>
         </div>
         <Button

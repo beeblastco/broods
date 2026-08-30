@@ -17,7 +17,7 @@ Your operator must set three values in your environment. If any is missing, say 
 
 If you have `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule`, use them. They are bound to your own agent id in code, which the REST path is not.
 
-If you do not have them and the request needs a schedule, go through the API with a `rate()`, `cron()` (6-field EventBridge), or one-shot `at()` expression. `at()` deletes itself after firing.
+If you do not have them and the request needs a schedule, go through the API with a `rate()`, `cron()` (6-field, AWS-style), or one-shot `at()` expression. `at()` deletes itself after firing.
 
 If a cron started this run, your first message says so. Then you create, edit, and cancel nothing, by tools or by API. The platform strips the scheduling tools from a cron-fired run but does not close the REST path, so this one is on you: a run that reschedules itself is a loop nobody asked for.
 

@@ -5,7 +5,7 @@ title: Resource Configuration
 
 # Resource Configuration
 
-Broods uses a **code-first** configuration model. You define agents, workspaces, sandboxes, skills, tools, cron jobs, and channels as typed TypeScript resources inside a `broods/` folder. The CLI compiles these into a manifest, syncs them to the cloud, and generates typed runtime references.
+Broods uses a **code-first** configuration model. You define agents, workspaces, sandboxes, skills, MCP servers, cron jobs, and channels as typed TypeScript resources inside a `broods/` folder. The CLI compiles these into a manifest, syncs them to the cloud, and generates typed runtime references.
 
 ## Project Layout
 
@@ -18,8 +18,8 @@ my-project/
       ids.ts           # Deployed IDs
     greeting-skill/    # Skill bundle (optional)
       SKILL.md
-    tools/             # Custom tool sources (optional)
-      my-tool.ts
+    mcp/               # Hosted MCP server modules (optional)
+      my-server.ts
   .env.local           # Local secrets (never commit)
 ```
 
@@ -242,19 +242,19 @@ requires `permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA
 policies and structured output are not currently supported by AI SDK Harness
 adapters.
 
-All AI SDK Harness adapters receive enabled Broods custom tools and account
+All AI SDK Harness adapters receive enabled Broods MCP server tools and account
 skills.
 Use `activeTools` or `inactiveTools` on `defineHarness()` to filter adapter
-built-ins and custom tools. Channel-level denied tools are applied in addition.
+built-ins and MCP tools. Channel-level denied tools are applied in addition.
 Adapter capabilities still differ:
 
-| Harness     | Custom tools | Account skills | Built-in approval | Built-in filtering |
-| ----------- | ------------ | -------------- | ----------------- | ------------------ |
-| Claude Code | Yes          | Yes            | Yes               | Yes                |
-| Codex       | Yes          | Yes            | No                | No                 |
-| Deep Agents | Yes          | Yes            | Yes               | Auto-rejection     |
-| OpenCode    | Yes          | Yes            | Yes               | Auto-rejection     |
-| Pi          | Yes          | Yes            | Yes               | Yes                |
+| Harness     | MCP tools | Account skills | Built-in approval | Built-in filtering |
+| ----------- | --------- | -------------- | ----------------- | ------------------ |
+| Claude Code | Yes       | Yes            | Yes               | Yes                |
+| Codex       | Yes       | Yes            | No                | No                 |
+| Deep Agents | Yes       | Yes            | Yes               | Auto-rejection     |
+| OpenCode    | Yes       | Yes            | Yes               | Auto-rejection     |
+| Pi          | Yes       | Yes            | Yes               | Yes                |
 
 Broods uses its existing Convex ingress and lease coordination instead of
 embedding Vercel Workflow. A turn receives only the newest user input, while a
@@ -314,8 +314,7 @@ model: {
 
 ### Tools
 
-Import provider-defined tools from their AI SDK provider package, and reference
-uploaded custom tools by name:
+Import provider-defined tools from their AI SDK provider package:
 
 ```ts
 import { google } from "@ai-sdk/google";
@@ -324,12 +323,11 @@ tools: {
   // executed by the provider — any tool on its AI SDK `tools` namespace
   googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
   urlContext: google.tools.urlContext({}),
-  // uploaded custom tool
-  [researchTool.name]: { enabled: true },
 },
 ```
 
-See [External Tools](tools.md) for uploading custom tools.
+Everything the provider does not execute itself comes from an MCP server — see
+[MCP Servers](#mcp-servers) below and [External Tools](tools.md).
 
 ### Channels
 
@@ -477,10 +475,10 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
-Policy rules can scope by resource selectors like `toolNames`, `toolIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `toolId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
+Policy rules can scope by resource selectors like `toolNames`, `mcpIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `mcpId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
-- `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an uploaded tool's model name.
-- `toolId`: stable uploaded account tool id when the call is for a custom tool.
+- `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an MCP tool's `<server>__<tool>` name.
+- `mcpId`: stable MCP server row id when the call is for an MCP server tool.
 - `tool.input.<field>`: sanitized tool input parameter, for example `tool.input.command`, `tool.input.file_path`, `tool.input.query`, or `tool.input.tasks`.
 - `tool.inputKeys`: sorted list of supplied input parameter names.
 
@@ -576,28 +574,35 @@ export const supportFlow = defineSkill({
 
 The `path` is relative to `broods/` and must contain a `SKILL.md` file.
 
-## Tools
+## MCP Servers
 
 ```ts
-import { defineTool } from "broods";
+import { defineMcp, env } from "broods";
 
-export const analyze = defineTool({
-  name: "analyze",
-  description: "Analyze structured data.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      data: { type: "array" },
-    },
-    required: ["data"],
-  },
-  async execute(input) {
-    return { type: "text", value: `Analyzed ${input.data.length} rows.` };
-  },
+export const search = defineMcp({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: `Bearer ${env("SEARCH_TOKEN")}` },
 });
 ```
 
-The CLI bundles the TypeScript entrypoint into a self-contained ESM module and uploads it. See [External Tools](tools.md) for the bundle contract.
+Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file:
+
+```ts
+import { defineMcp } from "broods";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+
+export const greeter = defineMcp({
+  name: "greeter",
+  handler: createMcpHandler(() => {
+    const server = new McpServer({ name: "greeter", version: "1.0.0" });
+    // server.registerTool(...) as usual
+    return server;
+  }),
+});
+```
+
+The CLI bundles the defining module into a self-contained ESM module and uploads it. Enable a server on an agent with `mcp: { [search.name]: { enabled: true } }`. `defineTool` (uploaded custom tools) is retired; hosted MCP servers replace it. See [External Tools](tools.md#connected-mcp-servers) for the full model.
 
 ## Cron Jobs
 
@@ -672,7 +677,7 @@ The CLI validates resource configs at compile time:
 - Unknown agent config keys are rejected with suggestions (e.g. `workspace:` → did you mean `workspaces:`?).
 - Duplicate resources are rejected.
 - Skill bundles must contain `SKILL.md`.
-- Tool bundles must build successfully as ESM.
+- Hosted MCP server bundles must build as ESM and default-export a fetch-style MCP handler.
 - Workspace storage provider must be `s3`.
 - Sandbox mounts must support S3 workspace access.
 

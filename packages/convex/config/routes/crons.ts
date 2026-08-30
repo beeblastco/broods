@@ -1,6 +1,6 @@
 /**
  * Cron CRUD (`/v1/crons*`) plus the run history at `/v1/crons/{id}/runs`.
- * Table writes and EventBridge Scheduler mutations happen in awsCrons.
+ * Table writes and schedule registration happen together in agent/crons.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -17,8 +17,9 @@ import { json, methodNotAllowed, writeAudit } from "./shared";
 
 /**
  * Cron CRUD: list/create on the collection, get/patch/delete by id, plus the
- * run history at /v1/crons/{id}/runs. Table writes and EventBridge Scheduler
- * mutations happen in awsCrons; mirrors core's former handleCronRoute contract.
+ * run history at /v1/crons/{id}/runs. Table writes and schedule registration
+ * happen together in agent/crons; mirrors core's former handleCronRoute
+ * contract.
  */
 export async function handleCronRoute(
   ctx: ActionCtx,
@@ -55,7 +56,7 @@ export async function handleCronRoute(
         cronId: cronId as Id<"crons">,
       })
       .catch(() => null);
-    const deleted = await ctx.runAction(internal.aws.crons.remove, {
+    const deleted = await ctx.runMutation(internal.agent.crons.remove, {
       accountId: accountId,
       cronId: cronId,
     });
@@ -82,7 +83,7 @@ export async function handleCronRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/** Collection verbs: list crons on GET, create through awsCrons on POST. */
+/** Collection verbs: list crons on GET, create through agent/crons on POST. */
 async function handleCronCollectionRoute(
   ctx: ActionCtx,
   req: Request,
@@ -97,7 +98,7 @@ async function handleCronCollectionRoute(
     return json({ crons: records.map((record) => toCronResponse(record)) });
   }
   if (req.method === "POST") {
-    const cron = await ctx.runAction(internal.aws.crons.create, {
+    const cron = await ctx.runMutation(internal.agent.crons.create, {
       accountId: accountId,
       input: await req.json(),
     });
@@ -145,7 +146,7 @@ async function handleCronRunsRoute(
   return json({ runs: records.map((record) => toCronRunResponse(record)) });
 }
 
-/** PATCH one cron through awsCrons and audit the change. */
+/** PATCH one cron through agent/crons and audit the change. */
 async function patchCronRoute(
   ctx: ActionCtx,
   req: Request,
@@ -153,7 +154,7 @@ async function patchCronRoute(
   actor: ConfigAuditActor,
   cronId: string,
 ): Promise<Response> {
-  const cron = await ctx.runAction(internal.aws.crons.update, {
+  const cron = await ctx.runMutation(internal.agent.crons.update, {
     accountId: accountId,
     cronId: cronId,
     patch: await req.json(),

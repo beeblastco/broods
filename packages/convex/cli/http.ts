@@ -128,8 +128,8 @@ function parseRoute(pathname: string): RouteParts | null {
 /**
  * Resolve the token hash to an account secret hash, enforcing deploy-key scope
  * against the route's project/stage. Cron sync runs natively against the crons
- * table + EventBridge Scheduler (awsCrons), so it works for org secrets and
- * scoped deploy keys alike.
+ * table and its registered schedules (agent/crons), so it works for org
+ * secrets and scoped deploy keys alike.
  */
 async function resolveCliRequestAuth(
   ctx: ActionCtx,

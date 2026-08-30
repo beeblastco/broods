@@ -2,14 +2,32 @@
  * Cron-job input normalization for the Convex config plane. Ports core's
  * former src/shared/domain/cron.ts normalizer so the public /v1/crons
  * contract is unchanged. Pure module — safe for the default Convex runtime;
- * EventBridge Scheduler calls live in awsCrons.ts and the public projections
+ * schedule registration lives in agent/crons.ts and the public projections
  * in ./responses.ts.
  */
 
 import { isPlainObject } from "./objects";
 
-const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
+
+const RATE_MS_PER_UNIT: Record<string, number> = {
+  minute: 60_000,
+  minutes: 60_000,
+  hour: 3_600_000,
+  hours: 3_600_000,
+  day: 86_400_000,
+  days: 86_400_000,
+};
+
+const DAY_OF_WEEK_NAMES = new Set([
+  "SUN",
+  "MON",
+  "TUE",
+  "WED",
+  "THU",
+  "FRI",
+  "SAT",
+]);
 
 export type CronStatus = "active" | "paused";
 
@@ -129,19 +147,206 @@ export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
   return normalized;
 }
 
+/** A schedule the Convex crons component can register. */
+export type ComponentCronSchedule =
+  | { kind: "cron"; cronspec: string; tz?: string }
+  | { kind: "interval"; ms: number };
+
+/** A translated schedule: recurring for the component, or a one-time instant. */
+export type TranslatedCronSchedule =
+  | ComponentCronSchedule
+  | { kind: "at"; timestamp: number };
+
 /**
- * Validate an EventBridge Scheduler group name.
- * @param value the candidate group name
- * @returns the validated group name
- * @throws when the name is missing or contains unsupported characters
+ * Translate a stored schedule expression — the public contract keeps the
+ * `cron(...)` / `rate(...)` / `at(...)` forms — into what the Convex crons
+ * component registers: a unix cronspec with an IANA `tz`, an interval in
+ * milliseconds, or the epoch instant of a one-time job.
+ * @param expression a normalized schedule expression
+ * @param timezone optional IANA timezone the expression is evaluated in
+ * @returns the translated schedule
+ * @throws when the expression uses forms the scheduler does not support
  */
-export function normalizeSchedulerGroupName(value: unknown): string {
-  const groupName = requireString(value, "schedulerGroupName", 64);
-  if (!SCHEDULE_NAME_PATTERN.test(groupName)) {
-    throw new Error("schedulerGroupName contains unsupported characters");
+export function translateScheduleExpression(
+  expression: string,
+  timezone: string | undefined,
+): TranslatedCronSchedule {
+  const rate = /^rate\((\d+)\s+([a-z]+)\)$/.exec(expression);
+  if (rate) {
+    const unitMs = RATE_MS_PER_UNIT[rate[2] as string];
+    const count = Number(rate[1]);
+    if (!unitMs || count < 1) {
+      throw new Error(
+        "rate(...) must use a positive count of minutes, hours, or days",
+      );
+    }
+
+    return { kind: "interval", ms: count * unitMs };
+  }
+  if (isOneTimeSchedule(expression)) {
+    return {
+      kind: "at",
+      timestamp: atExpressionToTimestamp(expression, timezone),
+    };
+  }
+  const cron = /^cron\((.+)\)$/.exec(expression);
+  if (!cron) {
+    throw new Error(
+      "scheduleExpression must use cron(...), rate(...), or at(...)",
+    );
   }
 
-  return groupName;
+  return {
+    kind: "cron",
+    cronspec: cronExpressionToCronspec((cron[1] as string).trim()),
+    ...(timezone ? { tz: timezone } : {}),
+  };
+}
+
+/**
+ * Convert the six-field cron form — minute hour day-of-month month day-of-week
+ * year — to the five-field unix cronspec the crons component parses. `?` maps
+ * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
+ * @throws for the calendar forms unix cron has no equivalent for (`L`, `W`,
+ * `#`, or a constrained year)
+ */
+function cronExpressionToCronspec(fields: string): string {
+  const parts = fields.split(/\s+/);
+  if (parts.length !== 6) {
+    throw new Error(
+      "cron(...) must have six fields: minute hour day-of-month month day-of-week year",
+    );
+  }
+  const [minute, hour, dayOfMonth, month, dayOfWeek, year] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (year !== "*") {
+    throw new Error("cron(...) year field must be * — years cannot be pinned");
+  }
+  for (const field of [minute, hour, dayOfMonth, month]) {
+    if (/[LW#]/i.test(field)) {
+      throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
+    }
+  }
+
+  return [
+    minute,
+    hour,
+    dayOfMonth === "?" ? "*" : dayOfMonth,
+    month,
+    convertDayOfWeek(dayOfWeek),
+  ].join(" ");
+}
+
+/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
+function convertDayOfWeek(field: string): string {
+  if (field === "?" || field === "*") return "*";
+  if (/[LW#]/i.test(field)) {
+    throw new Error(`cron(...) does not support L, W, or # in '${field}'`);
+  }
+
+  return field
+    .split(",")
+    .map((item) =>
+      item
+        .split("-")
+        .map((token) => {
+          const [base, step] = token.split("/") as [string, string | undefined];
+          const converted = DAY_OF_WEEK_NAMES.has(base.toUpperCase())
+            ? base
+            : String(requireDayOfWeekNumber(base) - 1);
+
+          return step === undefined ? converted : `${converted}/${step}`;
+        })
+        .join("-"),
+    )
+    .join(",");
+}
+
+function requireDayOfWeekNumber(token: string): number {
+  const value = Number(token);
+  if (!Number.isInteger(value) || value < 1 || value > 7) {
+    throw new Error(
+      `cron(...) day-of-week must be 1-7 (1 = Sunday) or SUN-SAT, got '${token}'`,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
+ * wall-clock time is read in `timezone` when given, UTC otherwise — the same
+ * semantics EventBridge Scheduler applied.
+ */
+function atExpressionToTimestamp(
+  expression: string,
+  timezone: string | undefined,
+): number {
+  const match = /^at\((\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\)$/.exec(
+    expression,
+  );
+  if (!match) {
+    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
+  }
+  const [, year, month, day, hour, minute, second] = match as unknown as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  const asUtc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
+  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
+  if (!timezone) return asUtc;
+
+  // Two passes pin the wall clock to the zone's offset at the target instant,
+  // which the first guess (the UTC reading) can miss across a DST boundary.
+  const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
+
+  return asUtc - timezoneOffsetMs(adjusted, timezone);
+}
+
+/** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
+function timezoneOffsetMs(timestamp: number, timezone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts: Record<string, string> = {};
+  for (const part of formatter.formatToParts(new Date(timestamp))) {
+    parts[part.type] = part.value;
+  }
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour === "24" ? "0" : parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+
+  return asUtc - timestamp;
 }
 
 /**

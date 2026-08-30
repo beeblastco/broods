@@ -25,7 +25,7 @@ Every resource below has the same five routes unless the notes say otherwise: `P
 
 `GET`/`PATCH /v1/account`, `POST /v1/account/rotate-secret`, and `POST /v1/account/assume-role` (body `{ roleId, ttlSeconds? }`, returns `{ token, expiresAt }`) round out the plane.
 
-Schedule expressions are EventBridge syntax: `rate(...)`, `cron(...)` with 6 fields, or one-shot `at(...)`, which deletes itself after firing.
+Schedule expressions are AWS-style syntax: `rate(...)`, `cron(...)` with 6 fields, or one-shot `at(...)`, which deletes itself after firing.
 
 ## Core
 

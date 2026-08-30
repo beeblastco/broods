@@ -1,8 +1,7 @@
 /**
  * AWS access for the Convex config plane. Convex owns the
- * skills/tool-bundle/workspace S3 objects and account cron schedules directly
- * instead of proxying to core. Node-runtime only — import exclusively from
- * `"use node"` actions.
+ * skills/tool-bundle/workspace S3 objects directly instead of proxying to
+ * core. Node-runtime only — import exclusively from `"use node"` actions.
  *
  * Auth: a minimal bootstrap user's static key (Convex deployment env
  * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) assumes ConvexAwsRole
@@ -12,7 +11,6 @@
 
 import { STSClient, AssumeRoleCommand } from "@aws-sdk/client-sts";
 import { S3Client } from "@aws-sdk/client-s3";
-import { SchedulerClient } from "@aws-sdk/client-scheduler";
 
 /**
  * Temporary credentials from assuming ConvexAwsRole.
@@ -135,19 +133,6 @@ export async function s3Client(access?: S3Access): Promise<S3Client> {
     ...(access?.endpoint
       ? { endpoint: access.endpoint, forcePathStyle: true }
       : {}),
-  });
-}
-
-/**
- * Build an EventBridge Scheduler client authenticated as the Convex config plane.
- * @returns a Scheduler client with assumed-role credentials
- */
-export async function schedulerClient(): Promise<SchedulerClient> {
-  const access = awsAccess();
-
-  return new SchedulerClient({
-    region: access.region,
-    credentials: await assumeCredentials(),
   });
 }
 

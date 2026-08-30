@@ -459,7 +459,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             | "sandbox"
             | "workspace"
             | "mcp"
-            | "tool"
             | "skill",
           position: n.position,
           data: n.data as {

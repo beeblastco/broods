@@ -36,7 +36,6 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
 
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
-    /^\/v1\/tools(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/mcp(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/hooks(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/workspaces\/[^/]+\/files$/.test(pathname) ||
@@ -91,7 +90,6 @@ export function isCoreHttpRoute(pathname: string): boolean {
     // Durable workspace media links handed to chat providers; the sealed ticket
     // in the path is the only credential, so this stays unauthenticated.
     pathname.startsWith("/media/") ||
-    pathname.startsWith("/async-tools/") ||
     pathname.startsWith("/sandbox-jobs/") ||
     pathname === "/v1" ||
     pathname.startsWith("/v1/")

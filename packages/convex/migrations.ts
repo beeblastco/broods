@@ -1,14 +1,18 @@
 /**
  * One-off data migrations. Run each on every deployment (dev + production),
- * e.g. `bunx convex run migrations:deleteOrphanedTools`. Each is idempotent
+ * e.g. `bunx convex run migrations:backfillUsageRollupGrains`. Each is idempotent
  * and safe to re-run; completed migrations are deleted once every deployment
  * has run them.
  */
 
-import { internal } from "./_generated/api";
+import { Crons } from "@convex-dev/crons";
+import { components, internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { translateScheduleExpression } from "./model/cronRules";
 import { USAGE_GRAIN_MS, foldRollupBucket } from "./usage";
+
+const cronSchedules = new Crons(components.crons);
 
 /**
  * Stamp pre-grain `usageRollups` rows with `grain: "5m"` (their implicit
@@ -70,50 +74,82 @@ export const backfillUsageRollupGrains = internalMutation({
   },
 });
 
-// Drop custom tools no stage owns: unscoped rows from the old
-// account-scoped path, tombstones, and rows whose stage is gone.
-export const deleteOrphanedTools = internalMutation({
-  args: { dryRun: v.optional(v.boolean()) },
+/**
+ * Cut per-account cron scheduling over from EventBridge Scheduler to the
+ * Convex crons component: register every live cron row through the component
+ * (one-time at(...) jobs go to the Convex scheduler) and unset the dead
+ * EventBridge identifiers. Idempotent — rows already registered are skipped —
+ * and paginated with a self-reschedule, like the other backfills. The
+ * EventBridge schedules themselves die with the schedule group when the
+ * updated sst.config.ts deploys; run this right after the Convex deploy so
+ * no schedule window is missed.
+ * @returns rows registered and skipped in this batch, and whether the walk finished
+ */
+export const migrateCronsToConvexScheduler = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({
-    unscoped: v.number(),
-    softDeleted: v.number(),
-    danglingStage: v.number(),
-    kept: v.number(),
+    registered: v.number(),
+    skipped: v.number(),
+    isDone: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const rows = await ctx.db.query("accountTools").collect();
-    let unscoped = 0;
-    let softDeleted = 0;
-    let danglingStage = 0;
-    let kept = 0;
+    const page = await ctx.db
+      .query("crons")
+      .paginate({ numItems: 50, cursor: args.cursor ?? null });
 
-    for (const row of rows) {
-      let reason: "unscoped" | "softDeleted" | "danglingStage" | null = null;
-      if (row.status === "deleted") reason = "softDeleted";
-      else if (!row.stageId || !row.projectId) reason = "unscoped";
-      else {
-        // `create` rejects a pair whose stage sits under another project;
-        // a row that holds one anyway is scope corruption, not a live tool.
-        const stage = await ctx.db.get(row.stageId);
-        if (!stage || stage.projectId !== row.projectId)
-          reason = "danglingStage";
+    let registered = 0;
+    let skipped = 0;
+    for (const cron of page.page) {
+      if (cron.schedulerName !== undefined) {
+        await ctx.db.patch(cron._id, {
+          schedulerName: undefined,
+          schedulerGroupName: undefined,
+        });
       }
-
-      if (!reason) {
-        kept += 1;
+      const alreadyRegistered =
+        cron.scheduledRunId !== undefined ||
+        (await cronSchedules.get(ctx, { name: cron._id })) !== null;
+      if (cron.status !== "active" || alreadyRegistered) {
+        skipped += 1;
         continue;
       }
-      if (reason === "unscoped") unscoped += 1;
-      if (reason === "softDeleted") softDeleted += 1;
-      if (reason === "danglingStage") danglingStage += 1;
-      if (args.dryRun !== true) await ctx.db.delete(row._id);
+      const schedule = translateScheduleExpression(
+        cron.scheduleExpression,
+        cron.timezone,
+      );
+      if (schedule.kind === "at") {
+        // A one-time job whose instant already passed fired (or was missed)
+        // under EventBridge; re-registering it would fire it again now.
+        if (schedule.timestamp <= Date.now()) {
+          skipped += 1;
+          continue;
+        }
+        const scheduledRunId = await ctx.scheduler.runAt(
+          schedule.timestamp,
+          internal.agent.crons.dispatch,
+          { accountId: cron.accountId, cronId: cron._id },
+        );
+        await ctx.db.patch(cron._id, { scheduledRunId: scheduledRunId });
+      } else {
+        await cronSchedules.register(
+          ctx,
+          schedule,
+          internal.agent.crons.dispatch,
+          { accountId: cron.accountId, cronId: cron._id },
+          cron._id,
+        );
+      }
+      registered += 1;
     }
 
-    return {
-      unscoped: unscoped,
-      softDeleted: softDeleted,
-      danglingStage: danglingStage,
-      kept: kept,
-    };
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.migrateCronsToConvexScheduler,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { registered: registered, skipped: skipped, isDone: page.isDone };
   },
 });

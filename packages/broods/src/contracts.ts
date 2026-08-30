@@ -80,17 +80,6 @@ export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
 export type CronDoc = Doc<"crons">;
 
-export type CliResourceKind =
-  | "agent"
-  | "workspace"
-  | "sandbox"
-  | "cron"
-  | "skill"
-  | "tool"
-  | "mcp"
-  | "policy"
-  | "channelRecord";
-
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.
 export type {

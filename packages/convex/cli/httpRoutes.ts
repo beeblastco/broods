@@ -1,7 +1,7 @@
 /**
  * Route handlers for the CLI HTTP surface (`cli/http.ts` is the router).
  * One exported handler per route kind, plus the external-resource sync helpers
- * (skills/tools/hooks bundles, cron reconciliation) the manifest PUT drives.
+ * (skills/hooks/mcp bundles, cron reconciliation) the manifest PUT drives.
  */
 
 import { type ActionCtx } from "../_generated/server";
@@ -10,9 +10,8 @@ import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
 import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
-import { normalizeAccountToolUpload } from "../model/accountTools";
 import { normalizeMcpInput } from "../model/mcp";
-import { putHookBundle, putToolBundle, storeMcpBundle } from "../model/bundles";
+import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
@@ -62,10 +61,7 @@ type DesiredCron = Omit<CronResponse, "cronId"> & {
   resourceName: string;
 };
 
-type ExternalIds = Pick<
-  GeneratedIds,
-  "skills" | "tools" | "hooks" | "mcpServers"
->;
+type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
 /** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
@@ -307,7 +303,7 @@ async function deleteCronByName(
   });
   const cron = existing.find((job) => job.name === name);
   if (!cron) return;
-  await ctx.runAction(internal.aws.crons.remove, {
+  await ctx.runMutation(internal.agent.crons.remove, {
     accountId: accountId,
     cronId: cron._id,
   });
@@ -502,13 +498,9 @@ function rewriteExternalConfigRefs(
       ),
     };
   }
-  const tools = asOptionalRecord(result.tools);
-  if (tools) {
-    result.tools = remapKeys(tools, ids.tools);
-  }
-  const mcpServers = asOptionalRecord(result.mcpServers);
-  if (mcpServers) {
-    result.mcpServers = remapKeys(mcpServers, ids.mcpServers);
+  const mcp = asOptionalRecord(result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, ids.mcp);
   }
   if (
     asOptionalRecord(result.hooks) &&
@@ -562,7 +554,7 @@ function stringField(value: unknown, label: string): string {
 
 /**
  * Reconcile manifest cron resources against the account's cron jobs using the
- * Convex-native cron plane (crons table + EventBridge Scheduler via awsCrons).
+ * transactional cron mutations in agent/crons.
  */
 async function syncCrons(
   ctx: ActionCtx,
@@ -583,14 +575,14 @@ async function syncCrons(
   for (const job of desired) {
     const existingJob = existingByName.get(job.name);
     if (existingJob) {
-      await ctx.runAction(internal.aws.crons.update, {
+      await ctx.runMutation(internal.agent.crons.update, {
         accountId: accountId,
         cronId: existingJob._id,
         patch: cronBody(job),
       });
       cronIds[job.resourceName] = existingJob._id;
     } else {
-      const created = (await ctx.runAction(internal.aws.crons.create, {
+      const created = (await ctx.runMutation(internal.agent.crons.create, {
         accountId: accountId,
         input: cronBody(job),
       })) as { cronId: string };
@@ -603,7 +595,7 @@ async function syncCrons(
     for (const job of existing) {
       if (!stageAgentIds.has(job.agentId) || desiredNames.has(job.name))
         continue;
-      await ctx.runAction(internal.aws.crons.remove, {
+      await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,
         cronId: job._id,
       });
@@ -623,20 +615,12 @@ async function syncExternalResources(
   const hasExternalResources = manifest.resources.some((entry) =>
     isExternalResourceKind(entry.kind),
   );
-  if (!hasExternalResources)
-    return { skills: {}, tools: {}, hooks: {}, mcpServers: {} };
+  if (!hasExternalResources) return { skills: {}, hooks: {}, mcp: {} };
 
   const skills = await syncSkillResources(
     ctx,
     accountId as Id<"accounts">,
     manifest,
-  );
-  const tools = await syncToolResources(
-    ctx,
-    accountId as Id<"accounts">,
-    scope,
-    manifest,
-    prune,
   );
   const hooks = await syncHookResources(
     ctx,
@@ -644,7 +628,7 @@ async function syncExternalResources(
     manifest,
     prune,
   );
-  const mcpServers = await syncMcpResources(
+  const mcp = await syncMcpResources(
     ctx,
     accountId as Id<"accounts">,
     scope,
@@ -652,7 +636,7 @@ async function syncExternalResources(
     prune,
   );
 
-  return { skills: skills, tools: tools, hooks: hooks, mcpServers: mcpServers };
+  return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
 async function syncHookResources(
@@ -917,117 +901,6 @@ async function syncSkillResources(
       input: { source: "files", files: files },
     });
     ids[resource.name] = skill.path;
-  }
-
-  return ids;
-}
-
-async function syncToolResources(
-  ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  scope: ProjectStageScope,
-  manifest: CliManifest,
-  prune: boolean,
-): Promise<Record<string, string>> {
-  const desired = manifest.resources.filter((entry) => entry.kind === "tool");
-  if (desired.length === 0) return {};
-  // Scoped to the stage, not the account: two projects may each define a
-  // tool called `system_report` without overwriting one another.
-  const existingTools = await ctx.runQuery(
-    internal.account.tools.listForStage,
-    {
-      stageId: scope.stageId,
-    },
-  );
-  const existing = new Map(existingTools.map((tool) => [tool.name, tool]));
-  const desiredNames = new Set(desired.map((resource) => resource.name));
-  const ids: Record<string, string> = {};
-
-  for (const resource of desired) {
-    const config = asRecord(resource.config, `tool:${resource.name}`);
-    const upload = await normalizeAccountToolUpload(
-      {
-        name: resource.name,
-        description: stringField(
-          config.description ?? resource.description,
-          `tool:${resource.name}.description`,
-        ),
-        inputSchema: asRecord(
-          config.inputSchema,
-          `tool:${resource.name}.inputSchema`,
-        ),
-        ...(config.runtime !== undefined
-          ? {
-              runtime: stringField(
-                config.runtime,
-                `tool:${resource.name}.runtime`,
-              ),
-            }
-          : {}),
-        ...(config.defaultConfig !== undefined
-          ? {
-              defaultConfig: asRecord(
-                config.defaultConfig,
-                `tool:${resource.name}.defaultConfig`,
-              ),
-            }
-          : {}),
-        bundle: stringField(config.bundle, `tool:${resource.name}.bundle`),
-      },
-      { requireBundle: true },
-    );
-    const current = existing.get(resource.name);
-    const bundleStorageKey =
-      current?.sha256 === upload.sha256
-        ? current.bundleStorageKey
-        : await putToolBundle(ctx, {
-            accountId: accountId,
-            sha256: upload.sha256,
-            bundle: upload.bundle,
-          });
-    if (current) {
-      await ctx.runMutation(internal.account.tools.update, {
-        accountId: accountId,
-        toolId: current._id,
-        name: upload.name,
-        description: upload.description,
-        inputSchema: upload.inputSchema,
-        bundleStorageKey: bundleStorageKey,
-        sha256: upload.sha256,
-        runtime: upload.runtime,
-        ...(upload.defaultConfig !== undefined
-          ? { defaultConfig: upload.defaultConfig }
-          : {}),
-      });
-      ids[resource.name] = current._id;
-    } else {
-      const toolId = await ctx.runMutation(internal.account.tools.create, {
-        accountId: accountId,
-        projectId: scope.projectId,
-        stageId: scope.stageId,
-        name: upload.name,
-        description: upload.description,
-        inputSchema: upload.inputSchema,
-        bundleStorageKey: bundleStorageKey,
-        sha256: upload.sha256,
-        runtime: upload.runtime,
-        ...(upload.defaultConfig !== undefined
-          ? { defaultConfig: upload.defaultConfig }
-          : {}),
-      });
-      ids[resource.name] = toolId;
-    }
-  }
-
-  if (prune === true) {
-    for (const tool of existing.values()) {
-      if (!desiredNames.has(tool.name)) {
-        await ctx.runMutation(internal.account.tools.remove, {
-          accountId: accountId,
-          toolId: tool._id,
-        });
-      }
-    }
   }
 
   return ids;
