@@ -84,8 +84,8 @@ export const create = mutation({
 
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
- * deployments and linked broods `agents` rows), the canvas layout, tool
- * services, env vars, and deploy keys.
+ * deployments and linked broods `agents` rows), the canvas layout, MCP
+ * servers, env vars, and deploy keys.
  */
 export async function deleteStageContents(
   ctx: MutationCtx,
@@ -139,13 +139,13 @@ export async function deleteStageContents(
     .collect();
   for (const layout of layouts) await ctx.db.delete(layout._id);
 
-  // Custom tools are stage-scoped resources, so they go with it. The S3
+  // MCP servers are stage-scoped resources, so they go with it. The S3
   // bundle is left to the account-level sweep; nothing else references it.
-  const customTools = await ctx.db
-    .query("accountTools")
+  const mcpServers = await ctx.db
+    .query("mcp")
     .withIndex("by_stageId_and_status", (q) => q.eq("stageId", stageId))
     .collect();
-  for (const tool of customTools) await ctx.db.delete(tool._id);
+  for (const server of mcpServers) await ctx.db.delete(server._id);
 
   const variables = await ctx.db
     .query("environmentVariables")
@@ -221,7 +221,7 @@ export async function deleteStageContents(
 /**
  * Deep-copies every resource scoped to `sourceStageId` into `targetStageId`:
  * agent configs (each with a fresh broods `agents` row), the canvas layout
- * (remapping node references to the cloned configs), tool services, and env vars.
+ * (remapping node references to the cloned configs), MCP servers, and env vars.
  * Subagent allow-lists are remapped onto the cloned agents so agent→agent calls stay
  * within the new stage.
  */
@@ -233,22 +233,22 @@ export async function duplicateStageContents(
   targetStageId: Id<"stages">,
   now: number,
 ): Promise<void> {
-  // 1. Clone custom tools first: agent configs key `extraConfig.tools` by tool
-  // id, so the clones need the new ids before step 2 remaps them.
-  const sourceCustomTools = await ctx.db
-    .query("accountTools")
+  // 1. Clone MCP servers first: agent configs key `extraConfig.mcpServers` by
+  // row id, so the clones need the new ids before step 2 remaps them.
+  const sourceMcpServers = await ctx.db
+    .query("mcp")
     .withIndex("by_stageId_and_status", (q) =>
       q.eq("stageId", sourceStageId).eq("status", "active"),
     )
     .collect();
-  const toolIdMap = new Map<string, string>();
-  for (const tool of sourceCustomTools) {
-    const newToolId = await ctx.db.insert("accountTools", {
-      ...stripSystemFields(tool),
+  const mcpIdMap = new Map<string, string>();
+  for (const server of sourceMcpServers) {
+    const newServerId = await ctx.db.insert("mcp", {
+      ...stripSystemFields(server),
       stageId: targetStageId,
       updatedAt: now,
     });
-    toolIdMap.set(tool._id, newToolId);
+    mcpIdMap.set(server._id, newServerId);
   }
 
   // 2. Clone agent configs and provision their agents rows, tracking id remaps.
@@ -275,8 +275,8 @@ export async function duplicateStageContents(
       agentIdMap.set(source.agentId, newAgentId);
   }
 
-  // 3. Remap each clone's subagent allow-list and tool ids onto the cloned
-  // resources, then push config.
+  // 3. Remap each clone's subagent allow-list and MCP server ids onto the
+  // cloned resources, then push config.
   for (const newConfigId of configIdMap.values()) {
     const clone = await ctx.db.get(newConfigId);
     if (!clone) continue;
@@ -298,12 +298,11 @@ export async function duplicateStageContents(
       changed = true;
     }
 
-    // Keys the map doesn't know are provider tools (`googleSearch`), so they stay.
-    const tools = asRecord(extraConfig.tools);
-    if (Object.keys(tools).length > 0 && toolIdMap.size > 0) {
-      nextExtra.tools = Object.fromEntries(
-        Object.entries(tools).map(([key, value]) => [
-          toolIdMap.get(key) ?? key,
+    const mcpServers = asRecord(extraConfig.mcpServers);
+    if (Object.keys(mcpServers).length > 0 && mcpIdMap.size > 0) {
+      nextExtra.mcpServers = Object.fromEntries(
+        Object.entries(mcpServers).map(([key, value]) => [
+          mcpIdMap.get(key) ?? key,
           value,
         ]),
       );
@@ -320,7 +319,7 @@ export async function duplicateStageContents(
     await pushEncryptedConfigToAgentRow(ctx, newConfigId);
   }
 
-  // 4. Clone the canvas layout, repointing agent and tool nodes at the clones.
+  // 4. Clone the canvas layout, repointing agent and MCP nodes at the clones.
   const sourceLayout = await ctx.db
     .query("canvasLayouts")
     .withIndex("by_projectId_and_stageId", (q) =>
@@ -339,14 +338,14 @@ export async function duplicateStageContents(
       if (newConfigId)
         return { ...node, data: { ...data, agentConfigId: newConfigId } };
 
-      // Tool nodes point at their row through `resourceId`.
-      const newToolId =
+      // MCP nodes point at their row through `resourceId`.
+      const newServerId =
         typeof data.resourceId === "string"
-          ? toolIdMap.get(data.resourceId)
+          ? mcpIdMap.get(data.resourceId)
           : undefined;
 
-      return newToolId
-        ? { ...node, data: { ...data, resourceId: newToolId } }
+      return newServerId
+        ? { ...node, data: { ...data, resourceId: newServerId } }
         : node;
     });
     await ctx.db.insert("canvasLayouts", {
@@ -647,13 +646,13 @@ async function hasStageContents(
 
   // Tombstones do not count: a tombstone-only stage is still empty, and
   // treating it as occupied silently skips the clone into production.
-  const tool = await ctx.db
-    .query("accountTools")
+  const server = await ctx.db
+    .query("mcp")
     .withIndex("by_stageId_and_status", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .first();
-  if (tool) return true;
+  if (server) return true;
 
   const variable = await ctx.db
     .query("environmentVariables")

@@ -3,7 +3,7 @@
  * endpoint.
  *
  * Creation reuses the dashboard's `duplicateStageContents`, so a cloned
- * stage carries the same agent configs, custom tools, canvas layout and
+ * stage carries the same agent configs, MCP servers, canvas layout and
  * environment variables the dashboard duplicate button produces.
  *
  * Stage management spans every stage of a project, so the HTTP endpoint

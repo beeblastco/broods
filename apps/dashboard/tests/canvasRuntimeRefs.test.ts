@@ -243,13 +243,13 @@ describe("analyzeCanvasInfra agent reachability", () => {
     const nodes = [
       node("agent", "agent", { agentConfigId: "cfg" }),
       node("ws", "workspace"),
-      node("wired", "tool"),
-      node("indirect", "tool"),
+      node("wired", "mcp"),
+      node("indirect", "mcp"),
     ];
     const edges = [
       edge("agent", "ws"),
       edge("agent", "wired"),
-      // A tool hanging off a wired workspace is still not wired to the agent.
+      // A node hanging off a wired workspace is still not wired to the agent.
       edge("indirect", "ws"),
     ];
 

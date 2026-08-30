@@ -61,7 +61,6 @@ function idsForManifest(
     sandboxes: namesForKind(manifest, "sandbox"),
     crons: namesForKind(manifest, "cron"),
     skills: namesForKind(manifest, "skill"),
-    tools: namesForKind(manifest, "tool"),
     mcpServers: namesForKind(manifest, "mcp"),
     policies: namesForKind(manifest, "policy"),
     channelRecords: namesForKind(manifest, "channelRecord"),
@@ -73,7 +72,6 @@ function idsForManifest(
     sandboxes: pickIds(ids.sandboxes, namesByKind.sandboxes),
     crons: pickIds(ids.crons, namesByKind.crons),
     skills: pickIds(ids.skills, namesByKind.skills),
-    tools: pickIds(ids.tools, namesByKind.tools),
     hooks: {},
     mcpServers: pickIds(ids.mcpServers, namesByKind.mcpServers),
     policies: pickIds(ids.policies, namesByKind.policies),
@@ -107,7 +105,6 @@ function idsFile(ids: GeneratedIds): string {
     `export const sandboxes = ids.sandboxes;\n` +
     `export const crons = ids.crons;\n` +
     `export const skills = ids.skills;\n` +
-    `export const tools = ids.tools;\n` +
     `export const policies = ids.policies;\n`
   );
 }
@@ -167,7 +164,6 @@ function apiFile(
     `  sandboxes: ${aliasedIdMap("sandboxes", ids.sandboxes, aliases.sandbox)},\n` +
     `  crons: ${aliasedIdMap("crons", ids.crons, aliases.cron)},\n` +
     `  skills: ${aliasedIdMap("skills", ids.skills, aliases.skill)},\n` +
-    `  tools: ${aliasedIdMap("tools", ids.tools, aliases.tool)},\n` +
     `  policies: ${aliasedIdMap("policies", ids.policies, aliases.policy)},\n` +
     `} as const satisfies ResourceApi;\n`
   );

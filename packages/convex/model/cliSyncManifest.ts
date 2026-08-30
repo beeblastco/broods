@@ -22,7 +22,6 @@ export async function externalIdsForStage(
   stageId: Id<"stages">,
 ): Promise<{
   skills: Record<string, string>;
-  tools: Record<string, string>;
   hooks: Record<string, string>;
   mcpServers: Record<string, string>;
 }> {
@@ -37,11 +36,6 @@ export async function externalIdsForStage(
     skills: Object.fromEntries(
       resources
         .filter((entry) => entry.kind === "skill")
-        .map((entry) => [entry.name, entry.externalId]),
-    ),
-    tools: Object.fromEntries(
-      resources
-        .filter((entry) => entry.kind === "tool")
         .map((entry) => [entry.name, entry.externalId]),
     ),
     hooks: Object.fromEntries(
@@ -126,7 +120,6 @@ export async function idsForStage(
       ),
     ),
     skills: externalIds.skills,
-    tools: externalIds.tools,
     hooks: externalIds.hooks,
     mcpServers: externalIds.mcpServers,
     policies: Object.fromEntries(
@@ -211,11 +204,6 @@ export async function resourcesForStage(
       .filter((entry) => entry.kind === "skill")
       .map((entry) => [entry.externalId, entry.name]),
   );
-  const toolNames = Object.fromEntries(
-    externalResources
-      .filter((entry) => entry.kind === "tool")
-      .map((entry) => [entry.externalId, entry.name]),
-  );
   const hookNames = Object.fromEntries(
     externalResources
       .filter((entry) => entry.kind === "hook")
@@ -283,7 +271,6 @@ export async function resourcesForStage(
             sandboxes: sandboxNames,
             agents: agentNames,
             skills: skillNames,
-            tools: toolNames,
             hooks: hookNames,
             mcp: mcpNames,
             policies: policyNames,

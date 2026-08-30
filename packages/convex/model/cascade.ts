@@ -14,7 +14,6 @@ import { cronsInProject } from "./projectScope";
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 const accountScopedTables = [
   "agents",
-  "accountTools",
   "accountHooks",
   "agentPolicies",
   "sandboxConfigs",
