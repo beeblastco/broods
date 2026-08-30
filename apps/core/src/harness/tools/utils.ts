@@ -436,6 +436,7 @@ function isJSONValue(
         Object.getPrototypeOf(value) === null) &&
       Object.values(value).every((item) => isJSONValue(item, active));
   active.delete(value);
+
   return valid;
 }
 
