@@ -176,23 +176,31 @@ MCP servers live in one stage, so listing or creating those also takes
 `project` and `stage` — defaulted from `BROODS_PROJECT` / `BROODS_STAGE` when
 the server starts inside a configured project directory.
 
-Four guards are built in rather than left to the agent: a delete needs
-`confirm: true` and takes one id, `rotate-secret` needs the same because it
-breaks every deployment still holding the old secret, env has no read tool
-because the plane stores values write-only, and a stage-scoped resource refuses
-a collection call with no scope.
+Three guards are built in rather than left to the agent: a delete needs
+`confirm: true` and takes one id, env has no read tool because the plane
+stores values write-only, and a stage-scoped resource refuses a collection
+call with no scope.
+
+`rotate-secret` and `delete-project` stay unregistered unless
+`BROODS_MCP_ALLOW_DESTRUCTIVE=1` is exported in the shell that starts the
+server. A value in `.env` or `.env.local` is ignored: those files are
+writable by the very agent the gate fences. `confirm` is asserted by the
+calling agent itself, and no role policy bounds either call — rotating
+breaks every deployment holding the old secret, and a project delete
+cascades through everything under it — so exposing them is an operator's
+decision, not the agent's.
 
 ### Org, project and stage
 
 With a stored `broods login`, the server also registers `list-orgs`,
-`create-org`, `select-org`, `list-projects`, `delete-project`, `list-stages`
-and `create-stage`. Creating a stage under a project name that does not exist
-creates the project too, which is the only way to make one without deploying a
-manifest.
+`create-org`, `select-org`, `list-projects`, `list-stages`, `create-stage`
+and (behind `BROODS_MCP_ALLOW_DESTRUCTIVE`) `delete-project`. Creating a
+stage under a project name that does not exist creates the project too, which
+is the only way to make one without deploying a manifest.
 
-These seven are the exception to the credential rule below. They live behind
-the CLI router, which resolves login tokens only, so an account secret or a
-role session gets a 401 from them and the tools are left unregistered when no
+These are the exception to the credential rule below. They live behind the
+CLI router, which resolves login tokens only, so an account secret or a role
+session gets a 401 from them and the tools are left unregistered when no
 login is stored. Everything else on this server, and the sync routes behind
 `deploy` and `dev`, take the account secret.
 
@@ -203,6 +211,10 @@ session in `BROODS_SESSION_TOKEN` so the role's policy bounds what the agent
 can reach; `BROODS_ACCOUNT_SECRET` is the full-tenant fallback. The credential
 is read once at startup and never travels through a tool argument. See
 [Account Roles](./roles.md) for minting one.
+
+With only a stored login and no environment credential, the server still
+starts: the account-plane tools stay unregistered and the org, project and
+stage tools work alone. With no credential of any kind, startup fails.
 
 ## update
 

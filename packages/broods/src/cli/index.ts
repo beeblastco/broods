@@ -275,8 +275,14 @@ than a terminal:
 
 Auth comes from the environment, same as the SDK. Prefer a role session
 (BROODS_SESSION_TOKEN) so the role's policy bounds what the agent can reach;
-BROODS_ACCOUNT_SECRET is the full-tenant fallback. Mint a session with
-\`broods_assume_role\`, or with the account secret from another client.`,
+BROODS_ACCOUNT_SECRET is the full-tenant fallback. Mint a session with the
+assume-role tool, or with the account secret from another client. With only
+a stored \`broods login\`, the org, project and stage tools still register.
+
+rotate-secret and delete-project stay unregistered unless
+BROODS_MCP_ALLOW_DESTRUCTIVE=1 is exported in the shell: no role policy
+bounds either call, and the agent asserts confirm:true itself. A value from
+.env or .env.local is ignored, since the agent can write those files.`,
   update: `Usage: broods update
 
 Installs the newest published broods over the copy you are running, with the
@@ -2652,9 +2658,13 @@ async function mcp(): Promise<void> {
   const cli = auth
     ? new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     : null;
-  // Constructed once, before serving, so a missing credential fails loudly
-  // here instead of on the first tool call.
+  // Constructed once, before serving, so having no credential at all fails
+  // loudly here instead of on the first tool call. The destructive gate must
+  // be shell-owned: `.env.local` is writable by the very agent it fences.
   const server = createBroodsMcpServer({
+    allowDestructive:
+      process.env.BROODS_MCP_ALLOW_DESTRUCTIVE === "1" &&
+      isShellOwnedEnv("BROODS_MCP_ALLOW_DESTRUCTIVE"),
     cli: cli,
     scope: { project: runtime.project, stage: runtime.stage },
   });

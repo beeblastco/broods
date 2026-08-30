@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   BroodsAccountClient,
   type CreateMcpInput,
+  resolveEnvCredential,
   type SkillUploadInput,
   type StageScope,
   type UpdateAgentInput,
@@ -34,6 +35,12 @@ export interface McpScopeDefaults {
 }
 
 export interface BroodsMcpServerOptions {
+  /**
+   * Registers the tools no role policy bounds (see {@link registerDestructive}).
+   * Off by default; `broods mcp` turns it on only for a shell-exported
+   * BROODS_MCP_ALLOW_DESTRUCTIVE=1.
+   */
+  allowDestructive?: boolean;
   /** Login-scoped client; registers the org/project/stage tools when set. */
   cli?: BroodsSyncClient | null;
   /** Scope defaults from the runtime config (BROODS_PROJECT / BROODS_STAGE). */
@@ -54,6 +61,9 @@ const CONFIRM_FIELD = z
   .boolean()
   .describe("Must be true, after the owner has agreed to this delete.");
 
+const SECRET_MERGE_HINT =
+  "'********' keeps a stored secret and null deletes a field: never send a placeholder you did not read from a get.";
+
 /**
  * One config-plane resource. The names drive the tool names, so `agent` plus
  * `agents` registers get/create/update/delete-agent and list-agents. A verb
@@ -71,6 +81,8 @@ interface ResourceSpec {
   createHint?: string;
   /** Appended to the delete tool's description, naming what else goes away. */
   deleteHint?: string;
+  /** Appended to the update tool's description, for resources whose responses redact secrets. */
+  updateHint?: string;
   list?: (client: BroodsAccountClient, scope?: StageScope) => Promise<unknown>;
   get?: (client: BroodsAccountClient, id: string) => Promise<unknown>;
   create?: (
@@ -94,6 +106,7 @@ const RESOURCES: ResourceSpec[] = [
     key: "agentId",
     createHint: "Needs name and config; a 409 returns the existing agentId.",
     deleteHint: "Deleting an agent also drops its runtime rows.",
+    updateHint: SECRET_MERGE_HINT,
     list: (client) => client.listAgents(),
     get: (client, id) => client.getAgent(id),
     create: (client, body) =>
@@ -121,6 +134,7 @@ const RESOURCES: ResourceSpec[] = [
     singular: "sandbox",
     plural: "sandboxes",
     key: "sandboxId",
+    updateHint: SECRET_MERGE_HINT,
     list: (client) => client.listSandboxes(),
     get: (client, id) => client.getSandbox(id),
     create: (client, body) =>
@@ -217,22 +231,34 @@ const RESOURCES: ResourceSpec[] = [
 /**
  * Build the server. One instance per stdio connection; the client is
  * constructed once and reused, so the credential is read from the environment
- * at startup and never travels through a tool argument.
+ * at startup and never travels through a tool argument. With only a stored
+ * login the account-plane tools stay unregistered instead of failing every
+ * call; with no credential at all this throws.
  */
 export function createBroodsMcpServer(
   options: BroodsMcpServerOptions = {},
 ): McpServer {
-  const client = new BroodsAccountClient({});
+  const client = resolveEnvCredential() ? new BroodsAccountClient({}) : null;
+  if (!client && !options.cli) {
+    throw new Error(
+      "broods mcp needs a credential: set BROODS_SESSION_TOKEN or BROODS_ACCOUNT_SECRET, or run `broods login`.",
+    );
+  }
   const server = new McpServer(
     { name: "broods", version: "1" },
     { capabilities: { tools: {} } },
   );
 
-  for (const spec of RESOURCES) {
-    registerResource(server, client, spec, options.scope ?? {});
+  if (client) {
+    for (const spec of RESOURCES) {
+      registerResource(server, client, spec, options.scope ?? {});
+    }
+    registerExtras(server, client);
   }
-  registerExtras(server, client);
   if (options.cli) registerCliScope(server, options.cli);
+  if (options.allowDestructive) {
+    registerDestructive(server, client, options.cli ?? null);
+  }
 
   return server;
 }
@@ -376,8 +402,8 @@ function registerResource(
       `update-${spec.singular}`,
       {
         description:
-          `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back. ` +
-          "'********' keeps a stored secret and null deletes a field: never send a placeholder you did not read from a get.",
+          `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back.` +
+          (spec.updateHint ? ` ${spec.updateHint}` : ""),
         inputSchema: {
           id: idField,
           body: z.record(z.string(), z.unknown()),
@@ -600,24 +626,6 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
   );
 
   server.registerTool(
-    "rotate-secret",
-    {
-      description:
-        "Rotate the account secret. The current secret stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
-      inputSchema: { confirm: CONFIRM_FIELD },
-    },
-    async ({ confirm }) =>
-      await attempt(async () => {
-        assertConfirmed(
-          confirm,
-          "Everything holding the current secret breaks the moment this runs.",
-        );
-
-        return await client.rotateSecret();
-      }),
-  );
-
-  server.registerTool(
     "get-account",
     {
       description:
@@ -633,7 +641,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
  * they need a login token rather than an account secret or a role session.
  * They are registered only when `broods login` has stored one: a role session
  * is rejected by that router, so offering the tools without a login would hand
- * the agent four calls that can only 401.
+ * the agent calls that can only 401.
  */
 function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
   server.registerTool(
@@ -684,24 +692,6 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
   );
 
   server.registerTool(
-    "delete-project",
-    {
-      description:
-        "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
-      inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
-    },
-    async ({ projectId, confirm }) =>
-      await attempt(async () => {
-        assertConfirmed(
-          confirm,
-          `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
-        );
-
-        return await cli.deleteProject(projectId);
-      }),
-  );
-
-  server.registerTool(
     "list-stages",
     {
       description: "Every stage of one project, by project name.",
@@ -728,4 +718,56 @@ function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
     async ({ project, name, from }) =>
       await attempt(async () => await cli.createStage(project, name, from)),
   );
+}
+
+/**
+ * The tools whose blast radius no role policy bounds: rotating the account
+ * secret breaks every deployment holding the old one, and a project delete
+ * cascades through everything under it. `confirm` is asserted by the calling
+ * agent itself, so exposing these is the operator's opt-in, not the agent's.
+ */
+function registerDestructive(
+  server: McpServer,
+  client: BroodsAccountClient | null,
+  cli: BroodsSyncClient | null,
+): void {
+  if (client) {
+    server.registerTool(
+      "rotate-secret",
+      {
+        description:
+          "Rotate the account secret. The current secret stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
+        inputSchema: { confirm: CONFIRM_FIELD },
+      },
+      async ({ confirm }) =>
+        await attempt(async () => {
+          assertConfirmed(
+            confirm,
+            "Everything holding the current secret breaks the moment this runs.",
+          );
+
+          return await client.rotateSecret();
+        }),
+    );
+  }
+
+  if (cli) {
+    server.registerTool(
+      "delete-project",
+      {
+        description:
+          "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
+        inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
+      },
+      async ({ projectId, confirm }) =>
+        await attempt(async () => {
+          assertConfirmed(
+            confirm,
+            `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
+          );
+
+          return await cli.deleteProject(projectId);
+        }),
+    );
+  }
 }
