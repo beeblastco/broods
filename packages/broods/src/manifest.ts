@@ -14,12 +14,7 @@ import type {
   CliManifest,
   CliManifestResource,
 } from "./contracts.ts";
-import {
-  build as esbuild,
-  transformSync,
-  type BuildFailure,
-  type Plugin,
-} from "esbuild";
+import { build as esbuild, transformSync, type BuildFailure } from "esbuild";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -1535,7 +1530,6 @@ async function buildBundleModule(options: {
   entryPoint: string;
   label: string;
   manifestPath: string;
-  plugins?: Plugin[];
 }): Promise<string> {
   const build = await esbuild({
     entryPoints: [options.entryPoint],
@@ -1545,7 +1539,6 @@ async function buildBundleModule(options: {
     minify: false,
     write: false,
     logLevel: "silent",
-    plugins: options.plugins ?? [],
   }).catch((error: unknown) => {
     // esbuild throws BuildFailure for source errors, but a plain Error for
     // install/platform problems — surface that cause instead of masking it.

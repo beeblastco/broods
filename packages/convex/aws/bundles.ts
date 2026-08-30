@@ -12,7 +12,7 @@ import { mcpBundleStorageKey } from "../model/mcp";
 import { writeS3Object } from "../model/s3";
 
 /**
- * Store a code hook bundle in the account tool bundles bucket.
+ * Store a code hook bundle in the account bundles bucket.
  * @param accountId account id owning the hook
  * @param sha256 hex sha256 of the already-normalized bundle contents
  * @param storageId Convex storage id holding the JavaScript module source
@@ -25,27 +25,13 @@ export const putHookBundle = internalAction({
     storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (ctx, args) => {
-    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
-    if (!bucket) {
-      throw new Error(
-        "TOOL_BUNDLES_BUCKET_NAME is required to write hook bundles",
-      );
-    }
-
-    const key = accountHookBundleStorageKey(args.accountId, args.sha256);
-    await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
-      contentType: "application/javascript",
-      executable: false,
-    });
-
-    return key;
-  },
+  handler: async (ctx, args) =>
+    await writeBundleObject(ctx, args, accountHookBundleStorageKey),
 });
 
 /**
- * Store a hosted MCP server bundle in the account tool bundles bucket, under
- * its own account-mcp/ prefix (#331 phase 2).
+ * Store a hosted MCP server bundle in the account bundles bucket, under its
+ * own account-mcp/ prefix (#331 phase 2).
  */
 export const putMcpBundle = internalAction({
   args: {
@@ -54,23 +40,28 @@ export const putMcpBundle = internalAction({
     storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (ctx, args) => {
-    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
-    if (!bucket) {
-      throw new Error(
-        "TOOL_BUNDLES_BUCKET_NAME is required to write mcp bundles",
-      );
-    }
-
-    const key = mcpBundleStorageKey(args.accountId, args.sha256);
-    await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
-      contentType: "application/javascript",
-      executable: false,
-    });
-
-    return key;
-  },
+  handler: async (ctx, args) =>
+    await writeBundleObject(ctx, args, mcpBundleStorageKey),
 });
+
+async function writeBundleObject(
+  ctx: { storage: { get: (id: string) => Promise<Blob | null> } },
+  args: { accountId: string; sha256: string; storageId: string },
+  keyFor: (accountId: string, sha256: string) => string,
+): Promise<string> {
+  const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error("TOOL_BUNDLES_BUCKET_NAME is required to write bundles");
+  }
+
+  const key = keyFor(args.accountId, args.sha256);
+  await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
+    contentType: "application/javascript",
+    executable: false,
+  });
+
+  return key;
+}
 
 async function bundleSource(
   ctx: { storage: { get: (id: string) => Promise<Blob | null> } },

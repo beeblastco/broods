@@ -1131,7 +1131,7 @@ export const usageRollupsFields = {
   runtimeWallMs: v.number(),
   /** Sandbox CPU usage_usec folded into this bucket. */
   agentSandboxCpuUsec: v.number(),
-  /** Tool-sandbox CPU usage_usec (user-uploaded tools) folded into this bucket. */
+  /** Tool-sandbox CPU usage_usec (hosted MCP servers) folded into this bucket. */
   toolSandboxCpuUsec: v.number(),
   updatedAt: v.number(),
 };

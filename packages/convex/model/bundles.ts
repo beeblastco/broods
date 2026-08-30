@@ -13,38 +13,14 @@ import type { McpInput } from "./mcp";
 
 const BUNDLE_CONTENT_TYPE = "application/javascript";
 
+type PutBundleAction = typeof internal.aws.bundles.putHookBundle;
+
 /** Stores a code hook bundle in S3 and returns its object key. */
 export async function putHookBundle(
   ctx: ActionCtx,
   options: { accountId: Id<"accounts">; sha256: string; bundle: string },
 ): Promise<string> {
-  const storageId = await courier(ctx, options.bundle);
-  try {
-    return await ctx.runAction(internal.aws.bundles.putHookBundle, {
-      accountId: options.accountId,
-      sha256: options.sha256,
-      storageId: storageId,
-    });
-  } finally {
-    await ctx.storage.delete(storageId);
-  }
-}
-
-/** Stores a hosted MCP server bundle in S3 and returns its object key. */
-export async function putMcpBundle(
-  ctx: ActionCtx,
-  options: { accountId: Id<"accounts">; sha256: string; bundle: string },
-): Promise<string> {
-  const storageId = await courier(ctx, options.bundle);
-  try {
-    return await ctx.runAction(internal.aws.bundles.putMcpBundle, {
-      accountId: options.accountId,
-      sha256: options.sha256,
-      storageId: storageId,
-    });
-  } finally {
-    await ctx.storage.delete(storageId);
-  }
+  return await putBundle(ctx, internal.aws.bundles.putHookBundle, options);
 }
 
 /**
@@ -65,18 +41,30 @@ export async function storeMcpBundle(
     return existing.bundleStorageKey;
   }
 
-  return await putMcpBundle(ctx, {
+  return await putBundle(ctx, internal.aws.bundles.putMcpBundle, {
     accountId: accountId,
     sha256: input.sha256,
     bundle: input.bundle,
   });
 }
 
-async function courier(
+// Couriers the bytes through Convex storage, runs the S3 writer action, and
+// always deletes the blob — pass or fail.
+async function putBundle(
   ctx: ActionCtx,
-  bundle: string,
-): Promise<Id<"_storage">> {
-  return await ctx.storage.store(
-    new Blob([bundle], { type: BUNDLE_CONTENT_TYPE }),
+  action: PutBundleAction,
+  options: { accountId: Id<"accounts">; sha256: string; bundle: string },
+): Promise<string> {
+  const storageId = await ctx.storage.store(
+    new Blob([options.bundle], { type: BUNDLE_CONTENT_TYPE }),
   );
+  try {
+    return await ctx.runAction(action, {
+      accountId: options.accountId,
+      sha256: options.sha256,
+      storageId: storageId,
+    });
+  } finally {
+    await ctx.storage.delete(storageId);
+  }
 }

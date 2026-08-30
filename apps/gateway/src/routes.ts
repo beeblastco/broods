@@ -90,7 +90,6 @@ export function isCoreHttpRoute(pathname: string): boolean {
     // Durable workspace media links handed to chat providers; the sealed ticket
     // in the path is the only credential, so this stays unauthenticated.
     pathname.startsWith("/media/") ||
-    pathname.startsWith("/async-tools/") ||
     pathname.startsWith("/sandbox-jobs/") ||
     pathname === "/v1" ||
     pathname.startsWith("/v1/")
