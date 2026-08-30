@@ -331,6 +331,16 @@ export class BroodsAccountApiError extends Error {
 
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
+/**
+ * The credential the environment supplies, with a role session winning over
+ * the account secret. The constructor throws through this same resolution, so
+ * callers that can run without an account credential (`broods mcp` with only a
+ * stored login) probe here instead of catching the constructor.
+ */
+export function resolveEnvCredential(): string | undefined {
+  return envVar("BROODS_SESSION_TOKEN") ?? envVar("BROODS_ACCOUNT_SECRET");
+}
+
 function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
 }
@@ -359,10 +369,7 @@ export class BroodsAccountClient {
     const baseUrl =
       options.baseUrl ?? envVar("BROODS_BASE_URL") ?? DEFAULT_ACCOUNT_BASE_URL;
     const bearerToken =
-      options.sessionToken ??
-      options.accountSecret ??
-      envVar("BROODS_SESSION_TOKEN") ??
-      envVar("BROODS_ACCOUNT_SECRET");
+      options.sessionToken ?? options.accountSecret ?? resolveEnvCredential();
     if (!bearerToken)
       throw new Error(
         "BroodsAccountClient requires an accountSecret or sessionToken (or BROODS_ACCOUNT_SECRET / BROODS_SESSION_TOKEN).",
