@@ -283,6 +283,10 @@ export const mcpFields = {
   allowedTools: v.optional(v.array(v.string())),
   /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */
   disabled: v.optional(v.boolean()),
+  /** Canvas node that owns this row when it was authored on the dashboard. */
+  nodeId: v.optional(v.string()),
+  /** Dashboard-authored server source, kept for the editor; CLI rows omit it. */
+  sourceCode: v.optional(v.string()),
   status: v.union(v.literal("active"), v.literal("deleted")),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -1247,7 +1251,8 @@ export default defineSchema({
   mcp: defineTable(mcpFields)
     .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_stageId_and_status", ["stageId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"])
+    .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])

@@ -18,6 +18,9 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // esbuild ships platform binaries; bundling it into the /api/mcp/bundle
+  // route crashes Turbopack. Load it from node_modules at runtime instead.
+  serverExternalPackages: ["esbuild"],
   experimental: {
     optimizePackageImports: ["@base-ui/react", "@xyflow/react", "lucide-react"],
   },

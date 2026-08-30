@@ -15,6 +15,7 @@ import { forceFlushOtel, initOtel } from "./shared/otel.ts";
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
+  /^\/v1\/mcp-service\/rpc$/,
 ];
 const inFlight = new Set<Promise<void>>();
 

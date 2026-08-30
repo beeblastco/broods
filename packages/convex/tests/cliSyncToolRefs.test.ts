@@ -215,35 +215,84 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     });
   });
 
-  test("points the tool row at the canvas node the sync drew for it", async () => {
+  test("draws a canvas node for a synced mcp server and links its row", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
     const toolId = await seedUploadedTool(tt, accountId);
-    // The shared helper writes the pre-scope row shape. A tool the CLI actually
-    // uploaded carries its stage, which is what the canvas reads.
     await scopeToolToStage(tt, toolId);
+    // First sync creates the project/stage the mcp row needs.
+    await syncTools(tt, {});
+    const serverId = await tt.run(async (ctx) => {
+      const stage = await ctx.db.query("stages").first();
+      if (!stage) throw new Error("Stage not seeded");
+      const now = Date.now();
 
-    await syncTools(tt, { [TOOL_NAME]: { enabled: true } });
+      return await ctx.db.insert("mcp", {
+        accountId: accountId,
+        projectId: stage.projectId,
+        stageId: stage._id,
+        name: "search",
+        transport: "http" as const,
+        url: "https://mcp.example.com/mcp",
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
+      secretHash: SECRET_HASH,
+      manifest: {
+        version: 1 as const,
+        project: PROJECT,
+        stage: STAGE,
+        resources: [
+          toolResource,
+          {
+            kind: "mcp" as const,
+            name: "search",
+            description: "External MCP server.",
+            config: { url: "https://mcp.example.com/mcp" },
+          },
+          agentResource({}),
+        ],
+      },
+    });
 
     const layout = await tt.run(
       async (ctx) => await ctx.db.query("canvasLayouts").first(),
     );
-    // Matched on resourceId, not just type: the claim is that the row points at
-    // its own node, which a bare type match would not distinguish.
-    const toolNode = (
-      layout!.nodes as Array<{
+    const mcpNode = (
+      (layout?.nodes ?? []) as Array<{
         id: string;
         type: string;
         data?: { resourceId?: string };
       }>
-    ).find((node) => node.type === "tool" && node.data?.resourceId === toolId);
-    const tool = await tt.run(async (ctx) => await ctx.db.get(toolId));
+    ).find((node) => node.type === "mcp" && node.data?.resourceId === serverId);
+    const server = await tt.run(async (ctx) => await ctx.db.get(serverId));
 
-    // Every tool panel resolves through `getByNode`, which reads the
-    // `by_stageId_and_nodeId` index. Without this link the CLI's own node
-    // never matched its row, so the config, details and test tabs opened empty
-    // on a tool the runtime executed fine.
-    expect(toolNode).toBeDefined();
-    expect(tool!.nodeId).toBe(toolNode!.id);
+    // The dashboard panel resolves through getByNode (by_stageId_and_nodeId),
+    // so without this link a CLI-defined server is invisible on the canvas.
+    expect(mcpNode).toBeDefined();
+    expect(server!.nodeId).toBe(mcpNode!.id);
+  });
+
+  test("draws no canvas node for a tool resource", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const toolId = await seedUploadedTool(tt, accountId);
+    await scopeToolToStage(tt, toolId);
+
+    await syncTools(tt, { [TOOL_NAME]: { enabled: true } });
+
+    // The dashboard's custom-tool surface is retired in favor of MCP server
+    // nodes; a synced tool still runs, it just has no canvas presence.
+    const layout = await tt.run(
+      async (ctx) => await ctx.db.query("canvasLayouts").first(),
+    );
+    const toolNodes = ((layout?.nodes ?? []) as Array<{ type: string }>).filter(
+      (node) => node.type === "tool",
+    );
+    expect(toolNodes).toEqual([]);
   });
 });

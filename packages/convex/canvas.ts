@@ -26,6 +26,8 @@ export const canvasNodeValidator = v.object({
     v.literal("database"),
     v.literal("sandbox"),
     v.literal("workspace"),
+    v.literal("mcp"),
+    // Legacy custom-tool nodes; stored layouts still carry them.
     v.literal("tool"),
     v.literal("skill"),
   ),

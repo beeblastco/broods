@@ -5,10 +5,10 @@ import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useState } from "react";
 
-type NodeType =
+export type NodeType =
   | "agent"
   | "database"
-  | "tool"
+  | "mcp"
   | "workspace"
   | "sandbox"
   | "skill";
@@ -28,10 +28,10 @@ const DELETE_DESCRIPTIONS: Record<
     detail:
       "The database connection config, all auto-populated sessions, and messages from this database will be deleted permanently.",
   },
-  tool: {
-    summary: "Delete the tool configuration.",
+  mcp: {
+    summary: "Delete the MCP server registration.",
     detail:
-      "Only the tool configuration will be removed. This will not interfere with any existing code or tool logic.",
+      "The server row is removed and agents stop registering its tools. An external server itself is untouched.",
   },
   workspace: {
     summary: "Delete this workspace from the stage.",
@@ -54,7 +54,7 @@ const DELETE_DESCRIPTIONS: Record<
 const NODE_TYPE_LABELS: Record<NodeType, string> = {
   agent: "agent",
   database: "database",
-  tool: "tool",
+  mcp: "MCP server",
   workspace: "workspace",
   sandbox: "sandbox",
   skill: "skill",
@@ -85,8 +85,13 @@ export function SettingsTab({
   const [isDeleting, setIsDeleting] = useState(false);
   const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);
 
-  const descriptions = DELETE_DESCRIPTIONS[nodeType];
-  const typeLabel = NODE_TYPE_LABELS[nodeType];
+  // A stale stored layout can still carry a retired node type; fall back to
+  // generic copy instead of crashing the panel.
+  const descriptions = DELETE_DESCRIPTIONS[nodeType] ?? {
+    summary: "Remove this node from the canvas.",
+    detail: "Only the canvas node is removed.",
+  };
+  const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
   // Open the delete dialog when the parent bumps the trigger token (handled
   // during render rather than in an effect to avoid a cascading re-render).

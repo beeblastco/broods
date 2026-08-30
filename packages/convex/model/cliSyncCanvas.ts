@@ -17,7 +17,7 @@ import {
 import { isPlainObject } from "./objects";
 
 type CanvasCliResource = CliResource & {
-  kind: "agent" | "workspace" | "sandbox" | "skill" | "tool";
+  kind: "agent" | "workspace" | "sandbox" | "skill" | "mcp";
 };
 
 type ExistingCanvas = {
@@ -31,7 +31,7 @@ type ExistingCanvas = {
 type MaterializedCanvasNodes = {
   nextById: Map<string, CanvasNode>;
   nodeIdByKindName: Map<string, string>;
-  toolNodeIds: Map<Id<"accountTools">, string>;
+  mcpNodeIds: Map<Id<"mcp">, string>;
 };
 
 type WorkspaceWriterState = {
@@ -78,20 +78,21 @@ export async function syncCanvasLayoutForManifest(
   const agentConfigByName = new Map(
     agentConfigs.map((entry) => [entry.name, entry]),
   );
-  // Tools resolve by name here: the manifest reaching this mutation already had
-  // its `config.tools` keys rewritten to ids, so the node needs the row to map back.
-  const toolsByName = new Map(
+  // Servers resolve by name here: the manifest reaching this mutation already
+  // had `config.mcpServers` keys rewritten to ids, so the node needs the row
+  // to map back.
+  const mcpByName = new Map(
     (
       await ctx.db
-        .query("accountTools")
+        .query("mcp")
         .withIndex("by_stageId_and_status", (q) =>
           q.eq("stageId", stageId).eq("status", "active"),
         )
         .collect()
     ).map((entry) => [entry.name, entry]),
   );
-  const toolNameById = new Map(
-    [...toolsByName.values()].map((entry) => [entry._id as string, entry.name]),
+  const mcpNameById = new Map(
+    [...mcpByName.values()].map((entry) => [entry._id as string, entry.name]),
   );
   const desiredResources: CanvasCliResource[] = resources
     .filter(
@@ -100,7 +101,7 @@ export async function syncCanvasLayoutForManifest(
         entry.kind === "workspace" ||
         entry.kind === "sandbox" ||
         entry.kind === "skill" ||
-        entry.kind === "tool",
+        entry.kind === "mcp",
     )
     .map((entry) => ({ ...entry, name: resourceName(entry.name) }));
   const desiredNodeKeys = new Set(
@@ -110,25 +111,24 @@ export async function syncCanvasLayoutForManifest(
   const materialized = materializeCanvasNodes({
     existing: existing,
     agentConfigByName: agentConfigByName,
-    toolsByName: toolsByName,
+    mcpByName: mcpByName,
     desiredResources: desiredResources,
     workspaceIds: workspaceIds,
     sandboxIds: sandboxIds,
   });
 
-  // Point each tool row at the node the CLI just drew for it. Every tool panel
-  // resolves through `getByNode`, which reads `by_stageId_and_nodeId` —
-  // so without this the CLI's own node never matched its row and the config,
-  // details and test tabs all opened empty on a tool that ran fine.
-  for (const [toolId, nodeId] of materialized.toolNodeIds) {
-    await ctx.db.patch(toolId, { nodeId: nodeId });
+  // Point each mcp row at the node the CLI just drew for it. The panel
+  // resolves through `getByNode` (`by_stageId_and_nodeId`), so without this a
+  // CLI-defined server would be invisible on the canvas.
+  for (const [serverId, nodeId] of materialized.mcpNodeIds) {
+    await ctx.db.patch(serverId, { nodeId: nodeId });
   }
 
   const desiredEdges = new Map<string, CanvasEdge>();
   const workspaceWriters = collectDesiredAgentEdges({
     desiredResources: desiredResources,
     nodeIdByKindName: materialized.nodeIdByKindName,
-    toolNameById: toolNameById,
+    mcpNameById: mcpNameById,
     desiredEdges: desiredEdges,
   });
   stampWorkspaceReadOnly(
@@ -195,26 +195,22 @@ function addAgentSubagentEdges(
   }
 }
 
-/**
- * Agent→tool edges. `config.tools` is keyed by tool id; provider tool keys
- * have no node and are skipped by the lookup.
- */
-function addAgentToolEdges(
+/** Agent→mcp edges. `config.mcpServers` is keyed by server row id. */
+function addAgentMcpEdges(
   agentConfig: Record<string, unknown>,
   agentNodeId: string,
   nodeIdByKindName: Map<string, string>,
-  toolNameById: Map<string, string>,
+  mcpNameById: Map<string, string>,
   desiredEdges: Map<string, CanvasEdge>,
 ): void {
-  const agentTools = agentConfig.tools;
-  if (!isPlainObject(agentTools)) return;
-  for (const [toolId, toolConfig] of Object.entries(agentTools)) {
-    const name = toolNameById.get(toolId);
+  const mcpServers = agentConfig.mcpServers;
+  if (!isPlainObject(mcpServers)) return;
+  for (const [serverId, serverConfig] of Object.entries(mcpServers)) {
+    const name = mcpNameById.get(serverId);
     if (!name) continue;
-    if (isPlainObject(toolConfig) && toolConfig.enabled === false) continue;
-    const toolNodeId = nodeIdByKindName.get(`tool:${name}`);
-    if (toolNodeId)
-      addDesiredDefaultEdge(desiredEdges, agentNodeId, toolNodeId);
+    if (isPlainObject(serverConfig) && serverConfig.enabled === false) continue;
+    const mcpNodeId = nodeIdByKindName.get(`mcp:${name}`);
+    if (mcpNodeId) addDesiredDefaultEdge(desiredEdges, agentNodeId, mcpNodeId);
   }
 }
 
@@ -329,15 +325,16 @@ function cliResourceKeyForNode(node: CanvasNode): string {
 
 /**
  * Walk each desired agent's refs (sandbox, workspaces, subagents, skills,
- * tools) and record the corresponding canvas edges plus workspace writability.
+ * mcp servers) and record the corresponding canvas edges plus workspace
+ * writability.
  */
 function collectDesiredAgentEdges(options: {
   desiredResources: CanvasCliResource[];
   nodeIdByKindName: Map<string, string>;
-  toolNameById: Map<string, string>;
+  mcpNameById: Map<string, string>;
   desiredEdges: Map<string, CanvasEdge>;
 }): WorkspaceWriterState {
-  const { desiredResources, nodeIdByKindName, toolNameById, desiredEdges } =
+  const { desiredResources, nodeIdByKindName, mcpNameById, desiredEdges } =
     options;
   const workspaceWriters: WorkspaceWriterState = {
     referenced: new Set<string>(),
@@ -376,11 +373,11 @@ function collectDesiredAgentEdges(options: {
       desiredEdges,
     );
     addAgentSkillEdges(agent.config, agentId, nodeIdByKindName, desiredEdges);
-    addAgentToolEdges(
+    addAgentMcpEdges(
       agent.config,
       agentId,
       nodeIdByKindName,
-      toolNameById,
+      mcpNameById,
       desiredEdges,
     );
   }
@@ -461,7 +458,7 @@ function indexExistingCanvas(
 function materializeCanvasNodes(options: {
   existing: ExistingCanvas;
   agentConfigByName: Map<string, Doc<"agentConfigs">>;
-  toolsByName: Map<string, Doc<"accountTools">>;
+  mcpByName: Map<string, Doc<"mcp">>;
   desiredResources: CanvasCliResource[];
   workspaceIds: Record<string, string>;
   sandboxIds: Record<string, string>;
@@ -469,27 +466,27 @@ function materializeCanvasNodes(options: {
   const {
     existing,
     agentConfigByName,
-    toolsByName,
+    mcpByName,
     desiredResources,
     workspaceIds,
     sandboxIds,
   } = options;
   const nextById = new Map(existing.nodes.map((node) => [node.id, node]));
   const nodeIdByKindName = new Map<string, string>();
-  const toolNodeIds = new Map<Id<"accountTools">, string>();
+  const mcpNodeIds = new Map<Id<"mcp">, string>();
   const columnX = {
     agent: 80,
     sandbox: 340,
     workspace: 600,
     skill: 860,
-    tool: 1120,
+    mcp: 1120,
   } as const;
   const rowY = {
     agent: 80,
     sandbox: 80,
     workspace: 80,
     skill: 80,
-    tool: 80,
+    mcp: 80,
   };
   const nextPosition = (
     kind: keyof typeof columnX,
@@ -506,7 +503,7 @@ function materializeCanvasNodes(options: {
       sandbox: 1,
       workspace: 2,
       skill: 3,
-      tool: 4,
+      mcp: 4,
     } as const;
 
     return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
@@ -562,31 +559,31 @@ function materializeCanvasNodes(options: {
       return;
     }
 
-    if (resource.kind === "tool") {
-      const record = toolsByName.get(resource.name);
+    if (resource.kind === "mcp") {
+      const record = mcpByName.get(resource.name);
       if (!record) return;
       const node = upsertCanvasNode({
         nextById: nextById,
         existingById: existing.byId,
         preferred: existing.byResourceId.get(record._id),
-        kind: "tool",
+        kind: "mcp",
         name: resource.name,
-        position: nextPosition("tool"),
+        position: nextPosition("mcp"),
         data: {
           label: resource.name,
           status: "idle",
           resourceId: record._id,
           description: record.description,
           config: {
-            runtime: record.runtime ?? "sandbox",
-            sha256: record.sha256,
+            transport: record.transport,
+            ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
           },
           managedBy: "cli",
-          cliResourceKey: `tool:${resource.name}`,
+          cliResourceKey: `mcp:${resource.name}`,
         },
       });
-      nodeIdByKindName.set(`tool:${resource.name}`, node.id);
-      if (record.nodeId !== node.id) toolNodeIds.set(record._id, node.id);
+      nodeIdByKindName.set(`mcp:${resource.name}`, node.id);
+      if (record.nodeId !== node.id) mcpNodeIds.set(record._id, node.id);
 
       return;
     }
@@ -620,7 +617,7 @@ function materializeCanvasNodes(options: {
   return {
     nextById: nextById,
     nodeIdByKindName: nodeIdByKindName,
-    toolNodeIds: toolNodeIds,
+    mcpNodeIds: mcpNodeIds,
   };
 }
 

@@ -6,16 +6,16 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { NodeProps } from "@xyflow/react";
 import { useQuery } from "convex/react";
-import { Wrench } from "lucide-react";
+import { Plug } from "lucide-react";
 import { useParams } from "next/navigation";
 
-/** Tool node representing an external tool on the canvas. */
-export function ToolNode({ id, data }: NodeProps): React.JSX.Element {
+/** MCP server node: one registered server exposing its tools to wired agents. */
+export function McpNode({ id, data }: NodeProps): React.JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
   const { stageId } = useStage();
 
-  const toolService = useQuery(
-    api.toolService.getByNode,
+  const server = useQuery(
+    api.mcp.getByNode,
     projectId && stageId
       ? {
           projectId: projectId as Id<"projects">,
@@ -28,13 +28,17 @@ export function ToolNode({ id, data }: NodeProps): React.JSX.Element {
   return (
     <BaseNode
       id={id}
-      nodeType="tool"
+      nodeType="mcp"
       data={data as BaseNodeData}
-      icon={<Wrench className="size-3.5" />}
-      toolMeta={{
-        language: "javascript",
-        status: toolService?.disabled === true ? "disabled" : "enabled",
-      }}
+      icon={<Plug className="size-3.5" />}
+      subtitle={
+        server
+          ? server.transport === "hosted"
+            ? "hosted · node"
+            : "external · url"
+          : undefined
+      }
+      cardStatus={{ enabled: !!server && server.disabled !== true }}
     />
   );
 }

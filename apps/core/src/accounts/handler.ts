@@ -19,6 +19,7 @@ import {
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import { handleMcpServiceRpc } from "./mcp-service.ts";
 import {
   recordSandboxAuditEvent,
   type SandboxAuditActor,
@@ -121,12 +122,13 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       return jsonResponse(200, { status: "ok" });
     }
 
+    const isAccountSelfDelete =
+      method === "DELETE" && rawPath === "/v1/account";
     const auth = await resolveBearerAuth(headers, {
       // Cleanup can fail after the account is disabled. Permit only the
       // owning secret to retry self-deletion; all normal ingress remains
       // subject to the active-account requirement.
-      allowDisabledAccountSecret:
-        method === "DELETE" && rawPath === "/v1/account",
+      allowDisabledAccountSecret: isAccountSelfDelete,
     });
     if (!auth) {
       logWarn("Account manage request unauthorized", {
@@ -137,7 +139,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       return errorResponse(401, "Unauthorized");
     }
 
-    if (method === "DELETE" && rawPath === "/v1/account") {
+    if (isAccountSelfDelete) {
       const account = requireAccountAuth(auth);
 
       return deleteAccountResponse(account);
@@ -150,6 +152,14 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     // workspace mount/S3 read helpers, sandbox lifecycle verbs, and the
     // harness cron-run leaf; account deletion still sweeps leftover
     // schedules (deleteAccountCrons).
+
+    const mcpServiceResponse = await handleMcpServiceRoute(
+      auth,
+      method,
+      rawPath,
+      request,
+    );
+    if (mcpServiceResponse) return mcpServiceResponse;
 
     const selfSandboxLifecycleMatch = rawPath.match(
       /^\/v1\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
@@ -205,6 +215,23 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
     return errorResponseForError(err);
   }
+}
+
+/**
+ * Dashboard explorer + save-time probe, via the Convex mcpService actions
+ * (service token scoped by X-Account-Id, like the sandbox verbs). Null when
+ * the request is not an mcp-service route.
+ */
+async function handleMcpServiceRoute(
+  auth: AuthContext,
+  method: string,
+  rawPath: string,
+  request: CoreRequest,
+): Promise<Response | null> {
+  if (method !== "POST" || rawPath !== "/v1/mcp-service/rpc") return null;
+  if (auth.kind !== "account") return errorResponse(403, "Forbidden");
+
+  return await handleMcpServiceRpc(auth.account.accountId, request);
 }
 
 /**
