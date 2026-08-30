@@ -1,16 +1,17 @@
 /**
- * Connected MCP server registration contract (issue #331 phase 1). The
- * persisted row and its normalizer live in the config plane
- * (packages/convex/model/mcp.ts, packages/convex/account/mcp.ts); this file
- * owns the core-side record shape the storage adapter returns. Connection and
- * tool registration live in harness/mcp/.
+ * Registered MCP server contract (#331): external "http" rows and uploaded
+ * "hosted" rows. The persisted row and its normalizer live in the config
+ * plane (packages/convex/model/mcp.ts, packages/convex/account/mcp.ts); this
+ * file owns the core-side record shape the storage adapter returns.
+ * Connection and tool registration live in harness/mcp/.
  */
 
+import type { McpTransport } from "@broods/convex/model/mcp";
+
 export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
+export type { McpTransport } from "@broods/convex/model/mcp";
 
 export type McpStatus = "active" | "deleted";
-
-export type McpTransport = "http" | "hosted";
 
 export interface McpRecord {
   accountId: string;

@@ -1,21 +1,21 @@
 /**
- * Shared validation for MCP server registrations (issue #331 phase 1). One
- * normalizer serves both write paths (CLI sync and dashboard) the way
- * `normalizeAccountToolUpload` does for tools. Rows describe an external MCP
- * server that core connects to over the stateless HTTP transport, spec
- * 2026-07-28 only. Auth header values may carry ${NAME} account env refs;
- * they resolve into the encrypted agent config at sync time, never on this
- * row, and credential-bearing headers must use one instead of an inline
- * secret.
+ * Shared validation for MCP server registrations (#331). One normalizer
+ * serves every write path (CLI sync, direct API, dashboard) the way
+ * `normalizeAccountToolUpload` does for tools. A `url` makes an "http" row
+ * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
+ * a "hosted" row served by the tool-runner Lambda, hashed here so sha256
+ * always travels with the bundle. Auth header values may carry ${NAME}
+ * account env refs; they resolve into the encrypted agent config at sync
+ * time, never on this row, and credential-bearing headers must use one
+ * instead of an inline secret.
  */
 
 import { sha256Hex } from "./accountSecrets";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
+const MAX_ALLOWED_TOOLS = 256;
 /** Matches the uploaded-package ceiling from #190 (the sandbox tool cap). */
 const MAX_BUNDLE_BYTES = 10_000_000;
-
-const MAX_ALLOWED_TOOLS = 256;
 const MAX_DESCRIPTION_LENGTH = 2000;
 const MAX_HEADERS = 16;
 const MAX_HEADER_VALUE_LENGTH = 2048;

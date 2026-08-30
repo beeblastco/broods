@@ -35,6 +35,7 @@ import {
   type AgentHooks,
   type BroodsConfigDefinition,
   type BroodsProjectConfig,
+  type McpServerDefinitionConfig,
   type PolicyResource,
   type SandboxResource,
   type WorkspaceResource,
@@ -1028,12 +1029,7 @@ async function normalizeConfig(
   if (resource.kind === "mcp") {
     return await normalizeMcpConfig(
       entry,
-      resource.config as {
-        path?: string;
-        url?: string;
-        headers?: Record<string, string>;
-        allowedTools?: string[];
-      },
+      resource.config as McpServerDefinitionConfig,
       projectRoot,
     );
   }
@@ -1525,28 +1521,6 @@ function normalizePolicyRefs(
   return names.length > 0 ? names : undefined;
 }
 
-async function normalizeSkillConfig(
-  config: { path: string },
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
-  const skillRoot = resolveContainedResourcePath(
-    projectRoot,
-    config.path,
-    "Skill",
-  );
-  const manifestPath = relative(projectRoot, skillRoot).split("\\").join("/");
-  const files = await readBundleFiles(skillRoot);
-  if (!files.some((file) => file.path === "SKILL.md")) {
-    throw new Error(`Skill folder ${config.path} must contain SKILL.md`);
-  }
-
-  return {
-    source: "files",
-    path: manifestPath,
-    files: files,
-  };
-}
-
 /**
  * Import the built bundle and require the fetch-style default export the
  * Lambda host expects (same shape check the child-runner applies), so a
@@ -1627,6 +1601,28 @@ async function buildBundleModule(options: {
   return build.outputFiles[0]!.text;
 }
 
+async function normalizeSkillConfig(
+  config: { path: string },
+  projectRoot: string,
+): Promise<Record<string, unknown>> {
+  const skillRoot = resolveContainedResourcePath(
+    projectRoot,
+    config.path,
+    "Skill",
+  );
+  const manifestPath = relative(projectRoot, skillRoot).split("\\").join("/");
+  const files = await readBundleFiles(skillRoot);
+  if (!files.some((file) => file.path === "SKILL.md")) {
+    throw new Error(`Skill folder ${config.path} must contain SKILL.md`);
+  }
+
+  return {
+    source: "files",
+    path: manifestPath,
+    files: files,
+  };
+}
+
 /**
  * An mcp resource with `url` syncs as-is (external server); one with `path`
  * bundles the module whose default export is a fetch-style MCP handler, and
@@ -1634,12 +1630,7 @@ async function buildBundleModule(options: {
  */
 async function normalizeMcpConfig(
   entry: ExportedResource,
-  config: {
-    path?: string;
-    url?: string;
-    headers?: Record<string, string>;
-    allowedTools?: string[];
-  },
+  config: McpServerDefinitionConfig,
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
   const { path: serverPath, ...rest } = config;

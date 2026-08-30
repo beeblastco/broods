@@ -198,10 +198,11 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
 };
 
 /**
- * External MCP server registration (#331). Core connects over the stateless
- * HTTP transport (spec 2026-07-28) at agent registration time and offers the
- * server's tools as `<name>__<tool>`. The name namespaces those tools, so it
- * must be 1-32 lowercase letters, digits, or hyphens, starting with a letter.
+ * MCP server registration (#331) — external (`url`) or hosted (`path`).
+ * Either way the server's tools are offered as `<name>__<tool>`; an external
+ * row is dialed over the stateless HTTP transport (spec 2026-07-28) at agent
+ * registration time. The name namespaces those tools, so it must be 1-32
+ * lowercase letters, digits, or hyphens, starting with a letter.
  */
 export interface McpServerDefinitionConfig {
   /** External server's MCP endpoint; http(s), no embedded credentials. */

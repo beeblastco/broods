@@ -26,7 +26,7 @@ interface HostedMcpRequest {
   body: string | undefined;
 }
 
-interface HostedMcpResponse {
+export interface HostedMcpResponse {
   status: number;
   headers: Record<string, string>;
   body: string;
@@ -45,8 +45,15 @@ let invokeOverride: HostedMcpInvoke | null = null;
  * request through the Lambda host instead of the network.
  */
 export function hostedMcpFetch(record: McpRecord): typeof fetch {
-  return (async (input: string | URL | Request, init?: RequestInit) => {
-    const request = new Request(input as never, init);
+  return (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    // Bun's Request overloads reject the raw union; narrow the URL form first.
+    const request =
+      input instanceof Request
+        ? new Request(input, init)
+        : new Request(String(input), init);
     const body = request.method === "GET" ? undefined : await request.text();
     const invoke = invokeOverride ?? invokeLambda;
     const result = await invoke(
@@ -71,6 +78,25 @@ export function setHostedMcpInvokeForTests(
   invoke: HostedMcpInvoke | null,
 ): void {
   invokeOverride = invoke;
+}
+
+/** The child answers with one terminal frame carrying the serialized response. */
+function finalHostedResponse(
+  serverName: string,
+  result: unknown,
+): HostedMcpResponse {
+  const response = result as HostedMcpResponse | undefined;
+  if (
+    !response ||
+    typeof response.status !== "number" ||
+    typeof response.body !== "string"
+  ) {
+    throw new Error(
+      `hosted MCP server ${serverName} returned a malformed response`,
+    );
+  }
+
+  return response;
 }
 
 async function invokeLambda(
@@ -118,23 +144,4 @@ async function invokeLambda(
   if (transportError) throw transportError;
 
   throw new Error(`hosted MCP server ${record.name} returned no response`);
-}
-
-/** The child answers with one terminal frame carrying the serialized response. */
-function finalHostedResponse(
-  serverName: string,
-  result: unknown,
-): HostedMcpResponse {
-  const response = result as HostedMcpResponse | undefined;
-  if (
-    !response ||
-    typeof response.status !== "number" ||
-    typeof response.body !== "string"
-  ) {
-    throw new Error(
-      `hosted MCP server ${serverName} returned a malformed response`,
-    );
-  }
-
-  return response;
 }

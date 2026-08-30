@@ -1,9 +1,11 @@
 /**
- * Stateless MCP client for connected servers (issue #331 phase 1). Wraps the
- * official v2 SDK pinned to spec 2026-07-28: one client per operation, no
- * session state. The version probe and tool listings are cached in-process
- * per server row (keyed by row version and resolved headers, so an edit is a
- * cache miss), honoring the ttlMs the spec requires on tools/list results.
+ * Stateless MCP client for registered servers (#331). Wraps the official v2
+ * SDK pinned to spec 2026-07-28: one client per operation, no session state.
+ * An "http" row dials its url; a "hosted" row runs the same transport with
+ * every request routed through the Lambda host (hosted.ts). The version
+ * probe and tool listings are cached in-process per server row (keyed by row
+ * version and resolved headers, so an edit is a cache miss), honoring the
+ * ttlMs the spec requires on tools/list results.
  */
 
 import {
