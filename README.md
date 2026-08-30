@@ -93,8 +93,10 @@ bun run docs
 ## Contributing
 
 Contributions are welcome. Open an issue first to align on the approach, then send a PR.
-This checkout uses the Bun canary channel selected by `.bun-version`; run
-`bun upgrade --canary` before the commands below until Bun 1.4 is stable.
+CI and the container images pin Bun to the version in `.bun-version`. `bun upgrade`
+installs the latest stable release, which is usually that version but may run ahead
+of it. If `bun --revision` shows a canary build, use `bun upgrade --stable` — plain
+`bun upgrade` keeps a canary install on the canary channel.
 
 ```bash
 bun install      # install all workspaces

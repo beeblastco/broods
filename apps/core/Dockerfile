@@ -1,8 +1,8 @@
 # Self-hosted core runtime image (epic #85 phase 9a): one Bun binary serving
 # both harness-processing and account-manage over HTTP, routed by Host header.
 # Build from the monorepo root: docker build -f apps/core/Dockerfile .
-# Bun 1.4 Rust canary; pin the digest because the canary tag is mutable.
-ARG BUN_IMAGE=oven/bun:canary-alpine@sha256:7de23ab3fb549a3945a2c85ae2d9b999e23f2fc72182b705777d2c254795d79f
+# Pin the digest: the version tag is republished when the base image rebuilds.
+ARG BUN_IMAGE=oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
