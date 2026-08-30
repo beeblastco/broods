@@ -23,6 +23,8 @@ If a cron started this run, your first message says so. Then you create, edit, a
 
 ## Calling the API on yourself
 
+The `broods` CLI is not an option for you, so do not go looking for it. It authenticates with a login token and resolves its scope through a CLI-only route that rejects a role session, and `broods deploy` would sync a whole stage from a project directory you do not have, reverting everything not in it. You change one field over the API.
+
 `scripts/self-api.sh METHOD PATH [JSON_BODY]`. It sends `BROODS_SESSION_TOKEN` if you have one, otherwise it exchanges `BROODS_API_KEY` and `BROODS_ROLE_ID` for a session and caches it until it expires.
 
 ```sh

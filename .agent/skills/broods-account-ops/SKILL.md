@@ -19,7 +19,15 @@ Creating roles needs the account secret: a session cannot mint another session o
 
 If no credential exists, stop and ask the owner. Do not hunt for one in dotfiles or CI config.
 
+## Reach for the CLI first
+
+If the work sits in a repo with a `broods/` dir, the CLI is the right tool and the API is not. `broods diff` previews, `broods deploy` syncs, `broods dev` watches, plus `broods env`, `broods logs`, `broods stream`, and `broods agent list|get`. The CLI reconciles the whole manifest against the code definition. Editing one resource over the API instead drifts from that definition, and the next deploy silently reverts you.
+
+The CLI needs a login token, from `broods login` or `BROODS_TOKEN`. A role session cannot drive it: `broods` resolves its scope through a CLI-only route that rejects any other credential.
+
 ## Calling the API
+
+The CLI has commands for projects, stages, env, agents and logs, and nothing else. Crons, sandboxes, skills, tools, policies, roles, channels, hooks, workspaces and MCP servers have no CLI verb, so they go over the API. So does anything a manifest cannot say: run history, a sandbox you want suspended now, a one-off read.
 
 `scripts/broods-api.sh METHOD PATH [JSON_BODY]`:
 
@@ -29,9 +37,9 @@ scripts/broods-api.sh POST /v1/crons '{"name":"daily-maintenance","agentId":"age
 scripts/broods-api.sh PATCH /v1/agents/agent_abc '{"config":{"agent":{"system":"..."}}}'
 ```
 
-From TypeScript use the SDK instead. `new BroodsAccountClient({})` from the `broods` package reads the same env vars and has a typed method per route, including `createRole` and `assumeRole`.
+If the resource is one the project manifest declares, change the manifest and deploy instead of patching it here.
 
-For a repo with a `broods/` dir, prefer the CLI: `broods diff` to preview, `broods deploy` to sync, `broods dev` to watch, `broods env sync`, `broods logs`, `broods stream`. The CLI reconciles the whole manifest. Editing one resource at a time drifts from the code definition, and the next deploy reverts it.
+From TypeScript use the SDK. `new BroodsAccountClient({})` from the `broods` package reads the same env vars and has a typed method per route, including `createRole` and `assumeRole`.
 
 ## Rules that keep you out of trouble
 
