@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
-import { Crons } from "@convex-dev/crons";
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { components, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { translateScheduleExpression } from "../model/cronRules";
+import { cronSchedules } from "../model/cronSchedules";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -17,8 +17,6 @@ const t = () => {
   return tt;
 };
 type T = ReturnType<typeof t>;
-
-const cronSchedules = new Crons(components.crons);
 
 describe("list", () => {
   test("returns only the named agent's jobs", async () => {
@@ -117,6 +115,25 @@ describe("create/update/remove", () => {
       ms: 3_600_000,
     });
     expect(registration?.args).toMatchObject({ cronId: created.cronId });
+  });
+
+  test("rejects a timezone Intl does not know, even on a paused job", async () => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+
+    await expect(
+      tt.mutation(internal.agent.crons.create, {
+        accountId: accountId,
+        input: {
+          name: "bad-zone",
+          agentId: agentId,
+          input: "never",
+          scheduleExpression: "rate(1 hour)",
+          timezone: "Not/AZone",
+          status: "paused",
+        },
+      }),
+    ).rejects.toThrow("timezone must be a valid IANA timezone");
   });
 
   test("create rolls the row back when the schedule is rejected", async () => {

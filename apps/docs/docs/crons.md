@@ -39,7 +39,7 @@ A cron never reaches a conversation belonging to another account or agent, and a
 
 ### What A Fired Run Sees
 
-The stored instructions arrive as a user turn that nobody typed, so the runtime frames them before the model reads them: the first user message is prefixed with the task name, the schedule and its timezone, the instant the scheduler fired, when the task was set up, whether it fires again, and the fact that nobody is sitting in the conversation waiting on a reply. The instructions themselves are passed through untouched. Its trace root is `agent.cron`, not `agent.task`, and the log line for the dispatch carries `dispatchLagMs` — how long the Convex dispatch → gateway hops took, so a late answer can be attributed to the pipeline or to the run itself.
+The stored instructions arrive as a user turn that nobody typed, so the runtime frames them before the model reads them: the first user message is prefixed with the task name, the schedule and its timezone, the instant the scheduler fired, when the task was set up, whether it fires again, and the fact that nobody is sitting in the conversation waiting on a reply. The instructions themselves are passed through untouched. Its trace root is `agent.cron`, not `agent.task`.
 
 A fired run carries **no scheduling tools at all** — not `schedule`, `update_schedule`, `list_schedules`, or `cancel_schedule` — however the agent is configured. A model reading its own stored instructions takes them for a fresh request, so every one of those tools is a way for it to act on the schedule it is currently running. A subagent dispatched by a fired run inherits the same restriction. Scheduling stays with the turns a person actually asked for.
 

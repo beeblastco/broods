@@ -9,7 +9,7 @@
 import { Crons } from "@convex-dev/crons";
 import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { ActionCtx, MutationCtx } from "../_generated/server";
 import { translateScheduleExpression } from "./cronRules";
 
 export const cronSchedules = new Crons(components.crons);
@@ -28,6 +28,20 @@ export interface RegisterScheduleOptions {
    * unregistered (the cutover migration, where it already fired).
    */
   onPastAt: "throw" | "run" | "skip";
+}
+
+/**
+ * Deletes the component registration under `name` when one exists; a missing
+ * registration is done. The existence probe is load-bearing — the component's
+ * delete throws on an unknown name.
+ */
+export async function deleteRegistrationIfExists(
+  ctx: MutationCtx | ActionCtx,
+  name: string,
+): Promise<void> {
+  if (await cronSchedules.get(ctx, { name: name })) {
+    await cronSchedules.delete(ctx, { name: name });
+  }
 }
 
 /**
@@ -73,8 +87,9 @@ export async function registerSchedule(
 
 /**
  * Deschedules whatever fires this cron job; a missing schedule is done.
- * A one-time job lives in `scheduledRunId` and is never in the component, so
- * the cross-component lookup only runs for recurring rows. Clearing the
+ * A one-time job lives in `scheduledRunId` and is never in the component, and
+ * a non-active job without one holds no registration at all, so the
+ * cross-component lookup only runs for active recurring rows. Clearing the
  * `scheduledRunId` field is the caller's write.
  */
 export async function unregisterSchedule(
@@ -86,7 +101,6 @@ export async function unregisterSchedule(
 
     return;
   }
-  if (await cronSchedules.get(ctx, { name: cron._id })) {
-    await cronSchedules.delete(ctx, { name: cron._id });
-  }
+  if (cron.status !== "active") return;
+  await deleteRegistrationIfExists(ctx, cron._id);
 }

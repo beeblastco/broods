@@ -126,7 +126,7 @@ interface CronInvocation {
   accountId: string;
   cronId: string;
   // The dispatch instant, stamped by agent/crons.dispatch in Convex when the
-  // schedule fires; dispatchLagMs measures the Convex → gateway hop from it.
+  // schedule fires; the run framing tells the agent this is when it fired.
   scheduledTime?: string;
 }
 
@@ -320,9 +320,6 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       agentId: job.agentId,
       eventId: result.eventId,
       conversationKey: result.conversationKey,
-      // Cost of the Convex dispatch → gateway hops, which nothing else
-      // reports: without it a late reply reads as a slow model.
-      dispatchLagMs: Date.now() - firedAt.getTime(),
     });
     await crons.markCompleted(job.accountId, job.cronId);
   } catch (err) {

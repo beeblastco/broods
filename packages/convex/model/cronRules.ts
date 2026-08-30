@@ -6,9 +6,12 @@
  * in ./responses.ts.
  */
 
+import type { CronInfo } from "@convex-dev/crons";
 import { isPlainObject } from "./objects";
 
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
+
+const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
 
 const RATE_MS_PER_UNIT: Record<string, number> = {
   minute: 60_000,
@@ -32,9 +35,7 @@ const DAY_OF_WEEK_NAMES = new Set([
 export type CronStatus = "active" | "paused";
 
 /** A schedule the Convex crons component can register. */
-export type ComponentCronSchedule =
-  | { kind: "cron"; cronspec: string; tz?: string }
-  | { kind: "interval"; ms: number };
+export type ComponentCronSchedule = CronInfo["schedule"];
 
 /** A translated schedule: recurring for the component, or a one-time instant. */
 export type TranslatedCronSchedule =
@@ -204,6 +205,132 @@ export function translateScheduleExpression(
 }
 
 /**
+ * Whether a schedule fires exactly once. Single home for this rule — core
+ * re-exports it from apps/core/src/shared/domain/cron.ts.
+ * @param expression a normalized schedule expression
+ * @returns true for an at(...) schedule
+ */
+export function isOneTimeSchedule(expression: string): boolean {
+  return expression.startsWith("at(");
+}
+
+/**
+ * Parse the ?limit= query value for run listings.
+ * @param value the raw query value
+ * @returns the parsed limit, or undefined when absent
+ * @throws when the value is not an integer between 1 and 100
+ */
+export function parseCronRunsLimit(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+    throw new Error("limit must be an integer between 1 and 100");
+  }
+
+  return parsed;
+}
+
+/** Collapses a one-of `input`/`events` payload into the stored events list. */
+function runPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): unknown[] {
+  const hasInput = payload.input !== undefined;
+  const hasEvents = payload.events !== undefined;
+  if (hasInput === hasEvents) {
+    throw new Error("Provide exactly one of input or events");
+  }
+  if (hasInput) {
+    return [
+      {
+        role: "user",
+        content: [{ type: "text", text: String(payload.input) }],
+      },
+    ];
+  }
+
+  return normalizeEvents(payload.events);
+}
+
+/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
+function optionalRunPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): unknown[] | undefined {
+  if (payload.input === undefined && payload.events === undefined)
+    return undefined;
+
+  return runPayloadToEvents(payload);
+}
+
+function normalizeEvents(value: unknown): unknown[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("events must be a non-empty array of model messages");
+  }
+
+  return value;
+}
+
+function normalizeScheduleExpression(value: unknown): string {
+  const expression = requireString(value, "scheduleExpression", 256);
+  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
+    throw new Error(
+      "scheduleExpression must use cron(...), rate(...), or at(...)",
+    );
+  }
+
+  return expression;
+}
+
+function normalizeTimezone(value: unknown): string {
+  const timezone = requireString(value, "timezone", 64);
+  if (!TIMEZONE_PATTERN.test(timezone)) {
+    throw new Error("timezone contains unsupported characters");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new Error("timezone must be a valid IANA timezone");
+  }
+
+  return timezone;
+}
+
+function normalizeCronStatus(value: unknown): CronStatus {
+  if (value === "active" || value === "paused") return value;
+  throw new Error("status must be active or paused");
+}
+
+function requireString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string {
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length === 0)
+    throw new Error(`${name} must be a non-empty string`);
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
+
+  return trimmed;
+}
+
+function optionalString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
+
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
  * Convert the six-field cron form — minute hour day-of-month month day-of-week
  * year — to the five-field unix cronspec the crons component parses. `?` maps
  * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
@@ -319,8 +446,6 @@ function atExpressionToTimestamp(
   return asUtc - timezoneOffsetMs(adjusted, timezone);
 }
 
-const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
-
 /** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */
 function timezoneOffsetMs(timestamp: number, timezone: string): number {
   let formatter = timezoneFormatters.get(timezone);
@@ -351,125 +476,4 @@ function timezoneOffsetMs(timestamp: number, timezone: string): number {
   );
 
   return asUtc - timestamp;
-}
-
-/**
- * Whether a schedule fires exactly once. Single home for this rule — core
- * re-exports it from apps/core/src/shared/domain/cron.ts.
- * @param expression a normalized schedule expression
- * @returns true for an at(...) schedule
- */
-export function isOneTimeSchedule(expression: string): boolean {
-  return expression.startsWith("at(");
-}
-
-/**
- * Parse the ?limit= query value for run listings.
- * @param value the raw query value
- * @returns the parsed limit, or undefined when absent
- * @throws when the value is not an integer between 1 and 100
- */
-export function parseCronRunsLimit(value: string | null): number | undefined {
-  if (value === null) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-    throw new Error("limit must be an integer between 1 and 100");
-  }
-
-  return parsed;
-}
-
-/** Collapses a one-of `input`/`events` payload into the stored events list. */
-function runPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): unknown[] {
-  const hasInput = payload.input !== undefined;
-  const hasEvents = payload.events !== undefined;
-  if (hasInput === hasEvents) {
-    throw new Error("Provide exactly one of input or events");
-  }
-  if (hasInput) {
-    return [
-      {
-        role: "user",
-        content: [{ type: "text", text: String(payload.input) }],
-      },
-    ];
-  }
-
-  return normalizeEvents(payload.events);
-}
-
-/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
-function optionalRunPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): unknown[] | undefined {
-  if (payload.input === undefined && payload.events === undefined)
-    return undefined;
-
-  return runPayloadToEvents(payload);
-}
-
-function normalizeEvents(value: unknown): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("events must be a non-empty array of model messages");
-  }
-
-  return value;
-}
-
-function normalizeScheduleExpression(value: unknown): string {
-  const expression = requireString(value, "scheduleExpression", 256);
-  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new Error(
-      "scheduleExpression must use cron(...), rate(...), or at(...)",
-    );
-  }
-
-  return expression;
-}
-
-function normalizeTimezone(value: unknown): string {
-  const timezone = requireString(value, "timezone", 64);
-  if (!TIMEZONE_PATTERN.test(timezone)) {
-    throw new Error("timezone contains unsupported characters");
-  }
-
-  return timezone;
-}
-
-function normalizeCronStatus(value: unknown): CronStatus {
-  if (value === "active" || value === "paused") return value;
-  throw new Error("status must be active or paused");
-}
-
-function requireString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string {
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length === 0)
-    throw new Error(`${name} must be a non-empty string`);
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed;
-}
-
-function optionalString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed.length > 0 ? trimmed : undefined;
 }

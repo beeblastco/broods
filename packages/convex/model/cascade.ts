@@ -31,7 +31,6 @@ const accountScopedTables = [
   "runtimeAsyncToolResults",
   "runtimeAsyncToolGroups",
   "sandboxReservations",
-  "crons",
   "cliAuthCodes",
   "cliTokens",
   "cliExternalResources",
@@ -50,20 +49,30 @@ export async function deleteAccountContentsBatch(
   const account = await ctx.db.get(accountId);
   if (!account) return true;
 
+  // Cron rows own a live schedule and go first: deleting their agents while
+  // a registration is live would let a fire race the teardown, and deleting
+  // the row alone would leave the schedule firing at a job that no longer
+  // exists.
+  const crons = await ctx.db
+    .query("crons")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .take(ACCOUNT_DELETE_BATCH_SIZE);
+  if (crons.length > 0) {
+    for (const cron of crons) {
+      await unregisterSchedule(ctx, cron);
+      await ctx.db.delete(cron._id);
+    }
+
+    return false;
+  }
+
   for (const table of accountScopedTables) {
     const rows = await ctx.db
       .query(table)
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE);
     if (rows.length > 0) {
-      for (const row of rows) {
-        // Cron rows own a live schedule; deleting the row alone would leave
-        // it firing at a job that no longer exists.
-        if (table === "crons") {
-          await unregisterSchedule(ctx, row as Doc<"crons">);
-        }
-        await ctx.db.delete(row._id);
-      }
+      for (const row of rows) await ctx.db.delete(row._id);
 
       return false;
     }
