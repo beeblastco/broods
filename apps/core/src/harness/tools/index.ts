@@ -28,7 +28,7 @@ import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type { AsyncToolModeMap, RunAsyncToolDispatch } from "../async-tools.ts";
+import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type {
@@ -228,7 +228,7 @@ export async function createTools(
     }
   }
   Object.assign(tools, sandboxTools);
-  const asyncModes: AsyncToolModeMap = new Set();
+  const asyncToolNames: AsyncToolNames = new Set();
 
   if (context.channel) {
     Object.assign(
@@ -363,14 +363,14 @@ export async function createTools(
         config: externalToolRuntimeConfig(toolConfig),
       }),
     );
-    addAsyncModeIfConfigured(asyncModes, toolName, toolConfig);
+    if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
   await registerMcpTools(tools, agentConfig, context);
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
-  if (asyncModes.size > 0 || hasBackgroundWorkspace) {
+  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({
@@ -389,7 +389,7 @@ export async function createTools(
   withholdTools(tools, agentConfig.denyTools);
 
   return context.dispatchAsyncTools
-    ? context.dispatchAsyncTools(tools, asyncModes)
+    ? context.dispatchAsyncTools(tools, asyncToolNames)
     : tools;
 }
 
@@ -449,7 +449,18 @@ async function registerMcpTools(
         // (unknown id, unresolved header) still throw.
         let listing: RemoteMcpTool[];
         try {
-          listing = await listMcpTools(connection);
+          listing = await listMcpTools(
+            connection,
+            context.onSandboxCpu
+              ? (cpuUsec: number): void =>
+                  context.onSandboxCpu!({
+                    type: "mcp-sandbox",
+                    role: "tool",
+                    toolName: record.name,
+                    cpuUsec: cpuUsec,
+                  })
+              : undefined,
+          );
         } catch (error) {
           logWarn("MCP server tool listing failed; skipping its tools", {
             serverId: serverId,
@@ -506,16 +517,6 @@ function isToolEnabled(
   config: AgentToolConfig | undefined,
 ): config is AgentToolConfig {
   return config !== undefined && config.enabled !== false;
-}
-
-function addAsyncModeIfConfigured(
-  modes: AsyncToolModeMap,
-  modelToolName: string,
-  config: AgentToolConfig,
-): void {
-  if (config.async === true) {
-    modes.add(modelToolName);
-  }
 }
 
 function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {

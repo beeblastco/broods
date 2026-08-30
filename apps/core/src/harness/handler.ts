@@ -88,7 +88,6 @@ import {
   routeIncomingEvent,
   sendChannelReply,
   type AsyncDirectInboundEvent,
-  type AsyncToolCompletionInboundEvent,
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
@@ -239,7 +238,6 @@ async function handleRequest(
         handleDirectRequest(directEvent, context),
       handleAsyncRequest: handleAsyncRequest,
       handleStatusRequest: handleStatusRequest,
-      handleAsyncToolCompletionRequest: handleAsyncToolCompletionRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: (channelEvent) =>
         handleChannelRequest(channelEvent, context),
@@ -343,59 +341,6 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
     }
     throw err;
   }
-}
-
-/**
- * Handle the account-auth async tool result completion request.
- * Requires account-scoped authentication and agent validation.
- */
-async function handleAsyncToolCompletionRequest(
-  event: AsyncToolCompletionInboundEvent,
-): Promise<Response> {
-  // Check for existing
-  const existing = await getAsyncToolResult(event.resultId);
-  if (!existing) {
-    return jsonResponse(404, { error: "Async tool result not found" });
-  }
-
-  // Check the event is for the same account and agent
-  const agentId = agentIdFromScopedKey(existing.parentEventId, event.accountId);
-  if (
-    !agentId ||
-    !isAccountScopedKey(existing.conversationKey, event.accountId, agentId)
-  ) {
-    return jsonResponse(404, { error: "Async tool result not found" });
-  }
-
-  // Check if the result is already processed
-  if (existing.status !== "processing") {
-    return jsonResponse(409, {
-      error: "Async tool result is already settled",
-      status: existing.status,
-    });
-  }
-
-  // Check if agent is valid
-  const agent = await getStorage().agents.getById(event.accountId, agentId);
-  if (!agent || agent.status !== "active") {
-    return jsonResponse(404, { error: "Agent not found" });
-  }
-
-  // Settle the tool result
-  const settled = await settleAsyncToolResultFromCallback({
-    resultId: event.resultId,
-    status: event.status,
-    ...(event.response !== undefined ? { response: event.response } : {}),
-    ...(event.error ? { error: event.error } : {}),
-  });
-  if (!settled) {
-    return jsonResponse(409, { error: "Async tool result settled got error" });
-  }
-
-  return continuationResponse(
-    settled,
-    await continueAfterAsyncToolSettlement(settled),
-  );
 }
 
 /**
@@ -1001,16 +946,9 @@ async function handleNatsWorkerRequest(
         waitUntilMs(context),
         { dispatchNextIngress: dispatchNextIngress },
       );
-      // Define the async tool mode application map.
       const asyncToolCoordinator = new AsyncToolCoordinator(
         session,
         waitUntilMs(context),
-        {
-          kind: "nats",
-          connectionId: connectionId,
-          publicEventId: event.publicEventId,
-          publicConversationKey: event.publicConversationKey,
-        },
       );
 
       const result = await runParentContinuationLoop({
@@ -2447,7 +2385,6 @@ async function runAgentLoopUntilSubagentsIdle(
   const asyncToolCoordinator = new AsyncToolCoordinator(
     session,
     waitUntilMs(context),
-    session.delivery ?? { kind: "async" },
   );
   const result = await runParentContinuationLoop({
     session: session,
@@ -2499,10 +2436,9 @@ async function runAgentLoopUntilSubagentsIdle(
 /**
  * Runs parent model passes until there is no runnable injected work.
  *
- * Heartbeats are emitted only while this request or worker waits on in-process
- * subagents, built-in async tools, or uploaded async tools on SSE. Detached
- * uploaded async tools do not add pending work here, so the request or worker can
- * return after sealing the group.
+ * Heartbeats are emitted only while this request or worker waits on
+ * in-process subagents and async tools. Detached sandbox background jobs
+ * settle through their completion callback, not through pending work here.
  */
 async function runParentContinuationLoop(options: {
   session: Session;
@@ -2639,10 +2575,9 @@ async function runParentContinuationLoop(options: {
  * After the parent stream ends, subagent and async-tool results may already be
  * queued, still be running, or be absent. This helper waits for outstanding
  * in-process work, emits wait heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the request or worker deadline.
- * Detached uploaded async tools do not add in-memory pending work, so waiting
- * here only holds the request or worker for subagents, built-in async tools, and uploaded
- * async tools on SSE.
+ * parent-visible completions plus timeout notices near the request or worker
+ * deadline. Detached sandbox background jobs add no in-memory pending work, so
+ * waiting here only holds the request or worker for subagents and async tools.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,
@@ -2989,26 +2924,6 @@ function eventPublicConversationKey(
   agentId?: string,
 ): string {
   return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
-}
-
-function agentIdFromScopedKey(value: string, accountId: string): string | null {
-  const prefix = `acct:${accountId}:agent:`;
-  if (!value.startsWith(prefix)) {
-    return null;
-  }
-
-  const rest = value.slice(prefix.length);
-  const separator = rest.indexOf(":");
-
-  return separator > 0 ? rest.slice(0, separator) : null;
-}
-
-function isAccountScopedKey(
-  value: string,
-  accountId: string,
-  agentId: string,
-): boolean {
-  return value.startsWith(`acct:${accountId}:agent:${agentId}:`);
 }
 
 function parseAccountAgentFromScopedKey(

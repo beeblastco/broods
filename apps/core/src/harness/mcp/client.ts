@@ -114,9 +114,13 @@ export async function callMcpToolResult(
 /**
  * List a server's tools, from the per-server cache when fresh. The cache
  * holds the in-flight promise, so concurrent cold runs share one listing;
- * its TTL is the listing's own ttlMs, clamped.
+ * its TTL is the listing's own ttlMs, clamped. A hosted server boots its
+ * bundle for a cold listing, so onCpuUsec meters that too.
  */
-export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
+export async function listMcpTools(
+  connection: McpConnection,
+  onCpuUsec?: (cpuUsec: number) => void,
+): Promise<Tool[]> {
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
   }
@@ -126,16 +130,18 @@ export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
     if (cached.expiresAt > Date.now()) return await cached.tools;
     toolListCache.delete(key);
   }
-  const pending = withClient(connection, (client) => client.listTools()).then(
-    (result) => {
-      const entry = toolListCache.get(key);
-      if (entry) {
-        entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
-      }
+  const pending = withClient(
+    connection,
+    (client) => client.listTools(),
+    onCpuUsec,
+  ).then((result) => {
+    const entry = toolListCache.get(key);
+    if (entry) {
+      entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
+    }
 
-      return result.tools;
-    },
-  );
+    return result.tools;
+  });
   pending.catch(() => toolListCache.delete(key));
   pruneCache(toolListCache);
   toolListCache.set(key, {

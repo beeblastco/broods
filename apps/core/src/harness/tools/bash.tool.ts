@@ -259,7 +259,7 @@ async function dispatchBackground(
   const jobId = generateJobId();
   // Bash background is not wrapped by AsyncToolCoordinator, so give this one
   // job its own parent event and seal it immediately after the tracking row is
-  // created. Uploaded async tools are sealed by handler.ts after the model pass.
+  // created; bash is the only detached-group producer.
   const parentEventId = `${context.background.eventId}:async-bg:${resultId}`;
   const baseUrl = getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
@@ -297,7 +297,7 @@ async function dispatchBackground(
   // siblings are already registered. Sealing lets the callback handler know it
   // is safe to resume the conversation once this job completes without waiting
   // for other sibling registrations (unlike uploaded async tools, where handler.ts
-  // seals the shared group only after the full model pass ends).
+  // sealed it).
   await sealDetachedAsyncToolGroup(parentEventId);
 
   try {

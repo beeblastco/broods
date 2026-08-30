@@ -14,14 +14,14 @@ import {
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { requireEnv } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
-import {
-  BUNDLE_URL_TTL_SECONDS,
-  FrameQueue,
-  toolBundlesBucket,
-} from "../frames.ts";
+import { FrameQueue, toolBundlesBucket } from "../frames.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
+
+// The runner fetches at the start of a 35s-bounded invocation, so the grant
+// only has to outlive a cold start.
+const BUNDLE_URL_TTL_SECONDS = 120;
 
 let sharedClient: LambdaClient | undefined;
 let invokeOverride: HostedMcpInvoke | null = null;
@@ -52,6 +52,7 @@ type HostedMcpInvoke = (
   record: McpRecord,
   request: HostedMcpRequest,
   abortSignal: AbortSignal | undefined,
+  onCpuUsec?: (cpuUsec: number) => void,
 ) => Promise<HostedMcpResponse>;
 
 /**

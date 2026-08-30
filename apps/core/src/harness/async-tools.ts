@@ -9,7 +9,6 @@ import {
   createPendingAsyncToolResult,
   markAsyncToolResultCompleted,
   markAsyncToolResultFailed,
-  type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import type { Session } from "./session.ts";
@@ -52,10 +51,10 @@ interface AsyncToolCall extends AsyncToolPendingMetadata {
 type ToolEntry = ToolSet[string];
 
 /** Model-facing names of tools configured `async: true`. */
-export type AsyncToolModeMap = Set<string>;
+export type AsyncToolNames = Set<string>;
 export type RunAsyncToolDispatch = (
   tools: ToolSet,
-  asyncToolModes: AsyncToolModeMap,
+  asyncToolNames: AsyncToolNames,
 ) => ToolSet;
 
 export class AsyncToolCoordinator {
@@ -71,21 +70,20 @@ export class AsyncToolCoordinator {
     private readonly parentSession: Session,
     private readonly waitUntilMs: number = Date.now() +
       DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
-    private readonly delivery?: AsyncToolDelivery,
   ) {}
 
   dispatch: RunAsyncToolDispatch = (
     tools: ToolSet,
-    asyncToolModes: AsyncToolModeMap,
+    asyncToolNames: AsyncToolNames,
   ): ToolSet => {
-    if (asyncToolModes.size === 0) {
+    if (asyncToolNames.size === 0) {
       return tools;
     }
 
     return Object.fromEntries(
       Object.entries(tools).map(([toolName, entry]) => [
         toolName,
-        asyncToolModes.has(toolName) ? this.wrapTool(toolName, entry) : entry,
+        asyncToolNames.has(toolName) ? this.wrapTool(toolName, entry) : entry,
       ]),
     );
   };
@@ -204,17 +202,12 @@ export class AsyncToolCoordinator {
           toolCallId: options.toolCallId,
           input: input,
         });
-        const executeOptions = withAsyncToolMetadata(options, {
-          resultId: resultId,
-          parentEventId: this.parentSession.eventId,
-          conversationKey: this.parentSession.conversationKey,
-        });
         this.startToolCall({
           resultId: resultId,
           toolName: toolName,
           toolCallId: options.toolCallId,
           input: input,
-          execute: () => originalExecute(input, executeOptions),
+          execute: () => originalExecute(input, options),
         });
 
         return { resultId: resultId, status: "running" };
@@ -423,25 +416,6 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
-}
-
-function withAsyncToolMetadata(
-  options: Parameters<ToolExecute>[1],
-  metadata: {
-    resultId: string;
-    parentEventId: string;
-    conversationKey: string;
-  },
-): Parameters<ToolExecute>[1] {
-  return {
-    ...options,
-    asyncTool: {
-      resultId: metadata.resultId,
-      parentEventId: metadata.parentEventId,
-      conversationKey: metadata.conversationKey,
-      completePath: `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
-    },
-  } as Parameters<ToolExecute>[1];
 }
 
 // Model-facing text for a just-started async tool call. The model already knows

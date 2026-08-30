@@ -7,14 +7,10 @@
 
 import { requireEnv } from "../shared/env.ts";
 
-// The runner fetches at the start of a 35s-bounded invocation, so the grant only
-// has to outlive a cold start.
-export const BUNDLE_URL_TTL_SECONDS = 120;
-
 // One NDJSON frame per stdout line: chunk = streamed output, final = a
 // non-streaming result, end = closed stream, error = run failure. cpuUsec is
 // stamped by a runner that can measure itself.
-export type ToolRunnerFrame =
+export type RunnerFrame =
   | { t: "chunk"; output: unknown }
   | { t: "final"; result: unknown; cpuUsec?: number }
   | { t: "end" }
@@ -27,7 +23,7 @@ export type ToolRunnerFrame =
 // arrive, letting a consumer await the next frame until the stream closes.
 export class FrameQueue {
   #buffer = "";
-  #frames: ToolRunnerFrame[] = [];
+  #frames: RunnerFrame[] = [];
   #waiters: Array<() => void> = [];
   #closed = false;
 
@@ -37,21 +33,21 @@ export class FrameQueue {
     while ((newline = this.#buffer.indexOf("\n")) !== -1) {
       const line = this.#buffer.slice(0, newline);
       this.#buffer = this.#buffer.slice(newline + 1);
-      const frame = parseToolRunnerFrame(line);
+      const frame = parseRunnerFrame(line);
       if (frame) this.#frames.push(frame);
     }
     this.#wake();
   }
 
   close(): void {
-    const frame = parseToolRunnerFrame(this.#buffer);
+    const frame = parseRunnerFrame(this.#buffer);
     this.#buffer = "";
     if (frame) this.#frames.push(frame);
     this.#closed = true;
     this.#wake();
   }
 
-  async *frames(): AsyncGenerator<ToolRunnerFrame, void, void> {
+  async *frames(): AsyncGenerator<RunnerFrame, void, void> {
     while (true) {
       while (this.#frames.length > 0) {
         yield this.#frames.shift()!;
@@ -70,11 +66,11 @@ export class FrameQueue {
 
 // Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
 // caller can tell "no frames" from a real error.
-export function parseToolRunnerFrame(line: string): ToolRunnerFrame | null {
+export function parseRunnerFrame(line: string): RunnerFrame | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    const parsed = JSON.parse(trimmed) as ToolRunnerFrame;
+    const parsed = JSON.parse(trimmed) as RunnerFrame;
     if (
       parsed &&
       (parsed.t === "chunk" ||
