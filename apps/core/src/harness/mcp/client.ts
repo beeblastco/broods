@@ -1,18 +1,19 @@
 /**
  * Stateless MCP client for registered servers (#331). Wraps the official v2
- * SDK pinned to spec 2026-07-28: one client per operation, no session state.
- * An "http" row dials its url; a "hosted" row runs the same transport with
- * every request routed through the Lambda host (hosted.ts). The version
- * probe and tool listings are cached in-process per server row (keyed by row
- * version and resolved headers, so an edit is a cache miss), honoring the
- * ttlMs the spec requires on tools/list results.
+ * SDK: one client per operation, no session state. An "http" row negotiates
+ * the protocol automatically, so modern (2026-07-28) servers and pre-existing
+ * legacy (2025-era initialize) servers both work; a "hosted" row runs the
+ * same transport pinned modern — its stateless Lambda handler is our own
+ * deploy contract. The era verdict and tool listings are cached in-process
+ * per server row (keyed by row version and resolved headers, so an edit is a
+ * cache miss), honoring the ttlMs the spec puts on cacheable results.
  */
 
 import {
   Client,
   StreamableHTTPClientTransport,
   type CallToolResult,
-  type DiscoverResult,
+  type PriorDiscovery,
   type Tool,
 } from "@modelcontextprotocol/client";
 import {
@@ -24,11 +25,11 @@ import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 const CLIENT_INFO = { name: "broods-core", version: "1.0.0" };
-const DEFAULT_LIST_TTL_MS = 5 * 60_000;
+const DEFAULT_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 256;
-const MAX_LIST_TTL_MS = 60 * 60_000;
+const MAX_TTL_MS = 60 * 60_000;
 
-const discoverCache = new Map<string, DiscoverResult>();
+const eraCache = new Map<string, CachedEra>();
 const toolListCache = new Map<string, CachedListing>();
 let testOverrides: McpTestOverrides | null = null;
 
@@ -36,6 +37,16 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+}
+
+/**
+ * A cached negotiation verdict. A modern verdict expires at the discover
+ * result's own ttlMs; a legacy one at the default TTL, so a server upgrade
+ * is noticed by the next probe instead of never.
+ */
+interface CachedEra {
+  expiresAt: number;
+  prior: PriorDiscovery;
 }
 
 interface CachedListing {
@@ -53,9 +64,9 @@ type McpTestOverrides = {
 };
 
 /**
- * Call one remote tool. Stateless: a fresh client and POST per call. An
- * isError result surfaces as a thrown Error so the harness records a tool
- * failure instead of feeding the model an error payload as data.
+ * Call one remote tool for the agent loop. An isError result surfaces as a
+ * thrown Error so the harness records a tool failure and feeds the message
+ * back to the model, instead of handing it an error payload as data.
  */
 export async function callMcpTool(
   connection: McpConnection,
@@ -63,21 +74,36 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: { abortSignal?: AbortSignal } = {},
 ): Promise<unknown> {
-  const result = testOverrides?.callTool
-    ? await testOverrides.callTool(connection, toolName, args)
-    : await withClient(connection, (client) =>
-        client.callTool(
-          { name: toolName, arguments: args },
-          options.abortSignal ? { signal: options.abortSignal } : {},
-        ),
-      );
+  const result = await callMcpToolResult(connection, toolName, args, options);
   if (result.isError) {
     throw new Error(
-      `MCP tool ${connection.record.name}.${toolName} failed: ${textOfContent(result.content)}`,
+      `MCP tool ${connection.record.name}.${toolName} failed: ${renderContent(result.content)}`,
     );
   }
 
-  return result.structuredContent ?? textOfContent(result.content);
+  return result.structuredContent ?? renderContent(result.content);
+}
+
+/**
+ * Call one remote tool and return the raw result, isError included. Stateless:
+ * a fresh client and POST per call.
+ */
+export async function callMcpToolResult(
+  connection: McpConnection,
+  toolName: string,
+  args: Record<string, unknown>,
+  options: { abortSignal?: AbortSignal } = {},
+): Promise<CallToolResult> {
+  if (testOverrides?.callTool) {
+    return await testOverrides.callTool(connection, toolName, args);
+  }
+
+  return await withClient(connection, (client) =>
+    client.callTool(
+      { name: toolName, arguments: args },
+      options.abortSignal ? { signal: options.abortSignal } : {},
+    ),
+  );
 }
 
 /**
@@ -99,13 +125,7 @@ export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
     (result) => {
       const entry = toolListCache.get(key);
       if (entry) {
-        const ttlMs = Math.min(
-          typeof result.ttlMs === "number" && result.ttlMs > 0
-            ? result.ttlMs
-            : DEFAULT_LIST_TTL_MS,
-          MAX_LIST_TTL_MS,
-        );
-        entry.expiresAt = Date.now() + ttlMs;
+        entry.expiresAt = Date.now() + clampTtlMs(result.ttlMs);
       }
 
       return result.tools;
@@ -115,7 +135,7 @@ export async function listMcpTools(connection: McpConnection): Promise<Tool[]> {
   pruneCache(toolListCache);
   toolListCache.set(key, {
     tools: pending,
-    expiresAt: Date.now() + DEFAULT_LIST_TTL_MS,
+    expiresAt: Date.now() + DEFAULT_TTL_MS,
   });
 
   return await pending;
@@ -148,7 +168,7 @@ export function mcpConnection(
 /** Tests only: stub the network edge, and drop any cached state. */
 export function setMcpForTests(overrides: McpTestOverrides | null): void {
   testOverrides = overrides;
-  discoverCache.clear();
+  eraCache.clear();
   toolListCache.clear();
 }
 
@@ -164,9 +184,17 @@ function cacheKeyFor(connection: McpConnection): string {
   return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}`;
 }
 
+/** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
+function clampTtlMs(ttlMs: unknown): number {
+  return Math.min(
+    typeof ttlMs === "number" && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS,
+    MAX_TTL_MS,
+  );
+}
+
 /**
- * Connect a fresh pinned client, adopting the cached version probe when one
- * exists (zero extra round trips); a stale adoption falls back to one fresh
+ * Connect a fresh client, adopting the cached era verdict when one is fresh
+ * (zero extra round trips); a stale adoption falls back to one fresh
  * negotiation.
  */
 async function connectClient(
@@ -182,7 +210,7 @@ async function connectClient(
     );
   }
   const makeClient = async (
-    discover: DiscoverResult | undefined,
+    prior: PriorDiscovery | undefined,
   ): Promise<Client> => {
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
@@ -191,29 +219,45 @@ async function connectClient(
         ...(hosted ? { fetch: hostedMcpFetch(connection.record) } : {}),
       },
     );
+    // Hosted bundles are our own deploy contract (stateless modern handlers),
+    // so they stay pinned; an external url may be any pre-existing server, so
+    // auto mode probes and falls back to the legacy initialize handshake.
     const client = new Client(CLIENT_INFO, {
-      versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
+      versionNegotiation: {
+        mode: hosted ? { pin: MCP_PROTOCOL_VERSION } : "auto",
+      },
     });
-    await client.connect(
-      transport,
-      discover ? { prior: { kind: "modern", discover: discover } } : {},
-    );
+    await client.connect(transport, prior ? { prior: prior } : {});
 
     return client;
   };
-  const prior = discoverCache.get(key);
+  const cached = eraCache.get(key);
+  if (cached && cached.expiresAt <= Date.now()) eraCache.delete(key);
+  const prior =
+    cached && cached.expiresAt > Date.now() ? cached.prior : undefined;
   let client: Client;
   try {
     client = await makeClient(prior);
   } catch (error) {
     if (!prior) throw error;
-    discoverCache.delete(key);
+    eraCache.delete(key);
     client = await makeClient(undefined);
   }
-  const discover = client.getDiscoverResult();
-  if (discover && !discoverCache.has(key)) {
-    pruneCache(discoverCache);
-    discoverCache.set(key, discover);
+  if (!eraCache.has(key)) {
+    const discover = client.getDiscoverResult();
+    pruneCache(eraCache);
+    eraCache.set(
+      key,
+      discover
+        ? {
+            prior: { kind: "modern", discover: discover },
+            expiresAt: Date.now() + clampTtlMs(discover.ttlMs),
+          }
+        : {
+            prior: { kind: "legacy" },
+            expiresAt: Date.now() + DEFAULT_TTL_MS,
+          },
+    );
   }
 
   return client;
@@ -228,13 +272,27 @@ function pruneCache(cache: Map<string, unknown>): void {
   }
 }
 
-function textOfContent(content: CallToolResult["content"]): string {
+/**
+ * Text view of a result's content. Non-text blocks are named instead of
+ * silently dropped, so an image-only result never reads as an empty success.
+ */
+function renderContent(content: CallToolResult["content"]): string {
   return content
-    .filter(
-      (block): block is Extract<typeof block, { type: "text" }> =>
-        block.type === "text",
-    )
-    .map((block) => block.text)
+    .map((block): string => {
+      switch (block.type) {
+        case "text":
+          return block.text;
+        case "image":
+        case "audio":
+          return `[${block.type} content (${block.mimeType}) omitted]`;
+        case "resource_link":
+          return `[resource link: ${block.uri}]`;
+        case "resource":
+          return `[embedded resource: ${block.resource.uri}]`;
+        default:
+          return `[unsupported ${(block as { type: string }).type} content omitted]`;
+      }
+    })
     .join("\n");
 }
 

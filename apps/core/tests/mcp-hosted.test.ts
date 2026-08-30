@@ -54,6 +54,20 @@ describe("hosted MCP fetch adapter", () => {
     });
   });
 
+  it("refuses the standalone GET stream with 405", async () => {
+    setHostedMcpInvokeForTests(async (): Promise<HostedMcpResponse> => {
+      throw new Error("invoke must not run for GET");
+    });
+
+    const fetchLike = hostedMcpFetch(hostedRecord());
+    const response = await fetchLike("http://mcp-hosted.internal/mcp", {
+      method: "GET",
+      headers: { accept: "text/event-stream" },
+    });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+
   it("surfaces an invoke failure as a thrown error", async () => {
     setHostedMcpInvokeForTests(async (): Promise<HostedMcpResponse> => {
       throw new Error("mcp host Lambda failed: boom");

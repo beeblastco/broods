@@ -54,7 +54,13 @@ export function hostedMcpFetch(record: McpRecord): typeof fetch {
       input instanceof Request
         ? new Request(input, init)
         : new Request(String(input), init);
-    const body = request.method === "GET" ? undefined : await request.text();
+    // The standalone GET SSE stream is a legacy-era long-poll; a per-request
+    // Lambda invoke would hold it open until timeout. Hosted rows are pinned
+    // modern, which never opens it — refuse it outright as the spec allows.
+    if (request.method === "GET") {
+      return new Response(null, { status: 405, headers: { allow: "POST" } });
+    }
+    const body = await request.text();
     const invoke = invokeOverride ?? invokeLambda;
     const result = await invoke(
       record,

@@ -36,7 +36,12 @@ export function mcpServerTools(
   return tools;
 }
 
-/** Model-facing name of one remote tool: the server's namespace plus its own. */
+/**
+ * Model-facing name of one remote tool: the server's namespace plus its own.
+ * Pre-2026 spec revisions put no charset on tool names, and providers reject
+ * names outside [A-Za-z0-9_-], so anything else maps to '_'; a collision this
+ * produces is caught by the registration conflict check.
+ */
 export function mcpToolName(serverName: string, remoteName: string): string {
-  return `${serverName}__${remoteName}`;
+  return `${serverName}__${remoteName.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
