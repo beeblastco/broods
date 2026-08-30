@@ -489,8 +489,9 @@ export const recordExternalResourcesBySecretHash = internalMutation({
         q.eq("projectId", projectDoc._id).eq("stageId", stageDoc._id),
       )
       .collect();
-    const desired = args.resources.filter((entry) =>
-      isExternalResourceKind(entry.kind),
+    const desired = args.resources.filter(
+      (entry): entry is typeof entry & { kind: ExternalResourceKind } =>
+        isExternalResourceKind(entry.kind),
     );
     const desiredKeys = new Set(
       desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`),
@@ -506,7 +507,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
 
     for (const resource of desired) {
       const name = resourceName(resource.name);
-      const kind = resource.kind as ExternalResourceKind;
+      const kind = resource.kind;
       const externalId: string | undefined = idsByKind[kind][name];
       if (!externalId)
         throw new Error(

@@ -5,6 +5,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { CliManifestResource } from "../cli/types";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -94,18 +95,22 @@ async function seedMcpServer(
   return serverId;
 }
 
-const agentResource = (mcpServers: Record<string, unknown>) => ({
-  kind: "agent" as const,
-  name: "mcp-agent",
-  config: {
-    model: { provider: "custom", modelId: "Qwen3.6-27B" },
-    agent: { system: "Use the search server when asked." },
-    mcpServers: mcpServers,
-  },
-});
+function agentResource(
+  mcpServers: Record<string, unknown>,
+): CliManifestResource {
+  return {
+    kind: "agent",
+    name: "mcp-agent",
+    config: {
+      model: { provider: "custom", modelId: "Qwen3.6-27B" },
+      agent: { system: "Use the search server when asked." },
+      mcpServers: mcpServers,
+    },
+  };
+}
 
-const storedMcpServers = (tt: T) =>
-  tt.run(async (ctx) => {
+function storedMcpServers(tt: T): Promise<Record<string, unknown>> {
+  return tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
     const extra = config?.extraConfig as
       | { mcpServers?: Record<string, unknown> }
@@ -113,8 +118,12 @@ const storedMcpServers = (tt: T) =>
 
     return extra?.mcpServers ?? {};
   });
+}
 
-const syncMcpServers = (tt: T, mcpServers: Record<string, unknown>) =>
+const syncMcpServers = (
+  tt: T,
+  mcpServers: Record<string, unknown>,
+): Promise<unknown> =>
   tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {

@@ -17,8 +17,6 @@ import {
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 
-export type CliResource = CliManifestResource;
-
 /**
  * Resource kinds owned by the account service and snapshotted per stage in
  * `cliExternalResources`. The one list behind every "is this external" filter
@@ -31,13 +29,9 @@ export const EXTERNAL_RESOURCE_KINDS = [
   "mcp",
 ] as const;
 
-export type ExternalResourceKind = (typeof EXTERNAL_RESOURCE_KINDS)[number];
+export type CliResource = CliManifestResource;
 
-export function isExternalResourceKind(
-  kind: CliManifestResource["kind"],
-): kind is ExternalResourceKind {
-  return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
-}
+export type ExternalResourceKind = (typeof EXTERNAL_RESOURCE_KINDS)[number];
 
 export async function accountFromSecretHash(
   ctx: QueryCtx | MutationCtx,
@@ -343,6 +337,12 @@ export function envName(value: string): string {
   }
 
   return trimmed;
+}
+
+export function isExternalResourceKind(
+  kind: CliManifestResource["kind"],
+): kind is ExternalResourceKind {
+  return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
 }
 
 export function plainRecord(value: unknown): Record<string, unknown> {
