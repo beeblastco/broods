@@ -37,7 +37,10 @@ export async function fireWebhook(
       },
       body: body,
     },
-    transport,
+    // No redirects: the payload and its signature go to the host the account
+    // named or nowhere. Every hop would be revalidated, but http is a valid
+    // hop, so following one could carry a signed payload off TLS.
+    { ...transport, redirectLimit: 0 },
   );
 
   if (response.status < 200 || response.status >= 300) {

@@ -30,6 +30,8 @@ export interface GuardedFetchOptions {
   allowAddresses?: string[];
   bodyLimitBytes?: number;
   ca?: string;
+  /** 0 refuses redirects; omitted means REDIRECT_LIMIT. */
+  redirectLimit?: number;
   createConnection?: ClientRequestArgs["createConnection"];
   lookup?: (
     hostname: string,
