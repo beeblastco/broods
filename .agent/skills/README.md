@@ -27,7 +27,7 @@ Each of these is prose in a `SKILL.md` today. An agent that ignores it meets no 
 ## Remaining phases
 
 - Sandbox images: `applyChannelRecord` copies `sandboxImages` onto the runtime config, and provisioning rejects anything outside it, as an allow-list rather than a default (see #74).
-- A built-in `broods_self` tool in `apps/core/src/harness/tools/`, doing the role exchange server-side and exposing typed self-management calls, so a raw token never reaches the model loop. The scripts here stay for what the tool does not cover.
+- A self-handle tool in `apps/core/src/harness/tools/`, exposing a deployed agent to itself for self-update and self-configuration. It does the role exchange server-side, so a raw token never reaches the model loop, and it takes the agent id from the run context the way `schedule.tool.ts` already does, which turns three of the four prose rules above into code. The agent-scope counterpart to the MCP server: MCP serves agents outside the platform, a built-in tool serves the one inside it, because only the built-in tool knows which agent is calling.
 - Dreaming as a documented preset rather than new infrastructure. The operator sets it up once:
 
 ```ts

@@ -25,9 +25,13 @@ If the work sits in a repo with a `broods/` dir, the CLI is the right tool and t
 
 The CLI needs a login token, from `broods login` or `BROODS_TOKEN`. A role session cannot drive it: `broods` resolves its scope through a CLI-only route that rejects any other credential.
 
+## Then the MCP server
+
+For everything the CLI has no command for, prefer the MCP server over the raw API. `broods mcp` serves the config plane on stdio, and a client adds it once with `claude mcp add broods -- broods mcp`. If you have tools named `broods_list`, `broods_get`, `broods_create`, `broods_update`, `broods_delete`, `broods_cron_runs`, `broods_sandbox_action`, `broods_assume_role` or `broods_whoami`, that is this server and you should use them: they carry the confirm-before-delete and scope rules below as code, so a mistake fails instead of landing.
+
 ## Calling the API
 
-The CLI has commands for projects, stages, env, agents and logs, and nothing else. Crons, sandboxes, skills, tools, policies, roles, channels, hooks, workspaces and MCP servers have no CLI verb, so they go over the API. So does anything a manifest cannot say: run history, a sandbox you want suspended now, a one-off read.
+Use the script when you have neither the CLI nor the MCP server. The CLI has commands for projects, stages, env, agents and logs, and nothing else. Crons, sandboxes, skills, tools, policies, roles, channels, hooks, workspaces and MCP servers have no CLI verb, so they go over the API. So does anything a manifest cannot say: run history, a sandbox you want suspended now, a one-off read.
 
 `scripts/broods-api.sh METHOD PATH [JSON_BODY]`:
 

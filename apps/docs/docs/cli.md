@@ -146,6 +146,40 @@ after switching to sync them into the new stage.
 The names `development` and `production` are reserved: they always become the
 `Development` and `Production` stages with their matching kinds.
 
+## mcp
+
+```bash
+broods mcp
+```
+
+Serves the account config plane to a development agent over MCP on stdio, so
+Claude Code and other agents drive broods through typed tools instead of raw
+HTTP. It speaks the protocol on stdin and stdout, so an MCP client starts it,
+not a terminal:
+
+```bash
+claude mcp add broods -- broods mcp
+```
+
+Nine tools cover the plane. `broods_list`, `broods_get`, `broods_create`,
+`broods_update` and `broods_delete` take a `resource` naming one of agents,
+crons, sandboxes, workspaces, policies, roles, channels, skills, tools, mcp or
+env. `broods_cron_runs` reads a cron's run history, `broods_sandbox_action`
+drives a sandbox's lifecycle, `broods_assume_role` mints a scoped session, and
+`broods_whoami` names the account in reach. `tools` and `mcp` live in one stage,
+so listing or creating those also takes `project` and `stage`.
+
+Three guards are built in rather than left to the agent: a delete needs
+`confirm: true` and takes one id, env has no read route because the plane
+stores values write-only, and a stage-scoped resource refuses a collection call
+with no scope.
+
+Auth resolves from the environment exactly as the SDK does. Prefer a role
+session in `BROODS_SESSION_TOKEN` so the role's policy bounds what the agent can
+reach; `BROODS_ACCOUNT_SECRET` is the full-tenant fallback. The credential is
+read once at startup and never travels through a tool argument. See
+[Account Roles](./roles.md) for minting one.
+
 ## update
 
 ```bash
@@ -178,6 +212,7 @@ seconds, and never fails a sync: an unreachable registry is silently skipped.
 | `env set\|get\|list\|rm`  | Manage environment variables                                      |
 | `env sync`                | Push every `env("NAME")` the project references from `.env.local` |
 | `stream` / `logs`         | Live logs, with or without backfill                               |
+| `mcp`                     | Serve the config plane to an agent over MCP (stdio)               |
 | `agent list\|get`         | Inspect synced agents                                             |
 | `run <agent>`             | Chat with an agent in a terminal UI                               |
 | `update`                  | Install the newest broods release over this one                   |

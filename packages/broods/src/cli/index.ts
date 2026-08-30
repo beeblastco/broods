@@ -117,6 +117,7 @@ Runtime:
   stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
 
 CLI:
+  mcp                  Serve the account config plane to an agent over MCP (stdio)
   update               Install the newest broods release over this one
 
 Options:
@@ -262,6 +263,19 @@ Options:
   --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
+  mcp: `Usage: broods mcp
+
+Serves the account config plane to a development agent over MCP on stdio, so
+Claude Code and friends drive broods through typed tools instead of curl. It
+speaks the protocol on stdin and stdout, so run it from an MCP client rather
+than a terminal:
+
+  claude mcp add broods -- broods mcp
+
+Auth comes from the environment, same as the SDK. Prefer a role session
+(BROODS_SESSION_TOKEN) so the role's policy bounds what the agent can reach;
+BROODS_ACCOUNT_SECRET is the full-tenant fallback. Mint a session with
+\`broods_assume_role\`, or with the account secret from another client.`,
   update: `Usage: broods update
 
 Installs the newest published broods over the copy you are running, with the
@@ -355,6 +369,10 @@ async function main(): Promise<void> {
       return;
     case "run":
       await run(args);
+
+      return;
+    case "mcp":
+      await mcp();
 
       return;
     case "update":
@@ -2614,6 +2632,24 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
       `BROODS_ENVIRONMENT was renamed to BROODS_STAGE. Rename the key in .env.local (it is currently set to "${legacy}").`,
     );
   }
+}
+
+/**
+ * Serve the config plane over MCP on stdio. The client resolves its credential
+ * from the environment at startup, so no token reaches a tool argument. Runs
+ * until the MCP client closes the connection.
+ */
+async function mcp(): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const { createBroodsMcpServer } = await import("../mcp.ts");
+  const { serveStdio } = await import("@modelcontextprotocol/server/stdio");
+  // Constructed once, before serving, so a missing credential fails loudly
+  // here instead of on the first tool call.
+  const server = createBroodsMcpServer();
+  serveStdio(() => server);
+  await new Promise<void>((resolve) => {
+    process.stdin.on("close", resolve);
+  });
 }
 
 main().catch((error) => {
