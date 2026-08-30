@@ -402,7 +402,7 @@ export function SkillFilesTab({
           <AlertTriangle className="size-3 shrink-0 text-destructive" />
           <span className="text-[10px] text-destructive">
             {unsupportedFiles.length} unsupported file type
-            {unsupportedFiles.length > 1 ? "s" : ""} — skill bundles are
+            {unsupportedFiles.length > 1 ? "s" : ""}. Skill bundles are
             text-only
           </span>
         </div>

@@ -198,8 +198,8 @@ export function SandboxInstancesTable({
       <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-foreground">No running sandbox instances.</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Run an agent against a sandbox and it appears here live — per-call
-          instances for the length of the call, reserved ones until suspended.
+          Run an agent against a sandbox and it appears here live. Per-call
+          instances last the length of the call, reserved ones until suspended.
         </p>
       </div>
     );
@@ -453,8 +453,9 @@ export function SandboxInstancesTable({
             <DialogDescription>
               Suspending frees the sandbox&apos;s compute. Running processes are
               stopped and any in-flight agent turn or background job on this
-              instance is dropped — it comes back reset. Files on the workspace
-              disk are kept, and you can resume once it has fully suspended.
+              instance is dropped, and it comes back reset. Files on the
+              workspace disk are kept, and you can resume once it has fully
+              suspended.
             </DialogDescription>
           </DialogHeader>
           {error && <p className="text-xs text-destructive">{error}</p>}

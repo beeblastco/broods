@@ -99,7 +99,7 @@ export function DeployKeysPanel({
         {revealed && (
           <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
             <p className="mb-1 text-xs font-medium text-foreground">
-              Copy this token now — it won&apos;t be shown again.
+              Copy this token now. It won&apos;t be shown again.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-xs">

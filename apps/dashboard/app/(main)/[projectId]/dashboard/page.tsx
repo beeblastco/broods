@@ -119,7 +119,7 @@ export default function DashboardPage(): React.JSX.Element {
       } else {
         setKeyError({
           stageId: activeStageId,
-          msg: "Couldn't load the key — try again.",
+          msg: "Couldn't load the key. Try again.",
         });
       }
     } catch (err) {

@@ -644,7 +644,7 @@ export function DetailsTab({
           <p className="text-[11px] text-muted-foreground">
             {publicAccess
               ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
-              : "Secured by default — this agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
+              : "Secured by default. This agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
           </p>
         </div>
 

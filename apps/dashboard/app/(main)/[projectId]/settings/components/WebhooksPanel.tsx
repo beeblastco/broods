@@ -96,7 +96,7 @@ export function WebhooksPanel({
 
   return (
     <>
-      <Section description="Outbound event webhooks delivered to your services. Each agent can register several — add one, toggle it active/inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
+      <Section description="Outbound event webhooks delivered to your services. Each agent can register several. Add one, toggle it active or inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
         {agents && agents.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No agents in this stage yet.
@@ -183,8 +183,8 @@ export function WebhooksPanel({
                         )}
                         title={
                           webhook.enabled
-                            ? "Active — click to disable"
-                            : "Inactive — click to enable"
+                            ? "Active, click to disable"
+                            : "Inactive, click to enable"
                         }
                       >
                         <span

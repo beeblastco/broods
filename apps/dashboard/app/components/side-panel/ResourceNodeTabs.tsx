@@ -183,7 +183,7 @@ export function WorkspaceResourceDetailsTab({
               value={
                 typeof storage.endpoint === "string" ? storage.endpoint : ""
               }
-              placeholder="https://…  (R2, MinIO — omit for AWS)"
+              placeholder="https://…  (R2, MinIO; omit for AWS)"
               onCommit={(endpoint) =>
                 setStorage({ endpoint: endpoint || undefined })
               }
