@@ -66,6 +66,16 @@ if (import.meta.main) {
     Number(process.env.GATEWAY_AUTH_FAILURES_PER_MINUTE ?? "") || 20,
     60_000,
   );
+  // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
+  // count of its own. Left off by default because channel webhooks arrive on
+  // this branch from a provider's egress addresses: one number chosen here
+  // would meter a whole retrying fleet as a single caller.
+  const httpRequestsPerMinute =
+    Number(process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE ?? "") || 0;
+  const httpLimiter =
+    httpRequestsPerMinute > 0
+      ? new RateLimiter(httpRequestsPerMinute, 60_000)
+      : undefined;
 
   const server = Bun.serve<GatewayData>({
     port: Number(process.env.PORT ?? "3000"),
@@ -241,6 +251,13 @@ if (import.meta.main) {
           ? undefined
           : json({ error: "WebSocket upgrade failed" }, { status: 400 });
       }
+    }
+
+    if (
+      httpLimiter &&
+      !httpLimiter.allow(clientIp(request, server.requestIP(request)?.address))
+    ) {
+      return json({ error: "Too many requests" }, { status: 429 });
     }
 
     if (isConfigHttpPath(url.pathname, request.method)) {
