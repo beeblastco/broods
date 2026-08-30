@@ -14,7 +14,7 @@ import {
   type Attachment,
   type Message,
 } from "chat";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeStringEqual } from "./auth.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -99,7 +99,7 @@ export function createTelegramChannel(
 
     authenticate: function (req) {
       const secret = req.headers["x-telegram-bot-api-secret-token"];
-      if (!verifyWebhookSecret(secret, webhookSecret)) {
+      if (!secret || !timingSafeStringEqual(secret, webhookSecret)) {
         logWarn("Webhook secret verification failed");
 
         return false;
@@ -561,18 +561,6 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
     fromUsername:
       typeof source.fromUsername === "string" ? source.fromUsername : undefined,
   };
-}
-
-function verifyWebhookSecret(
-  header: string | undefined,
-  secret: string,
-): boolean {
-  if (!header) return false;
-  const a = Buffer.from(header);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length) return false;
-
-  return timingSafeEqual(a, b);
 }
 
 /**
