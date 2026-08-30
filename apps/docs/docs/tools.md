@@ -408,5 +408,5 @@ Rules that follow from the transport and the policy layer:
 
 - The server name namespaces its tools (`search__query`), so it is 1-32 lowercase letters, digits, or hyphens; unique per stage.
 - Credential-bearing headers (`Authorization`, `X-Api-Key`, ...) must reference an account env var (`Bearer ${NAME}`); inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
-- Per-server OPA rules use the `mcpServerIds` selector on `tool.call`; `needsApproval` on the entry applies to every tool the server exposes; the row's `allowedTools` filters what registers at all.
+- Per-server OPA rules use the `mcpIds` selector on `tool.call`; `needsApproval` on the entry applies to every tool the server exposes; the row's `allowedTools` filters what registers at all.
 - `subscriptions/listen` (server-push list changes) is deliberately unsupported: tool lists refresh when their `ttlMs` expires. MRTR `input_required` results surface as tool errors.
