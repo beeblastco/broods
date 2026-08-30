@@ -295,23 +295,39 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       ...vercelCreateOptions(this.#config, request, true),
       name: name,
     });
-    if (
-      await claimSandboxInstance(
-        "vercel",
-        key,
-        name,
-        this.#config.controlPlane?.accountId,
-      )
-    ) {
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "vercel",
-        key,
-        name,
-        request.metadata,
-      );
+    try {
+      if (
+        await claimSandboxInstance(
+          "vercel",
+          key,
+          name,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "vercel",
+          key,
+          name,
+          request.metadata,
+        );
 
-      return sandbox;
+        return sandbox;
+      }
+    } catch (error) {
+      // The claim may already have committed even when its caller rejects. Tear
+      // down both sides conditionally so a failed acquisition cannot leak the
+      // newly created sandbox or erase a concurrent winner's reservation.
+      await Promise.allSettled([
+        sandbox.delete(),
+        deleteSandboxInstance(
+          "vercel",
+          key,
+          this.#config.controlPlane?.accountId,
+          name,
+        ),
+      ]);
+      throw error;
     }
     const winner = await getSandboxExternalId("vercel", key);
     if (!winner || winner === name) {

@@ -181,23 +181,39 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       }
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
-    if (
-      await claimSandboxInstance(
-        "e2b",
-        ns,
-        created.sandboxId,
-        this.#config.controlPlane?.accountId,
-      )
-    ) {
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "e2b",
-        ns,
-        created.sandboxId,
-        request.metadata,
-      );
+    try {
+      if (
+        await claimSandboxInstance(
+          "e2b",
+          ns,
+          created.sandboxId,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "e2b",
+          ns,
+          created.sandboxId,
+          request.metadata,
+        );
 
-      return created;
+        return created;
+      }
+    } catch (error) {
+      // The claim may already have committed even when its caller rejects. Tear
+      // down both sides conditionally so a failed acquisition cannot leak the
+      // newly created sandbox or erase a concurrent winner's reservation.
+      await Promise.allSettled([
+        Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)),
+        deleteSandboxInstance(
+          "e2b",
+          ns,
+          this.#config.controlPlane?.accountId,
+          created.sandboxId,
+        ),
+      ]);
+      throw error;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
