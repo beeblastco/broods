@@ -1,10 +1,10 @@
 /**
  * Stateless MCP client for registered servers (#331). Wraps the official v2
- * SDK: one client per operation, no session state. An "http" row negotiates
- * the protocol automatically, so modern (2026-07-28) servers and pre-existing
- * legacy (2025-era initialize) servers both work; a "hosted" row runs the
- * same transport pinned modern — its stateless Lambda handler is our own
- * deploy contract. The era verdict and tool listings are cached in-process
+ * SDK pinned to spec 2026-07-28 — the issue's scope is that revision only, no
+ * older versions, so a 2025-era server is refused at negotiation. One client
+ * per operation, no session state. An "http" row dials its url; a "hosted"
+ * row runs the same transport with every request routed through the Lambda
+ * host (hosted.ts). The version probe and tool listings are cached in-process
  * per server row (keyed by row version and resolved headers, so an edit is a
  * cache miss), honoring the ttlMs the spec puts on cacheable results.
  */
@@ -13,7 +13,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
   type CallToolResult,
-  type PriorDiscovery,
+  type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
 import {
@@ -29,7 +29,7 @@ const DEFAULT_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_TTL_MS = 60 * 60_000;
 
-const eraCache = new Map<string, CachedEra>();
+const discoverCache = new Map<string, CachedDiscover>();
 const toolListCache = new Map<string, CachedListing>();
 let testOverrides: McpTestOverrides | null = null;
 
@@ -39,14 +39,10 @@ export interface McpConnection {
   headers: Record<string, string>;
 }
 
-/**
- * A cached negotiation verdict. A modern verdict expires at the discover
- * result's own ttlMs; a legacy one at the default TTL, so a server upgrade
- * is noticed by the next probe instead of never.
- */
-interface CachedEra {
+/** A cached version probe, expiring at the discover result's own ttlMs. */
+interface CachedDiscover {
+  discover: DiscoverResult;
   expiresAt: number;
-  prior: PriorDiscovery;
 }
 
 interface CachedListing {
@@ -168,7 +164,7 @@ export function mcpConnection(
 /** Tests only: stub the network edge, and drop any cached state. */
 export function setMcpForTests(overrides: McpTestOverrides | null): void {
   testOverrides = overrides;
-  eraCache.clear();
+  discoverCache.clear();
   toolListCache.clear();
 }
 
@@ -193,8 +189,8 @@ function clampTtlMs(ttlMs: unknown): number {
 }
 
 /**
- * Connect a fresh client, adopting the cached era verdict when one is fresh
- * (zero extra round trips); a stale adoption falls back to one fresh
+ * Connect a fresh pinned client, adopting the cached version probe when one
+ * is fresh (zero extra round trips); a stale adoption falls back to one fresh
  * negotiation.
  */
 async function connectClient(
@@ -210,7 +206,7 @@ async function connectClient(
     );
   }
   const makeClient = async (
-    prior: PriorDiscovery | undefined,
+    discover: DiscoverResult | undefined,
   ): Promise<Client> => {
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
@@ -219,45 +215,35 @@ async function connectClient(
         ...(hosted ? { fetch: hostedMcpFetch(connection.record) } : {}),
       },
     );
-    // Hosted bundles are our own deploy contract (stateless modern handlers),
-    // so they stay pinned; an external url may be any pre-existing server, so
-    // auto mode probes and falls back to the legacy initialize handshake.
     const client = new Client(CLIENT_INFO, {
-      versionNegotiation: {
-        mode: hosted ? { pin: MCP_PROTOCOL_VERSION } : "auto",
-      },
+      versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
     });
-    await client.connect(transport, prior ? { prior: prior } : {});
+    await client.connect(
+      transport,
+      discover ? { prior: { kind: "modern", discover: discover } } : {},
+    );
 
     return client;
   };
-  const cached = eraCache.get(key);
-  if (cached && cached.expiresAt <= Date.now()) eraCache.delete(key);
+  const cached = discoverCache.get(key);
+  if (cached && cached.expiresAt <= Date.now()) discoverCache.delete(key);
   const prior =
-    cached && cached.expiresAt > Date.now() ? cached.prior : undefined;
+    cached && cached.expiresAt > Date.now() ? cached.discover : undefined;
   let client: Client;
   try {
     client = await makeClient(prior);
   } catch (error) {
     if (!prior) throw error;
-    eraCache.delete(key);
+    discoverCache.delete(key);
     client = await makeClient(undefined);
   }
-  if (!eraCache.has(key)) {
-    const discover = client.getDiscoverResult();
-    pruneCache(eraCache);
-    eraCache.set(
-      key,
-      discover
-        ? {
-            prior: { kind: "modern", discover: discover },
-            expiresAt: Date.now() + clampTtlMs(discover.ttlMs),
-          }
-        : {
-            prior: { kind: "legacy" },
-            expiresAt: Date.now() + DEFAULT_TTL_MS,
-          },
-    );
+  const discover = client.getDiscoverResult();
+  if (discover && !discoverCache.has(key)) {
+    pruneCache(discoverCache);
+    discoverCache.set(key, {
+      discover: discover,
+      expiresAt: Date.now() + clampTtlMs(discover.ttlMs),
+    });
   }
 
   return client;
