@@ -8,7 +8,7 @@ import { useState } from "react";
 type NodeType =
   | "agent"
   | "database"
-  | "tool"
+  | "mcp"
   | "workspace"
   | "sandbox"
   | "skill";
@@ -28,10 +28,10 @@ const DELETE_DESCRIPTIONS: Record<
     detail:
       "The database connection config, all auto-populated sessions, and messages from this database will be deleted permanently.",
   },
-  tool: {
-    summary: "Delete the tool configuration.",
+  mcp: {
+    summary: "Delete the MCP server registration.",
     detail:
-      "Only the tool configuration will be removed. This will not interfere with any existing code or tool logic.",
+      "The server row is removed and agents stop registering its tools. An external server itself is untouched.",
   },
   workspace: {
     summary: "Delete this workspace from the stage.",
@@ -54,7 +54,7 @@ const DELETE_DESCRIPTIONS: Record<
 const NODE_TYPE_LABELS: Record<NodeType, string> = {
   agent: "agent",
   database: "database",
-  tool: "tool",
+  mcp: "MCP server",
   workspace: "workspace",
   sandbox: "sandbox",
   skill: "skill",

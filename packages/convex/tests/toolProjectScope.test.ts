@@ -259,50 +259,6 @@ describe("migrations.deleteOrphanedTools", () => {
     });
   });
 
-  test("saving a node revives its tombstone and carries the scope", async () => {
-    const tt = t();
-    const scope = await seedScope(tt);
-    const nodeId = "node-report";
-    const toolId = await tt.mutation(internal.toolService.upsertForNode, {
-      accountId: scope.accountId,
-      projectId: scope.projectId,
-      stageId: scope.stageId,
-      nodeId: nodeId,
-      name: TOOL_NAME,
-      sourceCode: "export default () => 1;",
-      sha256: "b".repeat(64),
-      bundleStorageKey: `tools/${TOOL_NAME}.mjs`,
-      runtime: "isolate" as const,
-    });
-    // A row the REST delete tombstoned, left unscoped by the old sync path.
-    await tt.run(async (ctx) => {
-      await ctx.db.patch(toolId, {
-        status: "deleted" as const,
-        deletedAt: Date.now(),
-        projectId: undefined,
-      });
-    });
-
-    expect(
-      await tt.mutation(internal.toolService.upsertForNode, {
-        accountId: scope.accountId,
-        projectId: scope.projectId,
-        stageId: scope.stageId,
-        nodeId: nodeId,
-        name: TOOL_NAME,
-        sourceCode: "export default () => 2;",
-        sha256: "c".repeat(64),
-        bundleStorageKey: `tools/${TOOL_NAME}.mjs`,
-        runtime: "isolate" as const,
-      }),
-    ).toEqual(toolId);
-
-    const row = await tt.run(async (ctx) => await ctx.db.get(toolId));
-    expect(row?.status).toEqual("active");
-    expect(row?.deletedAt).toBeUndefined();
-    expect(row?.projectId).toEqual(scope.projectId);
-  });
-
   test("drops rows whose stage sits under another project", async () => {
     const tt = t();
     const scope = await seedScope(tt);

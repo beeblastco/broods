@@ -2,8 +2,6 @@
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
-import { JavaScript } from "@/app/components/icons/JavaScript";
-import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
@@ -44,11 +42,6 @@ export const agentStatusConfig: Record<
 const zoomSelector = (state: { transform: [number, number, number] }) =>
   state.transform[2];
 
-export type ToolMeta = {
-  language: "javascript" | "python";
-  status: "enabled" | "disabled";
-};
-
 /** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
   id,
@@ -56,7 +49,6 @@ export function BaseNode({
   data,
   icon,
   agentStatus,
-  toolMeta,
   cardStatus,
   subtitle,
   featureRows,
@@ -67,7 +59,6 @@ export function BaseNode({
   data: BaseNodeData;
   icon: React.ReactNode;
   agentStatus?: AgentHealthStatus;
-  toolMeta?: ToolMeta;
   /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
   cardStatus?: { enabled: boolean };
   /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
@@ -136,15 +127,7 @@ export function BaseNode({
   let statusText = "";
   let showStatus = true;
 
-  if (nodeType === "tool") {
-    if (toolMeta) {
-      statusColor =
-        toolMeta.status === "enabled" ? "bg-emerald-500" : "bg-zinc-500";
-      statusText = toolMeta.status === "enabled" ? "Enabled" : "Disabled";
-    } else {
-      showStatus = false;
-    }
-  } else if (nodeType === "agent" && agentStatus) {
+  if (nodeType === "agent" && agentStatus) {
     const config = agentStatusConfig[agentStatus];
     statusColor = config.color;
     statusText = config.text;
@@ -218,16 +201,6 @@ export function BaseNode({
             className="bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
         </>
-      )}
-
-      {toolMeta && (
-        <span className="absolute top-2 right-2.5 z-10">
-          {toolMeta.language === "python" ? (
-            <Python className="size-3.5" />
-          ) : (
-            <JavaScript className="size-3.5" />
-          )}
-        </span>
       )}
 
       {(nodeType === "agent" || nodeType === "sandbox") &&

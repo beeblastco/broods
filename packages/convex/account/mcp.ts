@@ -107,6 +107,9 @@ export const create = internalMutation({
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
     allowedTools: v.optional(v.array(v.string())),
+    disabled: v.optional(v.boolean()),
+    nodeId: v.optional(v.string()),
+    sourceCode: v.optional(v.string()),
   },
   returns: v.id("mcp"),
   handler: async (ctx, args) => {
@@ -150,6 +153,9 @@ export const create = internalMutation({
       sha256: args.sha256,
       headers: args.headers,
       allowedTools: args.allowedTools,
+      disabled: args.disabled,
+      nodeId: args.nodeId,
+      sourceCode: args.sourceCode,
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -196,6 +202,7 @@ export const update = internalMutation({
     headers: v.optional(v.record(v.string(), v.string())),
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
+    sourceCode: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -227,6 +234,17 @@ export const update = internalMutation({
         ? { allowedTools: args.allowedTools }
         : {}),
       ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
+      ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
+      // A transport switch clears the other side's connection fields so a
+      // hosted row never carries a stale url and vice versa.
+      ...(args.transport === "hosted" ? { url: undefined } : {}),
+      ...(args.transport === "http"
+        ? {
+            bundleStorageKey: undefined,
+            sha256: undefined,
+            sourceCode: args.sourceCode,
+          }
+        : {}),
       updatedAt: Date.now(),
     });
 

@@ -16,7 +16,7 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { DatabaseNode } from "@/app/components/node/Database";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
-import { ToolNode } from "@/app/components/node/Tool";
+import { McpNode } from "@/app/components/node/Mcp";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
 import {
   ContextMenu,
@@ -58,7 +58,7 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Box, Database, FolderOpen, Sparkles, Wrench } from "lucide-react";
+import { Bot, Box, Database, FolderOpen, Plug, Sparkles } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import {
@@ -86,11 +86,6 @@ const CreateAgentConfigDialog = dynamic(() =>
     (mod) => mod.CreateAgentConfigDialog,
   ),
 );
-const ToolSourcePickerDialog = dynamic(() =>
-  import("@/app/components/ToolSourcePickerDialog").then(
-    (mod) => mod.ToolSourcePickerDialog,
-  ),
-);
 const SkillSourcePickerDialog = dynamic(() =>
   import("@/app/components/SkillSourcePickerDialog").then(
     (mod) => mod.SkillSourcePickerDialog,
@@ -102,7 +97,7 @@ const nodeTypes = {
   database: DatabaseNode,
   sandbox: SandboxNode,
   workspace: WorkspaceNode,
-  tool: ToolNode,
+  mcp: McpNode,
   skill: SkillNode,
 };
 
@@ -118,7 +113,7 @@ const NODE_TEMPLATES = [
   { type: "sandbox", label: "Sandbox", icon: Box },
   { type: "workspace", label: "Workspace", icon: FolderOpen },
   { type: "skill", label: "Skill", icon: Sparkles },
-  { type: "tool", label: "Tool", icon: Wrench },
+  { type: "mcp", label: "MCP", icon: Plug },
 ] as const;
 
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
@@ -397,7 +392,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [deleteRequestToken, setDeleteRequestToken] = useState(0);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
-  const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
@@ -464,6 +458,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             | "database"
             | "sandbox"
             | "workspace"
+            | "mcp"
             | "tool"
             | "skill",
           position: n.position,
@@ -871,12 +866,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     scheduleSave();
   }, [scheduleSave]);
 
-  /** Stable handler for tool source picker selection. */
-  const onToolSelect = useCallback(() => {
-    // TODO: handle "docker" and "upload" sources with dedicated flows
-    addNode("tool", "Tool");
-  }, [addNode]);
-
   /** Adds a skill node with the chosen source type baked into its config. */
   const onSkillSelect = useCallback(
     (source: "files" | "github" | "json") => {
@@ -1155,11 +1144,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                     onClick={() =>
                       type === "agent"
                         ? onOpenSourcePicker()
-                        : type === "tool"
-                          ? setToolPickerOpen(true)
-                          : type === "skill"
-                            ? setSkillPickerOpen(true)
-                            : addNode(type, label)
+                        : type === "skill"
+                          ? setSkillPickerOpen(true)
+                          : addNode(type, label)
                     }
                   >
                     <Icon />
@@ -1201,12 +1188,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           open={configDialogOpen}
           onOpenChange={onConfigDialogOpenChange}
           initialCanvasPosition={agentCreatePosition}
-        />
-
-        <ToolSourcePickerDialog
-          open={toolPickerOpen}
-          onOpenChange={setToolPickerOpen}
-          onSelect={onToolSelect}
         />
 
         <SkillSourcePickerDialog

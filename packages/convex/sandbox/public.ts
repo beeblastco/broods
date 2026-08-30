@@ -11,6 +11,7 @@ import { v } from "convex/values";
 import { action, type ActionCtx } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { authKit } from "../auth";
+import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 
 /** Captures a reusable snapshot/image from a running sandbox instance. */
 export const createSnapshot = action({
@@ -226,12 +227,12 @@ async function callLifecycle(
     throw new Error("Sandbox instance does not belong to this sandbox config");
   }
 
-  const { url, secret } = getServiceEnv();
+  const { url, secret } = serviceEnv();
   const res = await fetch(
     `${url}/v1/sandboxes/${encodeURIComponent(sandboxId)}/${op}`,
     {
       method: "POST",
-      headers: headers(account.accountId, secret),
+      headers: serviceHeaders(account.accountId, secret),
       body: JSON.stringify({
         reservationKey: reservationKey,
         actor: await actor(ctx),
@@ -260,37 +261,6 @@ async function callLifecycle(
   if (!text) return null;
 
   return JSON.parse(text);
-}
-
-/**
- * Reads the broods account-manage base URL + service-auth secret from the env.
- * @returns the service URL and bearer secret.
- * @throws when either variable is unset.
- */
-function getServiceEnv(): { url: string; secret: string } {
-  const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-  if (!url || !secret) {
-    throw new Error(
-      "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
-    );
-  }
-
-  return { url: url.replace(/\/+$/, ""), secret: secret };
-}
-
-/**
- * Builds the service-auth headers broods expects on internal requests.
- * @param accountId the active account id (sent as X-Account-Id).
- * @param secret the shared service-auth bearer secret.
- * @returns the request headers.
- */
-function headers(accountId: string, secret: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${secret}`,
-    "X-Account-Id": accountId,
-    "Content-Type": "application/json",
-  };
 }
 
 // Mirrors a transition the dashboard owns rather than broods (today: `suspending`).

@@ -19,8 +19,8 @@ import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
-import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
-import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
+import { McpDetailsTab } from "@/app/components/side-panel/McpDetailsTab";
+import { McpServerTab } from "@/app/components/side-panel/McpServerTab";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -56,7 +56,7 @@ import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Node } from "@xyflow/react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
@@ -97,9 +97,9 @@ const healthBadgeVariant: Record<
 const loadAgentTestTab = () =>
   import("@/app/components/side-panel/TestTab").then((mod) => mod.TestTab);
 
-const loadToolTestTab = () =>
-  import("@/app/components/side-panel/ToolTestTab").then(
-    (mod) => mod.ToolTestTab,
+const loadMcpToolsTab = () =>
+  import("@/app/components/side-panel/McpToolsTab").then(
+    (mod) => mod.McpToolsTab,
   );
 
 const TestTab = dynamic(loadAgentTestTab, {
@@ -112,11 +112,11 @@ const TestTab = dynamic(loadAgentTestTab, {
   ),
 });
 
-const ToolTestTab = dynamic(loadToolTestTab, {
+const McpToolsTab = dynamic(loadMcpToolsTab, {
   loading: () => (
     <div className="flex flex-1 items-center justify-center p-4">
       <p className="text-center text-xs text-muted-foreground">
-        Loading test tab…
+        Loading tools…
       </p>
     </div>
   ),
@@ -125,7 +125,7 @@ const ToolTestTab = dynamic(loadToolTestTab, {
 type NodeType =
   | "agent"
   | "database"
-  | "tool"
+  | "mcp"
   | "workspace"
   | "sandbox"
   | "skill";
@@ -139,7 +139,7 @@ type HeaderStatusBadge = {
 const PANEL_TITLES: Record<NodeType, string> = {
   agent: "Agent",
   database: "Session",
-  tool: "Tool",
+  mcp: "MCP Server",
   workspace: "Workspace",
   sandbox: "Sandbox",
   skill: "Skill",
@@ -190,7 +190,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const nodeData = node?.data as BaseNodeData | undefined;
   const nodeType = (node?.type ?? "agent") as NodeType;
   const isAgent = nodeType === "agent";
-  const isTool = nodeType === "tool";
+  const isMcp = nodeType === "mcp";
   const isWorkspace = nodeType === "workspace";
   const isSandbox = nodeType === "sandbox";
   const isSkill = nodeType === "skill";
@@ -201,7 +201,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     | Id<"agentConfigs">
     | undefined;
   const nodeId = node?.id;
-  const canQueryToolStatus = isTool && !!projectId && !!stageId && !!nodeId;
+  const canQueryMcpStatus = isMcp && !!projectId && !!stageId && !!nodeId;
 
   // Time from the canvas click to this panel being on screen — mostly its own
   // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
@@ -262,9 +262,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       : "skip",
   );
 
-  const toolService = useQuery(
-    api.toolService.getByNode,
-    canQueryToolStatus
+  const mcpServer = useQuery(
+    api.mcpService.getByNode,
+    canQueryMcpStatus
       ? {
           projectId: projectId,
           stageId: stageId,
@@ -272,6 +272,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
       : "skip",
   );
+  const removeMcpForNode = useAction(api.mcpService.removeForNode);
 
   // Editable name (agent uses agentConfig, others use canvas label)
   const [editName, setEditName] = useState("");
@@ -364,8 +365,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       };
     }
 
-    if (isTool) {
-      if (!canQueryToolStatus || toolService === undefined) {
+    if (isMcp) {
+      if (!canQueryMcpStatus || mcpServer === undefined) {
         return {
           text: "Loading",
           color: "bg-zinc-500",
@@ -373,12 +374,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         };
       }
 
-      const isToolEnabled = toolService?.disabled !== true;
+      const isServerEnabled = !!mcpServer && mcpServer.disabled !== true;
 
       return {
-        text: isToolEnabled ? "Enabled" : "Disabled",
-        color: isToolEnabled ? "bg-emerald-500" : "bg-zinc-500",
-        variant: isToolEnabled ? "success" : "secondary",
+        text: isServerEnabled ? "Enabled" : "Disabled",
+        color: isServerEnabled ? "bg-emerald-500" : "bg-zinc-500",
+        variant: isServerEnabled ? "success" : "secondary",
       };
     }
 
@@ -445,9 +446,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }, [
     isAgent,
     healthStatus,
-    isTool,
-    canQueryToolStatus,
-    toolService,
+    isMcp,
+    canQueryMcpStatus,
+    mcpServer,
     nodeType,
     isConnectedToAgent,
     isWorkspace,
@@ -599,6 +600,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     if (isCodeManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
       await removeConfig({ configId: agentConfigId });
+    }
+    if (isMcp && projectId && stageId && node) {
+      await removeMcpForNode({
+        projectId: projectId,
+        stageId: stageId,
+        nodeId: node.id,
+      });
     }
     if (node) {
       onRemoveNode(node.id);
@@ -779,10 +787,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       return;
     }
 
-    if (isTool) {
-      void loadToolTestTab();
+    if (isMcp) {
+      void loadMcpToolsTab();
     }
-  }, [isAgent, isTool]);
+  }, [isAgent, isMcp]);
 
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
@@ -840,10 +848,21 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 (nodeData?.config?.skillSource ?? "") === "files")) && (
               <TabsTrigger value="files">Files</TabsTrigger>
             )}
-            {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && (
+            {isMcp && <TabsTrigger value="server">Server</TabsTrigger>}
+            {(isAgent || isWorkspace || isSandbox || isSkill) && (
               <TabsTrigger value="config">Config</TabsTrigger>
             )}
-            {(isAgent || nodeType === "tool") && (
+            {isMcp && (
+              <TabsTrigger
+                value="tools"
+                onMouseEnter={warmTestTab}
+                onFocus={warmTestTab}
+                onPointerDown={warmTestTab}
+              >
+                Tools
+              </TabsTrigger>
+            )}
+            {isAgent && (
               <TabsTrigger
                 value="test"
                 onMouseEnter={warmTestTab}
@@ -885,8 +904,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdatePublicAccess={handleUpdatePublicAccess}
                 onUpdatePolicyConfig={handleUpdatePolicyConfig}
               />
-            ) : isTool && node ? (
-              <ToolDetailsTab
+            ) : isMcp && node ? (
+              <McpDetailsTab
                 projectId={projectId}
                 stageId={stageId}
                 nodeId={node.id}
@@ -995,12 +1014,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               <ConfigTab agentConfig={agentConfig} onSave={handleSaveConfig} />
             </TabsContent>
           )}
-          {isTool && node && (
+          {isMcp && node && (
             <TabsContent
-              value="config"
+              value="server"
               className="flex flex-col overflow-hidden"
             >
-              <ToolConfigTab
+              <McpServerTab
                 projectId={projectId}
                 stageId={stageId}
                 nodeId={node.id}
@@ -1031,23 +1050,26 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Test tab — agent and tool only */}
-          {(isAgent || nodeType === "tool") && (
+          {isMcp && node && (
+            <TabsContent
+              value="tools"
+              className="flex flex-col overflow-hidden"
+            >
+              <McpToolsTab
+                projectId={projectId}
+                stageId={stageId}
+                nodeId={node.id}
+              />
+            </TabsContent>
+          )}
+          {isAgent && (
             <TabsContent value="test" className="flex flex-col overflow-hidden">
-              {isAgent ? (
-                <TestTab
-                  activeDeployment={activeDeployment}
-                  deploymentApiKey={resolvedDeploymentApiKey}
-                  agentId={agentConfigId ?? ""}
-                  nodeColor={nodeData?.properties?.color}
-                />
-              ) : node ? (
-                <ToolTestTab
-                  projectId={projectId}
-                  stageId={stageId}
-                  nodeId={node.id}
-                />
-              ) : null}
+              <TestTab
+                activeDeployment={activeDeployment}
+                deploymentApiKey={resolvedDeploymentApiKey}
+                agentId={agentConfigId ?? ""}
+                nodeColor={nodeData?.properties?.color}
+              />
             </TabsContent>
           )}
 
