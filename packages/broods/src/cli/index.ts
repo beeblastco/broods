@@ -3,7 +3,14 @@
  * CLI entry point for code-first broods resources.
  */
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
@@ -74,8 +81,11 @@ import {
   updateTarget,
 } from "./update.ts";
 import packageJson from "../../package.json" with { type: "json" };
+import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
+import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
 
 const VERSION = packageJson.version;
+const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const DEFAULT_SERVICE_REGION = "eu-west-1";
 const SERVICE_REGIONS = [
@@ -407,6 +417,7 @@ async function init(args: string[]): Promise<void> {
     "_generated\n.cache\n",
     force,
   );
+  await ensureAgentSkill(force);
   const dashboardUrl =
     optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
@@ -1120,7 +1131,42 @@ async function streamDevLogs(
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
   await ensureProjectShell();
+  await ensureAgentSkill(false);
   await ensureLocalDevDefaults(args);
+}
+
+/**
+ * Install the broods skill for coding agents, the way Convex vendors its AI
+ * rules files. Only a repo that already works with an agent gets it, and an
+ * existing install is left alone unless forced, so local edits survive.
+ */
+async function ensureAgentSkill(force: boolean): Promise<void> {
+  const cwd = process.cwd();
+  const markers = [".agent", ".agents", ".claude", "AGENTS.md", "CLAUDE.md"];
+  const found = await Promise.all(
+    markers.map((marker) => pathExists(resolve(cwd, marker))),
+  );
+  if (!found.includes(true)) return;
+
+  const root = resolve(cwd, AGENT_SKILL_DIR);
+  if (!force && (await pathExists(resolve(root, "SKILL.md")))) return;
+
+  await mkdir(resolve(root, "scripts"), { recursive: true });
+  await writeFile(resolve(root, "SKILL.md"), agentSkillText);
+  const onboardPath = resolve(root, "scripts", "onboard.sh");
+  await writeFile(onboardPath, agentSkillOnboardText);
+  await chmod(onboardPath, 0o755);
+  console.log(`Installed the broods agent skill at ${AGENT_SKILL_DIR}/`);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureProjectShell(): Promise<void> {
