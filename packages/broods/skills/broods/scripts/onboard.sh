@@ -18,7 +18,10 @@ if ! command -v broods > /dev/null 2>&1; then
   fi
 fi
 
-WHOAMI="$(broods whoami 2>&1 || true)"
+set +e
+WHOAMI="$(broods whoami 2>&1)"
+STATUS=$?
+set -e
 echo "$WHOAMI"
 
 if printf '%s' "$WHOAMI" | grep -q "Not logged in"; then
@@ -26,4 +29,7 @@ if printf '%s' "$WHOAMI" | grep -q "Not logged in"; then
   echo "Opening the browser to sign in. Finish the login there."
   broods login
   broods whoami
+elif [ "$STATUS" -ne 0 ]; then
+  # Not the expected signed-out state: surface the real failure.
+  exit "$STATUS"
 fi
