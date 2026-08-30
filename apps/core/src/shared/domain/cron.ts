@@ -36,9 +36,6 @@ export interface CronRecord {
   lastError?: string;
 }
 
-/** Public cron shape the config plane returns from create/update. */
-export type CronSummary = CronRecord;
-
 export interface CronRunRecord {
   accountId: string;
   cronId: string;

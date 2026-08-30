@@ -27,7 +27,7 @@ import {
 import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useAction } from "convex/react";
+import { useMutation } from "convex/react";
 import { useRef, useState } from "react";
 
 const SCHEDULE_REGEX = /^(cron|rate|at)\(.+\)$/;
@@ -82,8 +82,8 @@ export function CronDialog({
   agents,
   onClose,
 }: Props): React.JSX.Element {
-  const create = useAction(api.agent.cronsPublic.create);
-  const update = useAction(api.agent.cronsPublic.update);
+  const create = useMutation(api.agent.cronsPublic.create);
+  const update = useMutation(api.agent.cronsPublic.update);
 
   const [name, setName] = useState(cron?.name ?? "");
   const [description, setDescription] = useState(cron?.description ?? "");

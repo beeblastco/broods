@@ -1,17 +1,17 @@
 /**
- * Public action wrappers for cron CRUD used by the dashboard. These call the
- * transactional cron mutations in agent/crons directly, so the crons table
- * and the registered schedules can never drift apart.
+ * Public mutation wrappers for cron CRUD used by the dashboard. These run the
+ * transactional cron mutations in agent/crons in the same transaction, so the
+ * crons table and the registered schedules can never drift apart.
  */
 
 import { v } from "convex/values";
 import { api, internal } from "../_generated/api";
-import { action } from "../_generated/server";
+import { mutation } from "../_generated/server";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 
 /** Creates a cron job (crons row + registered schedule) for the active org. */
-export const create = action({
+export const create = mutation({
   args: {
     name: v.string(),
     agentId: v.id("agents"),
@@ -37,7 +37,7 @@ export const create = action({
 });
 
 /** Updates a cron job and its registered schedule for the active org. */
-export const update = action({
+export const update = mutation({
   args: {
     cronId: v.string(),
     name: v.optional(v.string()),
@@ -67,7 +67,7 @@ export const update = action({
 });
 
 /** Removes a cron job and its registered schedule for the active org. */
-export const remove = action({
+export const remove = mutation({
   args: { cronId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
