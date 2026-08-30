@@ -8,11 +8,12 @@ import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
+import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeAccountToolUpload } from "../model/accountTools";
 import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, putToolBundle } from "../model/bundles";
-import { stripUndefined } from "../model/objects";
+import { remapKeys, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -501,23 +502,13 @@ function rewriteExternalConfigRefs(
       ),
     };
   }
-  if (asOptionalRecord(result.tools)) {
-    const tools = asOptionalRecord(result.tools)!;
-    result.tools = Object.fromEntries(
-      Object.entries(tools).map(([key, value]) => [
-        ids.tools[key] ?? key,
-        value,
-      ]),
-    );
+  const tools = asOptionalRecord(result.tools);
+  if (tools) {
+    result.tools = remapKeys(tools, ids.tools);
   }
-  if (asOptionalRecord(result.mcpServers)) {
-    const mcpServers = asOptionalRecord(result.mcpServers)!;
-    result.mcpServers = Object.fromEntries(
-      Object.entries(mcpServers).map(([key, value]) => [
-        ids.mcpServers[key] ?? key,
-        value,
-      ]),
-    );
+  const mcpServers = asOptionalRecord(result.mcpServers);
+  if (mcpServers) {
+    result.mcpServers = remapKeys(mcpServers, ids.mcpServers);
   }
   if (
     asOptionalRecord(result.hooks) &&
@@ -629,12 +620,8 @@ async function syncExternalResources(
   manifest: CliManifest,
   prune: boolean,
 ): Promise<ExternalIds> {
-  const hasExternalResources = manifest.resources.some(
-    (entry) =>
-      entry.kind === "skill" ||
-      entry.kind === "tool" ||
-      entry.kind === "hook" ||
-      entry.kind === "mcp",
+  const hasExternalResources = manifest.resources.some((entry) =>
+    isExternalResourceKind(entry.kind),
   );
   if (!hasExternalResources)
     return { skills: {}, tools: {}, hooks: {}, mcpServers: {} };

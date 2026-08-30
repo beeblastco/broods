@@ -29,8 +29,10 @@ import {
   ensureProject,
   ensureStage,
   envName,
+  isExternalResourceKind,
   resourceName,
   snapshotExternalConfig,
+  type ExternalResourceKind,
 } from "../model/cliSync";
 import {
   canvasNodeId,
@@ -487,34 +489,25 @@ export const recordExternalResourcesBySecretHash = internalMutation({
         q.eq("projectId", projectDoc._id).eq("stageId", stageDoc._id),
       )
       .collect();
-    const desired = args.resources.filter(
-      (entry) =>
-        entry.kind === "skill" ||
-        entry.kind === "tool" ||
-        entry.kind === "hook" ||
-        entry.kind === "mcp",
+    const desired = args.resources.filter((entry) =>
+      isExternalResourceKind(entry.kind),
     );
     const desiredKeys = new Set(
       desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`),
     );
+    // No fallback branch: a kind added to EXTERNAL_RESOURCE_KINDS without an
+    // id map here is a type error, not a row written under the wrong kind.
+    const idsByKind: Record<ExternalResourceKind, Record<string, string>> = {
+      skill: args.ids.skills,
+      tool: args.ids.tools,
+      hook: args.ids.hooks,
+      mcp: args.ids.mcpServers,
+    };
 
     for (const resource of desired) {
       const name = resourceName(resource.name);
-      let kind: "skill" | "tool" | "hook" | "mcp";
-      let externalId: string | undefined;
-      if (resource.kind === "skill") {
-        kind = "skill";
-        externalId = args.ids.skills[name];
-      } else if (resource.kind === "tool") {
-        kind = "tool";
-        externalId = args.ids.tools[name];
-      } else if (resource.kind === "mcp") {
-        kind = "mcp";
-        externalId = args.ids.mcpServers[name];
-      } else {
-        kind = "hook";
-        externalId = args.ids.hooks[name];
-      }
+      const kind = resource.kind as ExternalResourceKind;
+      const externalId: string | undefined = idsByKind[kind][name];
       if (!externalId)
         throw new Error(
           `${resource.kind}:${name} did not return an external id`,

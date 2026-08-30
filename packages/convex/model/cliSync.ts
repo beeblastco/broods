@@ -14,10 +14,30 @@ import {
   decryptAgentConfigBlob,
   toNestedAgentConfig,
 } from "./agentConfigCodec";
-import { isPlainObject } from "./objects";
+import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 
 export type CliResource = CliManifestResource;
+
+/**
+ * Resource kinds owned by the account service and snapshotted per stage in
+ * `cliExternalResources`. The one list behind every "is this external" filter
+ * and the per-kind id lookups, so adding a kind cannot half-land.
+ */
+export const EXTERNAL_RESOURCE_KINDS = [
+  "skill",
+  "tool",
+  "hook",
+  "mcp",
+] as const;
+
+export type ExternalResourceKind = (typeof EXTERNAL_RESOURCE_KINDS)[number];
+
+export function isExternalResourceKind(
+  kind: CliManifestResource["kind"],
+): kind is ExternalResourceKind {
+  return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
+}
 
 export async function accountFromSecretHash(
   ctx: QueryCtx | MutationCtx,
@@ -383,15 +403,27 @@ export function rewriteEnvRefs(
 
 export function rewriteIdsToNames(
   config: Record<string, unknown>,
-  workspaceNames: Record<string, string>,
-  sandboxNames: Record<string, string>,
-  agentNames: Record<string, string> = {},
-  skillNames: Record<string, string> = {},
-  toolNames: Record<string, string> = {},
-  hookNames: Record<string, string> = {},
-  mcpNames: Record<string, string> = {},
-  policyNames: Record<string, string> = {},
+  names: {
+    workspaces: Record<string, string>;
+    sandboxes: Record<string, string>;
+    agents?: Record<string, string>;
+    skills?: Record<string, string>;
+    tools?: Record<string, string>;
+    hooks?: Record<string, string>;
+    mcp?: Record<string, string>;
+    policies?: Record<string, string>;
+  },
 ): Record<string, unknown> {
+  const {
+    workspaces: workspaceNames,
+    sandboxes: sandboxNames,
+    agents: agentNames = {},
+    skills: skillNames = {},
+    tools: toolNames = {},
+    hooks: hookNames = {},
+    mcp: mcpNames = {},
+    policies: policyNames = {},
+  } = names;
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
     result.sandbox = sandboxNames[result.sandbox];
@@ -440,20 +472,10 @@ export function rewriteIdsToNames(
     };
   }
   if (isPlainObject(result.tools)) {
-    result.tools = Object.fromEntries(
-      Object.entries(result.tools).map(([key, value]) => [
-        toolNames[key] ?? key,
-        value,
-      ]),
-    );
+    result.tools = remapKeys(result.tools, toolNames);
   }
   if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = Object.fromEntries(
-      Object.entries(result.mcpServers).map(([key, value]) => [
-        mcpNames[key] ?? key,
-        value,
-      ]),
-    );
+    result.mcpServers = remapKeys(result.mcpServers, mcpNames);
   }
   if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
     result.hooks = {
@@ -485,12 +507,21 @@ export function rewriteIdsToNames(
 
 export function rewriteResourceRefs(
   config: Record<string, unknown>,
-  workspaceIds: Record<string, string>,
-  sandboxIds: Record<string, string>,
-  policyIds: Record<string, string>,
-  toolIds: Record<string, string>,
-  mcpIds: Record<string, string> = {},
+  ids: {
+    workspaces: Record<string, string>;
+    sandboxes: Record<string, string>;
+    policies: Record<string, string>;
+    tools: Record<string, string>;
+    mcp?: Record<string, string>;
+  },
 ): Record<string, unknown> {
+  const {
+    workspaces: workspaceIds,
+    sandboxes: sandboxIds,
+    policies: policyIds,
+    tools: toolIds,
+    mcp: mcpIds = {},
+  } = ids;
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
     result.sandbox = sandboxIds[result.sandbox];
@@ -527,22 +558,12 @@ export function rewriteResourceRefs(
   // `config.tools` is keyed by account tool id at rest: a key left as a name is
   // read at runtime as a provider tool. Unknown keys are provider tools, so stay.
   if (isPlainObject(result.tools)) {
-    result.tools = Object.fromEntries(
-      Object.entries(result.tools).map(([key, value]) => [
-        toolIds[key] ?? key,
-        value,
-      ]),
-    );
+    result.tools = remapKeys(result.tools, toolIds);
   }
   // `config.mcpServers` keys must end up as mcp row ids; a name that fails to
   // map fails normalizeMcpServersConfig loudly rather than being left behind.
   if (isPlainObject(result.mcpServers)) {
-    result.mcpServers = Object.fromEntries(
-      Object.entries(result.mcpServers).map(([key, value]) => [
-        mcpIds[key] ?? key,
-        value,
-      ]),
-    );
+    result.mcpServers = remapKeys(result.mcpServers, mcpIds);
   }
 
   return result;

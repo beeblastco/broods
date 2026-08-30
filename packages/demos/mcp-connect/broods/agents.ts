@@ -5,9 +5,9 @@
  * `broods env set` before deploying.
  */
 
-import { defineAgent, defineMcpServer, env } from "broods";
+import { defineAgent, defineMcp, env } from "broods";
 
-export const search = defineMcpServer({
+export const search = defineMcp({
   name: "search",
   description: "External MCP server the assistant may query.",
   url: "https://mcp.example.com/mcp",

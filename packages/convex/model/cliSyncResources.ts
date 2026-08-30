@@ -271,14 +271,13 @@ export async function syncAgentResources(
           missingPolicies.add(entry);
       }
     }
-    const nested = rewriteResourceRefs(
-      withEnvRefs,
-      workspaceIds,
-      sandboxIds,
-      policyIds,
-      toolIds,
-      mcpIds,
-    );
+    const nested = rewriteResourceRefs(withEnvRefs, {
+      workspaces: workspaceIds,
+      sandboxes: sandboxIds,
+      policies: policyIds,
+      tools: toolIds,
+      mcp: mcpIds,
+    });
     const flat = fromNestedAgentConfig(nested);
     const runtimeVariables = [...envNames].map((envNameEntry) => ({
       key: envNameEntry,

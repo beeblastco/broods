@@ -967,7 +967,7 @@ export function defineTool<
   );
 }
 
-export function defineMcpServer<const Name extends string>(
+export function defineMcp<const Name extends string>(
   input: ResourceInput<Name, McpServerDefinitionConfig>,
 ): McpServerResource<Name> {
   const { name, description, ...config } = input;

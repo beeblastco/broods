@@ -376,7 +376,7 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 
 An external [MCP](https://modelcontextprotocol.io) server (spec **2026-07-28**, stateless Streamable HTTP only) can be registered per project stage and enabled per agent. Core is the MCP client: at agent registration it connects, lists the server's tools (cached per the listing's own `ttlMs`), and offers each as `<server>__<tool>` alongside every other tool kind. `tools/call` is request/response — one POST per call, no session.
 
-Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcpServer` synced by `broods deploy`, or `account.createMcpServer`), then enable it on an agent:
+Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcp` synced by `broods deploy`, or `account.createMcpServer`), then enable it on an agent:
 
 ```jsonc
 {
@@ -389,9 +389,9 @@ Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the
 In a `broods/` project the key is the server's name; the sync rewrites it to the row id:
 
 ```ts
-import { defineAgent, defineMcpServer, env } from "broods";
+import { defineAgent, defineMcp, env } from "broods";
 
-export const search = defineMcpServer({
+export const search = defineMcp({
   name: "search",
   url: "https://mcp.example.com/mcp",
   headers: { Authorization: `Bearer ${env("SEARCH_TOKEN")}` },

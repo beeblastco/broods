@@ -15,6 +15,16 @@ export function isStringRecord(
   );
 }
 
+/** Copy a record, replacing each key by its mapping when one exists. */
+export function remapKeys(
+  record: Record<string, unknown>,
+  keyMap: Record<string, string>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [keyMap[key] ?? key, value]),
+  );
+}
+
 /** Deterministic JSON (keys sorted recursively) for small payload comparisons. */
 export function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
