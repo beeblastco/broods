@@ -91,7 +91,9 @@ function SelectContent({
   alignOffset,
   side,
   sideOffset = 4,
-  alignItemWithTrigger = true,
+  // Overlay mode (true) clips the popup mid-list when the selected item can't
+  // line up with the trigger; drop below the trigger like the other menus.
+  alignItemWithTrigger = false,
   ...props
 }: SelectContentProps) {
   return (
