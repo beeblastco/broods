@@ -133,6 +133,7 @@ export function DeletableEdge({
           <div
             className="nodrag nopan pointer-events-none absolute text-[8px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
             style={{
+              opacity: style?.opacity,
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}
           >
