@@ -89,7 +89,17 @@ const importAllowlist: Plugin = {
       const packageRoot = args.path.startsWith("@")
         ? args.path.split("/").slice(0, 2).join("/")
         : args.path.split("/")[0]!;
-      if (NODE_BUILTINS.has(bare) || ALLOWED_PACKAGES.has(packageRoot)) {
+      // A "." or ".." segment on an allowed package (e.g. "zod/../../secret")
+      // escapes node_modules and inlines arbitrary server files into the bundle.
+      const traverses =
+        args.path.includes("\\") ||
+        args.path
+          .split("/")
+          .some((segment) => segment === "." || segment === "..");
+      if (
+        !traverses &&
+        (NODE_BUILTINS.has(bare) || ALLOWED_PACKAGES.has(packageRoot))
+      ) {
         return null;
       }
 

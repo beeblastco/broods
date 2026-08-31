@@ -298,11 +298,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     }
   }
 
+  // Delete-confirm dialog, rendered by SettingsTab but owned here so a
+  // Delete-key request can open it before the lazily mounted tab ever renders.
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
   // Reset to the details tab when a different node is selected.
   const [tabSyncedNodeId, setTabSyncedNodeId] = useState(node?.id);
   if (node?.id !== tabSyncedNodeId) {
     setTabSyncedNodeId(node?.id);
     setActiveTab("details");
+    setDeleteDialogOpen(false);
   }
 
   // Clear a freshly generated key when the active deployment changes. The
@@ -317,12 +322,18 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const resolvedDeploymentApiKey =
     deploymentApiKey ?? revealedDeploymentApiKey ?? undefined;
 
-  // Jump to the settings tab when the parent bumps the delete-request token.
+  // Jump to the settings tab and open the confirm dialog when the parent bumps
+  // the delete-request token. The dialog state lives here, not in SettingsTab —
+  // the tab panel mounts lazily, so the request usually lands before the tab
+  // has ever rendered and child-local state would miss it. Render-time
+  // adjustment, not an effect; the locked gate below closes it when delete is
+  // blocked (ownership pending or code-owned).
   const [prevDeleteToken, setPrevDeleteToken] = useState(deleteRequestToken);
   if (deleteRequestToken !== prevDeleteToken) {
     setPrevDeleteToken(deleteRequestToken);
     if (deleteRequestToken > 0) {
       setActiveTab("settings");
+      setDeleteDialogOpen(true);
     }
   }
 
@@ -569,6 +580,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     ((isWorkspace || isSandbox) &&
       !!resourceId &&
       resourceOwnership === undefined);
+
+  // Deletion is blocked while ownership is pending or code owns the resource;
+  // never show the confirm dialog in that window.
+  if (deleteDialogOpen && (isCodeManaged || isOwnershipLoading)) {
+    setDeleteDialogOpen(false);
+  }
 
   // Warn when a dashboard-owned node is named the same as a code-managed resource
   // of the same kind: the next `broods deploy` resolves by (stage,
@@ -1077,7 +1094,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             <SettingsTab
               nodeType={nodeType}
               nodeName={resolvedName}
-              openDeleteDialogToken={deleteRequestToken}
+              deleteOpen={deleteDialogOpen}
+              onDeleteOpenChange={setDeleteDialogOpen}
               onDelete={handleDelete}
               managedByCode={isCodeManaged}
               codeOwner={codeOwner === "api" ? "api" : "cli"}

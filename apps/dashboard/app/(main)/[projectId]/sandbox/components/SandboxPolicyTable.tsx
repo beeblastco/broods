@@ -10,6 +10,7 @@
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import {
   egressBadge,
+  formatProvider,
   instanceStatusBadge,
   permissionModeBadge,
 } from "./sandboxFormat";
@@ -70,7 +71,9 @@ export function SandboxPolicyTable({
                     {instance.externalId}
                   </div>
                 </td>
-                <td className="px-4 py-2.5 text-xs">{instance.provider}</td>
+                <td className="px-4 py-2.5 text-xs">
+                  {formatProvider(instance.provider)}
+                </td>
                 <td className="px-4 py-2.5">
                   {instanceStatusBadge(instance.status)}
                 </td>

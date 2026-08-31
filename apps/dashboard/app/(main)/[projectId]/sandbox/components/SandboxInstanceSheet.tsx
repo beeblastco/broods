@@ -33,6 +33,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import {
+  formatProvider,
   formatSpecs,
   instanceStatusBadge,
   relativeTime,
@@ -252,7 +253,7 @@ export function SandboxInstanceSheet({
             {instanceStatusBadge(instance.status)}
           </SheetTitle>
           <SheetDescription>
-            {instance.provider} sandbox instance
+            {formatProvider(instance.provider)} sandbox instance
           </SheetDescription>
         </SheetHeader>
 
@@ -264,7 +265,10 @@ export function SandboxInstanceSheet({
 
           <TabsContent value="detail" className="mt-4">
             <div className="rounded-lg border border-border bg-card px-4">
-              <Field label="Provider" value={instance.provider} />
+              <Field
+                label="Provider"
+                value={formatProvider(instance.provider)}
+              />
               <Field label="Status" value={instance.status} />
               <Field label="Size" value={formatSpecs(instance.specs)} />
               <Field
@@ -442,10 +446,10 @@ export function SandboxInstanceSheet({
                 </>
               ) : (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {instance.provider} sandboxes have no runtime image-capture
-                  API, so snapshots aren&apos;t created here. State is preserved
-                  across idle via suspend/resume, and the launch image is
-                  managed as versioned {instance.provider} image builds.
+                  {formatProvider(instance.provider)} sandboxes have no runtime
+                  image-capture API, so snapshots aren&apos;t created here.
+                  State is preserved across idle via suspend/resume, and the
+                  launch image is managed as versioned image builds.
                 </p>
               )}
             </div>

@@ -324,7 +324,7 @@ export function MonitoringPanel({
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshSpinning={status === "connecting"}
-        refreshTitle={error ?? "Refresh from Loki"}
+        refreshTitle={error ?? "Refresh logs"}
         isError={status === "error"}
       />
 
@@ -341,7 +341,7 @@ export function MonitoringPanel({
               <tr className="text-left text-muted-foreground text-[11px] uppercase tracking-wide">
                 <th className="px-3 py-2 font-medium">Time</th>
                 <th className="px-3 py-2 font-medium">Level</th>
-                <th className="px-3 py-2 font-medium">Function</th>
+                <th className="px-3 py-2 font-medium">Service</th>
                 <th className="px-3 py-2 font-medium">Message</th>
               </tr>
             </thead>

@@ -166,7 +166,7 @@ export function CronDialog({
             {mode === "create" ? "New cron job" : "Edit cron job"}
           </DialogTitle>
           <DialogDescription>
-            Schedules an agent run on the Convex scheduler.
+            Schedules an agent run on a recurring schedule.
           </DialogDescription>
         </DialogHeader>
 

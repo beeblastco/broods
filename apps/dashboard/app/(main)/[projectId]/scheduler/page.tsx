@@ -52,7 +52,7 @@ export default function CronsPage({
             <span className="font-medium text-foreground">
               {project?.name ?? "this project"}
             </span>
-            , powered by the Convex scheduler.
+            .
           </p>
         </div>
         <Button

@@ -44,7 +44,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const [copied, setCopied] = useState<string | null>(null);
 
   const harnessUrl =
-    process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(set BROODS_HARNESS_URL)";
+    process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(not configured)";
 
   async function handleProvision() {
     setPending(true);

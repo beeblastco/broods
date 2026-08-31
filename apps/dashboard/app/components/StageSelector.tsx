@@ -454,14 +454,7 @@ export function StageSelector(): React.JSX.Element | null {
                 >
                   <span className="flex items-center gap-2">
                     <span className="text-lg">{region.flag}</span>
-                    <span className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">
-                        {region.label}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {region.value}
-                      </span>
-                    </span>
+                    <span className="text-sm font-medium">{region.label}</span>
                   </span>
                   {!region.enabled && (
                     <span className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">

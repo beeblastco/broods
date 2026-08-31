@@ -64,7 +64,8 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
 export function SettingsTab({
   nodeType,
   nodeName,
-  openDeleteDialogToken,
+  deleteOpen,
+  onDeleteOpenChange,
   onDelete,
   managedByCode = false,
   codeOwner,
@@ -72,7 +73,11 @@ export function SettingsTab({
 }: {
   nodeType: NodeType;
   nodeName: string;
-  openDeleteDialogToken: number;
+  /** Confirm-dialog visibility, owned by the parent: this tab mounts lazily,
+   * so a Delete-key request must be able to open the dialog before the tab
+   * has ever rendered. */
+  deleteOpen: boolean;
+  onDeleteOpenChange: (open: boolean) => void;
   onDelete: () => Promise<void>;
   /** When true, this resource is code-owned (CLI or account API): delete is locked. */
   managedByCode?: boolean;
@@ -81,9 +86,7 @@ export function SettingsTab({
   /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
 }): React.JSX.Element {
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);
 
   // A stale stored layout can still carry a retired node type; fall back to
   // generic copy instead of crashing the panel.
@@ -93,24 +96,11 @@ export function SettingsTab({
   };
   const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
-  // Open the delete dialog when the parent bumps the trigger token (handled
-  // during render rather than in an effect to avoid a cascading re-render).
-  // Locked resources never open it — deletion is blocked.
-  if (openDeleteDialogToken !== prevDeleteToken) {
-    setPrevDeleteToken(openDeleteDialogToken);
-    if (openDeleteDialogToken > 0 && !deleteLocked) {
-      setDeleteOpen(true);
-    }
-  }
-  if (deleteOpen && deleteLocked) {
-    setDeleteOpen(false);
-  }
-
   async function handleDelete() {
     setIsDeleting(true);
     try {
       await onDelete();
-      setDeleteOpen(false);
+      onDeleteOpenChange(false);
     } finally {
       setIsDeleting(false);
     }
@@ -172,7 +162,7 @@ export function SettingsTab({
                 variant="destructive"
                 size="sm"
                 className="shrink-0 text-xs cursor-pointer"
-                onClick={() => setDeleteOpen(true)}
+                onClick={() => onDeleteOpenChange(true)}
               >
                 Delete
               </Button>
@@ -182,8 +172,8 @@ export function SettingsTab({
       </div>
 
       <DeleteConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+        open={deleteOpen && !deleteLocked}
+        onOpenChange={onDeleteOpenChange}
         resourceName={nodeName}
         resourceType={typeLabel}
         critical={false}

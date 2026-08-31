@@ -380,7 +380,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
         strokeWidth: 1.5,
       },
-      animated: true,
+      // Never animated: ReactFlow's animated edges run a continuous dash
+      // keyframe that repaints the canvas layer on every frame.
+      animated: false,
     }),
     [isDark],
   );
@@ -580,9 +582,15 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     if (hasLocalChanges.current || isDraggingNode.current) return;
 
     if (canvasLayout) {
+      // Strip persisted `animated: true` (legacy layouts) — animated edges run a
+      // continuous dash keyframe. Normalized before the signature so the echo
+      // check still matches local state; the next save persists the flag off.
+      const persistedEdges = (canvasLayout.edges as Edge[]).map((edge) =>
+        edge.animated ? { ...edge, animated: false } : edge,
+      );
       const incoming = layoutSignature(
         canvasLayout.nodes as Node[],
-        canvasLayout.edges as Edge[],
+        persistedEdges,
       );
       if (incoming !== layoutSignature(nodesRef.current, edgesRef.current)) {
         const nextNodes = dedupeNodes(canvasLayout.nodes as Node[]);
@@ -590,7 +598,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         setNodes(nextNodes);
         setEdges(
           dedupeEdges(
-            (canvasLayout.edges as Edge[])
+            persistedEdges
               .map(unredirectEdge)
               .map(hydrateMountEdge)
               .map(hydrateSubagentEdge)
@@ -1205,9 +1213,17 @@ export function Canvas({
 }: {
   projectId: Id<"projects">;
 }): React.JSX.Element {
+  const { stageId } = useStage();
+
+  // Remount per stage: a stage switch with a debounced save pending would
+  // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
+  // sync) and the next edit would persist it into the new stage.
   return (
     <ReactFlowProvider>
-      <CanvasInner projectId={projectId} />
+      <CanvasInner
+        key={`${projectId}:${stageId ?? "loading"}`}
+        projectId={projectId}
+      />
     </ReactFlowProvider>
   );
 }
