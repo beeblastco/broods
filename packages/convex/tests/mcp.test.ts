@@ -153,6 +153,42 @@ describe("MCP servers are scoped to a stage", () => {
     await expect(seedServer(tt, scope)).resolves.toBeDefined();
   });
 
+  test("soft delete releases the canvas node so a redeploy is visible", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const serverId = await seedServer(tt, scope);
+    const nodeId = `cli-mcp-${SERVER_NAME}`;
+    await tt.run(async (ctx) => {
+      await ctx.db.patch(serverId, { nodeId: nodeId });
+    });
+
+    await tt.mutation(internal.account.mcp.remove, {
+      accountId: scope.accountId,
+      serverId: serverId,
+    });
+
+    // The tombstone must not keep the node id: the row a redeploy creates
+    // claims the same deterministic id, and the canvas resolves by that pair.
+    const deleted = await tt.run(async (ctx) => await ctx.db.get(serverId));
+    expect(deleted?.status).toBe("deleted");
+    expect(deleted?.nodeId).toBeUndefined();
+
+    const recreatedId = await seedServer(tt, scope);
+    await tt.run(async (ctx) => {
+      await ctx.db.patch(recreatedId, { nodeId: nodeId });
+    });
+    const sharingNode = await tt.run(async (ctx) => {
+      return await ctx.db
+        .query("mcp")
+        .withIndex("by_stageId_and_nodeId", (q) =>
+          q.eq("stageId", scope.stageId).eq("nodeId", nodeId),
+        )
+        .collect();
+    });
+    expect(sharingNode).toHaveLength(1);
+    expect(sharingNode[0]?._id).toBe(recreatedId);
+  });
+
   test("update renames within the stage uniqueness guard", async () => {
     const tt = t();
     const scope = await seedScope(tt);

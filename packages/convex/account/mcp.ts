@@ -190,9 +190,12 @@ export const remove = internalMutation({
       throw new Error("MCP server does not belong to the supplied accountId");
     }
 
+    // Release the canvas node: a tombstone that keeps `nodeId` shadows the row
+    // a later deploy creates under the same deterministic node id.
     await ctx.db.patch(normalized, {
       status: "deleted",
       deletedAt: Date.now(),
+      nodeId: undefined,
       updatedAt: Date.now(),
     });
 

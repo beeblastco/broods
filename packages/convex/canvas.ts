@@ -9,6 +9,7 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { stableJson } from "./model/objects";
+import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 
@@ -59,6 +60,7 @@ type MaterializeNodeOptions = {
   resourceId: string;
   changed: boolean;
   now: number;
+  previousData: Record<string, unknown>;
 };
 
 /**
@@ -407,6 +409,7 @@ async function materializeRuntimeNodes(
         resourceId: resourceId,
         changed: changed,
         now: now,
+        previousData: previousData,
       }),
     );
   }
@@ -426,7 +429,7 @@ async function materializeSandboxNode(
 ): Promise<CanvasNode> {
   const { account, projectId, stageId, node, data, name, description } =
     options;
-  const { resourceId, changed, now } = options;
+  const { resourceId, changed, now, previousData } = options;
   const sandboxConfig = asRecord(data.config);
   const hasConfig = Object.keys(sandboxConfig).length > 0;
   const encrypted =
@@ -456,11 +459,9 @@ async function materializeSandboxNode(
           )
           .first();
   if (existing && existing.accountId === account._id) {
-    if (
-      existing.managedBy !== "cli" &&
-      existing.managedBy !== "api" &&
-      changed
-    ) {
+    const codeManaged =
+      existing.managedBy === "cli" || existing.managedBy === "api";
+    if (!codeManaged && changed) {
       await ctx.db.patch(existing._id, {
         projectId: projectId,
         stageId: stageId,
@@ -472,7 +473,12 @@ async function materializeSandboxNode(
       });
     }
 
-    return sandboxLayoutNode(node, data, existing._id);
+    return sandboxLayoutNode(
+      node,
+      data,
+      existing._id,
+      codeManaged ? previousData.config : data.config,
+    );
   }
 
   await assertNoAccountScopedResourceConflict(ctx, {
@@ -492,7 +498,7 @@ async function materializeSandboxNode(
     ...encrypted,
   });
 
-  return sandboxLayoutNode(node, data, createdId);
+  return sandboxLayoutNode(node, data, createdId, data.config);
 }
 
 /**
@@ -647,14 +653,30 @@ function rowBelongsToStage(
 
 /**
  * Canvas layouts are UI state, not a secret store. Sandbox config may include
- * provider credentials/env vars, so persist only display metadata + resource id.
+ * provider credentials/env vars, so persist only display metadata + resource
+ * id — but keep the fields the node actually renders, or the globe and the
+ * `persistent` badge go dark on the first save after a deploy.
+ *
+ * `displayConfig` is the authoritative side: a code-managed row ignores the
+ * incoming node data (the save never patches that row, so an edit there would
+ * paint state the sandbox does not have) and re-derives from what was already
+ * persisted.
  */
 function sandboxLayoutNode(
   node: CanvasNode,
   data: Record<string, unknown>,
   resourceId: Id<"sandboxConfigs">,
+  displayConfig: unknown,
 ): CanvasNode {
   const { config: _config, ...safeData } = data;
+  const display = sandboxDisplayConfig(displayConfig);
 
-  return { ...node, data: { ...safeData, resourceId: resourceId } };
+  return {
+    ...node,
+    data: {
+      ...safeData,
+      resourceId: resourceId,
+      ...(Object.keys(display).length > 0 ? { config: display } : {}),
+    },
+  };
 }

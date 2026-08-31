@@ -284,12 +284,15 @@ export function SandboxResourceDetailsTab({
   setEditName,
   onSaveName,
   onUpdateNodeData,
+  managedByCode = false,
 }: {
   data: BaseNodeData;
   editName: string;
   setEditName: (name: string) => void;
   onSaveName: () => void;
   onUpdateNodeData: UpdateNodeData;
+  /** Code owns this row, so the canvas save discards config edits: show them read-only. */
+  managedByCode?: boolean;
 }): React.JSX.Element {
   const config: Record<string, unknown> = isPlainObject(data.config)
     ? data.config
@@ -322,8 +325,14 @@ export function SandboxResourceDetailsTab({
 
       <div className="flex flex-col gap-3">
         <SectionHeader>Sandbox config</SectionHeader>
+        {managedByCode && (
+          <p className="text-[11px] text-muted-foreground">
+            Defined in code. Edit the sandbox in your broods project and deploy.
+          </p>
+        )}
         <SelectField
           label="Provider"
+          disabled={managedByCode}
           value={
             typeof config.provider === "string" ? config.provider : "sandbox"
           }
@@ -337,6 +346,7 @@ export function SandboxResourceDetailsTab({
         />
         <SelectField
           label="Permission mode"
+          disabled={managedByCode}
           value={
             typeof config.permissionMode === "string"
               ? config.permissionMode
@@ -354,6 +364,7 @@ export function SandboxResourceDetailsTab({
         <ToggleRow
           label="Internet"
           description="Allow public network access from the sandbox."
+          disabled={managedByCode}
           checked={
             network.mode === "allow-all" || network.mode === "restricted"
           }
@@ -375,6 +386,7 @@ export function SandboxResourceDetailsTab({
         <ToggleRow
           label="Persistent"
           description="Reserve a long-lived sandbox per workspace namespace."
+          disabled={managedByCode}
           checked={config.persistent === true}
           onCheckedChange={(persistent) =>
             setConfig({ persistent: persistent ? true : undefined })
@@ -509,11 +521,13 @@ function SelectField({
   value,
   onValueChange,
   options,
+  disabled,
 }: {
   label: string;
   value: string;
   onValueChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -521,13 +535,16 @@ function SelectField({
       <Select
         items={options}
         value={value}
+        disabled={disabled}
         onValueChange={(next) => {
           if (next !== null) {
             onValueChange(next);
           }
         }}
       >
-        <SelectTrigger className="h-8 w-40 cursor-pointer text-xs">
+        <SelectTrigger
+          className={`h-8 w-40 text-xs ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

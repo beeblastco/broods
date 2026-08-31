@@ -15,6 +15,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { isPlainObject } from "./objects";
+import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
 type CanvasCliResource = CliResource & {
   kind: "agent" | "workspace" | "sandbox" | "skill" | "mcp";
@@ -606,7 +607,12 @@ function materializeCanvasNodes(options: {
         resourceId: resourceId,
         mountName: resource.name,
         description: resource.description,
-        config: resource.config,
+        // A sandbox config carries envVars and provider options; the layout is
+        // UI state the dashboard reads back, so only display keys go in.
+        config:
+          resource.kind === "sandbox"
+            ? sandboxDisplayConfig(resource.config)
+            : resource.config,
         managedBy: "cli",
         cliResourceKey: `${resource.kind}:${resource.name}`,
       },
