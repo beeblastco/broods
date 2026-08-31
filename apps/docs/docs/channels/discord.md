@@ -44,7 +44,7 @@ export const myAgent = defineAgent({
 - `allowedUserIds` (optional): Discord user ids allowed to trigger the agent. Everyone, when omitted.
 - `apiUrl` (optional): Discord API base URL. This maps to `DiscordAdapterConfig["apiUrl"]`.
 
-Discord interaction webhooks are verified through the Chat SDK Discord adapter. Slash command interactions route `/new`, `/clear`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input — see [Mentions and the gateway forwarder](#mentions-and-the-gateway-forwarder) for what puts them there.
+Discord interaction webhooks are verified through the Chat SDK Discord adapter. Slash command interactions route `/new`, `/clear`, `/compact`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input — see [Mentions and the gateway forwarder](#mentions-and-the-gateway-forwarder) for what puts them there.
 
 Discord replies are delivered through `@chat-adapter/discord` final-message methods.
 

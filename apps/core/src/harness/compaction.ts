@@ -26,13 +26,19 @@ export interface CompactionInput {
   system: SystemModelMessage[];
   messages: ModelMessage[];
   agentConfig: AgentConfig;
+  // "manual" (the /compact command) compacts regardless of the agent's
+  // compaction config or context size; absent means the automatic threshold path.
+  trigger?: "auto" | "manual";
+  // Extra focus for the summary model, from /compact <instructions>.
+  instructions?: string;
 }
 
 export async function compactSessionContext(
   input: CompactionInput,
 ): Promise<SystemModelMessage | null> {
+  const manual = input.trigger === "manual";
   const compactionConfig = input.agentConfig.session?.compaction;
-  if (compactionConfig?.enabled !== true) {
+  if (!manual && compactionConfig?.enabled !== true) {
     return null;
   }
   if (hasPendingToolApprovalResponse(input.messages)) {
@@ -41,12 +47,17 @@ export async function compactSessionContext(
 
   const messages = stripReasoningFromMessages(input.messages);
   const maxContextLength =
-    compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
-  if (estimateContextLength(input.system, messages) <= maxContextLength) {
+    compactionConfig?.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
+  if (
+    !manual &&
+    estimateContextLength(input.system, messages) <= maxContextLength
+  ) {
     return null;
   }
 
-  const keepLastMessage = messages.at(-1)?.role === "user";
+  // Manual compaction runs between turns, so there is no pending turn to
+  // resume: the whole history folds into the summary.
+  const keepLastMessage = !manual && messages.at(-1)?.role === "user";
   const compactableMessages = keepLastMessage
     ? messages.slice(0, -1)
     : messages;
@@ -62,7 +73,7 @@ export async function compactSessionContext(
   const result = await generateText({
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
-    instructions: DEFAULT_COMPACTION_PROMPT,
+    instructions: compactionPrompt(input.instructions),
     telemetry: {
       functionId: "harness.compaction",
       recordInputs: false,
@@ -105,6 +116,14 @@ export function estimateContextLength(
   // This is a serialized character count, not a word/token count.
   // It is a cheap provider-independent threshold for the MVP compaction trigger.
   return JSON.stringify({ system: system, messages: messages }).length;
+}
+
+function compactionPrompt(instructions?: string): string {
+  const trimmed = instructions?.trim();
+
+  return trimmed
+    ? `${DEFAULT_COMPACTION_PROMPT}\n\nThe user requested this compaction with additional instructions. Follow them when choosing what to preserve and emphasize:\n${trimmed}`
+    : DEFAULT_COMPACTION_PROMPT;
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {

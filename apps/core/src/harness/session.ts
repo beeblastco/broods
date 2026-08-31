@@ -432,6 +432,39 @@ export class Session {
     });
   }
 
+  /**
+   * Compacts the stored conversation now, regardless of the agent's compaction
+   * config or context size. Serves the /compact channel command; the caller
+   * holds the fenced clear lease, so no run or queued ingress can interleave.
+   */
+  async compactConversation(
+    instructions?: string,
+  ): Promise<{ compacted: boolean; compactedMessageCount: number }> {
+    const entries = await this.loadConversationEntries();
+    const activeEntries = projectActiveConversationEntries(entries);
+    const systemContextSnapshot = createSystemContextSnapshot(entries);
+    // Stored media stays as its persisted reference parts: the summarizer only
+    // needs the text around them, not the rehydrated bytes.
+    const messages = projectEntriesToMessages(
+      activeEntries,
+      modelIdentityFromModelConfig(this.agentConfig),
+    );
+    const summary = await compactSessionContext({
+      conversationKey: this.conversationKey,
+      system: systemContextSnapshot.messages,
+      messages: stripEnvelopeFieldsFromMessages(messages),
+      agentConfig: this.agentConfig,
+      trigger: "manual",
+      ...(instructions ? { instructions: instructions } : {}),
+    });
+    if (!summary) {
+      return { compacted: false, compactedMessageCount: 0 };
+    }
+    await this.persistModelMessages([summary]);
+
+    return { compacted: true, compactedMessageCount: messages.length };
+  }
+
   async createEphemeralTurnContext(
     messages: ModelMessage[],
     ephemeralSystem: SystemModelMessage[] = [],

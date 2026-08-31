@@ -1058,6 +1058,17 @@ async function handleChannelRequest(
       agentId: event.agentId,
       eventId: event.eventId,
       text: commandText(outcome.commandToken, extractText(event.content)),
+      // The /compact command acquires the fenced clear lease first, then hands
+      // its generation here so the summary row is an owner-fenced append.
+      compact: (options) =>
+        new Session({
+          eventId: event.eventId,
+          conversationKey: event.conversationKey,
+          accountId: event.accountId,
+          agentId: event.agentId,
+          agentConfig: event.agentConfig ?? {},
+          ownerGeneration: options.ownerGeneration,
+        }).compactConversation(options.instructions),
     });
 
     return;

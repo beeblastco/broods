@@ -17,6 +17,12 @@ export interface CommandContext {
   agentId?: string;
   eventId?: string;
   text?: string;
+  // Harness-injected: compacts the stored conversation under the given fenced
+  // lease. Commands stay channel-agnostic and never import harness modules.
+  compact?: (options: {
+    ownerGeneration: number;
+    instructions?: string;
+  }) => Promise<{ compacted: boolean; compactedMessageCount: number }>;
 }
 
 interface DiscordCommandOption {
@@ -112,6 +118,59 @@ export const commands: CommandHandler[] = [
         }
 
         return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
+      } finally {
+        await runtime.mutate("releaseIngressOwner", {
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          ownerGeneration: ownerGeneration,
+        });
+      }
+    },
+  },
+  {
+    aliases: ["/compact"],
+    description: "Compact conversation context into a summary",
+    discord: {
+      names: ["compact"],
+      description: "Compact conversation context into a summary",
+      options: [
+        {
+          type: 3,
+          name: "instructions",
+          description: "What the summary should focus on",
+          required: false,
+        },
+      ],
+    },
+    execute: async function (ctx) {
+      if (!ctx.accountId || !ctx.agentId || !ctx.eventId || !ctx.compact) {
+        throw new Error("Compact requires account, agent, and event scope");
+      }
+      const instructions = ctx.text
+        ? stripCommandToken(ctx.text, "/compact")
+        : "";
+      const ownerGeneration = await runtime.mutate<number | null>(
+        "acquireIngressClear",
+        {
+          accountId: ctx.accountId,
+          agentId: ctx.agentId,
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          leaseTtlMs: 15 * 60 * 1000,
+        },
+      );
+      if (ownerGeneration === null) {
+        return "Cannot compact while a turn or queued message is active. Try again after it finishes.";
+      }
+      try {
+        const result = await ctx.compact({
+          ownerGeneration: ownerGeneration,
+          ...(instructions ? { instructions: instructions } : {}),
+        });
+
+        return result.compacted
+          ? `Context compacted. ${result.compactedMessageCount} message(s) summarized.`
+          : "Nothing to compact yet.";
       } finally {
         await runtime.mutate("releaseIngressOwner", {
           conversationKey: ctx.conversationKey,

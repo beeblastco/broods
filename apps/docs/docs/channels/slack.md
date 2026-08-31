@@ -50,7 +50,7 @@ Channel tools support image blocks and custom emoji or URL stickers. Event repli
 
 ## Slack App Setup
 
-Point Event Subscriptions and Slash Commands (`/new`, `/clear`, `/help`) at the generated Slack webhook URL.
+Point Event Subscriptions and Slash Commands (`/new`, `/clear`, `/compact`, `/help`) at the generated Slack webhook URL.
 
 Subscribe the bot to these event types:
 
