@@ -561,7 +561,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
   // not the cached `managedBy` on canvas node data which can be stale or missing.
   // Falls back to the cached value while the query loads. Code-managed resources
-  // stay editable but cannot be deleted here.
+  // cannot be deleted here, and a sandbox's config reads as read-only: the
+  // canvas save leaves those rows untouched, so an edit would never persist.
   const resourceId = nodeData?.resourceId as string | undefined;
   const resourceOwnership = useQuery(
     api.canvas.resourceOwnership,
@@ -945,6 +946,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
+                managedByCode={isCodeManaged}
                 onUpdateNodeData={(patch): void =>
                   onUpdateNodeData(node.id, patch)
                 }

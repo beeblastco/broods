@@ -226,14 +226,18 @@ async function activeServerByNode(
   stageId: Id<"stages">,
   nodeId: string,
 ): Promise<Doc<"mcp"> | null> {
-  const server = await ctx.db
+  // More than one row can carry the node id: deleting a server on the canvas
+  // and redeploying leaves a soft-deleted row beside the new one. Pick the
+  // active row rather than whichever the index returns first, or the server
+  // reads as missing for good.
+  const servers = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_nodeId", (q) =>
       q.eq("stageId", stageId).eq("nodeId", nodeId),
     )
-    .first();
+    .collect();
 
-  return server?.status === "active" ? server : null;
+  return servers.find((server) => server.status === "active") ?? null;
 }
 
 /** tools/list through core, unwrapping the { tools } envelope. */
