@@ -152,36 +152,40 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   return "text-emerald-700 dark:text-emerald-400";
 }
 
-// Kind hues are one CVD-validated palette (worst adjacent pair clears the
-// colorblind-separation floor on both surfaces): task violet, cron orange,
-// subtask cyan, model.step blue, tool.call amber, phase teal.
-/** Pill style per span kind so the hierarchy reads at a glance. */
-function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
-  if (kind === "task")
-    return "bg-violet-500/15 text-violet-700 dark:text-violet-300";
-  if (kind === "cron")
-    return "bg-orange-500/15 text-orange-700 dark:text-orange-300";
-  if (kind === "subtask")
-    return "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300";
-  if (kind === "model.step")
-    return "bg-blue-500/15 text-blue-700 dark:text-blue-300";
-  if (kind === "phase")
-    return "bg-teal-500/15 text-teal-700 dark:text-teal-300";
-
-  return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
-}
-
-/** Solid waterfall-bar fill per kind; mirrors the badge hues. Light mode takes
- * deeper steps so bars keep contrast on the white card. */
-function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
-  if (kind === "task") return "bg-violet-500/70";
-  if (kind === "cron") return "bg-orange-600/70 dark:bg-orange-500/70";
-  if (kind === "subtask") return "bg-cyan-500/70 dark:bg-cyan-300/70";
-  if (kind === "model.step") return "bg-blue-700/70 dark:bg-blue-400/70";
-  if (kind === "phase") return "bg-teal-700/70 dark:bg-teal-500/70";
-
-  return "bg-amber-500/70 dark:bg-amber-300/70";
-}
+// One CVD-validated hue per span kind — the worst adjacent pair clears the
+// colorblind-separation floor on both surfaces. Badges keep the shared
+// 700-on-light / 300-on-dark text convention; bars take deeper steps in light
+// mode so they keep contrast on the white card. The Record is exhaustive over
+// the kind union, so a new kind fails the build until it gets a theme entry.
+const KIND_THEME: Record<
+  ObservabilitySpanRow["kind"],
+  { badge: string; bar: string }
+> = {
+  task: {
+    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    bar: "bg-violet-500/70",
+  },
+  cron: {
+    badge: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+    bar: "bg-orange-600/70 dark:bg-orange-500/70",
+  },
+  subtask: {
+    badge: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300",
+    bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
+  },
+  "model.step": {
+    badge: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+    bar: "bg-blue-700/70 dark:bg-blue-400/70",
+  },
+  "tool.call": {
+    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    bar: "bg-amber-500/70 dark:bg-amber-300/70",
+  },
+  phase: {
+    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+    bar: "bg-teal-700/70 dark:bg-teal-500/70",
+  },
+};
 
 interface SpanGroup {
   root: ObservabilitySpanRow;
@@ -320,7 +324,7 @@ function TaskDurationBar({
   scaleMaxMs: number;
 }) {
   const live = isTaskRunning(group.root);
-  const barColor = kindBarColor(group.root.kind);
+  const barColor = KIND_THEME[group.root.kind].bar;
   const widthPct = Math.max(
     1.5,
     Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100),
@@ -408,10 +412,10 @@ function TimelineBar({
               ? "bg-muted-foreground/25"
               : live
                 ? cn(
-                    kindBarColor(span.kind),
+                    KIND_THEME[span.kind].bar,
                     "ring-1 ring-inset ring-foreground/40",
                   )
-                : kindBarColor(span.kind),
+                : KIND_THEME[span.kind].bar,
           )}
         />
       </div>
@@ -652,7 +656,7 @@ function SpanRow({
         <Badge
           className={cn(
             "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-            kindBadge(span.kind),
+            KIND_THEME[span.kind].badge,
           )}
         >
           {span.kind}
