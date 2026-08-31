@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpsServer, type Server } from "node:https";
 import type { SystemModelMessage } from "ai";
 import * as actualAi from "ai";
+import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
@@ -75,6 +76,7 @@ let streamTextScenario:
   | "automatic-approval"
   | "structured-output"
   | "tool-run"
+  | "delivery-tool-then-empty"
   | "multi-step-text" = "empty";
 
 const streamTextMock = mock(
@@ -414,6 +416,47 @@ const streamTextMock = mock(
           return;
         }
 
+        // A gemini-flash-shaped run: the answer left through a delivery tool,
+        // then the model stopped with no final text.
+        if (streamTextScenario === "delivery-tool-then-empty") {
+          const toolCall = {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "send-message",
+            input: { conversationKey: "acct:test:other", message: "hi" },
+          };
+          await options.onToolExecutionStart?.({
+            toolCall: toolCall,
+          });
+          await options.onToolExecutionEnd?.({
+            toolCall: toolCall,
+            toolExecutionMs: 12,
+            toolOutput: {
+              type: "tool-result",
+              output: { type: "text", value: "Message queued." },
+            },
+          });
+          await options.onEnd({
+            response: {
+              messages: [],
+              id: "response-1",
+              modelId: "gemini-custom",
+              timestamp: new Date("2024-01-02T03:04:05.000Z"),
+            },
+            text: "",
+            finishReason: "stop",
+            rawFinishReason: "STOP",
+            usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+            totalUsage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+            steps: [],
+            toolCalls: [toolCall],
+          });
+          controller.enqueue({ type: "finish", finishReason: "stop" });
+          controller.close();
+
+          return;
+        }
+
         if (streamTextScenario === "multi-step-text") {
           await options.onStepEnd?.({
             stepNumber: 0,
@@ -514,7 +557,11 @@ mock.module("@ai-sdk/openai", () => ({
   createOpenAI: createOpenAIMock,
 }));
 
+// Keep the real named exports: the openai-compatible provider packages
+// (togetherai, cerebras, ...) import OpenAICompatibleChatLanguageModel from
+// this module, and a mock that drops them breaks every import of provider.ts.
 mock.module("@ai-sdk/openai-compatible", () => ({
+  ...actualOpenAICompatible,
   createOpenAICompatible: createOpenAICompatibleMock,
 }));
 
@@ -754,6 +801,57 @@ describe("runAgentLoop", () => {
     expect(typeof streamTextMock.mock.calls[0]?.[0].onToolExecutionEnd).toBe(
       "function",
     );
+  });
+
+  it("finishes cleanly when a delivery tool succeeded and the final text is empty", async () => {
+    installHarnessEnv();
+    streamTextScenario = "delivery-tool-then-empty";
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const onFinalText = mock(async () => {});
+    const onErrorText = mock(async () => {});
+
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "tg:7495331456",
+        eventId: "tg:900151472",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        agentSandbox: () => undefined,
+        agentSandboxPermissionMode: () => "ask",
+        persistModelMessages: async () => {},
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "hello" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: {
+          google: {
+            apiKey: "google-key",
+          },
+        },
+        model: {
+          provider: "google",
+          modelId: "gemini-test",
+        },
+      },
+      {
+        onFinalText: onFinalText,
+        onErrorText: onErrorText,
+      },
+    );
+
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(onErrorText).not.toHaveBeenCalled();
+    expect(onFinalText).toHaveBeenCalledWith("");
   });
 
   it("sends configured lifecycle webhooks for agent events", async () => {
