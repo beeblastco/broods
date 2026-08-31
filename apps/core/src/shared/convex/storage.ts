@@ -8,7 +8,7 @@
 
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
-import type { McpRecord } from "../domain/mcp.ts";
+import type { McpOauth, McpRecord } from "../domain/mcp.ts";
 import {
   createAccountId,
   createAccountSecret,
@@ -642,6 +642,7 @@ interface ConvexMcpDoc {
   bundleStorageKey?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauth;
   allowedTools?: string[];
   disabled?: boolean;
   status: "active" | "deleted";
@@ -667,6 +668,7 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
       : {}),
     ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
     ...(doc.headers !== undefined ? { headers: doc.headers } : {}),
+    ...(doc.oauth !== undefined ? { oauth: doc.oauth } : {}),
     ...(doc.allowedTools !== undefined
       ? { allowedTools: doc.allowedTools }
       : {}),

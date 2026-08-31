@@ -135,6 +135,7 @@ async function handleMcpCollectionRoute(
         ? { description: input.description }
         : {}),
       ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
@@ -200,6 +201,7 @@ async function patchMcpRoute(
       ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
       : {}),
     ...(input.headers !== undefined ? { headers: input.headers } : {}),
+    ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
     ...(input.allowedTools !== undefined
       ? { allowedTools: input.allowedTools }
       : {}),
@@ -286,6 +288,8 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
     ...(record.url !== undefined ? { url: record.url } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
+    // Safe to echo like headers: the secret fields hold ${NAME} refs.
+    ...(record.oauth !== undefined ? { oauth: record.oauth } : {}),
     ...(record.allowedTools !== undefined
       ? { allowedTools: record.allowedTools }
       : {}),

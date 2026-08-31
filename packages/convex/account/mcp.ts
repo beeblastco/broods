@@ -9,6 +9,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import type { McpOauth } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields } from "../schema";
 
@@ -107,6 +108,7 @@ export const create = internalMutation({
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
+    oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     nodeId: v.optional(v.string()),
@@ -153,6 +155,7 @@ export const create = internalMutation({
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
       headers: args.headers,
+      oauth: args.oauth,
       allowedTools: args.allowedTools,
       disabled: args.disabled,
       nodeId: args.nodeId,
@@ -204,6 +207,7 @@ export const update = internalMutation({
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
+    oauth: mcpFields.oauth,
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     sourceCode: v.optional(v.string()),
@@ -221,6 +225,14 @@ export const update = internalMutation({
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
     }
+    // The normalizer only sees one body, so a patch that adds oauth to a row
+    // that already is (or becomes) hosted is caught against the stored doc.
+    if (
+      args.oauth !== undefined &&
+      (args.transport ?? doc.transport) === "hosted"
+    ) {
+      throw new Error("oauth applies to external (url) servers, not hosted");
+    }
 
     await ctx.db.patch(normalized, updatePatch(args, doc));
 
@@ -231,7 +243,7 @@ export const update = internalMutation({
 /**
  * The fields an update writes. Provided args win; a transport switch clears
  * the other side's connection fields so a hosted row never carries a stale
- * url and vice versa; a bundle change that brings no source (a CLI sync over
+ * url or oauth and vice versa; a bundle change that brings no source (a CLI sync over
  * a dashboard-authored row) clears the stored source rather than letting it
  * drift from the running bundle.
  */
@@ -244,6 +256,7 @@ function updatePatch(
     bundleStorageKey?: string;
     sha256?: string;
     headers?: Record<string, string>;
+    oauth?: McpOauth;
     allowedTools?: string[];
     disabled?: boolean;
     sourceCode?: string;
@@ -262,12 +275,15 @@ function updatePatch(
       : {}),
     ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
     ...(args.headers !== undefined ? { headers: args.headers } : {}),
+    ...(args.oauth !== undefined ? { oauth: args.oauth } : {}),
     ...(args.allowedTools !== undefined
       ? { allowedTools: args.allowedTools }
       : {}),
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
-    ...(args.transport === "hosted" ? { url: undefined } : {}),
+    ...(args.transport === "hosted"
+      ? { url: undefined, oauth: undefined }
+      : {}),
     ...(args.transport === "http"
       ? {
           bundleStorageKey: undefined,

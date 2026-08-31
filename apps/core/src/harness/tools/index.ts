@@ -447,7 +447,11 @@ async function registerMcpTools(
           );
         }
         if (record.disabled) return null;
-        const connection = mcpConnection(record, serverConfig.headers);
+        const connection = mcpConnection(
+          record,
+          serverConfig.headers,
+          serverConfig.oauth,
+        );
         // An unreachable server degrades to zero tools for this run instead
         // of killing every agent run that references it; config errors above
         // (unknown id, unresolved header) still throw.

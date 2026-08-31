@@ -310,6 +310,83 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("headers values must be single-line");
   });
 
+  test("accepts oauth whose secret fields are env refs", async () => {
+    const input = await normalizeMcpInput(
+      {
+        name: "gmail",
+        url: SERVER_URL,
+        oauth: {
+          clientId: "client-1.apps.googleusercontent.com",
+          clientSecret: "${GMAIL_CLIENT_SECRET}",
+          refreshToken: "${GMAIL_REFRESH_TOKEN}",
+          tokenUrl: "https://oauth2.googleapis.com/token",
+        },
+      },
+      { requireConnection: true },
+    );
+    expect(input.oauth).toEqual({
+      clientId: "client-1.apps.googleusercontent.com",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    });
+  });
+
+  test("rejects inline secrets in oauth fields", async () => {
+    for (const field of ["clientSecret", "refreshToken"]) {
+      await expect(
+        normalizeMcpInput(
+          {
+            name: "gmail",
+            url: SERVER_URL,
+            oauth: {
+              clientId: "client-1",
+              clientSecret: "${GMAIL_CLIENT_SECRET}",
+              refreshToken: "${GMAIL_REFRESH_TOKEN}",
+              [field]: "raw-secret-value",
+            },
+          },
+          { requireConnection: true },
+        ),
+      ).rejects.toThrow(`oauth.${field} must reference an account env var`);
+    }
+  });
+
+  test("rejects oauth next to an explicit Authorization header", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "gmail",
+          url: SERVER_URL,
+          headers: { authorization: "Bearer ${TOKEN}" },
+          oauth: {
+            clientId: "client-1",
+            clientSecret: "${GMAIL_CLIENT_SECRET}",
+            refreshToken: "${GMAIL_REFRESH_TOKEN}",
+          },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("oauth mints the Authorization header itself");
+  });
+
+  test("rejects oauth on a hosted server", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "hosted",
+          bundle: "export default () => new Response()",
+          oauth: {
+            clientId: "client-1",
+            clientSecret: "${GMAIL_CLIENT_SECRET}",
+            refreshToken: "${GMAIL_REFRESH_TOKEN}",
+          },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("oauth applies to external (url) servers");
+  });
+
   test("a patch may carry any subset", async () => {
     const input = await normalizeMcpInput(
       { disabled: true },

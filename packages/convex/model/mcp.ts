@@ -6,7 +6,8 @@
  * always travels with the bundle. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
- * instead of an inline secret.
+ * instead of an inline secret. `oauth` follows the same rule: clientSecret
+ * and refreshToken must be ${NAME} refs, so the row never holds a secret.
  */
 
 import { sha256Hex } from "./accountSecrets";
@@ -54,6 +55,20 @@ const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type McpTransport = "http" | "hosted";
 
+/**
+ * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
+ * at connect time and sends `Authorization: Bearer <token>`, so a server
+ * whose tokens expire (Google's Workspace MCP endpoints) still works where a
+ * static header cannot. Secret fields hold ${NAME} refs on the row.
+ */
+export interface McpOauth {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  /** Token endpoint; core defaults to https://oauth2.googleapis.com/token. */
+  tokenUrl?: string;
+}
+
 export interface McpInput {
   name?: string;
   description?: string;
@@ -69,6 +84,7 @@ export interface McpInput {
   bundleStorageId?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauth;
   allowedTools?: string[];
   disabled?: boolean;
 }
@@ -111,6 +127,20 @@ export async function normalizeMcpInput(
   }
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
+  }
+  if (record.oauth !== undefined && record.oauth !== null) {
+    input.oauth = normalizeOauth(record.oauth);
+    if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
+      throw new Error("oauth applies to external (url) servers, not hosted");
+    }
+    const authorization = Object.keys(input.headers ?? {}).find(
+      (name) => name.toLowerCase() === "authorization",
+    );
+    if (authorization !== undefined) {
+      throw new Error(
+        `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
+      );
+    }
   }
   if (record.allowedTools !== undefined && record.allowedTools !== null) {
     input.allowedTools = normalizeAllowedTools(record.allowedTools);
@@ -269,6 +299,51 @@ function normalizeName(value: unknown): string {
   }
 
   return value;
+}
+
+/**
+ * clientId may be inline (it is not a secret); clientSecret and refreshToken
+ * must be ${NAME} refs, exactly like credential-bearing headers, so a token
+ * never lands on the row or in a public projection.
+ */
+function normalizeOauth(value: unknown): McpOauth {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      "oauth must be an object with clientId, clientSecret and refreshToken",
+    );
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of ["clientId", "clientSecret", "refreshToken"] as const) {
+    const fieldValue = record[field];
+    if (
+      typeof fieldValue !== "string" ||
+      fieldValue.length === 0 ||
+      fieldValue.length > MAX_HEADER_VALUE_LENGTH ||
+      /[\r\n]/.test(fieldValue)
+    ) {
+      throw new Error(
+        `oauth.${field} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
+      );
+    }
+  }
+  for (const field of ["clientSecret", "refreshToken"] as const) {
+    if (!ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(record[field] as string)) {
+      throw new Error(
+        `oauth.${field} must reference an account env var like \${NAME}, not an inline secret`,
+      );
+    }
+  }
+  const tokenUrl =
+    record.tokenUrl === undefined || record.tokenUrl === null
+      ? undefined
+      : normalizeUrl(record.tokenUrl);
+
+  return {
+    clientId: record.clientId as string,
+    clientSecret: record.clientSecret as string,
+    refreshToken: record.refreshToken as string,
+    ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
+  };
 }
 
 function normalizeUrl(value: unknown): string {

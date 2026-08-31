@@ -586,6 +586,23 @@ export const search = defineMcp({
 });
 ```
 
+A server that only accepts expiring OAuth access tokens (Google's Workspace MCP endpoints) registers `oauth` instead of an Authorization header — the runtime mints, caches and refreshes access tokens itself:
+
+```ts
+import { defineMcp, env } from "broods";
+
+export const gmail = defineMcp({
+  name: "gmail",
+  url: "https://gmailmcp.googleapis.com/mcp/v1",
+  oauth: {
+    clientId: "1234.apps.googleusercontent.com",
+    clientSecret: env("GMAIL_CLIENT_SECRET"),
+    refreshToken: env("GMAIL_REFRESH_TOKEN"),
+    // tokenUrl defaults to https://oauth2.googleapis.com/token
+  },
+});
+```
+
 Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file:
 
 ```ts
