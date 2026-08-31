@@ -24,7 +24,7 @@
     "@docusaurus/tsconfig": "^3.10.2",
     "@docusaurus/types": "3.10.2",
     "@types/node": "^26.2.0",
-    "webpack": "5.109.2"
+    "webpack": "5.110.1"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"
