@@ -13,7 +13,7 @@ import {
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
-  resolveAnthropicOrVercelAuth,
+  resolveAnthropicOrVercelAuthEnv,
 } from "../provider.ts";
 
 export const DEEPAGENTS_HARNESS_VERSION = VERSION;
@@ -32,7 +32,7 @@ export function createConfiguredDeepAgentsAdapter(
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createDeepAgents({
-    auth: resolveAnthropicOrVercelAuth(providerName, provider),
+    auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
     model: model,
     recursionLimit: agentConfig.agent?.maxTurn,
     startupTimeoutMs: harness.startupTimeoutMs,

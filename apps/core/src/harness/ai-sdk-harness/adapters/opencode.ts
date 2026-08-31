@@ -13,7 +13,9 @@ import {
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
-  resolveHarnessProviderBaseUrl,
+  resolveAnthropicAuthEnv,
+  resolveGatewayAuthEnv,
+  resolveOpenAiAuthEnv,
 } from "../provider.ts";
 
 export const OPENCODE_HARNESS_VERSION = VERSION;
@@ -25,43 +27,23 @@ export function createConfiguredOpenCodeAdapter(
   const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  const baseUrl = resolveHarnessProviderBaseUrl(provider);
+  // `custom` is absent on purpose. OpenCode routes credential discovery through
+  // its own provider name, and only `anthropic`, `openai`, and the gateway
+  // resolve to a set of environment variables it reads. A custom endpoint label
+  // resolves to Anthropic, which would drop the OpenAI-compatible key silently,
+  // so refuse the combination instead of starting a session that cannot
+  // authenticate.
   const auth =
-    providerName === "custom"
-      ? {
-          openaiCompatible: {
-            apiKey: provider.apiKey!,
-            baseUrl: baseUrl,
-            name: provider.name ?? "custom",
-          },
-        }
+    providerName === "anthropic"
+      ? resolveAnthropicAuthEnv(provider)
       : providerName === "openai"
-        ? {
-            openai: {
-              apiKey: provider.apiKey!,
-              ...(baseUrl ? { baseUrl: baseUrl } : {}),
-              organization: provider.organization,
-              project: provider.project,
-            },
-          }
-        : providerName === "anthropic"
-          ? {
-              anthropic: {
-                apiKey: provider.apiKey!,
-                ...(baseUrl ? { baseUrl: baseUrl } : {}),
-              },
-            }
-          : providerName === "vercel"
-            ? {
-                gateway: {
-                  apiKey: provider.apiKey!,
-                  ...(baseUrl ? { baseUrl: baseUrl } : {}),
-                },
-              }
-            : undefined;
+        ? resolveOpenAiAuthEnv(provider)
+        : providerName === "vercel"
+          ? resolveGatewayAuthEnv(provider)
+          : undefined;
   if (!auth) {
     throw new Error(
-      "config.harness.type opencode requires the anthropic, custom, vercel, or openai model provider",
+      "config.harness.type opencode requires the anthropic, openai, or vercel model provider",
     );
   }
   const reasoning = agentConfig.model?.reasoning;
@@ -69,8 +51,7 @@ export function createConfiguredOpenCodeAdapter(
   return createOpenCode({
     auth: auth,
     model: model,
-    provider:
-      providerName === "custom" ? (provider.name ?? "custom") : providerName,
+    provider: providerName,
     reasoningVariant: reasoning && reasoning !== "none" ? reasoning : undefined,
     startupTimeoutMs: harness.startupTimeoutMs,
   });

@@ -116,7 +116,7 @@ describe("createConfiguredHarnessAgent", () => {
     });
   });
 
-  it("maps custom models, tool filters, and diagnostics into OpenCode", async () => {
+  it("maps tool filters and diagnostics into OpenCode", async () => {
     const result = await runProbe(`
       const runtime = module.createConfiguredHarnessAgent({
         agentConfig: {
@@ -126,11 +126,10 @@ describe("createConfiguredHarnessAgent", () => {
             debug: { enabled: true, level: "trace", subsystems: ["bridge"] },
           },
           denyTools: ["bash"],
-          model: { provider: "custom", modelId: "Qwen3.6-27B", reasoning: "high" },
+          model: { provider: "openai", modelId: "gpt-5.1", reasoning: "high" },
           provider: {
-            custom: {
+            openai: {
               apiKey: "test-key",
-              base_url: "https://llm.example.test/v1/",
             },
           },
         },
@@ -165,6 +164,38 @@ describe("createConfiguredHarnessAgent", () => {
     expect(
       JSON.stringify(JSON.parse(result).builtinToolFiltering),
     ).not.toContain("bash");
+  });
+
+  // OpenCode derives credential discovery from its own provider name, and a
+  // custom endpoint label resolves to Anthropic, so the OpenAI-compatible key
+  // would never reach the sandbox.
+  it("rejects unsupported providers for OpenCode", async () => {
+    const result = await runProbe(`
+      try {
+        module.createConfiguredHarnessAgent({
+          agentConfig: {
+            harness: { type: "opencode" },
+            model: { provider: "custom", modelId: "Qwen3.6-27B" },
+            provider: {
+              custom: {
+                apiKey: "test-key",
+                base_url: "https://llm.example.test/v1/",
+              },
+            },
+          },
+          compute: ${JSON.stringify(COMPUTE)},
+          instructions: "",
+          reservationKey: "acct:agent:conversation",
+          tools: {},
+        });
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : String(error));
+      }
+    `);
+
+    expect(result).toBe(
+      "config.harness.type opencode requires the anthropic, openai, or vercel model provider",
+    );
   });
 
   it("rejects unsupported providers for Deep Agents", async () => {
