@@ -61,7 +61,7 @@
     "@chat-adapter/telegram": "^4.38.1",
     "@convex-dev/stripe": "^0.1.6",
     "@convex-dev/workos-authkit": "^0.2.7",
-    "@daytona/sdk": "^0.205.0",
+    "@daytona/sdk": "^0.207.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@mv37/workdir": "^0.3.2",
     "@open-policy-agent/opa": "^2.0.0",
