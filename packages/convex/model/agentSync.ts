@@ -27,6 +27,7 @@ import {
   saveAgentRuntimeSecrets,
 } from "./agentRuntimeSecrets";
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
+import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { getActiveOrgForUser } from "./ownership/org";
 
@@ -368,10 +369,12 @@ export async function backSyncCanvasFromAgentRow(
     )
     .unique();
 
+  // The origin is a placeholder: the tidy pass below assigns the real spot from
+  // the graph, so an API-created agent never lands on top of an existing card.
   const nextNode = {
     id: String(now),
     type: "agent" as const,
-    position: { x: 120 + Math.random() * 200, y: 120 + Math.random() * 200 },
+    position: { x: 0, y: 0 },
     data: {
       label: agent.name,
       status: "idle" as const,
@@ -382,7 +385,7 @@ export async function backSyncCanvasFromAgentRow(
 
   if (layout) {
     await ctx.db.patch(layout._id, {
-      nodes: [...layout.nodes, nextNode],
+      nodes: applyTidyLayout([...layout.nodes, nextNode], layout.edges),
       updatedAt: now,
     });
   } else {
@@ -390,7 +393,7 @@ export async function backSyncCanvasFromAgentRow(
       authId: user.authId,
       projectId: project._id,
       stageId: stage._id,
-      nodes: [nextNode],
+      nodes: applyTidyLayout([nextNode], []),
       edges: [],
       updatedAt: now,
     });

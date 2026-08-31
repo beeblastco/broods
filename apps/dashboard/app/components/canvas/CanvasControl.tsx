@@ -3,8 +3,12 @@
 import { Button } from "@/app/components/ui/button";
 import { useReactFlow } from "@xyflow/react";
 
-/** Zoom and fit-view controls for the canvas. */
-export function CanvasControls(): React.JSX.Element {
+/** Zoom, fit-view and tidy controls for the canvas. */
+export function CanvasControls({
+  onTidy,
+}: {
+  onTidy: () => void;
+}): React.JSX.Element {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   return (
@@ -56,6 +60,52 @@ export function CanvasControls(): React.JSX.Element {
             strokeWidth="1.25"
             strokeLinecap="round"
             strokeLinejoin="round"
+          />
+        </svg>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="size-7"
+        aria-label="Tidy layout"
+        onClick={onTidy}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect
+            x="1.5"
+            y="1.5"
+            width="4.5"
+            height="4.5"
+            rx="1"
+            stroke="currentColor"
+            strokeWidth="1.25"
+          />
+          <rect
+            x="8"
+            y="1.5"
+            width="4.5"
+            height="4.5"
+            rx="1"
+            stroke="currentColor"
+            strokeWidth="1.25"
+          />
+          <rect
+            x="1.5"
+            y="8"
+            width="4.5"
+            height="4.5"
+            rx="1"
+            stroke="currentColor"
+            strokeWidth="1.25"
+          />
+          <rect
+            x="8"
+            y="8"
+            width="4.5"
+            height="4.5"
+            rx="1"
+            stroke="currentColor"
+            strokeWidth="1.25"
           />
         </svg>
       </Button>
