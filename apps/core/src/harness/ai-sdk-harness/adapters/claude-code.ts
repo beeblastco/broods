@@ -13,7 +13,7 @@ import {
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
-  resolveAnthropicOrVercelAuth,
+  resolveAnthropicOrVercelAuthEnv,
 } from "../provider.ts";
 
 export const CLAUDE_CODE_HARNESS_VERSION = VERSION;
@@ -38,7 +38,7 @@ export function createConfiguredClaudeCodeAdapter(
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createClaudeCode({
-    auth: resolveAnthropicOrVercelAuth(providerName, provider),
+    auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
     maxTurns: agentConfig.agent?.maxTurn,
     model: model,
     startupTimeoutMs: harness.startupTimeoutMs,

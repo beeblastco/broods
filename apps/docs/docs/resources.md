@@ -235,7 +235,7 @@ the turn has started is retained by the durable ingress coordinator and runs as
 the next follow-up. User stop requests abort the active harness turn.
 
 `codex` supports the `custom`, `openai`, and `vercel` model providers;
-`opencode` supports `anthropic`, `custom`, `vercel`, and `openai`;
+`opencode` supports `anthropic`, `openai`, and `vercel`;
 `claude-code` and `deepagents` support `anthropic` and `vercel`; Pi uses its
 model catalog with credentials derived from the configured provider. Codex
 requires `permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA
