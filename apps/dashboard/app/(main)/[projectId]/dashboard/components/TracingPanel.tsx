@@ -914,13 +914,8 @@ export function TracingPanel({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Each task bar is scaled by total duration so longer tasks read as longer
-        bars. Expand a task for the per-step waterfall (positioned in time);
-        model step bars show time to first token (lighter) then streaming.
-        Streaming counts only model token generation. Tool execution is shown
-        separately as &ldquo;tool wait&rdquo; and as the child tool spans.
-        Expand a span, then open a section to inspect its input, reasoning, or
-        output.
+        Task bars scaled by duration. Expand a task for its step waterfall, then
+        a span to inspect input, reasoning, and output.
       </p>
 
       <ObservabilityToolbar
