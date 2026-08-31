@@ -765,13 +765,20 @@ async function handleAsyncWorkerRequest(
           await settleCronRun(event.accountId, event.cronRun, {
             result: response,
           });
+          // An empty final text means the run already delivered its output
+          // through a channel tool; pushing it would post a blank message.
+          const responseText =
+            typeof response === "string"
+              ? response
+              : JSON.stringify(response, null, 2);
+          if (responseText.trim() === "") {
+            return;
+          }
           await pushReplyToChannel(
             session!,
             event,
             formatChannelFinalText(
-              typeof response === "string"
-                ? response
-                : JSON.stringify(response, null, 2),
+              responseText,
               traceId,
               event,
               event.replyTarget?.channelName,
@@ -1225,10 +1232,16 @@ async function handleChannelRequest(
                 terminal = "completed";
                 finalResult = response;
                 if (streamed && typeof response === "string") return;
-                const formatted = formatChannelFinalText(
+                // An empty final text means the run already delivered its
+                // output through a channel tool; sending it would post a
+                // blank message.
+                const responseText =
                   typeof response === "string"
                     ? response
-                    : JSON.stringify(response, null, 2),
+                    : JSON.stringify(response, null, 2);
+                if (responseText.trim() === "") return;
+                const formatted = formatChannelFinalText(
+                  responseText,
                   traceId,
                   event,
                   event.channelName,

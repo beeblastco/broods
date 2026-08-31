@@ -106,6 +106,17 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+// Tools whose successful call already delivered the run's output to a channel
+// or another session. Some models (gemini flash) legitimately stop with no
+// final text after one of these, so an empty response then is a finished turn,
+// not a failure.
+const DELIVERY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "send-message",
+  "send-files",
+  "send-images",
+  "send-reactions",
+  "send-sticker",
+]);
 const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 /** Thrown when an owner is stopped; callers match on it to skip result delivery. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
@@ -1574,7 +1585,22 @@ export async function runAgentLoop(
             : response.messages,
         );
 
-        if (approvals.length === 0 && !modelOutput && !finalText) {
+        // An empty final text is only a failure when nothing left the run.
+        // A model that stopped cleanly after a successful delivery tool call
+        // already answered through that tool.
+        const deliveredByTool =
+          finishReason === "stop" &&
+          tools.toolCalls.some(
+            (toolCall) =>
+              DELIVERY_TOOL_NAMES.has(toolCall.toolName) &&
+              toolCall.success === true,
+          );
+        if (
+          approvals.length === 0 &&
+          !modelOutput &&
+          !finalText &&
+          !deliveredByTool
+        ) {
           if (didFail) {
             return;
           }
