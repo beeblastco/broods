@@ -221,7 +221,7 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands** — command-capable channels (Slack, Discord, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
+- **Bot commands** — command-capable channels (Slack, Discord, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, `/compact [instructions]` summarizes it into a compact summary, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
 - **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
 - **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.

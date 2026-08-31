@@ -209,3 +209,4 @@ Session history is managed before each model turn:
 - Pruning is enabled by default unless `session.pruning.enabled` is false. It removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
 - Compaction is disabled by default unless `session.compaction.enabled` is true. When enabled, it uses the selected agent model to summarize older history once the serialized context exceeds `session.compaction.maxContextLength`.
 - Compaction persists a system summary, keeps the latest user message active, and includes prior compaction summaries when compacting again.
+- On command-capable channels, `/compact [instructions]` compacts on demand between turns, regardless of the `session.compaction` config or context size. The optional instructions steer what the summary preserves.

@@ -426,6 +426,12 @@ is to reject `/clear` with a retry message while a turn or queued ingress exists
 then clear only while holding the conversation lease. It must never delete
 history concurrently with an active turn.
 
+`/compact [instructions]` follows the same lease rule: it is rejected with a
+retry message while a turn or queued ingress exists, and only summarizes while
+holding the conversation lease. It compacts the stored history into a summary
+regardless of the agent's `session.compaction` config, and the optional
+instructions steer what the summary preserves.
+
 ### Authorization and tenant isolation
 
 Ingress authorization completes before envelope creation:

@@ -1058,6 +1058,7 @@ async function handleChannelRequest(
       agentId: event.agentId,
       eventId: event.eventId,
       text: commandText(outcome.commandToken, extractText(event.content)),
+      compact: (options) => compactChannelConversation(event, options),
     });
 
     return;
@@ -1338,6 +1339,25 @@ function commandText(commandToken: string, content: string): string {
   return trimmed.toLowerCase().startsWith(commandToken.toLowerCase())
     ? trimmed
     : `${commandToken} ${trimmed}`.trim();
+}
+
+// Serves the /compact command: it acquires the fenced clear lease first, then
+// hands its generation here so the summary row is an owner-fenced append. The
+// Session is context-only; no model turn runs.
+function compactChannelConversation(
+  event: ChannelInboundEvent,
+  options: { ownerGeneration: number; instructions: string },
+): Promise<number> {
+  const session = new Session({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig ?? {},
+    ownerGeneration: options.ownerGeneration,
+  });
+
+  return session.compactConversation(options.instructions);
 }
 
 async function handleChannelContext(event: ChannelContextEvent): Promise<void> {

@@ -46,6 +46,7 @@ import {
 import {
   compactSessionContext,
   isCompactionSummaryMessage,
+  summarizeConversation,
 } from "./compaction.ts";
 import {
   applySteering,
@@ -58,7 +59,11 @@ import {
   modelIdentityFromModelConfig,
   withoutStoredItemId,
 } from "./provider.ts";
-import { pruneSessionMessages, retainsReasoningParts } from "./pruning.ts";
+import {
+  hasPendingToolApprovalResponse,
+  pruneSessionMessages,
+  retainsReasoningParts,
+} from "./pruning.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -430,6 +435,43 @@ export class Session {
       conversationKey: this.conversationKey,
       ...state,
     });
+  }
+
+  /**
+   * Compacts the stored conversation now, regardless of the agent's compaction
+   * config or context size. Serves the /compact channel command; the caller
+   * holds the fenced clear lease, so no run or queued ingress can interleave
+   * and the whole history folds into the summary. Returns how many messages
+   * were summarized; 0 means there was nothing to compact.
+   */
+  async compactConversation(instructions: string): Promise<number> {
+    const entries = await this.loadConversationEntries();
+    const activeEntries = projectActiveConversationEntries(entries);
+    const systemContextSnapshot = createSystemContextSnapshot(entries);
+    // Stored media stays as its persisted reference parts: the summarizer only
+    // needs the text around them, not the rehydrated bytes.
+    const messages = projectEntriesToMessages(
+      activeEntries,
+      modelIdentityFromModelConfig(this.agentConfig),
+    );
+    if (hasPendingToolApprovalResponse(messages)) {
+      return 0;
+    }
+    const summary = await summarizeConversation({
+      conversationKey: this.conversationKey,
+      priorSummaries: systemContextSnapshot.messages.filter(
+        isCompactionSummaryMessage,
+      ),
+      messages: stripEnvelopeFieldsFromMessages(messages),
+      agentConfig: this.agentConfig,
+      instructions: instructions,
+    });
+    if (!summary) {
+      return 0;
+    }
+    await this.persistModelMessages([summary]);
+
+    return messages.length;
   }
 
   async createEphemeralTurnContext(

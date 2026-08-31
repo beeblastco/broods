@@ -28,6 +28,19 @@ export interface CompactionInput {
   agentConfig: AgentConfig;
 }
 
+export interface SummarizeConversationInput {
+  conversationKey: string;
+  priorSummaries: SystemModelMessage[];
+  messages: ModelMessage[];
+  agentConfig: AgentConfig;
+  // Extra focus for the summary model, from /compact <instructions>.
+  instructions?: string;
+}
+
+/**
+ * The automatic compaction gate: compacts only when the agent's compaction
+ * config enables it and the serialized context exceeds the configured max.
+ */
 export async function compactSessionContext(
   input: CompactionInput,
 ): Promise<SystemModelMessage | null> {
@@ -46,12 +59,27 @@ export async function compactSessionContext(
     return null;
   }
 
+  // The active turn resumes after compaction, so a pending user message stays
+  // out of the summary.
   const keepLastMessage = messages.at(-1)?.role === "user";
-  const compactableMessages = keepLastMessage
-    ? messages.slice(0, -1)
-    : messages;
-  const priorSummaries = input.system.filter(isCompactionSummaryMessage);
-  const compactableContext = [...priorSummaries, ...compactableMessages];
+
+  return summarizeConversation({
+    conversationKey: input.conversationKey,
+    priorSummaries: input.system.filter(isCompactionSummaryMessage),
+    messages: keepLastMessage ? messages.slice(0, -1) : messages,
+    agentConfig: input.agentConfig,
+  });
+}
+
+/**
+ * Unconditional summary generation. Callers decide when to compact and which
+ * messages fold in; this produces the summary row from them.
+ */
+export async function summarizeConversation(
+  input: SummarizeConversationInput,
+): Promise<SystemModelMessage | null> {
+  const messages = stripReasoningFromMessages(input.messages);
+  const compactableContext = [...input.priorSummaries, ...messages];
   if (compactableContext.length === 0) {
     return null;
   }
@@ -71,7 +99,10 @@ export async function compactSessionContext(
     messages: [
       {
         role: "user",
-        content: formatMessagesForCompaction(compactableContext),
+        content: formatCompactionRequest(
+          compactableContext,
+          input.instructions,
+        ),
       },
     ],
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
@@ -80,9 +111,8 @@ export async function compactSessionContext(
   const summary = createCompactionSummaryMessage(result.text);
   logInfo("Session context compacted", {
     conversationKey: input.conversationKey,
-    messageCount: messages.length,
+    messageCount: input.messages.length,
     compactedMessageCount: compactableContext.length,
-    maxContextLength: maxContextLength,
     durationMs: Date.now() - startedAt,
   });
 
@@ -112,6 +142,20 @@ function createCompactionSummaryMessage(summary: string): SystemModelMessage {
     role: "system",
     content: `${COMPACTION_MARKER}\nThe following is a compacted summary of earlier conversation history. Treat it as context for this conversation and prefer newer explicit messages when they conflict.\n\n${summary.trim()}\n${COMPACTION_MARKER_END}`,
   };
+}
+
+// Per-call data rides the user message; the system prompt stays the static
+// generated DEFAULT_COMPACTION_PROMPT so its prefix stays cacheable.
+function formatCompactionRequest(
+  messages: ModelMessage[],
+  instructions?: string,
+): string {
+  const formatted = formatMessagesForCompaction(messages);
+  const trimmed = instructions?.trim();
+
+  return trimmed
+    ? `${formatted}\n\nThe user requested this compaction with instructions. Follow them when choosing what to preserve and emphasize:\n${trimmed}`
+    : formatted;
 }
 
 function formatMessagesForCompaction(messages: ModelMessage[]): string {

@@ -727,6 +727,37 @@ describe("session compaction", () => {
     expect(generateTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("summarizes on demand regardless of config, folding instructions in", async () => {
+    const { summarizeConversation, isCompactionSummaryMessage } =
+      await import("../src/harness/compaction.ts");
+
+    const result = await summarizeConversation({
+      conversationKey: "conversation",
+      priorSummaries: [],
+      messages: [
+        { role: "assistant", content: "assistant content" },
+        { role: "user", content: "trailing user message" },
+      ],
+      agentConfig: {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google" as const, modelId: "gemini-test" },
+      },
+      instructions: "keep the deploy decisions",
+    });
+
+    expect(result).toBeDefined();
+    expect(isCompactionSummaryMessage(result!)).toBe(true);
+    const options = generateTextMock.mock.calls[0]?.[0] as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    // The manual path passes every message, trailing user message included,
+    // and the instructions ride the per-call user message.
+    expect(options?.messages[0]?.content).toContain("trailing user message");
+    expect(options?.messages[0]?.content).toContain(
+      "keep the deploy decisions",
+    );
+  });
+
   it("includes previous compaction summaries when compacting again", async () => {
     const { compactSessionContext } =
       await import("../src/harness/compaction.ts");
