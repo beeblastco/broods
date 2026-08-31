@@ -13,20 +13,24 @@ import {
   parseCommand,
   resolveChannelCommand,
   resolveDiscordCommand,
+  type CommandContext,
 } from "../src/shared/commands.ts";
 
 const originalMutation = runtime.mutate;
 
+let mutationMock = mock((_name: string) => Promise.resolve<unknown>(null));
+
 beforeEach(() => {
-  runtime.mutate = mock((name: string) =>
-    Promise.resolve(
+  mutationMock = mock((name: string) =>
+    Promise.resolve<unknown>(
       name === "acquireIngressClear"
         ? 1
         : name === "clearFencedConversation"
           ? { deleted: 0, hasMore: false }
           : null,
     ),
-  ) as never;
+  );
+  runtime.mutate = mutationMock as never;
 });
 
 afterEach(() => {
@@ -46,27 +50,15 @@ function createMockChannelActions(
 }
 
 function createCommandContext(
-  overrides: Partial<{
-    conversationKey: string;
-    channel: ChannelActions;
-    accountId: string;
-    agentId: string;
-    eventId: string;
-    text: string;
-    compact: (options: {
-      ownerGeneration: number;
-      instructions?: string;
-    }) => Promise<{ compacted: boolean; compactedMessageCount: number }>;
-  }> = {},
-) {
+  overrides: Partial<CommandContext> = {},
+): CommandContext {
   return {
-    conversationKey: overrides.conversationKey ?? "test-convo",
-    channel: overrides.channel ?? createMockChannelActions(),
-    accountId: overrides.accountId ?? "account-1",
-    agentId: overrides.agentId ?? "agent-1",
-    eventId: overrides.eventId ?? "event-1",
-    text: overrides.text,
-    compact: overrides.compact,
+    conversationKey: "test-convo",
+    channel: createMockChannelActions(),
+    accountId: "account-1",
+    agentId: "agent-1",
+    eventId: "event-1",
+    ...overrides,
   };
 }
 
@@ -435,15 +427,8 @@ describe("getDiscordCommandRegistrations", () => {
 
 describe("compactConversation via /compact command", () => {
   it("compacts under the fenced clear lease and reports the summary", async () => {
-    const mutationMock = mock((name: string) =>
-      Promise.resolve(name === "acquireIngressClear" ? 9 : null),
-    );
-    runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
-    const compact = mock(async () => ({
-      compacted: true,
-      compactedMessageCount: 12,
-    }));
+    const compact = mock(async () => 12);
 
     await executeCommand(
       "/compact",
@@ -454,11 +439,14 @@ describe("compactConversation via /compact command", () => {
       }),
     );
 
-    expect(compact).toHaveBeenCalledWith({ ownerGeneration: 9 });
+    expect(compact).toHaveBeenCalledWith({
+      ownerGeneration: 1,
+      instructions: "",
+    });
     expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
       conversationKey: "test-convo",
       ownerEventId: "event-1",
-      ownerGeneration: 9,
+      ownerGeneration: 1,
     });
     expect(channel.sendText).toHaveBeenCalledWith(
       "Context compacted. 12 message(s) summarized.",
@@ -466,10 +454,7 @@ describe("compactConversation via /compact command", () => {
   });
 
   it("passes command text through as compaction instructions", async () => {
-    const compact = mock(async () => ({
-      compacted: true,
-      compactedMessageCount: 3,
-    }));
+    const compact = mock(async () => 3);
     const channel = createMockChannelActions();
 
     await executeCommand(
@@ -489,10 +474,7 @@ describe("compactConversation via /compact command", () => {
 
   it("refuses while a turn or queued message holds the conversation", async () => {
     runtime.mutate = mock(() => Promise.resolve(null)) as never;
-    const compact = mock(async () => ({
-      compacted: true,
-      compactedMessageCount: 1,
-    }));
+    const compact = mock(async () => 1);
     const channel = createMockChannelActions();
 
     await executeCommand(
@@ -507,17 +489,13 @@ describe("compactConversation via /compact command", () => {
   });
 
   it("reports when there is nothing to compact and still releases the lease", async () => {
-    const mutationMock = mock((name: string) =>
-      Promise.resolve(name === "acquireIngressClear" ? 2 : null),
-    );
-    runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
 
     await executeCommand(
       "/compact",
       createCommandContext({
         channel: channel,
-        compact: async () => ({ compacted: false, compactedMessageCount: 0 }),
+        compact: async () => 0,
       }),
     );
 
@@ -525,15 +503,11 @@ describe("compactConversation via /compact command", () => {
     expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
       conversationKey: "test-convo",
       ownerEventId: "event-1",
-      ownerGeneration: 2,
+      ownerGeneration: 1,
     });
   });
 
   it("releases the lease when compaction fails", async () => {
-    const mutationMock = mock((name: string) =>
-      Promise.resolve(name === "acquireIngressClear" ? 4 : null),
-    );
-    runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
 
     await executeCommand(
@@ -547,7 +521,7 @@ describe("compactConversation via /compact command", () => {
     expect(mutationMock).toHaveBeenCalledWith("releaseIngressOwner", {
       conversationKey: "test-convo",
       ownerEventId: "event-1",
-      ownerGeneration: 4,
+      ownerGeneration: 1,
     });
     expect(channel.sendText).toHaveBeenCalledWith(
       "Something went wrong. Please try again.",

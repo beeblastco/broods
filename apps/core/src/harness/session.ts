@@ -46,6 +46,7 @@ import {
 import {
   compactSessionContext,
   isCompactionSummaryMessage,
+  summarizeConversation,
 } from "./compaction.ts";
 import {
   applySteering,
@@ -58,7 +59,11 @@ import {
   modelIdentityFromModelConfig,
   withoutStoredItemId,
 } from "./provider.ts";
-import { pruneSessionMessages, retainsReasoningParts } from "./pruning.ts";
+import {
+  hasPendingToolApprovalResponse,
+  pruneSessionMessages,
+  retainsReasoningParts,
+} from "./pruning.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -435,11 +440,11 @@ export class Session {
   /**
    * Compacts the stored conversation now, regardless of the agent's compaction
    * config or context size. Serves the /compact channel command; the caller
-   * holds the fenced clear lease, so no run or queued ingress can interleave.
+   * holds the fenced clear lease, so no run or queued ingress can interleave
+   * and the whole history folds into the summary. Returns how many messages
+   * were summarized; 0 means there was nothing to compact.
    */
-  async compactConversation(
-    instructions?: string,
-  ): Promise<{ compacted: boolean; compactedMessageCount: number }> {
+  async compactConversation(instructions: string): Promise<number> {
     const entries = await this.loadConversationEntries();
     const activeEntries = projectActiveConversationEntries(entries);
     const systemContextSnapshot = createSystemContextSnapshot(entries);
@@ -449,20 +454,24 @@ export class Session {
       activeEntries,
       modelIdentityFromModelConfig(this.agentConfig),
     );
-    const summary = await compactSessionContext({
+    if (hasPendingToolApprovalResponse(messages)) {
+      return 0;
+    }
+    const summary = await summarizeConversation({
       conversationKey: this.conversationKey,
-      system: systemContextSnapshot.messages,
+      priorSummaries: systemContextSnapshot.messages.filter(
+        isCompactionSummaryMessage,
+      ),
       messages: stripEnvelopeFieldsFromMessages(messages),
       agentConfig: this.agentConfig,
-      trigger: "manual",
-      ...(instructions ? { instructions: instructions } : {}),
+      instructions: instructions,
     });
     if (!summary) {
-      return { compacted: false, compactedMessageCount: 0 };
+      return 0;
     }
     await this.persistModelMessages([summary]);
 
-    return { compacted: true, compactedMessageCount: messages.length };
+    return messages.length;
   }
 
   async createEphemeralTurnContext(

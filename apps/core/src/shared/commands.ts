@@ -18,11 +18,12 @@ export interface CommandContext {
   eventId?: string;
   text?: string;
   // Harness-injected: compacts the stored conversation under the given fenced
-  // lease. Commands stay channel-agnostic and never import harness modules.
+  // lease and resolves with how many messages were summarized (0 = nothing).
+  // Commands stay channel-agnostic and never import harness modules.
   compact?: (options: {
     ownerGeneration: number;
-    instructions?: string;
-  }) => Promise<{ compacted: boolean; compactedMessageCount: number }>;
+    instructions: string;
+  }) => Promise<number>;
 }
 
 interface DiscordCommandOption {
@@ -74,6 +75,7 @@ export type ChannelCommandOutcome =
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
 const CLEAR_CONVERSATION_MAX_BATCHES = 100;
+const INGRESS_CLEAR_LEASE_TTL_MS = 15 * 60 * 1000;
 
 export const commands: CommandHandler[] = [
   {
@@ -84,23 +86,7 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     execute: async function (ctx) {
-      if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
-        throw new Error("Clear requires account, agent, and event scope");
-      }
-      const ownerGeneration = await runtime.mutate<number | null>(
-        "acquireIngressClear",
-        {
-          accountId: ctx.accountId,
-          agentId: ctx.agentId,
-          conversationKey: ctx.conversationKey,
-          ownerEventId: ctx.eventId,
-          leaseTtlMs: 15 * 60 * 1000,
-        },
-      );
-      if (ownerGeneration === null) {
-        return "Cannot clear while a turn or queued message is active. Try again after it finishes.";
-      }
-      try {
+      return withIngressClearLease(ctx, "clear", async (ownerGeneration) => {
         for (
           let batchNumber = 0;
           batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
@@ -118,13 +104,7 @@ export const commands: CommandHandler[] = [
         }
 
         return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
-      } finally {
-        await runtime.mutate("releaseIngressOwner", {
-          conversationKey: ctx.conversationKey,
-          ownerEventId: ctx.eventId,
-          ownerGeneration: ownerGeneration,
-        });
-      }
+      });
     },
   },
   {
@@ -143,41 +123,22 @@ export const commands: CommandHandler[] = [
       ],
     },
     execute: async function (ctx) {
-      if (!ctx.accountId || !ctx.agentId || !ctx.eventId || !ctx.compact) {
-        throw new Error("Compact requires account, agent, and event scope");
+      const compact = ctx.compact;
+      if (!compact) {
+        throw new Error("Compact requires the harness compact capability");
       }
-      const instructions = ctx.text
-        ? stripCommandToken(ctx.text, "/compact")
-        : "";
-      const ownerGeneration = await runtime.mutate<number | null>(
-        "acquireIngressClear",
-        {
-          accountId: ctx.accountId,
-          agentId: ctx.agentId,
-          conversationKey: ctx.conversationKey,
-          ownerEventId: ctx.eventId,
-          leaseTtlMs: 15 * 60 * 1000,
-        },
-      );
-      if (ownerGeneration === null) {
-        return "Cannot compact while a turn or queued message is active. Try again after it finishes.";
-      }
-      try {
-        const result = await ctx.compact({
+      const instructions = stripCommandToken(ctx.text ?? "", "/compact");
+
+      return withIngressClearLease(ctx, "compact", async (ownerGeneration) => {
+        const compactedMessageCount = await compact({
           ownerGeneration: ownerGeneration,
-          ...(instructions ? { instructions: instructions } : {}),
+          instructions: instructions,
         });
 
-        return result.compacted
-          ? `Context compacted. ${result.compactedMessageCount} message(s) summarized.`
+        return compactedMessageCount > 0
+          ? `Context compacted. ${compactedMessageCount} message(s) summarized.`
           : "Nothing to compact yet.";
-      } finally {
-        await runtime.mutate("releaseIngressOwner", {
-          conversationKey: ctx.conversationKey,
-          ownerEventId: ctx.eventId,
-          ownerGeneration: ownerGeneration,
-        });
-      }
+      });
     },
   },
   {
@@ -374,4 +335,38 @@ function getExecutableCommands(): Array<
 // Trim first: parseCommand ignores leading whitespace, so the token can be indented.
 function stripCommandToken(content: string, token: string): string {
   return content.trim().replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "");
+}
+
+// Runs a command body under the fenced clear lease: acquired only while no run
+// or queued ingress exists, released when the body settles.
+async function withIngressClearLease(
+  ctx: CommandContext,
+  verb: string,
+  run: (ownerGeneration: number) => Promise<string>,
+): Promise<string> {
+  if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
+    throw new Error(`${verb} requires account, agent, and event scope`);
+  }
+  const ownerGeneration = await runtime.mutate<number | null>(
+    "acquireIngressClear",
+    {
+      accountId: ctx.accountId,
+      agentId: ctx.agentId,
+      conversationKey: ctx.conversationKey,
+      ownerEventId: ctx.eventId,
+      leaseTtlMs: INGRESS_CLEAR_LEASE_TTL_MS,
+    },
+  );
+  if (ownerGeneration === null) {
+    return `Cannot ${verb} while a turn or queued message is active. Try again after it finishes.`;
+  }
+  try {
+    return await run(ownerGeneration);
+  } finally {
+    await runtime.mutate("releaseIngressOwner", {
+      conversationKey: ctx.conversationKey,
+      ownerEventId: ctx.eventId,
+      ownerGeneration: ownerGeneration,
+    });
+  }
 }
