@@ -152,31 +152,35 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   return "text-emerald-700 dark:text-emerald-400";
 }
 
+// Kind hues are one CVD-validated palette (worst adjacent pair clears the
+// colorblind-separation floor on both surfaces): task violet, cron orange,
+// subtask cyan, model.step blue, tool.call amber, phase teal.
 /** Pill style per span kind so the hierarchy reads at a glance. */
 function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task")
     return "bg-violet-500/15 text-violet-700 dark:text-violet-300";
   if (kind === "cron")
-    return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300";
+    return "bg-orange-500/15 text-orange-700 dark:text-orange-300";
   if (kind === "subtask")
-    return "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300";
+    return "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300";
   if (kind === "model.step")
-    return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
+    return "bg-blue-500/15 text-blue-700 dark:text-blue-300";
   if (kind === "phase")
     return "bg-teal-500/15 text-teal-700 dark:text-teal-300";
 
   return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
 }
 
-/** Solid waterfall-bar fill per kind; mirrors the badge hues. */
+/** Solid waterfall-bar fill per kind; mirrors the badge hues. Light mode takes
+ * deeper steps so bars keep contrast on the white card. */
 function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task") return "bg-violet-500/70";
-  if (kind === "cron") return "bg-indigo-500/70";
-  if (kind === "subtask") return "bg-fuchsia-500/70";
-  if (kind === "model.step") return "bg-sky-500/70";
-  if (kind === "phase") return "bg-teal-500/70";
+  if (kind === "cron") return "bg-orange-600/70 dark:bg-orange-500/70";
+  if (kind === "subtask") return "bg-cyan-500/70 dark:bg-cyan-300/70";
+  if (kind === "model.step") return "bg-blue-700/70 dark:bg-blue-400/70";
+  if (kind === "phase") return "bg-teal-700/70 dark:bg-teal-500/70";
 
-  return "bg-amber-500/70";
+  return "bg-amber-500/70 dark:bg-amber-300/70";
 }
 
 interface SpanGroup {
@@ -628,7 +632,7 @@ function SpanRow({
                     {" · "}
                     <button
                       type="button"
-                      className="cursor-pointer text-fuchsia-700 hover:underline dark:text-fuchsia-300"
+                      className="cursor-pointer text-cyan-700 hover:underline dark:text-cyan-300"
                       onClick={(event) => {
                         event.stopPropagation();
                         onFocusTrace(parentTraceId);
