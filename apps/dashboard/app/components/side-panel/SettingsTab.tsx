@@ -3,7 +3,7 @@
 /** Settings tab with danger zone for node deletion. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export type NodeType =
   | "agent"
@@ -64,8 +64,8 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
 export function SettingsTab({
   nodeType,
   nodeName,
-  openDeleteRequested,
-  onDeleteRequestHandled,
+  deleteOpen,
+  onDeleteOpenChange,
   onDelete,
   managedByCode = false,
   codeOwner,
@@ -73,10 +73,11 @@ export function SettingsTab({
 }: {
   nodeType: NodeType;
   nodeName: string;
-  /** True while the parent holds an unconsumed Delete-key request. */
-  openDeleteRequested: boolean;
-  /** Acknowledges the request so it does not re-fire on the next mount. */
-  onDeleteRequestHandled: () => void;
+  /** Confirm-dialog visibility, owned by the parent: this tab mounts lazily,
+   * so a Delete-key request must be able to open the dialog before the tab
+   * has ever rendered. */
+  deleteOpen: boolean;
+  onDeleteOpenChange: (open: boolean) => void;
   onDelete: () => Promise<void>;
   /** When true, this resource is code-owned (CLI or account API): delete is locked. */
   managedByCode?: boolean;
@@ -85,7 +86,6 @@ export function SettingsTab({
   /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
 }): React.JSX.Element {
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // A stale stored layout can still carry a retired node type; fall back to
@@ -96,26 +96,11 @@ export function SettingsTab({
   };
   const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
-  // Open the delete dialog for a pending Delete-key request. An effect (not a
-  // render-time check): this tab mounts lazily, so the request usually arrives
-  // before the first render and a mount-time token snapshot would swallow it.
-  // Locked resources consume the request without opening — deletion is blocked.
-  useEffect(() => {
-    if (!openDeleteRequested) return;
-    if (!deleteLocked) {
-      setDeleteOpen(true);
-    }
-    onDeleteRequestHandled();
-  }, [openDeleteRequested, deleteLocked, onDeleteRequestHandled]);
-  if (deleteOpen && deleteLocked) {
-    setDeleteOpen(false);
-  }
-
   async function handleDelete() {
     setIsDeleting(true);
     try {
       await onDelete();
-      setDeleteOpen(false);
+      onDeleteOpenChange(false);
     } finally {
       setIsDeleting(false);
     }
@@ -177,7 +162,7 @@ export function SettingsTab({
                 variant="destructive"
                 size="sm"
                 className="shrink-0 text-xs cursor-pointer"
-                onClick={() => setDeleteOpen(true)}
+                onClick={() => onDeleteOpenChange(true)}
               >
                 Delete
               </Button>
@@ -187,8 +172,8 @@ export function SettingsTab({
       </div>
 
       <DeleteConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+        open={deleteOpen && !deleteLocked}
+        onOpenChange={onDeleteOpenChange}
         resourceName={nodeName}
         resourceType={typeLabel}
         critical={false}

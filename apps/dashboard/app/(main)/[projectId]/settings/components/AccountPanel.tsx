@@ -285,6 +285,7 @@ export function AccountPanel(): React.JSX.Element {
                       href={UPGRADE_URL}
                       target="_blank"
                       rel="noopener noreferrer"
+                      aria-label="Upgrade plan"
                     />
                   }
                 >
