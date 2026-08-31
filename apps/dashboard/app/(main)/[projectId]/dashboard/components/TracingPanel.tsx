@@ -152,38 +152,43 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   return "text-emerald-700 dark:text-emerald-400";
 }
 
-// One CVD-validated hue per span kind — the worst adjacent pair clears the
-// colorblind-separation floor on both surfaces. Badges keep the shared
-// 700-on-light / 300-on-dark text convention; bars take deeper steps in light
-// mode so they keep contrast on the white card. The Record is exhaustive over
-// the kind union, so a new kind fails the build until it gets a theme entry.
+// One hue per span kind, checked for colorblind (protan/deutan) separation on
+// both surfaces. Badge text keeps the 700-on-light / 300-on-dark convention;
+// bars take deeper steps in light mode to hold contrast on the white card
+// (violet already clears both surfaces, so task carries no dark override).
 const KIND_THEME: Record<
   ObservabilitySpanRow["kind"],
-  { badge: string; bar: string }
+  { badgeBg: string; bar: string; text: string }
 > = {
   task: {
-    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    badgeBg: "bg-violet-500/15",
     bar: "bg-violet-500/70",
+    text: "text-violet-700 dark:text-violet-300",
   },
   cron: {
-    badge: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+    badgeBg: "bg-orange-500/15",
     bar: "bg-orange-600/70 dark:bg-orange-500/70",
+    text: "text-orange-700 dark:text-orange-300",
   },
   subtask: {
-    badge: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300",
+    badgeBg: "bg-cyan-500/15",
     bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
+    text: "text-cyan-700 dark:text-cyan-300",
   },
   "model.step": {
-    badge: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+    badgeBg: "bg-blue-500/15",
     bar: "bg-blue-700/70 dark:bg-blue-400/70",
+    text: "text-blue-700 dark:text-blue-300",
   },
   "tool.call": {
-    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    badgeBg: "bg-amber-500/15",
     bar: "bg-amber-500/70 dark:bg-amber-300/70",
+    text: "text-amber-700 dark:text-amber-300",
   },
   phase: {
-    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+    badgeBg: "bg-teal-500/15",
     bar: "bg-teal-700/70 dark:bg-teal-500/70",
+    text: "text-teal-700 dark:text-teal-300",
   },
 };
 
@@ -336,11 +341,8 @@ function TaskDurationBar({
       <div
         className={cn(
           "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
-          group.root.status === "error"
-            ? "bg-red-500/70"
-            : live
-              ? cn(barColor, "ring-1 ring-inset ring-foreground/40")
-              : barColor,
+          group.root.status === "error" ? "bg-red-500/70" : barColor,
+          live && "ring-1 ring-inset ring-foreground/40",
         )}
         style={{ width: `${widthPct}%` }}
         title={title}
@@ -368,6 +370,7 @@ function TimelineBar({
 }) {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
+  const barColor = KIND_THEME[span.kind].bar;
   const end = live
     ? windowStart + windowSpan
     : Math.max(span.endTimeMs, span.startTimeMs);
@@ -408,14 +411,8 @@ function TimelineBar({
         <div
           className={cn(
             "h-full flex-1",
-            stale
-              ? "bg-muted-foreground/25"
-              : live
-                ? cn(
-                    KIND_THEME[span.kind].bar,
-                    "ring-1 ring-inset ring-foreground/40",
-                  )
-                : KIND_THEME[span.kind].bar,
+            stale ? "bg-muted-foreground/25" : barColor,
+            live && "ring-1 ring-inset ring-foreground/40",
           )}
         />
       </div>
@@ -636,7 +633,11 @@ function SpanRow({
                     {" · "}
                     <button
                       type="button"
-                      className="cursor-pointer text-cyan-700 hover:underline dark:text-cyan-300"
+                      // Parent links render on subtask rows, so they wear the subtask hue.
+                      className={cn(
+                        "cursor-pointer hover:underline",
+                        KIND_THEME.subtask.text,
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
                         onFocusTrace(parentTraceId);
@@ -656,7 +657,8 @@ function SpanRow({
         <Badge
           className={cn(
             "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-            KIND_THEME[span.kind].badge,
+            KIND_THEME[span.kind].badgeBg,
+            KIND_THEME[span.kind].text,
           )}
         >
           {span.kind}
