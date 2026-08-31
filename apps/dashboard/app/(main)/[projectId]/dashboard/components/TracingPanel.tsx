@@ -61,6 +61,50 @@ const DETAIL_ATTRIBUTES: Array<{ key: string; label: string }> = [
 ];
 const DETAIL_KEYS = new Set(DETAIL_ATTRIBUTES.map((detail) => detail.key));
 
+interface KindTheme {
+  badgeBg: string;
+  bar: string;
+  text: string;
+}
+
+// One hue per span kind, checked for colorblind (protan/deutan) separation on
+// both surfaces — including against the error-bar red that can replace a root
+// bar. Badge text keeps the 700-on-light / 300-on-dark convention; bars step
+// deeper where a hue would wash out on one surface (task keeps violet-500 on
+// dark: violet-400 collapses into model.step's blue-400 under deuteranopia).
+const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
+  task: {
+    badgeBg: "bg-violet-500/15",
+    bar: "bg-violet-500/70",
+    text: "text-violet-700 dark:text-violet-300",
+  },
+  cron: {
+    badgeBg: "bg-amber-500/15",
+    bar: "bg-amber-500/70 dark:bg-amber-300/70",
+    text: "text-amber-700 dark:text-amber-300",
+  },
+  subtask: {
+    badgeBg: "bg-cyan-500/15",
+    bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
+    text: "text-cyan-700 dark:text-cyan-300",
+  },
+  "model.step": {
+    badgeBg: "bg-blue-500/15",
+    bar: "bg-blue-700/70 dark:bg-blue-400/70",
+    text: "text-blue-700 dark:text-blue-300",
+  },
+  "tool.call": {
+    badgeBg: "bg-orange-500/15",
+    bar: "bg-orange-600/70 dark:bg-orange-500/70",
+    text: "text-orange-700 dark:text-orange-300",
+  },
+  phase: {
+    badgeBg: "bg-teal-500/15",
+    bar: "bg-teal-700/70 dark:bg-teal-500/70",
+    text: "text-teal-700 dark:text-teal-300",
+  },
+};
+
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
@@ -152,45 +196,11 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   return "text-emerald-700 dark:text-emerald-400";
 }
 
-// One hue per span kind, checked for colorblind (protan/deutan) separation on
-// both surfaces. Badge text keeps the 700-on-light / 300-on-dark convention;
-// bars take deeper steps in light mode to hold contrast on the white card
-// (violet already clears both surfaces, so task carries no dark override).
-const KIND_THEME: Record<
-  ObservabilitySpanRow["kind"],
-  { badgeBg: string; bar: string; text: string }
-> = {
-  task: {
-    badgeBg: "bg-violet-500/15",
-    bar: "bg-violet-500/70",
-    text: "text-violet-700 dark:text-violet-300",
-  },
-  cron: {
-    badgeBg: "bg-orange-500/15",
-    bar: "bg-orange-600/70 dark:bg-orange-500/70",
-    text: "text-orange-700 dark:text-orange-300",
-  },
-  subtask: {
-    badgeBg: "bg-cyan-500/15",
-    bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
-    text: "text-cyan-700 dark:text-cyan-300",
-  },
-  "model.step": {
-    badgeBg: "bg-blue-500/15",
-    bar: "bg-blue-700/70 dark:bg-blue-400/70",
-    text: "text-blue-700 dark:text-blue-300",
-  },
-  "tool.call": {
-    badgeBg: "bg-amber-500/15",
-    bar: "bg-amber-500/70 dark:bg-amber-300/70",
-    text: "text-amber-700 dark:text-amber-300",
-  },
-  phase: {
-    badgeBg: "bg-teal-500/15",
-    bar: "bg-teal-700/70 dark:bg-teal-500/70",
-    text: "text-teal-700 dark:text-teal-300",
-  },
-};
+/** KIND_THEME lookup with a fallback: core can ship a new span kind before
+ * this dashboard build knows it, and that must not take down the panel. */
+function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
+  return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
+}
 
 interface SpanGroup {
   root: ObservabilitySpanRow;
@@ -329,7 +339,7 @@ function TaskDurationBar({
   scaleMaxMs: number;
 }) {
   const live = isTaskRunning(group.root);
-  const barColor = KIND_THEME[group.root.kind].bar;
+  const barColor = kindTheme(group.root.kind).bar;
   const widthPct = Math.max(
     1.5,
     Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100),
@@ -342,7 +352,8 @@ function TaskDurationBar({
         className={cn(
           "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
           group.root.status === "error" ? "bg-red-500/70" : barColor,
-          live && "ring-1 ring-inset ring-foreground/40",
+          live &&
+            "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
         )}
         style={{ width: `${widthPct}%` }}
         title={title}
@@ -370,7 +381,7 @@ function TimelineBar({
 }) {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
-  const barColor = KIND_THEME[span.kind].bar;
+  const barColor = kindTheme(span.kind).bar;
   const end = live
     ? windowStart + windowSpan
     : Math.max(span.endTimeMs, span.startTimeMs);
@@ -404,7 +415,7 @@ function TimelineBar({
       >
         {ttftFrac > 0 && (
           <div
-            className="h-full shrink-0 bg-sky-500/25"
+            className="h-full shrink-0 bg-blue-500/25"
             style={{ width: `${ttftFrac * 100}%` }}
           />
         )}
@@ -412,7 +423,8 @@ function TimelineBar({
           className={cn(
             "h-full flex-1",
             stale ? "bg-muted-foreground/25" : barColor,
-            live && "ring-1 ring-inset ring-foreground/40",
+            live &&
+              "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
           )}
         />
       </div>
@@ -657,8 +669,8 @@ function SpanRow({
         <Badge
           className={cn(
             "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-            KIND_THEME[span.kind].badgeBg,
-            KIND_THEME[span.kind].text,
+            kindTheme(span.kind).badgeBg,
+            kindTheme(span.kind).text,
           )}
         >
           {span.kind}
