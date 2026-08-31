@@ -746,6 +746,10 @@ export function WorkspaceFilesTab({
           }
         }
 
+        // Failures are caught per entry: one bad file (too large, rejected)
+        // must not abort the loop — that would strand the remaining paths in
+        // `uploading` as permanent spinner rows and silently skip them.
+        let entryError: string | null = null;
         for (const { file, path } of entries) {
           try {
             if (workspaceId) {
@@ -781,6 +785,8 @@ export function WorkspaceFilesTab({
               mimeType: file.type || undefined,
               sizeBytes: file.size,
             });
+          } catch (err) {
+            entryError = err instanceof Error ? err.message : "Upload failed.";
           } finally {
             setUploading((prev) => {
               const next = new Set(prev);
@@ -790,9 +796,18 @@ export function WorkspaceFilesTab({
             });
           }
         }
+        if (entryError) setError(entryError);
         if (workspaceId) await refreshRuntimeFiles(false, true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed.");
+        // The folder-creation path can fail before the loop starts; clear
+        // every pending path so no row is left spinning forever.
+        setUploading((prev) => {
+          const next = new Set(prev);
+          for (const { path } of entries) next.delete(path);
+
+          return next;
+        });
       }
     },
     [

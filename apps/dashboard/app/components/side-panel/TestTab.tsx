@@ -629,7 +629,6 @@ function ReasoningBlock({
           {isStreaming ? "Thinking..." : "Thinking"}
         </span>
         <span className="ml-auto tabular-nums">{formatElapsed(elapsed)}</span>
-        {isStreaming && <Loader2 className="size-3 animate-spin" />}
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="ml-5 mt-1 rounded-md border border-purple-500/20 bg-purple-500/5 px-2.5 py-2">

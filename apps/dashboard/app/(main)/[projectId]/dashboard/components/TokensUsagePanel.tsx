@@ -882,8 +882,10 @@ export function TokensUsagePanel({
             ))}
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            {/* Spin only while connecting — a live stream stays open indefinitely
+                and a spinning icon for its whole lifetime repaints continuously. */}
             <RefreshCw
-              className={`size-3.5 ${isFetching || isStreamingLive ? "animate-spin" : ""}`}
+              className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
             />
             {isFetching
               ? "Connecting…"

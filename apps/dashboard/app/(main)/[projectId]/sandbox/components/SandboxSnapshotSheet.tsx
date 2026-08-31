@@ -14,7 +14,11 @@ import {
   SheetTitle,
 } from "@/app/components/ui/sheet";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { relativeTime, snapshotStatusBadge } from "./sandboxFormat";
+import {
+  formatProvider,
+  relativeTime,
+  snapshotStatusBadge,
+} from "./sandboxFormat";
 
 interface Props {
   /** The snapshot whose detail is shown. */
@@ -49,13 +53,13 @@ export function SandboxSnapshotSheet({
             {snapshotStatusBadge(snapshot.status)}
           </SheetTitle>
           <SheetDescription>
-            {snapshot.provider} snapshot / image
+            {formatProvider(snapshot.provider)} snapshot / image
           </SheetDescription>
         </SheetHeader>
 
         <div className="px-4 pb-4">
           <div className="rounded-lg border border-border bg-card px-4">
-            <Field label="Provider" value={snapshot.provider} />
+            <Field label="Provider" value={formatProvider(snapshot.provider)} />
             <Field label="Status" value={snapshot.status} />
             <Field label="Base image" value={snapshot.baseImage} />
             <Field

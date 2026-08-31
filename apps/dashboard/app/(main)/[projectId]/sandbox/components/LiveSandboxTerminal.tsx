@@ -46,9 +46,16 @@ export function LiveSandboxTerminal({
   const [status, setStatus] = useState<TerminalStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  // Tear down the socket + terminal when the sheet unmounts.
+  // Tear down the socket + terminal when the sheet unmounts. The disposed flag
+  // also aborts a handleConnect still awaiting the ticket or the xterm import —
+  // without it that continuation would open a live PTY socket (which resumes a
+  // suspended instance) on an unmounted component, leaking it.
+  const disposedRef = useRef(false);
   useEffect(() => {
+    disposedRef.current = false;
+
     return () => {
+      disposedRef.current = true;
       socketRef.current?.close(1000, "cleanup");
       socketRef.current = null;
       termRef.current?.dispose();
@@ -73,6 +80,7 @@ export function LiveSandboxTerminal({
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
       ]);
+      if (disposedRef.current) return;
 
       socketRef.current?.close(1000, "reconnect");
       termRef.current?.dispose();

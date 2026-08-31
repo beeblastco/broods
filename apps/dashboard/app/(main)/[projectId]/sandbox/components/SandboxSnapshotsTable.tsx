@@ -10,7 +10,12 @@
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useState } from "react";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
-import { relativeTime, snapshotStatusBadge, useNow } from "./sandboxFormat";
+import {
+  formatProvider,
+  relativeTime,
+  snapshotStatusBadge,
+  useNow,
+} from "./sandboxFormat";
 
 interface Props {
   /** Snapshot rows from Convex. */
@@ -65,7 +70,9 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
                     {snapshot.externalImageId}
                   </div>
                 </td>
-                <td className="px-4 py-2.5 text-xs">{snapshot.provider}</td>
+                <td className="px-4 py-2.5 text-xs">
+                  {formatProvider(snapshot.provider)}
+                </td>
                 <td className="px-4 py-2.5">
                   {snapshotStatusBadge(snapshot.status)}
                 </td>

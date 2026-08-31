@@ -42,6 +42,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
 import {
+  formatProvider,
   formatSpecs,
   instanceStatusBadge,
   relativeTime,
@@ -321,8 +322,8 @@ export function SandboxInstancesTable({
                   </td>
                   <td className="px-4 py-2.5 text-xs">
                     {instance.ephemeral
-                      ? `${instance.provider} · per-call`
-                      : instance.provider}
+                      ? `${formatProvider(instance.provider)} · per-call`
+                      : formatProvider(instance.provider)}
                   </td>
                   <td className="px-4 py-2.5">
                     {instanceStatusBadge(instance.status)}

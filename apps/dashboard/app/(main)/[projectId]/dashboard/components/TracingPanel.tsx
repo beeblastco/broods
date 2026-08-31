@@ -8,7 +8,7 @@ import {
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
-import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -263,9 +263,11 @@ function SpanStatusIcon({
   span: ObservabilitySpanRow;
   taskRunning: boolean;
 }) {
+  // Static dot, not a spinner: a long run keeps many spans "running" at once and
+  // per-row spin animations repaint the whole tree continuously.
   if (span.status === "running" && !isStale(span, taskRunning)) {
     return (
-      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-700 dark:text-sky-400" />
+      <span className="size-2 shrink-0 rounded-full bg-sky-700 dark:bg-sky-400" />
     );
   }
 
@@ -844,14 +846,22 @@ export function TracingPanel({
       (group) => group.root.traceId === focusTraceId,
     );
     if (index === -1) return;
-    focusedRef.current = focusKey;
     const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
-    setExpanded((current) => new Set([...current, rootKey]));
+    setExpanded((current) =>
+      current.has(rootKey) ? current : new Set([...current, rootKey]),
+    );
+    // A trace beyond the current page isn't in the DOM yet: page it in and
+    // finish on the re-run (visibleCount is a dep). Marking done or dropping
+    // the param now would skip the scroll and highlight entirely.
     if (index >= visibleCount) {
       setVisibleCount(index + 1);
+
+      return;
     }
     const target = document.getElementById(`task-${focusTraceId}`);
-    target?.scrollIntoView({ block: "center" });
+    if (!target) return;
+    focusedRef.current = focusKey;
+    target.scrollIntoView({ block: "center" });
     const next = new URLSearchParams(searchParams.toString());
     next.delete("trace");
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
@@ -930,7 +940,7 @@ export function TracingPanel({
         onRefresh={refresh}
         refreshDisabled={status === "idle"}
         refreshSpinning={status === "connecting"}
-        refreshTitle={error ?? "Refresh from Tempo"}
+        refreshTitle={error ?? "Refresh traces"}
         isError={status === "error"}
       />
 

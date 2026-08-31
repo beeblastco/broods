@@ -72,11 +72,35 @@ export function WebhooksPanel({
 
   async function handleDeleteWebhook() {
     if (!deletingWebhook) return;
+    // The mutation addresses webhooks by index only, so re-resolve the index
+    // against the live list at confirm time — another session may have
+    // reordered it since the dialog opened, and a stale index deletes the
+    // wrong webhook. URL is the only identity the list carries.
+    const liveWebhooks = agents?.find(
+      (agent) => agent.agentConfigId === deletingWebhook.agentConfigId,
+    )?.webhooks;
+    const target =
+      liveWebhooks?.find(
+        (webhook) =>
+          webhook.index === deletingWebhook.index &&
+          (webhook.url ?? "webhook") === deletingWebhook.url,
+      ) ??
+      liveWebhooks?.find(
+        (webhook) => (webhook.url ?? "webhook") === deletingWebhook.url,
+      );
+    if (!target) {
+      setToggleError(
+        "This webhook changed in another session. Review the list and try again.",
+      );
+      setDeletingWebhook(null);
+
+      return;
+    }
     setIsDeletingWebhook(true);
     try {
       await removeWebhook({
         agentConfigId: deletingWebhook.agentConfigId,
-        index: deletingWebhook.index,
+        index: target.index,
       });
       setDeletingWebhook(null);
     } finally {

@@ -114,12 +114,9 @@ export default function HomePage(): React.JSX.Element {
           </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3">
-          <div className="size-8 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-          <p className="text-sm text-muted-foreground">
-            Setting up your workspace…
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Setting up your workspace…
+        </p>
       )}
     </div>
   );

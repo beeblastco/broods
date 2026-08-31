@@ -23,7 +23,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
     if (!convexUrl) {
-      return text("NEXT_PUBLIC_CONVEX_URL is required", 500);
+      return text("login backend is not configured", 500);
     }
 
     const client = new ConvexHttpClient(convexUrl);
@@ -87,9 +87,7 @@ function advertisedBaseUrl(): string {
   }
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl)
-    throw new Error(
-      "BROODS_BASE_URL, CONVEX_SITE_URL, or NEXT_PUBLIC_CONVEX_URL is required",
-    );
+    throw new Error("login base URL is not configured; set BROODS_BASE_URL");
 
   return new URL(convexUrl.replace(".convex.cloud", ".convex.site")).origin;
 }

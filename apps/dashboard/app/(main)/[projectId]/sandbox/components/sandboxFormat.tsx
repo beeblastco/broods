@@ -48,6 +48,14 @@ export function useNow(): number {
   return now;
 }
 
+/**
+ * Display name for a sandbox provider. The `lambda` value is an internal
+ * implementation detail — users see the managed VM tier, not what backs it.
+ */
+export function formatProvider(provider: string): string {
+  return provider === "lambda" ? "managed-vm" : provider;
+}
+
 /** Renders an instance's vcpu/memory/disk footprint as "1 vCPU · 2 GB · 8 GB". */
 export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   const memory =

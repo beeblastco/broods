@@ -62,6 +62,23 @@ const STREAM_CACHE = new Map<
   string,
   (ObservabilityLogEntry | ObservabilitySpanRow)[]
 >();
+// Bounds the cache across scopes — without it every stream/stage/key combo
+// visited in a session pins up to MAX_ENTRIES rows for the page's lifetime.
+const STREAM_CACHE_MAX_KEYS = 8;
+
+function cacheEntries(
+  key: string,
+  entries: (ObservabilityLogEntry | ObservabilitySpanRow)[],
+): void {
+  // Re-insert so iteration order doubles as LRU order.
+  STREAM_CACHE.delete(key);
+  STREAM_CACHE.set(key, entries);
+  while (STREAM_CACHE.size > STREAM_CACHE_MAX_KEYS) {
+    const oldest = STREAM_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    STREAM_CACHE.delete(oldest);
+  }
+}
 
 export function useObservabilityStream(
   options: UseObservabilityStreamOptions & { stream: "logs" },
@@ -104,7 +121,7 @@ export function useObservabilityStream(
 
   // Persist the latest list so the next mount with the same scope can seed from it.
   useEffect(() => {
-    STREAM_CACHE.set(connKey, entries);
+    cacheEntries(connKey, entries);
   }, [connKey, entries]);
 
   // Refs so the effect closure captures stable references.
@@ -234,15 +251,21 @@ export function useObservabilityStream(
           const existingIndex = prev.findIndex(
             (candidate) => entryKey(candidate) === key,
           );
-          const next =
-            existingIndex === -1
-              ? [entry, ...prev]
-              : prev.map((candidate, index) =>
-                  index === existingIndex
-                    ? preferEntry(candidate, entry)
-                    : candidate,
-                );
-          next.sort((a, b) => entryTime(b) - entryTime(a));
+          // A replacement keeps its slot (the dedup key pins the timestamp),
+          // and live entries almost always arrive in order — so the full
+          // re-sort runs only for a genuinely out-of-order arrival instead of
+          // on every message.
+          if (existingIndex !== -1) {
+            return prev.map((candidate, index) =>
+              index === existingIndex
+                ? preferEntry(candidate, entry)
+                : candidate,
+            );
+          }
+          const next = [entry, ...prev];
+          if (prev.length > 0 && entryTime(entry) < entryTime(prev[0])) {
+            next.sort((a, b) => entryTime(b) - entryTime(a));
+          }
 
           return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
         });

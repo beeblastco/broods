@@ -352,7 +352,7 @@ export function RuntimeKeyView({
         </Tabs>
         <p className="text-xs leading-relaxed text-muted-foreground">
           Calls go to <Mono>gateway.broods.app</Mono> by default; override with{" "}
-          <Mono>BROODS_BASE_URL</Mono> for a self-hosted core.
+          <Mono>BROODS_BASE_URL</Mono> for a self-hosted deployment.
         </p>
       </section>
     </div>

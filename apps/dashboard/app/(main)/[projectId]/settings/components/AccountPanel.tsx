@@ -268,7 +268,7 @@ export function AccountPanel(): React.JSX.Element {
           </div>
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <span className="text-xs text-muted-foreground">Auth provider</span>
-            <span className="text-sm text-foreground">Google via WorkOS</span>
+            <span className="text-sm text-foreground">Google</span>
           </div>
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-xs text-muted-foreground">Plan</span>

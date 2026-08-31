@@ -129,7 +129,10 @@ export function useConnectedAgentConfig(
           return;
         }
 
-        const nested = toNestedAgentConfig(base);
+        // Clone before editing: toNestedAgentConfig returns branches by
+        // reference, and `base` is the Convex-cached query document — writing
+        // through it would corrupt the client cache and survive rollbacks.
+        const nested = structuredClone(toNestedAgentConfig(base));
         let cursor: Record<string, unknown> = nested as Record<string, unknown>;
         for (let i = 0; i < path.length - 1; i += 1) {
           const key = path[i];

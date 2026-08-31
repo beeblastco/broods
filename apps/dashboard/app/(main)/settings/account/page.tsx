@@ -81,7 +81,7 @@ function AccountDangerPanel() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Schedules your account for deletion after a 7-day grace
-                  period. Your WorkOS identity and all project data will be
+                  period. Your sign-in identity and all project data will be
                   removed.
                 </p>
               </div>

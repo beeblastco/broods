@@ -3,7 +3,7 @@
 /** Settings tab with danger zone for node deletion. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export type NodeType =
   | "agent"
@@ -64,7 +64,8 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
 export function SettingsTab({
   nodeType,
   nodeName,
-  openDeleteDialogToken,
+  openDeleteRequested,
+  onDeleteRequestHandled,
   onDelete,
   managedByCode = false,
   codeOwner,
@@ -72,7 +73,10 @@ export function SettingsTab({
 }: {
   nodeType: NodeType;
   nodeName: string;
-  openDeleteDialogToken: number;
+  /** True while the parent holds an unconsumed Delete-key request. */
+  openDeleteRequested: boolean;
+  /** Acknowledges the request so it does not re-fire on the next mount. */
+  onDeleteRequestHandled: () => void;
   onDelete: () => Promise<void>;
   /** When true, this resource is code-owned (CLI or account API): delete is locked. */
   managedByCode?: boolean;
@@ -83,7 +87,6 @@ export function SettingsTab({
 }): React.JSX.Element {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);
 
   // A stale stored layout can still carry a retired node type; fall back to
   // generic copy instead of crashing the panel.
@@ -93,15 +96,17 @@ export function SettingsTab({
   };
   const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
-  // Open the delete dialog when the parent bumps the trigger token (handled
-  // during render rather than in an effect to avoid a cascading re-render).
-  // Locked resources never open it — deletion is blocked.
-  if (openDeleteDialogToken !== prevDeleteToken) {
-    setPrevDeleteToken(openDeleteDialogToken);
-    if (openDeleteDialogToken > 0 && !deleteLocked) {
+  // Open the delete dialog for a pending Delete-key request. An effect (not a
+  // render-time check): this tab mounts lazily, so the request usually arrives
+  // before the first render and a mount-time token snapshot would swallow it.
+  // Locked resources consume the request without opening — deletion is blocked.
+  useEffect(() => {
+    if (!openDeleteRequested) return;
+    if (!deleteLocked) {
       setDeleteOpen(true);
     }
-  }
+    onDeleteRequestHandled();
+  }, [openDeleteRequested, deleteLocked, onDeleteRequestHandled]);
   if (deleteOpen && deleteLocked) {
     setDeleteOpen(false);
   }

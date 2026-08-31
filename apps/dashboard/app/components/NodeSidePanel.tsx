@@ -318,7 +318,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     deploymentApiKey ?? revealedDeploymentApiKey ?? undefined;
 
   // Jump to the settings tab when the parent bumps the delete-request token.
+  // `handledDeleteToken` marks the request consumed only after SettingsTab has
+  // opened the dialog — the tab panel mounts lazily, so a render-time check
+  // inside SettingsTab would miss a token that bumped before it mounted.
   const [prevDeleteToken, setPrevDeleteToken] = useState(deleteRequestToken);
+  const [handledDeleteToken, setHandledDeleteToken] =
+    useState(deleteRequestToken);
   if (deleteRequestToken !== prevDeleteToken) {
     setPrevDeleteToken(deleteRequestToken);
     if (deleteRequestToken > 0) {
@@ -1077,7 +1082,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             <SettingsTab
               nodeType={nodeType}
               nodeName={resolvedName}
-              openDeleteDialogToken={deleteRequestToken}
+              openDeleteRequested={deleteRequestToken > handledDeleteToken}
+              onDeleteRequestHandled={() =>
+                setHandledDeleteToken(deleteRequestToken)
+              }
               onDelete={handleDelete}
               managedByCode={isCodeManaged}
               codeOwner={codeOwner === "api" ? "api" : "cli"}

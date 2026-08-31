@@ -3,12 +3,27 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { redirectUri } from "@/app/lib/authConfig";
 
+/**
+ * Accept only a same-origin path. Parsing against a fixed base catches every
+ * open-redirect encoding ("//evil.com", "/\evil.com", tab/newline tricks) that
+ * a prefix check misses — the URL parser normalizes backslashes to forward
+ * slashes and strips tabs/newlines exactly like browsers do, so anything that
+ * would escape the origin fails the origin check below.
+ */
 function parseReturnTo(value: string | null): string | null {
   if (!value?.startsWith("/")) {
     return null;
   }
+  try {
+    const url = new URL(value, "http://relative-base");
+    if (url.origin !== "http://relative-base") {
+      return null;
+    }
 
-  return value.startsWith("//") ? null : value;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return null;
+  }
 }
 
 /**

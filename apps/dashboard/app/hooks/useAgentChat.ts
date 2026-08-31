@@ -45,7 +45,7 @@ type WsServerMessage =
       phase: "started" | "tool_call" | "tool_result";
       toolNames?: string[];
     }
-  | { type: "subagent_result"; output: string }
+  | { type: "subagent_result"; output: string; taskId?: string }
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
 
@@ -168,7 +168,7 @@ async function startWebSocketSseStream(options: {
     phase: "started" | "tool_call" | "tool_result";
     toolNames?: string[];
   }) => void;
-  onSubagentResult: (output: string) => void;
+  onSubagentResult: (output: string, taskId?: string) => void;
 }): Promise<WebSocketStreamResult> {
   const {
     endpointId,
@@ -329,7 +329,7 @@ async function startWebSocketSseStream(options: {
       }
 
       if (payload.type === "subagent_result") {
-        onSubagentResult(payload.output);
+        onSubagentResult(payload.output, payload.taskId);
 
         return;
       }
@@ -779,9 +779,17 @@ export function useAgentChat({
                   return next.messages;
                 });
               },
-              onSubagentResult: (output) => {
+              onSubagentResult: (output, resultTaskId) => {
                 setMessages((prev) => {
-                  const taskIds = Object.keys(subagentMessageIdsRef.current);
+                  const tracked = Object.keys(subagentMessageIdsRef.current);
+                  // Target the task the wire names; without one (older
+                  // servers) fall back to every tracked panel, but attach the
+                  // output only when a single panel is tracked — copying one
+                  // subagent's result into another's panel misattributes it.
+                  const taskIds =
+                    resultTaskId && tracked.includes(resultTaskId)
+                      ? [resultTaskId]
+                      : tracked;
                   if (taskIds.length === 0) {
                     return prev;
                   }
@@ -794,7 +802,8 @@ export function useAgentChat({
                       taskId: taskId,
                       sessionId: sessionIdRef.current ?? "",
                       markCompleted: true,
-                      completedOutput: output,
+                      completedOutput:
+                        taskIds.length === 1 ? output : undefined,
                     });
                     subagentMessageIdsRef.current[taskId] = next.messageId;
                     nextMessages = next.messages;
@@ -869,7 +878,7 @@ export function useAgentChat({
         if ((err as Error).name === "AbortError") return;
         const message =
           err instanceof TypeError && err.message === "Failed to fetch"
-            ? `Cannot reach core service at ${baseUrl}. Is the service running?`
+            ? `Cannot reach the agent service at ${baseUrl}. Is it running?`
             : err instanceof Error && err.message.includes("WebSocket")
               ? err.message
               : err instanceof Error

@@ -142,12 +142,12 @@ export function WorkspaceResourceDetailsTab({
         <SectionHeader>Workspace config</SectionHeader>
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium text-foreground">Storage</span>
-          <Select items={{ s3: "Amazon S3" }} value="s3" disabled>
+          <Select items={{ s3: "S3-compatible" }} value="s3" disabled>
             <SelectTrigger className="h-8 w-40 cursor-not-allowed text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="s3">Amazon S3</SelectItem>
+              <SelectItem value="s3">S3-compatible</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -330,7 +330,7 @@ export function SandboxResourceDetailsTab({
           onValueChange={(provider) => setConfig({ provider: provider })}
           options={[
             { value: "sandbox", label: "Sandbox" },
-            { value: "lambda", label: "AWS Lambda" },
+            { value: "lambda", label: "Managed VM" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
           ]}
