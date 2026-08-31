@@ -10,6 +10,7 @@ import { cn } from "@/app/lib/utils";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
 import {
   ObservabilityToolbar,
   type ToolbarFilterOption,
@@ -117,111 +118,112 @@ function levelDot(level: ObservabilityLogEntry["level"]): string {
 
 function LogRow({
   entry,
-  isExpanded,
-  onToggle,
-  onViewTrace,
+  isSelected,
+  onSelect,
 }: {
   entry: ObservabilityLogEntry;
-  isExpanded: boolean;
-  onToggle: () => void;
-  onViewTrace: (traceId: string) => void;
+  isSelected: boolean;
+  onSelect: () => void;
 }) {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   const { date, time } = formatDateTime(entry.ts);
 
   return (
-    <>
-      <tr
-        onClick={onToggle}
-        className={cn(
-          "cursor-pointer border-b border-border/40 hover:bg-accent/20 transition-colors",
-          isExpanded && "bg-accent/30",
-        )}
+    <tr
+      onClick={onSelect}
+      className={cn(
+        "cursor-pointer border-b border-border/40 hover:bg-accent/20 transition-colors",
+        isSelected && "bg-accent/30",
+      )}
+    >
+      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
+        <span className="text-muted-foreground mr-1">{date}</span>
+        {time}
+      </td>
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 font-medium",
+            levelColor(entry.level),
+          )}
+        >
+          {entry.level === "ERROR" || entry.level === "WARN" ? (
+            <AlertTriangle className="size-3" />
+          ) : (
+            <span
+              className={cn("size-1.5 rounded-full", levelDot(entry.level))}
+            />
+          )}
+          {entry.level}
+        </span>
+      </td>
+      <td
+        className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
+        title={entry.endpointId}
       >
-        <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
-          <span className="text-muted-foreground mr-1">{date}</span>
-          {time}
-        </td>
-        <td className="px-3 py-1.5 whitespace-nowrap">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 font-medium",
-              levelColor(entry.level),
-            )}
+        {entry.service
+          ? shortFunctionName(entry.service)
+          : entry.endpointId
+            ? shortFunctionName(entry.endpointId)
+            : (entry.agentId ?? "—")}
+      </td>
+      <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
+        {(parsed.eventType ?? entry.eventType) && (
+          <Badge
+            variant="secondary"
+            className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
           >
-            {entry.level === "ERROR" || entry.level === "WARN" ? (
-              <AlertTriangle className="size-3" />
-            ) : (
-              <span
-                className={cn("size-1.5 rounded-full", levelDot(entry.level))}
-              />
-            )}
-            {entry.level}
-          </span>
-        </td>
-        <td
-          className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
+            {parsed.eventType ?? entry.eventType}
+          </Badge>
+        )}
+        {parsed.summary}
+      </td>
+    </tr>
+  );
+}
+
+/** Side-panel body for a selected log: trace link, endpoint, pretty payload. */
+function LogDetails({
+  entry,
+  onViewTrace,
+}: {
+  entry: ObservabilityLogEntry;
+  onViewTrace: (traceId: string) => void;
+}) {
+  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {entry.traceId && (
+        <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+          <span className="truncate">trace: {entry.traceId}</span>
+          <button
+            type="button"
+            onClick={() => onViewTrace(entry.traceId!)}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
+          >
+            View trace
+            <ArrowUpRight className="size-3" />
+          </button>
+        </div>
+      )}
+      {entry.endpointId && (
+        <div
+          className="text-[11px] text-muted-foreground break-all"
           title={entry.endpointId}
         >
-          {entry.service
-            ? shortFunctionName(entry.service)
-            : entry.endpointId
-              ? shortFunctionName(entry.endpointId)
-              : (entry.agentId ?? "—")}
-        </td>
-        <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
-          {(parsed.eventType ?? entry.eventType) && (
-            <Badge
-              variant="secondary"
-              className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
-            >
-              {parsed.eventType ?? entry.eventType}
-            </Badge>
-          )}
-          {parsed.summary}
-        </td>
-      </tr>
-      {isExpanded && (
-        <tr className="border-b border-border/40 bg-background/40">
-          <td colSpan={4} className="px-3 py-3">
-            <div className="flex flex-col gap-2">
-              {entry.traceId && (
-                <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-                  <span>trace: {entry.traceId}</span>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onViewTrace(entry.traceId!);
-                    }}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
-                  >
-                    View trace
-                    <ArrowUpRight className="size-3" />
-                  </button>
-                </div>
-              )}
-              {entry.endpointId && (
-                <div
-                  className="text-[11px] text-muted-foreground break-all"
-                  title={entry.endpointId}
-                >
-                  {entry.endpointId}
-                </div>
-              )}
-              <pre
-                className={cn(
-                  "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 max-h-[60vh] overflow-auto text-xs",
-                  levelColor(entry.level),
-                )}
-              >
-                {parsed.pretty}
-              </pre>
-            </div>
-          </td>
-        </tr>
+          {entry.endpointId}
+        </div>
       )}
-    </>
+      <pre
+        className={cn(
+          "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 overflow-auto text-xs",
+          levelColor(entry.level),
+        )}
+      >
+        {parsed.pretty}
+      </pre>
+    </div>
   );
 }
 
@@ -233,12 +235,20 @@ export function MonitoringPanel({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  // The entry object itself, not an index: indices drift as new logs stream in
+  // and would silently repoint the open panel at a different line.
+  const [selected, setSelected] = useState<ObservabilityLogEntry | null>(null);
   const [filter, setFilter] = useState("");
   const [level, setLevel] = useState<LevelFilter>("all");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Memoized so the streaming re-renders don't re-parse the open payload.
+  const selectedSummary = useMemo(
+    () => (selected ? parseLogMessage(selected.message).summary : null),
+    [selected],
+  );
 
   // Switch to the Tracing tab focused on a log's trace, preserving stage/other params.
   const viewTrace = (traceId: string) => {
@@ -328,8 +338,8 @@ export function MonitoringPanel({
         isError={status === "error"}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 flex-1 overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
               <col className="w-42.5" />
@@ -350,11 +360,8 @@ export function MonitoringPanel({
                 <LogRow
                   key={`${entry.ts}-${i}`}
                   entry={entry}
-                  isExpanded={expandedIndex === i}
-                  onToggle={() =>
-                    setExpandedIndex((cur) => (cur === i ? null : i))
-                  }
-                  onViewTrace={viewTrace}
+                  isSelected={selected === entry}
+                  onSelect={() => setSelected(entry)}
                 />
               ))}
               {filtered.length === 0 && (
@@ -384,6 +391,27 @@ export function MonitoringPanel({
             </div>
           )}
         </div>
+        {selected && (
+          <ObservabilityDetailPanel
+            title={selectedSummary}
+            meta={
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                <span className={cn("font-medium", levelColor(selected.level))}>
+                  {selected.level}
+                </span>
+                <span className="text-muted-foreground">
+                  {formatDateTime(selected.ts).date}{" "}
+                  {formatDateTime(selected.ts).time}
+                  {selected.service &&
+                    ` · ${shortFunctionName(selected.service)}`}
+                </span>
+              </div>
+            }
+            onClose={() => setSelected(null)}
+          >
+            <LogDetails entry={selected} onViewTrace={viewTrace} />
+          </ObservabilityDetailPanel>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
 import {
   ObservabilityToolbar,
   type ToolbarFilterOption,
@@ -60,6 +61,50 @@ const DETAIL_ATTRIBUTES: Array<{ key: string; label: string }> = [
   { key: "tool.output", label: "Tool output · result returned to the model" },
 ];
 const DETAIL_KEYS = new Set(DETAIL_ATTRIBUTES.map((detail) => detail.key));
+
+interface KindTheme {
+  badgeBg: string;
+  bar: string;
+  text: string;
+}
+
+// One hue per span kind, checked for colorblind (protan/deutan) separation on
+// both surfaces — including against the error-bar red that can replace a root
+// bar. Badge text keeps the 700-on-light / 300-on-dark convention; bars step
+// deeper where a hue would wash out on one surface (task keeps violet-500 on
+// dark: violet-400 collapses into model.step's blue-400 under deuteranopia).
+const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
+  task: {
+    badgeBg: "bg-violet-500/15",
+    bar: "bg-violet-500/70",
+    text: "text-violet-700 dark:text-violet-300",
+  },
+  cron: {
+    badgeBg: "bg-amber-500/15",
+    bar: "bg-amber-500/70 dark:bg-amber-300/70",
+    text: "text-amber-700 dark:text-amber-300",
+  },
+  subtask: {
+    badgeBg: "bg-cyan-500/15",
+    bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
+    text: "text-cyan-700 dark:text-cyan-300",
+  },
+  "model.step": {
+    badgeBg: "bg-blue-500/15",
+    bar: "bg-blue-700/70 dark:bg-blue-400/70",
+    text: "text-blue-700 dark:text-blue-300",
+  },
+  "tool.call": {
+    badgeBg: "bg-orange-500/15",
+    bar: "bg-orange-600/70 dark:bg-orange-500/70",
+    text: "text-orange-700 dark:text-orange-300",
+  },
+  phase: {
+    badgeBg: "bg-teal-500/15",
+    bar: "bg-teal-700/70 dark:bg-teal-500/70",
+    text: "text-teal-700 dark:text-teal-300",
+  },
+};
 
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
@@ -152,31 +197,10 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   return "text-emerald-700 dark:text-emerald-400";
 }
 
-/** Pill style per span kind so the hierarchy reads at a glance. */
-function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
-  if (kind === "task")
-    return "bg-violet-500/15 text-violet-700 dark:text-violet-300";
-  if (kind === "cron")
-    return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300";
-  if (kind === "subtask")
-    return "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300";
-  if (kind === "model.step")
-    return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
-  if (kind === "phase")
-    return "bg-teal-500/15 text-teal-700 dark:text-teal-300";
-
-  return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
-}
-
-/** Solid waterfall-bar fill per kind; mirrors the badge hues. */
-function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
-  if (kind === "task") return "bg-violet-500/70";
-  if (kind === "cron") return "bg-indigo-500/70";
-  if (kind === "subtask") return "bg-fuchsia-500/70";
-  if (kind === "model.step") return "bg-sky-500/70";
-  if (kind === "phase") return "bg-teal-500/70";
-
-  return "bg-amber-500/70";
+/** KIND_THEME lookup with a fallback: core can ship a new span kind before
+ * this dashboard build knows it, and that must not take down the panel. */
+function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
+  return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
 }
 
 interface SpanGroup {
@@ -316,7 +340,7 @@ function TaskDurationBar({
   scaleMaxMs: number;
 }) {
   const live = isTaskRunning(group.root);
-  const barColor = kindBarColor(group.root.kind);
+  const barColor = kindTheme(group.root.kind).bar;
   const widthPct = Math.max(
     1.5,
     Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100),
@@ -328,11 +352,9 @@ function TaskDurationBar({
       <div
         className={cn(
           "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
-          group.root.status === "error"
-            ? "bg-red-500/70"
-            : live
-              ? cn(barColor, "ring-1 ring-inset ring-foreground/40")
-              : barColor,
+          group.root.status === "error" ? "bg-red-500/70" : barColor,
+          live &&
+            "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
         )}
         style={{ width: `${widthPct}%` }}
         title={title}
@@ -360,6 +382,7 @@ function TimelineBar({
 }) {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
+  const barColor = kindTheme(span.kind).bar;
   const end = live
     ? windowStart + windowSpan
     : Math.max(span.endTimeMs, span.startTimeMs);
@@ -393,21 +416,16 @@ function TimelineBar({
       >
         {ttftFrac > 0 && (
           <div
-            className="h-full shrink-0 bg-sky-500/25"
+            className="h-full shrink-0 bg-blue-500/25"
             style={{ width: `${ttftFrac * 100}%` }}
           />
         )}
         <div
           className={cn(
             "h-full flex-1",
-            stale
-              ? "bg-muted-foreground/25"
-              : live
-                ? cn(
-                    kindBarColor(span.kind),
-                    "ring-1 ring-inset ring-foreground/40",
-                  )
-                : kindBarColor(span.kind),
+            stale ? "bg-muted-foreground/25" : barColor,
+            live &&
+              "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
           )}
         />
       </div>
@@ -439,13 +457,7 @@ function TimingChip({
   );
 }
 
-function SpanDetails({
-  span,
-  depth,
-}: {
-  span: ObservabilitySpanRow;
-  depth: number;
-}) {
+function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
   const attributes = span.attributes ?? {};
   const ttftMs = numericAttribute(span, "model.ttft_ms");
   const streamMs = numericAttribute(span, "model.stream_ms");
@@ -464,12 +476,9 @@ function SpanDetails({
 
   // minmax(0,1fr) lets the grid track shrink below its content's min-content
   // width; without it a long unbroken run in a payload widens the track past
-  // the table and the text spills off the tinted background.
+  // the panel and the text spills off the tinted background.
   return (
-    <div
-      className="grid grid-cols-[minmax(0,1fr)] gap-3 border-l-2 border-border/50 bg-background/50 py-3 pr-4"
-      style={{ paddingLeft: depth * 18 + 28 }}
-    >
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       {(span.kind === "task" || span.kind === "cron") && (
         <div className="wrap-anywhere text-[11px] font-mono text-muted-foreground">
           trace: {span.traceId} · agent: {span.agentId ?? "unknown"} ·{" "}
@@ -567,7 +576,10 @@ function SpanRow({
   span,
   depth,
   isExpanded,
+  hasChildren,
   onToggle,
+  isSelected,
+  onSelect,
   group,
   scaleMaxMs,
   taskRunning,
@@ -577,7 +589,10 @@ function SpanRow({
   span: ObservabilitySpanRow;
   depth: number;
   isExpanded: boolean;
+  hasChildren: boolean;
   onToggle: () => void;
+  isSelected: boolean;
+  onSelect: () => void;
   group: SpanGroup;
   scaleMaxMs: number;
   taskRunning: boolean;
@@ -593,10 +608,10 @@ function SpanRow({
   return (
     <tr
       id={isRoot ? `task-${span.traceId}` : undefined}
-      onClick={onToggle}
+      onClick={onSelect}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
-        isExpanded && "bg-accent/30",
+        isSelected && "bg-accent/30",
         isRoot && "font-medium",
         highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
@@ -609,10 +624,24 @@ function SpanRow({
       </td>
       <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
         <span className="flex min-w-0 items-center gap-2">
-          {isExpanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggle();
+              }}
+              aria-label={isExpanded ? "Collapse spans" : "Expand spans"}
+              className="-m-1 cursor-pointer rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {isExpanded ? (
+                <ChevronDown className="size-3.5 shrink-0" />
+              ) : (
+                <ChevronRight className="size-3.5 shrink-0" />
+              )}
+            </button>
           ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="size-3.5 shrink-0" />
           )}
           <SpanStatusIcon span={span} taskRunning={taskRunning} />
           <span className="min-w-0">
@@ -628,7 +657,11 @@ function SpanRow({
                     {" · "}
                     <button
                       type="button"
-                      className="cursor-pointer text-fuchsia-700 hover:underline dark:text-fuchsia-300"
+                      // Parent links render on subtask rows, so they wear the subtask hue.
+                      className={cn(
+                        "cursor-pointer hover:underline",
+                        KIND_THEME.subtask.text,
+                      )}
                       onClick={(event) => {
                         event.stopPropagation();
                         onFocusTrace(parentTraceId);
@@ -648,7 +681,8 @@ function SpanRow({
         <Badge
           className={cn(
             "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-            kindBadge(span.kind),
+            kindTheme(span.kind).badgeBg,
+            kindTheme(span.kind).text,
           )}
         >
           {span.kind}
@@ -682,7 +716,8 @@ function SpanRow({
 }
 
 /**
- * Recursively render a span row, its detail block, and its children when expanded.
+ * Recursively render a span row and its children when expanded. Clicking a row
+ * selects it into the side detail panel; the chevron toggles the tree.
  * `enclosingRootLive` is whether the nearest enclosing root run is live. A subagent
  * subtask is itself a root: it runs independently (the parent task pass can finalize
  * while the subagent is still working), so it is judged by its own freshness, and its
@@ -695,6 +730,8 @@ function renderSpanRows(
   scaleMaxMs: number,
   expanded: Set<string>,
   toggle: (key: string) => void,
+  selectedKey: string | null,
+  onSelect: (key: string) => void,
   focusTraceId: string | null,
   enclosingRootLive: boolean,
   onFocusTrace: (traceId: string) => void,
@@ -712,7 +749,10 @@ function renderSpanRows(
       span={span}
       depth={depth}
       isExpanded={isExpanded}
+      hasChildren={children.length > 0}
       onToggle={() => toggle(key)}
+      isSelected={key === selectedKey}
+      onSelect={() => onSelect(key)}
       group={group}
       scaleMaxMs={scaleMaxMs}
       taskRunning={spanRunning}
@@ -722,16 +762,6 @@ function renderSpanRows(
   ];
 
   if (isExpanded) {
-    rows.push(
-      <tr
-        key={`detail:${key}`}
-        className="border-b border-border/40 bg-background/30"
-      >
-        <td colSpan={6} className="p-0">
-          <SpanDetails span={span} depth={depth} />
-        </td>
-      </tr>,
-    );
     for (const child of children) {
       rows.push(
         ...renderSpanRows(
@@ -741,6 +771,8 @@ function renderSpanRows(
           scaleMaxMs,
           expanded,
           toggle,
+          selectedKey,
+          onSelect,
           focusTraceId,
           childRootLive,
           onFocusTrace,
@@ -762,6 +794,7 @@ export function TracingPanel({
   const searchParams = useSearchParams();
   const focusTraceId = searchParams.get("trace");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [fromTime, setFromTime] = useState("");
@@ -817,6 +850,24 @@ export function TracingPanel({
     () => Math.max(1, ...groups.map((group) => group.taskDurationMs)),
     [groups],
   );
+
+  // Resolve the selected key against the live groups so the panel tracks span
+  // updates (running → ok) and closes itself when the span leaves the view.
+  const selected = useMemo(() => {
+    if (!selectedKey) return null;
+    for (const group of groups) {
+      const spans = [
+        group.root,
+        ...[...group.childrenByParent.values()].flat(),
+      ];
+      const span = spans.find(
+        (candidate) => spanKey(candidate) === selectedKey,
+      );
+      if (span) return { span: span, group: group };
+    }
+
+    return null;
+  }, [groups, selectedKey]);
 
   // New tasks (including running ones) arrive collapsed — the row already shows
   // live status and a pulsing bar, and a tree that pops open on every new task is
@@ -914,8 +965,8 @@ export function TracingPanel({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Task bars scaled by duration. Expand a task for its step waterfall, then
-        a span to inspect input, reasoning, and output.
+        Task bars scaled by duration. Expand a task for its step waterfall;
+        click any row to inspect input, reasoning, and output in the side panel.
       </p>
 
       <ObservabilityToolbar
@@ -939,8 +990,8 @@ export function TracingPanel({
         isError={status === "error"}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 flex-1 overflow-auto">
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
               <col className="w-37" />
@@ -969,6 +1020,8 @@ export function TracingPanel({
                   scaleMaxMs,
                   expanded,
                   toggle,
+                  selectedKey,
+                  setSelectedKey,
                   focusTraceId,
                   isTaskRunning(group.root),
                   focusTrace,
@@ -1002,6 +1055,45 @@ export function TracingPanel({
             </div>
           )}
         </div>
+        {selected && (
+          <ObservabilityDetailPanel
+            title={spanLabel(selected.span)}
+            meta={
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                <Badge
+                  className={cn(
+                    "px-1.5 py-0 text-[10px] uppercase tracking-wide",
+                    kindTheme(selected.span.kind).badgeBg,
+                    kindTheme(selected.span.kind).text,
+                  )}
+                >
+                  {selected.span.kind}
+                </Badge>
+                <span
+                  className={cn(
+                    "font-medium",
+                    isStale(selected.span, isTaskRunning(selected.group.root))
+                      ? "text-muted-foreground"
+                      : statusColor(selected.span.status),
+                  )}
+                >
+                  {isStale(selected.span, isTaskRunning(selected.group.root))
+                    ? "ended"
+                    : selected.span.status}
+                </span>
+                <span className="text-muted-foreground">
+                  {selected.span.durationMs > 0
+                    ? formatDuration(selected.span.durationMs)
+                    : "—"}{" "}
+                  · {formatDateTime(selected.span.startTimeMs)}
+                </span>
+              </div>
+            }
+            onClose={() => setSelectedKey(null)}
+          >
+            <SpanDetails span={selected.span} />
+          </ObservabilityDetailPanel>
+        )}
       </div>
     </div>
   );
