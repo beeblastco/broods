@@ -38,6 +38,11 @@ import {
   serializeSubagentRefs,
   writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
+import {
+  applyTidyLayout,
+  findFreePosition,
+  GRID,
+} from "@broods/convex/model/canvasLayout";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
@@ -783,10 +788,26 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     [screenToFlowPosition],
   );
 
+  /**
+   * Position a manually added node: right under the cursor, stepped onto the
+   * nearest free grid slot only when that spot is already taken. The right-click
+   * point is consumed, so a later add that did not come from the context menu
+   * lands in view rather than at a spot the user has since panned away from.
+   */
+  const getFreeAddPosition = useCallback((): FlowPosition => {
+    const requested = lastRightClick.current ?? getViewportCenterPosition();
+    lastRightClick.current = null;
+
+    return findFreePosition(
+      requested,
+      nodesRef.current.map((node) => node.position),
+    );
+  }, [getViewportCenterPosition]);
+
   /** Add a service node at a position and auto-connect to the nearest agent. */
   const addNode = useCallback(
     (type: string, label: string, extraData?: Partial<BaseNodeData>) => {
-      const position = lastRightClick.current ?? getViewportCenterPosition();
+      const position = getFreeAddPosition();
       const id = String(nextId.current++);
       const nodeLabel = `${label} ${id}`;
 
@@ -819,8 +840,18 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
       scheduleSave();
     },
-    [getViewportCenterPosition, setNodes, setEdges, scheduleSave],
+    [getFreeAddPosition, setNodes, setEdges, scheduleSave],
   );
+
+  /**
+   * Re-lay the whole graph: agent clusters of typed columns, shared services in
+   * a lane below. Cards you dragged yourself move too — that is the point.
+   */
+  const tidyLayout = useCallback(() => {
+    setNodes((nds) => applyTidyLayout(nds, edgesRef.current));
+    scheduleSave();
+    window.requestAnimationFrame(() => fitView(FIT_VIEW_OPTIONS));
+  }, [setNodes, scheduleSave, fitView]);
 
   /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
   const onNodeDragStart: OnNodeDrag = useCallback(() => {
@@ -849,24 +880,22 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const onPaneClick = useCallback(() => setSelectedNode(null), []);
   const onOpenCreateConfig = useCallback(
     (position?: FlowPosition) => {
-      setAgentCreatePosition(position ?? getViewportCenterPosition());
+      setAgentCreatePosition(position ?? getFreeAddPosition());
       setConfigDialogOpen(true);
     },
-    [getViewportCenterPosition],
+    [getFreeAddPosition],
   );
   const onConfigDialogOpenChange = useCallback((open: boolean) => {
     setConfigDialogOpen(open);
     if (!open) setAgentCreatePosition(null);
   }, []);
   const onOpenSourcePicker = useCallback(() => {
-    setAgentCreatePosition(
-      lastRightClick.current ?? getViewportCenterPosition(),
-    );
+    setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
-  }, [getViewportCenterPosition]);
+  }, [getFreeAddPosition]);
   const onCreateAgentFromPicker = useCallback(() => {
-    onOpenCreateConfig(agentCreatePosition ?? getViewportCenterPosition());
-  }, [agentCreatePosition, getViewportCenterPosition, onOpenCreateConfig]);
+    onOpenCreateConfig(agentCreatePosition ?? getFreeAddPosition());
+  }, [agentCreatePosition, getFreeAddPosition, onOpenCreateConfig]);
 
   /** Persist after edges are deleted. */
   const onEdgesDeleteHandler = useCallback(() => {
@@ -1082,12 +1111,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         defaultEdgeOptions={defaultEdgeOptions}
       >
         <Background
-          gap={24}
+          gap={GRID}
           size={1.5}
           color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}
         />
         <Panel position="top-left" className="flex flex-col gap-2">
-          <CanvasControls />
+          <CanvasControls onTidy={tidyLayout} />
           {saveState !== "idle" && (
             <div
               aria-live="polite"

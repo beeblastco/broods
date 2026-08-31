@@ -3,8 +3,20 @@
 import { Button } from "@/app/components/ui/button";
 import { useReactFlow } from "@xyflow/react";
 
-/** Zoom and fit-view controls for the canvas. */
-export function CanvasControls(): React.JSX.Element {
+/** Top-left corners of the four cells in the tidy icon's 2x2 grid. */
+const TIDY_ICON_CELLS = [
+  { x: 1.5, y: 1.5 },
+  { x: 8, y: 1.5 },
+  { x: 1.5, y: 8 },
+  { x: 8, y: 8 },
+];
+
+/** Zoom, fit-view and tidy controls for the canvas. */
+export function CanvasControls({
+  onTidy,
+}: {
+  onTidy: () => void;
+}): React.JSX.Element {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   return (
@@ -57,6 +69,34 @@ export function CanvasControls(): React.JSX.Element {
             strokeLinecap="round"
             strokeLinejoin="round"
           />
+        </svg>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="size-7"
+        aria-label="Tidy layout"
+        onClick={onTidy}
+      >
+        {/* Stroke is set once here; SVG presentation attributes inherit. */}
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.25"
+        >
+          {TIDY_ICON_CELLS.map(({ x, y }) => (
+            <rect
+              key={`${x}-${y}`}
+              x={x}
+              y={y}
+              width="4.5"
+              height="4.5"
+              rx="1"
+            />
+          ))}
         </svg>
       </Button>
     </div>

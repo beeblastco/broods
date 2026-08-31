@@ -8,6 +8,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
+import { applyTidyLayout } from "./canvasLayout";
 import {
   authIdForAccount,
   resourceName,
@@ -453,8 +454,9 @@ function indexExistingCanvas(
 }
 
 /**
- * Upsert one canvas node per desired resource, column-laid-out by kind, keeping
- * an existing node's id and position when the resource already had one.
+ * Upsert one canvas node per desired resource, keeping an existing node's id
+ * when the resource already had one. Positions come from the tidy pass in
+ * {@link persistCanvasLayout}.
  */
 function materializeCanvasNodes(options: {
   existing: ExistingCanvas;
@@ -475,28 +477,6 @@ function materializeCanvasNodes(options: {
   const nextById = new Map(existing.nodes.map((node) => [node.id, node]));
   const nodeIdByKindName = new Map<string, string>();
   const mcpNodeIds = new Map<Id<"mcp">, string>();
-  const columnX = {
-    agent: 80,
-    sandbox: 340,
-    workspace: 600,
-    skill: 860,
-    mcp: 1120,
-  } as const;
-  const rowY = {
-    agent: 80,
-    sandbox: 80,
-    workspace: 80,
-    skill: 80,
-    mcp: 80,
-  };
-  const nextPosition = (
-    kind: keyof typeof columnX,
-  ): { x: number; y: number } => {
-    const position = { x: columnX[kind], y: rowY[kind] };
-    rowY[kind] += 132;
-
-    return position;
-  };
 
   const ordered = [...desiredResources].sort((a, b) => {
     const rank = {
@@ -519,7 +499,6 @@ function materializeCanvasNodes(options: {
         preferred: existing.byAgentConfigId.get(config._id),
         kind: "agent",
         name: resource.name,
-        position: nextPosition("agent"),
         data: {
           label: resource.name,
           status: "idle",
@@ -541,7 +520,6 @@ function materializeCanvasNodes(options: {
         preferred: existing.byId.get(canvasNodeId("skill", resource.name)),
         kind: "skill",
         name: resource.name,
-        position: nextPosition("skill"),
         data: {
           label: resource.name,
           status: "idle",
@@ -569,7 +547,6 @@ function materializeCanvasNodes(options: {
         preferred: existing.byResourceId.get(record._id),
         kind: "mcp",
         name: resource.name,
-        position: nextPosition("mcp"),
         data: {
           label: resource.name,
           status: "idle",
@@ -600,7 +577,6 @@ function materializeCanvasNodes(options: {
       preferred: existing.byResourceId.get(resourceId),
       kind: resource.kind,
       name: resource.name,
-      position: nextPosition(resource.kind),
       data: {
         label: resource.name,
         status: "idle",
@@ -676,20 +652,21 @@ async function persistCanvasLayout(
   },
 ): Promise<void> {
   const now = Date.now();
+  const nextNodes = applyTidyLayout(options.nextNodes, options.nextEdges);
   if (options.layout) {
     await ctx.db.patch(options.layout._id, {
-      nodes: options.nextNodes,
+      nodes: nextNodes,
       edges: options.nextEdges,
       updatedAt: now,
     });
-  } else if (options.nextNodes.length > 0) {
+  } else if (nextNodes.length > 0) {
     const authId = await authIdForAccount(ctx, options.account);
     if (!authId) throw new Error("Account org owner not found");
     await ctx.db.insert("canvasLayouts", {
       authId: authId,
       projectId: options.projectId,
       stageId: options.stageId,
-      nodes: options.nextNodes,
+      nodes: nextNodes,
       edges: options.nextEdges,
       updatedAt: now,
     });
@@ -740,17 +717,16 @@ function upsertCanvasNode(options: {
   preferred: CanvasNode | undefined;
   kind: CanvasNode["type"];
   name: string;
-  position: { x: number; y: number };
   data: Record<string, unknown>;
 }): CanvasNode {
-  const { nextById, existingById, preferred, kind, name, position, data } =
-    options;
+  const { nextById, existingById, preferred, kind, name, data } = options;
   const id = preferred?.id ?? canvasNodeId(kind, name);
   const existing = preferred ?? existingById.get(id);
   const node = {
     id: id,
     type: kind,
-    position: existing?.position ?? position,
+    // Placeholder: the tidy pass in `persistCanvasLayout` assigns every position.
+    position: { x: 0, y: 0 },
     data: {
       ...(isPlainObject(existing?.data) ? existing.data : {}),
       ...data,

@@ -22,15 +22,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
+import { applyTidyLayout } from "./canvasLayout";
 import { isPlainObject } from "./objects";
-
-// Same column layout as the CLI canvas sync; agents keep whatever position
-// the back-sync or the user gave them.
-const API_WIRING_COLUMN_X = {
-  sandbox: 340,
-  workspace: 600,
-  skill: 860,
-} as const;
 
 /** The stored layout normalized and indexed by id and back-references. */
 type ExistingApiCanvas = {
@@ -49,8 +42,6 @@ type ApiWiringSync = ExistingApiCanvas & {
   configs: Doc<"agentConfigs">[];
   /** Lazily loaded skill names per owning account. */
   skillNamesByAccount: Map<Id<"accounts">, Set<string>>;
-  /** Next free row per resource column; see {@link API_WIRING_COLUMN_X}. */
-  rowY: Record<keyof typeof API_WIRING_COLUMN_X, number>;
   desiredEdges: Map<string, CanvasEdge>;
   desiredWiringNodeIds: Set<string>;
   workspaceReferenced: Set<string>;
@@ -113,7 +104,6 @@ export async function syncApiAgentCanvasWiring(
     secret: secret,
     configs: configs,
     skillNamesByAccount: new Map(),
-    rowY: { sandbox: 80, workspace: 80, skill: 80 },
     desiredEdges: new Map(),
     desiredWiringNodeIds: new Set(),
     workspaceReferenced: new Set(),
@@ -130,7 +120,7 @@ export async function syncApiAgentCanvasWiring(
   const reconciled = reconcileApiWiring(sync);
 
   await ctx.db.patch(layout._id, {
-    nodes: reconciled.nextNodes,
+    nodes: applyTidyLayout(reconciled.nextNodes, reconciled.nextEdges),
     edges: reconciled.nextEdges,
     updatedAt: Date.now(),
   });
@@ -227,17 +217,6 @@ function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
   };
 }
 
-/** Next free slot in a resource kind's column. */
-function nextColumnPosition(
-  sync: ApiWiringSync,
-  kind: keyof typeof API_WIRING_COLUMN_X,
-): { x: number; y: number } {
-  const position = { x: API_WIRING_COLUMN_X[kind], y: sync.rowY[kind] };
-  sync.rowY[kind] += 132;
-
-  return position;
-}
-
 /**
  * Persistence stage: merge desired wiring with what survives from the
  * existing layout, and drop anything left dangling.
@@ -311,7 +290,6 @@ async function resolveSandboxNode(
     sync.existingByResourceId.get(row._id),
     `api-sandbox-${row._id}`,
     "sandbox",
-    nextColumnPosition(sync, "sandbox"),
     {
       label: row.name,
       status: "idle",
@@ -365,13 +343,12 @@ function stampWorkspaceReadOnly(sync: ApiWiringSync): void {
   }
 }
 
-/** Creates or refreshes a node in `sync.nextById`, keeping any existing position. */
+/** Creates or refreshes a node in `sync.nextById`. Positions come from the tidy pass. */
 function upsertWiringNode(
   sync: ApiWiringSync,
   preferred: CanvasNode | undefined,
   id: string,
   kind: CanvasNode["type"],
-  position: { x: number; y: number },
   data: Record<string, unknown>,
 ): CanvasNode {
   const nodeId = preferred?.id ?? id;
@@ -379,7 +356,8 @@ function upsertWiringNode(
   const node = {
     id: nodeId,
     type: kind,
-    position: existing?.position ?? position,
+    // Placeholder: the tidy pass in `syncApiAgentCanvasWiring` assigns every position.
+    position: { x: 0, y: 0 },
     data: { ...existing?.data, ...data },
   };
   sync.nextById.set(nodeId, node);
@@ -422,7 +400,6 @@ async function wireAgentConfig(
     sync.existingByAgentConfigId.get(config._id),
     `api-agent-${config._id}`,
     "agent",
-    { x: 80, y: 80 },
     {
       label: config.name,
       agentConfigId: config._id,
@@ -492,7 +469,6 @@ async function wireAgentSkills(
       sync.nextById.get(skillNodeId),
       skillNodeId,
       "skill",
-      nextColumnPosition(sync, "skill"),
       {
         label: name,
         status: "idle",
@@ -557,7 +533,6 @@ async function wireAgentWorkspaces(
       sync.existingByResourceId.get(row._id),
       `api-workspace-${row._id}`,
       "workspace",
-      nextColumnPosition(sync, "workspace"),
       {
         label: row.name,
         status: "idle",
