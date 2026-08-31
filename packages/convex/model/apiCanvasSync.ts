@@ -356,8 +356,8 @@ function upsertWiringNode(
   const node = {
     id: nodeId,
     type: kind,
-    // Every position is reassigned by the tidy pass in `syncApiAgentCanvasWiring`.
-    position: existing?.position ?? { x: 0, y: 0 },
+    // Placeholder: the tidy pass in `syncApiAgentCanvasWiring` assigns every position.
+    position: { x: 0, y: 0 },
     data: { ...existing?.data, ...data },
   };
   sync.nextById.set(nodeId, node);

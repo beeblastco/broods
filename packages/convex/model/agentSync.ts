@@ -369,8 +369,9 @@ export async function backSyncCanvasFromAgentRow(
     )
     .unique();
 
-  // The origin is a placeholder: the tidy pass below assigns the real spot from
-  // the graph, so an API-created agent never lands on top of an existing card.
+  // The origin is a placeholder: the tidy pass assigns the real spot from the
+  // graph, so an API-created agent never lands on top of an existing card. The
+  // first-node case needs no pass — a lone agent belongs at the origin.
   const nextNode = {
     id: String(now),
     type: "agent" as const,
@@ -393,7 +394,7 @@ export async function backSyncCanvasFromAgentRow(
       authId: user.authId,
       projectId: project._id,
       stageId: stage._id,
-      nodes: applyTidyLayout([nextNode], []),
+      nodes: [nextNode],
       edges: [],
       updatedAt: now,
     });

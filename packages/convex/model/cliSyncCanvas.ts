@@ -8,13 +8,13 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
+import { applyTidyLayout } from "./canvasLayout";
 import {
   authIdForAccount,
   resourceName,
   snapshotExternalConfig,
   type CliResource,
 } from "./cliSync";
-import { applyTidyLayout } from "./canvasLayout";
 import { isPlainObject } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
@@ -725,8 +725,8 @@ function upsertCanvasNode(options: {
   const node = {
     id: id,
     type: kind,
-    // Every position is reassigned by the tidy pass in `persistCanvasLayout`.
-    position: existing?.position ?? { x: 0, y: 0 },
+    // Placeholder: the tidy pass in `persistCanvasLayout` assigns every position.
+    position: { x: 0, y: 0 },
     data: {
       ...(isPlainObject(existing?.data) ? existing.data : {}),
       ...data,

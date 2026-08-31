@@ -41,6 +41,7 @@ import {
 import {
   applyTidyLayout,
   findFreePosition,
+  GRID,
 } from "@broods/convex/model/canvasLayout";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -1110,7 +1111,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         defaultEdgeOptions={defaultEdgeOptions}
       >
         <Background
-          gap={24}
+          gap={GRID}
           size={1.5}
           color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}
         />

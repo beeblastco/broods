@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   findFreePosition,
+  GRID,
+  NODE_HEIGHT,
+  NODE_WIDTH,
   tidyCanvasLayout,
   type LayoutEdge,
   type LayoutNode,
 } from "../model/canvasLayout";
-
-const NODE_WIDTH = 176;
-const NODE_HEIGHT = 96;
 
 function node(id: string, type: string, label: string): LayoutNode {
   return { id: id, type: type, data: { label: label } };
@@ -68,17 +68,15 @@ describe("tidyCanvasLayout", () => {
     edge("s1", "w1", "mount"),
     edge("a1", "a2", "subagent"),
   ];
+  // The layout is pure, so one run covers every assertion below.
+  const positions = tidyCanvasLayout(nodes, edges);
 
   it("places every node exactly once, with no card overlapping another", () => {
-    const positions = tidyCanvasLayout(nodes, edges);
-
     expect([...positions.keys()].sort()).toEqual(nodes.map((n) => n.id).sort());
     expect(overlappingPairs(positions)).toEqual([]);
   });
 
   it("puts agents on the top row above their own services", () => {
-    const positions = tidyCanvasLayout(nodes, edges);
-
     expect(positions.get("a1")?.y).toBe(0);
     expect(positions.get("a2")?.y).toBe(0);
     for (const id of ["d1", "m1", "s1", "s2", "k1"]) {
@@ -87,8 +85,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("orders an agent's services into typed columns", () => {
-    const positions = tidyCanvasLayout(nodes, edges);
-
     // database, sandbox, mcp for `support`: the session column sits left of the
     // sandbox column, which sits left of the mcp column.
     expect(positions.get("d1")!.x).toBeLessThan(positions.get("s1")!.x);
@@ -96,7 +92,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("drops a shared service below both clusters, and an unwired one lower still", () => {
-    const positions = tidyCanvasLayout(nodes, edges);
     const clusterBottom = Math.max(
       positions.get("s1")!.y,
       positions.get("s2")!.y,
@@ -108,8 +103,6 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("keeps a sub-agent next to its parent", () => {
-    const positions = tidyCanvasLayout(nodes, edges);
-
     // `triage` sorts after `support` by label anyway, so assert the sub-agent
     // link survives a reversed label order too.
     const reversed = tidyCanvasLayout(
@@ -125,14 +118,13 @@ describe("tidyCanvasLayout", () => {
     expect(reversed.get("a1")!.x).toBeLessThan(reversed.get("a2")!.x);
   });
 
-  it("is deterministic and snapped to the 24px grid", () => {
-    const first = tidyCanvasLayout(nodes, edges);
+  it("is deterministic and snapped to the background grid", () => {
     const second = tidyCanvasLayout([...nodes].reverse(), [...edges].reverse());
 
-    for (const [id, position] of first) {
+    for (const [id, position] of positions) {
       expect(second.get(id)).toEqual(position);
-      expect(position.x % 24).toBe(0);
-      expect(position.y % 24).toBe(0);
+      expect(position.x % GRID).toBe(0);
+      expect(position.y % GRID).toBe(0);
     }
   });
 
