@@ -104,9 +104,6 @@ describe("createConfiguredHarnessAgent", () => {
       console.log(JSON.stringify({
         harnessId: runtime.agent.harnessId,
         reservationKey: runtime.reservationKey,
-        activeUserToolNames: Object.keys(runtime.agent.activeUserTools),
-        builtinToolFiltering: runtime.agent.builtinToolFiltering,
-        debug: runtime.agent.settings.debug,
       }));
     `);
 
@@ -116,6 +113,9 @@ describe("createConfiguredHarnessAgent", () => {
     });
   });
 
+  // The harness resolves the active user tool set per turn, so the agent
+  // exposes no filtered tool map to read back. What core owns is the
+  // `activeTools` it derives from `harness.activeTools` minus `denyTools`.
   it("maps tool filters and diagnostics into OpenCode", async () => {
     const result = await runProbe(`
       const runtime = module.createConfiguredHarnessAgent({
@@ -143,7 +143,7 @@ describe("createConfiguredHarnessAgent", () => {
       console.log(JSON.stringify({
         harnessId: runtime.agent.harnessId,
         reservationKey: runtime.reservationKey,
-        activeUserToolNames: Object.keys(runtime.agent.activeUserTools),
+        activeTools: runtime.agent.settings.activeTools,
         builtinToolFiltering: runtime.agent.builtinToolFiltering,
         debug: runtime.agent.settings.debug,
       }));
@@ -154,7 +154,7 @@ describe("createConfiguredHarnessAgent", () => {
       reservationKey: expect.stringContaining(
         "acct:agent:conversation:opencode:",
       ),
-      activeUserToolNames: ["custom_tool"],
+      activeTools: ["custom_tool"],
       debug: {
         enabled: true,
         level: "trace",
