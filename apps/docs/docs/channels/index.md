@@ -28,8 +28,11 @@ Channel tools are automatic; do not add them to `config.tools`.
 | `send-files`     | Send workspace documents                         |
 | `send-sticker`   | Send a sticker                                   |
 | `send-reactions` | React to a message                               |
+| `send-update`    | Send a progress note before the turn ends        |
 
-`send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
+`send-message` targets an existing conversation key and runs that session as a follow-up. `send-update` posts into the conversation the turn is already in. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
+
+`send-update` is for the wait, not the answer. A turn that spends minutes in a sandbox or a long tool call leaves the conversation silent, and the recipient cannot tell a slow answer from a dead bot, so the agent can post a sentence saying what it is doing. The final reply is still delivered when the turn ends. Every provider can post text, so this is the one channel tool that is always available on a channel turn. The `channel.message.sending` hook rewrites or blocks these notes exactly as it does the final reply.
 
 `send-images` takes `file_paths` for images in an attached workspace, or `urls` for ones already published on the web. `file_paths` appears only when the agent has a workspace attached. Pass a whole set in one call; the channel decides how to group it.
 

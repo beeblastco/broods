@@ -53,6 +53,7 @@ describe("createTools", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sendImages = mock(async function (): Promise<void> {});
     const sendSticker = mock(async function (): Promise<void> {});
+    const sendText = mock(async function (): Promise<void> {});
     const reactToMessage = mock(async function (): Promise<void> {});
     const dispatchSessionMessage = mock(
       async function (): Promise<SessionMessageResult> {
@@ -66,7 +67,7 @@ describe("createTools", () => {
         actions: {
           sendImages: sendImages,
           sendSticker: sendSticker,
-          sendText: async function (): Promise<void> {},
+          sendText: sendText,
           sendTyping: async function (): Promise<void> {},
           supportsReactions: true,
           reactToMessage: reactToMessage,
@@ -86,6 +87,7 @@ describe("createTools", () => {
       "send-message",
       "send-reactions",
       "send-sticker",
+      "send-update",
     ]);
     await channelToolExecute(tools["send-message"], {
       conversationKey: "tg:target",
@@ -97,6 +99,9 @@ describe("createTools", () => {
     });
     await channelToolExecute(tools["send-reactions"], { emoji: "heart" });
     await channelToolExecute(tools["send-sticker"], { sticker: "sticker-1" });
+    await channelToolExecute(tools["send-update"], {
+      message: "still working",
+    });
 
     expect(dispatchSessionMessage).toHaveBeenCalledWith({
       conversationKey: "tg:target",
@@ -115,9 +120,10 @@ describe("createTools", () => {
     );
     expect(reactToMessage).toHaveBeenCalledWith("heart");
     expect(sendSticker).toHaveBeenCalledWith("sticker-1");
+    expect(sendText).toHaveBeenCalledWith("[safe] still working");
   });
 
-  it("omits unsupported channel interaction tools", async (): Promise<void> => {
+  it("keeps only send-update when the channel supports nothing else", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const tools = await createTools(
       {
@@ -137,7 +143,7 @@ describe("createTools", () => {
       {},
     );
 
-    expect(tools).toEqual({});
+    expect(Object.keys(tools)).toEqual(["send-update"]);
   });
 
   it("exposes send-message outside channel turns for configured agents", async (): Promise<void> => {
@@ -175,6 +181,7 @@ describe("createTools", () => {
     expect(Object.keys(tools).sort()).toEqual([
       "send-message",
       "send-reactions",
+      "send-update",
     ]);
   });
 

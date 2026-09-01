@@ -65,6 +65,10 @@ interface SendStickerInput {
   sticker: string;
 }
 
+interface SendUpdateInput {
+  message: string;
+}
+
 // Documents, by the same sealed media link `send-images` hands pictures over as.
 // Two deliveries behind one tool: a provider with a document API gets the files
 // themselves, and one without gets their URLs as text. The model picks neither —
@@ -287,6 +291,49 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
 
         return toolText(
           `Sticker sent to the current ${channelName} conversation.`,
+        );
+      },
+    }),
+  };
+}
+
+// A word to the recipient while the turn is still running. Every other outbound
+// tool carries part of the answer; this one carries none of it. It exists for
+// the wait itself, because a long tool run leaves the conversation silent and a
+// silent bot reads as a broken one. It is deliberately not a delivery tool: the
+// turn still owes a final reply after it.
+export function sendUpdateTool(context: ChannelToolContext): ToolSet {
+  const { actions, channelName } = context;
+
+  return {
+    "send-update": tool({
+      description: `Sends a short progress note to the current ${channelName} conversation right now, while the turn keeps running. Use it when the work ahead will take long enough that the recipient would otherwise wait with no sign anything is happening: say what is being done and how long it is likely to take. This is not the answer, which is still delivered when the turn ends, so keep it to a sentence or two and do not repeat an update that is still true.`,
+      inputSchema: jsonSchema<SendUpdateInput>({
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Progress note to send now, written in the language of the conversation.",
+          },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      }),
+      execute: async function (input): Promise<string> {
+        const message = input.message.trim();
+        if (!message) {
+          return toolError("Error: send-update needs a non-empty message");
+        }
+        const transformed = await context.transformText(message);
+        if (transformed === null) {
+          return toolText("Update blocked by the outbound message hook.");
+        }
+        await actions.sendText(transformed);
+
+        return toolText(
+          `Update sent to the current ${channelName} conversation. The final reply is still owed.`,
         );
       },
     }),
