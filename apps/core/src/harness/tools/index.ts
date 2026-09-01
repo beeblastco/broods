@@ -50,6 +50,7 @@ import {
   sendMessageTool,
   sendReactionsTool,
   sendStickerTool,
+  sendUpdateTool,
   type ChannelToolContext,
 } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
@@ -248,6 +249,9 @@ export async function createTools(
       }),
       sendReactionsTool(context.channel),
       sendStickerTool(context.channel),
+      // Every channel can post text, so the progress note is the one channel
+      // tool that is always registered.
+      sendUpdateTool(context.channel),
     );
   }
   if (
