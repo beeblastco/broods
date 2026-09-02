@@ -297,11 +297,9 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
   };
 }
 
-// A word to the recipient while the turn is still running. Every other outbound
-// tool carries part of the answer; this one carries none of it. It exists for
-// the wait itself, because a long tool run leaves the conversation silent and a
-// silent bot reads as a broken one. It is deliberately not a delivery tool: the
-// turn still owes a final reply after it.
+// A progress note while the turn is still running, so a long tool run does not
+// read as a dead bot. It carries none of the answer and is not a delivery tool:
+// the turn still owes a final reply after it.
 export function sendUpdateTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
 
@@ -322,11 +320,7 @@ export function sendUpdateTool(context: ChannelToolContext): ToolSet {
         additionalProperties: false,
       }),
       execute: async function (input): Promise<string> {
-        const message = input.message.trim();
-        if (!message) {
-          return toolError("Error: send-update needs a non-empty message");
-        }
-        const transformed = await context.transformText(message);
+        const transformed = await context.transformText(input.message);
         if (transformed === null) {
           return toolText("Update blocked by the outbound message hook.");
         }
