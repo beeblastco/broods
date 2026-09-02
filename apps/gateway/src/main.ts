@@ -38,6 +38,7 @@ import {
   json,
   normalizeBaseUrl,
   normalizedCoreBaseUrls,
+  warnDeprecatedQueryToken,
   websocketToken,
   websocketUpgradeHeaders,
 } from "./utils.ts";
@@ -77,6 +78,11 @@ if (import.meta.main) {
     httpRequestsPerMinute > 0
       ? new RateLimiter(httpRequestsPerMinute, 60_000)
       : undefined;
+  // Defaults on because Convex still reaches core through this gateway; flip
+  // to "false" once BROODS_ACCOUNT_MANAGE_URL points at core in-cluster.
+  const proxyOptions = {
+    forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID !== "false",
+  };
 
   const server = Bun.serve<GatewayData>({
     port: Number(process.env.PORT ?? "3000"),
@@ -167,6 +173,7 @@ if (import.meta.main) {
           return json({ error: "Gateway is at capacity" }, { status: 503 });
         }
 
+        warnDeprecatedQueryToken(request, url);
         const token = websocketToken(request, url);
         if (!token)
           return json({ error: "Missing WebSocket token" }, { status: 401 });
@@ -213,6 +220,7 @@ if (import.meta.main) {
           return json({ error: "Gateway is at capacity" }, { status: 503 });
         }
 
+        warnDeprecatedQueryToken(request, url);
         const token = websocketToken(request, url);
         if (!token)
           return json({ error: "Missing WebSocket token" }, { status: 401 });
@@ -271,13 +279,13 @@ if (import.meta.main) {
           { status: 503 },
         );
 
-      return proxyHttp(request, [configBaseUrl]);
+      return proxyHttp(request, [configBaseUrl], proxyOptions);
     }
 
     if (!isCoreHttpRoute(url.pathname))
       return json({ error: "Not found" }, { status: 404 });
 
-    return proxyHttp(request, coreBaseUrls);
+    return proxyHttp(request, coreBaseUrls, proxyOptions);
   }
 
   function websocketHandlers(): Bun.WebSocketHandler<GatewayData> {

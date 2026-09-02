@@ -213,8 +213,13 @@ async function callLifecycle(
     | "terminal",
   extra?: Record<string, unknown>,
 ): Promise<unknown> {
-  const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
-  if (!account) throw new Error("No active org / account not provisioned");
+  // Sandbox control runs commands and destroys state: admin only.
+  const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+    requiredRole: "admin",
+  });
+  if (!account) {
+    throw new Error("Sandboxes can only be controlled by an org admin.");
+  }
   const controllable = await ctx.runQuery(
     internal.sandbox.instances.isControllable,
     {
@@ -272,7 +277,9 @@ async function markInstance(
   status: "running" | "suspending",
 ): Promise<void> {
   try {
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
+    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+      requiredRole: "admin",
+    });
     if (!account) return;
 
     await ctx.runMutation(internal.sandbox.instances.setStatus, {

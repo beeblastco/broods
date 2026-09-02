@@ -232,10 +232,17 @@ export const saveLayout = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) {
+      throw new Error("The canvas can only be changed by an org admin.");
+    }
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
       throw new Error("Stage not found.");
     }

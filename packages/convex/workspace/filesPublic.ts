@@ -55,7 +55,7 @@ export const migrateLegacy = action({
   returns: v.array(fileEntry),
   handler: async (ctx, args) => {
     const user = await requireActionUser(ctx);
-    const workspace = await resolveWorkspace(ctx, args);
+    const workspace = await resolveWorkspace(ctx, args, "admin");
     const legacyFiles: LegacyFile[] = await ctx.runQuery(
       internal.workspace.files.listForMigrationInternal,
       {
@@ -127,7 +127,7 @@ export const upload = action({
   },
   returns: fileEntry,
   handler: async (ctx, args) => {
-    const workspace = await resolveWorkspace(ctx, args);
+    const workspace = await resolveWorkspace(ctx, args, "admin");
 
     return await uploadWorkspaceFile(workspace, {
       path: args.path,
@@ -146,7 +146,7 @@ export const remove = action({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const workspace = await resolveWorkspace(ctx, args);
+    const workspace = await resolveWorkspace(ctx, args, "admin");
     await deleteWorkspacePath(workspace, args.path);
 
     return null;
@@ -163,7 +163,7 @@ export const rename = action({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const workspace = await resolveWorkspace(ctx, args);
+    const workspace = await resolveWorkspace(ctx, args, "admin");
     await renameWorkspacePath(workspace, args.path, args.newPath);
 
     return null;
@@ -173,6 +173,7 @@ export const rename = action({
 async function resolveWorkspace(
   ctx: ActionCtx,
   args: { projectId: Id<"projects">; workspaceId: string },
+  requiredRole?: "admin",
 ): Promise<RuntimeWorkspace> {
   const user = await requireActionUser(ctx);
   const workspace: RuntimeWorkspace | null = await ctx.runQuery(
@@ -181,9 +182,16 @@ async function resolveWorkspace(
       authId: user.id,
       projectId: args.projectId,
       workspaceId: args.workspaceId,
+      ...(requiredRole ? { requiredRole: requiredRole } : {}),
     },
   );
-  if (!workspace) throw new Error("Workspace not found");
+  if (!workspace) {
+    throw new Error(
+      requiredRole
+        ? "Workspace files can only be changed by an org admin."
+        : "Workspace not found",
+    );
+  }
 
   return workspace;
 }

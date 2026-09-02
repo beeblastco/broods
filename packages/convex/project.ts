@@ -15,6 +15,7 @@ import { uniqueProjectSlug } from "./lib/slug";
 import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
+import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
 import { projectsFields } from "./schema";
 
 const RANDOM_ADJECTIVES = [
@@ -148,6 +149,9 @@ export const create = mutation({
 
     const now = Date.now();
     const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+    if (orgId && !(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
+      throw new Error("Projects can only be created by an org admin.");
+    }
     const projectId = await ctx.db.insert("projects", {
       authId: authUser.id,
       orgId: orgId ?? undefined,
@@ -220,6 +224,8 @@ export const getOrCreateDefault = mutation({
       if (org?.onboardedAt) {
         return null;
       }
+      // A member never creates the first project; an admin will.
+      if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) return null;
     }
 
     const now = Date.now();
@@ -380,6 +386,25 @@ export const update = mutation({
  * Resolve the caller's active org id, used to scope new and listed projects.
  * Returns null when the user has no membership yet (legacy / first-load flow).
  */
+/** Whether the caller may write in `orgId`: the org owner, or an admin member. */
+async function callerCanWriteOrg(
+  ctx: Ctx,
+  authId: string,
+  orgId: Id<"orgs">,
+): Promise<boolean> {
+  const org = await ctx.db.get(orgId);
+  if (!org) return false;
+  if (org.ownerAuthId === authId) return true;
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return false;
+  const membership = await getOrgMembership(ctx, orgId, user._id);
+
+  return Boolean(membership && orgRoleMeets(membership.role, "admin"));
+}
+
 async function getCallerActiveOrgId(
   ctx: Ctx,
   authId: string,

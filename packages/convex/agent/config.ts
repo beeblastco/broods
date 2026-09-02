@@ -23,7 +23,6 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
-import { stableJson } from "../model/objects";
 import { agentConfigsFields } from "../schema";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
@@ -43,6 +42,9 @@ const workspaceRefValidator = v.object({
   workspaceId: v.string(),
   sandbox: v.optional(v.union(v.string(), v.null())),
 });
+
+const AGENT_ADMIN_REQUIRED =
+  "Agent configuration can only be changed by an org admin.";
 
 export const create = mutation({
   args: {
@@ -73,10 +75,15 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error(AGENT_ADMIN_REQUIRED);
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
       throw new Error("Stage not found.");
     }
@@ -201,6 +208,7 @@ export const remove = mutation({
     ) {
       throw new Error("Agent config not found.");
     }
+    await assertAgentConfigAdmin(ctx, authUser.id, existing);
 
     // Code is the source of truth for CLI-managed agents: the dashboard may
     // edit them (changes are overwritten on the next sync) but must not delete
@@ -293,15 +301,7 @@ export const update = mutation({
     if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
       throw new Error("Agent config not found.");
     }
-    // `extraConfig` is written wholesale, so a member could otherwise reach
-    // `hooks.webhooks` here and bypass the admin gate in `webhooks.ts`.
-    if (
-      updates.extraConfig !== undefined &&
-      webhooksChanged(existing.extraConfig, updates.extraConfig) &&
-      !(await getProjectForRole(ctx, user.id, existing.projectId, "admin"))
-    ) {
-      throw new Error("Agent webhooks can only be changed by an org admin.");
-    }
+    await assertAgentConfigAdmin(ctx, user.id, existing);
 
     const patch = Object.fromEntries(
       Object.entries(updates)
@@ -369,6 +369,7 @@ export const updateRuntimeRefs = mutation({
     if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
       throw new Error("Agent config not found.");
     }
+    await assertAgentConfigAdmin(ctx, user.id, existing);
 
     // Code-managed agents get their wiring from their owner (CLI deploy or
     // account API); canvas-derived refs must not overwrite it. Before the
@@ -443,6 +444,7 @@ export const updateSubagentRefs = mutation({
     if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
       throw new Error("Agent config not found.");
     }
+    await assertAgentConfigAdmin(ctx, user.id, existing);
 
     // Code-managed agents own their subagent allow-list; see updateRuntimeRefs.
     if (existing.managedBy === "cli" || existing.managedBy === "api") {
@@ -512,12 +514,15 @@ async function canAccessAgentConfig(
   return Boolean(await getProjectForRole(ctx, authId, config.projectId));
 }
 
-/** Whether two `extraConfig` blobs carry a different `hooks.webhooks` array. */
-function webhooksChanged(current: unknown, next: unknown): boolean {
-  const read = (value: unknown): unknown =>
-    asRecord(asRecord(value).hooks).webhooks ?? [];
-
-  return stableJson(read(current)) !== stableJson(read(next));
+/** Members read agent configs; every write needs the org admin role. */
+async function assertAgentConfigAdmin(
+  ctx: Parameters<typeof getProjectForRole>[0],
+  authId: string,
+  config: { projectId: Id<"projects"> },
+): Promise<void> {
+  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
+    throw new Error(AGENT_ADMIN_REQUIRED);
+  }
 }
 
 /** Hide secret values from browser reads while preserving variable names. */

@@ -218,9 +218,12 @@ stage tools work alone. With no credential of any kind, startup fails.
 
 A login token is minted for an org owner or admin and is re-checked against
 the current membership on every request: demote or remove the user and the
-token stops working before it expires. A deploy key is bound to one project and
-stage; it cannot replace a skill, hook or cron job another stage of the same
-account manages, and `--prune` leaves those rows alone.
+token stops working before it expires. `broods login` sends a PKCE challenge
+with the browser hand-off, so only the CLI that started the login can exchange
+the code. A deploy key is bound to one project and stage; it cannot replace a
+skill, hook or cron job another stage of the same account manages, `--prune`
+leaves those rows alone, and it cannot read environment values back
+(`broods env get` needs a login token or the org secret).
 
 ## update
 

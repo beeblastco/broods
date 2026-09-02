@@ -63,6 +63,13 @@ export const callTool = action({
     ctx,
     args,
   ): Promise<{ result: unknown; durationMs: number }> => {
+    // Calling a tool has side effects in the tenant's systems: admin only.
+    await ctx.runQuery(internal.mcp.nodeContext, {
+      projectId: args.projectId,
+      stageId: args.stageId,
+      nodeId: args.nodeId,
+      requiredRole: "admin",
+    });
     const server = await requireServer(ctx, args);
     const response = await coreMcpRpc(server.accountId, {
       serverId: server._id,
@@ -109,20 +116,39 @@ export const listTools = action({
   },
 });
 
-/** Ownership check plus the account and existing row `saveForNode` needs. */
+/**
+ * Ownership check plus the account and existing row `saveForNode` needs.
+ * `requiredRole: "admin"` is what every write and direct tool call passes.
+ */
 export const nodeContext = internalQuery({
-  args: scopeArgs,
+  args: {
+    ...scopeArgs,
+    requiredRole: v.optional(
+      v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+    ),
+  },
   returns: v.object({
     accountId: v.id("accounts"),
     existing: v.union(v.null(), mcpDoc),
   }),
-  handler: async (ctx, { projectId, stageId, nodeId }) => {
+  handler: async (ctx, { projectId, stageId, nodeId, requiredRole }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      requiredRole,
+    );
+    if (!project) {
+      throw new Error(
+        requiredRole
+          ? "MCP servers can only be changed or called by an org admin."
+          : "Project not found.",
+      );
+    }
+    const stage = await getOwnedStage(ctx, authUser.id, stageId, requiredRole);
     if (!stage || stage.projectId !== projectId) {
       throw new Error("Stage not found.");
     }
@@ -149,6 +175,7 @@ export const removeForNode = action({
       projectId: args.projectId,
       stageId: args.stageId,
       nodeId: args.nodeId,
+      requiredRole: "admin",
     });
     if (context.existing) {
       await ctx.runMutation(internal.account.mcp.remove, {
@@ -192,6 +219,7 @@ export const saveForNode = action({
       projectId: args.projectId,
       stageId: args.stageId,
       nodeId: args.nodeId,
+      requiredRole: "admin",
     });
 
     const input = await normalizeMcpInput(

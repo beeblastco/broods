@@ -3,7 +3,7 @@
  */
 
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -228,13 +228,23 @@ export async function loginWithBrowser(
 ): Promise<StoredAuthConfig> {
   // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
   const state = randomUUID();
+  // PKCE: the code that comes back through the localhost callback is only
+  // exchangeable by this process, which holds the verifier.
+  const codeVerifier = randomBytes(32).toString("base64url");
+  const codeChallenge = createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
   const { code, close } = await waitForCallback(state);
 
   try {
     const callbackUrl = code.callbackUrl;
     const startUrl =
       `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
-      new URLSearchParams({ callback: callbackUrl, state: state });
+      new URLSearchParams({
+        callback: callbackUrl,
+        state: state,
+        code_challenge: codeChallenge,
+      });
     await assertCliAuthRouteExists(startUrl);
     openBrowser(startUrl);
     console.log(`Opening ${startUrl}`);
@@ -244,7 +254,7 @@ export async function loginWithBrowser(
     const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: login.code }),
+      body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
     });
     if (!response.ok) {
       throw new Error(

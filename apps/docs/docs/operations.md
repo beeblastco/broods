@@ -178,6 +178,7 @@ Runtime notes:
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
 - Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload to `/v1/cron-runs` through the gateway, authenticated with `BROODS_SERVICE_AUTH_SECRET` against `BROODS_ACCOUNT_MANAGE_URL` (both already in the Convex deployment env). No AWS scheduler infrastructure is involved.
+- The service token picks its account from `X-Account-Id`, so it should never have to cross the public door. Point the Convex deployment at core in-cluster (`npx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local` on the self-hosted Convex, the dev stage likewise), then set `GATEWAY_FORWARD_ACCOUNT_ID=false` on the gateway so it drops that header from public ingress. Until both are done the gateway forwards it, which is the default.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 

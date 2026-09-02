@@ -71,15 +71,23 @@ A member who is removed or demoted loses access on their next request, and a
 `broods login` token stops resolving the moment its user is no longer an org
 owner or admin.
 
-| Operation                                                   | Member | Admin / owner |
-| ----------------------------------------------------------- | ------ | ------------- |
-| Read agents, stages, canvas, logs, traces, test an agent    | yes    | yes           |
-| Reveal, set or delete an environment variable               | no     | yes           |
-| Reveal or rotate the stage runtime key (`fp_agent_…`)       | no     | yes           |
-| Create, clone or promote a stage; delete a stage or project | no     | yes           |
-| Add, toggle or remove agent webhooks                        | no     | yes           |
-| Create, update or delete scheduled jobs from the dashboard  | no     | yes           |
-| Create or revoke deploy keys; manage policies               | no     | yes           |
+Two roles, one rule: **a member reads, an admin writes.** Every dashboard
+mutation, every sandbox control and every direct MCP tool call requires the
+admin or owner role; members see the same screens read-only and get an
+explicit "org admin" error if they try to change anything. Finer roles come
+later.
+
+| Operation                                                               | Member | Admin / owner |
+| ----------------------------------------------------------------------- | ------ | ------------- |
+| Read agents, stages, canvas, files, logs, traces, usage                 | yes    | yes           |
+| Test an agent in the dashboard chat                                     | yes    | yes           |
+| Create or edit agents, the canvas, workspace files, MCP servers         | no     | yes           |
+| Reveal, set or delete an environment variable                           | no     | yes           |
+| Reveal or rotate the stage runtime key (`fp_agent_…`)                   | no     | yes           |
+| Create, clone or promote a stage; create or delete a project            | no     | yes           |
+| Add, toggle or remove agent webhooks; scheduled jobs                    | no     | yes           |
+| Exec, open a terminal in, snapshot, suspend or terminate a sandbox      | no     | yes           |
+| Call an MCP tool from the explorer; create or revoke deploy keys; roles | no     | yes           |
 
 Members stream logs and drive the test chat with a **stage session ticket**
 (`fp_dts_…`): a one-hour credential the config plane signs for the stage, which
@@ -90,6 +98,11 @@ the dashboard reports whether one is set and never returns the value.
 A stage-scoped deploy key syncs its own stage only. Skills, hooks and cron jobs
 are account-wide by name, so a manifest that names one another stage manages is
 refused instead of replacing it, and `prune` never deletes another stage's rows.
+A deploy key can set and list environment variables but never read a value
+back: `broods env get` needs a `broods login` token or the org secret.
+
+`broods login` binds the one-time code to the CLI process with PKCE (S256), so
+a code caught by another local listener cannot be exchanged.
 
 ## Untrusted Hosted MCP Server Execution
 
