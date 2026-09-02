@@ -14,6 +14,8 @@ export async function GET(request: NextRequest): Promise<Response> {
     const auth = await withAuth({ ensureSignedIn: true });
     const callback = request.nextUrl.searchParams.get("callback");
     const state = request.nextUrl.searchParams.get("state");
+    const codeChallenge =
+      request.nextUrl.searchParams.get("code_challenge") ?? undefined;
     if (!callback || !state) {
       return text("callback and state are required", 400);
     }
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const client = new ConvexHttpClient(convexUrl);
     client.setAuth(auth.accessToken);
-    const { code } = await createLoginCodeWithRetry(client);
+    const { code } = await createLoginCodeWithRetry(client, codeChallenge);
     const target = new URL(callback);
     target.searchParams.set("code", code);
     target.searchParams.set("state", state);
@@ -47,11 +49,15 @@ export async function GET(request: NextRequest): Promise<Response> {
 
 async function createLoginCodeWithRetry(
   client: ConvexHttpClient,
+  codeChallenge: string | undefined,
 ): Promise<{ code: string }> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      return await client.mutation(api.cli.auth.createLoginCode, {});
+      return await client.mutation(
+        api.cli.auth.createLoginCode,
+        codeChallenge ? { codeChallenge: codeChallenge } : {},
+      );
     } catch (error) {
       lastError = error;
       if (!isRetryableLoginRace(error) || attempt === 3) {

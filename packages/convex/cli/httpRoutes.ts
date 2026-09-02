@@ -96,6 +96,17 @@ export async function handleEnvRoute(
   auth: CliAuth,
 ): Promise<Response> {
   if (req.method === "GET") {
+    // A deploy key deploys; it does not carry the stage's secrets out. Reveal
+    // stays with a person (`broods login`) or the org secret.
+    if ("deployKeyId" in auth) {
+      return json(
+        {
+          error:
+            "Deploy keys cannot read environment values; use `broods login` or the org secret",
+        },
+        403,
+      );
+    }
     const result = await ctx.runMutation(internal.cli.sync.getEnvBySecretHash, {
       secretHash: auth.secretHash,
       project: route.project,

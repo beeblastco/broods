@@ -2184,3 +2184,30 @@ test("observability selectors keep a hostile stage slug inside the string", () =
     '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+"}',
   );
 });
+
+test("proxyHttp forwards X-Account-Id by default and drops it when told to", async () => {
+  const originalFetch = globalThis.fetch;
+  const seen: Array<string | null> = [];
+  globalThis.fetch = (async (_input, init) => {
+    seen.push(new Headers(init?.headers).get("x-account-id"));
+
+    return new Response("ok", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const request = () =>
+      new Request("https://gateway.example/v1/sandboxes/sb_1/terminate", {
+        method: "POST",
+        headers: { "x-account-id": "acct_1", authorization: "Bearer svc" },
+        body: "{}",
+      });
+    await proxyHttp(request(), ["https://core.example"]);
+    await proxyHttp(request(), ["https://core.example"], {
+      forwardAccountId: false,
+    });
+
+    expect(seen).toEqual(["acct_1", null]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

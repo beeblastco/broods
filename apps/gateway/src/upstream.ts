@@ -11,9 +11,20 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export type ProxyOptions = {
+  /**
+   * Whether `X-Account-Id` is forwarded. Only the service token reads it, and
+   * that token should reach core in-cluster; once it does, set
+   * `GATEWAY_FORWARD_ACCOUNT_ID=false` so a leaked secret cannot pick an
+   * account from the public door.
+   */
+  forwardAccountId?: boolean;
+};
+
 export async function proxyHttp(
   request: Request,
   coreBaseUrls: string[],
+  options: ProxyOptions = {},
 ): Promise<Response> {
   const url = new URL(request.url);
   const headers = new Headers(request.headers);
@@ -27,6 +38,7 @@ export async function proxyHttp(
   headers.delete("host");
   headers.delete("connection");
   headers.delete("upgrade");
+  if (options.forwardAccountId === false) headers.delete("x-account-id");
 
   for (const coreBaseUrl of coreBaseUrls) {
     try {

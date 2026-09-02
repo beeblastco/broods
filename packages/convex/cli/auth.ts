@@ -23,6 +23,8 @@ import {
 } from "../model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
+// RFC 7636: 43..128 unreserved characters, base64url without padding.
+const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const CLI_TOKEN_PREFIX = "fp_cli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -85,11 +87,22 @@ type OnboardingOrg = {
   accountStatus: "active" | "disabled" | "missing";
 };
 
-/** Mint a short-lived one-time login code for the authenticated user's active org. */
+/**
+ * Mint a short-lived one-time login code for the authenticated user's active
+ * org. With a PKCE `codeChallenge`, only the CLI process holding the verifier
+ * can exchange the code, so a stray localhost listener that catches it gets
+ * nothing.
+ */
 export const createLoginCode = mutation({
-  args: {},
+  args: { codeChallenge: v.optional(v.string()) },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
-  handler: async (ctx) => {
+  handler: async (ctx, { codeChallenge }) => {
+    if (
+      codeChallenge !== undefined &&
+      !PKCE_CHALLENGE_PATTERN.test(codeChallenge)
+    ) {
+      throw new Error("codeChallenge must be a base64url S256 challenge");
+    }
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -123,6 +136,7 @@ export const createLoginCode = mutation({
       authId: authUser.id,
       orgId: org._id,
       accountId: account._id,
+      ...(codeChallenge ? { codeChallenge: codeChallenge } : {}),
       expiresAt: expiresAt,
       createdAt: now,
     });
@@ -188,9 +202,9 @@ export const exchange = httpAction(async (ctx, req) => {
     return json({ error: "Method not allowed" }, 405);
   }
 
-  let body: { code?: unknown };
+  let body: { code?: unknown; code_verifier?: unknown };
   try {
-    body = (await req.json()) as { code?: unknown };
+    body = (await req.json()) as { code?: unknown; code_verifier?: unknown };
   } catch {
     return json({ error: "Request body must be valid JSON" }, 400);
   }
@@ -204,6 +218,9 @@ export const exchange = httpAction(async (ctx, req) => {
       internal.cli.auth.exchangeLoginCode,
       {
         code: body.code,
+        ...(typeof body.code_verifier === "string"
+          ? { codeVerifier: body.code_verifier }
+          : {}),
       },
     );
 
@@ -223,7 +240,7 @@ export const exchange = httpAction(async (ctx, req) => {
 
 /** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string() },
+  args: { code: v.string(), codeVerifier: v.optional(v.string()) },
   returns: v.object({
     token: v.string(),
     expiresAt: v.number(),
@@ -242,7 +259,7 @@ export const exchangeLoginCode = internalMutation({
       username: v.string(),
     }),
   }),
-  handler: async (ctx, { code }) => {
+  handler: async (ctx, { code, codeVerifier }) => {
     const codeHash = await sha256Hex(code);
     const row = await ctx.db
       .query("cliAuthCodes")
@@ -250,6 +267,13 @@ export const exchangeLoginCode = internalMutation({
       .unique();
     const now = Date.now();
     if (!row || row.usedAt || row.expiresAt < now) {
+      throw new Error("CLI login code is invalid or expired");
+    }
+    if (
+      row.codeChallenge &&
+      (!codeVerifier ||
+        (await pkceChallenge(codeVerifier)) !== row.codeChallenge)
+    ) {
       throw new Error("CLI login code is invalid or expired");
     }
 
@@ -462,6 +486,22 @@ async function onboardingContext(
       name: user.name,
     },
   };
+}
+
+/** S256 PKCE transform: base64url(sha256(verifier)), no padding. */
+export async function pkceChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  let binary = "";
+  for (const byte of new Uint8Array(digest))
+    binary += String.fromCharCode(byte);
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 function randomToken(prefix: string): string {

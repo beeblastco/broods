@@ -214,7 +214,11 @@ export const getActive = query({
  * null when the user has no active org or it has not been provisioned yet.
  */
 export const getActiveAccount = query({
-  args: {},
+  args: {
+    requiredRole: v.optional(
+      v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+    ),
+  },
   returns: v.union(
     v.object({
       accountId: v.id("accounts"),
@@ -222,8 +226,8 @@ export const getActiveAccount = query({
     }),
     v.null(),
   ),
-  handler: async (ctx) => {
-    const account = await getActiveAccountForUser(ctx);
+  handler: async (ctx, { requiredRole }) => {
+    const account = await getActiveAccountForUser(ctx, requiredRole);
     if (!account) return null;
 
     return { accountId: account._id, status: account.status };

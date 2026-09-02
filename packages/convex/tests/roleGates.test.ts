@@ -3,7 +3,11 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { assertNotForeign, stageCronByName } from "../cli/httpRoutes";
+import {
+  assertNotForeign,
+  handleEnvRoute,
+  stageCronByName,
+} from "../cli/httpRoutes";
 import type { OrgRole } from "../model/ownership/org";
 import { getProjectForRole } from "../model/ownership/project";
 import { getOwnedStage } from "../model/ownership/stage";
@@ -299,5 +303,34 @@ describe("readCapped", () => {
     await expect(
       readCapped(streamOf([new Uint8Array([1, 2]), new Uint8Array([3])]), 2),
     ).rejects.toThrow(/exceeds the 2 byte limit/);
+  });
+});
+
+describe("deploy keys and environment values", () => {
+  test("a deploy key is refused before any value is read", async () => {
+    const t = roleTest();
+    const { accountId } = await seed(t);
+    const response = await handleEnvRoute(
+      // The refusal happens before the context is touched.
+      {} as never,
+      new Request("https://config.example/env/API_KEY", { method: "GET" }),
+      {
+        kind: "env",
+        project: "demo-app",
+        stage: "development",
+        name: "API_KEY",
+      },
+      {
+        accountId: accountId,
+        secretHash: "hash-beeblast",
+        scoped: true,
+        deployKeyId: "deploy-key" as never,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: expect.stringMatching(/Deploy keys cannot read/),
+    });
   });
 });

@@ -18,6 +18,7 @@ import {
 } from "../_generated/server";
 import { authKit } from "../auth";
 import { getProjectForRole } from "../model/ownership/project";
+import { getActiveAccountForUser } from "../org/orgs";
 import { normalizeWorkspaceConfig } from "../model/workspaceRules";
 
 export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
@@ -85,6 +86,9 @@ export const workspaceStorageValidator = v.object({
  * @param sizeBytes file size in bytes
  * @returns the new document ID
  */
+const WORKSPACE_ADMIN_REQUIRED =
+  "Workspace files can only be changed by an org admin.";
+
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -115,8 +119,8 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(ctx, user.id, projectId, "admin");
+    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     const now = Date.now();
 
@@ -189,6 +193,9 @@ export const generateUploadUrl = mutation({
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
+    }
+    if (!(await getActiveAccountForUser(ctx, "admin"))) {
+      throw new Error(WORKSPACE_ADMIN_REQUIRED);
     }
 
     return await ctx.storage.generateUploadUrl();
@@ -350,8 +357,13 @@ export const remove = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getProjectForRole(ctx, user.id, file.projectId);
-    if (!project) throw new Error("File not found.");
+    const project = await getProjectForRole(
+      ctx,
+      user.id,
+      file.projectId,
+      "admin",
+    );
+    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     if (file.storageId) {
       await ctx.storage.delete(file.storageId);
@@ -384,8 +396,8 @@ export const removeFolder = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(ctx, user.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(ctx, user.id, projectId, "admin");
+    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     const descendants = await ctx.db
       .query("workspaceFiles")
@@ -460,8 +472,13 @@ export const rename = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getProjectForRole(ctx, user.id, file.projectId);
-    if (!project) throw new Error("File not found.");
+    const project = await getProjectForRole(
+      ctx,
+      user.id,
+      file.projectId,
+      "admin",
+    );
+    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
     const trimmed = newName.trim();
     if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
@@ -537,6 +554,9 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     authId: v.string(),
     projectId: v.id("projects"),
     workspaceId: v.string(),
+    requiredRole: v.optional(
+      v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+    ),
   },
   returns: v.union(
     v.object({
@@ -547,7 +567,12 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    const project = await getProjectForRole(ctx, args.authId, args.projectId);
+    const project = await getProjectForRole(
+      ctx,
+      args.authId,
+      args.projectId,
+      args.requiredRole,
+    );
     if (!project) return null;
     const workspaceId = ctx.db.normalizeId(
       "workspaceConfigs",

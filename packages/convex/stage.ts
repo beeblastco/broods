@@ -404,6 +404,10 @@ export const ensureDefault = mutation({
 
     const now = Date.now();
     const development = findStageByKind(existing, "development");
+    // A member reads the current default and never repairs or creates one.
+    if (!(await getProjectForRole(ctx, authUser.id, projectId, "admin"))) {
+      return development?._id ?? null;
+    }
 
     // Legacy rows predating `kind` named "Production" were really the dev
     // workspace, so promote a lone one to Development. A row with an explicit

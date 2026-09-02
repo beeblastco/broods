@@ -93,6 +93,20 @@ export function websocketUpgradeHeaders(request: Request): HeadersInit {
     : {};
 }
 
+/** Log once per upgrade when the credential arrived through the query string. */
+export function warnDeprecatedQueryToken(request: Request, url: URL): void {
+  if (
+    bearerToken(request.headers.get("authorization")) ||
+    subprotocolToken(request) ||
+    !url.searchParams.get("token")
+  ) {
+    return;
+  }
+  console.warn(
+    `deprecated WebSocket credential in ?token= on ${url.pathname}; send it as Sec-WebSocket-Protocol "broods.token.<key>"`,
+  );
+}
+
 function offeredSubprotocols(request: Request): string[] {
   return (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
