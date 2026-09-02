@@ -3838,7 +3838,7 @@ components:
             Hosted alternative to url (`transport: hosted`): bundled JavaScript
             module whose default export is a fetch-style MCP handler
             (createMcpHandler). Max 10 MB inline; the tool-runner Lambda hosts
-            it, one invoke per request. Larger bundles (up to 50 MB) go through
+            it, one invoke per batch of requests. Larger bundles (up to 50 MB) go through
             `POST /v1/mcp/uploads` and are registered with bundleStorageId +
             sha256 instead.
         bundleStorageId:
