@@ -140,18 +140,7 @@ export async function normalizeMcpInput(
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
   }
-  if (record.oauth !== undefined && record.oauth !== null) {
-    input.oauth = normalizeOauth(record.oauth);
-    if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
-      throw new Error("oauth applies to external (url) servers, not hosted");
-    }
-    const authorization = authorizationHeaderName(input.headers);
-    if (authorization !== undefined) {
-      throw new Error(
-        `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
-      );
-    }
-  }
+  normalizeOauth(record, input);
   if (record.allowedTools !== undefined && record.allowedTools !== null) {
     input.allowedTools = normalizeAllowedTools(record.allowedTools);
   }
@@ -312,22 +301,38 @@ function normalizeName(value: unknown): string {
 }
 
 /**
+ * Set input.oauth from the body, after the connection and headers are known:
+ * oauth never sits on a hosted row or next to an Authorization header.
  * clientId may be inline (it is not a secret); clientSecret and refreshToken
  * must be ${NAME} refs, exactly like credential-bearing headers, so a token
  * never lands on the row or in a public projection.
  */
-function normalizeOauth(value: unknown): McpOauth {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function normalizeOauth(
+  record: Record<string, unknown>,
+  input: McpInput,
+): void {
+  const value = record.oauth;
+  if (value === undefined || value === null) return;
+  if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(
       "oauth must be an object with clientId, clientSecret and refreshToken",
     );
   }
-  const record = value as Record<string, unknown>;
+  if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
+    throw new Error("oauth applies to external (url) servers, not hosted");
+  }
+  const authorization = authorizationHeaderName(input.headers);
+  if (authorization !== undefined) {
+    throw new Error(
+      `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
+    );
+  }
+  const oauth = value as Record<string, unknown>;
   const field = (
     name: "clientId" | "clientSecret" | "refreshToken",
     secret: boolean,
   ): string => {
-    const fieldValue = record[name];
+    const fieldValue = oauth[name];
     if (
       typeof fieldValue !== "string" ||
       fieldValue.length === 0 ||
@@ -347,15 +352,14 @@ function normalizeOauth(value: unknown): McpOauth {
     return fieldValue;
   };
   const tokenUrl =
-    record.tokenUrl === undefined || record.tokenUrl === null
+    oauth.tokenUrl === undefined || oauth.tokenUrl === null
       ? undefined
-      : normalizeUrl(record.tokenUrl);
+      : normalizeUrl(oauth.tokenUrl);
   // The refresh request carries the client secret in its body.
   if (tokenUrl !== undefined && new URL(tokenUrl).protocol !== "https:") {
     throw new Error("oauth.tokenUrl must use https");
   }
-
-  return {
+  input.oauth = {
     clientId: field("clientId", false),
     clientSecret: field("clientSecret", true),
     refreshToken: field("refreshToken", true),
