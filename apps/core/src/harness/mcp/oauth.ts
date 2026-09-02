@@ -2,9 +2,9 @@
  * OAuth 2.0 refresh-token grant for external MCP servers. Google's official
  * Workspace MCP endpoints only accept short-lived access tokens, so a static
  * Authorization header cannot hold: this module mints an access token per
- * token endpoint + client + refresh token, caches it in-process, and re-mints
- * with a safety margin before expiry. client.ts stamps the minted token onto
- * the connection's Authorization header at connect time.
+ * oauth config, caches it in-process, and re-mints with a safety margin
+ * before expiry. client.ts stamps the minted token onto the connection's
+ * Authorization header at connect time.
  */
 
 import type { McpOauth } from "../../shared/domain/mcp.ts";
@@ -28,6 +28,17 @@ interface MintedToken {
   expiresAt: number;
 }
 
+/** The token endpoint's JSON body, untrusted until checked. */
+interface TokenResponse {
+  access_token?: unknown;
+  expires_in?: unknown;
+}
+
+/** Tests only (via setMcpForTests): drop every cached token. */
+export function clearMcpOauthTokens(): void {
+  tokenCache.clear();
+}
+
 /**
  * The access token for one oauth config, minted via grant_type=refresh_token
  * when the cache holds none or the cached one is inside the refresh margin.
@@ -38,7 +49,13 @@ export async function mcpAccessToken(
   serverName: string,
   oauth: ResolvedMcpOauth,
 ): Promise<string> {
-  const key = `${oauth.tokenUrl}\n${oauth.clientId}\n${oauth.refreshToken}`;
+  // Every field is identity: a rotated secret must not reuse the old token.
+  const key = JSON.stringify([
+    oauth.tokenUrl,
+    oauth.clientId,
+    oauth.clientSecret,
+    oauth.refreshToken,
+  ]);
   const pending = tokenCache.get(key);
   if (pending) {
     const minted = await pending.catch(() => null);
@@ -57,11 +74,6 @@ export async function mcpAccessToken(
   tokenCache.set(key, mint);
 
   return (await mint).accessToken;
-}
-
-/** Tests only (via setMcpForTests): drop every cached token. */
-export function clearMcpOauthTokens(): void {
-  tokenCache.clear();
 }
 
 /** One form-encoded POST to the token endpoint; errors name the server. */
@@ -95,12 +107,9 @@ async function mintAccessToken(
       `status ${response.status} ${text.slice(0, MAX_ERROR_BODY_LENGTH)}`,
     );
   }
-  let parsed: { access_token?: unknown; expires_in?: unknown };
+  let parsed: TokenResponse;
   try {
-    parsed = JSON.parse(text) as {
-      access_token?: unknown;
-      expires_in?: unknown;
-    };
+    parsed = JSON.parse(text) as TokenResponse;
   } catch {
     throw failure("token endpoint returned non-JSON");
   }

@@ -128,8 +128,9 @@ describe("mcp oauth access tokens", () => {
 
     await mcpAccessToken("gmail", resolvedOauth());
     await mcpAccessToken("gmail", resolvedOauth({ refreshToken: "refresh-2" }));
+    await mcpAccessToken("gmail", resolvedOauth({ clientSecret: "secret-2" }));
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
   });
 
   it("surfaces a failed refresh as an error naming the server", async () => {

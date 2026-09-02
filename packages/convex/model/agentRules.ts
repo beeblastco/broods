@@ -773,6 +773,11 @@ function normalizeMcpConfig(value: unknown): void {
         `config.mcp.${serverId}.headers must be an object of string values`,
       );
     }
+    if (config.oauth !== undefined && !isStringRecord(config.oauth)) {
+      throw new Error(
+        `config.mcp.${serverId}.oauth must be an object of string values`,
+      );
+    }
   }
 }
 

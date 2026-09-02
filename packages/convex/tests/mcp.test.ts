@@ -352,6 +352,58 @@ describe("normalizeMcpInput", () => {
     }
   });
 
+  test("rejects a plain-http oauth token endpoint", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "gmail",
+          url: SERVER_URL,
+          oauth: {
+            clientId: "client-1",
+            clientSecret: "${GMAIL_CLIENT_SECRET}",
+            refreshToken: "${GMAIL_REFRESH_TOKEN}",
+            tokenUrl: "http://oauth.example.com/token",
+          },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("oauth.tokenUrl must use https");
+  });
+
+  test("update checks oauth against the row the patch produces", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const serverId = await seedServer(tt, scope);
+    const oauth = {
+      clientId: "client-1",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    };
+
+    // The seeded row carries an Authorization header; oauth alone conflicts.
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        oauth: oauth,
+      }),
+    ).rejects.toThrow("oauth mints the Authorization header itself");
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      headers: {},
+      oauth: oauth,
+    });
+    // Now the stored oauth conflicts with a header the patch brings back.
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        headers: { authorization: "Bearer ${SEARCH_TOKEN}" },
+      }),
+    ).rejects.toThrow("drop the explicit authorization header");
+  });
+
   test("rejects oauth next to an explicit Authorization header", async () => {
     await expect(
       normalizeMcpInput(

@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import type { McpOauth } from "../model/mcp";
+import { authorizationHeaderName, type McpOauth } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields } from "../schema";
 
@@ -225,16 +225,24 @@ export const update = internalMutation({
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
     }
-    // The normalizer only sees one body, so a patch that adds oauth to a row
-    // that already is (or becomes) hosted is caught against the stored doc.
-    if (
-      args.oauth !== undefined &&
-      (args.transport ?? doc.transport) === "hosted"
-    ) {
-      throw new Error("oauth applies to external (url) servers, not hosted");
+    // The normalizer only sees one body, so the row the patch produces is
+    // checked here: oauth never lands on a hosted row or next to an
+    // Authorization header, whichever side the patch brings.
+    const patch = updatePatch(args, doc);
+    const next = { ...doc, ...patch };
+    if (next.oauth !== undefined) {
+      if (next.transport === "hosted") {
+        throw new Error("oauth applies to external (url) servers, not hosted");
+      }
+      const authorization = authorizationHeaderName(next.headers);
+      if (authorization !== undefined) {
+        throw new Error(
+          `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
+        );
+      }
     }
 
-    await ctx.db.patch(normalized, updatePatch(args, doc));
+    await ctx.db.patch(normalized, patch);
 
     return null;
   },

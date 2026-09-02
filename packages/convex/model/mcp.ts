@@ -65,7 +65,7 @@ export interface McpOauth {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
-  /** Token endpoint; core defaults to https://oauth2.googleapis.com/token. */
+  /** Token endpoint, https only; core defaults to https://oauth2.googleapis.com/token. */
   tokenUrl?: string;
 }
 
@@ -87,6 +87,18 @@ export interface McpInput {
   oauth?: McpOauth;
   allowedTools?: string[];
   disabled?: boolean;
+}
+
+/**
+ * The name of the Authorization header as written, whatever its case, or
+ * undefined. A row with oauth must not carry one: core mints it itself.
+ */
+export function authorizationHeaderName(
+  headers: Record<string, string> | undefined,
+): string | undefined {
+  return Object.keys(headers ?? {}).find(
+    (name) => name.toLowerCase() === "authorization",
+  );
 }
 
 /**
@@ -133,9 +145,7 @@ export async function normalizeMcpInput(
     if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
       throw new Error("oauth applies to external (url) servers, not hosted");
     }
-    const authorization = Object.keys(input.headers ?? {}).find(
-      (name) => name.toLowerCase() === "authorization",
-    );
+    const authorization = authorizationHeaderName(input.headers);
     if (authorization !== undefined) {
       throw new Error(
         `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
@@ -313,8 +323,11 @@ function normalizeOauth(value: unknown): McpOauth {
     );
   }
   const record = value as Record<string, unknown>;
-  for (const field of ["clientId", "clientSecret", "refreshToken"] as const) {
-    const fieldValue = record[field];
+  const field = (
+    name: "clientId" | "clientSecret" | "refreshToken",
+    secret: boolean,
+  ): string => {
+    const fieldValue = record[name];
     if (
       typeof fieldValue !== "string" ||
       fieldValue.length === 0 ||
@@ -322,26 +335,30 @@ function normalizeOauth(value: unknown): McpOauth {
       /[\r\n]/.test(fieldValue)
     ) {
       throw new Error(
-        `oauth.${field} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
+        `oauth.${name} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
-  }
-  for (const field of ["clientSecret", "refreshToken"] as const) {
-    if (!ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(record[field] as string)) {
+    if (secret && !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(fieldValue)) {
       throw new Error(
-        `oauth.${field} must reference an account env var like \${NAME}, not an inline secret`,
+        `oauth.${name} must reference an account env var like \${NAME}, not an inline secret`,
       );
     }
-  }
+
+    return fieldValue;
+  };
   const tokenUrl =
     record.tokenUrl === undefined || record.tokenUrl === null
       ? undefined
       : normalizeUrl(record.tokenUrl);
+  // The refresh request carries the client secret in its body.
+  if (tokenUrl !== undefined && new URL(tokenUrl).protocol !== "https:") {
+    throw new Error("oauth.tokenUrl must use https");
+  }
 
   return {
-    clientId: record.clientId as string,
-    clientSecret: record.clientSecret as string,
-    refreshToken: record.refreshToken as string,
+    clientId: field("clientId", false),
+    clientSecret: field("clientSecret", true),
+    refreshToken: field("refreshToken", true),
     ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
   };
 }

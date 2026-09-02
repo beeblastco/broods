@@ -3909,7 +3909,7 @@ components:
           description: Must be a `${NAME}` account env ref.
         tokenUrl:
           type: string
-          description: Token endpoint; defaults to https://oauth2.googleapis.com/token.
+          description: Token endpoint, https only; defaults to https://oauth2.googleapis.com/token.
 
     McpUpdate:
       type: object

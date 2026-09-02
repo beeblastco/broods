@@ -18,6 +18,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/client";
 import {
+  authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
   type McpOauth,
   type McpRecord,
@@ -185,9 +186,7 @@ export function mcpConnection(
   }
   const oauth = resolveOauth(record, configOauth);
   if (oauth) {
-    const authorization = Object.keys(headers).find(
-      (name) => name.toLowerCase() === "authorization",
-    );
+    const authorization = authorizationHeaderName(headers);
     if (authorization !== undefined) {
       throw new Error(
         `config.mcp.${record.serverId} sets both an ${authorization} header and oauth; oauth mints that header itself`,
@@ -346,7 +345,9 @@ function resolveOauth(
 ): ResolvedMcpOauth | undefined {
   if (record.oauth === undefined && configOauth === undefined) return undefined;
   const merged: Partial<McpOauth> = { ...record.oauth, ...configOauth };
-  for (const field of ["clientId", "clientSecret", "refreshToken"] as const) {
+  const resolved = (
+    field: "clientId" | "clientSecret" | "refreshToken",
+  ): string => {
     const value = merged[field];
     if (value === undefined || value === "") {
       throw new Error(
@@ -358,12 +359,14 @@ function resolveOauth(
         `config.mcp.${record.serverId} oauth ${field} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
       );
     }
-  }
+
+    return value;
+  };
 
   return {
-    clientId: merged.clientId!,
-    clientSecret: merged.clientSecret!,
-    refreshToken: merged.refreshToken!,
+    clientId: resolved("clientId"),
+    clientSecret: resolved("clientSecret"),
+    refreshToken: resolved("refreshToken"),
     tokenUrl: merged.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
   };
 }
