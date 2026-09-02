@@ -1,11 +1,12 @@
 /**
  * AWS Lambda entry for the hosted MCP runner. Resolves the uploaded bundle,
- * runs the request in a child Node process with a scrubbed env and a fresh
- * per-call TMPDIR, and streams the child's raw NDJSON frames to core. The
- * child stays warm keyed by accountId + sha256 (#189), bounded and retired on
- * any failure. It is a containment layer, not a trust boundary — same-UID, so
- * keep the execution role empty. Execution logic lives in child-runner.mjs;
- * keep this file to spawn + forward + clean up.
+ * runs one batch of requests (#397) in a child Node process with a scrubbed
+ * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
+ * frames to core. The child stays warm keyed by accountId + sha256 (#189),
+ * bounded and retired on any batch-level failure. It is a containment layer,
+ * not a trust boundary — same-UID, so keep the execution role empty.
+ * Execution logic lives in child-runner.mjs; keep this file to spawn +
+ * forward + clean up.
  */
 
 import { spawn } from "node:child_process";
@@ -29,12 +30,14 @@ const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CHILD_CALLS = 64;
 const DEFAULT_CHILD_IDLE_SECONDS = 300;
 
-// Terminal frames are the only lines the child itself writes, with `t` first
-// (emitTerminal pins that key order), so a byte compare on the line prefix
-// spots the end of a run without parsing a multi-megabyte frame.
-const FINAL_PREFIX = Buffer.from('{"t":"final"', "latin1");
-const ERROR_PREFIX = Buffer.from('{"t":"error"', "latin1");
-const TERMINAL_PREFIX_BYTES = FINAL_PREFIX.length;
+// The child pins `t` first and `id` second on every frame it writes, so a
+// byte compare on the line prefix spots the end of a batch without parsing a
+// multi-megabyte frame: `end` closes a batch cleanly, an error whose second
+// key is `error` (no id) is a batch failure, and a tagged error is one
+// request's own failure that the batch outlives.
+const END_PREFIX = Buffer.from('{"t":"end"', "latin1");
+const BATCH_ERROR_PREFIX = Buffer.from('{"t":"error","error"', "latin1");
+const TERMINAL_PREFIX_BYTES = BATCH_ERROR_PREFIX.length;
 
 // The one warm child this execution environment may hold. Lambda serializes
 // invocations per environment, so a single slot is the whole pool.
@@ -108,9 +111,9 @@ async function readBundleSource(event) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-// One invocation against one child: write the request line, forward stdout
-// until the terminal frame line, settle. Resolves true only when the run
-// ended on a clean `final` frame, so the child may serve another call.
+// One invocation against one child: write the batch line, forward stdout
+// until the terminal frame line, settle. Resolves true only when the batch
+// ended on a clean `end` frame, so the child may serve another invocation.
 async function runRequest(state, event, home, responseStream) {
   return await new Promise((resolve) => {
     const child = state.child;
@@ -186,13 +189,16 @@ async function runRequest(state, event, home, responseStream) {
           linePrefixLen += copied;
         }
         if (newline === -1) break;
-        const complete = linePrefixLen === TERMINAL_PREFIX_BYTES;
-        const isFinal = complete && linePrefix.equals(FINAL_PREFIX);
-        const isError = complete && linePrefix.equals(ERROR_PREFIX);
+        const isEnd = lineStartsWith(linePrefix, linePrefixLen, END_PREFIX);
+        const isError = lineStartsWith(
+          linePrefix,
+          linePrefixLen,
+          BATCH_ERROR_PREFIX,
+        );
         linePrefixLen = 0;
         index = newline + 1;
-        if (isFinal || isError) {
-          terminal = isFinal ? "final" : "error";
+        if (isEnd || isError) {
+          terminal = isEnd ? "end" : "error";
           cut = index;
           break;
         }
@@ -208,7 +214,7 @@ async function runRequest(state, event, home, responseStream) {
       // stream; the child's own stdout pipe then applies the backpressure.
       const flushed = responseStream.write(forwarded);
       if (terminal !== null) {
-        finish(undefined, terminal === "final");
+        finish(undefined, terminal === "end");
 
         return;
       }
@@ -333,6 +339,16 @@ function childTimeoutSeconds() {
 function endWithError(responseStream, error) {
   responseStream.write(`${JSON.stringify({ t: "error", error: error })}\n`);
   responseStream.end();
+}
+
+// Whether the bytes collected from the start of a stdout line begin with the
+// given terminal prefix. Prefixes differ in length, so the compare is bounded
+// by the prefix, not by the buffer.
+function lineStartsWith(linePrefix, linePrefixLen, prefix) {
+  return (
+    linePrefixLen >= prefix.length &&
+    linePrefix.subarray(0, prefix.length).equals(prefix)
+  );
 }
 
 // SIGKILL the child's whole process group, not just the child. Falls back to the

@@ -1,9 +1,11 @@
 /**
- * Hosted MCP server transport (#331 phase 2). A hosted row's endpoint is the
- * tool-runner Lambda: this fetch adapter serializes one web request into an
- * mcp-mode runner payload, invokes the Lambda over InvokeWithResponseStream,
- * reads the NDJSON frames back (../frames.ts), and rebuilds the child's
- * serialized response. Stateless: one invoke per request, matching the
+ * Hosted MCP server transport (#331 phase 2, micro-batching #397). A hosted
+ * row's endpoint is the tool-runner Lambda: this fetch adapter serializes one
+ * web request into an mcp-mode runner request, holds it for a few
+ * milliseconds so the sibling calls of one model step join the same batch,
+ * invokes the Lambda once per batch over InvokeWithResponseStream, reads the
+ * NDJSON frames back (../frames.ts), and settles every call in the batch off
+ * the frame tagged with its id. Stateless: one invoke per batch, matching the
  * 2026-07-28 transport exactly.
  */
 
@@ -23,8 +25,17 @@ export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
 // only has to outlive a cold start.
 const BUNDLE_URL_TTL_SECONDS = 120;
 
+// The parallel tool calls of one model step leave the AI SDK in the same
+// macrotask and reach the batcher well under a millisecond apart; the window
+// only has to outlast that. 0 disables batching (every batch is size one,
+// same code path). The cap bounds what one batch's shared 30s deadline, 16 MB
+// output limit, and single vCPU have to absorb.
+const DEFAULT_BATCH_WINDOW_MS = 10;
+const DEFAULT_BATCH_MAX = 8;
+
 let sharedClient: LambdaClient | undefined;
-let invokeOverride: HostedMcpInvoke | null = null;
+let sendOverride: HostedMcpSendBatch | null = null;
+const openBatches = new Map<string, OpenBatch>();
 
 /** One serialized web request, as the mcp-mode child receives it. */
 interface HostedMcpRequest {
@@ -39,6 +50,12 @@ export interface HostedMcpResponse {
   body: string;
 }
 
+/** One request of a batch; the id is batch-local and tags its frames. */
+export interface HostedMcpBatchRequest {
+  id: string;
+  mcpRequest: HostedMcpRequest;
+}
+
 /**
  * mcp-mode invoke payload; the Lambda handler dispatches on `mode`.
  * `accountId` + `expectedSha256` key the handler's warm-child reuse (#189):
@@ -50,20 +67,44 @@ export interface McpHostPayload {
   accountId: string;
   expectedSha256: string;
   bundleUrl: string;
-  mcpRequest: HostedMcpRequest;
+  requests: HostedMcpBatchRequest[];
 }
 
-type HostedMcpInvoke = (
+/** A batch's outcome: every request's response or failure, plus the CPU it burned. */
+export interface HostedMcpBatchResult {
+  responses: Map<string, HostedMcpResponse>;
+  errors: Map<string, Error>;
+  cpuUsec: number | undefined;
+}
+
+/** One tool call waiting in a batch. `onAbort` is set once the batch is in flight. */
+interface PendingCall {
+  request: HostedMcpRequest;
+  aborted: boolean;
+  onAbort: (() => void) | null;
+  onCpuUsec: ((cpuUsec: number) => void) | undefined;
+  resolve: (response: HostedMcpResponse) => void;
+  reject: (error: unknown) => void;
+}
+
+/** A batch still collecting calls, keyed by tenant bundle. */
+interface OpenBatch {
+  record: McpRecord;
+  calls: PendingCall[];
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+type HostedMcpSendBatch = (
   record: McpRecord,
-  request: HostedMcpRequest,
-  abortSignal: AbortSignal | undefined,
-  onCpuUsec?: (cpuUsec: number) => void,
-) => Promise<HostedMcpResponse>;
+  requests: HostedMcpBatchRequest[],
+  abortSignal: AbortSignal,
+) => Promise<HostedMcpBatchResult>;
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
- * request through the Lambda host instead of the network. The child stamps its
- * CPU on the terminal frame; onCpuUsec reports it for usage metering.
+ * request through the Lambda host instead of the network. The child stamps
+ * the batch's CPU on its terminal frame; onCpuUsec reports this call's share
+ * for usage metering.
  */
 export function hostedMcpFetch(
   record: McpRecord,
@@ -85,8 +126,7 @@ export function hostedMcpFetch(
       return new Response(null, { status: 405, headers: { allow: "POST" } });
     }
     const body = await request.text();
-    const invoke = invokeOverride ?? invokeLambda;
-    const result = await invoke(
+    const result = await enqueueCall(
       record,
       {
         method: request.method,
@@ -104,11 +144,18 @@ export function hostedMcpFetch(
   }) as typeof fetch;
 }
 
-/** Tests and the local stack: replace the Lambda invoke with a local runner. */
-export function setHostedMcpInvokeForTests(
-  invoke: HostedMcpInvoke | null,
+/**
+ * Tests and the local stack: replace the Lambda invoke with a local runner
+ * that answers one whole batch. Passing null also drops any open batch.
+ */
+export function setHostedMcpSendBatchForTests(
+  send: HostedMcpSendBatch | null,
 ): void {
-  invokeOverride = invoke;
+  sendOverride = send;
+  for (const batch of openBatches.values()) {
+    if (batch.timer !== null) clearTimeout(batch.timer);
+  }
+  openBatches.clear();
 }
 
 function defaultClient(): LambdaClient {
@@ -128,7 +175,7 @@ function defaultClient(): LambdaClient {
 async function drainInvokeStream(
   client: LambdaClient,
   payload: McpHostPayload,
-  abortSignal: AbortSignal | undefined,
+  abortSignal: AbortSignal,
   queue: FrameQueue,
 ): Promise<void> {
   const result = await client.send(
@@ -137,7 +184,7 @@ async function drainInvokeStream(
       InvocationType: "RequestResponse",
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
-    abortSignal ? { abortSignal: abortSignal } : {},
+    { abortSignal: abortSignal },
   );
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.
@@ -158,7 +205,62 @@ async function drainInvokeStream(
   queue.push(decoder.decode());
 }
 
-/** The child answers with one terminal frame carrying the serialized response. */
+/**
+ * Hold a call in the open batch for its tenant bundle until the window closes
+ * or the batch is full, then settle it off the batch's outcome. A call that
+ * arrives after the window closed opens the next batch; nobody waits longer
+ * than the window. An aborted call drops out of its batch on its own.
+ */
+function enqueueCall(
+  record: McpRecord,
+  request: HostedMcpRequest,
+  abortSignal: AbortSignal,
+  onCpuUsec: ((cpuUsec: number) => void) | undefined,
+): Promise<HostedMcpResponse> {
+  if (!record.bundleStorageKey || !record.sha256) {
+    return Promise.reject(
+      new Error(
+        `hosted MCP server ${record.name} is missing its uploaded bundle`,
+      ),
+    );
+  }
+  if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
+  const key = `${record.accountId}:${record.sha256}`;
+
+  return new Promise<HostedMcpResponse>((resolve, reject) => {
+    const call: PendingCall = {
+      request: request,
+      aborted: false,
+      onAbort: null,
+      onCpuUsec: onCpuUsec,
+      resolve: resolve,
+      reject: reject,
+    };
+    abortSignal.addEventListener(
+      "abort",
+      () => {
+        call.aborted = true;
+        reject(abortSignal.reason);
+        call.onAbort?.();
+      },
+      { once: true },
+    );
+    const windowMs = envInt("MCP_BATCH_WINDOW_MS", DEFAULT_BATCH_WINDOW_MS);
+    const max = envInt("MCP_BATCH_MAX", DEFAULT_BATCH_MAX);
+    const open = openBatches.get(key);
+    const batch: OpenBatch = open ?? { record: record, calls: [], timer: null };
+    if (!open) {
+      openBatches.set(key, batch);
+      if (windowMs > 0) {
+        batch.timer = setTimeout(() => flushBatch(key, batch), windowMs);
+      }
+    }
+    batch.calls.push(call);
+    if (windowMs === 0 || batch.calls.length >= max) flushBatch(key, batch);
+  });
+}
+
+/** A request's final frame carries its serialized response. */
 function finalHostedResponse(
   serverName: string,
   result: unknown,
@@ -177,28 +279,84 @@ function finalHostedResponse(
   return response;
 }
 
-async function invokeLambda(
-  record: McpRecord,
-  request: HostedMcpRequest,
-  abortSignal: AbortSignal | undefined,
-  onCpuUsec?: (cpuUsec: number) => void,
-): Promise<HostedMcpResponse> {
-  if (!record.bundleStorageKey || !record.sha256) {
-    throw new Error(
-      `hosted MCP server ${record.name} is missing its uploaded bundle`,
-    );
+// Close a batch: take it off the map so later calls open a new one, send it,
+// and settle every call in it. The invoke itself is abandoned only once every
+// call in the batch has been aborted, so one cancelled run cannot cut short a
+// sibling's answer.
+function flushBatch(key: string, batch: OpenBatch): void {
+  if (openBatches.get(key) === batch) openBatches.delete(key);
+  if (batch.timer !== null) clearTimeout(batch.timer);
+  const live = batch.calls.filter((call) => !call.aborted);
+  if (live.length === 0) return;
+  const requests = live.map((call, index): HostedMcpBatchRequest => ({
+    id: String(index + 1),
+    mcpRequest: call.request,
+  }));
+  const controller = new AbortController();
+  for (const call of live) {
+    call.onAbort = (): void => {
+      if (live.every((sibling) => sibling.aborted)) controller.abort();
+    };
   }
+  const send = sendOverride ?? sendBatch;
+  void send(batch.record, requests, controller.signal).then(
+    (result) => {
+      // The child measures the batch, not the request. An even split keeps
+      // every span carrying a number and the account rollup summing to the
+      // true total; it is reported before any call resolves because the
+      // harness reads a call's compute the moment its result lands.
+      if (typeof result.cpuUsec === "number" && result.cpuUsec > 0) {
+        const share = Math.round(result.cpuUsec / live.length);
+        for (const call of live) call.onCpuUsec?.(share);
+      }
+      live.forEach((call, index) => {
+        const id = requests[index]!.id;
+        const response = result.responses.get(id);
+        if (response) call.resolve(response);
+        else
+          call.reject(
+            result.errors.get(id) ??
+              new Error(
+                `hosted MCP server ${batch.record.name} returned no response`,
+              ),
+          );
+      });
+    },
+    (error: unknown) => {
+      for (const call of live) call.reject(error);
+    },
+  );
+}
+
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+
+/**
+ * One invoke for one batch. Every request's tagged frame lands in the result;
+ * `end` closes the batch cleanly, an untagged error frame fails every request
+ * still unanswered, and a transport failure fails them all.
+ */
+async function sendBatch(
+  record: McpRecord,
+  requests: HostedMcpBatchRequest[],
+  abortSignal: AbortSignal,
+): Promise<HostedMcpBatchResult> {
   const payload: McpHostPayload = {
     mode: "mcp",
     toolName: record.name,
     accountId: record.accountId,
-    expectedSha256: record.sha256,
+    expectedSha256: record.sha256!,
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),
-      record.bundleStorageKey,
+      record.bundleStorageKey!,
       { expiresInSeconds: BUNDLE_URL_TTL_SECONDS },
     ),
-    mcpRequest: request,
+    requests: requests,
   };
   const queue = new FrameQueue();
   let transportError: unknown;
@@ -207,29 +365,54 @@ async function invokeLambda(
       transportError = error;
     })
     .finally(() => queue.close());
-  // A failed run still burned CPU, so the sample is reported off the terminal
-  // frame either way — before the error path throws.
-  const reportCpu = (cpuUsec: number | undefined): void => {
-    if (typeof cpuUsec === "number" && cpuUsec > 0) onCpuUsec?.(cpuUsec);
+  const result: HostedMcpBatchResult = {
+    responses: new Map(),
+    errors: new Map(),
+    cpuUsec: undefined,
   };
+  let batchError: Error | undefined;
   try {
     for await (const frame of queue.frames()) {
+      if (frame.t === "final" && frame.id !== undefined) {
+        try {
+          result.responses.set(
+            frame.id,
+            finalHostedResponse(record.name, frame.result),
+          );
+        } catch (error) {
+          result.errors.set(frame.id, error as Error);
+        }
+        continue;
+      }
+      if (frame.t === "error" && frame.id !== undefined) {
+        result.errors.set(frame.id, new Error(frame.error));
+        continue;
+      }
+      // A failed batch still burned CPU, so the sample is kept off the
+      // terminal frame either way.
+      if (frame.t === "end") {
+        result.cpuUsec = frame.cpuUsec;
+        break;
+      }
       if (frame.t === "error") {
-        reportCpu(frame.cpuUsec);
-        throw new Error(
+        result.cpuUsec = frame.cpuUsec;
+        batchError = new Error(
           frame.error || `hosted MCP server ${record.name} run failed`,
         );
-      }
-      if (frame.t === "final") {
-        reportCpu(frame.cpuUsec);
-
-        return finalHostedResponse(record.name, frame.result);
+        break;
       }
     }
   } finally {
     await pump;
   }
   if (transportError) throw transportError;
+  if (batchError) {
+    for (const request of requests) {
+      if (!result.responses.has(request.id)) {
+        result.errors.set(request.id, batchError);
+      }
+    }
+  }
 
-  throw new Error(`hosted MCP server ${record.name} returned no response`);
+  return result;
 }

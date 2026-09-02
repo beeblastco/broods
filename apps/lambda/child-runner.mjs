@@ -1,10 +1,12 @@
 /**
- * Node-native runner for hosted MCP server bundles (#331, warm reuse #189).
- * Runs the uploaded bundle in a real Node process. The bundle arrives on fd 3
- * once at spawn; requests arrive as NDJSON lines on stdin, one per Lambda
- * invocation, each answered with one terminal frame (final/error) on stdout.
- * A `final` frame keeps the process alive for the next same-tenant request;
- * any error, timeout, or unhandled rejection retires it by exiting.
+ * Node-native runner for hosted MCP server bundles (#331, warm reuse #189,
+ * micro-batching #397). Runs the uploaded bundle in a real Node process. The
+ * bundle arrives on fd 3 once at spawn; batches arrive as NDJSON lines on
+ * stdin, one per Lambda invocation. Every request in a batch runs
+ * concurrently and answers its own tagged final/error frame as it settles;
+ * the batch closes on an `end` frame that keeps the process alive for the
+ * next same-tenant invocation. A timeout, a bad payload, or an unhandled
+ * rejection retires the process with an untagged error frame.
  */
 
 import { createHash } from "node:crypto";
@@ -19,8 +21,8 @@ import { pathToFileURL } from "node:url";
 // sides of the pipe, for nothing.
 const BUNDLE_FD = 3;
 
-// Wall-clock deadline for one request; the handler also hard-kills the child,
-// this is the cooperative in-process bound that trips the request signal first.
+// Wall-clock deadline for one batch; the handler also hard-kills the child,
+// this is the cooperative in-process bound that trips the request signals first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
 // The identity the bundle is imported under. Nothing is ever written here — the
@@ -31,16 +33,16 @@ const BUNDLE_URL = pathToFileURL(
   join(process.env.LAMBDA_TASK_ROOT ?? process.cwd(), "broods-mcp-bundle.mjs"),
 ).href;
 
-// The run and the timeout race to write the terminal frame; first one wins.
-// `true` also means idle — nothing in flight before or between requests.
+// The batch and the timeout race to write the terminal frame; first one wins.
+// `true` also means idle — nothing in flight before or between batches.
 let settled = true;
 
 // The emitted frame carried an exit code: the process exits once it flushes,
-// so the loop must not read another request.
+// so the loop must not read another batch.
 let retiring = false;
 
 // A stray rejection must not crash the runner mid-frame, but it must not
-// serve another call either: mid-request the child retires after the frame
+// serve another call either: mid-batch the child retires after the frame
 // flushes, idle it exits on the spot, and a retiring child is left alone (its
 // exit is already pending on the flush).
 let poisoned = false;
@@ -58,29 +60,28 @@ async function runRequestLoop() {
   let bundle = await readBundleBytes();
   const actualSha = createHash("sha256").update(bundle).digest("hex");
   let handlerModule;
-  // One request per line; the handler serializes invocations, so by the time a
-  // line arrives the previous request has already emitted its terminal frame.
+  // One batch per line; the handler serializes invocations, so by the time a
+  // line arrives the previous batch has already emitted its terminal frame.
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
     if (line.trim() === "") continue;
     settled = false;
     const cpuBaseline = process.cpuUsage();
-    const controller = new AbortController();
+    // One signal per request so a tenant handler sees the abort it expects;
+    // the deadline trips all of them and fails the batch as a whole.
+    const controllers = [];
     const timeout = setTimeout(() => {
-      controller.abort(new Error("mcp server run timed out"));
-      emitTerminal(
-        { t: "error", error: "mcp server run timed out" },
-        cpuBaseline,
-        1,
-      );
+      const reason = new Error("mcp server run timed out");
+      for (const controller of controllers) controller.abort(reason);
+      emitTerminal({ t: "error", error: reason.message }, cpuBaseline, 1);
     }, runTimeoutMs());
     try {
       const payload = parsePayload(JSON.parse(line));
       if (payload.expectedSha256 !== actualSha) {
         throw new Error("bundle hash mismatch inside mcp runner");
       }
-      // Fresh scratch dir per request: nothing a call writes to HOME/TMPDIR
-      // is visible to the next call.
+      // Fresh scratch dir per batch: nothing a call writes to HOME/TMPDIR
+      // is visible to the next invocation.
       if (payload.home !== undefined) {
         process.env.HOME = payload.home;
         process.env.TMPDIR = payload.home;
@@ -89,22 +90,34 @@ async function runRequestLoop() {
         handlerModule = await importBundle(bundle);
         bundle = null;
       }
-      const result = await runMcpBundle(
-        handlerModule,
-        payload,
-        controller.signal,
+      const fetchLike = resolveFetchHandler(handlerModule);
+      await Promise.all(
+        payload.requests.map(async (request) => {
+          const controller = new AbortController();
+          controllers.push(controller);
+          try {
+            const result = await runMcpRequest(
+              fetchLike,
+              request.mcpRequest,
+              controller.signal,
+            );
+            emitRequestFrame({ t: "final", id: request.id, result: result });
+          } catch (error) {
+            emitRequestFrame({
+              t: "error",
+              id: request.id,
+              error: errorMessage(error),
+            });
+          }
+        }),
       );
       clearTimeout(timeout);
-      emitTerminal(
-        { t: "final", result: result },
-        cpuBaseline,
-        poisoned ? 1 : null,
-      );
+      emitTerminal({ t: "end" }, cpuBaseline, poisoned ? 1 : null);
     } catch (error) {
       clearTimeout(timeout);
       emitTerminal({ t: "error", error: errorMessage(error) }, cpuBaseline, 1);
     }
-    // A retiring run has its frame on the wire and its exit pending in the
+    // A retiring batch has its frame on the wire and its exit pending in the
     // flush callback; reading another line would race the exit.
     if (retiring) return;
   }
@@ -112,10 +125,9 @@ async function runRequestLoop() {
 }
 
 // The bundle default-exports a fetch-style MCP handler (e.g.
-// `createMcpHandler(...)` from @modelcontextprotocol/server). One request
-// carries exactly one web request; the stateless 2026-07-28 transport is what
-// makes that mapping complete.
-async function runMcpBundle(module, payload, abortSignal) {
+// `createMcpHandler(...)` from @modelcontextprotocol/server), as a plain
+// function or a { fetch } object.
+function resolveFetchHandler(module) {
   const handler = module.default;
   const fetchLike =
     handler && typeof handler.fetch === "function"
@@ -129,7 +141,12 @@ async function runMcpBundle(module, payload, abortSignal) {
     );
   }
 
-  const mcp = payload.mcpRequest;
+  return fetchLike;
+}
+
+// One request carries exactly one web request; the stateless 2026-07-28
+// transport is what makes that mapping complete.
+async function runMcpRequest(fetchLike, mcp, abortSignal) {
   const request = new Request("http://mcp-hosted.internal/mcp", {
     method: mcp.method,
     headers: mcp.headers,
@@ -176,8 +193,17 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// CPU is a delta from the request start, so a reused child reports exactly
-// what one call cost. `exitCode` null keeps the process alive; a number
+// One request's own frame, tagged with its id. Nothing after the batch's
+// terminal frame may reach stdout: the handler drops it and a retiring
+// process is already exiting. `t` then `id` must stay the first two keys —
+// handler.mjs tells a tagged error from a batch error by line prefix.
+function emitRequestFrame(frame) {
+  if (settled) return;
+  process.stdout.write(`${JSON.stringify(frame)}\n`);
+}
+
+// CPU is a delta from the batch start, so a reused child reports exactly what
+// one invocation cost. `exitCode` null keeps the process alive; a number
 // retires it after the frame flushes, so the pipe write is never truncated.
 // `t` must stay the frame's first key: handler.mjs classifies terminal frames
 // by line prefix without parsing them.
@@ -209,9 +235,8 @@ function parsePayload(payload) {
   if (typeof payload.toolName !== "string") {
     throw new Error("mcp runner payload missing toolName");
   }
-  const mcp = payload.mcpRequest;
-  if (!mcp || typeof mcp !== "object" || typeof mcp.method !== "string") {
-    throw new Error("mcp runner payload missing mcpRequest");
+  if (!Array.isArray(payload.requests) || payload.requests.length === 0) {
+    throw new Error("mcp runner payload missing requests");
   }
 
   return {
@@ -219,6 +244,21 @@ function parsePayload(payload) {
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
     ...(typeof payload.home === "string" ? { home: payload.home } : {}),
+    requests: payload.requests.map(parseRequest),
+  };
+}
+
+function parseRequest(request) {
+  const mcp = request?.mcpRequest;
+  if (typeof request?.id !== "string" || request.id === "") {
+    throw new Error("mcp runner request missing id");
+  }
+  if (!mcp || typeof mcp !== "object" || typeof mcp.method !== "string") {
+    throw new Error("mcp runner request missing mcpRequest");
+  }
+
+  return {
+    id: request.id,
     mcpRequest: {
       method: mcp.method,
       headers:
