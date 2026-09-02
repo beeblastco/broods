@@ -30,6 +30,11 @@ const stageDoc = v.object({
 
 type StageKind = "development" | "production" | "custom";
 
+// Creating, cloning, or promoting a stage copies agents, secrets and runtime
+// wiring, so it is an org admin operation like deleting one.
+const STAGE_ADMIN_REQUIRED =
+  "Stages can only be created or promoted by an org admin.";
+
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -41,8 +46,13 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
 
     if (duplicateFromId) {
       const source = await getOwnedStage(ctx, authUser.id, duplicateFromId);
@@ -465,8 +475,13 @@ export const initializeProduction = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
 
     const source = await getOwnedStage(ctx, authUser.id, sourceStageId);
     if (!source || source.projectId !== projectId) {

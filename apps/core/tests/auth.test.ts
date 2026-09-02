@@ -11,6 +11,7 @@ import {
   type AccountRecord,
 } from "../src/shared/domain/accounts.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -236,3 +237,48 @@ describe("resolveBearerAuth", () => {
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+
+describe("stage session tickets", () => {
+  const ticket = {
+    accountId: ACCOUNT.accountId,
+    endpointId: "stage-abcd1234",
+    projectSlug: "shop",
+    stageSlug: "development",
+    expiresAt: Date.now() + 60_000,
+  };
+
+  it("resolves a valid ticket as the stage's deployment", async () => {
+    const token = await sealStageSessionTicket(ticket, "service-secret");
+
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${token}` }),
+    ).toMatchObject({
+      kind: "deployment",
+      account: { accountId: "acct_1" },
+      endpointId: "stage-abcd1234",
+      projectSlug: "shop",
+      stageSlug: "development",
+    });
+  });
+
+  it("rejects a ticket signed with another secret, expired, or for a disabled account", async () => {
+    const foreign = await sealStageSessionTicket(ticket, "other-secret");
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${foreign}` }),
+    ).toBeNull();
+
+    const expired = await sealStageSessionTicket(
+      { ...ticket, expiresAt: Date.now() - 1 },
+      "service-secret",
+    );
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${expired}` }),
+    ).toBeNull();
+
+    accountsById[ACCOUNT.accountId] = { ...ACCOUNT, status: "disabled" };
+    const valid = await sealStageSessionTicket(ticket, "service-secret");
+    expect(
+      await resolveBearerAuth({ authorization: `Bearer ${valid}` }),
+    ).toBeNull();
+  });
+});

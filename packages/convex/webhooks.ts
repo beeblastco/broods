@@ -26,12 +26,18 @@ import { isPlainObject } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 
+// Webhook URLs and signing secrets can point agent events at any host, so
+// editing them is an org admin operation. The secret itself is write-only.
+const WEBHOOK_ADMIN_REQUIRED =
+  "Agent webhooks can only be changed by an org admin.";
+
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
   index: v.number(),
   enabled: v.boolean(),
   url: v.optional(v.string()),
-  secret: v.optional(v.string()),
+  /** Whether a signing secret is set; the value never leaves the store. */
+  hasSecret: v.boolean(),
   events: v.array(v.string()),
 });
 
@@ -87,7 +93,8 @@ export const listAgentWebhooks = query({
         index: index,
         enabled: webhook.enabled !== false,
         url: typeof webhook.url === "string" ? webhook.url : undefined,
-        secret: typeof webhook.secret === "string" ? webhook.secret : undefined,
+        hasSecret:
+          typeof webhook.secret === "string" && webhook.secret.length > 0,
         events: Array.isArray(webhook.events)
           ? webhook.events.filter(
               (event): event is string => typeof event === "string",
@@ -111,8 +118,9 @@ async function mutateAgentWebhooks(
   mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
 ): Promise<void> {
   const config = await ctx.db.get(agentConfigId);
-  if (!config || !(await getProjectForRole(ctx, authId, config.projectId))) {
-    throw new Error("Agent config not found.");
+  if (!config) throw new Error("Agent config not found.");
+  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
+    throw new Error(WEBHOOK_ADMIN_REQUIRED);
   }
 
   const extra: Record<string, unknown> = isPlainObject(config.extraConfig)

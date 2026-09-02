@@ -459,6 +459,33 @@ export const ensureScopeBySecretHash = internalMutation({
   },
 });
 
+/**
+ * Every CLI-managed external resource of the account with the stage that
+ * manages it, so a sync can refuse to touch a name another stage owns.
+ */
+export const listExternalResourcesForAccount = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(
+    v.object({
+      kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
+      name: v.string(),
+      stageId: v.id("stages"),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("cliExternalResources")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .collect();
+
+    return rows.map((row) => ({
+      kind: row.kind,
+      name: row.name,
+      stageId: row.stageId,
+    }));
+  },
+});
+
 export const recordExternalResourcesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),

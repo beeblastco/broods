@@ -19,7 +19,10 @@ class FakeWebSocket implements WebSocketLike {
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   readonly sent: string[] = [];
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly protocols?: string[],
+  ) {
     FakeWebSocket.instances.push(this);
     queueMicrotask(() => {
       this.readyState = 1;
@@ -60,7 +63,7 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
   });
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.example/v1/agents/agent_1/ws?token=test-key",
+    "wss://app.example/v1/agents/agent_1/ws",
   );
 });
 
@@ -81,7 +84,7 @@ test("websocket client reads apiKey from the shared SDK environment variable", (
   });
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.example/v1/agents/agent_1/ws?token=env-key",
+    "wss://app.example/v1/agents/agent_1/ws",
   );
 });
 
@@ -99,7 +102,7 @@ test("websocket client reads apiKey from package-local .env.local", () => {
     });
 
     expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-      "wss://app.example/v1/agents/agent_1/ws?token=local-env-key",
+      "wss://app.example/v1/agents/agent_1/ws",
     );
   } finally {
     process.chdir(originalCwd);
@@ -113,7 +116,7 @@ test("websocket client can be constructed without options", () => {
   const client = new BroodsWebSocketClient();
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://gateway.broods.app/v1/agents/agent_1/ws?token=env-key",
+    "wss://gateway.broods.app/v1/agents/agent_1/ws",
   );
 });
 
@@ -125,7 +128,7 @@ test("websocket client lets BROODS_BASE_URL override the default service URL", (
   });
 
   expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://gateway.example/v1/agents/agent_1/ws?token=test-key",
+    "wss://gateway.example/v1/agents/agent_1/ws",
   );
 });
 
@@ -166,8 +169,13 @@ test("websocket client subscribes to the core service and forwards server messag
   );
 
   expect(subscription.url).toBe(
-    "wss://app.example/v1/demo/agents/development/agent_1/ws?token=test-key",
+    "wss://app.example/v1/demo/agents/development/agent_1/ws",
   );
+  // The credential never lands in the URL; it rides the subprotocol list.
+  expect(FakeWebSocket.instances[0]?.protocols).toEqual([
+    "broods.v1",
+    "broods.token.test-key",
+  ]);
 
   await Promise.resolve();
   const socket = FakeWebSocket.instances[0]!;
@@ -335,7 +343,7 @@ test("websocket client can build scoped URLs from generated agent references", a
   });
 
   expect(subscription.url).toBe(
-    "wss://app.example/v1/demo/agents/development/env_123/ws?token=test-key",
+    "wss://app.example/v1/demo/agents/development/env_123/ws",
   );
 
   await Promise.resolve();

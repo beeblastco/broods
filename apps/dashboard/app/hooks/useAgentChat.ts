@@ -189,11 +189,11 @@ async function startWebSocketSseStream(options: {
 
   const stagePrefix = stageSlug ? `/${stageSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const wsUrl =
-    `${websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${endpointId}/ws` +
-    `?token=${encodeURIComponent(apiKey)}`;
+  const wsUrl = `${websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${endpointId}/ws`;
 
-  const socket = new WebSocket(wsUrl);
+  // The credential rides the subprotocol list, never the URL, so it stays out
+  // of access logs; the gateway selects `broods.v1` to complete the handshake.
+  const socket = new WebSocket(wsUrl, ["broods.v1", `broods.token.${apiKey}`]);
   const encoder = new TextEncoder();
 
   let streamController: ReadableStreamDefaultController<Uint8Array> | null =

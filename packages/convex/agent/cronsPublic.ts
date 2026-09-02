@@ -5,10 +5,15 @@
  */
 
 import { v } from "convex/values";
-import { api, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
+import { getActiveAccountForUser } from "../org/orgs";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
+// A cron runs stored instructions as any agent of the org, on a schedule, and
+// can answer into a live channel session: that is an org admin operation.
+const CRON_ADMIN_REQUIRED =
+  "Scheduled jobs can only be changed by an org admin.";
 
 /** Creates a cron job (crons row + registered schedule) for the active org. */
 export const create = mutation({
@@ -24,11 +29,11 @@ export const create = mutation({
   },
   returns: v.object({ cronId: v.string() }),
   handler: async (ctx, args) => {
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
-    if (!account) throw new Error("No active org / account not provisioned");
+    const account = await getActiveAccountForUser(ctx, "admin");
+    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
 
     const cron = (await ctx.runMutation(internal.agent.crons.create, {
-      accountId: account.accountId,
+      accountId: account._id,
       input: args,
     })) as { cronId: string };
 
@@ -52,11 +57,11 @@ export const update = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { cronId, ...patch } = args;
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
-    if (!account) throw new Error("No active org / account not provisioned");
+    const account = await getActiveAccountForUser(ctx, "admin");
+    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
 
     const updated = await ctx.runMutation(internal.agent.crons.update, {
-      accountId: account.accountId,
+      accountId: account._id,
       cronId: cronId,
       patch: patch,
     });
@@ -71,11 +76,11 @@ export const remove = mutation({
   args: { cronId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {});
-    if (!account) throw new Error("No active org / account not provisioned");
+    const account = await getActiveAccountForUser(ctx, "admin");
+    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
 
     const removed = await ctx.runMutation(internal.agent.crons.remove, {
-      accountId: account.accountId,
+      accountId: account._id,
       cronId: args.cronId,
     });
     if (!removed) throw new Error("Cron job not found");

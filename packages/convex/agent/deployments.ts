@@ -31,6 +31,10 @@ import { sha256Hex } from "../model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
+import {
+  sealStageSessionTicket,
+  STAGE_SESSION_TICKET_TTL_MS,
+} from "../model/stageSessionTicket";
 
 export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
@@ -317,10 +321,56 @@ export const getForStage = query({
 });
 
 /**
- * Owner-only: decrypts the stage's stored runtime key so the dashboard can
- * stream logs/traces without re-minting. Returns null when the stage has no
- * deployment yet. Reactive by design, so a freshly generated key appears without
- * a reload.
+ * Any org member: mint a short-lived stage session ticket the dashboard uses
+ * in place of the runtime key for logs, traces and the test chat. Core accepts
+ * it as the stage's deployment credential until it expires. Null when the
+ * stage has no deployment yet.
+ */
+export const mintStageSession = mutation({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: v.union(
+    v.object({ token: v.string(), expiresAt: v.number() }),
+    v.null(),
+  ),
+  handler: async (ctx, { projectId, stageId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
+
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_projectId_and_stageId_and_status", (q) =>
+        q
+          .eq("projectId", projectId)
+          .eq("stageId", stageId)
+          .eq("status", "active"),
+      )
+      .first();
+    if (!deployment) return null;
+
+    const expiresAt = Date.now() + STAGE_SESSION_TICKET_TTL_MS;
+    const token = await sealStageSessionTicket(
+      {
+        accountId: deployment.accountId,
+        endpointId: deployment.endpointId,
+        projectSlug: deployment.projectSlug,
+        stageSlug: deployment.stageSlug,
+        expiresAt: expiresAt,
+      },
+      serviceSecret(),
+    );
+
+    return { token: token, expiresAt: expiresAt };
+  },
+});
+
+/**
+ * Org admin only: decrypts the stage's stored runtime key so it can be copied
+ * without re-minting. Returns null when the stage has no deployment yet, and
+ * for members, who stream logs/traces through `mintStageSession` instead.
+ * Reactive by design, so a freshly generated key appears without a reload.
  */
 export const revealKeyForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
@@ -329,7 +379,7 @@ export const revealKeyForStage = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) return null;
 
     const deployment = await ctx.db
@@ -440,6 +490,19 @@ function encryptionSecret(): string {
   if (!secret) {
     throw new Error(
       "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime API keys",
+    );
+  }
+
+  return secret;
+}
+
+/** The service secret core shares; it also keys stage session tickets. */
+function serviceSecret(): string {
+  const secret =
+    process.env.BROODS_SERVICE_AUTH_SECRET ?? process.env.SERVICE_AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      "BROODS_SERVICE_AUTH_SECRET is required to mint stage session tickets",
     );
   }
 

@@ -417,7 +417,11 @@ for line in response.iter_lines():
 
 ## WebSocket (Real-time Streaming)
 
-For browser or persistent-connection clients, use the WebSocket gateway instead of SSE:
+For browser or persistent-connection clients, use the WebSocket gateway instead of SSE.
+The client sends the credential as a `Sec-WebSocket-Protocol` entry
+(`broods.v1, broods.token.<key>`) rather than in the URL, so it never lands in
+proxy or access logs; the gateway answers with `broods.v1`. The legacy
+`?token=` query parameter still works for older clients and is deprecated.
 
 ```ts
 import { WebSocketClient } from "broods";

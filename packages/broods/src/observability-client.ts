@@ -4,7 +4,7 @@
  * the AbortSignal fires or the socket closes. Imports only the shared contracts.
  */
 
-import { toWebSocketBaseUrl } from "./websocket.ts";
+import { toWebSocketBaseUrl, webSocketSubprotocols } from "./websocket.ts";
 import type {
   LogLevel,
   ObservabilityClientMessage,
@@ -44,14 +44,10 @@ function buildObservabilityUrl(
   baseUrl: string,
   project: string,
   stage: string,
-  apiKey: string,
 ): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
 
-  return (
-    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws` +
-    `?token=${encodeURIComponent(apiKey)}`
-  );
+  return `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws`;
 }
 
 function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
@@ -69,9 +65,15 @@ function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
   }
 }
 
-function resolveWebSocket(): new (url: string) => WebSocket {
-  const impl = (globalThis as { WebSocket?: new (url: string) => WebSocket })
-    .WebSocket;
+function resolveWebSocket(): new (
+  url: string,
+  protocols?: string[],
+) => WebSocket {
+  const impl = (
+    globalThis as {
+      WebSocket?: new (url: string, protocols?: string[]) => WebSocket;
+    }
+  ).WebSocket;
   if (!impl) throw new Error("WebSocket is not available in this environment.");
 
   return impl;
@@ -162,8 +164,8 @@ async function* subscribeObservabilityLogsOnce(
 
   if (signal?.aborted) return;
 
-  const url = buildObservabilityUrl(baseUrl, project, stage, apiKey);
-  const displayUrl = url.slice(0, url.indexOf("?"));
+  const url = buildObservabilityUrl(baseUrl, project, stage);
+  const displayUrl = url;
   const WebSocketImpl = resolveWebSocket();
 
   // Queues and flow-control for the generator ↔ WS event loop bridge.
@@ -177,7 +179,7 @@ async function* subscribeObservabilityLogsOnce(
     wake = null;
   };
 
-  const socket = new WebSocketImpl(url);
+  const socket = new WebSocketImpl(url, webSocketSubprotocols(apiKey));
 
   const cleanup = (): void => {
     if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING) {

@@ -7,6 +7,10 @@ export type GatewayLimits = {
 };
 
 export const decoder = new TextDecoder();
+/** Subprotocol the gateway selects so a token-bearing handshake completes. */
+export const WEBSOCKET_SUBPROTOCOL = "broods.v1";
+/** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
+export const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
 const maxBunIdleTimeoutSeconds = 255;
 
 export function json(
@@ -63,12 +67,45 @@ export function bearerToken(value: string | null): string | null {
   return match?.[1]?.trim() || null;
 }
 
+/**
+ * WebSocket credential: the Authorization header, else the token carried as a
+ * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
+ * set headers on an upgrade, and the query string ends up in access logs),
+ * else the legacy `?token=` query parameter.
+ */
 export function websocketToken(request: Request, url: URL): string {
   return (
     bearerToken(request.headers.get("authorization")) ??
+    subprotocolToken(request) ??
     url.searchParams.get("token") ??
     ""
   ).trim();
+}
+
+/**
+ * Response headers for an upgrade. A client that offered subprotocols fails
+ * the handshake unless the server selects one, so `broods.v1` is echoed back;
+ * the token entry is never echoed.
+ */
+export function websocketUpgradeHeaders(request: Request): HeadersInit {
+  return offeredSubprotocols(request).includes(WEBSOCKET_SUBPROTOCOL)
+    ? { "Sec-WebSocket-Protocol": WEBSOCKET_SUBPROTOCOL }
+    : {};
+}
+
+function offeredSubprotocols(request: Request): string[] {
+  return (request.headers.get("sec-websocket-protocol") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function subprotocolToken(request: Request): string | null {
+  const entry = offeredSubprotocols(request).find((candidate) =>
+    candidate.startsWith(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX),
+  );
+
+  return entry ? entry.slice(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX.length) : null;
 }
 
 export function allowedOriginPatternsFromEnv(

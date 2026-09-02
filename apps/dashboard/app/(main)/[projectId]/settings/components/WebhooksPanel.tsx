@@ -17,7 +17,7 @@ import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
-import { Copy, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
@@ -34,7 +34,7 @@ type AgentWebhooks = {
     index: number;
     enabled: boolean;
     url?: string;
-    secret?: string;
+    hasSecret: boolean;
     events: string[];
   }>;
 };
@@ -61,8 +61,6 @@ export function WebhooksPanel({
   const removeWebhook = useMutation(api.webhooks.removeAgentWebhook);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
-  // `${agentConfigId}:${index}` of the webhook whose secret is currently revealed.
-  const [revealed, setRevealed] = useState<string | null>(null);
   const [addingFor, setAddingFor] = useState<Id<"agentConfigs"> | null>(null);
 
   // Webhook pending delete confirmation.
@@ -236,38 +234,10 @@ export function WebhooksPanel({
                       </Button>
                     </div>
 
-                    {webhook.secret && (
-                      <div className="flex items-center gap-1.5">
-                        <code className="font-mono text-xs text-muted-foreground">
-                          {revealed === key
-                            ? webhook.secret
-                            : "••••••••••••••••"}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="cursor-pointer text-muted-foreground hover:text-foreground"
-                          onClick={() =>
-                            setRevealed(revealed === key ? null : key)
-                          }
-                        >
-                          {revealed === key ? (
-                            <EyeOff className="size-3.5" />
-                          ) : (
-                            <Eye className="size-3.5" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="cursor-pointer text-muted-foreground hover:text-foreground"
-                          onClick={() =>
-                            navigator.clipboard.writeText(webhook.secret ?? "")
-                          }
-                        >
-                          <Copy className="size-3.5" />
-                        </Button>
-                      </div>
+                    {webhook.hasSecret && (
+                      <code className="font-mono text-xs text-muted-foreground">
+                        signing secret set
+                      </code>
                     )}
 
                     <div className="flex flex-wrap gap-1">

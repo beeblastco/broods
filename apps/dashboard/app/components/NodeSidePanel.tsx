@@ -41,6 +41,7 @@ import {
 } from "@/app/hooks/useAgentHealth";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { useStage } from "@/app/hooks/useStage";
+import { useStageSession } from "@/app/hooks/useStageSession";
 import {
   applyModelReasoning,
   fromNestedAgentConfig,
@@ -251,11 +252,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         ? { projectId: projectId, stageId: stageId }
         : "skip",
     ) ?? undefined;
-  const revealedDeploymentApiKey = useQuery(
-    api.agent.deployments.revealKeyForStage,
-    isAgent && projectId && stageId
-      ? { projectId: projectId, stageId: stageId }
-      : "skip",
+  const stageSession = useStageSession(
+    projectId,
+    isAgent && projectId && stageId ? stageId : null,
   );
 
   const mcpServer = useQuery(
@@ -320,7 +319,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setDeploymentApiKey(undefined);
   }
   const resolvedDeploymentApiKey =
-    deploymentApiKey ?? revealedDeploymentApiKey ?? undefined;
+    deploymentApiKey ?? stageSession ?? undefined;
 
   // Jump to the settings tab and open the confirm dialog when the parent bumps
   // the delete-request token. The dialog state lives here, not in SettingsTab —

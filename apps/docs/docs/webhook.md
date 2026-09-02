@@ -59,7 +59,7 @@ export const myAgent = defineAgent({
 
 Each entry is delivered independently: every enabled webhook whose `events` allow-list matches (or is omitted) receives the event. The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
 
-Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`secret` as `env("NAME")` references) or in the dashboard, they are surfaced in the dashboard **Settings → Webhooks** tab. There you can add a webhook, toggle each one **active/inactive**, or remove it; the panel writes straight to `config.hooks.webhooks` (the config the harness delivers from) rather than a separate store. The CLI shows them via `broods agent get <name>`.
+Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`secret` as `env("NAME")` references) or in the dashboard, they are surfaced in the dashboard **Settings → Webhooks** tab. There you can add a webhook, toggle each one **active/inactive**, or remove it; the panel writes straight to `config.hooks.webhooks` (the config the harness delivers from) rather than a separate store. Changing webhooks is an org admin operation, and the signing secret is write-only: the panel shows that one is set but never returns the value. The CLI shows them via `broods agent get <name>`.
 
 ## Events
 

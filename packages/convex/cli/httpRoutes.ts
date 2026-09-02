@@ -64,6 +64,13 @@ type DesiredCron = Omit<CronResponse, "cronId"> & {
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
+/**
+ * `kind:name` of every external resource another stage of the account
+ * manages. Skills and hooks are account-wide rows keyed by name, so this set
+ * is what keeps a stage-scoped deploy key from replacing or pruning them.
+ */
+type ForeignExternalResources = Set<string>;
+
 /** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
   ctx: ActionCtx,
@@ -586,12 +593,12 @@ async function syncCrons(
   const existing = await ctx.runQuery(internal.agent.crons.list, {
     accountId: accountId,
   });
-  const existingByName = new Map(existing.map((job) => [job.name, job]));
+  const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
   const desiredNames = new Set(desired.map((job) => job.name));
   const cronIds: Record<string, string> = {};
 
   for (const job of desired) {
-    const existingJob = existingByName.get(job.name);
+    const existingJob = stageCronByName(existing, stageAgentIds, job.name);
     if (existingJob) {
       await ctx.runMutation(internal.agent.crons.update, {
         accountId: accountId,
@@ -609,7 +616,6 @@ async function syncCrons(
   }
 
   if (prune === true) {
-    const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
     for (const job of existing) {
       if (!stageAgentIds.has(job.agentId) || desiredNames.has(job.name))
         continue;
@@ -635,16 +641,23 @@ async function syncExternalResources(
   );
   if (!hasExternalResources) return { skills: {}, hooks: {}, mcp: {} };
 
+  const foreign = await foreignExternalResources(
+    ctx,
+    accountId as Id<"accounts">,
+    scope,
+  );
   const skills = await syncSkillResources(
     ctx,
     accountId as Id<"accounts">,
     manifest,
+    foreign,
   );
   const hooks = await syncHookResources(
     ctx,
     accountId as Id<"accounts">,
     manifest,
     prune,
+    foreign,
   );
   const mcp = await syncMcpResources(
     ctx,
@@ -657,11 +670,65 @@ async function syncExternalResources(
   return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
+/**
+ * Crons are account-wide rows, so a name is only this stage's when the job
+ * targets one of its agents. A same-named job of another stage is refused
+ * instead of being retargeted; null means the name is free.
+ */
+export function stageCronByName<T extends { name: string; agentId: string }>(
+  existing: T[],
+  stageAgentIds: Set<string>,
+  name: string,
+): T | null {
+  const match = existing.find((job) => job.name === name);
+  if (!match) return null;
+  if (!stageAgentIds.has(match.agentId)) {
+    throw new Error(
+      `Cron job name "${name}" is already used by another stage of this account`,
+    );
+  }
+
+  return match;
+}
+
+/**
+ * Refuse to create, replace, or prune an account-wide resource whose name is
+ * recorded as managed by a different stage.
+ */
+export function assertNotForeign(
+  foreign: ForeignExternalResources,
+  kind: "skill" | "hook",
+  name: string,
+): void {
+  if (!foreign.has(`${kind}:${name}`)) return;
+  throw new Error(
+    `${kind}:${name} is managed by another stage of this account and cannot be changed from this one`,
+  );
+}
+
+async function foreignExternalResources(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  scope: ProjectStageScope,
+): Promise<ForeignExternalResources> {
+  const rows = await ctx.runQuery(
+    internal.cli.sync.listExternalResourcesForAccount,
+    { accountId: accountId },
+  );
+
+  return new Set(
+    rows
+      .filter((row) => row.stageId !== scope.stageId)
+      .map((row) => `${row.kind}:${row.name}`),
+  );
+}
+
 async function syncHookResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   manifest: CliManifest,
   prune: boolean,
+  foreign: ForeignExternalResources,
 ): Promise<Record<string, string>> {
   const desired = manifest.resources.filter((entry) => entry.kind === "hook");
   if (desired.length === 0) return {};
@@ -673,6 +740,7 @@ async function syncHookResources(
   const ids: Record<string, string> = {};
 
   for (const resource of desired) {
+    assertNotForeign(foreign, "hook", resource.name);
     const config = asRecord(resource.config, `hook:${resource.name}`);
     const events = config.events;
     if (!Array.isArray(events))
@@ -733,7 +801,7 @@ async function syncHookResources(
 
   if (prune === true) {
     for (const hook of existing.values()) {
-      if (!desiredNames.has(hook.name)) {
+      if (!desiredNames.has(hook.name) && !foreign.has(`hook:${hook.name}`)) {
         await ctx.runMutation(internal.account.hooks.remove, {
           accountId: accountId,
           hookId: hook._id,
@@ -904,11 +972,13 @@ async function syncSkillResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
   manifest: CliManifest,
+  foreign: ForeignExternalResources,
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   for (const resource of manifest.resources.filter(
     (entry) => entry.kind === "skill",
   )) {
+    assertNotForeign(foreign, "skill", resource.name);
     const config = asRecord(resource.config, `skill:${resource.name}`);
     const files = config.files;
     if (!Array.isArray(files))
