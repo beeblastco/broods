@@ -181,10 +181,13 @@ export function useObservabilityStream(
 
     const wsUrl =
       `${coreEndpoint.websocketBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
-      `/${encodeURIComponent(stageSlug)}/observability/ws` +
-      `?token=${encodeURIComponent(apiKey)}`;
+      `/${encodeURIComponent(stageSlug)}/observability/ws`;
 
-    const socket = new WebSocket(wsUrl);
+    // Credential in the subprotocol list, never the URL (see useAgentChat).
+    const socket = new WebSocket(wsUrl, [
+      "broods.v1",
+      `broods.token.${apiKey}`,
+    ]);
     socketRef.current = socket;
 
     socket.onopen = () => {

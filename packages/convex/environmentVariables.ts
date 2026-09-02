@@ -26,6 +26,10 @@ import {
   type ConfigAuditActor,
 } from "./model/auditEvents";
 
+// Plaintext reveal and every write are org admin operations; members read names only.
+const ADMIN_REQUIRED =
+  "Environment variables can only be revealed or changed by an org admin.";
+
 const environmentVariableDoc = v.object({
   _id: v.id("environmentVariables"),
   _creationTime: v.number(),
@@ -77,8 +81,8 @@ export const remove = mutation({
     const variable = await ctx.db.get(variableId);
     if (!variable) throw new Error("Variable not found.");
 
-    const stage = await getOwnedStage(ctx, user.id, variable.stageId);
-    if (!stage) throw new Error("Variable not found.");
+    const stage = await getOwnedStage(ctx, user.id, variable.stageId, "admin");
+    if (!stage) throw new Error(ADMIN_REQUIRED);
     await assertEnvironmentVariableUnreferenced(
       ctx,
       variable.projectId,
@@ -134,9 +138,9 @@ export const reveal = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId);
+    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error("Stage not found.");
+      throw new Error(ADMIN_REQUIRED);
     }
 
     const variable = await ctx.db.get(variableId);
@@ -184,9 +188,9 @@ export const set = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId);
+    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error("Stage not found.");
+      throw new Error(ADMIN_REQUIRED);
     }
 
     const trimmedName = name.trim();

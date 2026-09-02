@@ -17,6 +17,7 @@ import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   lokiBackfillQuery,
   lokiLogEntry,
+  quoteLabel,
   normalizeOtelId,
   relayNatsMessages,
   tempoTraceRowsFromResponse,
@@ -37,6 +38,7 @@ import {
   mapWithConcurrency,
   normalizedCoreBaseUrls,
   websocketToken,
+  websocketUpgradeHeaders,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
@@ -2156,3 +2158,29 @@ function zeroBufferConnection(
     }),
   };
 }
+
+test("websocket token reads the broods.token subprotocol before the query param", () => {
+  const url = new URL("https://gateway.example.com/ws?token=from-query");
+  const request = new Request(url, {
+    headers: { "sec-websocket-protocol": "broods.v1, broods.token.from-proto" },
+  });
+  expect(websocketToken(request, url)).toBe("from-proto");
+  // The handshake completes only when the offered subprotocol is echoed.
+  expect(websocketUpgradeHeaders(request)).toEqual({
+    "Sec-WebSocket-Protocol": "broods.v1",
+  });
+  expect(websocketUpgradeHeaders(new Request(url))).toEqual({});
+});
+
+test("observability selectors keep a hostile stage slug inside the string", () => {
+  const scope = {
+    accountId: "acct-1",
+    projectSlug: "shop",
+    stageSlug: 'dev"} or {stage=~".+',
+    endpointIds: [],
+  };
+  expect(quoteLabel(scope.stageSlug)).toBe('"dev\\"} or {stage=~\\".+"');
+  expect(lokiBackfillQuery(scope, "DEBUG")).toBe(
+    '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+"}',
+  );
+});

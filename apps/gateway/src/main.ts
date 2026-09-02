@@ -39,6 +39,7 @@ import {
   normalizeBaseUrl,
   normalizedCoreBaseUrls,
   websocketToken,
+  websocketUpgradeHeaders,
 } from "./utils.ts";
 
 type GatewayData =
@@ -148,6 +149,7 @@ if (import.meta.main) {
         }
 
         const upgraded = server.upgrade(request, {
+          headers: websocketUpgradeHeaders(request),
           data: {
             kind: "terminal",
             ticket: ticket,
@@ -190,6 +192,7 @@ if (import.meta.main) {
         }
 
         const upgraded = server.upgrade(request, {
+          headers: websocketUpgradeHeaders(request),
           data: {
             kind: "observability",
             project: observabilityPath[1],
@@ -238,6 +241,7 @@ if (import.meta.main) {
         }
 
         const upgraded = server.upgrade(request, {
+          headers: websocketUpgradeHeaders(request),
           data: {
             kind: "agent-test",
             corePath: url.pathname.slice(0, -"/ws".length),

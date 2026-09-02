@@ -23,6 +23,7 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
+import { stableJson } from "../model/objects";
 import { agentConfigsFields } from "../schema";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
@@ -292,6 +293,15 @@ export const update = mutation({
     if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
       throw new Error("Agent config not found.");
     }
+    // `extraConfig` is written wholesale, so a member could otherwise reach
+    // `hooks.webhooks` here and bypass the admin gate in `webhooks.ts`.
+    if (
+      updates.extraConfig !== undefined &&
+      webhooksChanged(existing.extraConfig, updates.extraConfig) &&
+      !(await getProjectForRole(ctx, user.id, existing.projectId, "admin"))
+    ) {
+      throw new Error("Agent webhooks can only be changed by an org admin.");
+    }
 
     const patch = Object.fromEntries(
       Object.entries(updates)
@@ -500,6 +510,14 @@ async function canAccessAgentConfig(
   config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
   return Boolean(await getProjectForRole(ctx, authId, config.projectId));
+}
+
+/** Whether two `extraConfig` blobs carry a different `hooks.webhooks` array. */
+function webhooksChanged(current: unknown, next: unknown): boolean {
+  const read = (value: unknown): unknown =>
+    asRecord(asRecord(value).hooks).webhooks ?? [];
+
+  return stableJson(read(current)) !== stableJson(read(next));
 }
 
 /** Hide secret values from browser reads while preserving variable names. */

@@ -9,7 +9,13 @@ import { internalMutation, mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
 import { slugifyName } from "../lib/slug";
-import { getActiveOrgForUser, requireOrgMember } from "../model/ownership/org";
+import {
+  getActiveOrgForUser,
+  getOrgMembership,
+  orgRoleMeets,
+  requireOrgMember,
+  type OrgRole,
+} from "../model/ownership/org";
 import { orgsFields } from "../schema";
 
 /**
@@ -230,10 +236,12 @@ export const getActiveAccount = query({
  * provisioned yet. Shared by the account-scoped public queries so the
  * auth -> user -> org -> account chain lives in one place.
  * @param ctx query/mutation context.
- * @returns the account document, or null when none resolves.
+ * @param requiredRole minimum org role; omitted means any membership.
+ * @returns the account document, or null when none resolves or the role is short.
  */
 export async function getActiveAccountForUser(
   ctx: QueryCtx,
+  requiredRole?: OrgRole,
 ): Promise<Doc<"accounts"> | null> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) return null;
@@ -246,6 +254,12 @@ export async function getActiveAccountForUser(
 
   const org = await getActiveOrgForUser(ctx, user._id);
   if (!org) return null;
+  if (requiredRole) {
+    const membership = await getOrgMembership(ctx, org._id, user._id);
+    if (!membership || !orgRoleMeets(membership.role, requiredRole)) {
+      return null;
+    }
+  }
 
   return await ctx.db
     .query("accounts")

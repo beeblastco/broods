@@ -24,6 +24,9 @@ import {
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+// A tarball larger than this can never yield a valid bundle, so it is refused
+// before decompression instead of being materialized in memory.
+const MAX_SKILL_ARCHIVE_BYTES = 2 * MAX_SKILL_BUNDLE_BYTES;
 
 const TEXT_EXTENSIONS = new Set([
   ".css",
@@ -178,15 +181,22 @@ export async function fetchGitHubSkillFiles(
       `Failed to download GitHub skill archive: ${response.status}`,
     );
   }
+  const declaredBytes = Number(response.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredBytes) &&
+    declaredBytes > MAX_SKILL_ARCHIVE_BYTES
+  ) {
+    throw new Error(
+      `GitHub archive exceeds the ${MAX_SKILL_ARCHIVE_BYTES} byte limit`,
+    );
+  }
 
   // Web-standard gunzip: Convex's bundler rejects node builtins (node:zlib)
   // outside "use node" entry files, and this model must stay importable.
   const decompressed = response.body.pipeThrough(
     new DecompressionStream("gzip"),
   );
-  const archive = new Uint8Array(
-    await new Response(decompressed).arrayBuffer(),
-  );
+  const archive = await readCapped(decompressed, MAX_SKILL_ARCHIVE_BYTES);
   const subdirPrefix = parsed.subdir ? `${parsed.subdir}/` : "";
   const files: SkillBundleFile[] = [];
   for (const entry of parseTarFiles(archive)) {
@@ -397,6 +407,40 @@ function parsePaxPath(content: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Buffer a stream, refusing it once it grows past `maxBytes` so a high-ratio
+ * archive is cut off instead of exhausting memory.
+ */
+export async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new Error(`GitHub archive exceeds the ${maxBytes} byte limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
 }
 
 /**

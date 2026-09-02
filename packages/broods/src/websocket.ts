@@ -85,7 +85,7 @@ export interface BroodsWebSocketClientOptions {
 }
 
 export interface WebSocketConstructorLike {
-  new (url: string): WebSocketLike;
+  new (url: string, protocols?: string[]): WebSocketLike;
 }
 
 export interface WebSocketLike {
@@ -131,7 +131,7 @@ export class BroodsWebSocketClient {
     const url = this.buildUrl(input);
     const agentId = resolveAgentId(input);
     const accessError = webSocketAccessError(this.baseUrl);
-    const socket = new WebSocketImpl(url);
+    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
     let opened = false;
     let closed = false;
     const timeout = setTimeout(() => {
@@ -248,7 +248,7 @@ export class BroodsWebSocketClient {
   ): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
-    const socket = new WebSocketImpl(url);
+    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
     let closed = false;
     const close = (code = 1000, reason = "client closed") => {
       if (closed) return;
@@ -353,10 +353,7 @@ export class BroodsWebSocketClient {
     const stagePrefix = stageSlug ? `/${stageSlug}` : "";
     const wsBaseUrl = toWebSocketBaseUrl(this.baseUrl);
 
-    return (
-      `${wsBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${encodeURIComponent(endpointId)}/ws` +
-      `?token=${encodeURIComponent(this.apiKey)}`
-    );
+    return `${wsBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${encodeURIComponent(endpointId)}/ws`;
   }
 
   private resolveWebSocket(): WebSocketConstructorLike {
@@ -371,6 +368,16 @@ export class BroodsWebSocketClient {
 
     return WebSocketImpl;
   }
+}
+
+/**
+ * The credential travels as a `Sec-WebSocket-Protocol` entry rather than in
+ * the URL, so it never lands in proxy or access logs. The gateway answers
+ * with `broods.v1`, which is what completes a handshake that offered
+ * subprotocols.
+ */
+export function webSocketSubprotocols(apiKey: string): string[] {
+  return ["broods.v1", `broods.token.${apiKey}`];
 }
 
 function resolveAgentId(

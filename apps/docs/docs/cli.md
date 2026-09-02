@@ -216,6 +216,12 @@ With only a stored login and no environment credential, the server still
 starts: the account-plane tools stay unregistered and the org, project and
 stage tools work alone. With no credential of any kind, startup fails.
 
+A login token is minted for an org owner or admin and is re-checked against
+the current membership on every request: demote or remove the user and the
+token stops working before it expires. A deploy key is bound to one project and
+stage; it cannot replace a skill, hook or cron job another stage of the same
+account manages, and `--prune` leaves those rows alone.
+
 ## update
 
 ```bash

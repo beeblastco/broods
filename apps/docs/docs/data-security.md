@@ -64,6 +64,33 @@ Normal account responses redact secret-like fields:
 
 If a client sends `********` back in a patch, the existing real secret is preserved.
 
+## Who Can See What
+
+Dashboard access follows the org membership row, never who created a project.
+A member who is removed or demoted loses access on their next request, and a
+`broods login` token stops resolving the moment its user is no longer an org
+owner or admin.
+
+| Operation                                                   | Member | Admin / owner |
+| ----------------------------------------------------------- | ------ | ------------- |
+| Read agents, stages, canvas, logs, traces, test an agent    | yes    | yes           |
+| Reveal, set or delete an environment variable               | no     | yes           |
+| Reveal or rotate the stage runtime key (`fp_agent_…`)       | no     | yes           |
+| Create, clone or promote a stage; delete a stage or project | no     | yes           |
+| Add, toggle or remove agent webhooks                        | no     | yes           |
+| Create, update or delete scheduled jobs from the dashboard  | no     | yes           |
+| Create or revoke deploy keys; manage policies               | no     | yes           |
+
+Members stream logs and drive the test chat with a **stage session ticket**
+(`fp_dts_…`): a one-hour credential the config plane signs for the stage, which
+core accepts exactly like the runtime key until it expires. The runtime key
+itself never reaches a member's browser. Webhook signing secrets are write-only:
+the dashboard reports whether one is set and never returns the value.
+
+A stage-scoped deploy key syncs its own stage only. Skills, hooks and cron jobs
+are account-wide by name, so a manifest that names one another stage manages is
+refused instead of replacing it, and `prune` never deletes another stage's rows.
+
 ## Untrusted Hosted MCP Server Execution
 
 Account-uploaded hosted MCP server bundles are untrusted code and never run in the core process. They execute on the platform tool-runner Lambda — a plain Node.js function that runs each bundle in a child process with a scrubbed environment and a fresh per-invocation `TMPDIR`. The child is a containment layer, not a trust boundary: it runs as the same OS user as the function, so server code can read the function's own environment. The protections that do hold are that this function's execution role grants nothing but CloudWatch Logs, that the bundle is imported from memory and never written to disk, and that a child is only ever handed calls for the one `accountId + sha256` it was spawned for — a different tenant or a changed bundle always gets a fresh process, and the retiring child is reaped as a process group so nothing it spawned survives it. Treat anything the function can reach as reachable by tenant code. The function runs outside a VPC, so egress is open internet; the bundle arrives via a short-lived pre-signed URL, so the function holds no S3 or data-plane access.

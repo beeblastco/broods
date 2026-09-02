@@ -3,6 +3,7 @@
 /** Dashboard page with sidebar navigation and a titled content panel. */
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
+import { useStageSession } from "@/app/hooks/useStageSession";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -84,17 +85,20 @@ export default function DashboardPage(): React.JSX.Element {
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
-  // The key is stored encrypted at rest, so the owner recovers it here without
-  // re-minting — logs/traces just stream. Null only when the stage has no
-  // deployment yet (the prompt then mints one).
+  // Streaming runs on a short-lived stage session any member can mint; null
+  // only when the stage has no deployment yet (the prompt then mints one).
+  const stageSession = useStageSession(projectId, activeStageId);
+  // The permanent key is admin-only and shown solely in the copy dialog.
   const revealedKey = useQuery(
     api.agent.deployments.revealKeyForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
-  const observabilityApiKey =
-    (generated && generated.endpointId === activeDeployment?.endpointId
+  const generatedKey =
+    generated && generated.endpointId === activeDeployment?.endpointId
       ? generated.key
-      : undefined) ?? revealedKey;
+      : undefined;
+  const observabilityApiKey = generatedKey ?? stageSession;
+  const copyableKey = generatedKey ?? revealedKey;
   const currentKeyError =
     keyError && keyError.stageId === activeStageId ? keyError.msg : null;
 
@@ -181,7 +185,9 @@ export default function DashboardPage(): React.JSX.Element {
   // While the reveal query is still resolving, hold a quiet loader instead of
   // flashing the "generate a key" prompt — the prompt is only the true-absence state.
   const keyResolving =
-    Boolean(activeStageId) && revealedKey === undefined && !observabilityApiKey;
+    Boolean(activeStageId) &&
+    stageSession === undefined &&
+    !observabilityApiKey;
   const observabilityFallback = keyResolving ? (
     <div className="flex h-full min-h-64 items-center justify-center">
       <p className="text-sm text-muted-foreground">Loading…</p>
@@ -229,11 +235,12 @@ export default function DashboardPage(): React.JSX.Element {
       case "billing":
         return <BillingPanel projectId={projectId} />;
       case "api-key":
-        return observabilityApiKey ? (
-          <RuntimeKeyView
-            apiKey={observabilityApiKey}
-            onRotate={rotateViewingKey}
-          />
+        return copyableKey ? (
+          <RuntimeKeyView apiKey={copyableKey} onRotate={rotateViewingKey} />
+        ) : observabilityApiKey ? (
+          <p className="text-sm text-muted-foreground">
+            Only an org admin can reveal the runtime key.
+          </p>
         ) : (
           observabilityFallback
         );
@@ -308,11 +315,11 @@ export default function DashboardPage(): React.JSX.Element {
         </div>
       </div>
 
-      {observabilityApiKey && (
+      {copyableKey && (
         <RuntimeKeyDialog
           open={keyDialogOpen}
           onOpenChange={setKeyDialogOpen}
-          apiKey={observabilityApiKey}
+          apiKey={copyableKey}
           justCreated={keyJustCreated}
         />
       )}

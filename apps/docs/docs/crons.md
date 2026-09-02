@@ -154,7 +154,7 @@ export const support = defineAgent({
 | `update_schedule` | `cronId`, `name?`, `instructions?`, `schedule?`, `timezone?`, `status?` | Changes one of this agent's jobs in place, including pausing and resuming  |
 | `cancel_schedule` | `cronId`                                                                | Deletes one of this agent's jobs, run history included                     |
 
-These are normal cron jobs through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things `schedule` fixes for the model:
+These are normal cron jobs through the same config plane — visible on the dashboard scheduler page (where creating, editing or deleting one takes the org admin role) and manageable through `/v1/crons` like any other. Two things `schedule` fixes for the model:
 
 - **The agent is always itself.** A scheduled task cannot be pointed at another agent, and `list`/`update`/`cancel` reach only that agent's own jobs.
 - **The conversation is always the calling one.** The cron stores the conversation key of the session the tool ran in, so an agent asked in Slack to summarize every morning answers in that Slack conversation. See [Conversation Binding](#conversation-binding).

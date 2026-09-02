@@ -15,7 +15,12 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import { slugifyName } from "../lib/slug";
 import { sha256Hex } from "../model/accountSecrets";
-import { getActiveOrgForUser, requireOrgMember } from "../model/ownership/org";
+import {
+  getActiveOrgForUser,
+  getOrgMembership,
+  orgRoleMeets,
+  requireOrgMember,
+} from "../model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -486,6 +491,14 @@ async function resolveActiveCliToken(
 
   const account = await ctx.db.get(token.accountId);
   if (!account || account.status !== "active") return null;
+
+  // A token is minted for an owner/admin; it must stop working the moment
+  // that membership is removed or demoted, not when it expires.
+  const user = await userForAuthId(ctx, token.authId);
+  const membership = user
+    ? await getOrgMembership(ctx, token.orgId, user._id)
+    : null;
+  if (!membership || !orgRoleMeets(membership.role, "admin")) return null;
 
   if (
     token.lastUsedAt === undefined ||

@@ -14,8 +14,13 @@ export async function getProjectForRole(
 ): Promise<Doc<"projects"> | null> {
   const project = await ctx.db.get(projectId);
   if (!project) return null;
-  if (project.authId === authId) return project;
-  if (!project.orgId) return null;
+  // Only a project with no org is owned by its creator. Inside an org the
+  // org owner and the membership rows are the sole authority, so a removed
+  // or demoted project creator loses access the moment their role changes.
+  if (!project.orgId) return project.authId === authId ? project : null;
+  const org = await ctx.db.get(project.orgId);
+  if (!org) return null;
+  if (org.ownerAuthId === authId) return project;
 
   const user = await ctx.db
     .query("users")

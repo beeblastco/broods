@@ -2280,6 +2280,7 @@ describe("runAgentLoop", () => {
     expect(createAnthropicMock).toHaveBeenCalledWith({
       apiKey: "anthropic-key",
       baseURL: "https://api.anthropic.example/v1",
+      fetch: expect.any(Function),
     });
     expect(anthropicModelMock).toHaveBeenCalledWith("claude-sonnet-4-5");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
@@ -2331,6 +2332,7 @@ describe("runAgentLoop", () => {
     expect(createMinimaxMock).toHaveBeenCalledWith({
       apiKey: "minimax-key",
       baseURL: "https://api.minimax.io/anthropic/v1",
+      fetch: expect.any(Function),
     });
     expect(minimaxModelMock).toHaveBeenCalledWith("MiniMax-M3");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({

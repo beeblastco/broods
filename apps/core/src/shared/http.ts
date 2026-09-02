@@ -1,4 +1,8 @@
-import type { GuardedFetchOptions } from "../harness/isolate/runner/pinned-fetch.mjs";
+import { lookup } from "node:dns/promises";
+import {
+  isDeniedAddress,
+  type GuardedFetchOptions,
+} from "../harness/isolate/runner/pinned-fetch.mjs";
 
 /**
  * The core HTTP contract every handler speaks, plus generic request/response
@@ -134,6 +138,34 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 
   return url;
 }
+
+/**
+ * `fetch` for tenant-configured model endpoints: every request first resolves
+ * the hostname and refuses it when any address is private, link-local or a
+ * metadata range. `assertPublicHttpsUrl` only sees the hostname string at
+ * config time; this is what stops a public name that later resolves inward.
+ * The socket still opens by name (the AI SDK needs a streaming Web `Response`,
+ * which `guardedFetch` does not give), so a rebind between the lookup and the
+ * connect is the residual window.
+ */
+export const publicHostFetch: typeof fetch = Object.assign(
+  async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (isPrivateHostname(url.hostname)) {
+      throw new Error(`Refusing to reach private address ${url.hostname}`);
+    }
+    const addresses = await lookup(url.hostname, { all: true });
+    if (addresses.some((entry) => isDeniedAddress(entry.address))) {
+      throw new Error(`${url.hostname} resolves to a private address`);
+    }
+
+    return fetch(input, init);
+  },
+  { preconnect: fetch.preconnect },
+);
 
 function isPrivateHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");

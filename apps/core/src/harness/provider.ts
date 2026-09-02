@@ -42,6 +42,7 @@ import {
   type TranscriptionModel,
 } from "ai";
 import { createMinimax } from "vercel-minimax-ai-provider";
+import { publicHostFetch } from "../shared/http.ts";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
@@ -169,9 +170,9 @@ export function resolveConfiguredModel(
   // validated by `normalizeProviderSettings` and passed through verbatim, so the
   // cast is the one seam where account config meets the SDK's own typing.
   const createProvider = modelProviderFactories()[providerName] as (
-    settings: AgentProviderSettings,
+    settings: AgentProviderSettings & { fetch?: typeof fetch },
   ) => ModelProviderInstance;
-  const provider = createProvider(providerConfig);
+  const provider = createProvider(withGuardedFetch(providerConfig));
   const model = provider(modelId);
 
   return {
@@ -584,7 +585,7 @@ function resolveOpenAICompatibleModel(
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
   const provider = createOpenAICompatible({
-    ...openAIConfig,
+    ...withGuardedFetch(openAIConfig),
     baseURL: customProviderBaseURL(providerConfig) ?? "",
     name:
       typeof providerConfig.name === "string"
@@ -605,6 +606,18 @@ function resolveOpenAICompatibleModel(
       ],
     }),
   };
+}
+
+/**
+ * A tenant-supplied endpoint gets the resolve-then-connect `fetch`; the
+ * provider's own default endpoint keeps the SDK's fetch untouched.
+ */
+function withGuardedFetch<T extends AgentProviderSettings>(
+  settings: T,
+): T & { fetch?: typeof fetch } {
+  return settings.baseURL || settings.base_url
+    ? { ...settings, fetch: publicHostFetch }
+    : settings;
 }
 
 function requireModelProvider(

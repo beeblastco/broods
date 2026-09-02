@@ -163,13 +163,22 @@ export function lokiBackfillQuery(
   scope: ObservabilityScope,
   minLevel: LogLevel,
 ): string {
-  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",stage="${scope.stageSlug}"}`;
+  const selector = `{account_id=${quoteLabel(scope.accountId)},project=${quoteLabel(scope.projectSlug)},stage=${quoteLabel(scope.stageSlug)}}`;
   const below = Object.entries(LOG_LEVEL_ORDER)
     .filter(([, order]) => order < LOG_LEVEL_ORDER[minLevel])
     .map(([level]) => level);
   if (below.length === 0) return selector;
 
   return `${selector} | level!~"(?i)(${below.join("|")})"`;
+}
+
+/**
+ * Quote a scope value for a LogQL label matcher or a Tempo logfmt tag. Stage
+ * slugs are tenant-named, so a quote or backslash in one must stay inside
+ * the string instead of ending the matcher.
+ */
+export function quoteLabel(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 export function lokiLogEntry(
@@ -469,7 +478,7 @@ async function fetchTempoBackfill(
   const start = end - TEMPO_BACKFILL_WINDOW_S;
   url.searchParams.set(
     "tags",
-    `account_id=${scope.accountId} project=${scope.projectSlug} stage=${scope.stageSlug}`,
+    `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}`,
   );
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("start", String(start));

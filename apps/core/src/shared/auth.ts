@@ -7,6 +7,10 @@
 
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
+import {
+  openStageSessionTicket,
+  STAGE_SESSION_TICKET_PREFIX,
+} from "@broods/convex/model/stageSessionTicket";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv } from "./env.ts";
@@ -60,6 +64,10 @@ export async function resolveBearerAuth(
   // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
     return await resolveRoleSessionAuth(token);
+  }
+  // fp_dts_ likewise: a dashboard stage session is a deployment or nothing.
+  if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
+    return await resolveStageSessionAuth(token);
   }
 
   const adminSecret = optionalEnv("ADMIN_ACCOUNT_SECRET");
@@ -120,6 +128,30 @@ async function resolveRoleSessionAuth(
   if (!account || account.status !== "active") return null;
 
   return { kind: "role", account: account, role: principal };
+}
+
+/**
+ * Resolve an fp_dts_ ticket the config plane minted for an org member. It is
+ * the stage's deployment credential for its lifetime, so it lands on the same
+ * `deployment` branch a runtime key does.
+ */
+async function resolveStageSessionAuth(
+  token: string,
+): Promise<AuthContext | null> {
+  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
+  if (!serviceSecret) return null;
+  const ticket = await openStageSessionTicket(token, serviceSecret);
+  if (!ticket) return null;
+  const account = await getStorage().accounts.getById(ticket.accountId);
+  if (!account || account.status !== "active") return null;
+
+  return {
+    kind: "deployment",
+    account: account,
+    endpointId: ticket.endpointId,
+    projectSlug: ticket.projectSlug,
+    stageSlug: ticket.stageSlug,
+  };
 }
 
 function sha256Hex(value: string): string {

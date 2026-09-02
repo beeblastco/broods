@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { assertPublicHttpsUrl } from "../src/shared/http.ts";
+import { assertPublicHttpsUrl, publicHostFetch } from "../src/shared/http.ts";
 
 describe("assertPublicHttpsUrl", () => {
   it("accepts public https URLs", () => {
@@ -64,5 +64,19 @@ describe("assertPublicHttpsUrl", () => {
     expect(
       assertPublicHttpsUrl("https://192.169.0.1/hook", "url").hostname,
     ).toBe("192.169.0.1");
+  });
+});
+
+describe("publicHostFetch", () => {
+  it("refuses private hostnames and literal private addresses before connecting", async () => {
+    await expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
+      /private address/,
+    );
+    await expect(publicHostFetch("https://10.0.0.8/v1")).rejects.toThrow(
+      /private address/,
+    );
+    await expect(
+      publicHostFetch(new Request("https://169.254.169.254/latest")),
+    ).rejects.toThrow(/private address/);
   });
 });
