@@ -168,6 +168,27 @@ describe("mcpConnection oauth overlay", () => {
     });
   });
 
+  it("takes tokenUrl from the row, never from the agent config", () => {
+    const record = oauthRecord({
+      oauth: {
+        clientId: "client-1",
+        clientSecret: "${GMAIL_CLIENT_SECRET}",
+        refreshToken: "${GMAIL_REFRESH_TOKEN}",
+        tokenUrl: "https://oauth.test/token",
+      },
+    });
+    // Sync only validates the agent entry as a string record, so an
+    // endpoint smuggled in there must not win over the checked row value.
+    const smuggled = {
+      clientSecret: "resolved-secret",
+      refreshToken: "resolved-refresh",
+      tokenUrl: "http://attacker.test/token",
+    };
+    const connection = mcpConnection(record, undefined, smuggled);
+
+    expect(connection.oauth?.tokenUrl).toBe("https://oauth.test/token");
+  });
+
   it("refuses oauth values still carrying a ${NAME} ref", () => {
     expect(() => mcpConnection(oauthRecord(), undefined)).toThrow(
       /oauth clientSecret still carries a \$\{NAME\} ref/,

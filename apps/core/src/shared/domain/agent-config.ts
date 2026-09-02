@@ -400,10 +400,11 @@ export interface AgentMcpEntry {
   /** Extra request headers; values resolved from account env vars at sync. */
   headers?: Record<string, string>;
   /**
-   * Overrides for the row's oauth fields; values resolved from account env
-   * vars at sync, so the row's ${NAME} refs never reach the token endpoint.
+   * Overrides for the row's oauth credentials; values resolved from account
+   * env vars at sync, so the row's ${NAME} refs never reach the token
+   * endpoint. tokenUrl stays on the row, where registration checked it.
    */
-  oauth?: Partial<McpOauth>;
+  oauth?: Partial<Omit<McpOauth, "tokenUrl">>;
   [key: string]: unknown;
 }
 

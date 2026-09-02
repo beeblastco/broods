@@ -17,6 +17,7 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
   authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
@@ -171,7 +172,7 @@ export async function listMcpTools(
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
-  configOauth?: Partial<McpOauth>,
+  configOauth?: AgentMcpEntry["oauth"],
 ): McpConnection {
   const headers: Record<string, string> = {
     ...record.headers,
@@ -335,13 +336,15 @@ function renderContent(content: CallToolResult["content"]): string {
 }
 
 /**
- * Merge the row's oauth with the agent config's overrides (config wins per
- * field) and refuse values still carrying ${NAME} refs, mirroring the header
- * rule: secrets resolve into the agent config at sync, never on the row.
+ * Merge the row's oauth credentials with the agent config's overrides (config
+ * wins per field) and refuse values still carrying ${NAME} refs, mirroring
+ * the header rule: secrets resolve into the agent config at sync, never on
+ * the row. tokenUrl comes from the row alone: registration is the one place
+ * that checked it is https, and the agent config is only a string record.
  */
 function resolveOauth(
   record: McpRecord,
-  configOauth: Partial<McpOauth> | undefined,
+  configOauth: AgentMcpEntry["oauth"],
 ): ResolvedMcpOauth | undefined {
   if (record.oauth === undefined && configOauth === undefined) return undefined;
   const merged: Partial<McpOauth> = { ...record.oauth, ...configOauth };
@@ -367,7 +370,7 @@ function resolveOauth(
     clientId: resolved("clientId"),
     clientSecret: resolved("clientSecret"),
     refreshToken: resolved("refreshToken"),
-    tokenUrl: merged.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
+    tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
   };
 }
 
