@@ -178,7 +178,13 @@ Runtime notes:
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
 - Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload to `/v1/cron-runs` through the gateway, authenticated with `BROODS_SERVICE_AUTH_SECRET` against `BROODS_ACCOUNT_MANAGE_URL` (both already in the Convex deployment env). No AWS scheduler infrastructure is involved.
-- The service token picks its account from `X-Account-Id`, so it should never have to cross the public door. Point the Convex deployment at core in-cluster (`npx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local` on the self-hosted Convex, the dev stage likewise), then set `GATEWAY_FORWARD_ACCOUNT_ID=false` on the gateway so it drops that header from public ingress. Until both are done the gateway forwards it, which is the default.
+- The service token picks its account from `X-Account-Id`, so it should never have to cross the public door. Only the Convex deployment sends it (cron dispatch, sandbox cleanup on account or user deletion, the config-plane bridge); the dashboard reads `BROODS_ACCOUNT_MANAGE_URL` only to advertise a base URL to the CLI. Until the steps below are done the gateway forwards the header, which is the default. Runbook, dev first and then prod, each step reversible on its own:
+  1. Connectivity: from a pod in the `convex` namespace, `GET http://core-dev.beeblast.svc.cluster.local/healthz` must answer. If a NetworkPolicy blocks it, add an egress rule for the `beeblast` namespace first.
+  2. `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core-dev.beeblast.svc.cluster.local` on the dev Convex deployment.
+  3. Verify: fire one scheduled job and one sandbox terminate from the dashboard. Core logs show the request with the account header; gateway access logs show no `/v1/cron-runs` from Convex.
+  4. Set `GATEWAY_FORWARD_ACCOUNT_ID: "false"` in `infra/kubernetes/charts/releases/gateway-dev.yaml` and roll the gateway. After that, `curl -H "X-Account-Id: acct" -H "Authorization: Bearer $SERVICE" https://gateway.dev.broods.app/v1/cron-runs` is refused.
+  5. Repeat for prod with `core.beeblast.svc.cluster.local` and `gateway.yaml`.
+     Rollback: remove the flag (default forwards) and set the env back to the gateway URL.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 
