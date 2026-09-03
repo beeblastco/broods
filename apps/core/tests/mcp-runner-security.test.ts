@@ -43,13 +43,17 @@ function parseFrames(
     });
 }
 
+// The single request's tagged final frame; the batch then closes on `end`.
 function finalBody(stdout: string | undefined): unknown {
-  const frame = parseFrames(stdout).at(-1) as
-    | { t: string; result?: HostedResponse }
-    | undefined;
-  expect(frame?.t).toBe("final");
+  const frames = parseFrames(stdout) as Array<{
+    t: string;
+    result?: HostedResponse;
+  }>;
+  expect(frames.at(-1)?.t).toBe("end");
+  const finals = frames.filter((frame) => frame.t === "final");
+  expect(finals).toHaveLength(1);
 
-  return JSON.parse(frame!.result!.body);
+  return JSON.parse(finals[0]!.result!.body);
 }
 
 // A bundle the runner will accept: sha256 must match what the child recomputes.
@@ -76,7 +80,9 @@ async function invokeHandler(
   const event = {
     mode: "mcp",
     toolName: "server-under-test",
-    mcpRequest: { method: "POST", headers: {}, body: "{}" },
+    requests: [
+      { id: "1", mcpRequest: { method: "POST", headers: {}, body: "{}" } },
+    ],
   };
   try {
     const driver = join(dir, "driver.mjs");

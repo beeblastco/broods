@@ -10,6 +10,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRunnerFrame, type RunnerFrame } from "../src/harness/frames.ts";
 
 const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
@@ -24,6 +25,8 @@ interface HostedResponse {
 interface RunnerEvent {
   accountId?: string;
   bundle: string;
+  /** Requests in this invocation's batch; one by default. */
+  batch?: number;
   /** Pause after this invocation, for state that settles between calls. */
   waitMs?: number;
 }
@@ -70,7 +73,10 @@ async function invokeSequence(
         .update(event.bundle)
         .digest("hex"),
       bundleUrl: new URL(bundleName(event.bundle), server.url).href,
-      mcpRequest: { method: "POST", headers: {}, body: "{}" },
+      requests: Array.from({ length: event.batch ?? 1 }, (_, index) => ({
+        id: String(index + 1),
+        mcpRequest: { method: "POST", headers: {}, body: "{}" },
+      })),
     }));
     await writeFile(
       driver,
@@ -125,25 +131,34 @@ function bundleName(bundle: string): string {
   return `${new Bun.CryptoHasher("sha256").update(bundle).digest("hex")}.mjs`;
 }
 
-function finalBody(run: string | undefined): unknown {
-  const frame = terminalFrame(run);
-  expect(frame?.t).toBe("final");
-
-  return JSON.parse((frame!.result as HostedResponse).body);
+/** Every request's response body in an invocation, in id order. */
+function finalBodies(run: string | undefined): unknown[] {
+  return frames(run)
+    .filter(
+      (frame): frame is Extract<RunnerFrame, { t: "final" }> =>
+        frame.t === "final",
+    )
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .map((frame) => JSON.parse((frame.result as HostedResponse).body));
 }
 
-function terminalFrame(
-  run: string | undefined,
-): { t: string; result?: unknown; error?: string } | undefined {
+/** The response body of a single-request invocation. */
+function finalBody(run: string | undefined): unknown {
+  const bodies = finalBodies(run);
+  expect(bodies).toHaveLength(1);
+
+  return bodies[0];
+}
+
+function frames(run: string | undefined): RunnerFrame[] {
   return (run ?? "")
-    .trim()
     .split("\n")
-    .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as { t: string; result?: unknown; error?: string },
-    )
-    .at(-1);
+    .map(parseRunnerFrame)
+    .filter((frame) => frame !== null);
+}
+
+function terminalFrame(run: string | undefined): RunnerFrame | undefined {
+  return frames(run).at(-1);
 }
 
 describe("mcp-runner warm reuse", () => {
@@ -157,6 +172,24 @@ describe("mcp-runner warm reuse", () => {
     expect(
       runs.map((run) => (finalBody(run) as { calls: number }).calls),
     ).toEqual([1, 2, 3]);
+    expect(bundleFetches).toBe(1);
+  }, 30_000);
+
+  it("serves a whole batch in one child and keeps it warm", async () => {
+    // Three requests in one invocation share the process (counter 1..3),
+    // and the next invocation still lands in it.
+    const { runs, bundleFetches } = await invokeSequence([
+      { accountId: "acct-1", bundle: COUNTER_BUNDLE, batch: 3 },
+      { accountId: "acct-1", bundle: COUNTER_BUNDLE },
+    ]);
+
+    expect(
+      finalBodies(runs[0])
+        .map((body) => (body as { calls: number }).calls)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2, 3]);
+    expect(terminalFrame(runs[0])?.t).toBe("end");
+    expect((finalBody(runs[1]) as { calls: number }).calls).toBe(4);
     expect(bundleFetches).toBe(1);
   }, 30_000);
 
@@ -204,9 +237,10 @@ describe("mcp-runner warm reuse", () => {
     ).toEqual([1, 1]);
   }, 30_000);
 
-  it("retires the child after an error frame", async () => {
-    // First call throws; if the child survived it, the second call's counter
-    // would read 2 and return cleanly. A fresh child throws again.
+  it("keeps the child when one request throws", async () => {
+    // A throw is that request's own failure, reported on its tagged frame;
+    // the batch still closes on `end` and the next call reuses the child
+    // (counter reads 2).
     const bundle = [
       `let calls = 0;`,
       `export default () => {`,
@@ -216,14 +250,33 @@ describe("mcp-runner warm reuse", () => {
       `};`,
     ].join("\n");
 
-    const { runs } = await invokeSequence([
+    const { runs, bundleFetches } = await invokeSequence([
       { accountId: "acct-1", bundle: bundle },
       { accountId: "acct-1", bundle: bundle },
     ]);
 
+    expect(frames(runs[0])).toEqual([
+      { t: "error", id: "1", error: "boom-1" },
+      expect.objectContaining({ t: "end" }),
+    ]);
+    expect((finalBody(runs[1]) as { calls: number }).calls).toBe(2);
+    expect(bundleFetches).toBe(1);
+  }, 30_000);
+
+  it("retires the child after a batch-level error frame", async () => {
+    // A bundle whose export is not a fetch handler fails before any request
+    // runs; that is a process-level failure, so the next call spawns fresh.
+    const bundle = `export default { name: "nope" };`;
+
+    const { runs, bundleFetches } = await invokeSequence([
+      { accountId: "acct-1", bundle: bundle },
+      { accountId: "acct-1", bundle: bundle },
+    ]);
+
+    expect(frames(runs[0])).toHaveLength(1);
     expect(terminalFrame(runs[0])?.t).toBe("error");
     expect(terminalFrame(runs[1])?.t).toBe("error");
-    expect(terminalFrame(runs[1])?.error).toBe("boom-1");
+    expect(bundleFetches).toBe(2);
   }, 30_000);
 
   it("retires an idle child on an unhandled rejection instead of serving another call", async () => {
