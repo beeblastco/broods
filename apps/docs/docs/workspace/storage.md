@@ -150,7 +150,7 @@ storage: {
   bucket: "acme-workspaces",
   region: "us-west-2",
   endpoint: "https://<account>.r2.cloudflarestorage.com", // omit for AWS S3
-  prefix: "agents/",            // optional sub-path; default is the whole bucket
+  prefix: "agents/",            // required: the mount is scoped to bucket/prefix/
   auth: {
     type: "assumeRole",
     roleArn: "arn:aws:iam::111122223333:role/broods-mount",
