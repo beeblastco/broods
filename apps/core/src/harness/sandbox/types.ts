@@ -101,8 +101,10 @@ export interface SandboxRunRequest {
   timeoutSeconds: number;
   outputLimitBytes: number;
   args?: string[];
-  // Per-call env vars merged over the account-configured envVars. Reserved runtime
-  // vars always win and the host process.env is never inherited.
+  // Per-call env vars merged over the account-configured envVars through
+  // `mergeSandboxEnv`: keys in RESERVED_SANDBOX_ENV_KEYS (PATH, HOME, LD_*,
+  // NODE_OPTIONS, the job callback slots, ...) are dropped from the overrides, and
+  // the host process.env is never inherited.
   envVars?: Record<string, string>;
   metadata?: SandboxRunMetadata;
   // Background-only: the caller supplies the jobId (so the tracking row exists

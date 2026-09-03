@@ -228,8 +228,8 @@ runtime invocations, but a general VM cannot make this a hard isolation boundary
 
 `restricted` currently behaves exactly like `deny-all`. Egress is enforced by a shared,
 deploy-time network boundary, so a per-account `allowDomains` / `allowCidrs` allowlist
-cannot be applied to it; setting either logs a warning and changes nothing. Prefer
-`deny-all`, which states what you actually get.
+cannot be applied to it; a `lambda` config that sets either is rejected at validation
+rather than accepted and ignored. Prefer `deny-all`, which states what you actually get.
 
 Omitting `network` defaults to `deny-all`; it does not grant unrestricted internet. The
 deployment must therefore have the same managed egress boundary, and a workspace must use

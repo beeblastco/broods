@@ -33,6 +33,7 @@ import {
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
+  callbackEnv,
   generateJobId,
   launchScript,
   lifecycleScript,
@@ -65,9 +66,9 @@ import {
   assertSafeTenantProviderUrl,
   configString,
   isSandboxGoneError,
+  mergeSandboxEnv,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   stripTrailingSlashes,
   truncateText,
   workspacePath,
@@ -177,10 +178,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         : undefined;
       const result = await sandbox.exec(request.code, {
         ...(cwd ? { cwd: cwd } : {}),
-        env: {
-          ...stringRecord(this.#config.envVars),
-          ...request.envVars,
-        },
+        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
       });
       const stdout = truncateText(
         result.stdout ?? "",
@@ -225,8 +223,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
     const result = await sandbox.exec(script, {
       env: {
-        ...stringRecord(this.#config.envVars),
-        ...request.envVars,
+        ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+        ...callbackEnv(request.callback),
       },
     });
     if (result.exit_code !== 0) {
@@ -528,6 +526,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ? { image_version: configString(options.imageVersion) }
         : {}),
       ...(mounts ? { mounts: mounts } : {}),
+      // Validated at config time: only the sandbox provider may set it.
       ...(options.docker === true ? { docker: { enabled: true } } : {}),
       ...(persistent
         ? {

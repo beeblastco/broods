@@ -95,13 +95,19 @@ describe("resolveS3MountIdentity", () => {
     });
   });
 
-  it("treats an empty BYO prefix as the whole bucket", () => {
-    expect(
+  it("refuses a bring-your-own bucket without a prefix instead of mounting the whole bucket", () => {
+    expect(() =>
       resolveS3MountIdentity({
         storage: { provider: "s3", bucket: "acme" },
         namespace: NS,
       }),
-    ).toEqual({ bucket: "acme", prefix: "" });
+    ).toThrow("storage.prefix is required for a bring-your-own bucket");
+    expect(() =>
+      resolveS3MountIdentity({
+        storage: { provider: "s3", bucket: "acme", prefix: "/" },
+        namespace: NS,
+      }),
+    ).toThrow("storage.prefix is required for a bring-your-own bucket");
   });
 
   it("adds isolation folders under a bring-your-own bucket prefix without changing buckets", () => {
@@ -193,7 +199,29 @@ describe("resolveS3Mount", () => {
     expect(mount.credentials?.AWS_SESSION_TOKEN).toBe("temp-token");
     expect(lastAssumeRoleInput?.RoleArn).toBe("arn:aws:iam::2:role/byo");
     expect(lastAssumeRoleInput?.ExternalId).toBe("ext-9");
-    expect(String(lastAssumeRoleInput?.Policy)).toContain("acme/agents/");
+    const policy = JSON.parse(String(lastAssumeRoleInput?.Policy)) as {
+      Statement: Array<Record<string, unknown>>;
+    };
+    // A directory boundary, not a string glob: agents/ never matches agents-x/.
+    expect(policy.Statement[0]?.Resource).toEqual([
+      "arn:aws:s3:::acme/agents/*",
+    ]);
+    expect(policy.Statement[1]?.Condition).toEqual({
+      StringLike: { "s3:prefix": ["agents/*"] },
+    });
+  });
+
+  it("never mints credentials for a prefix that is not a directory", async () => {
+    const { assumeScopedMountCredentials } =
+      await import("../src/harness/sandbox/s3-mount.ts");
+    await expect(
+      assumeScopedMountCredentials({
+        roleArn: "arn:aws:iam::2:role/byo",
+        bucket: "acme",
+        prefix: "agents",
+      }),
+    ).rejects.toThrow('prefix must end with "/"');
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
   });
 });
 

@@ -68,3 +68,20 @@ prompt-shaping convenience, not a security control.
   to the proxy port.
 - Tool approvals are governed by the sandbox `permissionMode` (`edit` | `ask` | `bypass`),
   see [Workspace & Sandbox](../index.md).
+
+## Review notes (2026-09)
+
+Findings from the host-boundary review, each closed in the harness:
+
+- `options.docker` is validated: boolean, `sandbox` provider only, refused elsewhere.
+- `lambda` refuses `restricted` allowlists at validation instead of launching on the shared
+  connector with a warning.
+- Every executor merges env through one helper; per-call `envVars` cannot set `PATH`,
+  `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` or the
+  job-callback slots.
+- A bring-your-own bucket needs `storage.prefix`; the mount credentials are scoped to
+  `bucket/prefix/*`, a directory boundary, never the whole bucket.
+- The background-job callback token rides the launch exec's environment, never the script
+  text that shows in the process table.
+- The MicroVM's in-VM mount directory uses the base namespace by design: the reservation,
+  endpoint cache and S3 prefix key on the full namespace, so one VM holds one workspace.

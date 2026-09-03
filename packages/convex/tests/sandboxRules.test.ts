@@ -382,3 +382,50 @@ describe("sandbox config update merge", () => {
     ).toThrow("config.timeout must be an integer from 1 to 600");
   });
 });
+
+describe("sandbox config host boundary", () => {
+  it("accepts options.docker only as a boolean on the sandbox provider", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "sandbox", options: { docker: true } })
+        .options,
+    ).toEqual({ docker: true });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        options: { docker: "yes" },
+      }),
+    ).toThrow("config.options.docker must be a boolean");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "lambda", options: { docker: true } }),
+    ).toThrow(
+      "config.options.docker is only supported by the sandbox provider",
+    );
+  });
+
+  it("refuses restricted allowlists on lambda, which cannot enforce them", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        network: { mode: "restricted", allowDomains: ["api.example.com"] },
+      }),
+    ).toThrow("lambda (MicroVM) cannot enforce per-sandbox allowlists");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        network: { mode: "restricted", allowCidrs: ["10.0.0.0/8"] },
+      }),
+    ).toThrow("lambda (MicroVM) cannot enforce per-sandbox allowlists");
+    expect(
+      normalizeSandboxConfig({
+        provider: "lambda",
+        network: { mode: "restricted" },
+      }).network,
+    ).toEqual({ mode: "restricted" });
+    expect(
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        network: { mode: "restricted", allowDomains: ["api.example.com"] },
+      }).network,
+    ).toEqual({ mode: "restricted", allowDomains: ["api.example.com"] });
+  });
+});

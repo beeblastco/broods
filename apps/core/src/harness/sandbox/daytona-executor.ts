@@ -22,6 +22,7 @@ import {
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
+  callbackEnv,
   generateJobId,
   launchScript,
   lifecycleScript,
@@ -51,9 +52,9 @@ import {
   configString,
   isNoRunnersError,
   isSandboxGoneError,
+  mergeSandboxEnv,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   truncateText,
   workspacePath,
 } from "./utils.ts";
@@ -123,7 +124,11 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         ...(request.callback ? { callback: request.callback } : {}),
       },
     );
-    const response = await sandbox.process.executeCommand(script);
+    const response = await sandbox.process.executeCommand(
+      script,
+      undefined,
+      callbackEnv(request.callback),
+    );
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
@@ -327,10 +332,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #execEnvVars(request: SandboxRunRequest): Record<string, string> | undefined {
-    const env = {
-      ...stringRecord(this.#config.envVars),
-      ...stringRecord(request.envVars),
-    };
+    const env = mergeSandboxEnv(this.#config.envVars, request.envVars);
 
     return Object.keys(env).length > 0 ? env : undefined;
   }
@@ -446,10 +448,7 @@ async function daytonaCreateOptions(
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = isPlainObject(config.options) ? config.options : {};
-  const baseEnv = {
-    ...stringRecord(config.envVars),
-    ...request.envVars,
-  };
+  const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next
   // call); auto-delete after the grace if it stays stopped (leak backstop).
