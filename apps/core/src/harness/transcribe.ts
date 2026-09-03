@@ -31,6 +31,14 @@ import { resolveTranscriptionModel } from "./provider.ts";
  */
 export const TRANSCRIPTION_RETRIES = { ingest: 0, tool: 2 } as const;
 
+/**
+ * Ceiling on one speech-to-text call. `maxRetries` bounds attempts, not a socket
+ * that never answers, and ingest runs before the agent has said anything. Set
+ * above what a long recording legitimately needs, since the point is to end a
+ * hang rather than to cut work short.
+ */
+const TRANSCRIPTION_TIMEOUT_MS = 60_000;
+
 /** What came of reading one audio file. */
 export type TranscriptOutcome =
   | { status: "transcribed"; text: string }
@@ -55,29 +63,22 @@ export async function transcribeAudio(
   audio: Uint8Array,
   maxRetries: number,
 ): Promise<TranscriptOutcome> {
-  const provider = agentConfig.model?.provider ?? "this provider";
   const model = resolveTranscriptionModel(agentConfig);
   if (!model) {
     return {
       status: "failed",
-      reason: `${provider} has no transcription model`,
+      reason: `${agentConfig.model?.provider ?? "this provider"} has no transcription model`,
       recovery: "unavailable",
     };
   }
 
-  return await transcribeWithModel(model, audio, provider, maxRetries);
+  return await transcribeWithModel(model, audio, maxRetries);
 }
 
-/**
- * The same, over a model already built. Exported so the failure mapping can be
- * driven with a stub: the provider factories are replaced wholesale by other
- * test files, and this behaviour is too load-bearing to test only where they
- * survive.
- */
+/** The same, over a model already built. Exported to be driven with a stub. */
 export async function transcribeWithModel(
   model: Exclude<TranscriptionModel, string>,
   audio: Uint8Array,
-  provider: string,
   maxRetries: number,
 ): Promise<TranscriptOutcome> {
   try {
@@ -85,13 +86,14 @@ export async function transcribeWithModel(
       model: model,
       audio: audio,
       maxRetries: maxRetries,
+      abortSignal: AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS),
     });
 
     return { status: "transcribed", text: result.text.trim() };
   } catch (error) {
     const reason = toErrorMessage(error);
     logWarn("Inbound audio could not be transcribed", {
-      provider: provider,
+      provider: model.provider,
       model: model.modelId,
       error: reason,
     });
@@ -103,6 +105,23 @@ export async function transcribeWithModel(
 // A 400 is the provider reading the file and refusing it, which is the agent's
 // to work with because it holds the file. Anything else it names, a rejected key
 // or a model that is not there, is about the account, not the recording.
+/**
+ * The one next step that can work, for a failure that has one. Keyed by recovery
+ * so a new kind is a build error rather than the mildest wording by default.
+ */
+export function transcriptAdvice(
+  recovery: TranscriptRecovery,
+  path: string | undefined,
+): string {
+  const advice: Record<TranscriptRecovery, string> = {
+    retry: "Read the file to try again before you answer.",
+    unsupported: `The transcription model refused the file itself, so reading it again will not help. It is still yours to work with${path ? ` at ${path}` : ""}. Say which formats the reason names, or ask what was said.`,
+    unavailable: "Reading it again will not help; ask what was said.",
+  };
+
+  return advice[recovery];
+}
+
 function recoveryFor(error: unknown): TranscriptRecovery {
   if (!APICallError.isInstance(error)) {
     return "unavailable";

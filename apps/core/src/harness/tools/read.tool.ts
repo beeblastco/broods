@@ -18,10 +18,15 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { contentTypeForPath } from "../../shared/media-types.ts";
+import { acceptsNativeMedia } from "../channel-media.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { transcribeAudio, TRANSCRIPTION_RETRIES } from "../transcribe.ts";
+import {
+  transcribeAudio,
+  TRANSCRIPTION_RETRIES,
+  transcriptAdvice,
+} from "../transcribe.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface ReadInput {
@@ -118,13 +123,20 @@ Usage notes:
 }
 
 // What an audio file says, or null when this is not one, so every other read
-// falls through to the line reader below.
+// falls through to the line reader below. A provider that hears audio for itself
+// falls through too: transcribing for it would trade the recording for a worse
+// copy of it, and on google there is no transcription model to try anyway.
 async function spokenContents(
   agentConfig: AgentConfig | undefined,
   ws: ResolvedWorkspace,
   rel: string,
 ): Promise<string | null> {
-  if (!agentConfig || !contentTypeForPath(rel).startsWith("audio/")) {
+  const mediaType = contentTypeForPath(rel);
+  if (
+    !agentConfig ||
+    !mediaType.startsWith("audio/") ||
+    acceptsNativeMedia(agentConfig.model?.provider, mediaType)
+  ) {
     return null;
   }
   // A path that does not resolve falls through: the line reader reports a
@@ -140,7 +152,7 @@ async function spokenContents(
   );
   if (transcript.status !== "transcribed") {
     return toolError(
-      `Error: ${rel} could not be transcribed: ${transcript.reason}`,
+      `Error: ${rel} could not be transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, rel)}`,
     );
   }
 

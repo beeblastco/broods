@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -515,6 +515,31 @@ describe("rehydrateStoredMedia", () => {
         text: unreadableMediaNote("voice.ogg", "audio/ogg"),
       },
     ]);
+  });
+
+  // Tool results and subagent output are file parts too, with media types no
+  // provider table lists. Re-gating those would rewrite results this module
+  // never produced, on every turn.
+  it("leaves a file part it did not store alone", async () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "file",
+            mediaType: "application/octet-stream",
+            data: {
+              type: "reference",
+              reference: { fileId: "file_abc" },
+            },
+          } as Exclude<UserContent, string>[number],
+        ],
+      },
+    ];
+
+    expect(await rehydrateStoredMedia(messages, modelConfig("openai"))).toBe(
+      messages,
+    );
   });
 
   it("says a file the channel dropped is gone instead of failing the turn", async () => {

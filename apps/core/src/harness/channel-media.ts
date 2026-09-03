@@ -42,6 +42,7 @@ import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import {
   transcribeAudio,
   TRANSCRIPTION_RETRIES,
+  transcriptAdvice,
   type TranscriptOutcome,
 } from "./transcribe.ts";
 import {
@@ -299,15 +300,12 @@ export async function rehydrateStoredMedia(
   messages: ModelMessage[],
   agentConfig: AgentConfig,
 ): Promise<ModelMessage[]> {
-  // File parts count as well as references: a part stored under one provider is
-  // replayed under whichever provider the agent runs on now, and the one that
-  // has to be demoted carries no reference at all.
   const carriesMedia = messages.some(
     (message) =>
       message.role === "user" &&
       typeof message.content !== "string" &&
       message.content.some(
-        (part) => part.type === "file" || mediaReferenceOf(part) !== null,
+        (part) => isStoredMediaPart(part) || mediaReferenceOf(part) !== null,
       ),
   );
   if (!carriesMedia) {
@@ -430,10 +428,7 @@ function whereItLanded(
   return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
 }
 
-// What the audio said, or what to do about not knowing. Each failure gets the
-// one next step that can work, because the wrong advice is expensive both ways:
-// asking the sender to repeat themselves when a second read would have worked,
-// or spending turns on a provider that has no speech-to-text to try.
+// What the audio said, or what to do about not knowing.
 function transcriptLine(item: StoredAttachment): string {
   const transcript = item.transcript;
   if (!transcript) {
@@ -444,15 +439,8 @@ function transcriptLine(item: StoredAttachment): string {
       ? `\n  Transcript: ${transcript.text}`
       : "\n  Transcript: no speech in the recording.";
   }
-  const failure = `\n  Not transcribed: ${transcript.reason}.`;
-  if (transcript.recovery === "retry") {
-    return `${failure} Read the file to try again before you answer.`;
-  }
-  if (transcript.recovery === "unsupported") {
-    return `${failure} The transcription model refused the file itself, so reading it again will not help. It is still yours to work with${item.path ? ` at ${item.path}` : ""}. Say which formats the reason names, or ask what was said.`;
-  }
 
-  return `${failure} Reading it again will not help; ask what was said.`;
+  return `\n  Not transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, item.path)}`;
 }
 
 /**
@@ -518,6 +506,23 @@ function mediaFileName(
   const extension = mediaTypeToExtension(mediaType);
 
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
+}
+
+// A file part this module stored: a channel reference it can read again, or a
+// sealed workspace link. Tool results and subagent output arrive as file parts
+// too, carrying shapes this module never wrote, and re-gating those would
+// rewrite results it has no business judging.
+function isStoredMediaPart(
+  part: UserContentPart,
+): part is Extract<UserContentPart, { type: "file" }> {
+  if (part.type !== "file" || typeof part.data !== "string") {
+    return false;
+  }
+
+  return (
+    parseMediaReference(part.data) !== null ||
+    part.data.includes(MEDIA_PATH_PREFIX)
+  );
 }
 
 // The reference a part carries, when it carries one. Only a plain string is
@@ -653,7 +658,7 @@ async function rehydrateMessage(
       // a part that provider refuses, and fail every turn from here on rather
       // than the one it arrived in.
       if (
-        part.type === "file" &&
+        isStoredMediaPart(part) &&
         !acceptsNativeMedia(provider, part.mediaType)
       ) {
         return {

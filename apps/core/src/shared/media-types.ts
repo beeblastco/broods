@@ -52,5 +52,5 @@ export function unreadableMediaNote(
   filename: string | undefined,
   mediaType: string,
 ): string {
-  return `[${filename ?? "attachment"} (${mediaType}) was not shown to you: this model does not accept the type. Open it from the workspace with read.]`;
+  return `[${filename ?? "attachment"} (${mediaType}) was not shown to you: this model does not accept the type. Open it with read if it was saved to a workspace.]`;
 }
