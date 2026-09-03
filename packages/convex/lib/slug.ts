@@ -1,9 +1,15 @@
 /**
- * Slug helpers for project naming.
+ * Slug helpers for project and stage naming.
  */
 
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
+
+/**
+ * A custom stage name is an identifier, not a label: it rides the public
+ * runtime URL, the WebSocket paths and the Loki/Tempo labels as-is.
+ */
+export const STAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
 /** Who a project belongs to, which is also the namespace its slug is unique in. */
 export interface ProjectOwner {
@@ -11,7 +17,20 @@ export interface ProjectOwner {
   orgId?: Id<"orgs">;
 }
 
-export function slugifyName(name: string): string {
+/** Trim a custom stage name and refuse anything that is not already a slug. */
+export function assertStageName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Stage name is required.");
+  if (!STAGE_NAME_PATTERN.test(trimmed)) {
+    throw new Error(
+      `Stage name must be lowercase letters, digits and dashes (try "${slugifyName(trimmed, "stage")}").`,
+    );
+  }
+
+  return trimmed;
+}
+
+export function slugifyName(name: string, fallback = "project"): string {
   const slug = name
     .trim()
     .toLowerCase()
@@ -19,7 +38,7 @@ export function slugifyName(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
-  return slug.length > 0 ? slug : "project";
+  return slug.length > 0 ? slug : fallback;
 }
 
 export async function uniqueProjectSlug(

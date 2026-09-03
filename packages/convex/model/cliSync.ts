@@ -8,7 +8,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
-import { uniqueProjectSlug } from "../lib/slug";
+import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { stageKindForName } from "../stage";
 import {
   decryptAgentConfigBlob,
@@ -301,12 +301,14 @@ export async function ensureStage(
     return existing;
   }
 
+  // Only a new custom stage is held to the slug rule: a stage created before
+  // the rule keeps syncing under its existing name (matched above).
   // Only Development is ever the default; Production/custom stages are
   // never auto-defaulted, even when created first.
   const stageId = await ctx.db.insert("stages", {
     authId: project.authId,
     projectId: project._id,
-    name: displayStageName(name),
+    name: kind === "custom" ? assertStageName(name) : displayStageName(name),
     kind: kind,
     isDefault: kind === "development",
     updatedAt: Date.now(),

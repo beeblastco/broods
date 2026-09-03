@@ -20,6 +20,7 @@ import {
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { assertStageName } from "../lib/slug";
 import { sha256Hex } from "../model/accountSecrets";
 import { duplicateStageContents, stageKindForName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
@@ -80,7 +81,8 @@ export const createByAccount = internalMutation({
       .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
       .collect();
     const kind = stageKindForName({ name: trimmed, kind: undefined });
-    const displayName = kind === "custom" ? trimmed : CANONICAL_NAMES[kind];
+    const displayName =
+      kind === "custom" ? assertStageName(trimmed) : CANONICAL_NAMES[kind];
     if (stages.some((entry) => stageNameEquals(entry.name, displayName))) {
       throw new Error(`Stage ${displayName} already exists`);
     }
