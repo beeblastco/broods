@@ -51,6 +51,7 @@ import {
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
+  callbackEnv,
   generateJobId,
   launchScript,
   lifecycleScript,
@@ -74,9 +75,9 @@ import type {
 } from "./types.ts";
 import {
   configString,
+  mergeSandboxEnv,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   stripTrailingSlashes,
   truncateText,
 } from "./utils.ts";
@@ -372,7 +373,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         ...(request.callback ? { callback: request.callback } : {}),
       },
     );
-    const result = await this.#shell(microvmId, endpoint, script, 30);
+    const result = await this.#shell(microvmId, endpoint, script, {
+      timeoutSeconds: 30,
+      env: callbackEnv(request.callback),
+    });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
         result.stderr || result.stdout || "failed to launch background job",
@@ -898,18 +902,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         `MicroVM sandbox cannot enforce ${network.mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`,
       );
     }
-    // The connector's security group is fixed at deploy time, so a per-account allowlist
-    // cannot be applied to it. Both restricted modes get the same workspace-S3-only egress.
+    // The connector's security group is fixed at deploy time, so a per-account
+    // allowlist cannot be applied to it. Config validation already refuses one on
+    // this provider; this is the last line of defense, never a silent downgrade.
     if (
       (network.allowDomains?.length ?? 0) > 0 ||
       (network.allowCidrs?.length ?? 0) > 0
     ) {
-      logWarn(
-        "MicroVM sandbox ignores restricted network allowlists; egress is the shared connector (workspace S3 only)",
-        {
-          allowCidrs: network.allowCidrs?.length ?? 0,
-          allowDomains: network.allowDomains?.length ?? 0,
-        },
+      throw new Error(
+        "MicroVM sandbox cannot enforce network.allowDomains or network.allowCidrs; use deny-all or allow-all",
       );
     }
 
@@ -938,7 +939,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   #sandboxEnvVars(
     requestEnvVars?: Record<string, string>,
   ): Record<string, string> {
-    return { ...stringRecord(this.#config.envVars), ...requestEnvVars };
+    return mergeSandboxEnv(this.#config.envVars, requestEnvVars);
   }
 
   // POST the exec request to the VM endpoint, retrying while the snapshot warms.
@@ -1053,8 +1054,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     microvmId: string,
     endpoint: string,
     script: string,
-    timeoutSeconds = 60,
-    budgetMs = WARMUP_BUDGET_MS,
+    options: {
+      timeoutSeconds?: number;
+      budgetMs?: number;
+      // Executor-owned extras (the job callback token) layered over the account env.
+      env?: Record<string, string>;
+    } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const response = await this.#exec(
       microvmId,
@@ -1062,10 +1067,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       {
         runtime: "bash",
         code: script,
-        timeout_ms: timeoutSeconds * 1000,
-        env: this.#sandboxEnvVars(),
+        timeout_ms: (options.timeoutSeconds ?? 60) * 1000,
+        env: { ...this.#sandboxEnvVars(), ...options.env },
       },
-      budgetMs,
+      options.budgetMs ?? WARMUP_BUDGET_MS,
     );
 
     return {
@@ -1096,7 +1101,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         microvmId,
         endpoint,
         `mountpoint -q ${shellQuote(workDir)}`,
-        30,
+        { timeoutSeconds: 30 },
       );
       if (result.exitCode === 0) return;
       if (Date.now() >= deadline) break;
@@ -1214,13 +1219,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       this.#config.onResume,
     );
     if (!script) return;
-    const result = await this.#shell(
-      microvmId,
-      endpoint,
-      script,
-      this.#config.timeout ?? 120,
-      budgetMs,
-    );
+    const result = await this.#shell(microvmId, endpoint, script, {
+      timeoutSeconds: this.#config.timeout ?? 120,
+      budgetMs: budgetMs,
+    });
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
         result.stderr || result.stdout || "MicroVM lifecycle hook failed",
@@ -1365,6 +1367,11 @@ function evictToCap<T extends { expiresAt: number }>(
   if (oldest) cache.delete(oldest);
 }
 
+// The in-VM mount directory for a workspace namespace. Only the base segment is
+// used because the image mounts one prefix per VM: the reservation, the endpoint
+// cache and the S3 prefix all key on the full namespace (`sandboxReservationKey`,
+// `resolveS3MountIdentity`), so two isolated children of one base never share a
+// VM, and inside a VM there is exactly one workspace.
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }

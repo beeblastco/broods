@@ -23,8 +23,8 @@ import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
 export interface S3MountIdentity {
   bucket: string;
-  // Key prefix the mount exposes (and the assumed session is scoped to). Empty
-  // string means the whole bucket (a bring-your-own bucket with no sub-path).
+  // Key prefix the mount exposes (and the assumed session is scoped to). Always
+  // non-empty and "/"-terminated: a bring-your-own bucket must name a sub-path.
   prefix: string;
   region?: string;
   endpoint?: string;
@@ -67,14 +67,20 @@ export function mountRoleArn(
 }
 
 // Resolve the mount identity (bucket / prefix / region / endpoint) — no STS call.
-// A bring-your-own bucket uses its own layout (its prefix, default whole bucket);
-// the shared managed bucket is partitioned by namespace.
+// A bring-your-own bucket uses its own layout under a required prefix; the shared
+// managed bucket is partitioned by namespace. The prefix always ends in "/", so
+// the credential scope is a path boundary, never a string glob.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
   const bucket = storage?.bucket ?? ctx.managedBucket;
   if (!bucket) {
     throw new Error(
       "workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).",
+    );
+  }
+  if (storage?.bucket && !normalizePrefix(storage.prefix)) {
+    throw new Error(
+      "workspace storage.prefix is required for a bring-your-own bucket; the mount is scoped to bucket/prefix/",
     );
   }
   const prefix = storage?.bucket
@@ -192,15 +198,21 @@ export async function resolveS3Mount(
   return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
 }
 
-// Assume `roleArn` with a session policy narrowed to `bucket/prefix*` (an empty
-// prefix means the whole bucket). The role policy bounds the outer permissions;
-// this session policy bounds the blast radius to the mount's own prefix.
+// Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`. The role
+// policy bounds the outer permissions; this session policy bounds the blast
+// radius to the mount's own prefix. The prefix must be a directory (end in "/")
+// so `agents/` can never also match `agents-archive/`.
 export async function assumeScopedMountCredentials(params: {
   roleArn: string;
   bucket: string;
   prefix: string;
   externalId?: string;
 }): Promise<S3MountCredentials> {
+  if (!params.prefix.endsWith("/")) {
+    throw new Error(
+      `workspace S3 mount prefix must end with "/", got ${JSON.stringify(params.prefix)}`,
+    );
+  }
   const objectResource = `arn:aws:s3:::${params.bucket}/${params.prefix}*`;
   const statements: Record<string, unknown>[] = [
     {
@@ -217,10 +229,7 @@ export async function assumeScopedMountCredentials(params: {
       Effect: "Allow",
       Action: ["s3:ListBucket"],
       Resource: [`arn:aws:s3:::${params.bucket}`],
-      // Scope the listing to the prefix; an empty prefix lists the whole bucket.
-      ...(params.prefix
-        ? { Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } } }
-        : {}),
+      Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } },
     },
   ];
 

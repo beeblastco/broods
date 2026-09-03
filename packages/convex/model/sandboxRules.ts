@@ -79,6 +79,8 @@ export interface SandboxConfig {
   memoryLimit?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
+  // Provider knobs. `docker` (boolean, sandbox provider only) turns on
+  // docker-in-sandbox at create time; validated in validateProviderOptions.
   options?: Record<string, unknown>;
 }
 
@@ -165,6 +167,15 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (provider === "e2b" && network.mode !== "allow-all") {
     throw new Error(
       "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+    );
+  }
+  if (
+    provider === "lambda" &&
+    network.mode === "restricted" &&
+    (network.allowDomains || network.allowCidrs)
+  ) {
+    throw new Error(
+      "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
     );
   }
   const persistentFields = normalizePersistentFields(config, provider);
@@ -535,6 +546,16 @@ function validateProviderOptions(
 ): void {
   if (!isPlainObject(options)) {
     return;
+  }
+  if ("docker" in options) {
+    if (typeof options.docker !== "boolean") {
+      throw new Error("config.options.docker must be a boolean");
+    }
+    if (provider !== "sandbox") {
+      throw new Error(
+        "config.options.docker is only supported by the sandbox provider",
+      );
+    }
   }
   if (provider === "lambda" && "functionNames" in options) {
     throw new Error(

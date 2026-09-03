@@ -23,6 +23,7 @@ import {
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
+  callbackEnv,
   generateJobId,
   launchScript,
   logsScript,
@@ -43,6 +44,7 @@ import type {
 import {
   configString,
   isSandboxGoneError,
+  mergeSandboxEnv,
   persistentSandboxName,
   sandboxReservationKey,
   shellQuote,
@@ -83,10 +85,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd: cwd } : {}),
-        env: {
-          ...stringRecord(this.#config.envVars),
-          ...request.envVars,
-        },
+        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
         timeoutMs: request.timeoutSeconds * 1000,
       });
 
@@ -129,7 +128,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", script],
-      env: { ...stringRecord(this.#config.envVars) },
+      env: {
+        ...stringRecord(this.#config.envVars),
+        ...callbackEnv(request.callback),
+      },
       timeoutMs: request.timeoutSeconds * 1000,
     });
     if (result.exitCode !== 0) {
@@ -450,7 +452,7 @@ function vercelCreateOptions(
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
     networkPolicy: vercelNetworkPolicy(config),
-    env: { ...stringRecord(config.envVars), ...request.envVars },
+    env: mergeSandboxEnv(config.envVars, request.envVars),
     tags: { app: "broods", provider: "vercel" },
   };
 }

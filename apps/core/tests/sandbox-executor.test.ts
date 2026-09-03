@@ -1269,11 +1269,7 @@ describe("createSandboxExecutor", () => {
     } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "lambda",
-      network: {
-        mode: "restricted",
-        allowDomains: ["api.example.com"],
-        allowCidrs: ["10.0.0.0/8"],
-      },
+      network: { mode: "restricted" },
     });
 
     await executor.run({
@@ -1287,6 +1283,31 @@ describe("createSandboxExecutor", () => {
     ]);
   });
 
+  it("refuses a restricted allowlist instead of silently launching on the shared connector", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      network: {
+        mode: "restricted",
+        allowDomains: ["api.example.com"],
+        allowCidrs: ["10.0.0.0/8"],
+      },
+    });
+
+    await expect(
+      executor.run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toThrow(
+      "cannot enforce network.allowDomains or network.allowCidrs",
+    );
+    expect(microvmSendMock).not.toHaveBeenCalled();
+  });
+
   it("fails closed when a restricted MicroVM network has no egress connector", async () => {
     delete process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN;
     const {
@@ -1294,7 +1315,7 @@ describe("createSandboxExecutor", () => {
     } = require("../src/harness/sandbox/index.ts");
     const executor = createSandboxExecutor({
       provider: "lambda",
-      network: { mode: "restricted", allowDomains: ["api.example.com"] },
+      network: { mode: "restricted" },
     });
 
     await expect(
@@ -1776,8 +1797,9 @@ describe("background job scripts", () => {
     });
   });
 
-  it("bakes a token-gated completion callback into the launch wrapper", async () => {
-    const { launchScript } = await import("../src/harness/sandbox/jobs.ts");
+  it("bakes a token-gated completion callback into the launch wrapper, token in env only", async () => {
+    const { callbackEnv, launchScript } =
+      await import("../src/harness/sandbox/jobs.ts");
     const launch = launchScript(
       "/home/node/.jobs",
       "job_y",
@@ -1797,10 +1819,46 @@ describe("background job scripts", () => {
     expect(encoded).toBeTruthy();
     const wrapper = Buffer.from(encoded!, "base64").toString("utf8");
     expect(wrapper).toContain("x-job-token");
-    expect(wrapper).toContain("tok-123");
     expect(wrapper).toContain(
       "https://fn.example/sandbox-jobs/async_tool_1/complete",
     );
+    // The token never lands in script text (process table, job logs); the
+    // executor puts it in the launch exec's env and the wrapper reads $__CB_TOKEN.
+    expect(launch).not.toContain("tok-123");
+    expect(wrapper).not.toContain("tok-123");
+    expect(wrapper).toContain('os.environ["__CB_TOKEN"]');
+    expect(
+      callbackEnv({ url: "https://fn.example/c", token: "tok-123" }),
+    ).toEqual({ __CB_TOKEN: "tok-123" });
+    expect(callbackEnv(undefined)).toEqual({});
+  });
+
+  it("launches a MicroVM background job with the callback token in the exec env, not the script", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      envVars: { FOO: "bar" },
+    });
+
+    await executor.runBackground({
+      code: "sleep 1",
+      namespace: NS,
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+      jobId: "job_cb",
+      envVars: { PATH: "/evil", EXTRA: "1", __CB_TOKEN: "spoofed" },
+      callback: { url: "https://fn.example/c", token: "tok-real" },
+    });
+
+    const calls = microvmFetchMock.mock.calls;
+    const launch = JSON.parse(
+      (calls[calls.length - 1]![1] as { body: string }).body,
+    );
+    expect(launch.code).not.toContain("tok-real");
+    expect(launch.env).toMatchObject({ FOO: "bar", __CB_TOKEN: "tok-real" });
   });
 
   it("reports a job killed by sandbox recreation as failed, not running forever", async () => {
@@ -1967,5 +2025,39 @@ describe("workspaceNamespacePrefix", () => {
       await import("../src/shared/sandbox.ts");
     // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
     expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
+  });
+});
+
+describe("mergeSandboxEnv", () => {
+  it("layers request env over account env and drops reserved runtime keys from the request", async () => {
+    const { mergeSandboxEnv, RESERVED_SANDBOX_ENV_KEYS } =
+      await import("../src/harness/sandbox/utils.ts");
+    expect(
+      mergeSandboxEnv(
+        { FOO: "account", KEEP: "yes", HOME: "/operator" },
+        {
+          FOO: "request",
+          PATH: "/evil",
+          LD_PRELOAD: "/tmp/x.so",
+          NODE_OPTIONS: "--require /tmp/x.js",
+          __CB_TOKEN: "spoofed",
+          NEW: "1",
+        },
+      ),
+    ).toEqual({ FOO: "request", KEEP: "yes", HOME: "/operator", NEW: "1" });
+    expect(mergeSandboxEnv(undefined, undefined)).toEqual({});
+    for (const key of [
+      "PATH",
+      "HOME",
+      "LD_PRELOAD",
+      "NODE_OPTIONS",
+      "PYTHONPATH",
+      "BASH_ENV",
+      "ENV",
+      "PROMPT_COMMAND",
+      "__CB_TOKEN",
+    ]) {
+      expect(RESERVED_SANDBOX_ENV_KEYS.has(key)).toBe(true);
+    }
   });
 });

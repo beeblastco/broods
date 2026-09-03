@@ -656,6 +656,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       storage: {
         provider: "s3",
         bucket: "acme-bucket",
+        prefix: "agents",
         region: "us-west-2",
         auth: {
           type: "assumeRole",
@@ -681,8 +682,8 @@ describe("WorkdirSandboxExecutor.run", () => {
     );
     expect(mount).toBeTruthy();
     expect(String(mount!.body?.cmd)).toContain("'acme-bucket'");
-    // Whole-bucket BYO mount (no prefix configured) omits --prefix.
-    expect(String(mount!.body?.cmd)).not.toContain("--prefix");
+    // A BYO mount is always prefix-scoped; whole-bucket mounts are refused.
+    expect(String(mount!.body?.cmd)).toContain("'--prefix' 'agents/'");
     expect(mount!.body?.env).toMatchObject({
       AWS_ACCESS_KEY_ID: "ASIA_TEMP",
       AWS_SESSION_TOKEN: "temp-token",

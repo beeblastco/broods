@@ -159,16 +159,26 @@ export function parseJobStatus(
   return { jobId: jobId, state: text === "running" ? "running" : "unknown" };
 }
 
+// The per-job token rides the launch exec's environment, never the script text:
+// the wrapper shows up in the process table and can be echoed into job logs, the
+// environment does not. Executors spread this into the env of the exec that
+// launches the job; the detached session inherits it.
+export function callbackEnv(
+  callback: SandboxJobCallback | undefined,
+): Record<string, string> {
+  return callback ? { __CB_TOKEN: callback.token } : {};
+}
+
 // POSTs the job's outcome back to the harness so the conversation resumes without
 // the model having to poll. python3 is on PATH in every sandbox image; failures
 // (no egress, no python) are swallowed and the model can still poll async_status.
+// `__CB_TOKEN` comes from `callbackEnv`, inherited from the launch exec.
 export function callbackSnippet(
   callback: SandboxJobCallback,
   logFile: string,
 ): string {
   const env = [
     `__CB_URL=${shellQuote(callback.url)}`,
-    `__CB_TOKEN=${shellQuote(callback.token)}`,
     `__CB_LOG=${shellQuote(logFile)}`,
     `__CB_CODE="$__rc"`,
   ].join(" ");

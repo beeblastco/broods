@@ -17,7 +17,7 @@ import {
   getSandboxExternalId,
   saveSandboxInstance,
 } from "./instance-store.ts";
-import { callbackSnippet, generateJobId } from "./jobs.ts";
+import { callbackEnv, callbackSnippet, generateJobId } from "./jobs.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -28,9 +28,9 @@ import type {
 import {
   configString,
   isSandboxGoneError,
+  mergeSandboxEnv,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   truncateText,
 } from "./utils.ts";
 
@@ -49,10 +49,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       const result = await sandbox.commands.run(request.code, {
         timeoutMs: request.timeoutSeconds * 1000,
-        envs: {
-          ...stringRecord(this.#config.envVars),
-          ...request.envVars,
-        },
+        envs: mergeSandboxEnv(this.#config.envVars, request.envVars),
       });
       const stdout = truncateText(
         result.stdout ?? "",
@@ -88,8 +85,8 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         background: true,
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
-          ...stringRecord(this.#config.envVars),
-          ...request.envVars,
+          ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+          ...callbackEnv(request.callback),
         },
       },
     );

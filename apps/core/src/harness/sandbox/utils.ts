@@ -8,6 +8,33 @@ import { isPlainObject } from "../../shared/object.ts";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+// Keys a per-call `request.envVars` may never set: the loader/interpreter hooks
+// that would run attacker-chosen code before the command, the identity the image
+// sets, and the background-job callback slots the executors fill themselves.
+// Account `config.envVars` is the operator's, so it is not filtered.
+export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
+  "BASH_ENV",
+  "ENV",
+  "HOME",
+  "LD_AUDIT",
+  "LD_LIBRARY_PATH",
+  "LD_PRELOAD",
+  "LOGNAME",
+  "NODE_OPTIONS",
+  "PATH",
+  "PROMPT_COMMAND",
+  "PYTHONHOME",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "SHELL",
+  "TMPDIR",
+  "USER",
+  "__CB_CODE",
+  "__CB_LOG",
+  "__CB_TOKEN",
+  "__CB_URL",
+]);
+
 export function configString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -92,6 +119,20 @@ function isPrivate172(host: string): boolean {
 // maps to the same sandbox, so any later request reconnects to it. The hash
 // keeps names unique after the slug is truncated. workdir and vercel both
 // rely on this exact format to find their existing persistent sandboxes.
+// The one env merge every executor uses: account envVars under per-call
+// overrides, with the reserved keys stripped from the overrides. The host
+// process.env is never part of it.
+export function mergeSandboxEnv(
+  accountEnv: unknown,
+  requestEnv: unknown,
+): Record<string, string> {
+  const overrides = Object.entries(stringRecord(requestEnv)).filter(
+    ([key]) => !RESERVED_SANDBOX_ENV_KEYS.has(key),
+  );
+
+  return { ...stringRecord(accountEnv), ...Object.fromEntries(overrides) };
+}
+
 export function persistentSandboxName(reservationKey: string): string {
   return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
 }

@@ -153,6 +153,7 @@ describe("workspace config", () => {
         storage: {
           provider: "s3",
           bucket: "b",
+          prefix: "p",
           auth: { type: "assumeRole", roleArn: "arn:aws:iam::1:role/r" },
         },
       }),
@@ -160,6 +161,7 @@ describe("workspace config", () => {
       storage: {
         provider: "s3",
         bucket: "b",
+        prefix: "p",
         auth: { type: "assumeRole", roleArn: "arn:aws:iam::1:role/r" },
       },
     });
@@ -250,5 +252,27 @@ describe("workspace config", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+  });
+});
+
+describe("workspace storage prefix", () => {
+  it("requires a prefix for a bring-your-own bucket", () => {
+    expect(() =>
+      normalizeWorkspaceConfig({ storage: { provider: "s3", bucket: "acme" } }),
+    ).toThrow(
+      "config.storage.prefix is required when config.storage.bucket is set",
+    );
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3", bucket: "acme", prefix: "/" },
+      }),
+    ).toThrow(
+      "config.storage.prefix is required when config.storage.bucket is set",
+    );
+    expect(
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3", bucket: "acme", prefix: "agents" },
+      }).storage,
+    ).toEqual({ provider: "s3", bucket: "acme", prefix: "agents" });
   });
 });

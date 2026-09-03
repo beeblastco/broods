@@ -82,9 +82,15 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
     "memoryLimit": 512, // MB; validated (≤8192 for lambda MicroVM size) but informational — executors do not resize
     "outputLimitBytes": 65536,
     "envVars": { "FOO": "bar" }, // injected into every run (encrypted at rest)
+    "options": { "docker": true }, // sandbox provider only: docker-in-sandbox at create time
   },
 }
 ```
+
+`options.docker` is a boolean and is accepted only when `provider` is `sandbox`; every
+other provider rejects it at validation. Per-call `envVars` on a run cannot override the
+runtime's reserved keys (`PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`,
+the job-callback slots); those overrides are dropped.
 
 `onCreate` / `onResume` command hooks are also available, but only on persistent
 configs — see [Hooks](hook.md) and [Best Practice → Reserved
