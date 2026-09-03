@@ -209,7 +209,9 @@ export function resolveTranscriptionModel(
   }
   try {
     const provider = source.factory(
-      requireProviderSettings(agentConfig, providerName) as never,
+      withGuardedFetch(
+        requireProviderSettings(agentConfig, providerName),
+      ) as never,
     );
 
     return provider.transcription(
@@ -580,12 +582,13 @@ function resolveOpenAICompatibleModel(
   providerConfig: AgentProviderSettings,
   modelId: string,
 ): ResolvedModelProvider {
-  const { base_url: _baseUrl, ...openAIConfig } = providerConfig;
+  const { base_url: _baseUrl, ...openAIConfig } =
+    withGuardedFetch(providerConfig);
   // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
   const provider = createOpenAICompatible({
-    ...withGuardedFetch(openAIConfig),
+    ...openAIConfig,
     baseURL: customProviderBaseURL(providerConfig) ?? "",
     name:
       typeof providerConfig.name === "string"

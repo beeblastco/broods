@@ -221,9 +221,10 @@ the current membership on every request: demote or remove the user and the
 token stops working before it expires. `broods login` sends a PKCE challenge
 with the browser hand-off, so only the CLI that started the login can exchange
 the code. A deploy key is bound to one project and stage; it cannot replace a
-skill, hook or cron job another stage of the same account manages, `--prune`
-leaves those rows alone, and it cannot read environment values back
-(`broods env get` needs a login token or the org secret).
+skill or hook another stage of the same account manages, `--prune` leaves
+those rows alone, and it cannot read environment values back (`broods env
+get` needs a login token or the org secret). Cron jobs belong to the stage of
+the agent they target, so every stage may declare its own.
 
 ## update
 

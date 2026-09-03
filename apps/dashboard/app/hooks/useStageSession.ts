@@ -71,8 +71,8 @@ export function useStageSession(
     };
   }, [mint, projectId, stageId]);
 
-  if (!projectId || !stageId) return null;
-  if (session === undefined) return undefined;
+  if (!projectId || !stageId || session === null) return null;
+  if (session === undefined || session.stageId !== stageId) return undefined;
 
-  return session && session.stageId === stageId ? session.token : undefined;
+  return session.token;
 }
