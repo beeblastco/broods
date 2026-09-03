@@ -20,7 +20,11 @@
  * Telegram serves a file id forever, a Discord link dies within a day.
  */
 
-import { detectMediaType, mediaTypeToExtension } from "@ai-sdk/provider-utils";
+import {
+  detectMediaType,
+  getTopLevelMediaType,
+  mediaTypeToExtension,
+} from "@ai-sdk/provider-utils";
 import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
@@ -32,9 +36,10 @@ import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
 import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
-import { transcribeAudio, type TranscriptOutcome } from "./transcribe.ts";
+import { unreadableMediaNote } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import { transcribeAudio, type TranscriptOutcome } from "./transcribe.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -81,19 +86,17 @@ const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What each provider reads as a native prompt part beyond pictures, written as
- * exact media types or a `type/*` wildcard — the vocabulary the AI SDK already
- * uses for `supportedUrls`.
+ * What each provider reads as a native prompt part beyond pictures, as exact
+ * media types or a `type/*` wildcard.
  *
  * A floor, not a ceiling: a media type missing here is not rejected, it is
  * delivered as a workspace file instead of as a part the provider would refuse.
  * Guessing upward is the expensive direction — an unsupported part fails the
  * whole turn, while an under-claimed one costs the agent one `read` call.
  *
- * OpenAI and Azure take `application/pdf` and nothing else, whatever the model:
- * both answer on the Responses API, whose converter accepts that one inline
- * type. Audio input on OpenAI lives on chat completions, in two formats no
- * channel sends, and core never builds a chat model.
+ * The model's own `supportedUrls` is not this question. It says which URLs the
+ * provider fetches for itself, so bedrock omits the PDFs it does read as bytes
+ * and vertex claims `*`. Asking it would demote and promote the wrong things.
  */
 const PROVIDER_NATIVE_MEDIA: Partial<
   Record<AccountModelProviderName, readonly string[]>
@@ -181,11 +184,8 @@ interface IngestedAttachment {
 
 /**
  * Whether this provider reads this media type as a prompt part of its own.
- *
- * Pictures are the one kind every provider takes, so they are true everywhere.
- * Everything else has to be listed, exactly or as a `type/*` wildcard: a
- * top-level match on its own once let `audio/ogg` through to a provider that
- * accepts no audio at all, and cost every turn that replayed the message.
+ * Pictures are the one kind every provider takes; everything else has to be
+ * listed, exactly or as a `type/*` wildcard.
  */
 export function acceptsNativeMedia(
   provider: AccountModelProviderName | undefined,
@@ -195,7 +195,7 @@ export function acceptsNativeMedia(
     return true;
   }
   const patterns = provider ? PROVIDER_NATIVE_MEDIA[provider] : undefined;
-  const wildcard = `${mediaType.split("/")[0] ?? ""}/*`;
+  const wildcard = `${getTopLevelMediaType(mediaType)}/*`;
 
   return (
     patterns?.some(
@@ -388,17 +388,8 @@ function attachmentNote(
     if (item.failure) {
       return `- ${item.name} (${item.mediaType}) could not be read: ${item.failure}`;
     }
-    if (item.path) {
-      return `- ${item.name} (${item.mediaType}) saved to ${item.path}${transcriptLine(item)}`;
-    }
-    if (item.reference) {
-      return `- ${item.name} (${item.mediaType}) is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.${transcriptLine(item)}`;
-    }
-    if (part) {
-      return `- ${item.name} (${item.mediaType}) is available for this message only; no workspace is attached to store it.`;
-    }
 
-    return `- ${item.name} (${item.mediaType}) could not be shown: this model does not accept the type, and there is no workspace to store it in.${transcriptLine(item)}`;
+    return `- ${item.name} (${item.mediaType}) ${whereItLanded(item, part, channelName)}${transcriptLine(item)}`;
   });
   if (overflow > 0) {
     lines.push(
@@ -416,11 +407,29 @@ function attachmentNote(
   ].join("\n");
 }
 
-// What the audio said, or what to do about not knowing. The difference between
-// the two failures is the whole point of saying it: `unavailable` is a standing
-// fact about the account, so a retry is wasted, while a retryable failure is
-// one attempt going wrong and the agent should spend a `read` on it before
-// falling back on asking the sender to type it out.
+// Where the agent goes to open this attachment, or why it cannot.
+function whereItLanded(
+  item: StoredAttachment,
+  part: UserContentPart | null,
+  channelName: string,
+): string {
+  if (item.path) {
+    return `saved to ${item.path}`;
+  }
+  if (item.reference) {
+    return `is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.`;
+  }
+  if (part) {
+    return "is available for this message only; no workspace is attached to store it.";
+  }
+
+  return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
+}
+
+// What the audio said, or what to do about not knowing. Telling the agent
+// whether a retry can work is the point: without it, it either asks the sender
+// to repeat themselves when a second attempt would have worked, or burns a turn
+// on a provider that has no speech-to-text to try.
 function transcriptLine(item: StoredAttachment): string {
   const transcript = item.transcript;
   if (!transcript) {
@@ -431,13 +440,10 @@ function transcriptLine(item: StoredAttachment): string {
       ? `\n  Transcript: ${transcript.text}`
       : "\n  Transcript: no speech in the recording.";
   }
-  if (transcript.status === "unavailable") {
-    return `\n  Not transcribed: ${transcript.reason}. Reading it again will not help; ask what was said.`;
-  }
 
   return transcript.retryable
     ? `\n  Not transcribed: ${transcript.reason}. Read the file to try again before you answer.`
-    : `\n  Not transcribed: ${transcript.reason}.`;
+    : `\n  Not transcribed: ${transcript.reason}. Reading it again will not help; ask what was said.`;
 }
 
 /**
@@ -643,7 +649,7 @@ async function rehydrateMessage(
       ) {
         return {
           type: "text",
-          text: `[${part.filename ?? "attachment"} (${part.mediaType}) is stored in the workspace; this model cannot read it directly]`,
+          text: unreadableMediaNote(part.filename, part.mediaType),
         };
       }
       const reference = mediaReferenceOf(part);
@@ -732,7 +738,7 @@ async function storeAttachment(
     const mediaType = resolveMediaType(bytes, claimed);
     assertWithinLimit(bytes.byteLength, mediaType);
     const name = mediaFileName(attachment, mediaType, index);
-    const transcript = await audioTranscript(bytes, mediaType, context);
+    const transcribing = audioTranscript(bytes, mediaType, context.agentConfig);
     const workspace = context.workspace;
     // With nothing to store the bytes in, the row keeps a reference to the copy
     // the channel already has. The bytes just read are cached under it, so the
@@ -748,6 +754,8 @@ async function storeAttachment(
         cacheMedia(reference, bytes);
       }
 
+      const transcript = await transcribing;
+
       return {
         name: name,
         mediaType: mediaType,
@@ -757,13 +765,10 @@ async function storeAttachment(
       };
     }
     const path = mediaPath(name, context.eventId, index);
-    const url = await writeMediaObject(
-      workspace,
-      context.accountId,
-      path,
-      bytes,
-      mediaType,
-    );
+    const [transcript, url] = await Promise.all([
+      transcribing,
+      writeMediaObject(workspace, context.accountId, path, bytes, mediaType),
+    ]);
 
     return {
       name: name,
@@ -789,16 +794,14 @@ async function storeAttachment(
   }
 }
 
-// Audio the model cannot hear for itself, read into words. Skipped when the
-// provider takes the file natively — a model listening to the recording beats a
-// transcript of it — and when there is no config to build a transcription model
-// from. Never throws: `transcribeAudio` reports its outcome instead.
+// Audio the model cannot hear for itself, read into words. Skipped where the
+// provider takes the recording natively, since listening to it beats a
+// transcript of it.
 async function audioTranscript(
   bytes: Buffer,
   mediaType: string,
-  context: InboundMediaContext,
+  agentConfig: AgentConfig | undefined,
 ): Promise<TranscriptOutcome | undefined> {
-  const agentConfig = context.agentConfig;
   if (
     !agentConfig ||
     !mediaType.startsWith("audio/") ||
