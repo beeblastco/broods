@@ -404,12 +404,28 @@ describe("inbound audio", () => {
     transcribeAudioMock.mockResolvedValueOnce({
       status: "failed",
       reason: "provider answered 503",
-      retryable: true,
+      recovery: "retry",
     });
 
     expect(await ingestVoiceNote("openai").then(noteText)).toContain(
       "Read the file to try again before you answer",
     );
+  });
+
+  // The turn is not over when no model will take the container: the agent still
+  // has the file, and the provider's own message names what it would accept.
+  it("hands a refused recording to the agent with the file", async () => {
+    transcribeAudioMock.mockResolvedValueOnce({
+      status: "failed",
+      reason:
+        "Invalid file format. Supported formats: ['mp3', 'mp4', 'm4a', 'wav', 'webm']",
+      recovery: "unsupported",
+    });
+    const note = await ingestVoiceNote("openai").then(noteText);
+
+    expect(note).toContain("Supported formats");
+    expect(note).toContain("It is still yours to work with at media/");
+    expect(note).not.toContain("Read the file to try again");
   });
 
   // A provider with no speech-to-text will not grow one on a retry, so telling
@@ -418,7 +434,7 @@ describe("inbound audio", () => {
     transcribeAudioMock.mockResolvedValueOnce({
       status: "failed",
       reason: "anthropic has no transcription model",
-      retryable: false,
+      recovery: "unavailable",
     });
 
     expect(await ingestVoiceNote("anthropic").then(noteText)).toContain(

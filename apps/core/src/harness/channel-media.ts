@@ -39,7 +39,11 @@ import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
-import { transcribeAudio, type TranscriptOutcome } from "./transcribe.ts";
+import {
+  transcribeAudio,
+  TRANSCRIPTION_RETRIES,
+  type TranscriptOutcome,
+} from "./transcribe.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -426,10 +430,10 @@ function whereItLanded(
   return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
 }
 
-// What the audio said, or what to do about not knowing. Telling the agent
-// whether a retry can work is the point: without it, it either asks the sender
-// to repeat themselves when a second attempt would have worked, or burns a turn
-// on a provider that has no speech-to-text to try.
+// What the audio said, or what to do about not knowing. Each failure gets the
+// one next step that can work, because the wrong advice is expensive both ways:
+// asking the sender to repeat themselves when a second read would have worked,
+// or spending turns on a provider that has no speech-to-text to try.
 function transcriptLine(item: StoredAttachment): string {
   const transcript = item.transcript;
   if (!transcript) {
@@ -440,10 +444,15 @@ function transcriptLine(item: StoredAttachment): string {
       ? `\n  Transcript: ${transcript.text}`
       : "\n  Transcript: no speech in the recording.";
   }
+  const failure = `\n  Not transcribed: ${transcript.reason}.`;
+  if (transcript.recovery === "retry") {
+    return `${failure} Read the file to try again before you answer.`;
+  }
+  if (transcript.recovery === "unsupported") {
+    return `${failure} Every transcription model refused the file itself, so reading it again will not help. It is still yours to work with${item.path ? ` at ${item.path}` : ""} — convert it to a format the message names, or ask what was said.`;
+  }
 
-  return transcript.retryable
-    ? `\n  Not transcribed: ${transcript.reason}. Read the file to try again before you answer.`
-    : `\n  Not transcribed: ${transcript.reason}. Reading it again will not help; ask what was said.`;
+  return `${failure} Reading it again will not help; ask what was said.`;
 }
 
 /**
@@ -810,7 +819,11 @@ async function audioTranscript(
     return undefined;
   }
 
-  return await transcribeAudio(agentConfig, bytes);
+  return await transcribeAudio(
+    agentConfig,
+    bytes,
+    TRANSCRIPTION_RETRIES.ingest,
+  );
 }
 
 // Straight to S3 rather than through the sandbox: a read-only workspace has no

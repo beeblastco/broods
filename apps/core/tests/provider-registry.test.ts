@@ -8,7 +8,7 @@ import { describe, expect, it } from "bun:test";
 import {
   modelProviderFactories,
   resolveConfiguredModel,
-  resolveTranscriptionModel,
+  resolveTranscriptionModels,
 } from "../src/harness/provider.ts";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -60,18 +60,18 @@ describe("model provider registry", () => {
 describe("transcription model resolution", () => {
   it("has none for a provider that ships no speech-to-text", () => {
     expect(
-      resolveTranscriptionModel({
+      resolveTranscriptionModels({
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 
   it("has none when the provider is configured without credentials", () => {
     expect(
-      resolveTranscriptionModel({
+      resolveTranscriptionModels({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 });
