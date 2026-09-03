@@ -1,8 +1,6 @@
 /**
- * Upload URL minting and orphan cleanup for Convex file storage. The HTTP
- * routes call `grant`; the dashboard mutation in `workspace/files.ts` uses
- * the model helper directly because it already runs in a mutation.
- * `pruneOrphans` is driven by `crons.ts`.
+ * Upload URL minting for the HTTP routes and orphan cleanup for `crons.ts`.
+ * The dashboard mutation in `workspace/files.ts` calls the model helper.
  */
 
 import { v } from "convex/values";
@@ -27,10 +25,8 @@ export const grant = internalMutation({
 });
 
 /**
- * Delete stored blobs older than a day that no workspace file references.
- * MCP bundles are couriers deleted on registration, so any other blob that
- * old was minted and never registered. Walks storage oldest-first one page
- * per invocation and reschedules itself until it reaches the age cutoff.
+ * Delete blobs older than a day that no workspace file references, one page
+ * per invocation, oldest first, rescheduling itself up to the age cutoff.
  */
 export const pruneOrphans = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },

@@ -139,7 +139,6 @@ describe("project and stage ownership by org role", () => {
     const { orgId } = await seed(t);
 
     await t.run(async (ctx) => {
-      // The owner's membership row says admin; the org record still wins.
       const ownerId = await ctx.db.insert("users", {
         authId: OWNER_AUTH_ID,
         email: "owner@example.com",

@@ -221,10 +221,9 @@ export const getActive = query({
 });
 
 /**
- * Returns the active org's broods account id, status and the caller's role in
- * that org, or null when the user has no active org or it has not been
- * provisioned yet. The role is what the dashboard uses to hide write controls
- * from members; every mutation still checks it server-side.
+ * The active org's broods account id, status and the caller's role, or null
+ * when the user has no active org or it is not provisioned. The role only
+ * drives what the dashboard shows; every mutation checks it again.
  */
 export const getActiveAccount = query({
   args: {
@@ -239,10 +238,8 @@ export const getActiveAccount = query({
     v.null(),
   ),
   handler: async (ctx, { requiredRole }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) return null;
-    const active = await resolveActiveAccount(ctx, authUser.id);
-    if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
+    const active = await activeAccountForCaller(ctx, requiredRole);
+    if (!active) return null;
 
     return {
       accountId: active.account._id,
@@ -265,20 +262,14 @@ export async function getActiveAccountForUser(
   ctx: QueryCtx,
   requiredRole?: OrgRole,
 ): Promise<Doc<"accounts"> | null> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) return null;
-  const active = await resolveActiveAccount(ctx, authUser.id);
-  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
+  const active = await activeAccountForCaller(ctx, requiredRole);
 
-  return active.account;
+  return active ? active.account : null;
 }
 
 /**
  * The account behind a user's active org plus the role they hold there. The
  * org owner is an owner even when their membership row says otherwise.
- * @param ctx query/mutation context.
- * @param authId the WorkOS user id.
- * @returns account and role, or null when no active org or account resolves.
  */
 export async function resolveActiveAccount(
   ctx: QueryCtx,
@@ -520,6 +511,18 @@ export const update = mutation({
     return null;
   },
 });
+
+async function activeAccountForCaller(
+  ctx: QueryCtx,
+  requiredRole?: OrgRole,
+): Promise<ActiveAccount | null> {
+  const authUser = await authKit.getAuthUser(ctx);
+  if (!authUser) return null;
+  const active = await resolveActiveAccount(ctx, authUser.id);
+  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
+
+  return active;
+}
 
 async function uniqueOrgSlug(
   ctx: MutationCtx,
