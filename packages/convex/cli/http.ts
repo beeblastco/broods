@@ -41,7 +41,7 @@ export const handle = httpAction(async (ctx, req) => {
       case "manifest":
         return await handleManifestRoute(ctx, req, route, authResult);
       case "mcpBundleUpload":
-        return await handleMcpBundleUploadRoute(ctx, req);
+        return await handleMcpBundleUploadRoute(ctx, req, authResult);
       case "logs":
         return handleLogsRoute(req);
       case "runtimeKey":

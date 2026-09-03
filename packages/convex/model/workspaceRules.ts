@@ -13,6 +13,8 @@ import { isPlainObject } from "./objects";
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
 
+/** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
+export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
 export type WorkspaceStorageProvider =
   (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
@@ -218,6 +220,13 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   const region = optionalString(value.region, "config.storage.region");
   const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
   const prefix = optionalString(value.prefix, "config.storage.prefix");
+  // The mount credentials are scoped to bucket/prefix; a bring-your-own bucket
+  // with no prefix would hand the sandbox the whole bucket.
+  if (bucket && !prefix?.replace(/^\/+|\/+$/g, "")) {
+    throw new Error(
+      "config.storage.prefix is required when config.storage.bucket is set; the sandbox mount is scoped to that prefix",
+    );
+  }
   const auth = normalizeWorkspaceStorageAuth(value.auth);
 
   return {

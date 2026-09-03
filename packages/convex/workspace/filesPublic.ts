@@ -10,8 +10,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { action, type ActionCtx } from "../_generated/server";
 import { authKit } from "../auth";
+import { MAX_WORKSPACE_FILE_BYTES } from "../model/workspaceRules";
 import {
-  MAX_WORKSPACE_FILE_BYTES,
   deleteWorkspacePath,
   listWorkspaceFiles,
   renameWorkspacePath,

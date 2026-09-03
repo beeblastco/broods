@@ -14,6 +14,7 @@ import {
 } from "../../model/auditEvents";
 import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
+import { uploadQuotaMessage } from "../../model/uploads";
 import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
@@ -74,19 +75,25 @@ export async function handleMcpRoute(
 
 /**
  * `POST /v1/mcp/uploads`: mint a storage upload URL for a bundle too large to
- * ride the JSON body (#190); register the result as `bundleStorageId`.
+ * ride the JSON body (#190); register the result as `bundleStorageId`. The
+ * blob is a courier that registration deletes. Minting counts against the
+ * account's hourly upload quota.
  */
 export async function handleMcpUploadsRoute(
   ctx: ActionCtx,
   req: Request,
+  accountId: Id<"accounts">,
 ): Promise<Response> {
   if (req.method !== "POST") return methodNotAllowed(["POST"]);
-  const uploadUrl = await ctx.runMutation(
-    internal.account.mcp.generateBundleUploadUrl,
-    {},
-  );
+  const grant = await ctx.runMutation(internal.account.uploads.grant, {
+    accountId: accountId,
+    kind: "mcp",
+  });
+  if ("retryAt" in grant) {
+    return json({ error: uploadQuotaMessage(grant.retryAt) }, 429);
+  }
 
-  return json({ uploadUrl: uploadUrl });
+  return json({ uploadUrl: grant.uploadUrl });
 }
 
 /** Collection verbs: list the stage's servers on GET, register on POST. */

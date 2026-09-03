@@ -178,7 +178,7 @@ async function dispatchResourceRoute(
     case "mcp":
       return await handleMcpRoute(ctx, req, accountId, actor, route.serverId);
     case "mcpBundleUpload":
-      return await handleMcpUploadsRoute(ctx, req);
+      return await handleMcpUploadsRoute(ctx, req, accountId);
     case "workspaceFiles":
       return await handleWorkspaceFilesRoute(
         ctx,
