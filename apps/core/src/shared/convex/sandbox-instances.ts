@@ -31,6 +31,8 @@ export type SandboxInstanceStatus =
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
  * it is flagged uncontrollable for the dashboard and skips the audit event a real
  * reservation writes (one per bash call would drown the sandbox's own history).
+ * `logStream` is the provider-side guest log stream the dashboard tails. Only the
+ * call that launched the VM knows it; reconnects leave the stored value alone.
  */
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
@@ -38,7 +40,7 @@ export async function upsertSandboxInstance(
   reservationKey: string,
   externalId: string,
   metadata?: SandboxRunMetadata,
-  options?: { ephemeral?: boolean },
+  options?: { ephemeral?: boolean; logStream?: string },
 ): Promise<void> {
   if (!controlPlane) return;
   const meta: SandboxRunMetadata = metadata ?? {};
@@ -67,6 +69,7 @@ export async function upsertSandboxInstance(
       conversationKey: meta.conversationKey,
       workspaceName: meta.workspaceName,
       workspaceId: meta.workspaceId,
+      logStream: options?.logStream,
       ephemeral: ephemeral ? true : undefined,
     });
     if (ephemeral) return;

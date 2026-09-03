@@ -63,6 +63,7 @@ export const listForActiveOrg = query({
  * @param specs the instance's vcpu/memory/disk footprint.
  * @param sandboxConfigId the sandbox config row this instance was reserved from.
  * @param snapshotId the snapshot/image the instance launched from, when pinned.
+ * @param logStream the provider-side guest log stream, known only at launch.
  * @param ephemeral marks a per-call instance the dashboard must not try to control.
  */
 export const upsert = internalMutation({
@@ -87,6 +88,7 @@ export const upsert = internalMutation({
     conversationKey: sandboxInstancesFields.conversationKey,
     workspaceName: sandboxInstancesFields.workspaceName,
     workspaceId: sandboxInstancesFields.workspaceId,
+    logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
   },
   returns: v.null(),
@@ -272,6 +274,7 @@ function upsertRefreshFields(
         | "conversationKey"
         | "workspaceName"
         | "workspaceId"
+        | "logStream"
         | "ephemeral"
       >
     >,
@@ -295,6 +298,7 @@ function upsertRefreshFields(
       | "conversationKey"
       | "workspaceName"
       | "workspaceId"
+      | "logStream"
       | "ephemeral"
     >
   > {
@@ -316,6 +320,7 @@ function upsertRefreshFields(
     ...(args.conversationKey ? { conversationKey: args.conversationKey } : {}),
     ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
     ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    ...(args.logStream ? { logStream: args.logStream } : {}),
     ...(args.ephemeral ? { ephemeral: true } : {}),
   };
 }
