@@ -23,6 +23,14 @@ type CloudWatchPayload = {
   logEvents: Array<{ id: string; timestamp: number; message: string }>;
 };
 
+function attributes(
+  list: Array<{ key: string; value: { stringValue: string } }>,
+): Record<string, string> {
+  return Object.fromEntries(
+    list.map((item) => [item.key, item.value.stringValue]),
+  );
+}
+
 function cloudWatchEvent(payload: CloudWatchPayload): {
   awslogs: { data: string };
 } {
@@ -45,14 +53,6 @@ function payload(
     ],
     ...overrides,
   };
-}
-
-function attributes(
-  list: Array<{ key: string; value: { stringValue: string } }>,
-) {
-  return Object.fromEntries(
-    list.map((item) => [item.key, item.value.stringValue]),
-  );
 }
 
 describe("parseLogStream", () => {

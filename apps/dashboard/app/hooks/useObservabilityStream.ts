@@ -2,8 +2,9 @@
 
 /**
  * Streams live logs or traces from the gateway observability WS, merging backfill
- * (spliced first) with live NATS entries (appended). The list is never cleared
- * into a spinner on reconnect. Protocol: ../observability-contracts.ts.
+ * (spliced first) with live entries (appended): the NATS relay, or the gateway's
+ * Loki poll when tailing one sandbox. The list is never cleared into a spinner
+ * on reconnect. Protocol: ../observability-contracts.ts.
  */
 
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";

@@ -83,7 +83,8 @@ export type ObservabilityClientMessage =
   | ObservabilitySubscribeMessage
   | ObservabilityUnsubscribeMessage;
 
-// Sent once the live NATS subscription is active and any backfill is delivered.
+// Sent once the live subscription (NATS relay, or the Loki poll of a sandbox
+// tail) is active and any backfill is delivered.
 export type ObservabilityReadyMessage = { type: "ready" };
 
 export type ObservabilityBackfillMessage = {

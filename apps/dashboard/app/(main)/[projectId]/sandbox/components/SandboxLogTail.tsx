@@ -11,6 +11,8 @@
 import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
 import Link from "next/link";
 
+const BACKFILL = 200;
+
 /** The stage-scoped WS inputs the Sandbox page resolves once for every sheet. */
 export interface SandboxObservabilityScope {
   projectSlug: string;
@@ -26,17 +28,6 @@ interface Props {
   scope: SandboxObservabilityScope | null;
   /** Monitoring tab, where the stage's viewing key is minted. */
   monitoringHref: string;
-}
-
-const BACKFILL = 200;
-
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
 }
 
 export function SandboxLogTail({
@@ -102,4 +93,13 @@ export function SandboxLogTail({
       </div>
     </div>
   );
+}
+
+function formatTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
