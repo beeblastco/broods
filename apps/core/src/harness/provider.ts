@@ -616,7 +616,7 @@ function withGuardedFetch<T extends AgentProviderSettings>(
   settings: T,
 ): T & { fetch?: typeof fetch } {
   return settings.baseURL || settings.base_url
-    ? { ...settings, fetch: publicHostFetch }
+    ? { ...settings, fetch: publicHostFetch as typeof fetch }
     : settings;
 }
 

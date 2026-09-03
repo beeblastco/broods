@@ -1,4 +1,4 @@
-import { lookup } from "node:dns/promises";
+import { dns } from "bun";
 import {
   isDeniedAddress,
   type GuardedFetchOptions,
@@ -140,32 +140,43 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 }
 
 /**
- * `fetch` for tenant-configured model endpoints: every request first resolves
- * the hostname and refuses it when any address is private, link-local or a
- * metadata range. `assertPublicHttpsUrl` only sees the hostname string at
- * config time; this is what stops a public name that later resolves inward.
- * The socket still opens by name (the AI SDK needs a streaming Web `Response`,
- * which `guardedFetch` does not give), so a rebind between the lookup and the
- * connect is the residual window.
+ * `fetch` for tenant-configured model endpoints: resolve the hostname, refuse
+ * it when any address is private, link-local or a metadata range, then connect
+ * to the address that was validated with the name pinned into SNI and `Host`.
+ * `assertPublicHttpsUrl` only sees the hostname string at config time; this is
+ * what stops a public name that later resolves inward, with no rebind window.
+ * Bun's `fetch` keeps the streaming Web `Response` the AI SDK needs, which
+ * `guardedFetch` does not give. `redirect: "error"` because a redirect would
+ * leave the pinned address by name.
  */
-export const publicHostFetch: typeof fetch = Object.assign(
-  async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (isPrivateHostname(url.hostname)) {
-      throw new Error(`Refusing to reach private address ${url.hostname}`);
-    }
-    const addresses = await lookup(url.hostname, { all: true });
-    if (addresses.some((entry) => isDeniedAddress(entry.address))) {
-      throw new Error(`${url.hostname} resolves to a private address`);
-    }
+export async function publicHostFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  const hostname = url.hostname;
+  if (isPrivateHostname(hostname)) {
+    throw new Error(`Refusing to reach private address ${hostname}`);
+  }
+  const addresses = await dns.lookup(hostname);
+  const [pinned] = addresses;
+  if (!pinned) {
+    throw new Error(`${hostname} did not resolve`);
+  }
+  if (addresses.some((entry) => isDeniedAddress(entry.address))) {
+    throw new Error(`${hostname} resolves to a private address`);
+  }
+  url.hostname = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
+  const headers = new Headers(init?.headers);
+  headers.set("host", hostname);
 
-    return fetch(input, init);
-  },
-  { preconnect: fetch.preconnect },
-);
+  return fetch(url, {
+    ...init,
+    headers: headers,
+    redirect: "error",
+    tls: { serverName: hostname },
+  });
+}
 
 function isPrivateHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");

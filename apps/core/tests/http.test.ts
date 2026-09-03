@@ -3,7 +3,8 @@
  * webhook targets.
  */
 
-import { describe, expect, it } from "bun:test";
+import { dns } from "bun";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { assertPublicHttpsUrl, publicHostFetch } from "../src/shared/http.ts";
 
 describe("assertPublicHttpsUrl", () => {
@@ -68,6 +69,12 @@ describe("assertPublicHttpsUrl", () => {
 });
 
 describe("publicHostFetch", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   it("refuses private hostnames and literal private addresses before connecting", async () => {
     await expect(publicHostFetch("https://localhost/v1")).rejects.toThrow(
       /private address/,
@@ -78,5 +85,49 @@ describe("publicHostFetch", () => {
     await expect(
       publicHostFetch(new Request("https://169.254.169.254/latest")),
     ).rejects.toThrow(/private address/);
+  });
+
+  it("refuses a public name that resolves to a private address", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+      { address: "10.0.0.8", family: 4, ttl: 30 },
+    ]);
+    try {
+      await expect(
+        publicHostFetch("https://api.example.com/v1/chat"),
+      ).rejects.toThrow(/resolves to a private address/);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("connects to the validated address with the name pinned into SNI and Host", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
+    const calls: Array<{ url: string; init: BunFetchRequestInit }> = [];
+    globalThis.fetch = (async (input, init) => {
+      calls.push({ url: String(input), init: init ?? {} });
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await publicHostFetch("https://api.example.com/v1/chat", {
+        method: "POST",
+        headers: { authorization: "Bearer k" },
+        redirect: "follow",
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+
+    expect(calls).toHaveLength(1);
+    const { url, init } = calls[0]!;
+    expect(url).toBe("https://93.184.216.34/v1/chat");
+    expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("error");
+    expect(init.tls?.serverName).toBe("api.example.com");
+    expect(new Headers(init.headers).get("host")).toBe("api.example.com");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer k");
   });
 });
