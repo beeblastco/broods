@@ -7,8 +7,9 @@
 import { describe, expect, it } from "bun:test";
 import {
   modelProviderFactories,
+  modelSettingsFromModelConfig,
   resolveConfiguredModel,
-  resolveTranscriptionModels,
+  resolveTranscriptionModel,
 } from "../src/harness/provider.ts";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -60,18 +61,36 @@ describe("model provider registry", () => {
 describe("transcription model resolution", () => {
   it("has none for a provider that ships no speech-to-text", () => {
     expect(
-      resolveTranscriptionModels({
+      resolveTranscriptionModel({
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toEqual([]);
+    ).toBeUndefined();
   });
 
   it("has none when the provider is configured without credentials", () => {
     expect(
-      resolveTranscriptionModels({
+      resolveTranscriptionModel({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toEqual([]);
+    ).toBeUndefined();
+  });
+});
+
+// The transcription id rides in config.model but is not a language-model
+// setting, so it must not reach the call options the agent's own model is run
+// with — an unknown key there is the provider's error, not ours.
+describe("modelSettingsFromModelConfig", () => {
+  it("leaves the transcription model out of the language model's settings", () => {
+    expect(
+      modelSettingsFromModelConfig({
+        model: {
+          provider: "openai",
+          modelId: "gpt-5",
+          transcriptionModelId: "gpt-4o-mini-transcribe",
+          temperature: 0.2,
+        },
+      }),
+    ).toEqual({ temperature: 0.2 });
   });
 });

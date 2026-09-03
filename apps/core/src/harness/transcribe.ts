@@ -2,8 +2,9 @@
  * Inbound audio, read as words.
  *
  * Audio is transcribed once at ingest and the words travel as text, which every
- * model reads and no provider refuses on media type. The models come from the
- * account's own provider settings, so this costs no extra configuration.
+ * model reads and no provider refuses on media type. The model comes from the
+ * account's own provider settings, so this costs no extra configuration, and
+ * `config.model.transcriptionModelId` picks a different one.
  *
  * A failure is never the end of it. Which failure it was decides what the agent
  * is told to do next, because the three are not the same problem: a busy
@@ -17,7 +18,7 @@ import { transcribe, type TranscriptionModel } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import { logWarn } from "../shared/log.ts";
-import { resolveTranscriptionModels } from "./provider.ts";
+import { resolveTranscriptionModel } from "./provider.ts";
 
 /**
  * How patient each caller can afford to be.
@@ -38,7 +39,7 @@ export type TranscriptOutcome =
 /**
  * Why it failed, in the only terms that change what happens next.
  * `retry` — the provider was busy or broken, and the same call may work later.
- * `unsupported` — every model refused the file itself, so only the agent, which
+ * `unsupported` — the model refused the file itself, so only the agent, which
  * has it in the workspace, can get any further.
  * `unavailable` — this account has no working speech-to-text, and nothing the
  * agent does will change that.
@@ -46,55 +47,34 @@ export type TranscriptOutcome =
 export type TranscriptRecovery = "retry" | "unsupported" | "unavailable";
 
 /**
- * Reads one audio file into text, trying each of the provider's models in turn.
- * Reports its outcome rather than throwing: a transcription failure costs a
- * transcript, never the message it arrived on.
+ * Reads one audio file into text. Reports its outcome rather than throwing: a
+ * transcription failure costs a transcript, never the message it arrived on.
  */
 export async function transcribeAudio(
   agentConfig: AgentConfig,
   audio: Uint8Array,
   maxRetries: number,
 ): Promise<TranscriptOutcome> {
-  return await transcribeWithModels(
-    resolveTranscriptionModels(agentConfig),
-    audio,
-    agentConfig.model?.provider ?? "this provider",
-    maxRetries,
-  );
+  const provider = agentConfig.model?.provider ?? "this provider";
+  const model = resolveTranscriptionModel(agentConfig);
+  if (!model) {
+    return {
+      status: "failed",
+      reason: `${provider} has no transcription model`,
+      recovery: "unavailable",
+    };
+  }
+
+  return await transcribeWithModel(model, audio, provider, maxRetries);
 }
 
 /**
- * The same, over models already built. Exported so the fallback can be driven
- * with stub models: the provider factories are replaced wholesale by other test
- * files, and this behaviour is too load-bearing to test only where they survive.
+ * The same, over a model already built. Exported so the failure mapping can be
+ * driven with a stub: the provider factories are replaced wholesale by other
+ * test files, and this behaviour is too load-bearing to test only where they
+ * survive.
  */
-export async function transcribeWithModels(
-  models: Exclude<TranscriptionModel, string>[],
-  audio: Uint8Array,
-  provider: string,
-  maxRetries: number,
-): Promise<TranscriptOutcome> {
-  let outcome: TranscriptOutcome = {
-    status: "failed",
-    reason: `${provider} has no transcription model`,
-    recovery: "unavailable",
-  };
-  // Only a refused file is worth the next model: another one on the same
-  // service will not fix a 429, and will not fix a rejected key either.
-  for (const model of models) {
-    outcome = await attemptTranscription(model, audio, provider, maxRetries);
-    if (
-      outcome.status === "transcribed" ||
-      outcome.recovery !== "unsupported"
-    ) {
-      break;
-    }
-  }
-
-  return outcome;
-}
-
-async function attemptTranscription(
+export async function transcribeWithModel(
   model: Exclude<TranscriptionModel, string>,
   audio: Uint8Array,
   provider: string,
@@ -120,9 +100,9 @@ async function attemptTranscription(
   }
 }
 
-// A 400 is the provider reading the file and refusing it, which is the one
-// failure another model can answer. Anything else it names — a rejected key, a
-// model that is not there — is about the account, not the recording.
+// A 400 is the provider reading the file and refusing it, which is the agent's
+// to work with because it holds the file. Anything else it names, a rejected key
+// or a model that is not there, is about the account, not the recording.
 function recoveryFor(error: unknown): TranscriptRecovery {
   if (!APICallError.isInstance(error)) {
     return "unavailable";

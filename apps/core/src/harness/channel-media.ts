@@ -449,7 +449,7 @@ function transcriptLine(item: StoredAttachment): string {
     return `${failure} Read the file to try again before you answer.`;
   }
   if (transcript.recovery === "unsupported") {
-    return `${failure} Every transcription model refused the file itself, so reading it again will not help. It is still yours to work with${item.path ? ` at ${item.path}` : ""}. Say which formats the reason names, or ask what was said.`;
+    return `${failure} The transcription model refused the file itself, so reading it again will not help. It is still yours to work with${item.path ? ` at ${item.path}` : ""}. Say which formats the reason names, or ask what was said.`;
   }
 
   return `${failure} Reading it again will not help; ask what was said.`;
