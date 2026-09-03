@@ -128,6 +128,7 @@ This keeps the product easy to run and change:
 
 ## Limits
 
+- Upload URLs (hosted MCP bundles, workspace files) are capped at 20 open grants per account per hour; blobs uploaded but never registered are deleted after a day. A workspace file's size is read from the stored blob, never from the client, and refused over 512 KB.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` must be protected.
 - Any runtime with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.

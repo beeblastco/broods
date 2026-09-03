@@ -19,16 +19,6 @@ export const mcpDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Mint a storage upload URL for a hosted-MCP bundle too large to ride the
- * JSON body (#190). The blob is a courier: registering it deletes it.
- */
-export const generateBundleUploadUrl = internalMutation({
-  args: {},
-  returns: v.string(),
-  handler: async (ctx) => await ctx.storage.generateUploadUrl(),
-});
-
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),

@@ -800,6 +800,18 @@ export const workspaceFilesFields = {
  * credential of its own. It exists because a presigned S3 URL cannot survive the
  * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
  */
+/**
+ * One minted storage upload URL. The count of unexpired rows per account is
+ * the upload quota (`model/uploads.ts`); nothing links a row to the blob,
+ * because the storage id only exists once the client has uploaded.
+ */
+export const uploadGrantsFields = {
+  accountId: v.id("accounts"),
+  kind: v.union(v.literal("mcp"), v.literal("workspace")),
+  createdAt: v.number(),
+  expiresAt: v.number(),
+};
+
 export const workspaceDownloadTokensFields = {
   accountId: v.id("accounts"),
   workspaceId: v.id("workspaceConfigs"),
@@ -1288,11 +1300,15 @@ export default defineSchema({
   skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
-    .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"]),
+    .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
+    .index("by_storageId", ["storageId"]),
   workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
     .index("by_workspaceId", ["workspaceId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  uploadGrants: defineTable(uploadGrantsFields)
+    .index("by_accountId_and_expiresAt", ["accountId", "expiresAt"])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])

@@ -19,12 +19,11 @@ import {
   writeS3Object,
 } from "./s3";
 import {
+  MAX_WORKSPACE_FILE_BYTES,
   normalizeFilePath,
   workspaceNamespace,
   type WorkspaceStorageConfig,
 } from "./workspaceRules";
-
-export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
 
 /**
  * One listed workspace file or synthesized folder entry.

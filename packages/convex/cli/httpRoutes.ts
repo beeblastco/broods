@@ -14,6 +14,7 @@ import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
+import { uploadQuotaMessage } from "../model/uploads";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
 export type CliAuth =
@@ -198,18 +199,23 @@ export async function handleManifestRoute(
 /**
  * Mint a storage upload URL for a large hosted-MCP bundle (#190); the CLI
  * passes the returned storage id as `bundleStorageId` in the manifest.
+ * Minting counts against the account's hourly upload quota.
  */
 export async function handleMcpBundleUploadRoute(
   ctx: ActionCtx,
   req: Request,
+  auth: CliAuth,
 ): Promise<Response> {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-  const uploadUrl = await ctx.runMutation(
-    internal.account.mcp.generateBundleUploadUrl,
-    {},
-  );
+  const grant = await ctx.runMutation(internal.account.uploads.grant, {
+    accountId: auth.accountId,
+    kind: "mcp",
+  });
+  if ("retryAt" in grant) {
+    return json({ error: uploadQuotaMessage(grant.retryAt) }, 429);
+  }
 
-  return json({ uploadUrl: uploadUrl });
+  return json({ uploadUrl: grant.uploadUrl });
 }
 
 /** DELETE one manifest-managed resource by kind and name. */

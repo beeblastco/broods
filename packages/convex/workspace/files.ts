@@ -18,8 +18,12 @@ import {
 } from "../_generated/server";
 import { authKit } from "../auth";
 import { getProjectForRole } from "../model/ownership/project";
+import { grantUpload, uploadQuotaMessage } from "../model/uploads";
 import { getActiveAccountForUser } from "../org/orgs";
-import { normalizeWorkspaceConfig } from "../model/workspaceRules";
+import {
+  MAX_WORKSPACE_FILE_BYTES,
+  normalizeWorkspaceConfig,
+} from "../model/workspaceRules";
 
 export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 // Expired rows are dead weight, not a security boundary — redeeming always
@@ -122,6 +126,19 @@ export const create = mutation({
     const project = await getProjectForRole(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
+    // The blob's own size is the truth; the client-supplied value is only a
+    // hint and the cap is enforced here, not at upload time.
+    const blob = storageId ? await ctx.db.system.get(storageId) : null;
+    if (storageId && !blob) {
+      throw new Error("Uploaded file was not found in storage.");
+    }
+    if (blob && blob.size > MAX_WORKSPACE_FILE_BYTES) {
+      await ctx.storage.delete(blob._id);
+      throw new Error(
+        `Workspace files are capped at ${MAX_WORKSPACE_FILE_BYTES} bytes.`,
+      );
+    }
+
     const now = Date.now();
 
     return await ctx.db.insert("workspaceFiles", {
@@ -133,7 +150,7 @@ export const create = mutation({
       isFolder: isFolder,
       storageId: storageId,
       mimeType: mimeType,
-      sizeBytes: sizeBytes,
+      sizeBytes: blob ? blob.size : sizeBytes,
       createdAt: now,
       updatedAt: now,
     });
@@ -182,7 +199,8 @@ export const createDownloadToken = internalMutation({
 });
 
 /**
- * Generate a one-time upload URL for Convex file storage.
+ * Generate a one-time upload URL for Convex file storage, counted against the
+ * account's hourly upload quota.
  * @returns a pre-signed upload URL
  */
 export const generateUploadUrl = mutation({
@@ -194,11 +212,13 @@ export const generateUploadUrl = mutation({
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
-    if (!(await getActiveAccountForUser(ctx, "admin"))) {
-      throw new Error(WORKSPACE_ADMIN_REQUIRED);
-    }
+    const account = await getActiveAccountForUser(ctx, "admin");
+    if (!account) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
-    return await ctx.storage.generateUploadUrl();
+    const grant = await grantUpload(ctx, account._id, "workspace");
+    if ("retryAt" in grant) throw new Error(uploadQuotaMessage(grant.retryAt));
+
+    return grant.uploadUrl;
   },
 });
 

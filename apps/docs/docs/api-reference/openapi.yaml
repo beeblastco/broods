@@ -1826,6 +1826,8 @@ paths:
         the server as `bundleStorageId` (with its `sha256`) via `POST
         /v1/mcp` or `PATCH /v1/mcp/{serverId}`. The declared sha256 is
         verified against the uploaded bytes before anything is stored.
+        Each account may hold 20 open upload URLs per hour; the 21st mint
+        answers 429 with the time the oldest one expires.
       security: [{ BearerAuth: [] }]
       responses:
         "200":
@@ -1837,6 +1839,16 @@ paths:
                 properties:
                   uploadUrl:
                     type: string
+        "429":
+          description: Upload quota reached for this account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "upload quota: 20 uploads per hour; retry after 2026-09-03T11:20:00.000Z"
 
   /v1/mcp/{serverId}:
     get:
