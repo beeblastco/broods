@@ -8,6 +8,7 @@ import { describe, expect, it } from "bun:test";
 import {
   modelProviderFactories,
   resolveConfiguredModel,
+  resolveTranscriptionModel,
 } from "../src/harness/provider.ts";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -48,5 +49,33 @@ describe("model provider registry", () => {
       project: "p",
       location: "us-central1",
     });
+  });
+});
+
+// `transcription` is read off the constructed provider, so a rename in the SDK
+// would otherwise degrade quietly: the model comes back undefined, the note
+// says the provider has none, and inbound audio stops being transcribed with
+// nothing failing anywhere.
+describe("transcription model resolution", () => {
+  it.each([
+    ["openai", "sk-test"],
+    ["groq", "gsk-test"],
+    ["mistral", "sk-test"],
+  ] as const)("builds a transcription model for %s", (provider, apiKey) => {
+    const model = resolveTranscriptionModel({
+      model: { provider: provider, modelId: "test-model" },
+      provider: { [provider]: { apiKey: apiKey } },
+    });
+
+    expect(model?.specificationVersion).toBe("v4");
+  });
+
+  it("has none for a provider that ships no speech-to-text", () => {
+    expect(
+      resolveTranscriptionModel({
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+        provider: { anthropic: { apiKey: "sk-test" } },
+      }),
+    ).toBeUndefined();
   });
 });

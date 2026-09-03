@@ -16,12 +16,13 @@ import {
 import { describe, expect, it } from "bun:test";
 import {
   attemptRecordingMiddleware,
+  dropUnsupportedMediaMiddleware,
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
-  dropUnsupportedMediaMiddleware,
   retryWithoutStoredItemsMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";
+import { unreadableMediaNote } from "../src/shared/media-types.ts";
 
 type PromptMessage = { role: string; content: unknown };
 
@@ -403,12 +404,7 @@ describe("dropUnsupportedMediaMiddleware", () => {
         filename: "photo.png",
         data: { type: "data", data: new Uint8Array([1]) },
       },
-      {
-        type: "text",
-        text:
-          "[voice.ogg (audio/ogg) was not shown to you: this model does not " +
-          "accept the type. Open it from the workspace instead.]",
-      },
+      { type: "text", text: unreadableMediaNote("voice.ogg", "audio/ogg") },
     ]);
   });
 

@@ -25,6 +25,8 @@ import {
   APICallError,
   UnsupportedFunctionalityError,
   type LanguageModelV4CallOptions,
+  type LanguageModelV4FilePart,
+  type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
@@ -48,6 +50,7 @@ import type {
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
 import { logInfo } from "../shared/log.ts";
+import { unreadableMediaNote } from "../shared/media-types.ts";
 
 // Providers that answer on OpenAI's Responses API, where a replayed assistant
 // message is a reference to the item the provider still holds rather than the
@@ -83,10 +86,11 @@ interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
   (modelId: string): Exclude<LanguageModel, string>;
-  // Only the providers that ship speech-to-text carry this. Optional rather
-  // than cast at the use site, because "this provider has none" is the answer
-  // `resolveTranscriptionModel` exists to give.
-  transcriptionModel?: (modelId: string) => Exclude<TranscriptionModel, string>;
+  // Only the providers that ship speech-to-text carry this, so its absence is
+  // the answer `resolveTranscriptionModel` gives. `transcription` and not
+  // `transcriptionModel`: both exist at runtime, but openai and groq declare
+  // only this one, and an undeclared alias is not a surface to depend on.
+  transcription?: (modelId: string) => Exclude<TranscriptionModel, string>;
 }
 
 export interface ResolvedModelProvider {
@@ -160,22 +164,21 @@ export function resolveConfiguredModel(
     provider: provider,
     model: wrapLanguageModel({
       model: model,
-      middleware: STORED_ITEM_PROVIDERS.has(providerName)
-        ? [dropUnsupportedMediaMiddleware, retryWithoutStoredItemsMiddleware]
-        : [dropUnsupportedMediaMiddleware],
+      middleware: [
+        dropUnsupportedMediaMiddleware,
+        ...(STORED_ITEM_PROVIDERS.has(providerName)
+          ? [retryWithoutStoredItemsMiddleware]
+          : []),
+      ],
     }),
   };
 }
 
 /**
  * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none. Built from the same settings as the agent's
- * own model, so transcription costs no extra configuration: an account that can
- * reach OpenAI can already transcribe.
- *
- * Azure is deliberately absent. Its models are named by per-account deployment,
- * so there is no id to default to, and guessing one turns a missing transcript
- * into a 404.
+ * account's provider ships none or its config cannot build one. Undefined
+ * rather than a throw: a half-configured account should lose its transcript and
+ * keep the message it arrived on.
  */
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
@@ -184,13 +187,16 @@ export function resolveTranscriptionModel(
   const modelId = providerName
     ? PROVIDER_TRANSCRIPTION_MODELS[providerName]
     : undefined;
-  if (!providerName || !modelId) {
+  if (!modelId) {
     return undefined;
   }
-
-  return resolveConfiguredModel(agentConfig).provider.transcriptionModel?.(
-    modelId,
-  );
+  try {
+    return resolveConfiguredModel(agentConfig).provider.transcription?.(
+      modelId,
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export function modelSettingsFromModelConfig(
@@ -405,75 +411,59 @@ export function attemptRecordingMiddleware(
   };
 }
 
-/**
- * A file part whose media type the provider's converter refuses fails the whole
- * turn, and it fails it during prompt conversion, before any request is sent.
- * So dropping the part and running again costs a local re-convert and nothing
- * else: no tokens, no round trip.
- *
- * `PROVIDER_NATIVE_MEDIA` in channel-media.ts is what normally keeps such a
- * part out of the prompt. This is what makes an entry that is wrong, or a
- * provider that quietly changed, cost the agent one attachment instead of the
- * conversation.
- */
-export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware = {
-  wrapGenerate: async ({ doGenerate, model, params }) => {
-    try {
-      return await doGenerate();
-    } catch (error) {
-      const retry = withoutUnsupportedMedia(error, params);
-      if (!retry) {
-        throw error;
-      }
-
-      return await model.doGenerate(retry);
-    }
-  },
-  wrapStream: async ({ doStream, model, params }) => {
-    try {
-      return await doStream();
-    } catch (error) {
-      const retry = withoutUnsupportedMedia(error, params);
-      if (!retry) {
-        throw error;
-      }
-
-      return await model.doStream(retry);
-    }
-  },
-};
+// A file part the provider's converter refuses fails the turn during prompt
+// conversion, before any request is sent, so dropping the part and running
+// again costs a local re-convert and no tokens. That is what makes a wrong
+// entry in `PROVIDER_NATIVE_MEDIA` cost one attachment instead of the turn.
+export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withoutUnsupportedMedia);
 
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
 // Retry once with that state dropped — the turn then costs a full re-upload of
 // its history and nothing else, instead of failing in the user's chat.
-export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware = {
-  wrapGenerate: async ({ doGenerate, model, params }) => {
-    try {
-      return await doGenerate();
-    } catch (error) {
-      if (!isStaleStoredItemError(error)) {
-        throw error;
-      }
-      logStaleStoredItemRetry(error);
+export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withoutStaleStoredItems);
 
-      return await model.doGenerate(withoutStoredItemState(params));
-    }
-  },
-  wrapStream: async ({ doStream, model, params }) => {
-    try {
-      return await doStream();
-    } catch (error) {
-      if (!isStaleStoredItemError(error)) {
-        throw error;
-      }
-      logStaleStoredItemRetry(error);
+/**
+ * A middleware that runs the call again when `recover` recognises the failure
+ * and can say what to send instead. `recover` returning undefined rethrows, so
+ * a failure it does not know about is never paid for twice.
+ */
+function retryingMiddleware(
+  recover: (
+    error: unknown,
+    params: LanguageModelV4CallOptions,
+  ) => LanguageModelV4CallOptions | undefined,
+): LanguageModelMiddleware {
+  return {
+    wrapGenerate: async ({ doGenerate, model, params }) => {
+      try {
+        return await doGenerate();
+      } catch (error) {
+        const retry = recover(error, params);
+        if (!retry) {
+          throw error;
+        }
 
-      return await model.doStream(withoutStoredItemState(params));
-    }
-  },
-};
+        return await model.doGenerate(retry);
+      }
+    },
+    wrapStream: async ({ doStream, model, params }) => {
+      try {
+        return await doStream();
+      } catch (error) {
+        const retry = recover(error, params);
+        if (!retry) {
+          throw error;
+        }
+
+        return await model.doStream(retry);
+      }
+    },
+  };
+}
 
 /**
  * Strips the id an assistant part is replayed by, leaving the part to be sent
@@ -504,57 +494,64 @@ function withoutUnsupportedMedia(
   error: unknown,
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions | undefined {
-  if (!UnsupportedFunctionalityError.isInstance(error)) {
-    return undefined;
-  }
-  const dropped: string[] = [];
-  const prompt = params.prompt.map((message) => {
-    if (message.role !== "user") {
-      return message;
-    }
-
-    return {
-      ...message,
-      content: message.content.map((part) => {
-        if (part.type !== "file" || part.mediaType.startsWith("image/")) {
-          return part;
-        }
-        dropped.push(part.mediaType);
-
-        return {
-          type: "text" as const,
-          text:
-            `[${part.filename ?? "attachment"} (${part.mediaType}) was not shown to you: ` +
-            `this model does not accept the type. Open it from the workspace instead.]`,
-        };
-      }),
-    };
-  });
-  if (dropped.length === 0) {
+  if (
+    !UnsupportedFunctionalityError.isInstance(error) ||
+    !params.prompt.some(
+      (message) =>
+        message.role === "user" && message.content.some(isDroppableMedia),
+    )
+  ) {
     return undefined;
   }
   logInfo("Retrying model call without media the provider refused", {
-    mediaTypes: dropped.join(", "),
     error: error.message,
   });
 
-  return { ...params, prompt: prompt };
+  return {
+    ...params,
+    prompt: params.prompt.map((message) =>
+      message.role !== "user"
+        ? message
+        : {
+            ...message,
+            content: message.content.map((part) =>
+              isDroppableMedia(part)
+                ? {
+                    type: "text" as const,
+                    text: unreadableMediaNote(part.filename, part.mediaType),
+                  }
+                : part,
+            ),
+          },
+    ),
+  };
 }
 
-function isStaleStoredItemError(error: unknown): boolean {
+// Images are the one media kind every provider reads, so a converter that
+// refused something refused something else.
+function isDroppableMedia(
+  part: Extract<LanguageModelV4Message, { role: "user" }>["content"][number],
+): part is LanguageModelV4FilePart {
+  return part.type === "file" && !part.mediaType.startsWith("image/");
+}
+
+function withoutStaleStoredItems(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
   if (!APICallError.isInstance(error)) {
-    return false;
+    return undefined;
   }
   const responseBody =
     typeof error.responseBody === "string" ? error.responseBody : "";
-
-  return STALE_STORED_ITEM_PATTERN.test(`${error.message} ${responseBody}`);
-}
-
-function logStaleStoredItemRetry(error: unknown): void {
+  if (!STALE_STORED_ITEM_PATTERN.test(`${error.message} ${responseBody}`)) {
+    return undefined;
+  }
   logInfo("Retrying model call without stored item references", {
-    error: error instanceof Error ? error.message : String(error),
+    error: error.message,
   });
+
+  return withoutStoredItemState(params);
 }
 
 function resolveOpenAICompatibleModel(

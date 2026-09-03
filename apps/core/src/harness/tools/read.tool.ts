@@ -3,15 +3,9 @@
  * (Claude-Code-style). Sandbox-backed workspaces read through the mount; a
  * read-only workspace reads through a service-managed read-only mount by default
  * (readMount), or directly from S3 when the ref opts out with `sandbox: null`.
- *
- * Audio is the exception, because numbering the lines of a voice note means
- * nothing. Reading one returns what it says, which is what the ingest path
- * already tried on the agent's behalf — so this is also the retry the
- * attachment note points at when that first attempt failed for a reason worth
- * repeating.
+ * Audio is the exception: reading a voice note returns what it says.
  */
 
-import { detectMediaType } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -23,7 +17,9 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { contentTypeForPath } from "../../shared/media-types.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { shellQuote } from "../sandbox/utils.ts";
 import { transcribeAudio } from "../transcribe.ts";
 import { toolError, toolText } from "./utils.ts";
@@ -36,22 +32,6 @@ interface ReadInput {
 }
 
 const DEFAULT_LIMIT = 2000;
-
-// What is worth pulling out of the workspace to sniff. The extension only
-// decides whether to look: the bytes decide whether it really is audio, because
-// a channel that names a voice note `voice-1.oga` and one that names it
-// `audio.bin` both arrive here.
-const AUDIO_EXTENSIONS: ReadonlySet<string> = new Set([
-  "aac",
-  "flac",
-  "m4a",
-  "mp3",
-  "mpga",
-  "oga",
-  "ogg",
-  "opus",
-  "wav",
-]);
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
@@ -87,7 +67,8 @@ Usage notes:
 - file_path is relative to the workspace root.
 - Reads up to ${DEFAULT_LIMIT} lines from the start by default; use offset and limit to page through large files.
 - Lines are returned as \`<line_number>\\t<content>\`.
-- Prefer this over \`bash cat\` for reading files.`,
+- Prefer this over \`bash cat\` for reading files.
+- Reading an audio file returns its transcript rather than its bytes.`,
       inputSchema: jsonSchema(inputSchema(context)),
       execute: async function (input) {
         const { file_path, offset, limit, workspace } = input as ReadInput;
@@ -97,12 +78,12 @@ Usage notes:
             return toolError("Error: no workspace attached");
           }
           const rel = toWorkspaceRelative(file_path);
-          // Read through the mount when one is available (sandbox-backed, or a
-          // read-only mount); otherwise read S3 objects directly (sandbox: null opt-out).
-          const spoken = await spokenContents(context, ws, rel);
+          const spoken = await spokenContents(context.agentConfig, ws, rel);
           if (spoken) {
             return spoken;
           }
+          // Read through the mount when one is available (sandbox-backed, or a
+          // read-only mount); otherwise read S3 objects directly (sandbox: null opt-out).
           const runner = ws.sandbox ?? ws.readMount;
           if (!runner) {
             return await s3ReadNumbered(ws, rel, offset, limit);
@@ -136,23 +117,20 @@ Usage notes:
   };
 }
 
-// What an audio file says, or null when this is not one. Null rather than an
-// error for anything else, so every non-audio read falls through to the line
-// reader untouched.
+// What an audio file says, or null when this is not one, so every other read
+// falls through to the line reader below.
 async function spokenContents(
-  context: SandboxToolContext,
+  agentConfig: AgentConfig | undefined,
   ws: ResolvedWorkspace,
   rel: string,
 ): Promise<string | null> {
-  const agentConfig = context.agentConfig;
-  const extension = rel.split(".").pop()?.toLowerCase() ?? "";
-  if (!agentConfig || !AUDIO_EXTENSIONS.has(extension)) {
+  if (!agentConfig || !contentTypeForPath(rel).startsWith("audio/")) {
     return null;
   }
-  // A path that does not resolve falls through rather than failing here: the
-  // line reader below reports a missing file in the words the agent expects.
+  // A path that does not resolve falls through: the line reader reports a
+  // missing file in the words the agent expects.
   const bytes = await workspaceMediaBytes(ws, rel).catch(() => undefined);
-  if (!bytes || !detectMediaType({ data: bytes })?.startsWith("audio/")) {
+  if (!bytes) {
     return null;
   }
   const transcript = await transcribeAudio(agentConfig, bytes);

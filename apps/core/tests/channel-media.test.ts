@@ -16,6 +16,7 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
+import { unreadableMediaNote } from "../src/shared/media-types.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const writeS3ObjectMock = mock(
@@ -362,17 +363,17 @@ describe("acceptsNativeMedia", () => {
 });
 
 describe("inbound audio", () => {
-  const voiceNote = (): Attachment => ({
-    type: "audio",
-    name: "voice.ogg",
-    mimeType: "audio/ogg",
-    fetchData: async (): Promise<Buffer> => Buffer.from("audio-bytes"),
-  });
-
   async function ingestVoiceNote(
     provider: AccountModelProviderName,
   ): Promise<Awaited<ReturnType<typeof ingestInboundAttachments>>> {
-    return await ingestInboundAttachments([voiceNote()], {
+    const voiceNote: Attachment = {
+      type: "audio",
+      name: "voice.ogg",
+      mimeType: "audio/ogg",
+      fetchData: async (): Promise<Buffer> => Buffer.from("audio-bytes"),
+    };
+
+    return await ingestInboundAttachments([voiceNote], {
       accountId: ACCOUNT,
       channelName: "telegram",
       eventId: "evt-audio",
@@ -415,8 +416,9 @@ describe("inbound audio", () => {
   // the agent to try again would only cost it a turn before it asks anyway.
   it("tells the agent not to retry what cannot work", async () => {
     transcribeAudioMock.mockResolvedValueOnce({
-      status: "unavailable",
-      reason: "anthropic has no transcription model configured",
+      status: "failed",
+      reason: "anthropic has no transcription model",
+      retryable: false,
     });
 
     expect(await ingestVoiceNote("anthropic").then(noteText)).toContain(
@@ -494,7 +496,7 @@ describe("rehydrateStoredMedia", () => {
       { type: "text", text: "listen to this" },
       {
         type: "text",
-        text: "[voice.ogg (audio/ogg) is stored in the workspace; this model cannot read it directly]",
+        text: unreadableMediaNote("voice.ogg", "audio/ogg"),
       },
     ]);
   });
