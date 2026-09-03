@@ -10,9 +10,8 @@ import { requireEnv } from "../shared/env.ts";
 // One NDJSON frame per stdout line: chunk = streamed output, final = a
 // non-streaming result, end = closed stream, error = run failure. cpuUsec is
 // stamped by a runner that can measure itself. `id` names one request of a
-// batched hosted-MCP invoke (#397): a final or error carrying it settles that
-// request only, and the batch closes on `end`, which carries the batch's CPU.
-// An error without an id fails the whole run.
+// multi-request run: a final or error carrying it settles that request only,
+// `end` closes the run, and an error without an id fails the whole run.
 export type RunnerFrame =
   | { t: "chunk"; output: unknown }
   | { t: "final"; id?: string; result: unknown; cpuUsec?: number }

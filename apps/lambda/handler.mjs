@@ -30,12 +30,12 @@ const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CHILD_CALLS = 64;
 const DEFAULT_CHILD_IDLE_SECONDS = 300;
 
-// The child pins `t` first and `id` second on every frame, so a byte compare
-// on the line prefix spots a batch terminal without parsing a multi-megabyte
-// frame. An error with `error` as its second key has no id: the batch is dead.
+// `end` is the only frame that closes a batch with the child still alive, and
+// the child pins `t` first on it (emitTerminal), so a byte compare on the line
+// prefix spots it without parsing a multi-megabyte frame. A batch-level error
+// exits the child, and settleDead retires it off that exit.
 const END_PREFIX = Buffer.from('{"t":"end"', "latin1");
-const BATCH_ERROR_PREFIX = Buffer.from('{"t":"error","error"', "latin1");
-const TERMINAL_PREFIX_BYTES = BATCH_ERROR_PREFIX.length;
+const TERMINAL_PREFIX_BYTES = END_PREFIX.length;
 
 // The one warm child this execution environment may hold. Lambda serializes
 // invocations per environment, so a single slot is the whole pool.
@@ -117,7 +117,7 @@ async function runRequest(state, event, home, responseStream) {
     const child = state.child;
     let forwardedBytes = 0;
     let stopReason;
-    let terminal = null;
+    let ended = false;
     let drained = false;
     let settled = false;
     // First bytes of the current stdout line, enough to spot a terminal frame.
@@ -140,7 +140,7 @@ async function runRequest(state, event, home, responseStream) {
     // holds the pipe's write end open, which is what killGroup releases.
     const settleDead = () => {
       if (!state.dead || !drained) return;
-      if (terminal !== null) {
+      if (ended) {
         // The frame made it out before the exit; deliver it as written.
         finish(undefined, false);
       } else if (stopReason) {
@@ -169,7 +169,7 @@ async function runRequest(state, event, home, responseStream) {
     );
 
     const onStdout = (chunk) => {
-      if (stopReason || terminal !== null) return;
+      if (stopReason || ended) return;
       // Forward through the terminal frame's newline; later bytes in the same
       // chunk are noise from the tenant's own stray writers and are dropped.
       let cut = chunk.length;
@@ -187,16 +187,13 @@ async function runRequest(state, event, home, responseStream) {
           linePrefixLen += copied;
         }
         if (newline === -1) break;
-        const isEnd = lineStartsWith(linePrefix, linePrefixLen, END_PREFIX);
-        const isError = lineStartsWith(
-          linePrefix,
-          linePrefixLen,
-          BATCH_ERROR_PREFIX,
-        );
+        const isEnd =
+          linePrefixLen === TERMINAL_PREFIX_BYTES &&
+          linePrefix.equals(END_PREFIX);
         linePrefixLen = 0;
         index = newline + 1;
-        if (isEnd || isError) {
-          terminal = isEnd ? "end" : "error";
+        if (isEnd) {
+          ended = true;
           cut = index;
           break;
         }
@@ -211,8 +208,8 @@ async function runRequest(state, event, home, responseStream) {
       // Pause on a full response buffer so a chatty child cannot outrun the
       // stream; the child's own stdout pipe then applies the backpressure.
       const flushed = responseStream.write(forwarded);
-      if (terminal !== null) {
-        finish(undefined, terminal === "end");
+      if (ended) {
+        finish(undefined, true);
 
         return;
       }
@@ -337,13 +334,6 @@ function childTimeoutSeconds() {
 function endWithError(responseStream, error) {
   responseStream.write(`${JSON.stringify({ t: "error", error: error })}\n`);
   responseStream.end();
-}
-
-function lineStartsWith(linePrefix, linePrefixLen, prefix) {
-  return (
-    linePrefixLen >= prefix.length &&
-    linePrefix.subarray(0, prefix.length).equals(prefix)
-  );
 }
 
 // SIGKILL the child's whole process group, not just the child. Falls back to the

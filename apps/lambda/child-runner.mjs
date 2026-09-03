@@ -57,7 +57,7 @@ async function runRequestLoop() {
   // raw bytes (up to 50 MB) need not stay pinned for the child's lifetime.
   let bundle = await readBundleBytes();
   const actualSha = createHash("sha256").update(bundle).digest("hex");
-  let handlerModule;
+  let fetchLike;
   // One batch per line; the handler serializes invocations, so by the time a
   // line arrives the previous batch has already emitted its terminal frame.
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -65,10 +65,10 @@ async function runRequestLoop() {
     if (line.trim() === "") continue;
     settled = false;
     const cpuBaseline = process.cpuUsage();
-    const controllers = [];
+    const controller = new AbortController();
     const timeout = setTimeout(() => {
       const reason = new Error("mcp server run timed out");
-      for (const controller of controllers) controller.abort(reason);
+      controller.abort(reason);
       emitTerminal({ t: "error", error: reason.message }, cpuBaseline, 1);
     }, runTimeoutMs());
     try {
@@ -82,15 +82,12 @@ async function runRequestLoop() {
         process.env.HOME = payload.home;
         process.env.TMPDIR = payload.home;
       }
-      if (handlerModule === undefined) {
-        handlerModule = await importBundle(bundle);
+      if (fetchLike === undefined) {
+        fetchLike = resolveFetchHandler(await importBundle(bundle));
         bundle = null;
       }
-      const fetchLike = resolveFetchHandler(handlerModule);
       await Promise.all(
         payload.requests.map(async (request) => {
-          const controller = new AbortController();
-          controllers.push(controller);
           try {
             const result = await runMcpRequest(
               fetchLike,
@@ -186,8 +183,6 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// `t` then `id` must stay the first two keys: handler.mjs tells a tagged
-// error from a batch error by line prefix.
 function emitRequestFrame(frame) {
   if (settled) return;
   process.stdout.write(`${JSON.stringify(frame)}\n`);

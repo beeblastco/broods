@@ -11,7 +11,7 @@ import {
   LambdaClient,
 } from "@aws-sdk/client-lambda";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
-import { requireEnv } from "../../shared/env.ts";
+import { positiveIntegerEnv, requireEnv } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket } from "../frames.ts";
 
@@ -23,14 +23,20 @@ export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
 const BUNDLE_URL_TTL_SECONDS = 120;
 
 // The parallel calls of one model step arrive well under 1ms apart; the window
-// only has to outlast that. 0 disables batching. The cap bounds what one
-// batch's shared deadline, output limit, and single vCPU absorb.
+// only has to outlast that. The cap bounds what one batch's shared deadline,
+// output limit, and single vCPU absorb; 1 turns batching off.
 const DEFAULT_BATCH_WINDOW_MS = 10;
 const DEFAULT_BATCH_MAX = 8;
 
 let sharedClient: LambdaClient | undefined;
 let sendOverride: HostedMcpSendBatch | null = null;
 const openBatches = new Map<string, OpenBatch>();
+
+/** A hosted row whose bundle upload completed. */
+type HostedBundleRecord = McpRecord & {
+  bundleStorageKey: string;
+  sha256: string;
+};
 
 /** One serialized web request, as the mcp-mode child receives it. */
 interface HostedMcpRequest {
@@ -66,8 +72,7 @@ export interface McpHostPayload {
 
 /** A batch's outcome by request id, plus the CPU the whole batch burned. */
 export interface HostedMcpBatchResult {
-  responses: Map<string, HostedMcpResponse>;
-  errors: Map<string, Error>;
+  outcomes: Map<string, HostedMcpResponse | Error>;
   cpuUsec: number | undefined;
 }
 
@@ -80,13 +85,13 @@ interface PendingCall {
 }
 
 interface OpenBatch {
-  record: McpRecord;
+  record: HostedBundleRecord;
   calls: PendingCall[];
-  timer: ReturnType<typeof setTimeout> | null;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 type HostedMcpSendBatch = (
-  record: McpRecord,
+  record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
 ) => Promise<HostedMcpBatchResult>;
@@ -139,9 +144,7 @@ export function setHostedMcpSendBatchForTests(
   send: HostedMcpSendBatch | null,
 ): void {
   sendOverride = send;
-  for (const batch of openBatches.values()) {
-    if (batch.timer !== null) clearTimeout(batch.timer);
-  }
+  for (const batch of openBatches.values()) clearTimeout(batch.timer);
   openBatches.clear();
 }
 
@@ -200,7 +203,7 @@ function enqueueCall(
   abortSignal: AbortSignal,
   onCpuUsec: ((cpuUsec: number) => void) | undefined,
 ): Promise<HostedMcpResponse> {
-  if (!record.bundleStorageKey || !record.sha256) {
+  if (!hasBundle(record)) {
     return Promise.reject(
       new Error(
         `hosted MCP server ${record.name} is missing its uploaded bundle`,
@@ -208,39 +211,39 @@ function enqueueCall(
     );
   }
   if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
-  const key = `${record.accountId}:${record.sha256}`;
-
-  return new Promise<HostedMcpResponse>((resolve, reject) => {
-    abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
-      once: true,
-    });
-    const windowMs = envInt("MCP_BATCH_WINDOW_MS", DEFAULT_BATCH_WINDOW_MS);
-    const max = envInt("MCP_BATCH_MAX", DEFAULT_BATCH_MAX);
-    const open = openBatches.get(key);
-    const batch: OpenBatch = open ?? { record: record, calls: [], timer: null };
-    if (!open) {
-      openBatches.set(key, batch);
-      if (windowMs > 0) {
-        batch.timer = setTimeout(() => flushBatch(key, batch), windowMs);
-      }
-    }
-    batch.calls.push({
-      request: request,
-      abortSignal: abortSignal,
-      onCpuUsec: onCpuUsec,
-      resolve: resolve,
-      reject: reject,
-    });
-    if (windowMs === 0 || batch.calls.length >= max) flushBatch(key, batch);
+  const { promise, resolve, reject } =
+    Promise.withResolvers<HostedMcpResponse>();
+  abortSignal.addEventListener("abort", () => reject(abortSignal.reason), {
+    once: true,
   });
-}
+  const key = `${record.accountId}:${record.sha256}`;
+  let batch = openBatches.get(key);
+  if (!batch) {
+    const opened: OpenBatch = {
+      record: record,
+      calls: [],
+      timer: setTimeout(
+        () => flushBatch(key, opened),
+        positiveIntegerEnv("MCP_BATCH_WINDOW_MS", DEFAULT_BATCH_WINDOW_MS),
+      ),
+    };
+    openBatches.set(key, opened);
+    batch = opened;
+  }
+  batch.calls.push({
+    request: request,
+    abortSignal: abortSignal,
+    onCpuUsec: onCpuUsec,
+    resolve: resolve,
+    reject: reject,
+  });
+  if (
+    batch.calls.length >= positiveIntegerEnv("MCP_BATCH_MAX", DEFAULT_BATCH_MAX)
+  ) {
+    flushBatch(key, batch);
+  }
 
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const value = Number(raw);
-
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+  return promise;
 }
 
 /** A request's final frame carries its serialized response. */
@@ -265,24 +268,26 @@ function finalHostedResponse(
 // Send the batch and settle every call still waiting on it. The invoke is
 // abandoned only once every call in it has been aborted.
 function flushBatch(key: string, batch: OpenBatch): void {
-  if (openBatches.get(key) === batch) openBatches.delete(key);
-  if (batch.timer !== null) clearTimeout(batch.timer);
-  const live = batch.calls.filter((call) => !call.abortSignal.aborted);
+  openBatches.delete(key);
+  clearTimeout(batch.timer);
+  const live = batch.calls
+    .filter((call) => !call.abortSignal.aborted)
+    .map((call, index) => ({ id: String(index + 1), call: call }));
   if (live.length === 0) return;
   const controller = new AbortController();
-  for (const call of live) {
+  for (const { call } of live) {
     call.abortSignal.addEventListener(
       "abort",
       () => {
-        if (live.every((sibling) => sibling.abortSignal.aborted)) {
+        if (live.every((member) => member.call.abortSignal.aborted)) {
           controller.abort();
         }
       },
       { once: true },
     );
   }
-  const requests = live.map((call, index): HostedMcpBatchRequest => ({
-    id: String(index + 1),
+  const requests = live.map(({ id, call }): HostedMcpBatchRequest => ({
+    id: id,
     mcpRequest: call.request,
   }));
   const send = sendOverride ?? sendBatch;
@@ -292,33 +297,32 @@ function flushBatch(key: string, batch: OpenBatch): void {
       // the moment its result lands.
       if (typeof result.cpuUsec === "number" && result.cpuUsec > 0) {
         const share = Math.round(result.cpuUsec / live.length);
-        for (const call of live) call.onCpuUsec?.(share);
+        for (const { call } of live) call.onCpuUsec?.(share);
       }
-      requests.forEach((request, index) => {
-        const call = live[index]!;
-        const response = result.responses.get(request.id);
-        if (response) {
-          call.resolve(response);
-        } else {
-          call.reject(
-            result.errors.get(request.id) ??
-              new Error(
-                `hosted MCP server ${batch.record.name} returned no response`,
-              ),
+      for (const { id, call } of live) {
+        const outcome =
+          result.outcomes.get(id) ??
+          new Error(
+            `hosted MCP server ${batch.record.name} returned no response`,
           );
-        }
-      });
+        if (outcome instanceof Error) call.reject(outcome);
+        else call.resolve(outcome);
+      }
     },
     (error: unknown) => {
-      for (const call of live) call.reject(error);
+      for (const { call } of live) call.reject(error);
     },
   );
+}
+
+function hasBundle(record: McpRecord): record is HostedBundleRecord {
+  return Boolean(record.bundleStorageKey && record.sha256);
 }
 
 // One invoke for one batch. `end` closes it; an untagged error frame fails
 // every request still unanswered; a transport failure throws for all.
 async function sendBatch(
-  record: McpRecord,
+  record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
 ): Promise<HostedMcpBatchResult> {
@@ -326,10 +330,10 @@ async function sendBatch(
     mode: "mcp",
     toolName: record.name,
     accountId: record.accountId,
-    expectedSha256: record.sha256!,
+    expectedSha256: record.sha256,
     bundleUrl: await getS3ObjectUrl(
       toolBundlesBucket(),
-      record.bundleStorageKey!,
+      record.bundleStorageKey,
       { expiresInSeconds: BUNDLE_URL_TTL_SECONDS },
     ),
     requests: requests,
@@ -342,8 +346,7 @@ async function sendBatch(
     })
     .finally(() => queue.close());
   const result: HostedMcpBatchResult = {
-    responses: new Map(),
-    errors: new Map(),
+    outcomes: new Map(),
     cpuUsec: undefined,
   };
   let batchError: Error | undefined;
@@ -351,23 +354,22 @@ async function sendBatch(
     for await (const frame of queue.frames()) {
       if (frame.t === "final" && frame.id !== undefined) {
         try {
-          result.responses.set(
+          result.outcomes.set(
             frame.id,
             finalHostedResponse(record.name, frame.result),
           );
         } catch (error) {
-          result.errors.set(frame.id, error as Error);
+          result.outcomes.set(frame.id, error as Error);
         }
       } else if (frame.t === "error" && frame.id !== undefined) {
-        result.errors.set(frame.id, new Error(frame.error));
-      } else if (frame.t === "end") {
+        result.outcomes.set(frame.id, new Error(frame.error));
+      } else if (frame.t === "end" || frame.t === "error") {
         result.cpuUsec = frame.cpuUsec;
-        break;
-      } else if (frame.t === "error") {
-        result.cpuUsec = frame.cpuUsec;
-        batchError = new Error(
-          frame.error || `hosted MCP server ${record.name} run failed`,
-        );
+        if (frame.t === "error") {
+          batchError = new Error(
+            frame.error || `hosted MCP server ${record.name} run failed`,
+          );
+        }
         break;
       }
     }
@@ -375,9 +377,11 @@ async function sendBatch(
     await pump;
   }
   if (transportError) throw transportError;
-  for (const request of requests) {
-    if (batchError && !result.responses.has(request.id)) {
-      result.errors.set(request.id, batchError);
+  if (batchError) {
+    for (const request of requests) {
+      if (!result.outcomes.has(request.id)) {
+        result.outcomes.set(request.id, batchError);
+      }
     }
   }
 

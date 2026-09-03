@@ -25,17 +25,17 @@ interface SentBatch {
   requests: HostedMcpBatchRequest[];
 }
 
-describe("hosted MCP fetch adapter", () => {
-  const savedEnv = { ...process.env };
-  beforeEach(() => {
-    process.env.MCP_BATCH_WINDOW_MS = "10";
-    process.env.MCP_BATCH_MAX = "8";
-  });
-  afterEach(() => {
-    setHostedMcpSendBatchForTests(null);
-    process.env = { ...savedEnv };
-  });
+const savedEnv = { ...process.env };
+beforeEach(() => {
+  process.env.MCP_BATCH_WINDOW_MS = "10";
+  process.env.MCP_BATCH_MAX = "8";
+});
+afterEach(() => {
+  setHostedMcpSendBatchForTests(null);
+  process.env = { ...savedEnv };
+});
 
+describe("hosted MCP fetch adapter", () => {
   it("serializes the request and rebuilds the child's response", async () => {
     const sent = stubBatches((request) => ok(`{"echo":${request.body}}`));
 
@@ -102,16 +102,6 @@ describe("hosted MCP fetch adapter", () => {
 });
 
 describe("hosted MCP micro-batching", () => {
-  const savedEnv = { ...process.env };
-  beforeEach(() => {
-    process.env.MCP_BATCH_WINDOW_MS = "10";
-    process.env.MCP_BATCH_MAX = "8";
-  });
-  afterEach(() => {
-    setHostedMcpSendBatchForTests(null);
-    process.env = { ...savedEnv };
-  });
-
   it("folds the parallel calls of one step into one invoke, keyed by tenant bundle", async () => {
     const sent = stubBatches((request) => ok(`{"n":${request.body}}`));
     const fetchLike = hostedMcpFetch(hostedRecord());
@@ -149,12 +139,11 @@ describe("hosted MCP micro-batching", () => {
     const sent = stubBatches((request) => ok(request.body ?? ""));
     const fetchLike = hostedMcpFetch(hostedRecord());
 
-    const first = Promise.all([
+    await Promise.all([
       fetchLike(URL, { method: "POST", body: "a" }),
       fetchLike(URL, { method: "POST", body: "b" }),
       fetchLike(URL, { method: "POST", body: "c" }),
     ]);
-    await first;
     await new Promise((resolve) => setTimeout(resolve, 20));
     await fetchLike(URL, { method: "POST", body: "d" });
 
@@ -163,8 +152,8 @@ describe("hosted MCP micro-batching", () => {
     ).toEqual([["a", "b"], ["c"], ["d"]]);
   });
 
-  it("runs size-one batches when the window is 0", async () => {
-    process.env.MCP_BATCH_WINDOW_MS = "0";
+  it("runs size-one batches when the cap is 1", async () => {
+    process.env.MCP_BATCH_MAX = "1";
     const sent = stubBatches((request) => ok(request.body ?? ""));
     const fetchLike = hostedMcpFetch(hostedRecord());
 
@@ -180,15 +169,13 @@ describe("hosted MCP micro-batching", () => {
 
   it("fails only the call whose frame carried the error", async () => {
     setHostedMcpSendBatchForTests(async (record, requests) => ({
-      responses: new Map(
-        requests
-          .filter((r) => r.mcpRequest.body !== "bad")
-          .map((r) => [r.id, ok(r.mcpRequest.body ?? "")]),
-      ),
-      errors: new Map(
-        requests
-          .filter((r) => r.mcpRequest.body === "bad")
-          .map((r) => [r.id, new Error("handler threw")]),
+      outcomes: new Map(
+        requests.map((r) => [
+          r.id,
+          r.mcpRequest.body === "bad"
+            ? new Error("handler threw")
+            : ok(r.mcpRequest.body ?? ""),
+        ]),
       ),
       cpuUsec: 0,
     }));
@@ -206,8 +193,7 @@ describe("hosted MCP micro-batching", () => {
 
   it("rejects a call the batch never answered", async () => {
     setHostedMcpSendBatchForTests(async () => ({
-      responses: new Map(),
-      errors: new Map(),
+      outcomes: new Map(),
       cpuUsec: undefined,
     }));
     const fetchLike = hostedMcpFetch(hostedRecord());
@@ -219,8 +205,7 @@ describe("hosted MCP micro-batching", () => {
 
   it("splits the batch's CPU evenly across its calls before they resolve", async () => {
     setHostedMcpSendBatchForTests(async (record, requests) => ({
-      responses: new Map(requests.map((r) => [r.id, ok("")])),
-      errors: new Map(),
+      outcomes: new Map(requests.map((r) => [r.id, ok("")])),
       cpuUsec: 3_000,
     }));
     const seen: number[] = [];
@@ -249,8 +234,7 @@ describe("hosted MCP micro-batching", () => {
           setTimeout(
             () =>
               resolve({
-                responses: new Map(requests.map((r) => [r.id, ok("")])),
-                errors: new Map(),
+                outcomes: new Map(requests.map((r) => [r.id, ok("")])),
                 cpuUsec: 0,
               }),
             50,
@@ -282,10 +266,7 @@ describe("hosted MCP micro-batching", () => {
   });
 });
 
-/**
- * Stub the invoke with a per-request answer and record every batch as sent.
- * Every request gets a response; the batch reports no CPU.
- */
+/** Stub the invoke with a per-request answer and record every batch as sent. */
 function stubBatches(
   answer: (request: HostedMcpBatchRequest["mcpRequest"]) => HostedMcpResponse,
 ): SentBatch[] {
@@ -298,8 +279,7 @@ function stubBatches(
     });
 
     return {
-      responses: new Map(requests.map((r) => [r.id, answer(r.mcpRequest)])),
-      errors: new Map(),
+      outcomes: new Map(requests.map((r) => [r.id, answer(r.mcpRequest)])),
       cpuUsec: undefined,
     };
   });

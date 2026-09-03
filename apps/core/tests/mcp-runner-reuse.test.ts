@@ -10,6 +10,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRunnerFrame, type RunnerFrame } from "../src/harness/frames.ts";
 
 const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
@@ -130,17 +131,13 @@ function bundleName(bundle: string): string {
   return `${new Bun.CryptoHasher("sha256").update(bundle).digest("hex")}.mjs`;
 }
 
-interface Frame {
-  t: string;
-  id?: string;
-  result?: unknown;
-  error?: string;
-}
-
 /** Every request's response body in an invocation, in id order. */
 function finalBodies(run: string | undefined): unknown[] {
   return frames(run)
-    .filter((frame) => frame.t === "final")
+    .filter(
+      (frame): frame is Extract<RunnerFrame, { t: "final" }> =>
+        frame.t === "final",
+    )
     .sort((a, b) => Number(a.id) - Number(b.id))
     .map((frame) => JSON.parse((frame.result as HostedResponse).body));
 }
@@ -153,15 +150,14 @@ function finalBody(run: string | undefined): unknown {
   return bodies[0];
 }
 
-function frames(run: string | undefined): Frame[] {
+function frames(run: string | undefined): RunnerFrame[] {
   return (run ?? "")
-    .trim()
     .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Frame);
+    .map(parseRunnerFrame)
+    .filter((frame) => frame !== null);
 }
 
-function terminalFrame(run: string | undefined): Frame | undefined {
+function terminalFrame(run: string | undefined): RunnerFrame | undefined {
   return frames(run).at(-1);
 }
 
