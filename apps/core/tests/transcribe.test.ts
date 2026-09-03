@@ -23,7 +23,6 @@ describe("transcribeWithModel", () => {
       await transcribeWithModel(
         succeeding("whisper-1", "  check the deploy status  "),
         AUDIO,
-        "openai",
         0,
       ),
     ).toEqual({ status: "transcribed", text: "check the deploy status" });
@@ -36,7 +35,6 @@ describe("transcribeWithModel", () => {
       await transcribeWithModel(
         failing("whisper-1", 400, "Supported formats: ['mp3', 'wav']"),
         AUDIO,
-        "openai",
         0,
       ),
     ).toEqual({
@@ -51,7 +49,6 @@ describe("transcribeWithModel", () => {
       await transcribeWithModel(
         failing("whisper-1", 429, "Rate limit reached"),
         AUDIO,
-        "openai",
         0,
       ),
     ).toMatchObject({ status: "failed", recovery: "retry" });
@@ -64,7 +61,6 @@ describe("transcribeWithModel", () => {
       await transcribeWithModel(
         failing("whisper-1", 401, "Incorrect API key"),
         AUDIO,
-        "openai",
         0,
       ),
     ).toMatchObject({ status: "failed", recovery: "unavailable" });

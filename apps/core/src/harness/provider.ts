@@ -199,10 +199,11 @@ export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
 ): Exclude<TranscriptionModel, string> | undefined {
   const providerName = agentConfig.model?.provider;
-  const source = providerName
-    ? PROVIDER_TRANSCRIPTION[providerName]
-    : undefined;
-  if (!providerName || !source) {
+  if (!providerName) {
+    return undefined;
+  }
+  const source = PROVIDER_TRANSCRIPTION[providerName];
+  if (!source) {
     return undefined;
   }
   try {
@@ -447,6 +448,27 @@ export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
 
 /**
+ * Strips the id an assistant part is replayed by, leaving the part to be sent
+ * as content. Only ever correct alongside dropping the reasoning parts of the
+ * same message: an id without its reasoning is the reference the provider
+ * refuses.
+ */
+export function withoutStoredItemId<
+  TPart extends { type: string; providerOptions?: SharedV4ProviderOptions },
+>(part: TPart): TPart {
+  const openaiOptions = part.providerOptions?.openai;
+  if (openaiOptions?.itemId === undefined) {
+    return part;
+  }
+  const { itemId: _itemId, ...remaining } = openaiOptions;
+
+  return {
+    ...part,
+    providerOptions: { ...part.providerOptions, openai: remaining },
+  };
+}
+
+/**
  * A middleware that runs the call again when `recover` recognises the failure
  * and can say what to send instead. `recover` returning undefined rethrows, so
  * a failure it does not know about is never paid for twice.
@@ -485,31 +507,9 @@ function retryingMiddleware(
   };
 }
 
-/**
- * Strips the id an assistant part is replayed by, leaving the part to be sent
- * as content. Only ever correct alongside dropping the reasoning parts of the
- * same message: an id without its reasoning is the reference the provider
- * refuses.
- */
-export function withoutStoredItemId<
-  TPart extends { type: string; providerOptions?: SharedV4ProviderOptions },
->(part: TPart): TPart {
-  const openaiOptions = part.providerOptions?.openai;
-  if (openaiOptions?.itemId === undefined) {
-    return part;
-  }
-  const { itemId: _itemId, ...remaining } = openaiOptions;
-
-  return {
-    ...part,
-    providerOptions: { ...part.providerOptions, openai: remaining },
-  };
-}
-
 // The same call with every non-image file part replaced by a line naming it,
 // or undefined when this error is not a refused part or there was nothing to
-// drop. Images are kept: they are the one media kind every provider reads, so a
-// converter that refused something refused something else.
+// drop.
 function withoutUnsupportedMedia(
   error: unknown,
   params: LanguageModelV4CallOptions,
@@ -601,6 +601,7 @@ function resolveOpenAICompatibleModel(
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
+        dropUnsupportedMediaMiddleware,
       ],
     }),
   };

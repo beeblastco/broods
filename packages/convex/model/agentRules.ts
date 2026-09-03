@@ -455,6 +455,10 @@ function normalizeModelConfig(value: unknown): void {
   }
   assertOptionalProviderName(config.provider, "config.model.provider");
   assertOptionalString(config.modelId, "config.model.modelId");
+  assertOptionalString(
+    config.transcriptionModelId,
+    "config.model.transcriptionModelId",
+  );
   assertOptionalEnum(config.reasoning, "config.model.reasoning", [
     "provider-default",
     "none",
