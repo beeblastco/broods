@@ -87,7 +87,6 @@ export const workspaceStorageValidator = v.object({
  * @param isFolder true for directory entries
  * @param storageId Convex storage ID for the uploaded file (omit for folders)
  * @param mimeType MIME type of the file
- * @param sizeBytes file size in bytes
  * @returns the new document ID
  */
 const WORKSPACE_ADMIN_REQUIRED =
@@ -102,20 +101,11 @@ export const create = mutation({
     isFolder: v.boolean(),
     storageId: v.optional(v.id("_storage")),
     mimeType: v.optional(v.string()),
-    sizeBytes: v.optional(v.number()),
   },
   returns: v.id("workspaceFiles"),
   handler: async (ctx, args) => {
-    const {
-      projectId,
-      nodeId,
-      path,
-      name,
-      isFolder,
-      storageId,
-      mimeType,
-      sizeBytes,
-    } = args;
+    const { projectId, nodeId, path, name, isFolder, storageId, mimeType } =
+      args;
 
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
@@ -126,8 +116,8 @@ export const create = mutation({
     const project = await getProjectForRole(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
-    // The blob's own size is the truth; the client-supplied value is only a
-    // hint and the cap is enforced here, not at upload time.
+    // The blob's own size is the truth, and the cap is enforced here because
+    // a storage upload URL cannot carry one.
     const blob = storageId ? await ctx.db.system.get(storageId) : null;
     if (storageId && !blob) {
       throw new Error("Uploaded file was not found in storage.");
@@ -150,7 +140,7 @@ export const create = mutation({
       isFolder: isFolder,
       storageId: storageId,
       mimeType: mimeType,
-      sizeBytes: blob ? blob.size : sizeBytes,
+      sizeBytes: blob?.size,
       createdAt: now,
       updatedAt: now,
     });

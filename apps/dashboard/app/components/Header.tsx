@@ -4,6 +4,8 @@
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { UserMenu } from "@/app/components/UserMenu";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { Lock } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import Image from "next/image";
@@ -39,6 +41,7 @@ export function Header(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const isProjectPage = Boolean(params.projectId);
   const { resolvedTheme } = useTheme();
+  const { role } = useOrgRole();
 
   return (
     <header className="flex h-12 shrink-0 items-center border-b border-border">
@@ -68,6 +71,15 @@ export function Header(): React.JSX.Element {
 
         <div className="h-4 w-px bg-border" />
         <OrgSwitcher />
+        {role === "member" && (
+          <span
+            className="flex select-none items-center gap-1 text-[11px] text-amber-500/90"
+            title="Members read everything and change nothing. Ask an org admin for changes."
+          >
+            <Lock className="size-3" />
+            read-only
+          </span>
+        )}
 
         <ProjectHeaderLeft />
 

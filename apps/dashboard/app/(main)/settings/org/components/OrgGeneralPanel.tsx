@@ -8,6 +8,7 @@
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { api } from "@broods/convex/_generated/api";
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const updateOrg = useMutation(api.org.orgs.update).withOptimisticUpdate(
     (localStore, args) => {
       const active = localStore.getQuery(api.org.orgs.getActive, {});
@@ -72,15 +74,18 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="flex-1"
+              readOnly={!canWrite}
             />
-            <Button
-              size="sm"
-              className="cursor-pointer disabled:cursor-not-allowed"
-              disabled={!dirty || saving}
-              onClick={handleSave}
-            >
-              {saving ? "Saving..." : "Save"}
-            </Button>
+            {canWrite && (
+              <Button
+                size="sm"
+                className="cursor-pointer disabled:cursor-not-allowed"
+                disabled={!dirty || saving}
+                onClick={handleSave}
+              >
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             Slug: <code className="font-mono">{org.slug}</code>

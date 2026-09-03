@@ -3,6 +3,7 @@
 /** VSCode-style file explorer for a workspace canvas node with drag-and-drop upload. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -313,6 +314,7 @@ function TreeRow({
   onRenameCommit: (node: FileNode, newName: string) => void;
   onRenameCancel: () => void;
 }) {
+  const { canWrite } = useOrgRole();
   const isExpanded = expanded.has(node.path);
   const isSelected = selected === node.path;
   const isRenaming = renamingPath === node.path;
@@ -371,6 +373,7 @@ function TreeRow({
           <span
             className="flex-1 truncate font-mono text-[12px]"
             onDoubleClick={(e) => {
+              if (!canWrite) return;
               e.stopPropagation();
               onRenameStart(node.path);
             }}
@@ -399,7 +402,7 @@ function TreeRow({
           >
             {isUploading ? (
               <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            ) : (
+            ) : canWrite ? (
               <>
                 <Button
                   size="icon-xs"
@@ -426,7 +429,7 @@ function TreeRow({
                   <Trash2 className="size-3.5" />
                 </Button>
               </>
-            )}
+            ) : null}
           </span>
         )}
       </div>
@@ -465,6 +468,7 @@ export function WorkspaceFilesTab({
   nodeId: string;
   workspaceId?: string;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const convexFiles = useQuery(
     api.workspace.files.list,
     projectId && !workspaceId
@@ -783,7 +787,6 @@ export function WorkspaceFilesTab({
               isFolder: false,
               storageId: storageId,
               mimeType: file.type || undefined,
-              sizeBytes: file.size,
             });
           } catch (err) {
             entryError = err instanceof Error ? err.message : "Upload failed.";
@@ -944,7 +947,7 @@ export function WorkspaceFilesTab({
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
-      onDrop={handleDrop}
+      onDrop={canWrite ? handleDrop : undefined}
       onClick={handleContainerClick}
     >
       {/* Toolbar */}
@@ -972,30 +975,34 @@ export function WorkspaceFilesTab({
             />
           </Button>
         )}
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          title="Upload files"
-          onClick={(e) => {
-            e.stopPropagation();
-            fileInputRef.current?.click();
-          }}
-        >
-          <Upload className="size-3.5" />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          title="Upload folder"
-          onClick={(e) => {
-            e.stopPropagation();
-            folderInputRef.current?.click();
-          }}
-        >
-          <FolderUp className="size-3.5" />
-        </Button>
+        {canWrite && (
+          <>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="cursor-pointer"
+              title="Upload files"
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
+            >
+              <Upload className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="cursor-pointer"
+              title="Upload folder"
+              onClick={(e) => {
+                e.stopPropagation();
+                folderInputRef.current?.click();
+              }}
+            >
+              <FolderUp className="size-3.5" />
+            </Button>
+          </>
+        )}
       </div>
 
       {/* Hidden inputs */}

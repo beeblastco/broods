@@ -5,6 +5,7 @@
  * its schema, and runs one with JSON arguments.
  */
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
 import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
@@ -129,6 +130,7 @@ function ToolRow({
   tool: RemoteTool;
 }): React.JSX.Element {
   const callTool = useAction(api.mcp.callTool);
+  const { canWrite } = useOrgRole();
 
   const [isOpen, setIsOpen] = useState(false);
   const [inputJson, setInputJson] = useState("{}");
@@ -203,19 +205,21 @@ function ToolRow({
           {runError && <p className="text-xs text-destructive">{runError}</p>}
 
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              className="h-7 text-xs"
-              disabled={isRunning}
-              onClick={handleRun}
-            >
-              {isRunning ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Play className="size-3" />
-              )}
-              {isRunning ? "Running…" : "Run"}
-            </Button>
+            {canWrite && (
+              <Button
+                size="sm"
+                className="h-7 cursor-pointer text-xs"
+                disabled={isRunning}
+                onClick={handleRun}
+              >
+                {isRunning ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Play className="size-3" />
+                )}
+                {isRunning ? "Running…" : "Run"}
+              </Button>
+            )}
             {result && (
               <span className="text-[11px] text-muted-foreground">
                 {Math.round(result.durationMs)} ms

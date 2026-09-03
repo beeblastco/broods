@@ -7,6 +7,7 @@
  */
 
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -39,6 +40,7 @@ export function LiveSandboxTerminal({
   reservationKey,
   disabled,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const openTerminal = useAction(api.sandbox.public.openTerminal);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -150,20 +152,22 @@ export function LiveSandboxTerminal({
           Interactive shell inside the sandbox (a real in-guest TTY). Connecting
           resumes a suspended instance.
         </p>
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled || status === "connecting"}
-          onClick={handleConnect}
-          className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
-        >
-          {connected ? (
-            <RefreshCw className="mr-1 size-3.5" />
-          ) : (
-            <Plug className="mr-1 size-3.5" />
-          )}
-          {status === "idle" ? "Connect" : "Reconnect"}
-        </Button>
+        {canWrite && (
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled || status === "connecting"}
+            onClick={handleConnect}
+            className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
+          >
+            {connected ? (
+              <RefreshCw className="mr-1 size-3.5" />
+            ) : (
+              <Plug className="mr-1 size-3.5" />
+            )}
+            {status === "idle" ? "Connect" : "Reconnect"}
+          </Button>
+        )}
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-black p-2">
         <div ref={containerRef} className="h-80 w-full" />

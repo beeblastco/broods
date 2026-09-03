@@ -35,6 +35,17 @@ const orgDoc = v.object({
   _creationTime: v.number(),
 });
 
+const orgRoleValidator = v.union(
+  v.literal("owner"),
+  v.literal("admin"),
+  v.literal("member"),
+);
+
+interface ActiveAccount {
+  account: Doc<"accounts">;
+  role: OrgRole;
+}
+
 /**
  * Adopts an `external:`-bound account into a real org owned by a human, so it
  * can be operated like any other account.
@@ -210,27 +221,34 @@ export const getActive = query({
 });
 
 /**
- * Returns the active org's broods account id + status for the caller, or
- * null when the user has no active org or it has not been provisioned yet.
+ * Returns the active org's broods account id, status and the caller's role in
+ * that org, or null when the user has no active org or it has not been
+ * provisioned yet. The role is what the dashboard uses to hide write controls
+ * from members; every mutation still checks it server-side.
  */
 export const getActiveAccount = query({
   args: {
-    requiredRole: v.optional(
-      v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
-    ),
+    requiredRole: v.optional(orgRoleValidator),
   },
   returns: v.union(
     v.object({
       accountId: v.id("accounts"),
       status: v.union(v.literal("active"), v.literal("disabled")),
+      role: orgRoleValidator,
     }),
     v.null(),
   ),
   handler: async (ctx, { requiredRole }) => {
-    const account = await getActiveAccountForUser(ctx, requiredRole);
-    if (!account) return null;
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) return null;
+    const active = await resolveActiveAccount(ctx, authUser.id);
+    if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
 
-    return { accountId: account._id, status: account.status };
+    return {
+      accountId: active.account._id,
+      status: active.account.status,
+      role: active.role,
+    };
   },
 });
 
@@ -249,26 +267,43 @@ export async function getActiveAccountForUser(
 ): Promise<Doc<"accounts"> | null> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) return null;
+  const active = await resolveActiveAccount(ctx, authUser.id);
+  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
 
+  return active.account;
+}
+
+/**
+ * The account behind a user's active org plus the role they hold there. The
+ * org owner is an owner even when their membership row says otherwise.
+ * @param ctx query/mutation context.
+ * @param authId the WorkOS user id.
+ * @returns account and role, or null when no active org or account resolves.
+ */
+export async function resolveActiveAccount(
+  ctx: QueryCtx,
+  authId: string,
+): Promise<ActiveAccount | null> {
   const user = await ctx.db
     .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
     .unique();
   if (!user) return null;
 
   const org = await getActiveOrgForUser(ctx, user._id);
   if (!org) return null;
-  if (requiredRole) {
-    const membership = await getOrgMembership(ctx, org._id, user._id);
-    if (!membership || !orgRoleMeets(membership.role, requiredRole)) {
-      return null;
-    }
-  }
+  const membership = await getOrgMembership(ctx, org._id, user._id);
+  const role: OrgRole | undefined =
+    org.ownerAuthId === authId ? "owner" : membership?.role;
+  if (!role) return null;
 
-  return await ctx.db
+  const account = await ctx.db
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
     .unique();
+  if (!account) return null;
+
+  return { account: account, role: role };
 }
 
 /** Returns one org by id when the caller has admin-level membership. */

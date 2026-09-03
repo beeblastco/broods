@@ -11,6 +11,7 @@ import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
 import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
@@ -50,6 +51,7 @@ export function WebhooksPanel({
   projectId,
   stageId,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const agents = useQuery(
     api.webhooks.listAgentWebhooks,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -145,21 +147,23 @@ export function WebhooksPanel({
                     {agent.agentName}
                   </span>
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() =>
-                    setAddingFor(
-                      addingFor === agent.agentConfigId
-                        ? null
-                        : agent.agentConfigId,
-                    )
-                  }
-                >
-                  <Plus className="size-3.5" />
-                  Add webhook
-                </Button>
+                {canWrite && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() =>
+                      setAddingFor(
+                        addingFor === agent.agentConfigId
+                          ? null
+                          : agent.agentConfigId,
+                      )
+                    }
+                  >
+                    <Plus className="size-3.5" />
+                    Add webhook
+                  </Button>
+                )}
               </div>
 
               {agent.webhooks.length === 0 &&
@@ -183,6 +187,7 @@ export function WebhooksPanel({
                       </span>
                       <button
                         type="button"
+                        disabled={!canWrite}
                         onClick={() => {
                           setToggleError(null);
                           setEnabled({
@@ -198,7 +203,8 @@ export function WebhooksPanel({
                           );
                         }}
                         className={cn(
-                          "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
+                          "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
+                          canWrite ? "cursor-pointer" : "cursor-default",
                           webhook.enabled
                             ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
                             : "bg-red-500/15 text-red-600 hover:bg-red-500/25",
@@ -217,21 +223,23 @@ export function WebhooksPanel({
                         />
                         {webhook.enabled ? "Active" : "Inactive"}
                       </button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
-                        onClick={() =>
-                          setDeletingWebhook({
-                            agentConfigId: agent.agentConfigId,
-                            index: webhook.index,
-                            url: webhook.url ?? "webhook",
-                          })
-                        }
-                        title="Remove webhook"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      {canWrite && (
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            setDeletingWebhook({
+                              agentConfigId: agent.agentConfigId,
+                              index: webhook.index,
+                              url: webhook.url ?? "webhook",
+                            })
+                          }
+                          title="Remove webhook"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      )}
                     </div>
 
                     {webhook.hasSecret && (

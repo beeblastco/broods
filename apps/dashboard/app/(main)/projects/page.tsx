@@ -3,6 +3,7 @@
 /** Project gallery: lists every project in the active org and lets the user open or create one. */
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
@@ -13,6 +14,7 @@ import { useCallback, useState } from "react";
 
 /** Full-page grid of the user's projects with create and empty states. */
 export default function ProjectsPage(): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const projects = useQuery(
     api.project.list,
@@ -48,13 +50,15 @@ export default function ProjectsPage(): React.JSX.Element {
               Select a project to open, or create a new one.
             </p>
           </div>
-          <Button
-            className="cursor-pointer"
-            onClick={() => setDialogOpen(true)}
-          >
-            <Plus className="size-4" />
-            New Project
-          </Button>
+          {canWrite && (
+            <Button
+              className="cursor-pointer"
+              onClick={() => setDialogOpen(true)}
+            >
+              <Plus className="size-4" />
+              New Project
+            </Button>
+          )}
         </div>
 
         {projects.length === 0 ? (
@@ -68,13 +72,15 @@ export default function ProjectsPage(): React.JSX.Element {
                 Create a project to start building and deploying AI agents.
               </p>
             </div>
-            <Button
-              className="cursor-pointer"
-              onClick={() => setDialogOpen(true)}
-            >
-              <Plus className="size-4" />
-              Create your first project
-            </Button>
+            {canWrite && (
+              <Button
+                className="cursor-pointer"
+                onClick={() => setDialogOpen(true)}
+              >
+                <Plus className="size-4" />
+                Create your first project
+              </Button>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -11,6 +11,7 @@ import {
 import type { OrgRole } from "../model/ownership/org";
 import { getProjectForRole } from "../model/ownership/project";
 import { getOwnedStage } from "../model/ownership/stage";
+import { resolveActiveAccount } from "../org/orgs";
 import { readCapped } from "../model/skills";
 import schema from "../schema";
 
@@ -130,6 +131,38 @@ describe("project and stage ownership by org role", () => {
         null,
       );
       expect(await getOwnedStage(ctx, CREATOR_AUTH_ID, stageId)).toBeNull();
+    });
+  });
+
+  test("the active account reports the caller's role, org owner first", async () => {
+    const t = roleTest();
+    const { orgId } = await seed(t);
+
+    await t.run(async (ctx) => {
+      // The owner's membership row says admin; the org record still wins.
+      const ownerId = await ctx.db.insert("users", {
+        authId: OWNER_AUTH_ID,
+        email: "owner@example.com",
+        name: "owner",
+        plan: "free" as const,
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: orgId,
+        userId: ownerId,
+        role: "admin",
+        createdAt: Date.now(),
+      });
+
+      expect((await resolveActiveAccount(ctx, OWNER_AUTH_ID))?.role).toBe(
+        "owner",
+      );
+      expect((await resolveActiveAccount(ctx, ADMIN_AUTH_ID))?.role).toBe(
+        "admin",
+      );
+      expect((await resolveActiveAccount(ctx, MEMBER_AUTH_ID))?.role).toBe(
+        "member",
+      );
+      expect(await resolveActiveAccount(ctx, CREATOR_AUTH_ID)).toBeNull();
     });
   });
 

@@ -4,6 +4,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
@@ -35,6 +36,7 @@ export function PoliciesPanel({
   projectId,
   stageId,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const policies = useQuery(
     api.agent.policies.listForStage,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -147,15 +149,17 @@ export function PoliciesPanel({
     <>
       <Section description="Reusable runtime authorization policies for agents.">
         <div className="flex justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            className="cursor-pointer"
-            onClick={beginNew}
-          >
-            <Plus className="mr-1 size-3.5" />
-            New Policy
-          </Button>
+          {canWrite && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              onClick={beginNew}
+            >
+              <Plus className="mr-1 size-3.5" />
+              New Policy
+            </Button>
+          )}
         </div>
         <div className="grid gap-2">
           {policies?.map((policy) => (
@@ -185,22 +189,26 @@ export function PoliciesPanel({
                   ? "…"
                   : `${usageCounts[policy._id] ?? 0} agent${(usageCounts[policy._id] ?? 0) === 1 ? "" : "s"}`}
               </span>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="cursor-pointer text-muted-foreground"
-                onClick={() => beginEdit(policy)}
-              >
-                <Pencil className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="cursor-pointer text-muted-foreground hover:text-destructive"
-                onClick={() => setDeletingPolicy(policy)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              {canWrite && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="cursor-pointer text-muted-foreground"
+                    onClick={() => beginEdit(policy)}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="cursor-pointer text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeletingPolicy(policy)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </>
+              )}
             </div>
           ))}
           {policies && policies.length === 0 && (

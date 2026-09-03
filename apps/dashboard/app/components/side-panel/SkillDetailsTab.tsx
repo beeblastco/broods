@@ -8,6 +8,7 @@
 import { ToggleRow } from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -100,6 +101,7 @@ function SourceCard({
 }
 
 function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
+  const { canWrite } = useOrgRole();
   const createFromGithub = useAction(api.skillsPublic.createFromGithub);
   const [url, setUrl] = useState("");
   const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
@@ -165,17 +167,19 @@ function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
         </p>
       )}
 
-      <Button
-        size="sm"
-        className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
-        disabled={!url.trim() || !token.trim() || status.type === "busy"}
-        onClick={() => void handleImport()}
-      >
-        {status.type === "busy" && (
-          <Loader2 className="size-3.5 animate-spin" />
-        )}
-        Import from GitHub
-      </Button>
+      {canWrite && (
+        <Button
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          disabled={!url.trim() || !token.trim() || status.type === "busy"}
+          onClick={() => void handleImport()}
+        >
+          {status.type === "busy" && (
+            <Loader2 className="size-3.5 animate-spin" />
+          )}
+          Import from GitHub
+        </Button>
+      )}
     </div>
   );
 }
@@ -187,6 +191,7 @@ function JsonForm({
   existingPath?: string;
   onSuccess: (skillPath: string) => void;
 }) {
+  const { canWrite } = useOrgRole();
   const createFromJson = useAction(api.skillsPublic.createFromJson);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -302,17 +307,19 @@ function JsonForm({
         </p>
       )}
 
-      <Button
-        size="sm"
-        className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
-        disabled={!canSubmit}
-        onClick={() => void handleSubmit()}
-      >
-        {status.type === "busy" && (
-          <Loader2 className="size-3.5 animate-spin" />
-        )}
-        {isUpdate ? "Update skill" : "Create skill"}
-      </Button>
+      {canWrite && (
+        <Button
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          disabled={!canSubmit}
+          onClick={() => void handleSubmit()}
+        >
+          {status.type === "busy" && (
+            <Loader2 className="size-3.5 animate-spin" />
+          )}
+          {isUpdate ? "Update skill" : "Create skill"}
+        </Button>
+      )}
     </div>
   );
 }

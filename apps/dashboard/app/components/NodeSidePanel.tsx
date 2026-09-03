@@ -42,6 +42,7 @@ import {
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   applyModelReasoning,
   fromNestedAgentConfig,
@@ -268,6 +269,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       : "skip",
   );
   const removeMcpForNode = useAction(api.mcp.removeForNode);
+  const { canWrite } = useOrgRole();
 
   // Editable name (agent uses agentConfig, others use canvas label)
   const [editName, setEditName] = useState("");
@@ -885,7 +887,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 Test
               </TabsTrigger>
             )}
-            <TabsTrigger value="settings">Settings</TabsTrigger>
+            {canWrite && <TabsTrigger value="settings">Settings</TabsTrigger>}
           </TabsList>
 
           {/* Details tab */}
@@ -893,98 +895,100 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             value="details"
             className="flex flex-col overflow-y-auto"
           >
-            {isAgent ? (
-              <DetailsTab
-                key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
-                agentConfig={agentConfig}
-                projectId={projectId}
-                stageId={stageId}
-                activeDeployment={activeDeployment}
-                deploymentApiKey={resolvedDeploymentApiKey}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                onUpdateOutputFormat={handleUpdateOutputFormat}
-                onGenerateKey={handleGenerateKey}
-                onRotateKey={handleRotateKey}
-                isSavingKey={isSavingKey}
-                selectedProvider={selectedProvider}
-                runtimeVariables={runtimeVariables}
-                onSaveModelSettings={handleSaveModelSettings}
-                onUpdateToolConfig={handleUpdateToolConfig}
-                onUpdateChannelConfig={handleUpdateChannelConfig}
-                onUpdateModelReasoning={handleUpdateModelReasoning}
-                onUpdatePublicAccess={handleUpdatePublicAccess}
-                onUpdatePolicyConfig={handleUpdatePolicyConfig}
-              />
-            ) : isMcp && node ? (
-              <McpDetailsTab
-                projectId={projectId}
-                stageId={stageId}
-                nodeId={node.id}
-                nodeLabel={editName || nodeData.label}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSavingName={isSaving}
-              />
-            ) : nodeType === "workspace" && node ? (
-              <WorkspaceResourceDetailsTab
-                data={nodeData}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                onUpdateNodeData={(patch): void =>
-                  onUpdateNodeData(node.id, patch)
-                }
-              />
-            ) : nodeType === "sandbox" && node ? (
-              <SandboxResourceDetailsTab
-                data={nodeData}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                managedByCode={isCodeManaged}
-                onUpdateNodeData={(patch): void =>
-                  onUpdateNodeData(node.id, patch)
-                }
-              />
-            ) : nodeType === "skill" && node ? (
-              <SkillDetailsTab
-                nodeId={node.id}
-                nodeConfig={nodeData?.config}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                onUpdateNodeConfig={(patch): void =>
-                  onUpdateNodeData(node.id, {
-                    config: { ...nodeData?.config, ...patch },
-                  })
-                }
-                onUpdateSkillPath={(p): void => {
-                  setEditName(p);
-                  onUpdateNodeLabel(node.id, p);
-                }}
-              />
-            ) : nodeType === "database" && node ? (
-              <SessionDetailsTab
-                nodeId={node.id}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSaving={isSaving}
-              />
-            ) : (
-              <ServiceDetailsTab
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSaving={isSaving}
-              />
-            )}
+            <fieldset disabled={!canWrite} className="contents">
+              {isAgent ? (
+                <DetailsTab
+                  key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
+                  agentConfig={agentConfig}
+                  projectId={projectId}
+                  stageId={stageId}
+                  activeDeployment={activeDeployment}
+                  deploymentApiKey={resolvedDeploymentApiKey}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  onUpdateOutputFormat={handleUpdateOutputFormat}
+                  onGenerateKey={handleGenerateKey}
+                  onRotateKey={handleRotateKey}
+                  isSavingKey={isSavingKey}
+                  selectedProvider={selectedProvider}
+                  runtimeVariables={runtimeVariables}
+                  onSaveModelSettings={handleSaveModelSettings}
+                  onUpdateToolConfig={handleUpdateToolConfig}
+                  onUpdateChannelConfig={handleUpdateChannelConfig}
+                  onUpdateModelReasoning={handleUpdateModelReasoning}
+                  onUpdatePublicAccess={handleUpdatePublicAccess}
+                  onUpdatePolicyConfig={handleUpdatePolicyConfig}
+                />
+              ) : isMcp && node ? (
+                <McpDetailsTab
+                  projectId={projectId}
+                  stageId={stageId}
+                  nodeId={node.id}
+                  nodeLabel={editName || nodeData.label}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  nameChanged={!!nameChanged}
+                  isSavingName={isSaving}
+                />
+              ) : nodeType === "workspace" && node ? (
+                <WorkspaceResourceDetailsTab
+                  data={nodeData}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  onUpdateNodeData={(patch): void =>
+                    onUpdateNodeData(node.id, patch)
+                  }
+                />
+              ) : nodeType === "sandbox" && node ? (
+                <SandboxResourceDetailsTab
+                  data={nodeData}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  managedByCode={isCodeManaged}
+                  onUpdateNodeData={(patch): void =>
+                    onUpdateNodeData(node.id, patch)
+                  }
+                />
+              ) : nodeType === "skill" && node ? (
+                <SkillDetailsTab
+                  nodeId={node.id}
+                  nodeConfig={nodeData?.config}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  onUpdateNodeConfig={(patch): void =>
+                    onUpdateNodeData(node.id, {
+                      config: { ...nodeData?.config, ...patch },
+                    })
+                  }
+                  onUpdateSkillPath={(p): void => {
+                    setEditName(p);
+                    onUpdateNodeLabel(node.id, p);
+                  }}
+                />
+              ) : nodeType === "database" && node ? (
+                <SessionDetailsTab
+                  nodeId={node.id}
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  nameChanged={!!nameChanged}
+                  isSaving={isSaving}
+                />
+              ) : (
+                <ServiceDetailsTab
+                  editName={editName}
+                  setEditName={setEditName}
+                  onSaveName={handleSaveName}
+                  nameChanged={!!nameChanged}
+                  isSaving={isSaving}
+                />
+              )}
+            </fieldset>
           </TabsContent>
 
           {/* Files tab — workspace nodes */}
@@ -1087,22 +1091,24 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Settings tab — all node types */}
-          <TabsContent
-            value="settings"
-            className="flex flex-col overflow-y-auto"
-          >
-            <SettingsTab
-              nodeType={nodeType}
-              nodeName={resolvedName}
-              deleteOpen={deleteDialogOpen}
-              onDeleteOpenChange={setDeleteDialogOpen}
-              onDelete={handleDelete}
-              managedByCode={isCodeManaged}
-              codeOwner={codeOwner === "api" ? "api" : "cli"}
-              deleteLocked={isCodeManaged || isOwnershipLoading}
-            />
-          </TabsContent>
+          {/* Settings tab — all node types, admins only */}
+          {canWrite && (
+            <TabsContent
+              value="settings"
+              className="flex flex-col overflow-y-auto"
+            >
+              <SettingsTab
+                nodeType={nodeType}
+                nodeName={resolvedName}
+                deleteOpen={deleteDialogOpen}
+                onDeleteOpenChange={setDeleteDialogOpen}
+                onDelete={handleDelete}
+                managedByCode={isCodeManaged}
+                codeOwner={codeOwner === "api" ? "api" : "cli"}
+                deleteLocked={isCodeManaged || isOwnershipLoading}
+              />
+            </TabsContent>
+          )}
         </Tabs>
       )}
     </div>

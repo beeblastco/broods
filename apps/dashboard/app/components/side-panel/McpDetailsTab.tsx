@@ -5,6 +5,7 @@
  * enabled switch, and the wire to the connected agent's `mcp` config.
  */
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Switch } from "@/app/components/ui/switch";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
@@ -39,6 +40,7 @@ export function McpDetailsTab({
   nameChanged: boolean;
   isSavingName: boolean;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const canQuery = !!projectId && !!stageId;
   const server = useQuery(
     api.mcp.getByNode,
@@ -92,7 +94,7 @@ export function McpDetailsTab({
               if (e.key === "Enter") onSaveName();
             }}
           />
-          {nameChanged && (
+          {nameChanged && canWrite && (
             <Button
               size="sm"
               variant="outline"

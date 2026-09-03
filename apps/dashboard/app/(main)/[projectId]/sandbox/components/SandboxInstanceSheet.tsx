@@ -9,6 +9,7 @@
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import {
   Sheet,
@@ -101,6 +102,7 @@ export function SandboxInstanceSheet({
   now,
   onClose,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const createSnapshot = useAction(api.sandbox.public.createSnapshot);
   const refresh = useAction(api.sandbox.public.refreshSandbox);
   const runCommand = useAction(api.sandbox.public.runSandboxCommand);
@@ -349,16 +351,18 @@ export function SandboxInstanceSheet({
             </div>
 
             <div className="mt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                className="cursor-pointer disabled:cursor-not-allowed"
-                disabled={!controllable || refreshing}
-                onClick={handleRefresh}
-              >
-                <RefreshCw className="mr-1 size-3.5" />
-                Refresh status
-              </Button>
+              {canWrite && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="cursor-pointer disabled:cursor-not-allowed"
+                  disabled={!controllable || refreshing}
+                  onClick={handleRefresh}
+                >
+                  <RefreshCw className="mr-1 size-3.5" />
+                  Refresh status
+                </Button>
+              )}
               {refreshMessage && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   {refreshMessage}
@@ -426,17 +430,19 @@ export function SandboxInstanceSheet({
                       disabled={!controllable || snapPending}
                       className="h-8"
                     />
-                    <Button
-                      size="sm"
-                      className="cursor-pointer disabled:cursor-not-allowed"
-                      disabled={
-                        !controllable || snapPending || !snapName.trim()
-                      }
-                      onClick={handleSnapshot}
-                    >
-                      <Camera className="mr-1 size-3.5" />
-                      Snapshot
-                    </Button>
+                    {canWrite && (
+                      <Button
+                        size="sm"
+                        className="cursor-pointer disabled:cursor-not-allowed"
+                        disabled={
+                          !controllable || snapPending || !snapName.trim()
+                        }
+                        onClick={handleSnapshot}
+                      >
+                        <Camera className="mr-1 size-3.5" />
+                        Snapshot
+                      </Button>
+                    )}
                   </div>
                   {snapMessage && (
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -461,15 +467,17 @@ export function SandboxInstanceSheet({
               <p className="mt-1 text-xs text-muted-foreground">
                 Terminate the instance, releasing its reservation and compute.
               </p>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="mt-3 cursor-pointer disabled:cursor-not-allowed"
-                disabled={!controllable}
-                onClick={() => setConfirmOpen(true)}
-              >
-                Terminate
-              </Button>
+              {canWrite && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="mt-3 cursor-pointer disabled:cursor-not-allowed"
+                  disabled={!controllable}
+                  onClick={() => setConfirmOpen(true)}
+                >
+                  Terminate
+                </Button>
+              )}
             </div>
 
             {!controllable && (
@@ -509,18 +517,20 @@ export function SandboxInstanceSheet({
                       Runs in the reserved sandbox with a 30s timeout and 64 KiB
                       output cap.
                     </p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={
-                        !commandRunnable || commandPending || !command.trim()
-                      }
-                      onClick={handleCommand}
-                      className="cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <Play className="mr-1 size-3.5" />
-                      Run
-                    </Button>
+                    {canWrite && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={
+                          !commandRunnable || commandPending || !command.trim()
+                        }
+                        onClick={handleCommand}
+                        className="cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <Play className="mr-1 size-3.5" />
+                        Run
+                      </Button>
+                    )}
                   </div>
                   {!commandRunnable && (
                     <p className="mt-2 text-xs text-muted-foreground">

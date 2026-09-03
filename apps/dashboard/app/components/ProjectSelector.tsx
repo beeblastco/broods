@@ -3,6 +3,7 @@
 /** Dropdown selector for switching between user projects with an option to create new ones. */
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +25,7 @@ import { useCallback, useEffect, useState } from "react";
 
 /** Dropdown to list, switch, and create projects. */
 export function ProjectSelector(): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const queryArgs = !isLoading && isAuthenticated ? {} : "skip";
   const projects = useQuery(api.project.list, queryArgs) as
@@ -78,6 +80,8 @@ export function ProjectSelector(): React.JSX.Element {
   // An org with no projects has nothing to pick from: skip the menu and put the
   // create action itself in the header, one click from the same dialog.
   if (projects.length === 0) {
+    if (!canWrite) return <></>;
+
     return (
       <>
         <Button
@@ -141,14 +145,18 @@ export function ProjectSelector(): React.JSX.Element {
             </div>
           </DropdownMenuGroup>
 
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => setDialogOpen(true)}
-          >
-            <Plus className="size-4" />
-            New Project
-          </DropdownMenuItem>
+          {canWrite && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => setDialogOpen(true)}
+              >
+                <Plus className="size-4" />
+                New Project
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
