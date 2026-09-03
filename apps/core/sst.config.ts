@@ -400,9 +400,10 @@ export default $config({
     // Sandbox log bridge: every guest line the MicroVMs write to that group is
     // forwarded to the cluster's OTLP collector, which is the only write path into
     // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
-    // the collector's Basic auth pair (base64 `user:password`, a CI secret), so a
-    // deploy without it skips the bridge rather than shipping a function that
-    // fails every invocation. See docs/observability.md.
+    // the collector's Basic auth pair (base64 `user:password`, a CI secret, kept
+    // encrypted in state via $util.secret), so a deploy without it skips the
+    // bridge rather than shipping a function that fails every invocation. See
+    // docs/observability.md.
     if (microvmLogGroup && OTLP_BASIC_AUTH) {
       const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
         handler: "../lambda/sandbox-log-forwarder.handler",
@@ -412,7 +413,7 @@ export default $config({
         memory: "256 MB",
         environment: {
           OTLP_ENDPOINT: OTLP_ENDPOINT,
-          OTLP_BASIC_AUTH: OTLP_BASIC_AUTH,
+          OTLP_BASIC_AUTH: $util.secret(OTLP_BASIC_AUTH),
         },
         transform: {
           function: {

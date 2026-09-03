@@ -50,9 +50,10 @@ import {
   fetchObservabilityScope,
   subscribeObservabilityLogs,
 } from "../observability-client.ts";
-import type {
-  LogLevel,
-  ObservabilityLogEntry,
+import {
+  isSandboxLogId,
+  type LogLevel,
+  type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
 import {
   hasFlag,
@@ -2192,6 +2193,11 @@ async function logs(args: string[]): Promise<void> {
   );
   const jsonMode = hasFlag(args, "--json");
   const sandboxId = optionValue(args, "--sandbox");
+  // A bare or malformed --sandbox must not fall through to the deployment tail.
+  if (hasFlag(args, "--sandbox") && !isSandboxLogId(sandboxId))
+    throw new Error(
+      "--sandbox needs the instance log id, the UUID shown in the dashboard Instances sheet.",
+    );
 
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
