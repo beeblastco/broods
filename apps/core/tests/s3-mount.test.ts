@@ -202,7 +202,6 @@ describe("resolveS3Mount", () => {
     const policy = JSON.parse(String(lastAssumeRoleInput?.Policy)) as {
       Statement: Array<Record<string, unknown>>;
     };
-    // A directory boundary, not a string glob: agents/ never matches agents-x/.
     expect(policy.Statement[0]?.Resource).toEqual([
       "arn:aws:s3:::acme/agents/*",
     ]);

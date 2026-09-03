@@ -79,8 +79,7 @@ export interface SandboxConfig {
   memoryLimit?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
-  // Provider knobs. `docker` (boolean, sandbox provider only) turns on
-  // docker-in-sandbox at create time; validated in validateProviderOptions.
+  // Provider knobs; `docker: boolean` is the sandbox provider's only typed one.
   options?: Record<string, unknown>;
 }
 

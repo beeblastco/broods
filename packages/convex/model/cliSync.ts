@@ -301,8 +301,6 @@ export async function ensureStage(
     return existing;
   }
 
-  // Only a new custom stage is held to the slug rule: a stage created before
-  // the rule keeps syncing under its existing name (matched above).
   // Only Development is ever the default; Production/custom stages are
   // never auto-defaulted, even when created first.
   const stageId = await ctx.db.insert("stages", {

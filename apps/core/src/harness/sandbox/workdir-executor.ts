@@ -526,7 +526,6 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ? { image_version: configString(options.imageVersion) }
         : {}),
       ...(mounts ? { mounts: mounts } : {}),
-      // Validated at config time: only the sandbox provider may set it.
       ...(options.docker === true ? { docker: { enabled: true } } : {}),
       ...(persistent
         ? {

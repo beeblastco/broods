@@ -116,8 +116,6 @@ export const create = mutation({
     const project = await getProjectForRole(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
-    // The blob's own size is the truth, and the cap is enforced here because
-    // a storage upload URL cannot carry one.
     const blob = storageId ? await ctx.db.system.get(storageId) : null;
     if (storageId && !blob) {
       throw new Error("Uploaded file was not found in storage.");

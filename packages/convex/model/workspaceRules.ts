@@ -220,8 +220,6 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   const region = optionalString(value.region, "config.storage.region");
   const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
   const prefix = optionalString(value.prefix, "config.storage.prefix");
-  // The mount credentials are scoped to bucket/prefix; a bring-your-own bucket
-  // with no prefix would hand the sandbox the whole bucket.
   if (bucket && !prefix?.replace(/^\/+|\/+$/g, "")) {
     throw new Error(
       "config.storage.prefix is required when config.storage.bucket is set; the sandbox mount is scoped to that prefix",

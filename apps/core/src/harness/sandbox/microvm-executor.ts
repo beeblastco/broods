@@ -902,9 +902,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         `MicroVM sandbox cannot enforce ${network.mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`,
       );
     }
-    // The connector's security group is fixed at deploy time, so a per-account
-    // allowlist cannot be applied to it. Config validation already refuses one on
-    // this provider; this is the last line of defense, never a silent downgrade.
+    // The connector's security group is fixed at deploy time; config validation refuses this first.
     if (
       (network.allowDomains?.length ?? 0) > 0 ||
       (network.allowCidrs?.length ?? 0) > 0
@@ -1057,7 +1055,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     options: {
       timeoutSeconds?: number;
       budgetMs?: number;
-      // Executor-owned extras (the job callback token) layered over the account env.
       env?: Record<string, string>;
     } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
@@ -1367,11 +1364,7 @@ function evictToCap<T extends { expiresAt: number }>(
   if (oldest) cache.delete(oldest);
 }
 
-// The in-VM mount directory for a workspace namespace. Only the base segment is
-// used because the image mounts one prefix per VM: the reservation, the endpoint
-// cache and the S3 prefix all key on the full namespace (`sandboxReservationKey`,
-// `resolveS3MountIdentity`), so two isolated children of one base never share a
-// VM, and inside a VM there is exactly one workspace.
+// In-VM mount directory: one workspace per VM, so the base segment is enough.
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }

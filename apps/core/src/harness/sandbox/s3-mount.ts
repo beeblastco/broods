@@ -23,8 +23,7 @@ import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
 export interface S3MountIdentity {
   bucket: string;
-  // Key prefix the mount exposes (and the assumed session is scoped to). Always
-  // non-empty and "/"-terminated: a bring-your-own bucket must name a sub-path.
+  // Key prefix the mount exposes and the session is scoped to; non-empty, "/"-terminated.
   prefix: string;
   region?: string;
   endpoint?: string;
@@ -68,8 +67,7 @@ export function mountRoleArn(
 
 // Resolve the mount identity (bucket / prefix / region / endpoint) — no STS call.
 // A bring-your-own bucket uses its own layout under a required prefix; the shared
-// managed bucket is partitioned by namespace. The prefix always ends in "/", so
-// the credential scope is a path boundary, never a string glob.
+// managed bucket is partitioned by namespace.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
   const bucket = storage?.bucket ?? ctx.managedBucket;
@@ -198,10 +196,8 @@ export async function resolveS3Mount(
   return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
 }
 
-// Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`. The role
-// policy bounds the outer permissions; this session policy bounds the blast
-// radius to the mount's own prefix. The prefix must be a directory (end in "/")
-// so `agents/` can never also match `agents-archive/`.
+// Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`; the prefix
+// must end in "/" so `agents/` never also matches `agents-archive/`.
 export async function assumeScopedMountCredentials(params: {
   roleArn: string;
   bucket: string;

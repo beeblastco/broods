@@ -1,9 +1,6 @@
 /**
- * Upload URL quota. Every minted Convex storage upload URL is one
- * `uploadGrants` row; the count of unexpired rows per account is the quota.
- * The rows are also the only record of who minted a blob that never got
- * registered, which is what the orphan prune in `account/uploads.ts` relies
- * on being bounded.
+ * Upload URL quota: one `uploadGrants` row per minted storage upload URL, and
+ * the count of unexpired rows per account is the cap.
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -18,10 +15,7 @@ export type UploadKind = Doc<"uploadGrants">["kind"];
 /** Either a fresh upload URL or the time the oldest open grant expires. */
 export type UploadGrant = { uploadUrl: string } | { retryAt: number };
 
-/**
- * Prune a batch of expired grants, refuse when the account already holds the
- * hourly cap of open grants, otherwise record a grant and mint the URL.
- */
+/** Prune a batch of expired grants, then mint unless the account is at the cap. */
 export async function grantUpload(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

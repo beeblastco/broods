@@ -894,101 +894,100 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           <TabsContent
             value="details"
             className="flex flex-col overflow-y-auto"
+            render={<fieldset disabled={!canWrite} />}
           >
-            <fieldset disabled={!canWrite} className="contents">
-              {isAgent ? (
-                <DetailsTab
-                  key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
-                  agentConfig={agentConfig}
-                  projectId={projectId}
-                  stageId={stageId}
-                  activeDeployment={activeDeployment}
-                  deploymentApiKey={resolvedDeploymentApiKey}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  onUpdateOutputFormat={handleUpdateOutputFormat}
-                  onGenerateKey={handleGenerateKey}
-                  onRotateKey={handleRotateKey}
-                  isSavingKey={isSavingKey}
-                  selectedProvider={selectedProvider}
-                  runtimeVariables={runtimeVariables}
-                  onSaveModelSettings={handleSaveModelSettings}
-                  onUpdateToolConfig={handleUpdateToolConfig}
-                  onUpdateChannelConfig={handleUpdateChannelConfig}
-                  onUpdateModelReasoning={handleUpdateModelReasoning}
-                  onUpdatePublicAccess={handleUpdatePublicAccess}
-                  onUpdatePolicyConfig={handleUpdatePolicyConfig}
-                />
-              ) : isMcp && node ? (
-                <McpDetailsTab
-                  projectId={projectId}
-                  stageId={stageId}
-                  nodeId={node.id}
-                  nodeLabel={editName || nodeData.label}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  nameChanged={!!nameChanged}
-                  isSavingName={isSaving}
-                />
-              ) : nodeType === "workspace" && node ? (
-                <WorkspaceResourceDetailsTab
-                  data={nodeData}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  onUpdateNodeData={(patch): void =>
-                    onUpdateNodeData(node.id, patch)
-                  }
-                />
-              ) : nodeType === "sandbox" && node ? (
-                <SandboxResourceDetailsTab
-                  data={nodeData}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  managedByCode={isCodeManaged}
-                  onUpdateNodeData={(patch): void =>
-                    onUpdateNodeData(node.id, patch)
-                  }
-                />
-              ) : nodeType === "skill" && node ? (
-                <SkillDetailsTab
-                  nodeId={node.id}
-                  nodeConfig={nodeData?.config}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  onUpdateNodeConfig={(patch): void =>
-                    onUpdateNodeData(node.id, {
-                      config: { ...nodeData?.config, ...patch },
-                    })
-                  }
-                  onUpdateSkillPath={(p): void => {
-                    setEditName(p);
-                    onUpdateNodeLabel(node.id, p);
-                  }}
-                />
-              ) : nodeType === "database" && node ? (
-                <SessionDetailsTab
-                  nodeId={node.id}
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  nameChanged={!!nameChanged}
-                  isSaving={isSaving}
-                />
-              ) : (
-                <ServiceDetailsTab
-                  editName={editName}
-                  setEditName={setEditName}
-                  onSaveName={handleSaveName}
-                  nameChanged={!!nameChanged}
-                  isSaving={isSaving}
-                />
-              )}
-            </fieldset>
+            {isAgent ? (
+              <DetailsTab
+                key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
+                agentConfig={agentConfig}
+                projectId={projectId}
+                stageId={stageId}
+                activeDeployment={activeDeployment}
+                deploymentApiKey={resolvedDeploymentApiKey}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                onUpdateOutputFormat={handleUpdateOutputFormat}
+                onGenerateKey={handleGenerateKey}
+                onRotateKey={handleRotateKey}
+                isSavingKey={isSavingKey}
+                selectedProvider={selectedProvider}
+                runtimeVariables={runtimeVariables}
+                onSaveModelSettings={handleSaveModelSettings}
+                onUpdateToolConfig={handleUpdateToolConfig}
+                onUpdateChannelConfig={handleUpdateChannelConfig}
+                onUpdateModelReasoning={handleUpdateModelReasoning}
+                onUpdatePublicAccess={handleUpdatePublicAccess}
+                onUpdatePolicyConfig={handleUpdatePolicyConfig}
+              />
+            ) : isMcp && node ? (
+              <McpDetailsTab
+                projectId={projectId}
+                stageId={stageId}
+                nodeId={node.id}
+                nodeLabel={editName || nodeData.label}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                nameChanged={!!nameChanged}
+                isSavingName={isSaving}
+              />
+            ) : nodeType === "workspace" && node ? (
+              <WorkspaceResourceDetailsTab
+                data={nodeData}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                onUpdateNodeData={(patch): void =>
+                  onUpdateNodeData(node.id, patch)
+                }
+              />
+            ) : nodeType === "sandbox" && node ? (
+              <SandboxResourceDetailsTab
+                data={nodeData}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                managedByCode={isCodeManaged}
+                onUpdateNodeData={(patch): void =>
+                  onUpdateNodeData(node.id, patch)
+                }
+              />
+            ) : nodeType === "skill" && node ? (
+              <SkillDetailsTab
+                nodeId={node.id}
+                nodeConfig={nodeData?.config}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                onUpdateNodeConfig={(patch): void =>
+                  onUpdateNodeData(node.id, {
+                    config: { ...nodeData?.config, ...patch },
+                  })
+                }
+                onUpdateSkillPath={(p): void => {
+                  setEditName(p);
+                  onUpdateNodeLabel(node.id, p);
+                }}
+              />
+            ) : nodeType === "database" && node ? (
+              <SessionDetailsTab
+                nodeId={node.id}
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                nameChanged={!!nameChanged}
+                isSaving={isSaving}
+              />
+            ) : (
+              <ServiceDetailsTab
+                editName={editName}
+                setEditName={setEditName}
+                onSaveName={handleSaveName}
+                nameChanged={!!nameChanged}
+                isSaving={isSaving}
+              />
+            )}
           </TabsContent>
 
           {/* Files tab — workspace nodes */}

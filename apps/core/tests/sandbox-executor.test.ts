@@ -1822,8 +1822,6 @@ describe("background job scripts", () => {
     expect(wrapper).toContain(
       "https://fn.example/sandbox-jobs/async_tool_1/complete",
     );
-    // The token never lands in script text (process table, job logs); the
-    // executor puts it in the launch exec's env and the wrapper reads $__CB_TOKEN.
     expect(launch).not.toContain("tok-123");
     expect(wrapper).not.toContain("tok-123");
     expect(wrapper).toContain('os.environ["__CB_TOKEN"]');
