@@ -496,10 +496,12 @@ function encryptionSecret(): string {
   return secret;
 }
 
-/** The service secret core shares; it also keys stage session tickets. */
+/**
+ * The one service secret: `BROODS_SERVICE_AUTH_SECRET` here, the same value
+ * as core's `SERVICE_AUTH_SECRET`, which also verifies stage session tickets.
+ */
 function serviceSecret(): string {
-  const secret =
-    process.env.BROODS_SERVICE_AUTH_SECRET ?? process.env.SERVICE_AUTH_SECRET;
+  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
   if (!secret) {
     throw new Error(
       "BROODS_SERVICE_AUTH_SECRET is required to mint stage session tickets",

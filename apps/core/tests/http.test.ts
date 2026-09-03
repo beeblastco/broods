@@ -130,4 +130,35 @@ describe("publicHostFetch", () => {
     expect(new Headers(init.headers).get("host")).toBe("api.example.com");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer k");
   });
+
+  it("keeps a Request's method, body, headers and explicit port", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
+    const calls: Array<{ url: string; init: BunFetchRequestInit }> = [];
+    globalThis.fetch = (async (input, init) => {
+      calls.push({ url: String(input), init: init ?? {} });
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await publicHostFetch(
+        new Request("https://api.example.com:8443/v1/chat", {
+          method: "POST",
+          headers: { authorization: "Bearer k" },
+          body: "hi",
+        }),
+      );
+    } finally {
+      lookup.mockRestore();
+    }
+
+    const { url, init } = calls[0]!;
+    expect(url).toBe("https://93.184.216.34:8443/v1/chat");
+    expect(init.method).toBe("POST");
+    expect(await new Response(init.body).text()).toBe("hi");
+    expect(new Headers(init.headers).get("host")).toBe("api.example.com:8443");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer k");
+    expect(init.tls?.serverName).toBe("api.example.com");
+  });
 });

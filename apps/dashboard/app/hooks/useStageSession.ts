@@ -12,6 +12,8 @@ import { useEffect, useState } from "react";
 // Re-mint this long before the ticket would expire so a live socket never
 // reconnects with a dead credential.
 const RENEW_LEAD_MS = 5 * 60 * 1000;
+// A stage with no deployment yet, or a failed mint, is retried at this pace.
+const RETRY_MS = 30 * 1000;
 
 type StageSession = {
   stageId: Id<"stages">;
@@ -37,27 +39,29 @@ export function useStageSession(
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
+    const schedule = (delayMs: number): void => {
+      timer = setTimeout(() => void renew(), delayMs);
+    };
     const renew = async (): Promise<void> => {
+      let minted: { token: string; expiresAt: number } | null = null;
       try {
-        const minted = await mint({ projectId: projectId, stageId: stageId });
-        if (cancelled) return;
-        if (!minted) {
-          setSession(null);
-
-          return;
-        }
-        setSession({
-          stageId: stageId,
-          token: minted.token,
-          expiresAt: minted.expiresAt,
-        });
-        timer = setTimeout(
-          () => void renew(),
-          Math.max(minted.expiresAt - Date.now() - RENEW_LEAD_MS, 1000),
-        );
+        minted = await mint({ projectId: projectId, stageId: stageId });
       } catch {
-        if (!cancelled) setSession(null);
+        minted = null;
       }
+      if (cancelled) return;
+      if (!minted) {
+        setSession(null);
+        schedule(RETRY_MS);
+
+        return;
+      }
+      setSession({
+        stageId: stageId,
+        token: minted.token,
+        expiresAt: minted.expiresAt,
+      });
+      schedule(Math.max(minted.expiresAt - Date.now() - RENEW_LEAD_MS, 1000));
     };
     void renew();
 

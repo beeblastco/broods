@@ -155,6 +155,7 @@ export async function publicHostFetch(
 ): Promise<Response> {
   const url = new URL(input instanceof Request ? input.url : String(input));
   const hostname = url.hostname;
+  const host = url.host;
   if (isPrivateHostname(hostname)) {
     throw new Error(`Refusing to reach private address ${hostname}`);
   }
@@ -167,10 +168,14 @@ export async function publicHostFetch(
     throw new Error(`${hostname} resolves to a private address`);
   }
   url.hostname = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
-  const headers = new Headers(init?.headers);
-  headers.set("host", hostname);
+  const request = input instanceof Request ? input : undefined;
+  const headers = new Headers(init?.headers ?? request?.headers);
+  headers.set("host", host);
 
   return fetch(url, {
+    ...(request
+      ? { method: request.method, body: request.body, signal: request.signal }
+      : {}),
     ...init,
     headers: headers,
     redirect: "error",
