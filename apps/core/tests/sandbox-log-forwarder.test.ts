@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { gzipSync } from "node:zlib";
 import {
   handler,
+  otlpHeaders,
   otlpLogsRequest,
   parseLogStream,
   redact,
@@ -84,6 +85,14 @@ describe("parseLogStream", () => {
   });
 });
 
+describe("otlpHeaders", () => {
+  it("reads the K=V,K2=V2 line the way core's otel.ts does", () => {
+    expect(
+      otlpHeaders("Authorization=Basic dXNlcjpwYXNz, x-scope=a=b"),
+    ).toEqual({ Authorization: "Basic dXNlcjpwYXNz", "x-scope": "a=b" });
+  });
+});
+
 describe("redact", () => {
   it("applies core's string patterns", () => {
     expect(
@@ -134,8 +143,8 @@ describe("handler", () => {
   const fetchMock = mock(async () => new Response(null, { status: 200 }));
 
   beforeEach(() => {
-    process.env.OTLP_ENDPOINT = "https://otel.example.test/";
-    process.env.OTLP_BASIC_AUTH = "dXNlcjpwYXNz";
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "https://otel.example.test/";
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = "Authorization=Basic dXNlcjpwYXNz";
     fetchMock.mockClear();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -154,7 +163,7 @@ describe("handler", () => {
     ];
     expect(url).toBe("https://otel.example.test/v1/logs");
     expect(init.method).toBe("POST");
-    expect(init.headers.authorization).toBe("Basic dXNlcjpwYXNz");
+    expect(init.headers.Authorization).toBe("Basic dXNlcjpwYXNz");
     expect(JSON.parse(init.body).resourceLogs).toHaveLength(1);
   });
 

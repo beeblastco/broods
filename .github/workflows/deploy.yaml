@@ -127,7 +127,7 @@ jobs:
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       # Sandbox log bridge: base64 `user:password` for the cluster's OTLP ingress.
       # Optional; unset skips the CloudWatch-to-Loki forwarder (sst.config.ts warns).
-      OTLP_BASIC_AUTH: ${{ secrets.OTLP_BASIC_AUTH }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
     steps:
       - name: Resolve deploy configuration
         shell: bash

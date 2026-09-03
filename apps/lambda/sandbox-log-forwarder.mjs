@@ -6,8 +6,10 @@
  * indexes come from splitting the stream name: no lookup, no shared state. Lines
  * are redacted with the same string patterns core's log.ts applies, then posted as
  * one OTLP/HTTP request to the cluster collector, whose groupbyattrs processor
- * already routes them by tenant. Per-run secret values are unknown here, so only
- * the pattern half of core's redaction runs; the docs say so.
+ * already routes them by tenant. The collector is reached exactly like core
+ * reaches it: OTEL_EXPORTER_OTLP_ENDPOINT plus the OTEL_EXPORTER_OTLP_HEADERS
+ * `K=V,K2=V2` line, so one credential serves both. Per-run secret values are
+ * unknown here, so only the pattern half of core's redaction runs; the docs say so.
  */
 
 import { gunzipSync } from "node:zlib";
@@ -38,12 +40,15 @@ export async function handler(event) {
     return;
 
   const body = otlpLogsRequest(payload);
-  const endpoint = requiredEnv("OTLP_ENDPOINT").replace(/\/+$/, "");
+  const endpoint = requiredEnv("OTEL_EXPORTER_OTLP_ENDPOINT").replace(
+    /\/+$/,
+    "",
+  );
   const response = await fetch(`${endpoint}/v1/logs`, {
     method: "POST",
     headers: {
+      ...otlpHeaders(requiredEnv("OTEL_EXPORTER_OTLP_HEADERS")),
       "content-type": "application/json",
-      authorization: `Basic ${requiredEnv("OTLP_BASIC_AUTH")}`,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -93,6 +98,20 @@ export function otlpLogsRequest(payload) {
       },
     ],
   };
+}
+
+/**
+ * Parse the OTEL_EXPORTER_OTLP_HEADERS line (`K=V,K2=V2`) the way core's otel.ts
+ * does, so the same secret value works on both sides.
+ */
+export function otlpHeaders(raw) {
+  const headers = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq > 0) headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+
+  return headers;
 }
 
 /**

@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
 import {
   formatProvider,
@@ -119,9 +119,10 @@ export function SandboxInstancesTable({
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageRows = filtered.slice(
-    safePage * PAGE_SIZE,
-    safePage * PAGE_SIZE + PAGE_SIZE,
+  const pageRows = useMemo(
+    () =>
+      filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [filtered, safePage],
   );
   const hasFilters = search.trim() !== "" || status !== "all";
   const refreshKey = pageRows
@@ -152,7 +153,7 @@ export function SandboxInstancesTable({
     }
   }
 
-  async function refreshVisible() {
+  const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = pageRows.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
@@ -171,13 +172,13 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }
+  }, [pageRows, refresh]);
 
   useEffect(() => {
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
     refreshedPages.current.add(refreshKey);
     void refreshVisible();
-  }, [refreshKey]);
+  }, [refreshKey, refreshVisible]);
 
   function traceHref(traceId: string): string {
     const next = new URLSearchParams();

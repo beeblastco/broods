@@ -22,12 +22,12 @@ const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
-// Sandbox log bridge target: the cluster's OTLP/HTTP collector ingress and the
-// base64 `user:password` behind its Basic-auth middleware (infra repo,
-// `otlp-basic-auth`). Optional: without the auth pair the bridge is not deployed.
-const OTLP_ENDPOINT =
-  process.env.OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
-const OTLP_BASIC_AUTH = process.env.OTLP_BASIC_AUTH?.trim();
+// The sandbox log forwarder reaches the OTLP collector with the same two
+// variables core uses, so the one `Authorization=Basic …` credential serves both.
+const OTEL_EXPORTER_OTLP_ENDPOINT =
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
+const OTEL_EXPORTER_OTLP_HEADERS =
+  process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
@@ -400,11 +400,10 @@ export default $config({
     // Sandbox log bridge: every guest line the MicroVMs write to that group is
     // forwarded to the cluster's OTLP collector, which is the only write path into
     // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
-    // the collector's Basic auth pair (base64 `user:password`, a CI secret, kept
-    // encrypted in state via $util.secret), so a deploy without it skips the
-    // bridge rather than shipping a function that fails every invocation. See
-    // docs/observability.md.
-    if (microvmLogGroup && OTLP_BASIC_AUTH) {
+    // the collector's client header line (a CI secret, kept encrypted in state
+    // via $util.secret), so a deploy without it skips the bridge rather than
+    // shipping a function that fails every invocation. See docs/observability.md.
+    if (microvmLogGroup && OTEL_EXPORTER_OTLP_HEADERS) {
       const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
         handler: "../lambda/sandbox-log-forwarder.handler",
         runtime: "nodejs22.x",
@@ -412,8 +411,8 @@ export default $config({
         timeout: "30 seconds",
         memory: "256 MB",
         environment: {
-          OTLP_ENDPOINT: OTLP_ENDPOINT,
-          OTLP_BASIC_AUTH: $util.secret(OTLP_BASIC_AUTH),
+          OTEL_EXPORTER_OTLP_ENDPOINT: OTEL_EXPORTER_OTLP_ENDPOINT,
+          OTEL_EXPORTER_OTLP_HEADERS: $util.secret(OTEL_EXPORTER_OTLP_HEADERS),
         },
         transform: {
           function: {
@@ -441,7 +440,7 @@ export default $config({
       );
     } else if (microvmLogGroup) {
       console.warn(
-        "OTLP_BASIC_AUTH is not set: skipping the sandbox log forwarder, MicroVM guest logs stay in CloudWatch only.",
+        "OTEL_EXPORTER_OTLP_HEADERS is not set: skipping the sandbox log forwarder, MicroVM guest logs stay in CloudWatch only.",
       );
     }
 

@@ -77,32 +77,6 @@ type TerminalEntry = {
 
 type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
 
-/** One label/value detail row. */
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-border py-2 last:border-0">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-right text-xs text-foreground">{value}</span>
-    </div>
-  );
-}
-
-/** Inline link button that deep-links to a trace in the dashboard. */
-function TraceLink({ traceId, href }: { traceId: string; href: string }) {
-  return (
-    <Button
-      nativeButton={false}
-      render={<Link href={href} />}
-      variant="outline"
-      size="xs"
-      className="cursor-pointer"
-    >
-      <code className="max-w-45 truncate font-mono">{traceId}</code>
-      <ExternalLink className="size-3" />
-    </Button>
-  );
-}
-
 export function SandboxInstanceSheet({
   instance,
   projectId,
@@ -239,23 +213,6 @@ export function SandboxInstanceSheet({
     }
   }
 
-  function actorLabel(event: SandboxAuditEvent): string {
-    if (event.actorEmail) return event.actorEmail;
-    if (event.actorName) return event.actorName;
-    if (event.actorId) return event.actorId;
-
-    return event.actorSource;
-  }
-
-  function auditDetail(event: SandboxAuditEvent): string {
-    if (event.result === "error") return event.errorMessage ?? "failed";
-    if (event.action === "exec" && event.exitCode !== undefined)
-      return `exit ${event.exitCode}`;
-    if (event.status) return event.status;
-
-    return "ok";
-  }
-
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">
@@ -277,95 +234,13 @@ export function SandboxInstanceSheet({
           </TabsList>
 
           <TabsContent value="detail" className="mt-4">
-            <div className="rounded-lg border border-border bg-card px-4">
-              <Field
-                label="Provider"
-                value={formatProvider(instance.provider)}
-              />
-              <Field label="Status" value={instance.status} />
-              <Field label="Size" value={formatSpecs(instance.specs)} />
-              <Field
-                label="External ID"
-                value={<code className="font-mono">{instance.externalId}</code>}
-              />
-              <Field
-                label="Reservation key"
-                value={
-                  <code className="font-mono break-all">
-                    {instance.reservationKey}
-                  </code>
-                }
-              />
-              {instance.agentId && (
-                <Field
-                  label="Agent"
-                  value={<code className="font-mono">{instance.agentId}</code>}
-                />
-              )}
-              {instance.conversationKey && (
-                <Field
-                  label="Conversation"
-                  value={
-                    <code className="font-mono break-all">
-                      {instance.conversationKey}
-                    </code>
-                  }
-                />
-              )}
-              {instance.workspaceName && (
-                <Field label="Workspace" value={instance.workspaceName} />
-              )}
-              {instance.createdByTraceId && (
-                <Field
-                  label="Created trace"
-                  value={
-                    <TraceLink
-                      traceId={instance.createdByTraceId}
-                      href={dashboardHref({
-                        tab: "tracing",
-                        trace: instance.createdByTraceId,
-                      })}
-                    />
-                  }
-                />
-              )}
-              {instance.lastUsedTraceId && (
-                <Field
-                  label="Last trace"
-                  value={
-                    <TraceLink
-                      traceId={instance.lastUsedTraceId}
-                      href={dashboardHref({
-                        tab: "tracing",
-                        trace: instance.lastUsedTraceId,
-                      })}
-                    />
-                  }
-                />
-              )}
-              {instance.snapshotId && (
-                <Field
-                  label="Snapshot"
-                  value={
-                    <code className="font-mono">{instance.snapshotId}</code>
-                  }
-                />
-              )}
-              <Field
-                label="Created"
-                value={relativeTime(instance.createdAt, now)}
-              />
-              <Field
-                label="Last used"
-                value={relativeTime(instance.lastUsedAt, now)}
-              />
-              {instance.suspendedAt && (
-                <Field
-                  label="Suspended"
-                  value={relativeTime(instance.suspendedAt, now)}
-                />
-              )}
-            </div>
+            <InstanceDetailFields
+              instance={instance}
+              now={now}
+              traceHref={(traceId) =>
+                dashboardHref({ tab: "tracing", trace: traceId })
+              }
+            />
 
             <div className="mt-4">
               {canWrite && (
@@ -387,50 +262,7 @@ export function SandboxInstanceSheet({
               )}
             </div>
 
-            <div className="mt-5">
-              <h4 className="text-sm font-medium text-foreground">Activity</h4>
-              <div className="mt-2 rounded-lg border border-border bg-card">
-                {auditEvents === undefined ? (
-                  <div className="px-3 py-4 text-xs text-muted-foreground">
-                    Loading activity...
-                  </div>
-                ) : auditEvents.length === 0 ? (
-                  <div className="px-3 py-4 text-xs text-muted-foreground">
-                    No activity recorded.
-                  </div>
-                ) : (
-                  auditEvents.map((event) => (
-                    <div
-                      key={event._id}
-                      className="flex items-start justify-between gap-3 border-b border-border px-3 py-2 last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-foreground">
-                            {event.action}
-                          </span>
-                          <span
-                            className={
-                              event.result === "ok"
-                                ? "text-xs text-emerald-500"
-                                : "text-xs text-red-500"
-                            }
-                          >
-                            {auditDetail(event)}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          {actorLabel(event)}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {relativeTime(event.createdAt, now)}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            <ActivityList events={auditEvents} now={now} />
 
             <div className="mt-5">
               <h4 className="text-sm font-medium text-foreground">Snapshot</h4>
@@ -526,103 +358,15 @@ export function SandboxInstanceSheet({
                 disabled={!commandRunnable}
               />
             ) : (
-              <div className="flex flex-col gap-3">
-                <div className="rounded-lg border border-border bg-card p-3">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-                    <Terminal className="size-4" />
-                    Shell command
-                  </div>
-                  <Textarea
-                    value={command}
-                    onChange={(event) => setCommand(event.target.value)}
-                    disabled={!commandRunnable || commandPending}
-                    rows={4}
-                    className="cursor-text font-mono text-xs disabled:cursor-not-allowed"
-                  />
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">
-                      Runs in the reserved sandbox with a 30s timeout and 64 KiB
-                      output cap.
-                    </p>
-                    {canWrite && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={
-                          !commandRunnable || commandPending || !command.trim()
-                        }
-                        onClick={handleCommand}
-                        className="cursor-pointer disabled:cursor-not-allowed"
-                      >
-                        <Play className="mr-1 size-3.5" />
-                        Run
-                      </Button>
-                    )}
-                  </div>
-                  {!commandRunnable && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      This instance cannot run commands from the dashboard in
-                      its current state.
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {terminalEntries.length === 0 ? (
-                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-8 text-center text-xs text-muted-foreground">
-                      Run a command to see stdout, stderr, and exit status here.
-                    </div>
-                  ) : (
-                    terminalEntries.map((entry, index) => (
-                      <div
-                        key={`${entry.command}-${index}`}
-                        className="rounded-lg border border-border bg-black p-3 text-xs text-white"
-                      >
-                        <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-zinc-400">
-                          <code className="min-w-0 flex-1 truncate">
-                            $ {entry.command}
-                          </code>
-                          {entry.result && (
-                            <span
-                              className={
-                                entry.result.ok
-                                  ? "shrink-0 text-emerald-300"
-                                  : "shrink-0 text-red-300"
-                              }
-                            >
-                              exit {entry.result.exitCode ?? "?"} ·{" "}
-                              {entry.result.durationMs}ms
-                            </span>
-                          )}
-                        </div>
-                        {entry.error ? (
-                          <pre className="whitespace-pre-wrap wrap-break-word text-red-200">
-                            {entry.error}
-                          </pre>
-                        ) : (
-                          <>
-                            {entry.result?.stdout && (
-                              <pre className="whitespace-pre-wrap wrap-break-word text-zinc-100">
-                                {entry.result.stdout}
-                              </pre>
-                            )}
-                            {entry.result?.stderr && (
-                              <pre className="mt-2 whitespace-pre-wrap wrap-break-word text-amber-200">
-                                {entry.result.stderr}
-                              </pre>
-                            )}
-                            {entry.result?.truncated && (
-                              <p className="mt-2 text-[11px] text-amber-200">
-                                Output truncated.
-                              </p>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
+              <CommandRunner
+                command={command}
+                entries={terminalEntries}
+                pending={commandPending}
+                runnable={commandRunnable}
+                onCommandChange={setCommand}
+                onRun={handleCommand}
+                canRun={canWrite}
+              />
             )}
           </TabsContent>
         </Tabs>
@@ -638,5 +382,318 @@ export function SandboxInstanceSheet({
         isDeleting={terminating}
       />
     </Sheet>
+  );
+}
+
+/** The instance's recent audit events, newest first. */
+function ActivityList({
+  events,
+  now,
+}: {
+  events: SandboxAuditEvent[] | undefined;
+  now: number;
+}): React.JSX.Element {
+  return (
+    <div className="mt-5">
+      <h4 className="text-sm font-medium text-foreground">Activity</h4>
+      <div className="mt-2 rounded-lg border border-border bg-card">
+        {events === undefined ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground">
+            Loading activity...
+          </div>
+        ) : events.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground">
+            No activity recorded.
+          </div>
+        ) : (
+          events.map((event) => (
+            <div
+              key={event._id}
+              className="flex items-start justify-between gap-3 border-b border-border px-3 py-2 last:border-0"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-foreground">
+                    {event.action}
+                  </span>
+                  <span
+                    className={
+                      event.result === "ok"
+                        ? "text-xs text-emerald-500"
+                        : "text-xs text-red-500"
+                    }
+                  >
+                    {auditDetail(event)}
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {actorLabel(event)}
+                </p>
+              </div>
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {relativeTime(event.createdAt, now)}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function actorLabel(event: SandboxAuditEvent): string {
+  if (event.actorEmail) return event.actorEmail;
+  if (event.actorName) return event.actorName;
+  if (event.actorId) return event.actorId;
+
+  return event.actorSource;
+}
+
+function auditDetail(event: SandboxAuditEvent): string {
+  if (event.result === "error") return event.errorMessage ?? "failed";
+  if (event.action === "exec" && event.exitCode !== undefined)
+    return `exit ${event.exitCode}`;
+  if (event.status) return event.status;
+
+  return "ok";
+}
+
+/** The bounded command runner for providers without a PTY endpoint. */
+function CommandRunner({
+  canRun,
+  command,
+  entries,
+  pending,
+  runnable,
+  onCommandChange,
+  onRun,
+}: {
+  /** Members are read-only: they see past output but get no Run button. */
+  canRun: boolean;
+  command: string;
+  entries: TerminalEntry[];
+  pending: boolean;
+  runnable: boolean;
+  onCommandChange: (value: string) => void;
+  onRun: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-lg border border-border bg-card p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+          <Terminal className="size-4" />
+          Shell command
+        </div>
+        <Textarea
+          value={command}
+          onChange={(event) => onCommandChange(event.target.value)}
+          disabled={!runnable || pending}
+          rows={4}
+          className="cursor-text font-mono text-xs disabled:cursor-not-allowed"
+        />
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            Runs in the reserved sandbox with a 30s timeout and 64 KiB output
+            cap.
+          </p>
+          {canRun && (
+            <Button
+              type="button"
+              size="sm"
+              disabled={!runnable || pending || !command.trim()}
+              onClick={onRun}
+              className="cursor-pointer disabled:cursor-not-allowed"
+            >
+              <Play className="mr-1 size-3.5" />
+              Run
+            </Button>
+          )}
+        </div>
+        {!runnable && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            This instance cannot run commands from the dashboard in its current
+            state.
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {entries.length === 0 ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-8 text-center text-xs text-muted-foreground">
+            Run a command to see stdout, stderr, and exit status here.
+          </div>
+        ) : (
+          entries.map((entry, index) => (
+            <div
+              key={`${entry.command}-${index}`}
+              className="rounded-lg border border-border bg-black p-3 text-xs text-white"
+            >
+              <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+                <code className="min-w-0 flex-1 truncate">
+                  $ {entry.command}
+                </code>
+                {entry.result && (
+                  <span
+                    className={
+                      entry.result.ok
+                        ? "shrink-0 text-emerald-300"
+                        : "shrink-0 text-red-300"
+                    }
+                  >
+                    exit {entry.result.exitCode ?? "?"} ·{" "}
+                    {entry.result.durationMs}ms
+                  </span>
+                )}
+              </div>
+              {entry.error ? (
+                <pre className="whitespace-pre-wrap wrap-break-word text-red-200">
+                  {entry.error}
+                </pre>
+              ) : (
+                <>
+                  {entry.result?.stdout && (
+                    <pre className="whitespace-pre-wrap wrap-break-word text-zinc-100">
+                      {entry.result.stdout}
+                    </pre>
+                  )}
+                  {entry.result?.stderr && (
+                    <pre className="mt-2 whitespace-pre-wrap wrap-break-word text-amber-200">
+                      {entry.result.stderr}
+                    </pre>
+                  )}
+                  {entry.result?.truncated && (
+                    <p className="mt-2 text-[11px] text-amber-200">
+                      Output truncated.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One label/value detail row. */
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-border py-2 last:border-0">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-right text-xs text-foreground">{value}</span>
+    </div>
+  );
+}
+
+/** The identity, size, and timing rows of the Detail tab. */
+function InstanceDetailFields({
+  instance,
+  now,
+  traceHref,
+}: {
+  instance: Doc<"sandboxInstances">;
+  now: number;
+  traceHref: (traceId: string) => string;
+}): React.JSX.Element {
+  return (
+    <div className="rounded-lg border border-border bg-card px-4">
+      <Field label="Provider" value={formatProvider(instance.provider)} />
+      <Field label="Status" value={instance.status} />
+      <Field label="Size" value={formatSpecs(instance.specs)} />
+      <Field
+        label="External ID"
+        value={<code className="font-mono">{instance.externalId}</code>}
+      />
+      <Field
+        label="Reservation key"
+        value={
+          <code className="font-mono break-all">{instance.reservationKey}</code>
+        }
+      />
+      {instance.agentId && (
+        <Field
+          label="Agent"
+          value={<code className="font-mono">{instance.agentId}</code>}
+        />
+      )}
+      {instance.conversationKey && (
+        <Field
+          label="Conversation"
+          value={
+            <code className="font-mono break-all">
+              {instance.conversationKey}
+            </code>
+          }
+        />
+      )}
+      {instance.workspaceName && (
+        <Field label="Workspace" value={instance.workspaceName} />
+      )}
+      {instance.createdByTraceId && (
+        <Field
+          label="Created trace"
+          value={
+            <TraceLink
+              traceId={instance.createdByTraceId}
+              href={traceHref(instance.createdByTraceId)}
+            />
+          }
+        />
+      )}
+      {instance.lastUsedTraceId && (
+        <Field
+          label="Last trace"
+          value={
+            <TraceLink
+              traceId={instance.lastUsedTraceId}
+              href={traceHref(instance.lastUsedTraceId)}
+            />
+          }
+        />
+      )}
+      {instance.snapshotId && (
+        <Field
+          label="Snapshot"
+          value={<code className="font-mono">{instance.snapshotId}</code>}
+        />
+      )}
+      <Field label="Created" value={relativeTime(instance.createdAt, now)} />
+      <Field label="Last used" value={relativeTime(instance.lastUsedAt, now)} />
+      {instance.suspendedAt && (
+        <Field
+          label="Suspended"
+          value={relativeTime(instance.suspendedAt, now)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Inline link button that deep-links to a trace in the dashboard. */
+function TraceLink({
+  traceId,
+  href,
+}: {
+  traceId: string;
+  href: string;
+}): React.JSX.Element {
+  return (
+    <Button
+      nativeButton={false}
+      render={<Link href={href} />}
+      variant="outline"
+      size="xs"
+      className="cursor-pointer"
+    >
+      <code className="max-w-45 truncate font-mono">{traceId}</code>
+      <ExternalLink className="size-3" />
+    </Button>
   );
 }

@@ -118,10 +118,14 @@ under service `broods-sandbox`, so an ephemeral VM never becomes a new Loki stre
 The dashboard Instances sheet has a **Logs** tab that subscribes with that id
 (`subscribe { sandboxId }`), and `broods logs --sandbox <id>` does the same. Sandbox
 lines never pass through NATS, so the gateway serves such a subscription by polling
-Loki every 2 s over a lookback window and dropping what it already relayed. Expect
-3–8 s from write to screen; that is CloudWatch delivery plus the collector batch, not
-the poll. The forwarder and its filter are SST resources that deploy only when
-`OTLP_BASIC_AUTH` (the collector ingress's Basic-auth pair) is set for the stage.
+Loki every 2 s over a lookback window and dropping what it already relayed. The
+backfill looks back one day, not the deployment stream's 30: the sandbox filter is
+structured metadata, so Loki scans every chunk of the tenant in the window, and a
+month took 8 s against 0.2 s for a day. Measured end to end, a line reaches the
+screen 1–2 s after the collector accepts it; CloudWatch delivery adds a few seconds
+in front of that. The forwarder and its filter are SST resources that deploy only when
+`OTEL_EXPORTER_OTLP_HEADERS` is set for the stage: the same `Authorization=Basic …`
+client line core ships with, so one credential serves both and rotates once.
 
 **3 — workdir host (not built).** workdir has no guest log stream: `sandboxd` logs to
 journald and each VM keeps a Firecracker log under its jail path, and neither carries a

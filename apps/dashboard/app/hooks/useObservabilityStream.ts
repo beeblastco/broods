@@ -168,9 +168,9 @@ export function useObservabilityStream(
 
   const connect = useCallback(() => {
     if (destroyedRef.current) return;
-    if (!coreEndpoint.ok) {
+    if (coreErrorMessage) {
       setStatus("error");
-      setError(coreEndpoint.message);
+      setError(coreErrorMessage);
 
       return;
     }
@@ -187,7 +187,7 @@ export function useObservabilityStream(
     setError(null);
 
     const wsUrl =
-      `${coreEndpoint.websocketBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
+      `${wsBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
       `/${encodeURIComponent(stageSlug)}/observability/ws`;
 
     // Credential in the subprotocol list, never the URL (see useAgentChat).
@@ -319,7 +319,6 @@ export function useObservabilityStream(
       }, RECONNECT_DELAY_MS);
     };
   }, [
-    coreEndpoint.ok,
     wsBaseUrl,
     coreErrorMessage,
     projectSlug,
@@ -338,22 +337,19 @@ export function useObservabilityStream(
     connectRef.current = connect;
   }, [connect]);
 
+  // `connect` changes exactly when a connection parameter does, so it is the one
+  // dependency that reopens the socket. Connecting is the effect's purpose; the
+  // status setState it performs is external-system synchronization.
   useEffect(() => {
     destroyedRef.current = false;
-
-    if (projectSlug && stageSlug && apiKey) {
-      // Connecting to the WebSocket on mount is the effect's purpose; the status
-      // setState it performs is intentional external-system synchronization.
-      connect();
-    }
+    if (projectSlug && stageSlug && apiKey) connect();
 
     return () => {
       destroyedRef.current = true;
       clearReconnect();
       closeSocket();
     };
-    // Re-run when connection params change; connect is stable unless they change.
-  }, [projectSlug, stageSlug, apiKey, stream, sandboxId]);
+  }, [projectSlug, stageSlug, apiKey, connect, clearReconnect, closeSocket]);
 
   const refresh = useCallback(() => {
     if (projectSlug && stageSlug && apiKey) connect();

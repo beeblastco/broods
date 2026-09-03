@@ -82,7 +82,7 @@ jobs:
       CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
       # Same as deploy.yaml: without it the plan omits the sandbox log forwarder
       # and drift would delete the deployed one.
-      OTLP_BASIC_AUTH: ${{ secrets.OTLP_BASIC_AUTH }}
+      OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup — drift should
       # only reconcile state, not bootstrap sandbox images. The deploy
       # workflow owns that mirror step.

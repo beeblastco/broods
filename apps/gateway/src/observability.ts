@@ -70,6 +70,11 @@ const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 const SANDBOX_LOG_POLL_MS = 2_000;
 const SANDBOX_LOG_POLL_LIMIT = 500;
 const SANDBOX_LOG_POLL_LOOKBACK_NS = 15n * 1_000_000_000n;
+// A sandbox filter is structured metadata, so Loki scans every chunk of the
+// tenant in the window: measured 8 s over 30 days against 0.2 s over one day,
+// and the gateway's 5 s query timeout sits in between. A day covers any VM's
+// maximum lifetime, so the tail loses nothing by asking for less.
+const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
@@ -681,7 +686,7 @@ function startSandboxLogPoll(
           scope,
           query,
           {
-            startNs: nowNs() - BigInt(LOKI_BACKFILL_WINDOW_MS) * NS_PER_MS,
+            startNs: nowNs() - SANDBOX_LOG_BACKFILL_WINDOW_NS,
             limit: backfill,
             direction: "backward",
           },

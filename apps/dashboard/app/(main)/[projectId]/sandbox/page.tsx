@@ -17,6 +17,7 @@ import { useQuery } from "convex/react";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { SandboxInstancesTable } from "./components/SandboxInstancesTable";
+import type { SandboxObservabilityScope } from "./components/SandboxLogTail";
 import { SandboxPolicyTable } from "./components/SandboxPolicyTable";
 import { SandboxSnapshotsTable } from "./components/SandboxSnapshotsTable";
 
@@ -48,24 +49,7 @@ export default function SandboxPage(): React.JSX.Element {
   );
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
   const account = useQuery(api.org.orgs.getActiveAccount, {});
-  // The instance sheet's Logs tab streams over the same gateway socket as the
-  // Monitoring tab: the stage's slugs from its deployment plus its runtime key,
-  // recovered from its encrypted copy. Minting a key stays on the Monitoring tab.
-  const activeDeployment = useQuery(
-    api.agent.deployments.getForStage,
-    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
-  );
-  const runtimeKey = useQuery(
-    api.agent.deployments.revealKeyForStage,
-    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
-  );
-  const observability = activeDeployment
-    ? {
-        projectSlug: activeDeployment.projectSlug,
-        stageSlug: activeDeployment.stageSlug,
-        apiKey: runtimeKey ?? undefined,
-      }
-    : null;
+  const observability = useObservabilityScope(projectId, activeStageId);
 
   const [view, setView] = useState<SandboxView>("instances");
   const activeLabel =
@@ -143,4 +127,26 @@ export default function SandboxPage(): React.JSX.Element {
       </div>
     </div>
   );
+}
+
+/**
+ * The instance sheet's Logs tab streams over the same gateway socket as the
+ * Monitoring tab: the stage's slugs from its deployment plus its runtime key,
+ * recovered from its encrypted copy. Minting a key stays on the Monitoring tab.
+ */
+function useObservabilityScope(
+  projectId: Id<"projects">,
+  stageId: Id<"stages"> | null,
+): SandboxObservabilityScope | null {
+  const args = stageId ? { projectId: projectId, stageId: stageId } : "skip";
+  const deployment = useQuery(api.agent.deployments.getForStage, args);
+  const runtimeKey = useQuery(api.agent.deployments.revealKeyForStage, args);
+
+  return deployment
+    ? {
+        projectSlug: deployment.projectSlug,
+        stageSlug: deployment.stageSlug,
+        apiKey: runtimeKey ?? undefined,
+      }
+    : null;
 }
