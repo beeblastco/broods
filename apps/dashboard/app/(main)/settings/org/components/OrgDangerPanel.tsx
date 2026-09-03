@@ -8,6 +8,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function OrgDangerPanel({ org }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const router = useRouter();
   const removeOrg = useMutation(api.org.orgs.remove);
 
@@ -57,17 +59,19 @@ export function OrgDangerPanel({ org }: Props): React.JSX.Element {
               scheduled jobs. The action cannot be undone.
             </p>
           </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            className="cursor-pointer"
-            onClick={() => {
-              setDeleteError(null);
-              setDeleteOpen(true);
-            }}
-          >
-            Delete
-          </Button>
+          {canWrite && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+            >
+              Delete
+            </Button>
+          )}
         </div>
         {deleteError && (
           <p className="text-xs text-destructive">{deleteError}</p>

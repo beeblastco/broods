@@ -3,6 +3,7 @@
 /** Project general settings: rename the project and view its slug. */
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const project = useQuery(api.project.getById, { projectId: projectId });
   const update = useMutation(api.project.update);
 
@@ -113,14 +115,16 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
 
         <div className="flex items-center justify-between gap-4">
           {saveError && <p className="text-xs text-destructive">{saveError}</p>}
-          <Button
-            size="sm"
-            className="cursor-pointer disabled:cursor-not-allowed ml-auto"
-            disabled={!dirty || !trimmedName || saving}
-            onClick={handleSave}
-          >
-            {saving ? "Saving..." : "Save changes"}
-          </Button>
+          {canWrite && (
+            <Button
+              size="sm"
+              className="cursor-pointer disabled:cursor-not-allowed ml-auto"
+              disabled={!dirty || !trimmedName || saving}
+              onClick={handleSave}
+            >
+              {saving ? "Saving..." : "Save changes"}
+            </Button>
+          )}
         </div>
       </div>
     </Section>

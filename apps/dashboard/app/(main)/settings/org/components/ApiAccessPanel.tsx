@@ -8,6 +8,7 @@
 
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +33,7 @@ interface Props {
 const MASKED_SECRET = "••••••••••••••••••••••••••••";
 
 export function ApiAccessPanel({ org }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const provision = useAction(api.org.lifecycle.provision);
   const rotate = useAction(api.org.lifecycle.rotateSecret);
@@ -107,14 +109,16 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
             secret. Save it now. It will not be shown again.
           </p>
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-          <Button
-            size="sm"
-            className="mt-4 cursor-pointer disabled:cursor-not-allowed"
-            disabled={pending}
-            onClick={handleProvision}
-          >
-            {pending ? "Provisioning..." : "Provision broods account"}
-          </Button>
+          {canWrite && (
+            <Button
+              size="sm"
+              className="mt-4 cursor-pointer disabled:cursor-not-allowed"
+              disabled={pending}
+              onClick={handleProvision}
+            >
+              {pending ? "Provisioning..." : "Provision broods account"}
+            </Button>
+          )}
         </div>
 
         {revealedSecret && (
@@ -206,16 +210,18 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
               The previous Bearer token will stop working.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="cursor-pointer disabled:cursor-not-allowed"
-            disabled={pending}
-            onClick={() => setRotateOpen(true)}
-          >
-            <RefreshCw className="size-3.5 mr-1" />
-            Rotate
-          </Button>
+          {canWrite && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={pending}
+              onClick={() => setRotateOpen(true)}
+            >
+              <RefreshCw className="size-3.5 mr-1" />
+              Rotate
+            </Button>
+          )}
         </div>
 
         {error && <p className="text-xs text-destructive">{error}</p>}

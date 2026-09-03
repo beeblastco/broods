@@ -6,6 +6,7 @@
  * each save an isolated slice.
  */
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -25,6 +26,7 @@ export function BranchEditor({
   onSave: (parsed: unknown) => Promise<void> | void;
   disabled?: boolean;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const serialized = useMemo(
     () =>
       value === undefined || value === null
@@ -89,18 +91,21 @@ export function BranchEditor({
         rows={8}
         className="min-h-32 resize-y bg-muted/50 font-mono text-xs"
         disabled={disabled}
+        readOnly={!canWrite}
       />
       {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
-          disabled={disabled || !dirty || isSaving}
-          onClick={handleSave}
-        >
-          {isSaving ? "Saving…" : "Save"}
-        </Button>
+        {canWrite && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
+            disabled={disabled || !dirty || isSaving}
+            onClick={handleSave}
+          >
+            {isSaving ? "Saving…" : "Save"}
+          </Button>
+        )}
         {saved && (
           <span className="flex items-center gap-1 text-xs text-emerald-500">
             <Check className="size-3" /> Saved

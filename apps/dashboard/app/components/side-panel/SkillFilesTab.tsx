@@ -7,6 +7,7 @@
  */
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
@@ -215,6 +216,7 @@ export function SkillFilesTab({
   skillPath: string;
   onUpdateSkillPath: (path: string) => void;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const files = useQuery(
     api.workspace.files.list,
     projectId ? { projectId: projectId, nodeId: nodeId } : "skip",
@@ -353,7 +355,6 @@ export function SkillFilesTab({
         isFolder: false,
         storageId: storageId,
         mimeType: "text/markdown",
-        sizeBytes: file.size,
       });
     },
     [projectId, nodeId, generateUploadUrl, createFile],
@@ -387,12 +388,14 @@ export function SkillFilesTab({
           <span className="flex-1 text-[10px] text-amber-600 dark:text-amber-400">
             SKILL.md required at the root
           </span>
-          <button
-            className="cursor-pointer text-[10px] font-medium text-amber-600 underline dark:text-amber-400"
-            onClick={() => setShowCreateSkillMd(true)}
-          >
-            Create
-          </button>
+          {canWrite && (
+            <button
+              className="cursor-pointer text-[10px] font-medium text-amber-600 underline dark:text-amber-400"
+              onClick={() => setShowCreateSkillMd(true)}
+            >
+              Create
+            </button>
+          )}
         </div>
       )}
 
@@ -459,7 +462,7 @@ export function SkillFilesTab({
       )}
 
       {/* Action bar */}
-      {!promptMode && (
+      {!promptMode && canWrite && (
         <div className="flex shrink-0 items-center gap-1.5 px-3 py-2">
           <Button
             size="sm"

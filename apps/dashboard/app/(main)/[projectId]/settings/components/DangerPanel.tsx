@@ -4,6 +4,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const project = useQuery(api.project.getById, { projectId: projectId });
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
@@ -93,18 +95,20 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                   : "All agents, services, variables, deploy keys, and webhooks in this stage will be removed."}
               </p>
             </div>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
-              disabled={!canDeleteStage}
-              onClick={() => {
-                setStageDeleteError(null);
-                setStageDialogOpen(true);
-              }}
-            >
-              Delete Stage
-            </Button>
+            {canWrite && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                disabled={!canDeleteStage}
+                onClick={() => {
+                  setStageDeleteError(null);
+                  setStageDialogOpen(true);
+                }}
+              >
+                Delete Stage
+              </Button>
+            )}
           </div>
           {stageDeleteError && (
             <p className="text-sm text-destructive">{stageDeleteError}</p>
@@ -126,17 +130,19 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                 permanently removed.
               </p>
             </div>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="shrink-0 cursor-pointer"
-              onClick={() => {
-                setProjectDeleteError(null);
-                setProjectDialogOpen(true);
-              }}
-            >
-              Delete Project
-            </Button>
+            {canWrite && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="shrink-0 cursor-pointer"
+                onClick={() => {
+                  setProjectDeleteError(null);
+                  setProjectDialogOpen(true);
+                }}
+              >
+                Delete Project
+              </Button>
+            )}
           </div>
           {projectDeleteError && (
             <p className="text-sm text-destructive">{projectDeleteError}</p>

@@ -6,6 +6,7 @@
  * external mode registers a pre-existing server by url + headers.
  */
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -69,6 +70,7 @@ export function McpTab({
   nodeId: string;
   nodeLabel: string;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const canQuery = !!projectId && !!stageId;
   const server = useQuery(
     api.mcp.getByNode,
@@ -247,14 +249,16 @@ export function McpTab({
             {isFormatting ? "Formatting…" : "Format"}
           </Button>
         )}
-        <Button
-          size="sm"
-          className="h-8 text-xs"
-          disabled={isSaving}
-          onClick={handleSave}
-        >
-          {isSaving ? "Verifying…" : "Save Server"}
-        </Button>
+        {canWrite && (
+          <Button
+            size="sm"
+            className="h-8 cursor-pointer text-xs"
+            disabled={isSaving}
+            onClick={handleSave}
+          >
+            {isSaving ? "Verifying…" : "Save Server"}
+          </Button>
+        )}
         <SavedBadge state={saveState} />
       </div>
     </div>

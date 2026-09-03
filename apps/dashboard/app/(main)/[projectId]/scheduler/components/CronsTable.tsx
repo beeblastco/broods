@@ -9,6 +9,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
@@ -61,6 +62,7 @@ function statusBadge(status: Doc<"crons">["lastStatus"]) {
 }
 
 export function CronsTable({ crons, agents }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const remove = useMutation(api.agent.cronsPublic.remove);
 
   const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
@@ -149,27 +151,31 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
                   {relativeTime(job.lastInvokedAt)}
                 </td>
                 <td className="px-4 py-2.5 text-right">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Edit ${job.name}`}
-                    className="cursor-pointer text-muted-foreground hover:text-foreground"
-                    onClick={() => setEditing(job)}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Delete ${job.name}`}
-                    className="cursor-pointer text-muted-foreground hover:text-destructive"
-                    onClick={() => {
-                      setError(null);
-                      setDeleting(job);
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  {canWrite && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Edit ${job.name}`}
+                        className="cursor-pointer text-muted-foreground hover:text-foreground"
+                        onClick={() => setEditing(job)}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Delete ${job.name}`}
+                        className="cursor-pointer text-muted-foreground hover:text-destructive"
+                        onClick={() => {
+                          setError(null);
+                          setDeleting(job);
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

@@ -4,6 +4,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -23,6 +24,7 @@ export function DeployKeysPanel({
   projectId,
   stageId,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const deployKeys = useQuery(
     api.deployKeys.list,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -141,14 +143,16 @@ export function DeployKeysPanel({
               <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
                 {key.keyHint}
               </code>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="cursor-pointer text-muted-foreground hover:text-destructive"
-                onClick={() => setDeletingKey(key)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              {canWrite && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="cursor-pointer text-muted-foreground hover:text-destructive"
+                  onClick={() => setDeletingKey(key)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -185,7 +189,7 @@ export function DeployKeysPanel({
               Cancel
             </Button>
           </div>
-        ) : (
+        ) : canWrite ? (
           <Button
             variant="outline"
             size="sm"
@@ -195,7 +199,7 @@ export function DeployKeysPanel({
             <Plus className="mr-1 size-3.5" />
             New Deploy Key
           </Button>
-        )}
+        ) : null}
       </Section>
 
       {deletingKey && (

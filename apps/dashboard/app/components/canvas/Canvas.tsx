@@ -8,6 +8,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
@@ -404,6 +405,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const [agentCreatePosition, setAgentCreatePosition] =
     useState<FlowPosition | null>(null);
   const { screenToFlowPosition, setCenter, getZoom, fitView } = useReactFlow();
+  const { canWrite } = useOrgRole();
   const nextId = useRef(1);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const lastRightClick = useRef<FlowPosition | null>(null);
@@ -1099,6 +1101,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         onEdgesDelete={onEdgesDeleteHandler}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        nodesDraggable={canWrite}
+        nodesConnectable={canWrite}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}
@@ -1165,36 +1169,43 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             >
               {flow}
             </ContextMenuTrigger>
-            <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
-              <ContextMenuGroup>
-                <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
-                  Add service
-                </ContextMenuLabel>
-              </ContextMenuGroup>
-              {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
-                <Fragment key={type}>
-                  {index === NODE_TEMPLATES.length - 1 && (
-                    <ContextMenuSeparator />
-                  )}
-                  <ContextMenuItem
-                    onClick={() =>
-                      type === "agent"
-                        ? onOpenSourcePicker()
-                        : type === "skill"
-                          ? setSkillPickerOpen(true)
-                          : addNode(type, label)
-                    }
-                  >
-                    <Icon />
-                    {label}
-                  </ContextMenuItem>
-                </Fragment>
-              ))}
-            </ContextMenuContent>
+            {canWrite && (
+              <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
+                <ContextMenuGroup>
+                  <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
+                    Add service
+                  </ContextMenuLabel>
+                </ContextMenuGroup>
+                {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
+                  <Fragment key={type}>
+                    {index === NODE_TEMPLATES.length - 1 && (
+                      <ContextMenuSeparator />
+                    )}
+                    <ContextMenuItem
+                      onClick={() =>
+                        type === "agent"
+                          ? onOpenSourcePicker()
+                          : type === "skill"
+                            ? setSkillPickerOpen(true)
+                            : addNode(type, label)
+                      }
+                    >
+                      <Icon />
+                      {label}
+                    </ContextMenuItem>
+                  </Fragment>
+                ))}
+              </ContextMenuContent>
+            )}
           </ContextMenu>
 
-          {isEmpty && (
+          {isEmpty && canWrite && (
             <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />
+          )}
+          {isEmpty && !canWrite && (
+            <p className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
+              No services yet. An org admin can add one.
+            </p>
           )}
         </div>
 

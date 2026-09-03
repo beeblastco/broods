@@ -14,6 +14,7 @@ import {
 } from "@/app/components/ui/avatar";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import {
@@ -52,6 +53,7 @@ type MemberRow = {
 };
 
 export function MembersPanel({ org }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const members = useQuery(api.org.members.list, { orgId: org._id });
   const add = useMutation(api.org.members.add);
   const updateRole = useMutation(
@@ -248,9 +250,9 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                         {m.email}
                       </p>
                     </div>
-                    {m.isOwner ? (
+                    {m.isOwner || !canWrite ? (
                       <Badge variant="secondary" className="text-xs uppercase">
-                        {ROLE_LABEL.owner}
+                        {ROLE_LABEL[m.role]}
                       </Badge>
                     ) : (
                       <Select
@@ -274,7 +276,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                         </SelectContent>
                       </Select>
                     )}
-                    {!m.isOwner && (
+                    {!m.isOwner && canWrite && (
                       <Button
                         variant="ghost"
                         size="sm"

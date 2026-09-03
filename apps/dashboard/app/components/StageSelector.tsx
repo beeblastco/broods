@@ -2,6 +2,7 @@
 
 /** Dropdown selector for switching between project stages and creating new ones. */
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   Dialog,
   DialogContent,
@@ -97,6 +98,7 @@ export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
  * that has no deployment region yet, so nothing else can prompt for one.
  */
 export function StageSelector(): React.JSX.Element | null {
+  const { canWrite } = useOrgRole();
   const params = useParams<{ projectId?: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { stageId, setStageId } = useStage();
@@ -275,7 +277,7 @@ export function StageSelector(): React.JSX.Element | null {
                 </DropdownMenuItem>
               ))}
 
-              {!productionStage && (
+              {!productionStage && canWrite && (
                 <DropdownMenuItem
                   className="gap-2 cursor-pointer"
                   onClick={handleSelectProductionTarget}
@@ -287,17 +289,21 @@ export function StageSelector(): React.JSX.Element | null {
             </div>
           </DropdownMenuGroup>
 
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => {
-              setDuplicateFromId(stageId);
-              setCreateOpen(true);
-            }}
-          >
-            <Plus className="size-4" />
-            New Stage
-          </DropdownMenuItem>
+          {canWrite && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setDuplicateFromId(stageId);
+                  setCreateOpen(true);
+                }}
+              >
+                <Plus className="size-4" />
+                New Stage
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

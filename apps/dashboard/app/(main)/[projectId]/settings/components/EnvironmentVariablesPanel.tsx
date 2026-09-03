@@ -4,6 +4,7 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -36,6 +37,7 @@ export function EnvironmentVariablesPanel({
   projectId,
   stageId,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const variables = useQuery(
     api.environmentVariables.list,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -162,29 +164,35 @@ export function EnvironmentVariablesPanel({
                   <span className="text-muted-foreground">empty</span>
                 )}
               </code>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
-                title={
-                  revealed[v._id] !== undefined ? "Hide value" : "Reveal value"
-                }
-                onClick={() => toggleReveal(v._id)}
-              >
-                {revealed[v._id] !== undefined ? (
-                  <EyeOff className="size-3.5" />
-                ) : (
-                  <Eye className="size-3.5" />
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
-                onClick={() => setDeletingVar(v)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              {canWrite && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                    title={
+                      revealed[v._id] !== undefined
+                        ? "Hide value"
+                        : "Reveal value"
+                    }
+                    onClick={() => toggleReveal(v._id)}
+                  >
+                    {revealed[v._id] !== undefined ? (
+                      <EyeOff className="size-3.5" />
+                    ) : (
+                      <Eye className="size-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeletingVar(v)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -234,7 +242,7 @@ export function EnvironmentVariablesPanel({
               <X className="size-3.5" />
             </Button>
           </div>
-        ) : (
+        ) : canWrite ? (
           <Button
             variant="outline"
             size="sm"
@@ -244,7 +252,7 @@ export function EnvironmentVariablesPanel({
             <Plus className="mr-1 size-3.5" />
             Add Variable
           </Button>
-        )}
+        ) : null}
       </Section>
 
       {deletingVar && (

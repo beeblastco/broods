@@ -12,6 +12,7 @@
  */
 
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -25,6 +26,7 @@ export default function CronsPage({
 }: {
   params: Promise<{ projectId: string }>;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const { projectId } = use(params);
   const typedProjectId = projectId as Id<"projects">;
 
@@ -55,18 +57,22 @@ export default function CronsPage({
             .
           </p>
         </div>
-        <Button
-          size="sm"
-          className="cursor-pointer disabled:cursor-not-allowed"
-          // A cron runs an agent, so with none in this project the
-          // dialog's picker would be empty and the form unsubmittable.
-          // Undefined means still loading, which is also not usable yet.
-          disabled={!account || account.status !== "active" || !agents?.length}
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus className="size-4 mr-1" />
-          New cron job
-        </Button>
+        {canWrite && (
+          <Button
+            size="sm"
+            className="cursor-pointer disabled:cursor-not-allowed"
+            // A cron runs an agent, so with none in this project the
+            // dialog's picker would be empty and the form unsubmittable.
+            // Undefined means still loading, which is also not usable yet.
+            disabled={
+              !account || account.status !== "active" || !agents?.length
+            }
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="size-4 mr-1" />
+            New cron job
+          </Button>
+        )}
       </div>
 
       {loading ? (
@@ -94,14 +100,16 @@ export default function CronsPage({
           <p className="mt-1 text-xs text-muted-foreground">
             Create one to run an agent on a recurring schedule.
           </p>
-          <Button
-            size="sm"
-            className="mt-4 cursor-pointer"
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus className="size-4 mr-1" />
-            Create your first cron job
-          </Button>
+          {canWrite && (
+            <Button
+              size="sm"
+              className="mt-4 cursor-pointer"
+              onClick={() => setCreateOpen(true)}
+            >
+              <Plus className="size-4 mr-1" />
+              Create your first cron job
+            </Button>
+          )}
         </div>
       ) : (
         <CronsTable crons={crons} agents={agents} />

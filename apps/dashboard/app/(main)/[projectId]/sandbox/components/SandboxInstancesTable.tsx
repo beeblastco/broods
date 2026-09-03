@@ -9,6 +9,7 @@
  */
 
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   Dialog,
   DialogContent,
@@ -72,6 +73,7 @@ export function SandboxInstancesTable({
   instances,
   projectId,
 }: Props): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const suspend = useAction(api.sandbox.public.suspendSandbox);
   const resume = useAction(api.sandbox.public.resumeSandbox);
   const refresh = useAction(api.sandbox.public.refreshSandbox);
@@ -372,7 +374,7 @@ export function SandboxInstancesTable({
                   >
                     <Switch
                       checked={running}
-                      disabled={!toggleable}
+                      disabled={!toggleable || !canWrite}
                       onCheckedChange={(next) =>
                         next ? toggle(instance, true) : setConfirming(instance)
                       }

@@ -7,6 +7,7 @@ import {
   ToggleRow,
 } from "@/app/components/side-panel/ConfigControls";
 import { Button } from "@/app/components/ui/button";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   Dialog,
   DialogContent,
@@ -159,6 +160,7 @@ export function DetailsTab({
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
   onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
 }): React.JSX.Element {
+  const { canWrite } = useOrgRole();
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
@@ -658,15 +660,17 @@ export function DetailsTab({
               Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
               <code>broods deploy</code> also mints it automatically.
             </p>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 w-fit cursor-pointer text-xs"
-              disabled={isSavingKey}
-              onClick={() => void onGenerateKey?.()}
-            >
-              {isSavingKey ? "Generating…" : "Generate API key"}
-            </Button>
+            {canWrite && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 w-fit cursor-pointer text-xs"
+                disabled={isSavingKey}
+                onClick={() => void onGenerateKey?.()}
+              >
+                {isSavingKey ? "Generating…" : "Generate API key"}
+              </Button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
@@ -766,18 +770,20 @@ export function DetailsTab({
                 <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                   API Key (stage-wide)
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
-                  disabled={isSavingKey}
-                  onClick={() => setRotateOpen(true)}
-                >
-                  <RefreshCw
-                    className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
-                  />
-                  Rotate
-                </Button>
+                {canWrite && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
+                    disabled={isSavingKey}
+                    onClick={() => setRotateOpen(true)}
+                  >
+                    <RefreshCw
+                      className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
+                    />
+                    Rotate
+                  </Button>
+                )}
               </div>
               {deploymentApiKey ? (
                 <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
@@ -899,26 +905,28 @@ export function DetailsTab({
                     e.currentTarget.value = "";
                   }}
                 />
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px]"
-                    onClick={() => schemaFileInputRef.current?.click()}
-                  >
-                    Import Schema
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px]"
-                    onClick={handleApplySchema}
-                  >
-                    Save Schema
-                  </Button>
-                </div>
+                {canWrite && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 cursor-pointer text-[11px]"
+                      onClick={() => schemaFileInputRef.current?.click()}
+                    >
+                      Import Schema
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 cursor-pointer text-[11px]"
+                      onClick={handleApplySchema}
+                    >
+                      Save Schema
+                    </Button>
+                  </div>
+                )}
                 <Textarea
                   value={displayOutputSchemaText}
                   onChange={(e) => {
