@@ -32,6 +32,7 @@ import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
 import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
+import { transcribeAudio, type TranscriptOutcome } from "./transcribe.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import {
@@ -80,21 +81,29 @@ const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What each provider reads as a native prompt part beyond pictures.
+ * What each provider reads as a native prompt part beyond pictures, written as
+ * exact media types or a `type/*` wildcard — the vocabulary the AI SDK already
+ * uses for `supportedUrls`.
+ *
  * A floor, not a ceiling: a media type missing here is not rejected, it is
  * delivered as a workspace file instead of as a part the provider would refuse.
  * Guessing upward is the expensive direction — an unsupported part fails the
  * whole turn, while an under-claimed one costs the agent one `read` call.
+ *
+ * OpenAI and Azure take `application/pdf` and nothing else, whatever the model:
+ * both answer on the Responses API, whose converter accepts that one inline
+ * type. Audio input on OpenAI lives on chat completions, in two formats no
+ * channel sends, and core never builds a chat model.
  */
 const PROVIDER_NATIVE_MEDIA: Partial<
-  Record<AccountModelProviderName, ReadonlySet<string>>
+  Record<AccountModelProviderName, readonly string[]>
 > = {
-  anthropic: new Set(["application/pdf"]),
-  azure: new Set(["application/pdf", "audio"]),
-  bedrock: new Set(["application/pdf"]),
-  google: new Set(["application/pdf", "audio", "video"]),
-  openai: new Set(["application/pdf", "audio"]),
-  vertex: new Set(["application/pdf", "audio", "video"]),
+  anthropic: ["application/pdf"],
+  azure: ["application/pdf"],
+  bedrock: ["application/pdf"],
+  google: ["application/pdf", "audio/*", "video/*"],
+  openai: ["application/pdf"],
+  vertex: ["application/pdf", "audio/*", "video/*"],
 };
 
 type UserContentPart = Exclude<UserContent, string>[number];
@@ -129,12 +138,16 @@ interface MediaReference {
 
 export interface InboundMediaContext {
   accountId?: string;
+  /**
+   * Decides which media types go over as native parts, and supplies the
+   * credentials audio is transcribed with. Absent means neither: every
+   * attachment becomes a workspace file, which is the safe direction.
+   */
+  agentConfig?: AgentConfig;
   /** Names the channel in the note the agent reads, and in the logs. */
   channelName: string;
   /** Scopes the media folder so two messages cannot overwrite each other. */
   eventId: string;
-  /** Decides which media types go over as native parts. */
-  provider?: AccountModelProviderName;
   /** Where the bytes are stored. Without one, only the current turn sees them. */
   workspace?: ResolvedWorkspace;
 }
@@ -154,6 +167,8 @@ interface StoredAttachment {
   url?: string;
   /** Why the bytes are not available, for the note the agent reads. */
   failure?: string;
+  /** What the audio says, or why it is not known. Absent for everything else. */
+  transcript?: TranscriptOutcome;
 }
 
 // One attachment paired with the part it produced. A null part means nothing
@@ -162,6 +177,31 @@ interface StoredAttachment {
 interface IngestedAttachment {
   stored: StoredAttachment;
   part: UserContentPart | null;
+}
+
+/**
+ * Whether this provider reads this media type as a prompt part of its own.
+ *
+ * Pictures are the one kind every provider takes, so they are true everywhere.
+ * Everything else has to be listed, exactly or as a `type/*` wildcard: a
+ * top-level match on its own once let `audio/ogg` through to a provider that
+ * accepts no audio at all, and cost every turn that replayed the message.
+ */
+export function acceptsNativeMedia(
+  provider: AccountModelProviderName | undefined,
+  mediaType: string,
+): boolean {
+  if (mediaType.startsWith("image/")) {
+    return true;
+  }
+  const patterns = provider ? PROVIDER_NATIVE_MEDIA[provider] : undefined;
+  const wildcard = `${mediaType.split("/")[0] ?? ""}/*`;
+
+  return (
+    patterns?.some(
+      (pattern) => pattern === mediaType || pattern === wildcard,
+    ) ?? false
+  );
 }
 
 /**
@@ -187,9 +227,10 @@ export async function ingestInboundAttachments(
     ),
   );
 
+  const provider = context.agentConfig?.model?.provider;
   const ingested = read.map((item): IngestedAttachment => ({
     stored: item,
-    part: nativePart(item, context.provider, item.url ?? item.data),
+    part: nativePart(item, provider, item.url ?? item.data),
   }));
 
   const stored: UserContentPart[] = [];
@@ -201,9 +242,7 @@ export async function ingestInboundAttachments(
     turn.push(part);
     // A sealed link is already the same part in both. Bytes are not: the row
     // keeps the reference that reads them again, or keeps no media at all.
-    const kept = item.url
-      ? part
-      : nativePart(item, context.provider, item.reference);
+    const kept = item.url ? part : nativePart(item, provider, item.reference);
     if (kept) {
       stored.push(kept);
     }
@@ -256,13 +295,18 @@ export async function rehydrateStoredMedia(
   messages: ModelMessage[],
   agentConfig: AgentConfig,
 ): Promise<ModelMessage[]> {
-  const referenced = messages.some(
+  // File parts count as well as references: a part stored under one provider is
+  // replayed under whichever provider the agent runs on now, and the one that
+  // has to be demoted carries no reference at all.
+  const carriesMedia = messages.some(
     (message) =>
       message.role === "user" &&
       typeof message.content !== "string" &&
-      message.content.some((part) => mediaReferenceOf(part) !== null),
+      message.content.some(
+        (part) => part.type === "file" || mediaReferenceOf(part) !== null,
+      ),
   );
-  if (!referenced) {
+  if (!carriesMedia) {
     return messages;
   }
 
@@ -345,16 +389,16 @@ function attachmentNote(
       return `- ${item.name} (${item.mediaType}) could not be read: ${item.failure}`;
     }
     if (item.path) {
-      return `- ${item.name} (${item.mediaType}) saved to ${item.path}`;
+      return `- ${item.name} (${item.mediaType}) saved to ${item.path}${transcriptLine(item)}`;
     }
     if (item.reference) {
-      return `- ${item.name} (${item.mediaType}) is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.`;
+      return `- ${item.name} (${item.mediaType}) is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.${transcriptLine(item)}`;
     }
     if (part) {
       return `- ${item.name} (${item.mediaType}) is available for this message only; no workspace is attached to store it.`;
     }
 
-    return `- ${item.name} (${item.mediaType}) could not be shown: this model does not accept the type, and there is no workspace to store it in.`;
+    return `- ${item.name} (${item.mediaType}) could not be shown: this model does not accept the type, and there is no workspace to store it in.${transcriptLine(item)}`;
   });
   if (overflow > 0) {
     lines.push(
@@ -370,6 +414,30 @@ function attachmentNote(
     ...lines,
     "Open any file you have not been shown directly with your own tools before answering; do not ask the sender to paste its contents.",
   ].join("\n");
+}
+
+// What the audio said, or what to do about not knowing. The difference between
+// the two failures is the whole point of saying it: `unavailable` is a standing
+// fact about the account, so a retry is wasted, while a retryable failure is
+// one attempt going wrong and the agent should spend a `read` on it before
+// falling back on asking the sender to type it out.
+function transcriptLine(item: StoredAttachment): string {
+  const transcript = item.transcript;
+  if (!transcript) {
+    return "";
+  }
+  if (transcript.status === "transcribed") {
+    return transcript.text
+      ? `\n  Transcript: ${transcript.text}`
+      : "\n  Transcript: no speech in the recording.";
+  }
+  if (transcript.status === "unavailable") {
+    return `\n  Not transcribed: ${transcript.reason}. Reading it again will not help; ask what was said.`;
+  }
+
+  return transcript.retryable
+    ? `\n  Not transcribed: ${transcript.reason}. Read the file to try again before you answer.`
+    : `\n  Not transcribed: ${transcript.reason}.`;
 }
 
 /**
@@ -508,9 +576,7 @@ function nativePart(
   if (item.mediaType.startsWith("image/")) {
     return { type: "image", image: source, mediaType: item.mediaType };
   }
-  const native = provider ? PROVIDER_NATIVE_MEDIA[provider] : undefined;
-  const topLevel = item.mediaType.split("/")[0] ?? "";
-  if (!native?.has(item.mediaType) && !native?.has(topLevel)) {
+  if (!acceptsNativeMedia(provider, item.mediaType)) {
     return null;
   }
 
@@ -561,10 +627,24 @@ async function rehydrateMessage(
   if (message.role !== "user" || typeof message.content === "string") {
     return message;
   }
+  const provider = agentConfig.model?.provider;
   const content = await Promise.all(
     message.content.map(async (part): Promise<UserContentPart> => {
       if (part.type !== "image" && part.type !== "file") {
         return part;
+      }
+      // The gate runs again here, against the model running now. A part stored
+      // while the agent was on another provider would otherwise be replayed as
+      // a part that provider refuses, and fail every turn from here on rather
+      // than the one it arrived in.
+      if (
+        part.type === "file" &&
+        !acceptsNativeMedia(provider, part.mediaType)
+      ) {
+        return {
+          type: "text",
+          text: `[${part.filename ?? "attachment"} (${part.mediaType}) is stored in the workspace; this model cannot read it directly]`,
+        };
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
@@ -652,6 +732,7 @@ async function storeAttachment(
     const mediaType = resolveMediaType(bytes, claimed);
     assertWithinLimit(bytes.byteLength, mediaType);
     const name = mediaFileName(attachment, mediaType, index);
+    const transcript = await audioTranscript(bytes, mediaType, context);
     const workspace = context.workspace;
     // With nothing to store the bytes in, the row keeps a reference to the copy
     // the channel already has. The bytes just read are cached under it, so the
@@ -672,6 +753,7 @@ async function storeAttachment(
         mediaType: mediaType,
         data: bytes,
         ...(reference ? { reference: reference } : {}),
+        ...(transcript ? { transcript: transcript } : {}),
       };
     }
     const path = mediaPath(name, context.eventId, index);
@@ -688,6 +770,7 @@ async function storeAttachment(
       mediaType: mediaType,
       path: path,
       ...(url ? { url: url } : { data: bytes }),
+      ...(transcript ? { transcript: transcript } : {}),
     };
   } catch (err) {
     const failure = err instanceof Error ? err.message : String(err);
@@ -704,6 +787,27 @@ async function storeAttachment(
       failure: failure,
     };
   }
+}
+
+// Audio the model cannot hear for itself, read into words. Skipped when the
+// provider takes the file natively — a model listening to the recording beats a
+// transcript of it — and when there is no config to build a transcription model
+// from. Never throws: `transcribeAudio` reports its outcome instead.
+async function audioTranscript(
+  bytes: Buffer,
+  mediaType: string,
+  context: InboundMediaContext,
+): Promise<TranscriptOutcome | undefined> {
+  const agentConfig = context.agentConfig;
+  if (
+    !agentConfig ||
+    !mediaType.startsWith("audio/") ||
+    acceptsNativeMedia(agentConfig.model?.provider, mediaType)
+  ) {
+    return undefined;
+  }
+
+  return await transcribeAudio(agentConfig, bytes);
 }
 
 // Straight to S3 rather than through the sandbox: a read-only workspace has no

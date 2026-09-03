@@ -86,11 +86,19 @@ token is attached and the auth stripped if a redirect leaves Slack.
 
 What reaches the model depends on what the provider will read. Pictures always
 go over as pictures. Anything else — a PDF, a voice note, a video — goes over as
-a native part only where the configured model provider accepts that media type,
-and otherwise arrives as a saved workspace file the agent opens with `read` or
-`bash`. That keeps a voice note a transcription job rather than a turn the
-provider refuses outright. Every message carrying attachments also gets one
-short note listing what arrived and where it was stored.
+a native part only where the configured model provider accepts that exact media
+type, and otherwise arrives as a saved workspace file the agent opens with
+`read` or `bash`. Every message carrying attachments also gets one short note
+listing what arrived and where it was stored.
+
+Audio the model cannot hear for itself is transcribed on the way in, and the
+words travel in that note as ordinary text. The transcription model is built
+from the account's own provider settings, so this needs no configuration:
+OpenAI, Groq and Mistral accounts transcribe with the credentials they already
+have, Google and Vertex send the recording itself and skip transcription, and a
+provider with no speech-to-text says so in the note rather than leaving the
+agent to guess. A transcription that fails is only ever a missing transcript —
+the message still arrives, and `read` on the stored audio file tries again.
 
 Limits are enforced twice, on the declared size and again on the bytes actually
 read: 6 MB for a picture and 25 MB for anything else, the same ceiling the media
@@ -112,8 +120,8 @@ serves becomes a line of text saying so, in the message where the picture was.
 
 Attach a workspace when media has to outlive the channel's own retention, or
 when the agent needs to open the file rather than look at it: only a stored file
-can be read with `read` or `bash`, which is what turns a voice note into a
-transcription job or a spreadsheet into something to compute over.
+can be read with `read` or `bash`, which is what lets an agent transcribe a
+voice note a second time or compute over a spreadsheet.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

@@ -9,6 +9,7 @@
 
 import {
   APICallError,
+  UnsupportedFunctionalityError,
   type LanguageModelV4CallOptions,
   type LanguageModelV4Message,
 } from "@ai-sdk/provider";
@@ -17,6 +18,7 @@ import {
   attemptRecordingMiddleware,
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
+  dropUnsupportedMediaMiddleware,
   retryWithoutStoredItemsMiddleware,
   type ModelAttempt,
 } from "../src/harness/provider.ts";
@@ -334,5 +336,95 @@ describe("attemptRecordingMiddleware", () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[0]?.error).toBe("described: resource exhausted");
     expect(attempts[1]?.error).toBeUndefined();
+  });
+});
+
+describe("dropUnsupportedMediaMiddleware", () => {
+  // The prompt shape a voice note produces: a picture the provider reads, an
+  // audio file it does not, and the note naming where both were stored.
+  const mediaPrompt: LanguageModelV4Message[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what did I say?" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "photo.png",
+          data: { type: "data", data: new Uint8Array([1]) },
+        },
+        {
+          type: "file",
+          mediaType: "audio/ogg",
+          filename: "voice.ogg",
+          data: { type: "data", data: new Uint8Array([2]) },
+        },
+      ],
+    },
+  ];
+
+  async function dropCall(
+    error: unknown,
+    prompt: LanguageModelV4Message[] = mediaPrompt,
+  ): Promise<LanguageModelV4CallOptions | undefined> {
+    let retried: LanguageModelV4CallOptions | undefined;
+    await dropUnsupportedMediaMiddleware.wrapStream!({
+      doStream: async (): Promise<never> => {
+        throw error;
+      },
+      model: {
+        doStream: async (
+          params: LanguageModelV4CallOptions,
+        ): Promise<{ stream: ReadableStream }> => {
+          retried = params;
+
+          return { stream: new ReadableStream() };
+        },
+      },
+      params: { prompt: prompt },
+    } as never);
+
+    return retried;
+  }
+
+  const refused = new UnsupportedFunctionalityError({
+    functionality: "file part media type audio/ogg",
+  });
+
+  it("retries with the refused part replaced by a line naming it", async () => {
+    const params = await dropCall(refused);
+    const content = params?.prompt[0]?.content;
+
+    expect(content).toEqual([
+      { type: "text", text: "what did I say?" },
+      {
+        type: "file",
+        mediaType: "image/png",
+        filename: "photo.png",
+        data: { type: "data", data: new Uint8Array([1]) },
+      },
+      {
+        type: "text",
+        text:
+          "[voice.ogg (audio/ogg) was not shown to you: this model does not " +
+          "accept the type. Open it from the workspace instead.]",
+      },
+    ]);
+  });
+
+  it("rethrows an error that is not a refused capability", async () => {
+    await expect(dropCall(apiCallError("Rate limit reached"))).rejects.toThrow(
+      "Rate limit reached",
+    );
+  });
+
+  // Without this the middleware would pay for a second identical call every
+  // time a provider refuses something that is not a file part at all.
+  it("rethrows when the prompt carries nothing to drop", async () => {
+    await expect(
+      dropCall(refused, [
+        { role: "user", content: [{ type: "text", text: "hi" }] },
+      ]),
+    ).rejects.toThrow("file part media type audio/ogg");
   });
 });

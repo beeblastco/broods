@@ -23,6 +23,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createPerplexity } from "@ai-sdk/perplexity";
 import {
   APICallError,
+  UnsupportedFunctionalityError,
   type LanguageModelV4CallOptions,
   type LanguageModelV4StreamPart,
   type SharedV4ProviderOptions,
@@ -36,6 +37,7 @@ import {
   wrapLanguageModel,
   type LanguageModel,
   type LanguageModelMiddleware,
+  type TranscriptionModel,
 } from "ai";
 import { createMinimax } from "vercel-minimax-ai-provider";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
@@ -55,6 +57,18 @@ import { logInfo } from "../shared/log.ts";
 export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
   new Set(["azure", "openai"]);
 
+// The speech-to-text model each provider is read with. One id per provider
+// rather than an account setting: every one of these is the provider's own
+// cheap default, and an account that needs another can be given a setting when
+// one actually asks. Providers absent here ship no transcription model at all.
+const PROVIDER_TRANSCRIPTION_MODELS: Partial<
+  Record<AccountModelProviderName, string>
+> = {
+  groq: "whisper-large-v3-turbo",
+  mistral: "voxtral-mini-latest",
+  openai: "gpt-4o-mini-transcribe",
+};
+
 // How OpenAI names a reference it cannot honour: the item aged out of its 30-day
 // window, it lost the reasoning item it was paired with, or its reasoning was
 // encrypted for a different model.
@@ -69,11 +83,15 @@ interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
   (modelId: string): Exclude<LanguageModel, string>;
+  // Only the providers that ship speech-to-text carry this. Optional rather
+  // than cast at the use site, because "this provider has none" is the answer
+  // `resolveTranscriptionModel` exists to give.
+  transcriptionModel?: (modelId: string) => Exclude<TranscriptionModel, string>;
 }
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
-  provider: unknown;
+  provider: ModelProviderInstance;
   // Never the string form: every resolver returns a constructed instance, so
   // callers can wrap it in middleware.
   model: Exclude<LanguageModel, string>;
@@ -140,13 +158,39 @@ export function resolveConfiguredModel(
   return {
     providerName: providerName,
     provider: provider,
-    model: STORED_ITEM_PROVIDERS.has(providerName)
-      ? wrapLanguageModel({
-          model: model,
-          middleware: [retryWithoutStoredItemsMiddleware],
-        })
-      : model,
+    model: wrapLanguageModel({
+      model: model,
+      middleware: STORED_ITEM_PROVIDERS.has(providerName)
+        ? [dropUnsupportedMediaMiddleware, retryWithoutStoredItemsMiddleware]
+        : [dropUnsupportedMediaMiddleware],
+    }),
   };
+}
+
+/**
+ * The speech-to-text model to read inbound audio with, or undefined when this
+ * account's provider ships none. Built from the same settings as the agent's
+ * own model, so transcription costs no extra configuration: an account that can
+ * reach OpenAI can already transcribe.
+ *
+ * Azure is deliberately absent. Its models are named by per-account deployment,
+ * so there is no id to default to, and guessing one turns a missing transcript
+ * into a 404.
+ */
+export function resolveTranscriptionModel(
+  agentConfig: AgentConfig,
+): Exclude<TranscriptionModel, string> | undefined {
+  const providerName = agentConfig.model?.provider;
+  const modelId = providerName
+    ? PROVIDER_TRANSCRIPTION_MODELS[providerName]
+    : undefined;
+  if (!providerName || !modelId) {
+    return undefined;
+  }
+
+  return resolveConfiguredModel(agentConfig).provider.transcriptionModel?.(
+    modelId,
+  );
 }
 
 export function modelSettingsFromModelConfig(
@@ -361,6 +405,44 @@ export function attemptRecordingMiddleware(
   };
 }
 
+/**
+ * A file part whose media type the provider's converter refuses fails the whole
+ * turn, and it fails it during prompt conversion, before any request is sent.
+ * So dropping the part and running again costs a local re-convert and nothing
+ * else: no tokens, no round trip.
+ *
+ * `PROVIDER_NATIVE_MEDIA` in channel-media.ts is what normally keeps such a
+ * part out of the prompt. This is what makes an entry that is wrong, or a
+ * provider that quietly changed, cost the agent one attachment instead of the
+ * conversation.
+ */
+export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware = {
+  wrapGenerate: async ({ doGenerate, model, params }) => {
+    try {
+      return await doGenerate();
+    } catch (error) {
+      const retry = withoutUnsupportedMedia(error, params);
+      if (!retry) {
+        throw error;
+      }
+
+      return await model.doGenerate(retry);
+    }
+  },
+  wrapStream: async ({ doStream, model, params }) => {
+    try {
+      return await doStream();
+    } catch (error) {
+      const retry = withoutUnsupportedMedia(error, params);
+      if (!retry) {
+        throw error;
+      }
+
+      return await model.doStream(retry);
+    }
+  },
+};
+
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
@@ -412,6 +494,51 @@ export function withoutStoredItemId<
     ...part,
     providerOptions: { ...part.providerOptions, openai: remaining },
   };
+}
+
+// The same call with every non-image file part replaced by a line naming it,
+// or undefined when this error is not a refused part or there was nothing to
+// drop. Images are kept: they are the one media kind every provider reads, so a
+// converter that refused something refused something else.
+function withoutUnsupportedMedia(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!UnsupportedFunctionalityError.isInstance(error)) {
+    return undefined;
+  }
+  const dropped: string[] = [];
+  const prompt = params.prompt.map((message) => {
+    if (message.role !== "user") {
+      return message;
+    }
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type !== "file" || part.mediaType.startsWith("image/")) {
+          return part;
+        }
+        dropped.push(part.mediaType);
+
+        return {
+          type: "text" as const,
+          text:
+            `[${part.filename ?? "attachment"} (${part.mediaType}) was not shown to you: ` +
+            `this model does not accept the type. Open it from the workspace instead.]`,
+        };
+      }),
+    };
+  });
+  if (dropped.length === 0) {
+    return undefined;
+  }
+  logInfo("Retrying model call without media the provider refused", {
+    mediaTypes: dropped.join(", "),
+    error: error.message,
+  });
+
+  return { ...params, prompt: prompt };
 }
 
 function isStaleStoredItemError(error: unknown): boolean {
