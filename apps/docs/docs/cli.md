@@ -144,7 +144,12 @@ runtime key is per stage. Resources come from your code, so run `broods dev`
 after switching to sync them into the new stage.
 
 The names `development` and `production` are reserved: they always become the
-`Development` and `Production` stages with their matching kinds.
+`Development` and `Production` stages with their matching kinds. Any other
+stage name is an identifier that rides the runtime URL and the log labels
+as-is, so it must be lowercase letters, digits and dashes (`staging`,
+`qa-2`). The CLI, the manifest sync and the dashboard all refuse anything
+else and suggest the slug form; stages created before this rule keep their
+names.
 
 ## mcp
 

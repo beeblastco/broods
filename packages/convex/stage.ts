@@ -12,8 +12,10 @@ import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
+import { stageNameEquals } from "./model/projectScope";
 import { stagesFields } from "./schema";
 
 const deploymentRegion = v.union(
@@ -61,14 +63,25 @@ export const create = mutation({
       }
     }
 
-    const trimmedName = name.trim();
-    if (!trimmedName) throw new Error("Stage name is required.");
+    const stageName = assertStageName(name);
+    if (stageKindForName({ name: stageName, kind: undefined }) !== "custom") {
+      throw new Error(
+        "Development and Production are created by the project, not by name.",
+      );
+    }
+    const siblings = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+    if (siblings.some((entry) => stageNameEquals(entry.name, stageName))) {
+      throw new Error(`Stage ${stageName} already exists.`);
+    }
 
     const now = Date.now();
     const stageId = await ctx.db.insert("stages", {
       authId: authUser.id,
       projectId: projectId,
-      name: trimmedName,
+      name: stageName,
       kind: "custom",
       isDefault: false,
       updatedAt: now,
