@@ -3,7 +3,8 @@
  * row's endpoint is the tool-runner Lambda: this fetch adapter serializes a
  * web request, batches it with the sibling calls that arrive in the same
  * window, invokes the Lambda once per batch over InvokeWithResponseStream,
- * and settles each call off the NDJSON frame (../frames.ts) tagged with its id.
+ * and once the batch's terminal NDJSON frame (../frames.ts) arrives settles
+ * each call off the frame tagged with its id.
  */
 
 import {
@@ -13,7 +14,7 @@ import {
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { positiveIntegerEnv, requireEnv } from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
-import { FrameQueue, toolBundlesBucket } from "../frames.ts";
+import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
 
 /** Placeholder origin the SDK transport points at; never actually dialed. */
 export const HOSTED_MCP_URL = "http://mcp-hosted.internal/mcp";
@@ -76,6 +77,12 @@ export interface HostedMcpBatchResult {
   cpuUsec: number | undefined;
 }
 
+/** What the frame stream yielded; `ended` is false when it closed without a terminal frame. */
+export interface CollectedBatch {
+  result: HostedMcpBatchResult;
+  ended: boolean;
+}
+
 interface PendingCall {
   request: HostedMcpRequest;
   abortSignal: AbortSignal;
@@ -95,6 +102,53 @@ type HostedMcpSendBatch = (
   requests: HostedMcpBatchRequest[],
   abortSignal: AbortSignal,
 ) => Promise<HostedMcpBatchResult>;
+
+/**
+ * Fold a batch's frames into per-request outcomes. A tagged final or error
+ * settles its request; `end` closes the batch; an untagged error closes it
+ * and fails every request still unanswered.
+ */
+export async function collectBatchFrames(
+  serverName: string,
+  requests: HostedMcpBatchRequest[],
+  frames: AsyncIterable<RunnerFrame>,
+): Promise<CollectedBatch> {
+  const result: HostedMcpBatchResult = {
+    outcomes: new Map(),
+    cpuUsec: undefined,
+  };
+  const runFailed = (message: string): Error =>
+    new Error(message || `hosted MCP server ${serverName} run failed`);
+  let ended = false;
+  for await (const frame of frames) {
+    if (frame.t === "final" && frame.id !== undefined) {
+      try {
+        result.outcomes.set(
+          frame.id,
+          finalHostedResponse(serverName, frame.result),
+        );
+      } catch (error) {
+        result.outcomes.set(frame.id, error as Error);
+      }
+    } else if (frame.t === "error" && frame.id !== undefined) {
+      result.outcomes.set(frame.id, runFailed(frame.error));
+    } else if (frame.t === "end" || frame.t === "error") {
+      result.cpuUsec = frame.cpuUsec;
+      ended = true;
+      if (frame.t === "error") {
+        const batchError = runFailed(frame.error);
+        for (const request of requests) {
+          if (!result.outcomes.has(request.id)) {
+            result.outcomes.set(request.id, batchError);
+          }
+        }
+      }
+      break;
+    }
+  }
+
+  return { result: result, ended: ended };
+}
 
 /**
  * A FetchLike for the SDK's StreamableHTTPClientTransport that routes every
@@ -293,13 +347,18 @@ function flushBatch(key: string, batch: OpenBatch): void {
   const send = sendOverride ?? sendBatch;
   void send(batch.record, requests, controller.signal).then(
     (result) => {
+      const settled = live.filter(({ call }) => !call.abortSignal.aborted);
       // Reported before any call resolves: the harness reads a call's compute
       // the moment its result lands.
-      if (typeof result.cpuUsec === "number" && result.cpuUsec > 0) {
-        const share = Math.round(result.cpuUsec / live.length);
-        for (const { call } of live) call.onCpuUsec?.(share);
+      if (
+        typeof result.cpuUsec === "number" &&
+        result.cpuUsec > 0 &&
+        settled.length > 0
+      ) {
+        const share = Math.round(result.cpuUsec / settled.length);
+        for (const { call } of settled) call.onCpuUsec?.(share);
       }
-      for (const { id, call } of live) {
+      for (const { id, call } of settled) {
         const outcome =
           result.outcomes.get(id) ??
           new Error(
@@ -319,8 +378,8 @@ function hasBundle(record: McpRecord): record is HostedBundleRecord {
   return Boolean(record.bundleStorageKey && record.sha256);
 }
 
-// One invoke for one batch. `end` closes it; an untagged error frame fails
-// every request still unanswered; a transport failure throws for all.
+// One invoke for one batch; a transport failure before any terminal frame
+// throws for every call.
 async function sendBatch(
   record: HostedBundleRecord,
   requests: HostedMcpBatchRequest[],
@@ -345,45 +404,18 @@ async function sendBatch(
       transportError = error;
     })
     .finally(() => queue.close());
-  const result: HostedMcpBatchResult = {
-    outcomes: new Map(),
-    cpuUsec: undefined,
-  };
-  let batchError: Error | undefined;
   try {
-    for await (const frame of queue.frames()) {
-      if (frame.t === "final" && frame.id !== undefined) {
-        try {
-          result.outcomes.set(
-            frame.id,
-            finalHostedResponse(record.name, frame.result),
-          );
-        } catch (error) {
-          result.outcomes.set(frame.id, error as Error);
-        }
-      } else if (frame.t === "error" && frame.id !== undefined) {
-        result.outcomes.set(frame.id, new Error(frame.error));
-      } else if (frame.t === "end" || frame.t === "error") {
-        result.cpuUsec = frame.cpuUsec;
-        if (frame.t === "error") {
-          batchError = new Error(
-            frame.error || `hosted MCP server ${record.name} run failed`,
-          );
-        }
-        break;
-      }
-    }
+    const collected = await collectBatchFrames(
+      record.name,
+      requests,
+      queue.frames(),
+    );
+    // A transport failure after the child's own terminal frame is noise; the
+    // child's answer stands.
+    if (transportError && !collected.ended) throw transportError;
+
+    return collected.result;
   } finally {
     await pump;
   }
-  if (transportError) throw transportError;
-  if (batchError) {
-    for (const request of requests) {
-      if (!result.outcomes.has(request.id)) {
-        result.outcomes.set(request.id, batchError);
-      }
-    }
-  }
-
-  return result;
 }

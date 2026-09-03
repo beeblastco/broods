@@ -183,6 +183,8 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
+// `t` then `id` must stay the first two keys: handler.mjs tells a tagged
+// error from a batch error by line prefix.
 function emitRequestFrame(frame) {
   if (settled) return;
   process.stdout.write(`${JSON.stringify(frame)}\n`);

@@ -9,7 +9,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
+import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import {
+  collectBatchFrames,
   hostedMcpFetch,
   setHostedMcpSendBatchForTests,
   type HostedMcpBatchRequest,
@@ -98,6 +100,85 @@ describe("hosted MCP fetch adapter", () => {
         "mcp host Lambda failed: boom",
       );
     }
+  });
+});
+
+describe("hosted MCP batch frame demux", () => {
+  const requests: HostedMcpBatchRequest[] = ["1", "2", "3"].map((id) => ({
+    id: id,
+    mcpRequest: { method: "POST", headers: {}, body: "{}" },
+  }));
+
+  it("settles each request off its tagged frame and reads CPU off end", async () => {
+    const { result, ended } = await collectBatchFrames(
+      "hosted",
+      requests,
+      framesOf(
+        '{"t":"final","id":"2","result":{"status":200,"headers":{},"body":"two"}}',
+        '{"t":"error","id":"3","error":"boom"}',
+        '{"t":"final","id":"1","result":{"status":201,"headers":{},"body":"one"}}',
+        '{"t":"end","cpuUsec":900}',
+        '{"t":"final","id":"1","result":{"status":500,"headers":{},"body":"late"}}',
+      ),
+    );
+
+    expect(ended).toBe(true);
+    expect(result.cpuUsec).toBe(900);
+    expect(outcomeSummary(result.outcomes)).toEqual({
+      "1": "201 one",
+      "2": "200 two",
+      "3": "error: boom",
+    });
+  });
+
+  it("fails every unanswered request on an untagged error and keeps the answered ones", async () => {
+    const { result, ended } = await collectBatchFrames(
+      "hosted",
+      requests,
+      framesOf(
+        '{"t":"final","id":"1","result":{"status":200,"headers":{},"body":"one"}}',
+        '{"t":"error","error":"mcp server run timed out","cpuUsec":50}',
+      ),
+    );
+
+    expect(ended).toBe(true);
+    expect(result.cpuUsec).toBe(50);
+    expect(outcomeSummary(result.outcomes)).toEqual({
+      "1": "200 one",
+      "2": "error: mcp server run timed out",
+      "3": "error: mcp server run timed out",
+    });
+  });
+
+  it("names the server when a frame carries no message and rejects a malformed final", async () => {
+    const { result } = await collectBatchFrames(
+      "hosted",
+      requests,
+      framesOf(
+        '{"t":"error","id":"1","error":""}',
+        '{"t":"final","id":"2","result":{"status":"200"}}',
+        '{"t":"end"}',
+      ),
+    );
+
+    expect(outcomeSummary(result.outcomes)).toEqual({
+      "1": "error: hosted MCP server hosted run failed",
+      "2": "error: hosted MCP server hosted returned a malformed response",
+    });
+  });
+
+  it("reports a stream that closed without a terminal frame", async () => {
+    const { result, ended } = await collectBatchFrames(
+      "hosted",
+      requests,
+      framesOf(
+        '{"t":"final","id":"1","result":{"status":200,"headers":{},"body":"one"}}',
+      ),
+    );
+
+    expect(ended).toBe(false);
+    expect(result.cpuUsec).toBeUndefined();
+    expect(outcomeSummary(result.outcomes)).toEqual({ "1": "200 one" });
   });
 });
 
@@ -285,6 +366,29 @@ function stubBatches(
   });
 
   return sent;
+}
+
+/** A closed FrameQueue holding the given NDJSON lines. */
+function framesOf(...lines: string[]): AsyncIterable<RunnerFrame> {
+  const queue = new FrameQueue();
+  queue.push(`${lines.join("\n")}\n`);
+  queue.close();
+
+  return queue.frames();
+}
+
+/** Outcomes as one readable string per id, so a test asserts the whole map at once. */
+function outcomeSummary(
+  outcomes: Map<string, HostedMcpResponse | Error>,
+): Record<string, string> {
+  return Object.fromEntries(
+    [...outcomes].map(([id, outcome]) => [
+      id,
+      outcome instanceof Error
+        ? `error: ${outcome.message}`
+        : `${outcome.status} ${outcome.body}`,
+    ]),
+  );
 }
 
 /** The message a promise rejects with; fails the test if it resolves. */
