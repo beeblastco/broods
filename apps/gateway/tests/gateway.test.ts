@@ -1433,6 +1433,38 @@ test("asks Loki to drop the levels a subscription does not want", () => {
   expect(lokiBackfillQuery(scope, "ERROR")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO|WARN)"`,
   );
+  // A sandbox tail narrows on the bridge's sandbox_id metadata before the level.
+  expect(
+    lokiBackfillQuery(scope, "WARN", "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+  ).toBe(
+    `${selector} | sandbox_id="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b" | level!~"(?i)(DEBUG|INFO)"`,
+  );
+});
+
+test("accepts a sandbox tail only for logs and only with a UUID id", () => {
+  const sandboxId = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "logs",
+      sandboxId: sandboxId,
+    }),
+  ).toBe(true);
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "traces",
+      sandboxId: sandboxId,
+    }),
+  ).toBe(false);
+  // Anything that could escape a LogQL string is refused at the wire.
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "logs",
+      sandboxId: 'x" or account_id=~".*',
+    }),
+  ).toBe(false);
 });
 
 test("reads a lowercase Loki level label as its real level", () => {

@@ -2,9 +2,10 @@
 
 /**
  * Slide-in detail for one sandbox instance. The Detail tab shows the instance's
- * runtime identity + size and hosts the snapshot + terminate actions; the Terminal
- * tab is a live in-guest PTY for workdir instances and a bounded command runner
- * for providers without a PTY endpoint.
+ * runtime identity + size and hosts the snapshot + terminate actions; the Logs tab
+ * tails the guest's own stdout/stderr for providers with a log stream (MicroVM);
+ * the Terminal tab is a live in-guest PTY for workdir instances and a bounded
+ * command runner for providers without a PTY endpoint.
  */
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
@@ -39,12 +40,18 @@ import {
   instanceStatusBadge,
   relativeTime,
 } from "./sandboxFormat";
+import {
+  SandboxLogTail,
+  type SandboxObservabilityScope,
+} from "./SandboxLogTail";
 
 interface Props {
   /** The instance whose detail is shown. */
   instance: Doc<"sandboxInstances">;
   /** Current project route id, used to build trace deep links. */
   projectId: Id<"projects">;
+  /** Stage-scoped observability WS inputs for the Logs tab; null before the stage deploys. */
+  observability: SandboxObservabilityScope | null;
   /** The parent table's clock, so both tick together off one timer. */
   now: number;
   /** Close the sheet. */
@@ -99,6 +106,7 @@ function TraceLink({ traceId, href }: { traceId: string; href: string }) {
 export function SandboxInstanceSheet({
   instance,
   projectId,
+  observability,
   now,
   onClose,
 }: Props): React.JSX.Element {
@@ -139,13 +147,15 @@ export function SandboxInstanceSheet({
   // no runtime snapshot-to-image API, so the capture action is hidden for them —
   // their state is still preserved across idle via suspend/resume.
   const supportsSnapshot = instance.provider === "sandbox";
+  // Only a provider with its own guest log stream can be tailed; the id the
+  // gateway filters on is the last segment of the stream core named at launch.
+  const logSandboxId = instance.logStream?.split("/").at(-1);
 
-  function traceHref(traceId: string): string {
+  function dashboardHref(params: Record<string, string>): string {
     const next = new URLSearchParams();
     const stage = searchParams.get("stage");
     if (stage) next.set("stage", stage);
-    next.set("tab", "tracing");
-    next.set("trace", traceId);
+    for (const [key, value] of Object.entries(params)) next.set(key, value);
 
     return `/${projectId}/dashboard?${next.toString()}`;
   }
@@ -262,6 +272,7 @@ export function SandboxInstanceSheet({
         <Tabs defaultValue="detail" className="px-4 pb-4">
           <TabsList>
             <TabsTrigger value="detail">Detail</TabsTrigger>
+            {logSandboxId && <TabsTrigger value="logs">Logs</TabsTrigger>}
             <TabsTrigger value="terminal">Terminal</TabsTrigger>
           </TabsList>
 
@@ -310,7 +321,10 @@ export function SandboxInstanceSheet({
                   value={
                     <TraceLink
                       traceId={instance.createdByTraceId}
-                      href={traceHref(instance.createdByTraceId)}
+                      href={dashboardHref({
+                        tab: "tracing",
+                        trace: instance.createdByTraceId,
+                      })}
                     />
                   }
                 />
@@ -321,7 +335,10 @@ export function SandboxInstanceSheet({
                   value={
                     <TraceLink
                       traceId={instance.lastUsedTraceId}
-                      href={traceHref(instance.lastUsedTraceId)}
+                      href={dashboardHref({
+                        tab: "tracing",
+                        trace: instance.lastUsedTraceId,
+                      })}
                     />
                   }
                 />
@@ -488,6 +505,16 @@ export function SandboxInstanceSheet({
               </p>
             )}
           </TabsContent>
+
+          {logSandboxId && (
+            <TabsContent value="logs" className="mt-4">
+              <SandboxLogTail
+                sandboxId={logSandboxId}
+                scope={observability}
+                monitoringHref={dashboardHref({ tab: "monitoring" })}
+              />
+            </TabsContent>
+          )}
 
           <TabsContent value="terminal" className="mt-4">
             {supportsLiveTerminal &&

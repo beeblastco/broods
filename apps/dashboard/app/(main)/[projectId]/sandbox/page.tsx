@@ -48,6 +48,24 @@ export default function SandboxPage(): React.JSX.Element {
   );
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
   const account = useQuery(api.org.orgs.getActiveAccount, {});
+  // The instance sheet's Logs tab streams over the same gateway socket as the
+  // Monitoring tab: the stage's slugs from its deployment plus its runtime key,
+  // recovered from its encrypted copy. Minting a key stays on the Monitoring tab.
+  const activeDeployment = useQuery(
+    api.agent.deployments.getForStage,
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
+  );
+  const runtimeKey = useQuery(
+    api.agent.deployments.revealKeyForStage,
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
+  );
+  const observability = activeDeployment
+    ? {
+        projectSlug: activeDeployment.projectSlug,
+        stageSlug: activeDeployment.stageSlug,
+        apiKey: runtimeKey ?? undefined,
+      }
+    : null;
 
   const [view, setView] = useState<SandboxView>("instances");
   const activeLabel =
@@ -112,6 +130,7 @@ export default function SandboxPage(): React.JSX.Element {
             <SandboxInstancesTable
               instances={instances}
               projectId={projectId}
+              observability={observability}
             />
           ) : view === "snapshots" ? (
             <SandboxSnapshotsTable snapshots={snapshots} />

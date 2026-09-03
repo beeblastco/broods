@@ -8,6 +8,9 @@
 // so it reaches a client through Loki backfill and nowhere else.
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export const MAX_OBSERVABILITY_BACKFILL = 500;
+// The per-launch UUID core puts last in a MicroVM's CloudWatch log stream name.
+const SANDBOX_LOG_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // Matches the shape core's shared/log.ts emits. Backfilled entries can be any
 // level; the live NATS stream is INFO+ only.
@@ -64,6 +67,11 @@ export type ObservabilitySubscribeMessage = {
   // and the live relay (default INFO+). Pass "DEBUG" to keep backfilled debug
   // lines. Traces are unfiltered.
   minLevel?: LogLevel;
+  // "logs" only: tail one sandbox's guest output instead of the deployment's own
+  // logs. The id is the last segment of the instance's `logStream`, a UUID core
+  // minted at launch. Sandbox lines reach Loki through the CloudWatch bridge and
+  // never NATS, so the gateway serves this subscription by polling Loki.
+  sandboxId?: string;
 };
 
 export type ObservabilityUnsubscribeMessage = {
@@ -127,6 +135,12 @@ export function isObservabilityClientMessage(
       return false;
     const minLevel = msg["minLevel"];
     if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
+    const sandboxId = msg["sandboxId"];
+    if (
+      sandboxId !== undefined &&
+      (stream !== "logs" || !isSandboxLogId(sandboxId))
+    )
+      return false;
 
     return true;
   }
@@ -147,6 +161,14 @@ export function isLogLevel(value: unknown): value is LogLevel {
     value === "WARN" ||
     value === "ERROR"
   );
+}
+
+/**
+ * Narrow a wire value to a sandbox log id. Strict on purpose: the gateway
+ * interpolates it into LogQL, so only the UUID shape core mints may pass.
+ */
+export function isSandboxLogId(value: unknown): value is string {
+  return typeof value === "string" && SANDBOX_LOG_ID_PATTERN.test(value);
 }
 
 /** Whether a span is a top-level run, each of which owns its own trace. */

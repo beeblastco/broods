@@ -221,6 +221,9 @@ Options:
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Show every level (DEBUG from the backfill only)
   --json                Print the backfill as raw JSON
+  --sandbox <id>        Tail one sandbox instance's guest output instead. The id
+                        is the last segment of the instance's log stream
+                        (dashboard Instances sheet).
 
 ${GLOBAL_OPTIONS}`,
   org: `Usage: broods org <list|use|create> [name]
@@ -2188,13 +2191,16 @@ async function logs(args: string[]): Promise<void> {
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
   );
   const jsonMode = hasFlag(args, "--json");
+  const sandboxId = optionValue(args, "--sandbox");
 
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Logs for ${project}/${stage} [${minLevel}+]` +
+    `Logs for ${project}/${stage}` +
+      (sandboxId ? ` sandbox ${sandboxId}` : "") +
+      ` [${minLevel}+]` +
       levelHint(minLevel) +
       ` (backfill ${limit}) — Ctrl+C to stop`,
   );
@@ -2202,7 +2208,12 @@ async function logs(args: string[]): Promise<void> {
   try {
     for await (const entry of subscribeObservabilityLogs(
       { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
-      { backfill: limit, minLevel: minLevel, signal: controller.signal },
+      {
+        backfill: limit,
+        minLevel: minLevel,
+        ...(sandboxId ? { sandboxId: sandboxId } : {}),
+        signal: controller.signal,
+      },
     )) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));

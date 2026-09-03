@@ -49,12 +49,15 @@ import {
   relativeTime,
   useNow,
 } from "./sandboxFormat";
+import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
 interface Props {
   /** Sandbox instance rows from Convex. */
   instances: Array<Doc<"sandboxInstances">>;
   /** Current project route id, used to build trace deep links. */
   projectId: Id<"projects">;
+  /** Stage-scoped observability WS inputs, handed to the sheet's Logs tab. */
+  observability: SandboxObservabilityScope | null;
 }
 
 /** Status filter values; "all" disables the status predicate. */
@@ -72,6 +75,7 @@ const PAGE_SIZE = 8;
 export function SandboxInstancesTable({
   instances,
   projectId,
+  observability,
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const suspend = useAction(api.sandbox.public.suspendSandbox);
@@ -487,6 +491,7 @@ export function SandboxInstancesTable({
         <SandboxInstanceSheet
           instance={selected}
           projectId={projectId}
+          observability={observability}
           now={now}
           onClose={() => setSelected(null)}
         />

@@ -40,6 +40,11 @@ interface UseObservabilityStreamOptions {
   backfill?: number;
   /** Minimum log level for live NATS relay (applies to "logs" stream only). Default: INFO. */
   minLevel?: LogLevel;
+  /**
+   * Tail one sandbox instance's guest output instead of the deployment's logs
+   * ("logs" stream only). The last segment of the instance's `logStream`.
+   */
+  sandboxId?: string;
 }
 
 interface UseObservabilityStreamResult<T> {
@@ -96,11 +101,12 @@ export function useObservabilityStream(
     apiKey,
     backfill = 0,
     minLevel,
+    sandboxId,
   } = options;
 
   // Cache key for this stream + scope; entries are seeded from / written back to
   // STREAM_CACHE so remounts (tab switches) are instant.
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}`;
+  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -202,6 +208,7 @@ export function useObservabilityStream(
         stream: stream,
         ...(backfill > 0 ? { backfill: backfill } : {}),
         ...(minLevel ? { minLevel: minLevel } : {}),
+        ...(sandboxId ? { sandboxId: sandboxId } : {}),
       };
       socket.send(JSON.stringify(subscribeMsg));
     };
@@ -320,6 +327,7 @@ export function useObservabilityStream(
     stream,
     backfill,
     minLevel,
+    sandboxId,
     closeSocket,
     clearReconnect,
   ]);
@@ -344,7 +352,7 @@ export function useObservabilityStream(
       closeSocket();
     };
     // Re-run when connection params change; connect is stable unless they change.
-  }, [projectSlug, stageSlug, apiKey, stream]);
+  }, [projectSlug, stageSlug, apiKey, stream, sandboxId]);
 
   const refresh = useCallback(() => {
     if (projectSlug && stageSlug && apiKey) connect();

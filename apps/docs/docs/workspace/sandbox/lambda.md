@@ -246,10 +246,13 @@ fail to launch rather than silently falling back to full internet access.
 
 MicroVM sizes range from **0.5 GB / 0.25 vCPU** up to **8 GB / 4 vCPU** (fixed disk per size);
 the predefined size catalog is service-managed. Build logs stay in the service-managed
-CloudWatch log groups. Runtime logs are configured at launch with
-`MICROVM_LOG_GROUP_NAME` (defaulted by SST to `/broods/<stage>/microvms`, stream =
-`microvmId`) so a single CloudWatch subscription can forward sandbox output into Loki
-when the sandbox log bridge is deployed.
+CloudWatch log groups. Guest stdout/stderr goes to the per-stage group named by
+`MICROVM_LOG_GROUP_NAME` (`/broods/<stage>/microvms`, created by SST and set on the core
+pod from the infra repo). Core names each VM's stream `<accountId>/<project>/<stage>/<uuid>`
+at launch and stores it on the instance row as `logStream`; the sandbox log forwarder
+reads the tenant back out of that name when it ships the lines to Loki, and the
+dashboard's Logs tab and `broods logs --sandbox <uuid>` tail one VM by the last segment.
+See [Observability](../../observability.md#sandbox-observability).
 
 ## Security
 

@@ -83,15 +83,15 @@ flowchart TD
   Sinks --> View["per-tenant view<br/>(dashboard + Loki + Tempo)"]
 
   subgraph microvm["lambda provider (AWS MicroVM)"]
-    VM["axum server + /run /resume<br/>/suspend /terminate hooks"] --> CW["CloudWatch<br/>/aws/lambda-microvms/&lt;image&gt;<br/>(stream = microvmId)"]
+    VM["guest stdout/stderr<br/>/run hook, background jobs, servers"] --> CW["CloudWatch<br/>/broods/&lt;stage&gt;/microvms<br/>(stream = acct/project/stage/uuid)"]
   end
-  CW -->|"subscription filter"| Fwd["forwarder → OTLP"]
+  CW -->|"subscription filter"| Fwd["sandbox-log-forwarder → OTLP"]
   Fwd --> View
 
   subgraph workdir["sandbox provider (workdir host)"]
-    Sbx["firecracker sandbox<br/>stdout/stderr + daemon"] --> Coll["host OTel collector"]
+    Sbx["sandboxd journald + firecracker.log"] --> Coll["host OTel collector (pending #89)"]
   end
-  Coll --> View
+  Coll --> Ops["operator view (Grafana only)"]
 ```
 
 **1 — In-band (already live, no executor work).** When the agent runs a tool inside a
@@ -103,19 +103,33 @@ the dashboard and in Loki/Tempo under the originating `endpointId` — correlate
 the model step that triggered them by `trace_id`. **No change to the executors is
 required for this path.**
 
-**2 — MicroVM runtime (CloudWatch → Loki/Tempo).** The MicroVM's own logs — build
-hooks, the four lifecycle hooks, and the axum exec server — go to CloudWatch at
-`/aws/lambda-microvms/<image>` with the stream keyed by `microvmId` (the execution role
-already grants `logs:*` on `/aws/lambda-microvms/*`). A **CloudWatch subscription
-filter** forwards these to a small forwarder that re-emits them as OTLP into the same
-Loki/Tempo, tagged with `microvmId` so they join the sandbox instance that owns them.
+**2 — MicroVM guest output (CloudWatch → Loki, built).** What the guest itself writes
+to stdout/stderr — the `/run` hook, detached background jobs, servers the agent started —
+goes to CloudWatch at `/broods/<stage>/microvms`. Core names the stream at launch as
+`<accountId>/<project>/<stage>/<uuid>`; a `-` segment marks a run with no deployment
+scope (channel, cron), so that output still ships for operators but never indexes as a
+tenant. A CloudWatch subscription filter invokes `apps/lambda/sandbox-log-forwarder.mjs`,
+which splits the stream name into the `account_id` / `project` / `stage` resource
+attributes, redacts, and posts one OTLP/HTTP request to the cluster collector — the only
+external write path into Loki. The collector's per-tenant grouping and Loki's index
+labels then apply unchanged; the per-VM id rides as `sandbox_id` structured metadata
+under service `broods-sandbox`, so an ephemeral VM never becomes a new Loki stream.
 
-**3 — workdir host (OTel collector → Loki/Tempo).** The self-hosted workdir node runs
-an OTel collector (or promtail) that ships each Firecracker sandbox's stdout/stderr and
-the daemon log into the same Loki/Tempo, tagged with the workdir sandbox id.
+The dashboard Instances sheet has a **Logs** tab that subscribes with that id
+(`subscribe { sandboxId }`), and `broods logs --sandbox <id>` does the same. Sandbox
+lines never pass through NATS, so the gateway serves such a subscription by polling
+Loki every 2 s over a lookback window and dropping what it already relayed. Expect
+3–8 s from write to screen; that is CloudWatch delivery plus the collector batch, not
+the poll. The forwarder and its filter are SST resources that deploy only when
+`OTLP_BASIC_AUTH` (the collector ingress's Basic-auth pair) is set for the stage.
 
-Both out-of-band paths (2 and 3) are **infra**, not core code — they are deploy-gated
-follow-ups (see below).
+**3 — workdir host (not built).** workdir has no guest log stream: `sandboxd` logs to
+journald and each VM keeps a Firecracker log under its jail path, and neither carries a
+tenant. When the production host lands (#89), an otel-collector-contrib on the host
+(`journald` + `filelog` receivers, OTLP out to the same collector) ships those as
+operator-only logs — `host`, `unit`, `sandbox_id`, no `account_id` — so they reach
+Grafana and never a customer dashboard. Exec output already reaches the dashboard via
+path 1.
 
 ## Security
 
@@ -123,21 +137,21 @@ follow-ups (see below).
   lists) and scrubs every emitted string against the run's known secret values before
   any sink sees it. The same redaction applies to all three sinks.
 - **Scoped credentials never enter a log.** The short-lived STS mount creds delivered
-  to a sandbox are not logged by the harness; the out-of-band forwarders (paths 2 and 3)
-  **must** apply the same redaction before shipping to Loki, since sandbox stdout is
-  untrusted.
+  to a sandbox are not logged by the harness. The MicroVM forwarder (path 2) applies the
+  pattern half of that redaction — `Bearer`/`Basic` values, query-string secrets,
+  `fp_agent_*`, `fp_sts_*` — but it cannot know a run's own secret values, so a guest
+  that echoes an injected secret prints it, to the owning account's view and to
+  operators. Sandbox stdout is untrusted; treat it that way.
 - The NATS sink skips any task without a deployment-scoped context (channel/cron paths),
   so it never publishes to a malformed subject; stdout + OTLP still capture those lines.
+- A sandbox tail is scoped like every other observability socket: the gateway builds the
+  Loki selector from the key's server-derived `account_id`/`project`/`stage`, and the
+  `sandboxId` a client sends only narrows inside that. It must be the UUID shape core
+  mints; anything else is rejected at the wire before it reaches LogQL.
 
-## Deploy-gated follow-ups (infra repo)
+## Follow-ups
 
-These complete paths 2 and 3 and live in the `infra` repo, not core:
-
-- A **CloudWatch subscription filter** on `/aws/lambda-microvms/*` plus a forwarder that
-  redacts and re-emits as OTLP to the cluster Loki/Tempo.
-- The **workdir host OTel collector** config that ships sandbox + daemon logs into the
-  same Loki/Tempo (set up once per workdir node).
-
-Until they land, MicroVM/workdir _infrastructure_ logs are still available at their
-source (CloudWatch, the workdir host); the **agent-visible** exec and lifecycle activity
-already reaches the dashboard via path 1.
+- **workdir host collector** (path 3) belongs to the workdir provisioning runbook in the
+  `infra` repo and waits for the production host (#89).
+- **Retention.** CloudWatch keeps the MicroVM group 30 days and Loki keeps 90. Once the
+  bridge is verified on a stage, the group's retention can drop to a few days.
