@@ -1,12 +1,10 @@
 /**
  * Node-native runner for hosted MCP server bundles (#331, warm reuse #189,
- * micro-batching #397). Runs the uploaded bundle in a real Node process. The
- * bundle arrives on fd 3 once at spawn; batches arrive as NDJSON lines on
- * stdin, one per Lambda invocation. Every request in a batch runs
- * concurrently and answers its own tagged final/error frame as it settles;
- * the batch closes on an `end` frame that keeps the process alive for the
- * next same-tenant invocation. A timeout, a bad payload, or an unhandled
- * rejection retires the process with an untagged error frame.
+ * micro-batching #397). The bundle arrives on fd 3 once at spawn; one batch
+ * of requests arrives per NDJSON line on stdin, one line per Lambda
+ * invocation. Requests run concurrently, each answered by a frame tagged with
+ * its id; the batch closes on `end` and the process stays for the next one.
+ * An untagged error frame (timeout, bad payload, unhandled rejection) retires it.
  */
 
 import { createHash } from "node:crypto";
@@ -67,8 +65,6 @@ async function runRequestLoop() {
     if (line.trim() === "") continue;
     settled = false;
     const cpuBaseline = process.cpuUsage();
-    // One signal per request so a tenant handler sees the abort it expects;
-    // the deadline trips all of them and fails the batch as a whole.
     const controllers = [];
     const timeout = setTimeout(() => {
       const reason = new Error("mcp server run timed out");
@@ -124,9 +120,8 @@ async function runRequestLoop() {
   process.exit(0);
 }
 
-// The bundle default-exports a fetch-style MCP handler (e.g.
-// `createMcpHandler(...)` from @modelcontextprotocol/server), as a plain
-// function or a { fetch } object.
+// The bundle default-exports a fetch-style handler (`createMcpHandler(...)`),
+// as a plain function or a { fetch } object.
 function resolveFetchHandler(module) {
   const handler = module.default;
   const fetchLike =
@@ -144,8 +139,6 @@ function resolveFetchHandler(module) {
   return fetchLike;
 }
 
-// One request carries exactly one web request; the stateless 2026-07-28
-// transport is what makes that mapping complete.
 async function runMcpRequest(fetchLike, mcp, abortSignal) {
   const request = new Request("http://mcp-hosted.internal/mcp", {
     method: mcp.method,
@@ -193,10 +186,8 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
-// One request's own frame, tagged with its id. Nothing after the batch's
-// terminal frame may reach stdout: the handler drops it and a retiring
-// process is already exiting. `t` then `id` must stay the first two keys —
-// handler.mjs tells a tagged error from a batch error by line prefix.
+// `t` then `id` must stay the first two keys: handler.mjs tells a tagged
+// error from a batch error by line prefix.
 function emitRequestFrame(frame) {
   if (settled) return;
   process.stdout.write(`${JSON.stringify(frame)}\n`);

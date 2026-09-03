@@ -30,11 +30,9 @@ const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CHILD_CALLS = 64;
 const DEFAULT_CHILD_IDLE_SECONDS = 300;
 
-// The child pins `t` first and `id` second on every frame it writes, so a
-// byte compare on the line prefix spots the end of a batch without parsing a
-// multi-megabyte frame: `end` closes a batch cleanly, an error whose second
-// key is `error` (no id) is a batch failure, and a tagged error is one
-// request's own failure that the batch outlives.
+// The child pins `t` first and `id` second on every frame, so a byte compare
+// on the line prefix spots a batch terminal without parsing a multi-megabyte
+// frame. An error with `error` as its second key has no id: the batch is dead.
 const END_PREFIX = Buffer.from('{"t":"end"', "latin1");
 const BATCH_ERROR_PREFIX = Buffer.from('{"t":"error","error"', "latin1");
 const TERMINAL_PREFIX_BYTES = BATCH_ERROR_PREFIX.length;
@@ -341,9 +339,6 @@ function endWithError(responseStream, error) {
   responseStream.end();
 }
 
-// Whether the bytes collected from the start of a stdout line begin with the
-// given terminal prefix. Prefixes differ in length, so the compare is bounded
-// by the prefix, not by the buffer.
 function lineStartsWith(linePrefix, linePrefixLen, prefix) {
   return (
     linePrefixLen >= prefix.length &&
