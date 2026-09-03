@@ -60,16 +60,24 @@ import { unreadableMediaNote } from "../shared/media-types.ts";
 export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
   new Set(["azure", "openai"]);
 
-// The speech-to-text model each provider is read with. One id per provider
-// rather than an account setting: every one of these is the provider's own
-// cheap default, and an account that needs another can be given a setting when
-// one actually asks. Providers absent here ship no transcription model at all.
-const PROVIDER_TRANSCRIPTION_MODELS: Partial<
-  Record<AccountModelProviderName, string>
+/**
+ * How inbound audio is read, per provider: the factory that ships speech-to-text
+ * and the model id to ask it for. One id each rather than an account setting —
+ * every one is that provider's own cheap default, and a setting can be added
+ * when somebody actually needs another. Providers absent here have none.
+ *
+ * Keyed to the factory rather than looked up on an already-built provider so
+ * the compiler checks the method still exists. Both `transcription` and
+ * `transcriptionModel` are there at runtime, but openai and groq declare only
+ * the first, and a rename would otherwise degrade in silence: no model, a note
+ * saying the provider has none, and nothing failing anywhere.
+ */
+const PROVIDER_TRANSCRIPTION: Partial<
+  Record<AccountModelProviderName, TranscriptionSource>
 > = {
-  groq: "whisper-large-v3-turbo",
-  mistral: "voxtral-mini-latest",
-  openai: "gpt-4o-mini-transcribe",
+  groq: { factory: createGroq, modelId: "whisper-large-v3-turbo" },
+  mistral: { factory: createMistral, modelId: "voxtral-mini-latest" },
+  openai: { factory: createOpenAI, modelId: "gpt-4o-mini-transcribe" },
 };
 
 // How OpenAI names a reference it cannot honour: the item aged out of its 30-day
@@ -86,11 +94,14 @@ interface ModelProviderInstance {
   // Never the string form of `LanguageModel`: a constructed provider hands back
   // a model instance, which is what middleware can wrap.
   (modelId: string): Exclude<LanguageModel, string>;
-  // Only the providers that ship speech-to-text carry this, so its absence is
-  // the answer `resolveTranscriptionModel` gives. `transcription` and not
-  // `transcriptionModel`: both exist at runtime, but openai and groq declare
-  // only this one, and an undeclared alias is not a surface to depend on.
-  transcription?: (modelId: string) => Exclude<TranscriptionModel, string>;
+}
+
+// A provider that reads audio, and which of its models does it.
+interface TranscriptionSource {
+  factory: (settings: never) => {
+    transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
+  };
+  modelId: string;
 }
 
 export interface ResolvedModelProvider {
@@ -184,16 +195,16 @@ export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
 ): Exclude<TranscriptionModel, string> | undefined {
   const providerName = agentConfig.model?.provider;
-  const modelId = providerName
-    ? PROVIDER_TRANSCRIPTION_MODELS[providerName]
+  const source = providerName
+    ? PROVIDER_TRANSCRIPTION[providerName]
     : undefined;
-  if (!modelId) {
+  if (!providerName || !source) {
     return undefined;
   }
   try {
-    return resolveConfiguredModel(agentConfig).provider.transcription?.(
-      modelId,
-    );
+    const settings = requireProviderSettings(agentConfig, providerName);
+
+    return source.factory(settings as never).transcription(source.modelId);
   } catch {
     return undefined;
   }

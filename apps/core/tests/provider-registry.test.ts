@@ -52,29 +52,25 @@ describe("model provider registry", () => {
   });
 });
 
-// `transcription` is read off the constructed provider, so a rename in the SDK
-// would otherwise degrade quietly: the model comes back undefined, the note
-// says the provider has none, and inbound audio stops being transcribed with
-// nothing failing anywhere.
+// That the three transcribing providers still expose `transcription` is pinned
+// by the type of `PROVIDER_TRANSCRIPTION`, not by a test: a rename fails
+// `bun run check`, which no module mock can hide. What is left to check is that
+// a provider outside that map, or one that cannot be built, loses its
+// transcript instead of throwing into the message it arrived on.
 describe("transcription model resolution", () => {
-  it.each([
-    ["openai", "sk-test"],
-    ["groq", "gsk-test"],
-    ["mistral", "sk-test"],
-  ] as const)("builds a transcription model for %s", (provider, apiKey) => {
-    const model = resolveTranscriptionModel({
-      model: { provider: provider, modelId: "test-model" },
-      provider: { [provider]: { apiKey: apiKey } },
-    });
-
-    expect(model?.specificationVersion).toBe("v4");
-  });
-
   it("has none for a provider that ships no speech-to-text", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("has none when the provider is configured without credentials", () => {
+    expect(
+      resolveTranscriptionModel({
+        model: { provider: "openai", modelId: "gpt-5" },
       }),
     ).toBeUndefined();
   });
