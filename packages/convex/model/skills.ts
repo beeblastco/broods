@@ -186,6 +186,7 @@ export async function fetchGitHubSkillFiles(
     Number.isFinite(declaredBytes) &&
     declaredBytes > MAX_SKILL_ARCHIVE_BYTES
   ) {
+    await response.body.cancel();
     throw new Error(
       `GitHub archive exceeds the ${MAX_SKILL_ARCHIVE_BYTES} byte limit`,
     );

@@ -36,12 +36,17 @@ export async function openStageSessionTicket(
   if (!payload || !signature || rest.length > 0) return null;
 
   const key = await ticketKey(secret);
-  const verified = await crypto.subtle.verify(
-    HMAC_ALGORITHM,
-    key,
-    base64UrlToBytes(signature),
-    ENCODER.encode(payload),
-  );
+  let verified = false;
+  try {
+    verified = await crypto.subtle.verify(
+      HMAC_ALGORITHM,
+      key,
+      base64UrlToBytes(signature),
+      ENCODER.encode(payload),
+    );
+  } catch {
+    return null;
+  }
   if (!verified) return null;
 
   const ticket = parseTicket(payload);
