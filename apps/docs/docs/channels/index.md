@@ -92,13 +92,25 @@ type, and otherwise arrives as a saved workspace file the agent opens with
 listing what arrived and where it was stored.
 
 Audio the model cannot hear for itself is transcribed on the way in, and the
-words travel in that note as ordinary text. The transcription model is built
-from the account's own provider settings, so this needs no configuration:
-OpenAI, Groq and Mistral accounts transcribe with the credentials they already
-have, Google and Vertex send the recording itself and skip transcription, and a
-provider with no speech-to-text says so in the note rather than leaving the
-agent to guess. A transcription that fails is only ever a missing transcript —
-the message still arrives, and `read` on the stored audio file tries again.
+words travel in that note as ordinary text. The models come from the account's
+own provider settings, so this needs no configuration: OpenAI, Groq and Mistral
+accounts transcribe with the credentials they already have, while Google and
+Vertex send the recording itself and skip transcription.
+
+A provider's models disagree about containers, so each one is tried in turn.
+On OpenAI that means `gpt-4o-mini-transcribe` first and `whisper-1` after it,
+because the cheaper model refuses the ogg/opus that Telegram, Discord and Zalo
+voice notes arrive as, and the older one accepts it.
+
+A transcription that fails is only ever a missing transcript — the message
+still arrives, and the note says which kind of failure it was, because they do
+not have the same answer. A provider that was busy is worth reading the file
+for, and ingest does not wait on it: it fails fast rather than holding the
+first reply through a backoff, and `read` on the stored file is the patient
+attempt. A file every model refused is handed to the agent with the provider's
+own message, which names the formats it would have taken. An account with no
+speech-to-text says so, so the agent asks rather than spending a turn finding
+out.
 
 Limits are enforced twice, on the declared size and again on the bytes actually
 read: 6 MB for a picture and 25 MB for anything else, the same ceiling the media

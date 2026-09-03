@@ -21,7 +21,7 @@ import { contentTypeForPath } from "../../shared/media-types.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { transcribeAudio } from "../transcribe.ts";
+import { transcribeAudio, TRANSCRIPTION_RETRIES } from "../transcribe.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface ReadInput {
@@ -133,7 +133,11 @@ async function spokenContents(
   if (!bytes) {
     return null;
   }
-  const transcript = await transcribeAudio(agentConfig, bytes);
+  const transcript = await transcribeAudio(
+    agentConfig,
+    bytes,
+    TRANSCRIPTION_RETRIES.tool,
+  );
   if (transcript.status !== "transcribed") {
     return toolError(
       `Error: ${rel} could not be transcribed: ${transcript.reason}`,

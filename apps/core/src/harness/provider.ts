@@ -62,9 +62,14 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 
 /**
  * How inbound audio is read, per provider: the factory that ships speech-to-text
- * and the model id to ask it for. One id each rather than an account setting —
- * every one is that provider's own cheap default, and a setting can be added
- * when somebody actually needs another. Providers absent here have none.
+ * and the models to ask it for, best first. Providers absent here have none.
+ *
+ * More than one id because a provider's models disagree about containers, and
+ * the disagreement decides whether the feature works at all: `whisper-1` takes
+ * the ogg/opus every voice-note channel sends, and `gpt-4o-mini-transcribe`,
+ * which is cheaper and better, does not. Trying the cheap one first and falling
+ * back on a refused file is what makes a Telegram voice note transcribe on
+ * OpenAI at all.
  *
  * Keyed to the factory rather than looked up on an already-built provider so
  * the compiler checks the method still exists. Both `transcription` and
@@ -75,9 +80,12 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
 const PROVIDER_TRANSCRIPTION: Partial<
   Record<AccountModelProviderName, TranscriptionSource>
 > = {
-  groq: { factory: createGroq, modelId: "whisper-large-v3-turbo" },
-  mistral: { factory: createMistral, modelId: "voxtral-mini-latest" },
-  openai: { factory: createOpenAI, modelId: "gpt-4o-mini-transcribe" },
+  groq: { factory: createGroq, modelIds: ["whisper-large-v3-turbo"] },
+  mistral: { factory: createMistral, modelIds: ["voxtral-mini-latest"] },
+  openai: {
+    factory: createOpenAI,
+    modelIds: ["gpt-4o-mini-transcribe", "whisper-1"],
+  },
 };
 
 // How OpenAI names a reference it cannot honour: the item aged out of its 30-day
@@ -96,12 +104,12 @@ interface ModelProviderInstance {
   (modelId: string): Exclude<LanguageModel, string>;
 }
 
-// A provider that reads audio, and which of its models does it.
+// A provider that reads audio, and which of its models do it.
 interface TranscriptionSource {
   factory: (settings: never) => {
     transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
   };
-  modelId: string;
+  modelIds: readonly string[];
 }
 
 export interface ResolvedModelProvider {
@@ -186,27 +194,29 @@ export function resolveConfiguredModel(
 }
 
 /**
- * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none or its config cannot build one. Undefined
- * rather than a throw: a half-configured account should lose its transcript and
- * keep the message it arrived on.
+ * The speech-to-text models to read inbound audio with, best first, or empty
+ * when this account's provider ships none or its config cannot build them.
+ * Empty rather than a throw: a half-configured account should lose its
+ * transcript and keep the message it arrived on.
  */
-export function resolveTranscriptionModel(
+export function resolveTranscriptionModels(
   agentConfig: AgentConfig,
-): Exclude<TranscriptionModel, string> | undefined {
+): Exclude<TranscriptionModel, string>[] {
   const providerName = agentConfig.model?.provider;
   const source = providerName
     ? PROVIDER_TRANSCRIPTION[providerName]
     : undefined;
   if (!providerName || !source) {
-    return undefined;
+    return [];
   }
   try {
-    const settings = requireProviderSettings(agentConfig, providerName);
+    const provider = source.factory(
+      requireProviderSettings(agentConfig, providerName) as never,
+    );
 
-    return source.factory(settings as never).transcription(source.modelId);
+    return source.modelIds.map((modelId) => provider.transcription(modelId));
   } catch {
-    return undefined;
+    return [];
   }
 }
 
