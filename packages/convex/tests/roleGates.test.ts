@@ -274,9 +274,8 @@ describe("stage-scoped sync of account-wide resources", () => {
       existing[1],
     );
     expect(stageCronByName(existing, stageAgentIds, "fresh")).toBeNull();
-    expect(() => stageCronByName(existing, stageAgentIds, "nightly")).toThrow(
-      /already used by another stage/,
-    );
+    // Another stage's "nightly" is not this stage's job: create, never retarget.
+    expect(stageCronByName(existing, stageAgentIds, "nightly")).toBeNull();
   });
 });
 

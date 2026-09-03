@@ -422,6 +422,7 @@ async function handleManifestSync(
     scope,
     originalManifest,
     prune,
+    auth,
   );
   await ctx.runMutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
     secretHash: secretHash,
@@ -646,17 +647,20 @@ async function syncExternalResources(
   scope: ProjectStageScope,
   manifest: CliManifest,
   prune: boolean,
+  auth: CliAuth,
 ): Promise<ExternalIds> {
   const hasExternalResources = manifest.resources.some((entry) =>
     isExternalResourceKind(entry.kind),
   );
   if (!hasExternalResources) return { skills: {}, hooks: {}, mcp: {} };
 
-  const foreign = await foreignExternalResources(
-    ctx,
-    accountId as Id<"accounts">,
-    scope,
-  );
+  // Skills and hooks are account-wide, so the org secret and a login token
+  // may move a name between stages (dev then deploy). Only a stage-scoped
+  // deploy key is fenced to the names its own stage recorded.
+  const foreign =
+    "deployKeyId" in auth
+      ? await foreignExternalResources(ctx, accountId as Id<"accounts">, scope)
+      : new Set<string>();
   const skills = await syncSkillResources(
     ctx,
     accountId as Id<"accounts">,
@@ -682,24 +686,20 @@ async function syncExternalResources(
 }
 
 /**
- * Crons are account-wide rows, so a name is only this stage's when the job
- * targets one of its agents. A same-named job of another stage is refused
- * instead of being retargeted; null means the name is free.
+ * Crons are account-wide rows but a job belongs to the stage of the agent it
+ * targets, so a name is matched only among this stage's agents. A same-named
+ * job of another stage is neither touched nor a conflict; null means create.
  */
 export function stageCronByName<T extends { name: string; agentId: string }>(
   existing: T[],
   stageAgentIds: Set<string>,
   name: string,
 ): T | null {
-  const match = existing.find((job) => job.name === name);
-  if (!match) return null;
-  if (!stageAgentIds.has(match.agentId)) {
-    throw new Error(
-      `Cron job name "${name}" is already used by another stage of this account`,
-    );
-  }
-
-  return match;
+  return (
+    existing.find(
+      (job) => job.name === name && stageAgentIds.has(job.agentId),
+    ) ?? null
+  );
 }
 
 /**

@@ -90,14 +90,17 @@ later.
 | Call an MCP tool from the explorer; create or revoke deploy keys; roles | no     | yes           |
 
 Members stream logs and drive the test chat with a **stage session ticket**
-(`fp_dts_…`): a one-hour credential the config plane signs for the stage, which
+(`fp_dts_…`): a fifteen-minute credential the config plane signs for the stage, which
 core accepts exactly like the runtime key until it expires. The runtime key
 itself never reaches a member's browser. Webhook signing secrets are write-only:
 the dashboard reports whether one is set and never returns the value.
 
-A stage-scoped deploy key syncs its own stage only. Skills, hooks and cron jobs
-are account-wide by name, so a manifest that names one another stage manages is
-refused instead of replacing it, and `prune` never deletes another stage's rows.
+A stage-scoped deploy key syncs its own stage only. Skills and hooks are
+account-wide by name, so a deploy key whose manifest names one another stage
+manages is refused instead of replacing it; the org secret and a login token
+may move a name between stages, which is what `broods dev` then `broods deploy`
+does. A cron job belongs to the stage of the agent it targets, so two stages
+can each hold a `nightly`, and `prune` never deletes another stage's rows.
 A deploy key can set and list environment variables but never read a value
 back: `broods env get` needs a `broods login` token or the org secret.
 

@@ -2226,6 +2226,7 @@ describe("runAgentLoop", () => {
     expect(createOpenAICompatibleMock).toHaveBeenCalledWith({
       apiKey: "custom-key",
       baseURL: "https://llm.example/v1",
+      fetch: expect.any(Function),
       headers: { "X-Tenant": "tenant-1" },
       name: "custom",
       includeUsage: true,

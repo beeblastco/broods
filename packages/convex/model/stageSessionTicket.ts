@@ -12,7 +12,9 @@ const HMAC_ALGORITHM = { name: "HMAC", hash: "SHA-256" };
 const KEY_CONTEXT = "stage-session-ticket:";
 
 export const STAGE_SESSION_TICKET_PREFIX = "fp_dts_";
-export const STAGE_SESSION_TICKET_TTL_MS = 60 * 60 * 1000;
+// Short because a ticket is bearer-only: a rotated key or a removed member
+// is only fully out once every ticket minted before that has expired.
+export const STAGE_SESSION_TICKET_TTL_MS = 15 * 60 * 1000;
 
 export interface StageSessionTicket {
   accountId: string;
