@@ -92,22 +92,31 @@ type, and otherwise arrives as a saved workspace file the agent opens with
 listing what arrived and where it was stored.
 
 Audio the model cannot hear for itself is transcribed on the way in, and the
-words travel in that note as ordinary text. The models come from the account's
+words travel in that note as ordinary text. The model comes from the account's
 own provider settings, so this needs no configuration: OpenAI, Groq and Mistral
 accounts transcribe with the credentials they already have, while Google and
 Vertex send the recording itself and skip transcription.
 
-A provider's models disagree about containers, so each one is tried in turn.
-On OpenAI that means `gpt-4o-mini-transcribe` first and `whisper-1` after it,
-because the cheaper model refuses the ogg/opus that Telegram, Discord and Zalo
-voice notes arrive as, and the older one accepts it.
+The default is whichever model takes the widest range of containers, since a
+voice note arrives as ogg/opus on Telegram, Discord and Zalo:
+
+| Provider | Default transcription model |
+| -------- | --------------------------- |
+| OpenAI   | `whisper-1`                 |
+| Groq     | `whisper-large-v3-turbo`    |
+| Mistral  | `voxtral-mini-latest`       |
+
+Set `config.model.transcriptionModelId` to use a different one. It runs on the
+same provider and credentials as `config.model.modelId`, so an account that only
+ever sees wav or mp3 can name a cheaper model such as
+`gpt-4o-mini-transcribe`, which is faster but refuses ogg.
 
 A transcription that fails is only ever a missing transcript — the message
 still arrives, and the note says which kind of failure it was, because they do
 not have the same answer. A provider that was busy is worth reading the file
 for, and ingest does not wait on it: it fails fast rather than holding the
 first reply through a backoff, and `read` on the stored file is the patient
-attempt. A file every model refused is handed to the agent with the provider's
+attempt. A file the model refused is handed to the agent with the provider's
 own message, which names the formats it would have taken. An account with no
 speech-to-text says so, so the agent asks rather than spending a turn finding
 out.

@@ -198,6 +198,7 @@ export type AgentModelProviderOptions = StreamTextOptions["providerOptions"];
 export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
+  "transcriptionModelId",
   "providerOptions",
   "output",
   "maxOutputTokens",
@@ -254,6 +255,11 @@ export interface AgentModelConfig
     Pick<RequestOptions, "maxRetries" | "timeout"> {
   provider?: AccountModelProviderName;
   modelId?: string;
+  /**
+   * Speech-to-text model for inbound audio, on the same provider and key as
+   * `modelId`. Defaults to the widest-container model the provider ships.
+   */
+  transcriptionModelId?: string;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
 }
@@ -904,6 +910,10 @@ function normalizeModelConfig(value: unknown): void {
   }
   assertOptionalProviderName(config.provider, "config.model.provider");
   assertOptionalString(config.modelId, "config.model.modelId");
+  assertOptionalString(
+    config.transcriptionModelId,
+    "config.model.transcriptionModelId",
+  );
   assertOptionalEnum(config.reasoning, "config.model.reasoning", [
     "provider-default",
     "none",

@@ -3639,6 +3639,14 @@ components:
         modelId:
           type: string
           description: Provider-specific model identifier
+        transcriptionModelId:
+          type: string
+          description: >-
+            Speech-to-text model for inbound audio, on the same provider and
+            credentials as `modelId`. Defaults to the widest-container model the
+            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
+            Groq, `voxtral-mini-latest` on Mistral). Providers with no
+            speech-to-text ignore it.
         reasoning:
           type: string
           enum: [provider-default, none, minimal, low, medium, high, xhigh]

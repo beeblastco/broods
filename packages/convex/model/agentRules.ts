@@ -140,6 +140,7 @@ const RETIRED_REACH_KEYS = [
 const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
+  "transcriptionModelId",
   "providerOptions",
   "output",
   "maxOutputTokens",
