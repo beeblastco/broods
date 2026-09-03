@@ -123,6 +123,13 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
+    // It reaches the AI SDK as a model id, which is string-only.
+    expect(() =>
+      normalizeAgentConfig({ model: { transcriptionModelId: 42 } }),
+    ).toThrow("config.model.transcriptionModelId must be a string");
+    expect(() =>
+      normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
+    ).not.toThrow();
     // Inherited Object keys are not provider names, however `in` reads them.
     for (const inherited of ["constructor", "__proto__", "toString"]) {
       expect(() =>

@@ -52,8 +52,16 @@ const transcribeAudioMock = mock(async (): Promise<TranscriptOutcome> => ({
   text: "check the deploy status",
 }));
 
+// Only the call is stubbed. The retry budget and the advice wording are the
+// real ones, so a mock factory that named just `transcribeAudio` would leave
+// them to whatever Bun happens to leave reachable.
+const { TRANSCRIPTION_RETRIES, transcriptAdvice } =
+  await import("../src/harness/transcribe.ts");
+
 mock.module("../src/harness/transcribe.ts", () => ({
+  TRANSCRIPTION_RETRIES: TRANSCRIPTION_RETRIES,
   transcribeAudio: transcribeAudioMock,
+  transcriptAdvice: transcriptAdvice,
 }));
 
 const {
