@@ -10,6 +10,7 @@
  */
 
 import type { JSONSchema7 } from "ai";
+import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -82,6 +83,9 @@ export interface BashTarget {
 // reachable when workspaces are — see hasStandaloneSandbox.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
+  // Present when the tool needs the account's model settings rather than the
+  // workspace alone — `read` transcribes audio with them.
+  agentConfig?: AgentConfig;
   agentSandbox?: SandboxExecutorConfig;
   agentSandboxPermissionMode?: SandboxPermissionMode;
   // Set when the parent session can track background jobs: bash exposes a

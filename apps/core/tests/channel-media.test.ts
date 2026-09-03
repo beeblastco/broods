@@ -12,8 +12,10 @@ import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { Server } from "node:net";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
+import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
+import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const writeS3ObjectMock = mock(
@@ -42,7 +44,19 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: () => false,
 }));
 
+// Transcription is one API call behind a provider's credentials; what the media
+// path owes it is the decision to call at all and what it does with the answer.
+const transcribeAudioMock = mock(async (): Promise<TranscriptOutcome> => ({
+  status: "transcribed",
+  text: "check the deploy status",
+}));
+
+mock.module("../src/harness/transcribe.ts", () => ({
+  transcribeAudio: transcribeAudioMock,
+}));
+
 const {
+  acceptsNativeMedia,
   ingestInboundAttachments,
   readAttachmentBytes,
   rehydrateStoredMedia,
@@ -74,6 +88,7 @@ beforeEach(() => {
   process.env.SERVICE_AUTH_SECRET = "service-auth-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
   writeS3ObjectMock.mockClear();
+  transcribeAudioMock.mockClear();
 });
 
 afterEach(() => {
@@ -168,7 +183,7 @@ describe("ingestInboundAttachments", () => {
         channelName: "telegram",
         eventId: "evt-2",
         // Anthropic reads PDFs and pictures; audio would fail the whole turn.
-        provider: "anthropic",
+        agentConfig: modelConfig("anthropic"),
         workspace: workspace(),
       },
     );
@@ -194,7 +209,7 @@ describe("ingestInboundAttachments", () => {
         accountId: ACCOUNT,
         channelName: "telegram",
         eventId: "evt-3",
-        provider: "google",
+        agentConfig: modelConfig("google"),
         workspace: workspace(),
       },
     );
@@ -289,7 +304,7 @@ describe("ingestInboundAttachments", () => {
         eventId: "evt-9",
         // Anthropic will not take audio, and with no workspace there is no
         // stored file to send the agent to instead.
-        provider: "anthropic",
+        agentConfig: modelConfig("anthropic"),
       },
     );
 
@@ -324,6 +339,89 @@ describe("ingestInboundAttachments", () => {
         workspace: workspace(),
       }),
     ).toEqual({ stored: [], turn: [] });
+  });
+});
+
+describe("acceptsNativeMedia", () => {
+  it("refuses a subtype the provider does not read", () => {
+    // The bug this replaced matched on the top-level segment, so a table entry
+    // of "audio" claimed audio/ogg on a provider that accepts no audio at all.
+    expect(acceptsNativeMedia("openai", "audio/ogg")).toBe(false);
+    expect(acceptsNativeMedia("openai", "application/pdf")).toBe(true);
+  });
+
+  it("reads pictures on every provider, listed or not", () => {
+    expect(acceptsNativeMedia("anthropic", "image/png")).toBe(true);
+    expect(acceptsNativeMedia(undefined, "image/png")).toBe(true);
+  });
+
+  it("honours a type/* entry for the providers that take a whole family", () => {
+    expect(acceptsNativeMedia("google", "audio/ogg")).toBe(true);
+    expect(acceptsNativeMedia("google", "video/mp4")).toBe(true);
+  });
+});
+
+describe("inbound audio", () => {
+  const voiceNote = (): Attachment => ({
+    type: "audio",
+    name: "voice.ogg",
+    mimeType: "audio/ogg",
+    fetchData: async (): Promise<Buffer> => Buffer.from("audio-bytes"),
+  });
+
+  async function ingestVoiceNote(
+    provider: AccountModelProviderName,
+  ): Promise<Awaited<ReturnType<typeof ingestInboundAttachments>>> {
+    return await ingestInboundAttachments([voiceNote()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-audio",
+      agentConfig: modelConfig(provider),
+      workspace: workspace(),
+    });
+  }
+
+  it("puts the words in the note when the model cannot hear the file", async () => {
+    const parts = await ingestVoiceNote("openai");
+
+    expect(transcribeAudioMock).toHaveBeenCalledTimes(1);
+    expect(noteText(parts)).toContain("Transcript: check the deploy status");
+    // The file is still stored, and still not sent as a part OpenAI refuses.
+    expect(noteText(parts)).toContain("saved to media/");
+    expect(
+      [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
+    ).toEqual([]);
+  });
+
+  it("does not transcribe audio the provider listens to itself", async () => {
+    await ingestVoiceNote("google");
+
+    expect(transcribeAudioMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the agent back to the file when the attempt is worth repeating", async () => {
+    transcribeAudioMock.mockResolvedValueOnce({
+      status: "failed",
+      reason: "provider answered 503",
+      retryable: true,
+    });
+
+    expect(await ingestVoiceNote("openai").then(noteText)).toContain(
+      "Read the file to try again before you answer",
+    );
+  });
+
+  // A provider with no speech-to-text will not grow one on a retry, so telling
+  // the agent to try again would only cost it a turn before it asks anyway.
+  it("tells the agent not to retry what cannot work", async () => {
+    transcribeAudioMock.mockResolvedValueOnce({
+      status: "unavailable",
+      reason: "anthropic has no transcription model configured",
+    });
+
+    expect(await ingestVoiceNote("anthropic").then(noteText)).toContain(
+      "Reading it again will not help",
+    );
   });
 });
 
@@ -369,6 +467,36 @@ describe("rehydrateStoredMedia", () => {
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("getFile")),
     ).toBe(true);
+  });
+
+  // Without this the conversation stays broken: the part is replayed on every
+  // later turn, and a provider switch breaks messages that worked when stored.
+  it("demotes a stored part the model running now cannot read", async () => {
+    const messages = await rehydrateStoredMedia(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "listen to this" },
+            {
+              type: "file",
+              mediaType: "audio/ogg",
+              filename: "voice.ogg",
+              data: "https://core.example/media/sealed-token",
+            },
+          ],
+        },
+      ],
+      modelConfig("openai"),
+    );
+
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "listen to this" },
+      {
+        type: "text",
+        text: "[voice.ogg (audio/ogg) is stored in the workspace; this model cannot read it directly]",
+      },
+    ]);
   });
 
   it("says a file the channel dropped is gone instead of failing the turn", async () => {
@@ -656,6 +784,12 @@ function storedMessage(fileId: string): ModelMessage {
       },
     ],
   };
+}
+
+// The only part of a config the media path reads: which provider is running,
+// which decides both what goes over natively and what audio is transcribed with.
+function modelConfig(provider: AccountModelProviderName): AgentConfig {
+  return { model: { provider: provider, modelId: "test-model" } };
 }
 
 function telegramConfig(): AgentConfig {

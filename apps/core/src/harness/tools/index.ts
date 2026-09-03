@@ -197,7 +197,7 @@ export async function createTools(
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
-      readTool({ workspaces: workspaces }),
+      readTool({ workspaces: workspaces, agentConfig: agentConfig }),
       globTool({ workspaces: workspaces }),
     );
   }

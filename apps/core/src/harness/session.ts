@@ -1059,7 +1059,7 @@ export async function ingestChannelAttachments(
     accountId: context.accountId,
     channelName: context.channelName,
     eventId: context.eventId,
-    provider: context.agentConfig.model?.provider,
+    agentConfig: context.agentConfig,
     // The first workspace is the agent's default, the same one the file tools
     // write to when the model names none.
     workspace: runtimeConfig.workspaces[0],
