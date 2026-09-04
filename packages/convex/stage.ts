@@ -63,19 +63,7 @@ export const create = mutation({
       }
     }
 
-    const stageName = assertStageName(name);
-    if (stageKindForName({ name: stageName, kind: undefined }) !== "custom") {
-      throw new Error(
-        "Development and Production are created by the project, not by name.",
-      );
-    }
-    const siblings = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-    if (siblings.some((entry) => stageNameEquals(entry.name, stageName))) {
-      throw new Error(`Stage ${stageName} already exists.`);
-    }
+    const stageName = await assertCustomStageNameFree(ctx, projectId, name);
 
     const now = Date.now();
     const stageId = await ctx.db.insert("stages", {
@@ -647,6 +635,29 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /** Case-insensitive lookup by explicit kind or conventional stage name. */
+/** The slug rule plus: reserved names come from the project, and no sibling may share the name. */
+async function assertCustomStageNameFree(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  name: string,
+): Promise<string> {
+  const stageName = assertStageName(name);
+  if (stageKindForName({ name: stageName, kind: undefined }) !== "custom") {
+    throw new Error(
+      "Development and Production are created by the project, not by name.",
+    );
+  }
+  const siblings = await ctx.db
+    .query("stages")
+    .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+    .collect();
+  if (siblings.some((entry) => stageNameEquals(entry.name, stageName))) {
+    throw new Error(`Stage ${stageName} already exists.`);
+  }
+
+  return stageName;
+}
+
 function findStageByKind(
   stages: Doc<"stages">[],
   kind: StageKind,
