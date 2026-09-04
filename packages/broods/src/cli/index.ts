@@ -18,6 +18,7 @@ import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import {
@@ -95,9 +96,6 @@ const SERVICE_REGIONS = [
   { region: "us-east-1", label: "us-east-1 (US East)" },
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
 ] as const;
-// CSI and OSC escape sequences plus C0 control bytes other than tab.
-const TERMINAL_CONTROL_PATTERN =
-  /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|[\x00-\x08\x0b-\x1f\x7f]/g;
 
 // Options every command accepts, appended to each command's own help so a
 // reader never has to jump back to the top-level page for them.
@@ -2139,13 +2137,13 @@ function levelHint(minLevel: LogLevel): string {
 
 /**
  * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
- * A sandbox line is raw guest output, so terminal escapes and control bytes
- * are dropped before it can move the cursor or retitle the window.
+ * A sandbox line is raw guest output, so terminal escapes are dropped before
+ * they can move the cursor or retitle the window.
  */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
   const level = entry.level.padEnd(5);
-  const message = entry.message.replace(TERMINAL_CONTROL_PATTERN, "");
+  const message = stripVTControlCharacters(entry.message);
 
   return `${time} ${level} ${entry.eventType} ${message}`;
 }
