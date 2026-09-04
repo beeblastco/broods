@@ -2,8 +2,9 @@
 
 /**
  * Streams live logs or traces from the gateway observability WS, merging backfill
- * (spliced first) with live NATS entries (appended). The list is never cleared
- * into a spinner on reconnect. Protocol: ../observability-contracts.ts.
+ * (spliced first) with live entries (appended): the NATS relay, or the gateway's
+ * Loki poll when tailing one sandbox. The list is never cleared into a spinner
+ * on reconnect. Protocol: ../observability-contracts.ts.
  */
 
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
@@ -40,6 +41,11 @@ interface UseObservabilityStreamOptions {
   backfill?: number;
   /** Minimum log level for live NATS relay (applies to "logs" stream only). Default: INFO. */
   minLevel?: LogLevel;
+  /**
+   * Tail one sandbox instance's guest output instead of the deployment's logs
+   * ("logs" stream only). The last segment of the instance's `logStream`.
+   */
+  sandboxId?: string;
 }
 
 interface UseObservabilityStreamResult<T> {
@@ -96,11 +102,12 @@ export function useObservabilityStream(
     apiKey,
     backfill = 0,
     minLevel,
+    sandboxId,
   } = options;
 
   // Cache key for this stream + scope; entries are seeded from / written back to
   // STREAM_CACHE so remounts (tab switches) are instant.
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}`;
+  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -161,9 +168,9 @@ export function useObservabilityStream(
 
   const connect = useCallback(() => {
     if (destroyedRef.current) return;
-    if (!coreEndpoint.ok) {
+    if (coreErrorMessage) {
       setStatus("error");
-      setError(coreEndpoint.message);
+      setError(coreErrorMessage);
 
       return;
     }
@@ -180,7 +187,7 @@ export function useObservabilityStream(
     setError(null);
 
     const wsUrl =
-      `${coreEndpoint.websocketBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
+      `${wsBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
       `/${encodeURIComponent(stageSlug)}/observability/ws`;
 
     // Credential in the subprotocol list, never the URL (see useAgentChat).
@@ -202,6 +209,7 @@ export function useObservabilityStream(
         stream: stream,
         ...(backfill > 0 ? { backfill: backfill } : {}),
         ...(minLevel ? { minLevel: minLevel } : {}),
+        ...(sandboxId ? { sandboxId: sandboxId } : {}),
       };
       socket.send(JSON.stringify(subscribeMsg));
     };
@@ -311,7 +319,6 @@ export function useObservabilityStream(
       }, RECONNECT_DELAY_MS);
     };
   }, [
-    coreEndpoint.ok,
     wsBaseUrl,
     coreErrorMessage,
     projectSlug,
@@ -320,6 +327,7 @@ export function useObservabilityStream(
     stream,
     backfill,
     minLevel,
+    sandboxId,
     closeSocket,
     clearReconnect,
   ]);
@@ -329,22 +337,19 @@ export function useObservabilityStream(
     connectRef.current = connect;
   }, [connect]);
 
+  // `connect` already changes whenever a connection parameter does; the other
+  // deps only satisfy the hooks lint. Connecting is the effect's purpose; the
+  // status setState it performs is external-system synchronization.
   useEffect(() => {
     destroyedRef.current = false;
-
-    if (projectSlug && stageSlug && apiKey) {
-      // Connecting to the WebSocket on mount is the effect's purpose; the status
-      // setState it performs is intentional external-system synchronization.
-      connect();
-    }
+    if (projectSlug && stageSlug && apiKey) connect();
 
     return () => {
       destroyedRef.current = true;
       clearReconnect();
       closeSocket();
     };
-    // Re-run when connection params change; connect is stable unless they change.
-  }, [projectSlug, stageSlug, apiKey, stream]);
+  }, [projectSlug, stageSlug, apiKey, connect, clearReconnect, closeSocket]);
 
   const refresh = useCallback(() => {
     if (projectSlug && stageSlug && apiKey) connect();

@@ -243,6 +243,16 @@ const microvmRunInput = (): Record<string, unknown> => {
 
   return (call![0] as { input: Record<string, unknown> }).input;
 };
+// The MicroVM log stream is `<accountId>/<project>/<stage>/<uuid>/<mac>`; the
+// mac is absent when core has no OTLP client secret to sign with.
+const logStreamPattern = (
+  accountId: string,
+  project: string,
+  stage: string,
+): RegExp =>
+  new RegExp(
+    `^${accountId}/${project}/${stage}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/[0-9a-f]{16})?$`,
+  );
 mock.module("e2b", () => ({
   Sandbox: {
     create: e2bCreateMock,
@@ -438,8 +448,13 @@ describe("createSandboxExecutor", () => {
     expect(runInput.executionRoleArn).toBe(
       "arn:aws:iam::123456789012:role/microvm-execution",
     );
+    // The stream name carries the tenant (none here: no observability scope and
+    // no control plane) so the log forwarder can label lines without a lookup.
     expect(runInput.logging).toEqual({
-      cloudWatch: { logGroup: "/broods/dev/microvms" },
+      cloudWatch: {
+        logGroup: "/broods/dev/microvms",
+        logStream: expect.stringMatching(logStreamPattern("-", "-", "-")),
+      },
     });
     const payload = JSON.parse(runInput.runHookPayload as string);
     expect(payload.workspace).toMatchObject({
@@ -519,6 +534,11 @@ describe("createSandboxExecutor", () => {
 
     expect(result.ok).toBe(true);
     expect(upsertSandboxInstanceMock).toHaveBeenCalledTimes(1);
+    // The mirror row remembers the stream so the dashboard can tail it.
+    expect((upsertSandboxInstanceMock.mock.calls[0] as unknown[])[5]).toEqual({
+      ephemeral: true,
+      logStream: expect.stringMatching(logStreamPattern("account-1", "-", "-")),
+    });
     expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 
     resolveSandboxInstanceUpsert?.();

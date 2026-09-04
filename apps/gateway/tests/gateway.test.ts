@@ -15,8 +15,12 @@ import {
 } from "../src/routes.ts";
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
+  cleanupObservabilitySocket,
+  handleObservabilityMessage,
   lokiBackfillQuery,
   lokiLogEntry,
+  type ObservabilityGatewayData,
+  openObservabilitySocket,
   quoteLabel,
   normalizeOtelId,
   relayNatsMessages,
@@ -1423,7 +1427,9 @@ test("asks Loki to drop the levels a subscription does not want", () => {
     stageSlug: "dev",
     endpointIds: [],
   };
-  const selector = '{account_id="acct-1",project="shop",stage="dev"}';
+  const tenant = 'account_id="acct-1",project="shop",stage="dev"';
+  // The deployment stream never carries guest output, matching the NATS relay.
+  const selector = `{${tenant},service_name!="broods-sandbox"}`;
 
   // A DEBUG subscriber wants everything, so nothing is filtered away.
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(selector);
@@ -1433,6 +1439,127 @@ test("asks Loki to drop the levels a subscription does not want", () => {
   expect(lokiBackfillQuery(scope, "ERROR")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO|WARN)"`,
   );
+  // A sandbox tail narrows on the bridge's sandbox_id metadata before the level.
+  expect(
+    lokiBackfillQuery(scope, "WARN", "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+  ).toBe(
+    `{${tenant}} | sandbox_id="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b" | level!~"(?i)(DEBUG|INFO)"`,
+  );
+});
+
+test("a sandbox tail relays each guest line once and ignores a repeat subscribe", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const sandboxId = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = {
+    readyState: WebSocket.OPEN,
+    getBufferedAmount: () => 0,
+    send: (value: string) =>
+      sent.push(JSON.parse(value) as Record<string, unknown>),
+    data: {
+      kind: "observability",
+      project: "shop",
+      stage: "dev",
+      token: "runtime-key",
+      scope: {
+        accountId: "acct-1",
+        projectSlug: "shop",
+        stageSlug: "dev",
+        endpointIds: [],
+      },
+    },
+  } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const at = (secondsAgo: number, text: string): [string, string] => [
+    String(nowNs - BigInt(secondsAgo) * 1_000_000_000n),
+    text,
+  ];
+  let queries = 0;
+  // Loki answers newest first. The backfill sees B and A; every poll sees C
+  // and B again, and a guest line that looks like a core record stays text.
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input));
+    expect(url.searchParams.get("query")).toContain(
+      `sandbox_id="${sandboxId}"`,
+    );
+    queries += 1;
+    const values =
+      queries === 1
+        ? [at(20, "B"), at(30, "A")]
+        : [at(10, '{"level":"ERROR","message":"C"}'), at(20, "B")];
+
+    return new Response(
+      JSON.stringify({ data: { result: [{ stream: {}, values: values }] } }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  const subscribe = JSON.stringify({
+    type: "subscribe",
+    stream: "logs",
+    sandboxId: sandboxId,
+    backfill: 10,
+    minLevel: "DEBUG",
+  });
+  const noNats = async (): Promise<never> => {
+    throw new Error("a sandbox tail never touches NATS");
+  };
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(socket, subscribe, noNats);
+    await waitForGatewayMessage(sent, (message) => message.type === "log", 400);
+
+    expect(sent.map((message) => message.type)).toEqual([
+      "ready",
+      "backfill",
+      "log",
+    ]);
+    expect(
+      (sent[1]!.entries as Array<{ message: string }>).map((e) => e.message),
+    ).toEqual(["A", "B"]);
+    expect(sent[2]!.entry).toMatchObject({
+      level: "INFO",
+      eventType: "sandbox",
+      message: '{"level":"ERROR","message":"C"}',
+    });
+
+    const queriesBefore = queries;
+    await handleObservabilityMessage(socket, subscribe, noNats);
+    expect(sent.at(-1)).toEqual({ type: "ready" });
+    expect(queries).toBe(queriesBefore);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("accepts a sandbox tail only for logs and only with a UUID id", () => {
+  const sandboxId = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "logs",
+      sandboxId: sandboxId,
+    }),
+  ).toBe(true);
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "traces",
+      sandboxId: sandboxId,
+    }),
+  ).toBe(false);
+  // Anything that could escape a LogQL string is refused at the wire.
+  expect(
+    isObservabilityClientMessage({
+      type: "subscribe",
+      stream: "logs",
+      sandboxId: 'x" or account_id=~".*',
+    }),
+  ).toBe(false);
 });
 
 test("reads a lowercase Loki level label as its real level", () => {
@@ -2181,7 +2308,7 @@ test("observability selectors keep a hostile stage slug inside the string", () =
   };
   expect(quoteLabel(scope.stageSlug)).toBe('"dev\\"} or {stage=~\\".+"');
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(
-    '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+"}',
+    '{account_id="acct-1",project="shop",stage="dev\\"} or {stage=~\\".+",service_name!="broods-sandbox"}',
   );
 });
 

@@ -246,10 +246,15 @@ fail to launch rather than silently falling back to full internet access.
 
 MicroVM sizes range from **0.5 GB / 0.25 vCPU** up to **8 GB / 4 vCPU** (fixed disk per size);
 the predefined size catalog is service-managed. Build logs stay in the service-managed
-CloudWatch log groups. Runtime logs are configured at launch with
-`MICROVM_LOG_GROUP_NAME` (defaulted by SST to `/broods/<stage>/microvms`, stream =
-`microvmId`) so a single CloudWatch subscription can forward sandbox output into Loki
-when the sandbox log bridge is deployed.
+CloudWatch log groups. Guest stdout/stderr goes to the per-stage group named by
+`MICROVM_LOG_GROUP_NAME` (`/broods/<stage>/microvms`, created by SST and set on the core
+pod from the infra repo). Core names each VM's stream
+`<accountId>/<project>/<stage>/<uuid>/<mac>` at launch, the mac signing the rest with the
+OTLP client secret, and stores it on the instance row as `logStream`; the sandbox log
+forwarder verifies the signature and reads the tenant back out of that name when it
+ships the lines to Loki, and the dashboard's Logs tab and `broods logs --sandbox <uuid>`
+tail one VM by the uuid.
+See [Observability](../../observability.md#sandbox-observability).
 
 ## Security
 
@@ -257,7 +262,9 @@ when the sandbox log bridge is deployed.
   _environment_, not the VM's instance metadata service: code in the sandbox can still read
   the MicroVM execution role from IMDS on any network mode, because that address is
   link-local and never crosses the egress boundary. That role is deliberately kept to
-  writing this sandbox's own CloudWatch logs and nothing else
+  writing CloudWatch logs in this stage's MicroVM group and nothing else; it can name
+  a stream after another tenant, which is why the forwarder labels only names core
+  signed
 - the workspace mount is rooted at the run's `<namespace>/` prefix, scoped by the per-mount
   STS session policy; arbitrary `bash` is privileged workspace compute, not a hard
   cross-workspace filesystem boundary — dedicated file tools still reject path traversal

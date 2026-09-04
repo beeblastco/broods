@@ -28,12 +28,23 @@ export type ObservabilityGatewayData = {
   scope: ObservabilityScope;
 };
 
-type NatsSubscription = { unsubscribe(): void };
+// A NATS consumer for the deployment's own stream, or the Loki poll loop that
+// serves a sandbox tail; the socket state only ever needs to stop it.
+type LiveSubscription = { unsubscribe(): void };
+type LokiRange = {
+  startNs: bigint;
+  limit: number;
+  direction: "backward" | "forward";
+};
+type LokiRow = { entry: ObservabilityLogEntry; ns: bigint };
 type ObservabilitySocketState = {
   scope: ObservabilityScope;
-  logsSub: NatsSubscription | null;
-  tracesSub: NatsSubscription | null;
+  logsSub: LiveSubscription | null;
+  tracesSub: LiveSubscription | null;
   logsMinLevel: LogLevel;
+  // The sandbox a logs subscription tails, so a repeat of the same subscribe
+  // does not fire another Loki backfill scan.
+  logsSandboxId: string | null;
 };
 type OtelValue = {
   stringValue?: string;
@@ -54,6 +65,20 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 // a wider window is rejected with HTTP 400 and the backfill delivers nothing.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
+// Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
+// polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
+// timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
+// so each poll re-reads a lookback window newest-first and dedupes.
+const SANDBOX_LOG_POLL_MS = 2_000;
+const SANDBOX_LOG_POLL_LIMIT = 1_000;
+const SANDBOX_LOG_POLL_LOOKBACK_NS = 180n * 1_000_000_000n;
+// The forwarder's service.name. Guest output is untrusted text, so it never
+// joins the deployment stream, where a JSON line would read as a core record.
+const SANDBOX_SERVICE_NAME = "broods-sandbox";
+// The sandbox_id filter is structured metadata and scans every chunk in the window;
+// one day covers any VM's lifetime and stays under the 5 s query timeout (30 days: 8 s).
+const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
+const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
@@ -95,6 +120,7 @@ export async function handleObservabilityMessage(
     msg.liveOnly === true,
     msg.minLevel ?? "INFO",
     getNatsConnection,
+    msg.sandboxId,
   );
 }
 
@@ -141,6 +167,7 @@ export function openObservabilitySocket(
     logsSub: null,
     tracesSub: null,
     logsMinLevel: "INFO",
+    logsSandboxId: null,
   });
 }
 
@@ -157,19 +184,27 @@ export function cleanupObservabilitySocket(
  * itself, so an errors-only tail reaches past a long quiet run of DEBUG instead
  * of returning whatever happens to sit in the newest page. Core stamps `level`
  * on every record it emits; a line that somehow arrives without one survives
- * the filter and is judged by meetsMinLevel.
+ * the filter and is judged by meetsMinLevel. A sandbox tail narrows further on
+ * the `sandbox_id` metadata the log bridge stamps; the id was validated against
+ * the UUID shape by the wire contract, so it is safe to interpolate. The
+ * deployment stream excludes the bridge's service, matching the live NATS relay.
  */
 export function lokiBackfillQuery(
   scope: ObservabilityScope,
   minLevel: LogLevel,
+  sandboxId?: string,
 ): string {
-  const selector = `{account_id=${quoteLabel(scope.accountId)},project=${quoteLabel(scope.projectSlug)},stage=${quoteLabel(scope.stageSlug)}}`;
+  const tenant = `account_id=${quoteLabel(scope.accountId)},project=${quoteLabel(scope.projectSlug)},stage=${quoteLabel(scope.stageSlug)}`;
+  const selector = sandboxId
+    ? `{${tenant}}`
+    : `{${tenant},service_name!=${quoteLabel(SANDBOX_SERVICE_NAME)}}`;
+  const filters = sandboxId ? [`sandbox_id=${quoteLabel(sandboxId)}`] : [];
   const below = Object.entries(LOG_LEVEL_ORDER)
     .filter(([, order]) => order < LOG_LEVEL_ORDER[minLevel])
     .map(([level]) => level);
-  if (below.length === 0) return selector;
+  if (below.length > 0) filters.push(`level!~"(?i)(${below.join("|")})"`);
 
-  return `${selector} | level!~"(?i)(${below.join("|")})"`;
+  return [selector, ...filters].join(" | ");
 }
 
 /**
@@ -353,21 +388,49 @@ async function handleObservabilitySubscribe(
   liveOnly: boolean,
   minLevel: LogLevel,
   getNatsConnection: () => Promise<NatsConnection>,
+  sandboxId?: string,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
 
-  cleanupObservabilityStream(socket, stream);
-  if (stream === "logs") state.logsMinLevel = minLevel;
+  // The same sandbox tail again is a no-op: the poll is already running, and a
+  // fresh backfill would only rescan a day of Loki for lines the client has.
+  if (
+    sandboxId &&
+    state.logsSub &&
+    state.logsSandboxId === sandboxId &&
+    state.logsMinLevel === minLevel
+  ) {
+    sendObs(socket, { type: "ready" });
 
-  const live = await startLiveSubscription(
-    socket,
-    scope,
-    stream,
-    state,
-    liveOnly,
-    getNatsConnection,
-  );
+    return;
+  }
+
+  cleanupObservabilityStream(socket, stream);
+  if (stream === "logs") {
+    state.logsMinLevel = minLevel;
+    state.logsSandboxId = sandboxId ?? null;
+  }
+
+  // A sandbox tail owns its backfill too: history and the first poll window
+  // overlap, and one seen set across both is what keeps a line from going twice.
+  const live = sandboxId
+    ? startSandboxLogPoll(
+        socket,
+        scope,
+        state,
+        sandboxId,
+        minLevel,
+        backfill ?? 0,
+      )
+    : await startLiveSubscription(
+        socket,
+        scope,
+        stream,
+        state,
+        liveOnly,
+        getNatsConnection,
+      );
   if (!live) {
     sendObs(socket, {
       type: "error",
@@ -378,7 +441,7 @@ async function handleObservabilitySubscribe(
   }
 
   sendObs(socket, { type: "ready" });
-  if (typeof backfill === "number" && backfill > 0)
+  if (!sandboxId && typeof backfill === "number" && backfill > 0)
     void sendBackfill(socket, scope, stream, backfill, minLevel);
 }
 
@@ -395,11 +458,23 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) return false;
-      const logs = await fetchLokiBackfill(lokiUrl, scope, limit, minLevel);
+      const rows = await fetchLokiLogs(
+        lokiUrl,
+        scope,
+        lokiBackfillQuery(scope, minLevel),
+        {
+          startNs: nowNs() - BigInt(LOKI_BACKFILL_WINDOW_MS) * NS_PER_MS,
+          limit: limit,
+          direction: "backward",
+        },
+      );
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        entries: logs.filter((entry) => meetsMinLevel(entry, minLevel)),
+        entries: rows
+          .reverse()
+          .map((row) => row.entry)
+          .filter((entry) => meetsMinLevel(entry, minLevel)),
       });
     } else {
       const tempoUrl = process.env.TEMPO_URL?.trim();
@@ -420,21 +495,25 @@ async function sendBackfill(
   }
 }
 
-async function fetchLokiBackfill(
+/**
+ * One Loki query_range call in Loki's own order (`backward` = newest first).
+ * Each entry keeps its nanosecond timestamp so the sandbox poll can dedupe
+ * across overlapping windows. A sandbox tail's lines are guest text: they are
+ * relayed verbatim, never parsed as a core record.
+ */
+async function fetchLokiLogs(
   lokiUrl: string,
   scope: ObservabilityScope,
-  limit: number,
-  minLevel: LogLevel,
-): Promise<ObservabilityLogEntry[]> {
+  query: string,
+  range: LokiRange,
+  sandbox = false,
+): Promise<LokiRow[]> {
   const url = new URL(`${lokiUrl}/loki/api/v1/query_range`);
-  url.searchParams.set("query", lokiBackfillQuery(scope, minLevel));
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("direction", "backward");
-  url.searchParams.set(
-    "start",
-    new Date(Date.now() - LOKI_BACKFILL_WINDOW_MS).toISOString(),
-  );
-  url.searchParams.set("end", new Date().toISOString());
+  url.searchParams.set("query", query);
+  url.searchParams.set("limit", String(range.limit));
+  url.searchParams.set("direction", range.direction);
+  url.searchParams.set("start", String(range.startNs));
+  url.searchParams.set("end", String(nowNs()));
 
   const response = await fetch(url.toString(), {
     signal: AbortSignal.timeout(5_000),
@@ -450,22 +529,28 @@ async function fetchLokiBackfill(
       }>;
     };
   };
-  const entries: ObservabilityLogEntry[] = [];
+  const rows: LokiRow[] = [];
 
   for (const stream of body?.data?.result ?? []) {
     for (const [nsStr, line] of stream.values) {
-      entries.push(
-        lokiLogEntry(
-          stream.stream,
-          line,
-          Math.floor(Number(nsStr) / 1_000_000),
-          scope.accountId,
-        ),
-      );
+      const ns = BigInt(nsStr);
+      const ts = Number(ns / NS_PER_MS);
+      rows.push({
+        ns: ns,
+        entry: sandbox
+          ? {
+              ts: ts,
+              level: "INFO",
+              eventType: "sandbox",
+              message: line,
+              accountId: scope.accountId,
+            }
+          : lokiLogEntry(stream.stream, line, ts, scope.accountId),
+      });
     }
   }
 
-  return entries.reverse();
+  return rows;
 }
 
 async function fetchTempoBackfill(
@@ -546,7 +631,7 @@ async function startLiveSubscription(
         liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS,
       ).toISOString(),
     });
-    const natsSub: NatsSubscription = { unsubscribe: () => messages.stop() };
+    const natsSub: LiveSubscription = { unsubscribe: () => messages.stop() };
 
     if (stream === "logs") {
       state.logsSub = natsSub;
@@ -562,6 +647,105 @@ async function startLiveSubscription(
   }
 }
 
+// A sandbox tail: Loki backfill first, then a poll every SANDBOX_LOG_POLL_MS
+// over a lookback window, relaying only what this socket has not had yet. The
+// seen set is pruned to the window, so it stays as small as the sandbox is
+// chatty. The poll is armed only after the backfill settles, so the two never
+// race on that set.
+function startSandboxLogPoll(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  scope: ObservabilityScope,
+  state: ObservabilitySocketState,
+  sandboxId: string,
+  minLevel: LogLevel,
+  backfill: number,
+): boolean {
+  const lokiUrl = process.env.LOKI_URL?.trim();
+  if (!lokiUrl) return false;
+
+  const query = lokiBackfillQuery(scope, minLevel, sandboxId);
+  const seen = new Map<string, bigint>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let stopped = false;
+  let inFlight = false;
+
+  // Marks every row as sent and keeps the ones that are new and pass the level.
+  // Rows arrive newest first; the caller wants them in time order.
+  const unseen = (rows: LokiRow[]): ObservabilityLogEntry[] =>
+    rows
+      .reverse()
+      .filter((row) => {
+        const key = `${row.ns}:${row.entry.message}`;
+        if (seen.has(key)) return false;
+        seen.set(key, row.ns);
+
+        return meetsMinLevel(row.entry, minLevel);
+      })
+      .map((row) => row.entry);
+
+  const poll = async (): Promise<void> => {
+    if (inFlight || socket.readyState !== WebSocket.OPEN) return;
+    inFlight = true;
+    try {
+      const floorNs = nowNs() - SANDBOX_LOG_POLL_LOOKBACK_NS;
+      const rows = await fetchLokiLogs(
+        lokiUrl,
+        scope,
+        query,
+        {
+          startNs: floorNs,
+          limit: SANDBOX_LOG_POLL_LIMIT,
+          direction: "backward",
+        },
+        true,
+      );
+      for (const [key, ns] of seen) if (ns < floorNs) seen.delete(key);
+      for (const entry of unseen(rows))
+        sendObs(socket, { type: "log", entry: entry });
+    } catch (error) {
+      console.error("observability sandbox log poll failed:", error);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const start = async (): Promise<void> => {
+    if (backfill > 0) {
+      try {
+        const rows = await fetchLokiLogs(
+          lokiUrl,
+          scope,
+          query,
+          {
+            startNs: nowNs() - SANDBOX_LOG_BACKFILL_WINDOW_NS,
+            limit: backfill,
+            direction: "backward",
+          },
+          true,
+        );
+        sendObs(socket, {
+          type: "backfill",
+          stream: "logs",
+          entries: unseen(rows),
+        });
+      } catch (error) {
+        console.error("observability sandbox backfill failed:", error);
+      }
+    }
+    if (!stopped) timer = setInterval(() => void poll(), SANDBOX_LOG_POLL_MS);
+  };
+
+  state.logsSub = {
+    unsubscribe: (): void => {
+      stopped = true;
+      clearInterval(timer);
+    },
+  };
+  void start();
+
+  return true;
+}
+
 function cleanupObservabilityStream(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   stream: "logs" | "traces",
@@ -572,6 +756,7 @@ function cleanupObservabilityStream(
   if (stream === "logs" && state.logsSub) {
     state.logsSub.unsubscribe();
     state.logsSub = null;
+    state.logsSandboxId = null;
   } else if (stream === "traces" && state.tracesSub) {
     state.tracesSub.unsubscribe();
     state.tracesSub = null;
@@ -611,6 +796,10 @@ function sendObs(
   } catch {
     return;
   }
+}
+
+function nowNs(): bigint {
+  return BigInt(Date.now()) * NS_PER_MS;
 }
 
 /** Whether an entry is at or above the subscription's minimum level. */

@@ -22,6 +22,12 @@ const SANDBOX_IMAGE_READY = parseBooleanEnv("SANDBOX_IMAGE_READY", false);
 // Runtime credentials live on the container (infra repo), not here.
 const CONVEX_URL = process.env.CONVEX_URL?.trim();
 const CONVEX_DEPLOY_KEY = process.env.CONVEX_DEPLOY_KEY?.trim();
+// The sandbox log forwarder reaches the OTLP collector with the same two
+// variables core uses, so the one `Authorization=Basic …` credential serves both.
+const OTEL_EXPORTER_OTLP_ENDPOINT =
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || "https://otel.beeblast.co";
+const OTEL_EXPORTER_OTLP_HEADERS =
+  process.env.OTEL_EXPORTER_OTLP_HEADERS?.trim();
 
 // How long to let a freshly created IAM role's trust policy propagate before another
 // AWS service is asked to assume it. Measured: the connector create failed 8s after the
@@ -384,11 +390,58 @@ export default $config({
         })
       : null;
     const microvmLogGroupName = `/broods/${stage}/microvms`;
-    if (enableMicrovmPrereqs) {
-      new aws.cloudwatch.LogGroup("MicrovmRuntimeLogGroup", {
-        name: microvmLogGroupName,
-        retentionInDays: 30,
+    const microvmLogGroup = enableMicrovmPrereqs
+      ? new aws.cloudwatch.LogGroup("MicrovmRuntimeLogGroup", {
+          name: microvmLogGroupName,
+          retentionInDays: 30,
+        })
+      : null;
+
+    // Sandbox log bridge: every guest line the MicroVMs write to that group is
+    // forwarded to the cluster's OTLP collector, which is the only write path into
+    // Loki. The forwarder is a plain .mjs next to the hosted-MCP runner. It needs
+    // the collector's client header line (a CI secret, kept encrypted in state
+    // via $util.secret), so a deploy without it skips the bridge rather than
+    // shipping a function that fails every invocation. See docs/observability.md.
+    if (microvmLogGroup && OTEL_EXPORTER_OTLP_HEADERS) {
+      const sandboxLogForwarder = new sst.aws.Function("SandboxLogForwarder", {
+        handler: "../lambda/sandbox-log-forwarder.handler",
+        runtime: "nodejs22.x",
+        architecture: "arm64",
+        timeout: "30 seconds",
+        memory: "256 MB",
+        environment: {
+          OTEL_EXPORTER_OTLP_ENDPOINT: OTEL_EXPORTER_OTLP_ENDPOINT,
+          OTEL_EXPORTER_OTLP_HEADERS: $util.secret(OTEL_EXPORTER_OTLP_HEADERS),
+        },
+        transform: {
+          function: {
+            name: resourceName("sandbox-log-forwarder", stage, region),
+          },
+        },
       });
+      const sandboxLogForwarderInvoke = new aws.lambda.Permission(
+        "SandboxLogForwarderInvoke",
+        {
+          action: "lambda:InvokeFunction",
+          function: sandboxLogForwarder.name,
+          principal: "logs.amazonaws.com",
+          sourceArn: $interpolate`${microvmLogGroup.arn}:*`,
+        },
+      );
+      new aws.cloudwatch.LogSubscriptionFilter(
+        "MicrovmRuntimeLogsToLoki",
+        {
+          logGroup: microvmLogGroup.name,
+          filterPattern: "",
+          destinationArn: sandboxLogForwarder.arn,
+        },
+        { dependsOn: [sandboxLogForwarderInvoke] },
+      );
+    } else if (microvmLogGroup) {
+      console.warn(
+        "OTEL_EXPORTER_OTLP_HEADERS is not set: skipping the sandbox log forwarder, MicroVM guest logs stay in CloudWatch only.",
+      );
     }
 
     if (microvmExecutionRole) {

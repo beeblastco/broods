@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
 import {
   formatProvider,
@@ -49,12 +49,15 @@ import {
   relativeTime,
   useNow,
 } from "./sandboxFormat";
+import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
 interface Props {
   /** Sandbox instance rows from Convex. */
   instances: Array<Doc<"sandboxInstances">>;
   /** Current project route id, used to build trace deep links. */
   projectId: Id<"projects">;
+  /** Stage-scoped observability WS inputs, handed to the sheet's Logs tab. */
+  observability: SandboxObservabilityScope | null;
 }
 
 /** Status filter values; "all" disables the status predicate. */
@@ -72,6 +75,7 @@ const PAGE_SIZE = 8;
 export function SandboxInstancesTable({
   instances,
   projectId,
+  observability,
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const suspend = useAction(api.sandbox.public.suspendSandbox);
@@ -115,9 +119,10 @@ export function SandboxInstancesTable({
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageRows = filtered.slice(
-    safePage * PAGE_SIZE,
-    safePage * PAGE_SIZE + PAGE_SIZE,
+  const pageRows = useMemo(
+    () =>
+      filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [filtered, safePage],
   );
   const hasFilters = search.trim() !== "" || status !== "all";
   const refreshKey = pageRows
@@ -148,7 +153,7 @@ export function SandboxInstancesTable({
     }
   }
 
-  async function refreshVisible() {
+  const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = pageRows.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
@@ -167,13 +172,13 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }
+  }, [pageRows, refresh]);
 
   useEffect(() => {
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
     refreshedPages.current.add(refreshKey);
     void refreshVisible();
-  }, [refreshKey]);
+  }, [refreshKey, refreshVisible]);
 
   function traceHref(traceId: string): string {
     const next = new URLSearchParams();
@@ -487,6 +492,7 @@ export function SandboxInstancesTable({
         <SandboxInstanceSheet
           instance={selected}
           projectId={projectId}
+          observability={observability}
           now={now}
           onClose={() => setSelected(null)}
         />

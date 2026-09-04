@@ -34,6 +34,10 @@ export interface ObservabilitySubscribeOptions {
   // no backfill is requested, matching CLI/client live-tail expectations.
   liveOnly?: boolean;
   minLevel?: LogLevel;
+  // Tail one sandbox instance's guest output instead of the deployment's logs.
+  // The id is the last segment of the instance's log stream (dashboard Instances
+  // sheet, or `logStream` on the instance row).
+  sandboxId?: string;
   signal?: AbortSignal;
 }
 
@@ -159,7 +163,7 @@ async function* subscribeObservabilityLogsOnce(
   subscribeOptions: ObservabilitySubscribeOptions,
 ): AsyncGenerator<ObservabilityLogEntry> {
   const { baseUrl, apiKey, project, stage } = options;
-  const { backfill = 0, minLevel, signal } = subscribeOptions;
+  const { backfill = 0, minLevel, sandboxId, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
@@ -208,6 +212,7 @@ async function* subscribeObservabilityLogsOnce(
       ...(backfill > 0 ? { backfill: backfill } : {}),
       ...(liveOnly ? { liveOnly: true } : {}),
       ...(minLevel !== undefined ? { minLevel: minLevel } : {}),
+      ...(sandboxId !== undefined ? { sandboxId: sandboxId } : {}),
     };
     socket.send(JSON.stringify(msg));
   };

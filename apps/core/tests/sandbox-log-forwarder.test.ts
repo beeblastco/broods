@@ -1,0 +1,212 @@
+/**
+ * The sandbox log forwarder turns one CloudWatch subscription delivery into one
+ * OTLP/HTTP push. These pin the two contracts it sits between: the stream name
+ * core writes, and the attributes the collector and Loki index on.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { createHmac } from "node:crypto";
+import { gzipSync } from "node:zlib";
+import type {
+  CloudWatchLogsDecodedData,
+  CloudWatchLogsEvent,
+} from "aws-lambda";
+import {
+  handler,
+  otlpHeaders,
+  otlpLogsRequest,
+  parseLogStream,
+  redact,
+} from "../../lambda/sandbox-log-forwarder.mjs";
+
+// The OTLP client line doubles as the stream-name signing key on both sides.
+const KEY = "Authorization=Basic dXNlcjpwYXNz";
+const STREAM = signed("acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b");
+const LOG_GROUP = "/broods/dev/microvms";
+
+type CloudWatchPayload = Pick<
+  CloudWatchLogsDecodedData,
+  "messageType" | "logGroup" | "logStream" | "logEvents"
+>;
+
+function attributes(
+  list: Array<{ key: string; value: { stringValue: string } }>,
+): Record<string, string> {
+  return Object.fromEntries(
+    list.map((item) => [item.key, item.value.stringValue]),
+  );
+}
+
+function cloudWatchEvent(payload: CloudWatchPayload): CloudWatchLogsEvent {
+  return {
+    awslogs: {
+      data: gzipSync(Buffer.from(JSON.stringify(payload))).toString("base64"),
+    },
+  };
+}
+
+function signed(name: string): string {
+  const mac = createHmac("sha256", KEY).update(name).digest("hex").slice(0, 16);
+
+  return `${name}/${mac}`;
+}
+
+function payload(
+  overrides: Partial<CloudWatchPayload> = {},
+): CloudWatchPayload {
+  return {
+    messageType: "DATA_MESSAGE",
+    logGroup: LOG_GROUP,
+    logStream: STREAM,
+    logEvents: [
+      { id: "1", timestamp: 1_700_000_000_000, message: "server listening" },
+    ],
+    ...overrides,
+  };
+}
+
+describe("parseLogStream", () => {
+  it("splits core's signed stream name into tenant labels and the sandbox id", () => {
+    expect(parseLogStream(STREAM, KEY)).toEqual({
+      accountId: "acct-1",
+      project: "proj",
+      stage: "dev",
+      sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+    });
+  });
+
+  it("leaves unscoped runs unlabeled instead of indexing '-' as a tenant", () => {
+    expect(parseLogStream(signed("acct-1/-/-/uuid"), KEY)).toEqual({
+      accountId: "acct-1",
+      project: undefined,
+      stage: undefined,
+      sandboxId: "uuid",
+    });
+  });
+
+  // A guest holds the VM role and can name a stream after any tenant; without
+  // core's signature the name is just an operator-visible id.
+  it("refuses tenant labels for a stream core did not sign", () => {
+    const unlabeled = (sandboxId: string) => ({
+      accountId: undefined,
+      project: undefined,
+      stage: undefined,
+      sandboxId: sandboxId,
+    });
+    const forged = "victim/shop/prod/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+    expect(parseLogStream(forged, KEY)).toEqual(unlabeled(forged));
+    expect(parseLogStream(`${forged}/0123456789abcdef`, KEY)).toEqual(
+      unlabeled(`${forged}/0123456789abcdef`),
+    );
+    expect(parseLogStream(signed(forged), "other-key")).toEqual(
+      unlabeled(signed(forged)),
+    );
+    expect(parseLogStream("ai-12345678", KEY)).toEqual(
+      unlabeled("ai-12345678"),
+    );
+  });
+});
+
+describe("otlpHeaders", () => {
+  it("reads the K=V,K2=V2 line the way core's otel.ts does", () => {
+    expect(
+      otlpHeaders("Authorization=Basic dXNlcjpwYXNz, x-scope=a=b"),
+    ).toEqual({ Authorization: "Basic dXNlcjpwYXNz", "x-scope": "a=b" });
+  });
+});
+
+describe("redact", () => {
+  it("applies core's string patterns", () => {
+    expect(
+      redact(
+        "Authorization: Bearer abc.def GET /x?token=s3cret key fp_agent_AbC-1 sts fp_sts_Z9",
+      ),
+    ).toBe(
+      "Authorization: Bearer [redacted] GET /x?token=[redacted] key [redacted] sts [redacted]",
+    );
+  });
+});
+
+describe("otlpLogsRequest", () => {
+  it("puts the tenant on the resource and the sandbox id on each record", () => {
+    const body = otlpLogsRequest(
+      payload({
+        logEvents: [
+          { id: "1", timestamp: 1_700_000_000_000, message: "one" },
+          { id: "2", timestamp: 1_700_000_000_250, message: "Bearer tok" },
+        ],
+      }),
+      KEY,
+    );
+    const resourceLogs = body.resourceLogs[0]!;
+
+    expect(attributes(resourceLogs.resource.attributes)).toEqual({
+      "service.name": "broods-sandbox",
+      account_id: "acct-1",
+      project: "proj",
+      stage: "dev",
+    });
+    const records = resourceLogs.scopeLogs[0]!.logRecords;
+    expect(records).toHaveLength(2);
+    expect(records[0]!.timeUnixNano).toBe("1700000000000000000");
+    expect(records[0]!.body).toEqual({ stringValue: "one" });
+    expect(records[1]!.body).toEqual({ stringValue: "Bearer [redacted]" });
+    expect(attributes(records[0]!.attributes)).toEqual({
+      sandbox_id: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      source: "sandbox",
+      provider: "lambda",
+      "aws.cloudwatch.log_group": LOG_GROUP,
+      "aws.cloudwatch.log_stream": STREAM,
+    });
+  });
+});
+
+describe("handler", () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(async () => new Response(null, { status: 200 }));
+
+  beforeEach(() => {
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "https://otel.example.test/";
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = KEY;
+    fetchMock.mockClear();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("posts one OTLP request per delivery with basic auth", async () => {
+    await handler(cloudWatchEvent(payload()));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      { method: string; headers: Record<string, string>; body: string },
+    ];
+    expect(url).toBe("https://otel.example.test/v1/logs");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Basic dXNlcjpwYXNz");
+    const [resourceLogs] = JSON.parse(init.body).resourceLogs;
+    expect(attributes(resourceLogs.resource.attributes).account_id).toBe(
+      "acct-1",
+    );
+  });
+
+  it("ignores control messages and empty batches", async () => {
+    await handler(cloudWatchEvent(payload({ messageType: "CONTROL_MESSAGE" })));
+    await handler(cloudWatchEvent(payload({ logEvents: [] })));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("throws on a rejected push so CloudWatch retries the delivery", async () => {
+    fetchMock.mockImplementationOnce(
+      async () => new Response(null, { status: 401 }),
+    );
+
+    await expect(handler(cloudWatchEvent(payload()))).rejects.toThrow(
+      "OTLP push failed with HTTP 401",
+    );
+  });
+});

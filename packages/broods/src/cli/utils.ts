@@ -33,6 +33,7 @@ const VALUE_OPTIONS = new Set([
   "--limit",
   "--project",
   "--region",
+  "--sandbox",
   "-n",
 ]);
 

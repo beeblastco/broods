@@ -18,6 +18,7 @@ import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import {
@@ -50,9 +51,10 @@ import {
   fetchObservabilityScope,
   subscribeObservabilityLogs,
 } from "../observability-client.ts";
-import type {
-  LogLevel,
-  ObservabilityLogEntry,
+import {
+  isSandboxLogId,
+  type LogLevel,
+  type ObservabilityLogEntry,
 } from "../observability-contracts.ts";
 import {
   hasFlag,
@@ -221,6 +223,9 @@ Options:
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Show every level (DEBUG from the backfill only)
   --json                Print the backfill as raw JSON
+  --sandbox <id>        Tail one sandbox instance's guest output instead. The id
+                        is the last segment of the instance's log stream
+                        (dashboard Instances sheet).
 
 ${GLOBAL_OPTIONS}`,
   org: `Usage: broods org <list|use|create> [name]
@@ -2130,12 +2135,17 @@ function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
-/** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
+/**
+ * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
+ * A sandbox line is raw guest output, so terminal escapes are dropped before
+ * they can move the cursor or retitle the window.
+ */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
   const level = entry.level.padEnd(5);
+  const message = stripVTControlCharacters(entry.message);
 
-  return `${time} ${level} ${entry.eventType} ${entry.message}`;
+  return `${time} ${level} ${entry.eventType} ${message}`;
 }
 
 // `broods stream` — live tail of the whole project/stage log stream
@@ -2183,7 +2193,15 @@ async function logs(args: string[]): Promise<void> {
     baseUrl: baseUrl,
     apiKey: apiKey,
   });
-  const minLevel = resolveMinLevel(args);
+  const sandboxId = optionValue(args, "--sandbox");
+  // A bare or malformed --sandbox must not fall through to the deployment tail.
+  if (hasFlag(args, "--sandbox") && !isSandboxLogId(sandboxId))
+    throw new Error(
+      "--sandbox needs the instance log id, the UUID shown in the dashboard Instances sheet.",
+    );
+  // Guest lines carry no level (the bridge stamps INFO), so the WARN default
+  // would show nothing; a sandbox tail is everything the guest wrote.
+  const minLevel: LogLevel = sandboxId ? "DEBUG" : resolveMinLevel(args);
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
   );
@@ -2194,7 +2212,9 @@ async function logs(args: string[]): Promise<void> {
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Logs for ${project}/${stage} [${minLevel}+]` +
+    `Logs for ${project}/${stage}` +
+      (sandboxId ? ` sandbox ${sandboxId}` : "") +
+      ` [${minLevel}+]` +
       levelHint(minLevel) +
       ` (backfill ${limit}) — Ctrl+C to stop`,
   );
@@ -2202,7 +2222,12 @@ async function logs(args: string[]): Promise<void> {
   try {
     for await (const entry of subscribeObservabilityLogs(
       { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
-      { backfill: limit, minLevel: minLevel, signal: controller.signal },
+      {
+        backfill: limit,
+        minLevel: minLevel,
+        ...(sandboxId ? { sandboxId: sandboxId } : {}),
+        signal: controller.signal,
+      },
     )) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));

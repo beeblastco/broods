@@ -32,6 +32,7 @@ import {
   SuspendMicrovmCommand,
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
+import { createHmac } from "node:crypto";
 import {
   removeSandboxInstance,
   upsertSandboxInstance,
@@ -39,6 +40,7 @@ import {
 import { optionalEnv } from "../../shared/env.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import { getObservabilityContext } from "../../shared/otel.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
   MAX_CONCURRENT_BACKGROUND_JOBS,
@@ -113,6 +115,8 @@ const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
+// Hex chars of the log stream name HMAC. Keep in step with the forwarder.
+const LOG_STREAM_MAC_LENGTH = 16;
 
 // A reservation whose VM cannot be reconnected because it reached a terminal state.
 // GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
@@ -588,11 +592,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         created.microvmId,
         created.microvmId,
         request.metadata,
-        { ephemeral: true },
+        { ephemeral: true, logStream: created.logStream },
       );
 
       return {
-        ...created,
+        microvmId: created.microvmId,
+        endpoint: created.endpoint,
         ephemeralMirror: ephemeralMirror,
         isFirstCreate: true,
       };
@@ -652,6 +657,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           key,
           created.microvmId,
           request.metadata,
+          { logStream: created.logStream },
         );
 
         return { ...this.#cacheTarget(key, created), isFirstCreate: true };
@@ -689,12 +695,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): { microvmId: string; endpoint: string } {
     const now = Date.now();
     evictToCap(reservedEndpoints, now);
+    // Only the exec target is cached and returned; a fresh launch also carries its
+    // log stream, which the mirror row keeps and the reservation must not.
+    const entry = { microvmId: target.microvmId, endpoint: target.endpoint };
     reservedEndpoints.set(key, {
-      ...target,
+      ...entry,
       expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
     });
 
-    return target;
+    return entry;
   }
 
   // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
@@ -781,18 +790,26 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   async #runMicrovm(
     request: SandboxRunRequest,
-  ): Promise<{ microvmId: string; endpoint: string }> {
+  ): Promise<{ microvmId: string; endpoint: string; logStream: string }> {
+    const logStream = this.#logStream();
     const result = await this.#client.send(
-      new RunMicrovmCommand(await this.#runInput(request)),
+      new RunMicrovmCommand(await this.#runInput(request, logStream)),
     );
     if (!result.microvmId || !result.endpoint) {
       throw new Error("RunMicrovm did not return a microvmId and endpoint");
     }
 
-    return { microvmId: result.microvmId, endpoint: result.endpoint };
+    return {
+      microvmId: result.microvmId,
+      endpoint: result.endpoint,
+      logStream: logStream,
+    };
   }
 
-  async #runInput(request: SandboxRunRequest): Promise<RunMicrovmRequest> {
+  async #runInput(
+    request: SandboxRunRequest,
+    logStream: string,
+  ): Promise<RunMicrovmRequest> {
     const imageIdentifier = this.#requireImageIdentifier();
     const imageVersion = this.#optionOrEnv(
       "imageVersion",
@@ -811,7 +828,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       imageIdentifier: imageIdentifier,
       ...(imageVersion ? { imageVersion: imageVersion } : {}),
       ...(executionRoleArn ? { executionRoleArn: executionRoleArn } : {}),
-      ...(logGroup ? { logging: { cloudWatch: { logGroup: logGroup } } } : {}),
+      ...(logGroup
+        ? {
+            logging: {
+              cloudWatch: { logGroup: logGroup, logStream: logStream },
+            },
+          }
+        : {}),
       ...(persistent
         ? {
             idlePolicy: {
@@ -831,6 +854,33 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       ...this.#networkConnectors(persistent),
       ...(runHookPayload ? { runHookPayload: runHookPayload } : {}),
     };
+  }
+
+  // CloudWatch stream name for this VM's guest output. The sandbox log forwarder
+  // splits it on "/" to label the tenant, so nothing between CloudWatch and Loki
+  // ever has to look a microvmId up. "-" marks a run with no deployment scope
+  // (channel, cron): those lines still reach Loki for operators and stay out of
+  // the dashboard, exactly like core's own NATS sink skips them. One fresh id per
+  // launch, since the microvmId does not exist until RunMicrovm returns. The
+  // last segment signs the rest with the OTLP client secret the forwarder also
+  // holds: a guest can reach the VM role and create any stream in the group, so
+  // the forwarder labels only what core signed. Unsigned names ship unlabeled.
+  #logStream(): string {
+    const scope = getObservabilityContext();
+    const name = [
+      scope?.accountId || this.#config.controlPlane?.accountId || "-",
+      scope?.project || "-",
+      scope?.stage || "-",
+      crypto.randomUUID(),
+    ].join("/");
+    const key = optionalEnv("OTEL_EXPORTER_OTLP_HEADERS");
+    if (!key) return name;
+    const mac = createHmac("sha256", key)
+      .update(name)
+      .digest("hex")
+      .slice(0, LOG_STREAM_MAC_LENGTH);
+
+    return `${name}/${mac}`;
   }
 
   // Per-VM init delivered to the image's /run hook. Carries the workspace mount
