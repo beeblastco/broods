@@ -389,6 +389,8 @@ export const createAsyncToolResult = internalMutation({
     input: v.any(),
     delivery: v.optional(v.any()),
     completionToken: v.optional(v.string()),
+    // A group of exactly one row can be sealed on insert.
+    sealed: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -413,7 +415,7 @@ export const createAsyncToolResult = internalMutation({
       throw new Error("Cannot register an async tool result in a sealed group");
     }
     const now = new Date().toISOString();
-    const { completionToken, ...persistedArgs } = args;
+    const { completionToken, sealed, ...persistedArgs } = args;
     await ctx.db.insert("runtimeAsyncToolResults", {
       accountId: accountId,
       ...persistedArgs,
@@ -429,6 +431,7 @@ export const createAsyncToolResult = internalMutation({
       if (group && !group.resultIds.includes(args.resultId))
         await ctx.db.patch(group._id, {
           resultIds: [...group.resultIds, args.resultId],
+          ...(sealed ? { sealed: true } : {}),
           expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
         });
       else if (!group)
@@ -436,7 +439,7 @@ export const createAsyncToolResult = internalMutation({
           accountId: accountId,
           parentEventId: args.parentEventId,
           resultIds: [args.resultId],
-          sealed: false,
+          sealed: sealed === true,
           expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
         });
     }
@@ -512,19 +515,14 @@ export const listPendingAsyncToolResults = internalQuery({
     (
       await ctx.db
         .query("runtimeAsyncToolResults")
-        .withIndex("by_conversationKey", (q) =>
-          q.eq("conversationKey", args.conversationKey),
-        )
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("status"), "processing"),
-            q.eq(q.field("toolName"), args.toolName),
-          ),
+        .withIndex("by_conversationKey_and_toolName_and_status", (q) =>
+          q
+            .eq("conversationKey", args.conversationKey)
+            .eq("toolName", args.toolName)
+            .eq("status", "processing"),
         )
         .take(100)
-    )
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map(hideCompletionTokenHash),
+    ).map(hideCompletionTokenHash),
 });
 /**
  * Looks up fan-in group registration and seal state for a parent event.

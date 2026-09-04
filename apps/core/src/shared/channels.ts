@@ -35,13 +35,13 @@ export interface ChannelActions {
   // A batch arrives whole and the provider decides how to spend it: Telegram
   // groups it into one album, Zalo has no album and sends them in sequence.
   sendImages?(images: ChannelImage[], caption?: string): Promise<void>;
-  // Optional provider-native sticker delivery. Providers decide whether the
-  // value is a sticker id, file id, or public URL.
-  sendSticker?(sticker: string): Promise<void>;
   // Optional native rendering for an ask_questions prompt (inline buttons).
   // Providers without one omit it and the numbered `text` goes out as plain
   // text, answered by a reply.
   sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
+  // Optional provider-native sticker delivery. Providers decide whether the
+  // value is a sticker id, file id, or public URL.
+  sendSticker?(sticker: string): Promise<void>;
   sendTyping(): Promise<void>;
   supportsReactions?: boolean;
   // Reactions target the inbound message. Omitting the emoji uses the channel's
@@ -55,11 +55,6 @@ export interface ChannelActions {
   ): Promise<string | null>;
 }
 
-export interface ChannelQuestionOption {
-  label: string;
-  description?: string;
-}
-
 /** One question the agent asks through ask_questions, as a channel renders it. */
 export interface ChannelQuestion {
   id: string;
@@ -70,23 +65,26 @@ export interface ChannelQuestion {
   allowFreeText?: boolean;
 }
 
-/**
- * What a channel posts for one ask_questions call. `text` is the numbered
- * fallback every provider can send; `answerKey` is the short token a button
- * carries back so the click is matched to its row (Telegram caps callback
- * data at 64 bytes, so it is not the statusId).
- */
-export interface ChannelQuestionPrompt {
-  answerKey: string;
-  questions: ChannelQuestion[];
-  text: string;
-}
-
 /** A button click on a posted question, by position. */
 export interface ChannelQuestionAnswer {
-  answerKey: string;
+  statusId: string;
   questionIndex: number;
   optionIndex: number;
+}
+
+export interface ChannelQuestionOption {
+  label: string;
+  description?: string;
+}
+
+/**
+ * What a channel posts for one ask_questions call. `text` is the numbered
+ * fallback every provider can send; a button carries `statusId` back.
+ */
+export interface ChannelQuestionPrompt {
+  statusId: string;
+  questions: ChannelQuestion[];
+  text: string;
 }
 
 export interface ChannelRequest {

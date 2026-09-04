@@ -39,6 +39,30 @@ export interface DetachedAsyncToolGroup {
   resultIds: string[];
   sealed: boolean;
 }
+/**
+ * A one-row group sealed on insert, for a tool that settles on its own later
+ * (a background job, an open question). The parent event is derived from the
+ * turn that started it.
+ */
+export function createDetachedAsyncToolResult(options: {
+  eventId: string;
+  tag: string;
+  resultId: string;
+  conversationKey: string;
+  toolName: string;
+  toolCallId: string;
+  input: unknown;
+  delivery: AsyncToolDelivery;
+  completionToken?: string;
+}): Promise<boolean> {
+  const { eventId, tag, ...row } = options;
+
+  return runtime.mutate("createAsyncToolResult", {
+    ...row,
+    parentEventId: `${eventId}:${tag}:${options.resultId}`,
+    sealed: true,
+  });
+}
 export function createPendingAsyncToolResult(options: {
   resultId: string;
   parentEventId: string;

@@ -6,11 +6,6 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
-import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
-import askQuestionsTool, {
-  type AskQuestionsInput,
-  type AskQuestionsOutput,
-} from "../src/harness/tools/ask-questions.tool.ts";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import {
   answersFromChoice,
@@ -18,18 +13,21 @@ import {
   formatQuestionsText,
   listOpenQuestions,
   NO_ANSWER_ERROR,
+  openQuestion,
   type PendingQuestionInput,
 } from "../src/harness/questions.ts";
+import askQuestionsTool, {
+  type AskQuestionsInput,
+  type AskQuestionsOutput,
+} from "../src/harness/tools/ask-questions.tool.ts";
+import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type {
   ChannelQuestion,
   ChannelQuestionPrompt,
 } from "../src/shared/channels.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-const originalMutate = runtime.mutate;
-const originalQuery = runtime.query;
-const mutations: { name: string; args: Record<string, unknown> }[] = [];
-
+const CONVERSATION_KEY = "acct:a:agent:b:conv";
 const QUESTION: ChannelQuestion = {
   id: "deploy_target",
   header: "Target",
@@ -39,8 +37,22 @@ const QUESTION: ChannelQuestion = {
     { label: "prod" },
   ],
 };
+const PENDING: PendingQuestionInput = {
+  questions: [QUESTION],
+  blocking: false,
+  answerBy: new Date(Date.now() + 60_000).toISOString(),
+};
 
-afterEach(() => {
+interface RecordedMutation {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+const originalMutate = runtime.mutate;
+const originalQuery = runtime.query;
+const mutations: RecordedMutation[] = [];
+
+afterEach((): void => {
   runtime.mutate = originalMutate;
   runtime.query = originalQuery;
   mutations.length = 0;
@@ -49,10 +61,10 @@ afterEach(() => {
 describe("ask_questions tool", () => {
   it("leaves a sealed question row and posts the numbered prompt", async () => {
     stubMutations();
-    const sendText = mock(async (_text: string) => {});
+    const sendText = mock(async (_text: string): Promise<void> => {});
     const execute = toolExecute(
       askQuestionsTool({
-        conversationKey: "acct:a:agent:b:conv",
+        conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
         delivery: { kind: "async" },
         channel: channelContext({ sendText: sendText }),
@@ -61,62 +73,65 @@ describe("ask_questions tool", () => {
 
     const output = await execute({ questions: [QUESTION] });
 
-    expect(output.status).toBe("asked");
     expect(output.blocking).toBe(false);
     expect(output.statusId).toMatch(/^async_tool_/);
-    const created = mutations.find((m) => m.name === "createAsyncToolResult");
-    expect(created?.args).toMatchObject({
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]!.name).toBe("createAsyncToolResult");
+    expect(mutations[0]!.args).toMatchObject({
       resultId: output.statusId,
       parentEventId: `event-1:async-question:${output.statusId}`,
-      conversationKey: "acct:a:agent:b:conv",
+      conversationKey: CONVERSATION_KEY,
       toolName: "ask_questions",
       delivery: { kind: "async" },
+      sealed: true,
+      input: {
+        questions: [QUESTION],
+        blocking: false,
+        answerBy: output.answerBy,
+      },
     });
-    const input = created?.args.input as PendingQuestionInput;
-    expect(input.kind).toBe("question");
-    expect(input.answerKey).toHaveLength(8);
-    expect(input.blocking).toBe(false);
-    expect(mutations.some((m) => m.name === "sealAsyncToolGroup")).toBe(true);
-    expect(sendText).toHaveBeenCalledTimes(1);
-    expect(sendText.mock.calls[0]![0]).toBe(
-      "Which stage should this go to?\n1. dev - current default\n2. prod",
-    );
+    expect(sendText.mock.calls).toEqual([
+      ["Which stage should this go to?\n1. dev - current default\n2. prod"],
+    ]);
   });
 
-  it("hands the prompt to a channel that renders buttons", async () => {
+  it("hands the prompt to a channel that renders buttons and reports a blocking call", async () => {
     stubMutations();
-    const sendText = mock(async (_text: string) => {});
-    const sendQuestions = mock(async (_prompt: ChannelQuestionPrompt) => {});
+    const sendText = mock(async (_text: string): Promise<void> => {});
+    const sendQuestions = mock(
+      async (_prompt: ChannelQuestionPrompt): Promise<void> => {},
+    );
+    const blocked: string[] = [];
     const execute = toolExecute(
       askQuestionsTool({
-        conversationKey: "acct:a:agent:b:conv",
+        conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
         channel: channelContext({
           sendText: sendText,
           sendQuestions: sendQuestions,
         }),
+        onBlockingQuestion: (question): void => {
+          blocked.push(question.statusId);
+        },
       }),
     );
 
     const output = await execute({ questions: [QUESTION], blocking: true });
 
     expect(output.blocking).toBe(true);
-    expect(output.note).toContain("End your turn now");
     expect(sendText).not.toHaveBeenCalled();
-    expect(sendQuestions).toHaveBeenCalledTimes(1);
-    const prompt = sendQuestions.mock.calls[0]![0];
-    expect(prompt.questions).toEqual([QUESTION]);
-    const created = mutations.find((m) => m.name === "createAsyncToolResult");
-    expect((created?.args.input as PendingQuestionInput).answerKey).toBe(
-      prompt.answerKey,
-    );
+    expect(sendQuestions.mock.calls[0]![0]).toMatchObject({
+      statusId: output.statusId,
+      questions: [QUESTION],
+    });
+    expect(blocked).toEqual([output.statusId]);
   });
 
   it("rejects a malformed prompt before touching storage", async () => {
     stubMutations();
     const execute = toolExecute(
       askQuestionsTool({
-        conversationKey: "acct:a:agent:b:conv",
+        conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
       }),
     );
@@ -136,7 +151,7 @@ describe("ask_questions tool", () => {
     stubMutations();
     const execute = toolExecute(
       askQuestionsTool({
-        conversationKey: "acct:a:agent:b:conv",
+        conversationKey: CONVERSATION_KEY,
         eventId: "event-1",
         channel: channelContext({ transformText: async () => null }),
       }),
@@ -145,38 +160,27 @@ describe("ask_questions tool", () => {
     await expect(execute({ questions: [QUESTION] })).rejects.toThrow(
       "blocked by the outbound message hook",
     );
-    const failed = mutations.find(
-      (m) => m.name === "updateAsyncToolResult" && m.args.status === "failed",
-    );
-    expect(failed).toBeDefined();
+    expect(mutations.at(-1)?.args).toMatchObject({ status: "failed" });
   });
 });
 
 describe("question answers", () => {
-  const pending: PendingQuestionInput = {
-    kind: "question",
-    answerKey: "abc12345",
-    questions: [QUESTION],
-    blocking: false,
-    answerBy: new Date(Date.now() + 60_000).toISOString(),
-  };
-
   it("reads a typed reply as an option number, a label, or free text", () => {
-    expect(answersFromText(pending, "2").answers).toEqual({
+    expect(answersFromText(PENDING, "2").answers).toEqual({
       deploy_target: ["prod"],
     });
-    expect(answersFromText(pending, " Dev ").answers).toEqual({
+    expect(answersFromText(PENDING, " Dev ").answers).toEqual({
       deploy_target: ["dev"],
     });
-    expect(answersFromText(pending, "staging please").answers).toEqual({
+    expect(answersFromText(PENDING, "staging please").answers).toEqual({
       deploy_target: ["staging please"],
     });
-    expect(answersFromText(pending, "1").note).toBeUndefined();
+    expect(answersFromText(PENDING, "1").note).toBeUndefined();
   });
 
   it("says so when a typed reply only answers the first of several", () => {
     const result = answersFromText(
-      { ...pending, questions: [QUESTION, { ...QUESTION, id: "second" }] },
+      { ...PENDING, questions: [QUESTION, { ...QUESTION, id: "second" }] },
       "1",
     );
 
@@ -185,43 +189,56 @@ describe("question answers", () => {
   });
 
   it("resolves a button click by position and rejects a stale one", () => {
+    const click = {
+      statusId: "async_tool_1",
+      questionIndex: 0,
+      optionIndex: 1,
+    };
+
+    expect(answersFromChoice(PENDING, click)).toEqual({
+      deploy_target: ["prod"],
+    });
     expect(
-      answersFromChoice(pending, {
-        answerKey: "abc12345",
-        questionIndex: 0,
-        optionIndex: 1,
-      }),
-    ).toEqual({ deploy_target: ["prod"] });
-    expect(
-      answersFromChoice(pending, {
-        answerKey: "abc12345",
-        questionIndex: 3,
-        optionIndex: 0,
-      }),
+      answersFromChoice(PENDING, { ...click, questionIndex: 3 }),
     ).toBeUndefined();
+  });
+
+  it("only opens a processing question row from its own conversation", () => {
+    const row = questionRow("async_tool_1", PENDING);
+
+    expect(openQuestion(row, CONVERSATION_KEY)?.pending).toEqual(PENDING);
+    expect(openQuestion(row, "acct:a:agent:b:other")).toBeUndefined();
+    expect(
+      openQuestion({ ...row, status: "completed" }, CONVERSATION_KEY),
+    ).toBeUndefined();
+    expect(openQuestion(null, CONVERSATION_KEY)).toBeUndefined();
   });
 
   it("expires a prompt nobody answered in time and keeps the rest open", async () => {
     stubMutations();
-    const stale: AsyncToolResultRecord = questionRow("async_tool_old", {
-      ...pending,
+    const stale = questionRow("async_tool_old", {
+      ...PENDING,
       answerBy: new Date(Date.now() - 1000).toISOString(),
     });
-    const fresh = questionRow("async_tool_new", pending);
+    const fresh = questionRow("async_tool_new", PENDING);
     runtime.query = mock(async () => [stale, fresh]) as never;
 
-    const open = await listOpenQuestions("acct:a:agent:b:conv");
+    const open = await listOpenQuestions(CONVERSATION_KEY);
+    await Promise.resolve();
 
-    expect(open.map((row) => row.resultId)).toEqual(["async_tool_new"]);
-    const expired = mutations.find(
-      (m) =>
-        m.name === "updateAsyncToolResult" &&
-        m.args.resultId === "async_tool_old",
-    );
-    expect(expired?.args).toMatchObject({
-      status: "failed",
-      error: NO_ANSWER_ERROR,
-    });
+    expect(open.map((question) => question.record.resultId)).toEqual([
+      "async_tool_new",
+    ]);
+    expect(mutations).toEqual([
+      {
+        name: "updateAsyncToolResult",
+        args: expect.objectContaining({
+          resultId: "async_tool_old",
+          status: "failed",
+          error: NO_ANSWER_ERROR,
+        }),
+      },
+    ]);
   });
 
   it("renders the free-text hint only when the question allows it", () => {
@@ -232,14 +249,6 @@ describe("question answers", () => {
   });
 });
 
-function stubMutations(): void {
-  runtime.mutate = mock(async (name: string, args: Record<string, unknown>) => {
-    mutations.push({ name: name, args: args });
-
-    return name === "createAsyncToolResult" ? true : null;
-  }) as never;
-}
-
 function channelContext(
   overrides: Partial<ChannelToolContext["actions"]> & {
     transformText?: ChannelToolContext["transformText"];
@@ -249,11 +258,11 @@ function channelContext(
 
   return {
     channelName: "telegram",
-    transformText: transformText ?? (async (text) => text),
+    transformText: transformText ?? (async (text): Promise<string> => text),
     actions: {
-      sendText: async () => {},
-      sendTyping: async () => {},
-      reactToMessage: async () => {},
+      sendText: async (): Promise<void> => {},
+      sendTyping: async (): Promise<void> => {},
+      reactToMessage: async (): Promise<void> => {},
       ...actions,
     },
   };
@@ -268,7 +277,7 @@ function questionRow(
   return {
     resultId: resultId,
     parentEventId: `event-1:async-question:${resultId}`,
-    conversationKey: "acct:a:agent:b:conv",
+    conversationKey: CONVERSATION_KEY,
     toolName: "ask_questions",
     toolCallId: "call-1",
     input: input,
@@ -277,6 +286,19 @@ function questionRow(
     updatedAt: now,
     expiresAt: 0,
   };
+}
+
+function stubMutations(): void {
+  runtime.mutate = mock(
+    async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<boolean | null> => {
+      mutations.push({ name: name, args: args });
+
+      return name === "createAsyncToolResult" ? true : null;
+    },
+  ) as never;
 }
 
 function toolExecute(
@@ -288,7 +310,7 @@ function toolExecute(
     Record<string, unknown>
   >;
 
-  return (input) =>
+  return (input): Promise<AskQuestionsOutput> =>
     Promise.resolve(
       execute(input, {
         toolCallId: "call-1",

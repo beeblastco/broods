@@ -11,9 +11,8 @@ import { logDebug, logInfo } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
-  createPendingAsyncToolResult,
+  createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
-  sealDetachedAsyncToolGroup,
 } from "../async-tool-result.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
 import type {
@@ -257,10 +256,6 @@ async function dispatchBackground(
   const resultId = `async_tool_${crypto.randomUUID()}`;
   const completionToken = crypto.randomUUID();
   const jobId = generateJobId();
-  // Bash background is not wrapped by AsyncToolCoordinator, so give this one
-  // job its own parent event and seal it immediately after the tracking row is
-  // created; bash is the only detached-group producer.
-  const parentEventId = `${context.background.eventId}:async-bg:${resultId}`;
   const baseUrl = getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
     ? {
@@ -274,11 +269,12 @@ async function dispatchBackground(
     );
   }
 
-  // Create + seal the tracking row BEFORE launching so a fast job's callback can
-  // never arrive before the row exists.
-  await createPendingAsyncToolResult({
+  // Create the sealed tracking row BEFORE launching so a fast job's callback
+  // can never arrive before the row exists.
+  await createDetachedAsyncToolResult({
+    eventId: context.background.eventId,
+    tag: "async-bg",
     resultId: resultId,
-    parentEventId: parentEventId,
     conversationKey: context.background.conversationKey,
     toolName: "bash",
     toolCallId: toolCallId,
@@ -293,12 +289,6 @@ async function dispatchBackground(
     delivery: context.background.delivery ?? { kind: "async" },
     completionToken: completionToken,
   });
-  // Seal the group immediately — this is a group of exactly one job, so all
-  // siblings are already registered. Sealing lets the callback handler know it
-  // is safe to resume the conversation once this job completes without waiting
-  // for other sibling registrations (unlike uploaded async tools, where handler.ts
-  // sealed it).
-  await sealDetachedAsyncToolGroup(parentEventId);
 
   try {
     await runSandboxBackground(ws.sandbox, ws.namespace, command, {

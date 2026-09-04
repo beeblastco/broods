@@ -76,7 +76,7 @@ How the answer gets in:
 
 | Surface           | Prompt                                  | Answer                                                                                                     |
 | ----------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Telegram          | inline keyboard, one button per option  | button click (`callback_query`), matched by the key on the button                                          |
+| Telegram          | inline keyboard, one button per option  | button click (`callback_query`), the button carries the statusId                                           |
 | Other channels    | numbered text                           | a reply while a question is open answers the oldest one: an option number, an option label, or free text   |
 | Direct HTTP/async | status `awaiting_input` + `questions[]` | `POST` the same route with `answers: [{ statusId, answers: { <question id>: [labels] } }]` and no `events` |
 

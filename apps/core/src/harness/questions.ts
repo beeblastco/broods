@@ -1,9 +1,7 @@
 /**
  * ask_questions state shared by the tool, the answer intake and the handler.
- * The tool leaves an open async-tool row here; a channel reply, a button click
- * or the direct API settles it; handler.ts then resumes the conversation the
- * same way a finished background job does. Tool schema and posting live in
- * tools/ask-questions.tool.ts; per-provider rendering in the channel adapters.
+ * The tool leaves an open async-tool row; a reply, a button click or the
+ * direct API settles it; handler.ts resumes the conversation from there.
  */
 
 import type { JSONValue } from "ai";
@@ -21,111 +19,52 @@ import {
 } from "./async-tool-result.ts";
 
 export const ASK_QUESTIONS_TOOL_NAME = "ask_questions";
-export const MAX_QUESTIONS = 3;
-export const MIN_OPTIONS = 2;
-export const MAX_OPTIONS = 4;
-export const MAX_HEADER_LENGTH = 12;
 export const DEFAULT_ANSWER_TIMEOUT_SECONDS = 900;
-export const MIN_ANSWER_TIMEOUT_SECONDS = 30;
 export const MAX_ANSWER_TIMEOUT_SECONDS = 3600;
+export const MAX_OPTIONS = 4;
+export const MAX_QUESTIONS = 3;
+export const MIN_ANSWER_TIMEOUT_SECONDS = 30;
+export const MIN_OPTIONS = 2;
 export const NO_ANSWER_ERROR = "no_answer";
-// Fits beside "q:", two indices and separators inside Telegram's 64-byte cap.
-const ANSWER_KEY_LENGTH = 8;
 
-/** What the tool stores as the row's `input`, so the intake can match a reply. */
+/** A direct API answer to one open prompt. */
+export interface DirectQuestionAnswer {
+  statusId: string;
+  answers: QuestionAnswers;
+}
+
+/** An open prompt row with its parsed input. */
+export interface OpenQuestion {
+  record: AsyncToolResultRecord;
+  pending: PendingQuestionInput;
+}
+
+/** The row's `input`. `answerBy` is when the prompt stops accepting answers. */
 export interface PendingQuestionInput {
-  kind: "question";
-  answerKey: string;
   questions: ChannelQuestion[];
   blocking: boolean;
-  // ISO time after which the prompt is considered unanswered.
   answerBy: string;
 }
 
-/** Labels (or free text) chosen per question id. */
-export type QuestionAnswers = Record<string, string[]>;
-
-/** The value injected back into the conversation as the tool result. */
-export interface QuestionAnswerResult {
-  status: "answered";
-  answers: QuestionAnswers;
-  answeredBy?: Pick<ChannelIdentity, "userId" | "userName">;
-  note?: string;
-}
-
-/** Public shape of an open prompt, reported while a run is awaiting_input. */
+/** An open prompt as reported while a run is awaiting_input. */
 export interface PendingQuestionSummary {
   statusId: string;
   questions: ChannelQuestion[];
   answerBy: string;
 }
 
-/** A structured answer from the direct API body. */
-export interface DirectQuestionAnswer {
-  statusId: string;
+/** Chosen labels (or free text) keyed by question id. */
+export type QuestionAnswers = Record<string, string[]>;
+
+/** The tool result injected back into the conversation. */
+export interface QuestionAnswerResult {
+  status: "answered";
   answers: QuestionAnswers;
+  answeredBy?: ChannelIdentity;
+  note?: string;
 }
 
-/** The row's `input` when it is an ask_questions prompt, else undefined. */
-export function pendingQuestionInput(
-  input: unknown,
-): PendingQuestionInput | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const record = input as Partial<PendingQuestionInput>;
-  if (
-    record.kind !== "question" ||
-    typeof record.answerKey !== "string" ||
-    !Array.isArray(record.questions) ||
-    typeof record.answerBy !== "string"
-  ) {
-    return undefined;
-  }
-
-  return {
-    kind: "question",
-    answerKey: record.answerKey,
-    questions: record.questions,
-    blocking: record.blocking === true,
-    answerBy: record.answerBy,
-  };
-}
-
-/**
- * Open prompts on a conversation, oldest first. A prompt past its answerBy is
- * settled as no_answer on the way out, so a late reply reads as a normal
- * message rather than an answer to a question the agent stopped waiting for.
- */
-export async function listOpenQuestions(
-  conversationKey: string,
-): Promise<AsyncToolResultRecord[]> {
-  const rows = await runtime.query<AsyncToolResultRecord[]>(
-    "listPendingAsyncToolResults",
-    { conversationKey: conversationKey, toolName: ASK_QUESTIONS_TOOL_NAME },
-  );
-  const now = Date.now();
-  const open: AsyncToolResultRecord[] = [];
-  for (const row of rows) {
-    const pending = pendingQuestionInput(row.input);
-    if (!pending) continue;
-    if (Date.parse(pending.answerBy) < now) {
-      await markAsyncToolResultFailed({
-        resultId: row.resultId,
-        error: NO_ANSWER_ERROR,
-      }).catch((error: unknown) => {
-        logWarn("Failed to expire an unanswered question", {
-          resultId: row.resultId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-      continue;
-    }
-    open.push(row);
-  }
-
-  return open;
-}
-
-/** Resolves a button click to the label it stands for. */
+/** The label a button click stands for; undefined when the click is stale. */
 export function answersFromChoice(
   pending: PendingQuestionInput,
   choice: ChannelQuestionAnswer,
@@ -138,9 +77,8 @@ export function answersFromChoice(
 }
 
 /**
- * Resolves a typed reply against the first question: an option number or
- * label picks that option, anything else is taken as free text. Only the
- * first question is answered this way; buttons carry their own position.
+ * A typed reply against the first question: an option number or label picks
+ * that option, anything else is free text.
  */
 export function answersFromText(
   pending: PendingQuestionInput,
@@ -155,7 +93,7 @@ export function answersFromText(
     ? question.options[Number(trimmed) - 1]
     : undefined;
   const byLabel = question.options.find(
-    (option) => option.label.toLowerCase() === trimmed.toLowerCase(),
+    (option): boolean => option.label.toLowerCase() === trimmed.toLowerCase(),
   );
   const chosen = byNumber ?? byLabel;
 
@@ -173,9 +111,9 @@ export function answersFromText(
 /** Numbered plain-text rendering every channel can post. */
 export function formatQuestionsText(questions: ChannelQuestion[]): string {
   return questions
-    .map((question) => {
+    .map((question): string => {
       const lines = [question.question];
-      question.options.forEach((option, index) => {
+      question.options.forEach((option, index): void => {
         lines.push(
           `${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ""}`,
         );
@@ -189,8 +127,52 @@ export function formatQuestionsText(questions: ChannelQuestion[]): string {
     .join("\n\n");
 }
 
-export function newAnswerKey(): string {
-  return crypto.randomUUID().replaceAll("-", "").slice(0, ANSWER_KEY_LENGTH);
+/** Open prompts on a conversation, oldest first. Expired ones settle on the way out. */
+export async function listOpenQuestions(
+  conversationKey: string,
+): Promise<OpenQuestion[]> {
+  const rows = await runtime.query<AsyncToolResultRecord[]>(
+    "listPendingAsyncToolResults",
+    { conversationKey: conversationKey, toolName: ASK_QUESTIONS_TOOL_NAME },
+  );
+
+  return rows
+    .map((row): OpenQuestion | undefined => openQuestion(row, conversationKey))
+    .filter((open): open is OpenQuestion => open !== undefined);
+}
+
+/**
+ * The row as an open prompt, or undefined when it is not one this
+ * conversation may answer. A prompt past `answerBy` is settled as no_answer.
+ */
+export function openQuestion(
+  record: AsyncToolResultRecord | null,
+  conversationKey: string,
+): OpenQuestion | undefined {
+  if (
+    !record ||
+    record.conversationKey !== conversationKey ||
+    record.toolName !== ASK_QUESTIONS_TOOL_NAME ||
+    record.status !== "processing"
+  ) {
+    return undefined;
+  }
+  const pending = record.input as PendingQuestionInput;
+  if (Date.parse(pending.answerBy) < Date.now()) {
+    void markAsyncToolResultFailed({
+      resultId: record.resultId,
+      error: NO_ANSWER_ERROR,
+    }).catch((error: unknown): void => {
+      logWarn("Failed to expire an unanswered question", {
+        resultId: record.resultId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    return undefined;
+  }
+
+  return { record: record, pending: pending };
 }
 
 /** Settles an open prompt with its answer. Null when it already settled. */
@@ -203,16 +185,4 @@ export function settleQuestion(
     status: "completed",
     response: result as unknown as JSONValue,
   });
-}
-
-/** Public summary for status responses and the blocking stop. */
-export function toPendingQuestionSummary(
-  statusId: string,
-  pending: PendingQuestionInput,
-): PendingQuestionSummary {
-  return {
-    statusId: statusId,
-    questions: pending.questions,
-    answerBy: pending.answerBy,
-  };
 }

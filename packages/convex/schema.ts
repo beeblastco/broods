@@ -1376,6 +1376,11 @@ export default defineSchema({
     .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey", ["conversationKey"])
+    .index("by_conversationKey_and_toolName_and_status", [
+      "conversationKey",
+      "toolName",
+      "status",
+    ])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields)
     .index("by_parentEventId", ["parentEventId"])

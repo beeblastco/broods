@@ -31,6 +31,7 @@ import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
+import type { PendingQuestionSummary } from "../questions.ts";
 import type {
   SandboxCpuSample,
   SandboxExecutorConfig,
@@ -105,6 +106,8 @@ export interface ToolContext {
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; hosted MCP servers => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
+  // A blocking ask_questions call, so the loop ends the turn after this step.
+  onBlockingQuestion?: (question: PendingQuestionSummary) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   /** Model-facing tool name → MCP server row id, for per-server policy rules. */
@@ -373,32 +376,27 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  // ask_questions needs somewhere to put the prompt and somewhere to resume: a
-  // channel turn, or a WebSocket turn whose answer comes back through the direct
-  // API. A subagent has neither (its parent asks for it), and a cron-fired run
-  // has nobody typing.
-  const canAskQuestions =
-    context.session !== undefined &&
-    context.session.trigger !== "cron" &&
-    (context.channel !== undefined || context.session.delivery !== undefined);
-  if (canAskQuestions) {
+  // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
+  // A subagent session carries none, and a cron-fired run has nobody typing.
+  const session = context.session;
+  if (session?.delivery !== undefined && session.trigger !== "cron") {
     Object.assign(
       tools,
       askQuestionsTool({
         conversationKey: context.conversationKey,
-        eventId: context.session!.eventId,
-        ...(context.session!.delivery
-          ? { delivery: context.session!.delivery }
-          : {}),
+        eventId: session.eventId,
+        delivery: session.delivery,
         ...(context.channel ? { channel: context.channel } : {}),
+        ...(context.onBlockingQuestion
+          ? { onBlockingQuestion: context.onBlockingQuestion }
+          : {}),
       }),
     );
   }
 
-  // Auto-add the background-job status tool when the agent has any async tool,
-  // a reserved sandbox that can launch background jobs, or an open question to
-  // check on.
-  if (asyncToolNames.size > 0 || hasBackgroundWorkspace || canAskQuestions) {
+  // Auto-add the background-job status tool when the agent has any async tool or
+  // a reserved sandbox that can launch background jobs.
+  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
     Object.assign(
       tools,
       asyncStatusTool({

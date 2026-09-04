@@ -8,17 +8,24 @@ import { describe, expect, it } from "bun:test";
 import type { ChannelRequest } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
+const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
 const WEBHOOK_SECRET = "secret";
 
+interface TelegramApiCall {
+  url: string;
+  body: unknown;
+}
+
+const adapter = createTelegramChannel(
+  "bot-token",
+  WEBHOOK_SECRET,
+  null,
+  null,
+  "👀",
+);
+
 describe("telegram ask_questions", () => {
-  it("posts one button per option carrying the answer key and positions", async () => {
-    const adapter = createTelegramChannel(
-      "bot-token",
-      WEBHOOK_SECRET,
-      null,
-      null,
-      "👀",
-    );
+  it("posts one button per option carrying the statusId and positions", async () => {
     const actions = adapter.actions({
       eventId: "telegram:1",
       conversationKey: "tg:123",
@@ -29,7 +36,7 @@ describe("telegram ask_questions", () => {
 
     const calls = await withTelegramApi(() =>
       actions.sendQuestions!({
-        answerKey: "abc12345",
+        statusId: STATUS_ID,
         text: "Which stage?\n1. dev\n2. prod",
         questions: [
           {
@@ -49,31 +56,23 @@ describe("telegram ask_questions", () => {
       text: "Which stage?\n1. dev\n2. prod",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "dev", callback_data: "q:abc12345:0:0" }],
-          [{ text: "prod", callback_data: "q:abc12345:0:1" }],
+          [{ text: "dev", callback_data: `q:${STATUS_ID}:0:0` }],
+          [{ text: "prod", callback_data: `q:${STATUS_ID}:0:1` }],
         ],
       },
     });
   });
 
   it("turns a button click into an answer, acknowledges it and clears the keyboard", async () => {
-    const adapter = createTelegramChannel(
-      "bot-token",
-      WEBHOOK_SECRET,
-      null,
-      null,
-      "👀",
-    );
-
     let parsed: Awaited<ReturnType<typeof adapter.parse>> | undefined;
-    const calls = await withTelegramApi(async () => {
+    const calls = await withTelegramApi(async (): Promise<void> => {
       parsed = await adapter.parse(
         telegramRequest({
           update_id: 42,
           callback_query: {
             id: "cb-1",
             chat_instance: "ci",
-            data: "q:abc12345:0:1",
+            data: `q:${STATUS_ID}:0:1`,
             from: {
               id: 999,
               is_bot: false,
@@ -96,7 +95,7 @@ describe("telegram ask_questions", () => {
     if (parsed?.kind !== "message") throw new Error("expected a message");
     expect(parsed.message.conversationKey).toBe("tg:123");
     expect(parsed.message.answer).toEqual({
-      answerKey: "abc12345",
+      statusId: STATUS_ID,
       questionIndex: 0,
       optionIndex: 1,
     });
@@ -116,16 +115,8 @@ describe("telegram ask_questions", () => {
   });
 
   it("acknowledges and drops a callback that is not one of ours", async () => {
-    const adapter = createTelegramChannel(
-      "bot-token",
-      WEBHOOK_SECRET,
-      null,
-      null,
-      "👀",
-    );
-
     let parsed: Awaited<ReturnType<typeof adapter.parse>> | undefined;
-    const calls = await withTelegramApi(async () => {
+    const calls = await withTelegramApi(async (): Promise<void> => {
       parsed = await adapter.parse(
         telegramRequest({
           update_id: 43,
@@ -156,12 +147,12 @@ function telegramRequest(update: unknown): ChannelRequest {
   };
 }
 
-// Captures every Bot API call made while `run` executes. The fire-and-forget
-// acknowledgements are awaited through a microtask drain before returning.
+// Captures every Bot API call made while `run` executes, including the
+// fire-and-forget acknowledgements, which a timer tick lets land.
 async function withTelegramApi(
   run: () => Promise<void>,
-): Promise<{ url: string; body: unknown }[]> {
-  const calls: { url: string; body: unknown }[] = [];
+): Promise<TelegramApiCall[]> {
+  const calls: TelegramApiCall[] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (
     input: Parameters<typeof fetch>[0],

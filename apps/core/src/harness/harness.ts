@@ -99,15 +99,8 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
-import {
-  ASK_QUESTIONS_TOOL_NAME,
-  type PendingQuestionSummary,
-} from "./questions.ts";
+import type { PendingQuestionSummary } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
-import type {
-  AskQuestionsInput,
-  AskQuestionsOutput,
-} from "./tools/ask-questions.tool.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
@@ -238,8 +231,6 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   didFail(): boolean;
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
-  // Blocking ask_questions prompts the last step opened; the turn ended on
-  // them and the answer resumes the conversation.
   questionSummaries(): PendingQuestionSummary[];
   hasStructuredOutput(): boolean;
   finalResponse(): JSONValue | undefined;
@@ -529,6 +520,9 @@ export async function runAgentLoop(
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
+        onBlockingQuestion: (question): void => {
+          questionSummaries.push(question);
+        },
         approvalRequirements: configuredApprovals,
         policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: {
@@ -614,7 +608,7 @@ export async function runAgentLoop(
     session.conversationKey,
   );
   let approvalSummaries: ToolApprovalSummary[] = [];
-  let questionSummaries: PendingQuestionSummary[] = [];
+  const questionSummaries: PendingQuestionSummary[] = [];
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";
 
@@ -990,11 +984,11 @@ export async function runAgentLoop(
       recordInputs: false,
       recordOutputs: false,
     },
-    // A blocking question ends the turn after the step that asked it; the
-    // answer resumes the conversation through the async-tool continuation.
+    // A blocking ask_questions call ends the turn after its step; the answer
+    // resumes the conversation through the async-tool continuation.
     stopWhen: [
       isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
-      ({ steps }) => blockingQuestionsInStep(steps.at(-1)).length > 0,
+      (): boolean => questionSummaries.length > 0,
     ],
     prepareStep: async ({ messages }) => {
       const renewal = await session.renewConversationLease();
@@ -1580,7 +1574,6 @@ export async function runAgentLoop(
       const approvals = approvalRequests
         .filter((request) => !request.isAutomatic)
         .map(summarizeApprovalRequest);
-      questionSummaries = blockingQuestionsInStep(steps.at(-1));
       const tools = summarizeToolsUsed(toolCallSummaries);
       const finishLog = {
         eventType: "model.invocation.finished",
@@ -1606,7 +1599,7 @@ export async function runAgentLoop(
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
         // already answered through that tool, and one that stopped on a
-        // blocking question is waiting on the person, not failing.
+        // blocking question is waiting on the person.
         const deliveredByTool =
           finishReason === "stop" &&
           tools.toolCalls.some(
@@ -1943,28 +1936,6 @@ export async function runAgentLoop(
     finalResponse: () => finalResponse,
     traceId: () => traceId,
   });
-}
-
-// Blocking ask_questions calls the step completed. The tool's own output
-// carries the statusId; the input carries what was asked.
-function blockingQuestionsInStep(
-  step: StepResult<ToolSet> | undefined,
-): PendingQuestionSummary[] {
-  if (!step) return [];
-  const summaries: PendingQuestionSummary[] = [];
-  for (const result of step.toolResults ?? []) {
-    if (result.toolName !== ASK_QUESTIONS_TOOL_NAME) continue;
-    const output = result.output as AskQuestionsOutput | undefined;
-    if (output?.status !== "asked" || output.blocking !== true) continue;
-    const input = result.input as AskQuestionsInput | undefined;
-    summaries.push({
-      statusId: output.statusId,
-      questions: input?.questions ?? [],
-      answerBy: output.answerBy,
-    });
-  }
-
-  return summaries;
 }
 
 function errorMessage(error: unknown): string {

@@ -231,7 +231,6 @@ export interface ChannelInboundEvent {
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
-  // A click on an ask_questions button, matched to its prompt by handler.ts.
   answer?: ChannelQuestionAnswer;
 }
 
@@ -261,9 +260,6 @@ interface IntegrationHandlers {
   ): Promise<Response>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
   handleChannelContext?(event: ChannelContextEvent): Promise<void>;
-  // Settles an open ask_questions prompt with this message. True when the
-  // message was consumed as an answer and must not run a turn.
-  handleQuestionAnswer?(event: ChannelInboundEvent): Promise<boolean>;
 }
 
 export interface ChannelRegistry {
@@ -1546,7 +1542,9 @@ async function processChannelMessage(
     // dispatcher is a no-op unless the agent configured code hooks.
     let content = event.content;
     let events = event.events;
-    if (event.agentConfig) {
+    // A button click is an answer, not a message: no hook, no typing, no
+    // reaction on the prompt it clicked.
+    if (event.agentConfig && !event.answer) {
       const hooks = await createAgentHookDispatcher(
         event.accountId,
         event.agentConfig,
@@ -1582,31 +1580,19 @@ async function processChannelMessage(
     // Best-effort acknowledgements. They must never fail the turn, but a bare
     // catch left a missing typing indicator indistinguishable from one the
     // provider rejected, so each outcome is recorded.
-    ackInbound(event, "sendTyping", () => event.channel.sendTyping());
-    ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
+    if (!event.answer) {
+      ackInbound(event, "sendTyping", () => event.channel.sendTyping());
+      ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
+    }
 
-    const inbound: ChannelInboundEvent = {
+    await handlers.handleChannelRequest({
       ...event,
       content: content,
       events: events,
       commandToken:
         resolveCommandToken(content, event.source, event.channelName) ??
         undefined,
-    };
-    // A reply while the agent has a question open is that question's answer,
-    // not a new turn; the answer resumes the conversation on its own.
-    if (await handlers.handleQuestionAnswer?.(inbound)) {
-      logInfo("Channel message consumed as a question answer", {
-        channel: event.channelName,
-        accountId: event.accountId,
-        agentId: event.agentId,
-        eventId: event.eventId,
-        conversationKey: event.conversationKey,
-      });
-
-      return;
-    }
-    await handlers.handleChannelRequest(inbound);
+    });
     logInfo("Channel message processing completed", {
       channel: event.channelName,
       accountId: event.accountId,
@@ -2015,7 +2001,7 @@ async function parseDirectPayload(
   };
 }
 
-/** Validates `answers`: one entry per open prompt, labels keyed by question id. */
+/** One entry per open prompt, labels keyed by question id. */
 function parseDirectQuestionAnswers(value: unknown): DirectQuestionAnswer[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {

@@ -1,41 +1,44 @@
 /**
- * ask_questions — model-facing tool to put one to three structured questions
- * to the person behind the conversation, without holding the run open.
- *
- * It writes an open async-tool row (the same detached shape a background bash
- * job uses), posts the prompt where the turn came from, and returns at once.
- * With `blocking: false` the model keeps working and the answer is injected
- * when it arrives; with `blocking: true` the harness ends the turn after this
- * step and the answer resumes the conversation. Matching and settling live in
- * ../questions.ts; the resume path is handler.ts's async-tool continuation.
+ * ask_questions: model-facing tool that puts one to three structured
+ * questions to the person behind the conversation without holding the run.
+ * It leaves the same detached async-tool row a background bash job does and
+ * posts the prompt where the turn came from; ../questions.ts matches the
+ * answer and handler.ts resumes the conversation.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { ChannelQuestion } from "../../shared/channels.ts";
 import { logInfo } from "../../shared/log.ts";
 import {
-  createPendingAsyncToolResult,
+  createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
-  sealDetachedAsyncToolGroup,
   type AsyncToolDelivery,
 } from "../async-tool-result.ts";
 import {
   ASK_QUESTIONS_TOOL_NAME,
   DEFAULT_ANSWER_TIMEOUT_SECONDS,
   MAX_ANSWER_TIMEOUT_SECONDS,
-  MAX_HEADER_LENGTH,
   MAX_OPTIONS,
   MAX_QUESTIONS,
   MIN_ANSWER_TIMEOUT_SECONDS,
   MIN_OPTIONS,
   formatQuestionsText,
-  newAnswerKey,
   type PendingQuestionInput,
+  type PendingQuestionSummary,
 } from "../questions.ts";
 import type { ChannelToolContext } from "./channel.tool.ts";
 import { toolError } from "./utils.ts";
 
-const QUESTION_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
+const MAX_HEADER_LENGTH = 12;
+
+export interface AskQuestionsContext {
+  conversationKey: string;
+  eventId: string;
+  delivery?: AsyncToolDelivery;
+  channel?: ChannelToolContext;
+  // Tells the harness to end the turn after this step.
+  onBlockingQuestion?: (question: PendingQuestionSummary) => void;
+}
 
 export interface AskQuestionsInput {
   questions: ChannelQuestion[];
@@ -43,24 +46,10 @@ export interface AskQuestionsInput {
   timeoutSeconds?: number;
 }
 
-/** What the model gets back right away; the answer comes later as a result. */
 export interface AskQuestionsOutput {
   statusId: string;
-  status: "asked";
   blocking: boolean;
   answerBy: string;
-  note: string;
-}
-
-export interface AskQuestionsContext {
-  conversationKey: string;
-  // The turn that asked; the row's parent event is derived from it.
-  eventId: string;
-  // Where the answer should resume the conversation. Absent for a plain direct
-  // API turn, which polls status instead.
-  delivery?: AsyncToolDelivery;
-  // The channel the turn came from, when there is one to post the prompt to.
-  channel?: ChannelToolContext;
 }
 
 export default function askQuestionsTool(
@@ -68,14 +57,9 @@ export default function askQuestionsTool(
 ): ToolSet {
   return {
     [ASK_QUESTIONS_TOOL_NAME]: tool({
-      description: `Ask the person you are working for one to ${MAX_QUESTIONS} structured questions and get the answers back later, without holding the turn open.
+      description: `Ask the person you are working for up to ${MAX_QUESTIONS} structured questions, each with ${MIN_OPTIONS} to ${MAX_OPTIONS} options, for decisions that are theirs to make. Do not use it for confirmation you can infer from the request, the code, or a sensible default.
 
-Use it for decisions that are theirs to make, not for confirmation you can infer from the request, the code, or a sensible default. Each question offers ${MIN_OPTIONS} to ${MAX_OPTIONS} options; set allowFreeText when a typed answer is also fine.
-
-- blocking: false (default): the tool returns a statusId and you keep working on whatever does not depend on the answer. The answer is delivered into this conversation automatically when it arrives (or "no_answer" if nobody answers in time).
-- blocking: true: use it only when nothing useful can happen before the answer. End your turn right after calling it, with no further tool calls; the answer will resume this conversation.
-
-Never ask the same question twice, and never poll async_status for it unless the user asks.`,
+The tool returns a statusId at once and the answer is delivered into this conversation automatically when it arrives ("no_answer" if nobody answers in time). With blocking false (default) keep working on what does not depend on the answer. With blocking true, end your turn right after this call with no further tool calls; the answer will resume the conversation. Never ask the same question twice or poll async_status for it.`,
       inputSchema: jsonSchema<AskQuestionsInput>({
         type: "object",
         properties: {
@@ -88,18 +72,21 @@ Never ask the same question twice, and never poll async_status for it unless the
               properties: {
                 id: {
                   type: "string",
+                  pattern: "^[a-z][a-z0-9_]*$",
                   description:
                     "snake_case key the answer comes back under, unique within the call.",
                 },
                 header: {
                   type: "string",
+                  minLength: 1,
                   maxLength: MAX_HEADER_LENGTH,
-                  description: `Short label for the question, at most ${MAX_HEADER_LENGTH} characters.`,
+                  description: `Short label, at most ${MAX_HEADER_LENGTH} characters.`,
                 },
                 question: {
                   type: "string",
+                  minLength: 1,
                   description:
-                    "The question itself, one sentence, in the language of the conversation.",
+                    "One sentence, in the language of the conversation.",
                 },
                 options: {
                   type: "array",
@@ -108,7 +95,7 @@ Never ask the same question twice, and never poll async_status for it unless the
                   items: {
                     type: "object",
                     properties: {
-                      label: { type: "string" },
+                      label: { type: "string", minLength: 1 },
                       description: { type: "string" },
                     },
                     required: ["label"],
@@ -138,7 +125,7 @@ Never ask the same question twice, and never poll async_status for it unless the
             type: "integer",
             minimum: MIN_ANSWER_TIMEOUT_SECONDS,
             maximum: MAX_ANSWER_TIMEOUT_SECONDS,
-            description: `How long to wait for an answer before it counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
+            description: `Seconds to wait before the prompt counts as no_answer. Default ${DEFAULT_ANSWER_TIMEOUT_SECONDS}.`,
           },
         },
         required: ["questions"],
@@ -150,43 +137,48 @@ Never ask the same question twice, and never poll async_status for it unless the
           return toolError(`Error: ${invalid}`);
         }
         const blocking = input.blocking === true;
-        const timeoutSeconds = clampTimeout(input.timeoutSeconds);
         const resultId = `async_tool_${crypto.randomUUID()}`;
         const answerBy = new Date(
-          Date.now() + timeoutSeconds * 1000,
+          Date.now() + clampTimeout(input.timeoutSeconds) * 1000,
         ).toISOString();
         const pending: PendingQuestionInput = {
-          kind: "question",
-          answerKey: newAnswerKey(),
           questions: input.questions,
           blocking: blocking,
           answerBy: answerBy,
         };
 
-        // Own parent event, sealed at once: like a background bash job this is
-        // a group of exactly one, so the answer can resume as soon as it lands.
-        const parentEventId = `${context.eventId}:async-question:${resultId}`;
-        await createPendingAsyncToolResult({
+        await createDetachedAsyncToolResult({
+          eventId: context.eventId,
+          tag: "async-question",
           resultId: resultId,
-          parentEventId: parentEventId,
           conversationKey: context.conversationKey,
           toolName: ASK_QUESTIONS_TOOL_NAME,
           toolCallId: options.toolCallId,
           input: pending,
           delivery: context.delivery ?? { kind: "async" },
         });
-        await sealDetachedAsyncToolGroup(parentEventId);
 
         if (context.channel) {
-          const posted = await postToChannel(context.channel, pending);
-          if (posted !== null) {
+          const failure = await postToChannel(
+            context.channel,
+            resultId,
+            input.questions,
+          );
+          if (failure !== null) {
             await markAsyncToolResultFailed({
               resultId: resultId,
-              error: posted,
-            }).catch(() => {});
+              error: failure,
+            }).catch((): void => {});
 
-            return toolError(`Error: ${posted}`);
+            return toolError(`Error: ${failure}`);
           }
+        }
+        if (blocking) {
+          context.onBlockingQuestion?.({
+            statusId: resultId,
+            questions: input.questions,
+            answerBy: answerBy,
+          });
         }
 
         logInfo("ask_questions posted", {
@@ -197,38 +189,38 @@ Never ask the same question twice, and never poll async_status for it unless the
           channel: context.channel?.channelName,
         });
 
-        return {
-          statusId: resultId,
-          status: "asked",
-          blocking: blocking,
-          answerBy: answerBy,
-          note: blocking
-            ? "End your turn now with no further tool calls. The answer will resume this conversation."
-            : "Keep working. The answer is delivered into this conversation automatically when it arrives.",
-        };
+        return { statusId: resultId, blocking: blocking, answerBy: answerBy };
       },
     }),
   };
 }
 
-// Returns the failure reason, or null once the prompt is out.
+function clampTimeout(value: number | undefined): number {
+  return Math.min(
+    MAX_ANSWER_TIMEOUT_SECONDS,
+    Math.max(
+      MIN_ANSWER_TIMEOUT_SECONDS,
+      Math.floor(value ?? DEFAULT_ANSWER_TIMEOUT_SECONDS),
+    ),
+  );
+}
+
+// The failure reason, or null once the prompt is out.
 async function postToChannel(
   channel: ChannelToolContext,
-  pending: PendingQuestionInput,
+  statusId: string,
+  questions: ChannelQuestion[],
 ): Promise<string | null> {
-  const text = await channel.transformText(
-    formatQuestionsText(pending.questions),
-  );
+  const text = await channel.transformText(formatQuestionsText(questions));
   if (text === null) {
     return "question blocked by the outbound message hook";
   }
-  const prompt = {
-    answerKey: pending.answerKey,
-    questions: pending.questions,
-    text: text,
-  };
   if (channel.actions.sendQuestions) {
-    await channel.actions.sendQuestions(prompt);
+    await channel.actions.sendQuestions({
+      statusId: statusId,
+      questions: questions,
+      text: text,
+    });
   } else {
     await channel.actions.sendText(text);
   }
@@ -236,47 +228,23 @@ async function postToChannel(
   return null;
 }
 
-function clampTimeout(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return DEFAULT_ANSWER_TIMEOUT_SECONDS;
-  }
-
-  return Math.min(
-    MAX_ANSWER_TIMEOUT_SECONDS,
-    Math.max(MIN_ANSWER_TIMEOUT_SECONDS, Math.floor(value)),
-  );
-}
-
+// Only what the JSON schema cannot say: counts the SDK does not enforce at
+// runtime, and id uniqueness.
 function validateQuestions(questions: ChannelQuestion[]): string | null {
   if (questions.length === 0 || questions.length > MAX_QUESTIONS) {
     return `ask_questions takes 1 to ${MAX_QUESTIONS} questions`;
   }
   const ids = new Set<string>();
   for (const question of questions) {
-    if (!QUESTION_ID_PATTERN.test(question.id)) {
-      return `question id "${question.id}" must be snake_case`;
-    }
     if (ids.has(question.id)) {
       return `question id "${question.id}" is used twice`;
     }
     ids.add(question.id);
-    if (question.header.trim().length === 0) {
-      return `question "${question.id}" needs a header`;
-    }
-    if (question.header.length > MAX_HEADER_LENGTH) {
-      return `question "${question.id}" header is longer than ${MAX_HEADER_LENGTH} characters`;
-    }
-    if (question.question.trim().length === 0) {
-      return `question "${question.id}" is empty`;
-    }
     if (
       question.options.length < MIN_OPTIONS ||
       question.options.length > MAX_OPTIONS
     ) {
       return `question "${question.id}" needs ${MIN_OPTIONS} to ${MAX_OPTIONS} options`;
-    }
-    if (question.options.some((option) => option.label.trim().length === 0)) {
-      return `question "${question.id}" has an option with no label`;
     }
   }
 

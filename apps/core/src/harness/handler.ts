@@ -106,8 +106,9 @@ import {
   answersFromChoice,
   answersFromText,
   listOpenQuestions,
-  pendingQuestionInput,
+  openQuestion,
   settleQuestion,
+  type OpenQuestion,
   type PendingQuestionSummary,
   type QuestionAnswerResult,
 } from "./questions.ts";
@@ -152,7 +153,6 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   traceId?: string;
   approvals: ToolApprovalSummary[];
-  // Blocking ask_questions prompts the turn ended on.
   questions: PendingQuestionSummary[];
 }
 
@@ -255,7 +255,6 @@ async function handleRequest(
       handleChannelRequest: (channelEvent) =>
         handleChannelRequest(channelEvent, context),
       handleChannelContext: handleChannelContext,
-      handleQuestionAnswer: handleChannelQuestionAnswer,
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
@@ -525,54 +524,79 @@ function continuationResponse(
 }
 
 /**
- * Settle an open ask_questions prompt with a channel message. A button click
- * names its prompt; typed text answers the oldest open one. Consumes the
- * message (returns true) only when a prompt actually settled.
+ * Settle open ask_questions prompts from a direct API body and resume the
+ * conversation, answering with the last continuation's outcome.
  */
-async function handleChannelQuestionAnswer(
+async function handleDirectAnswers(
+  event: DirectInboundEvent,
+): Promise<Response> {
+  const answers = event.answers ?? [];
+  const open = await Promise.all(
+    answers.map(async (answer): Promise<OpenQuestion | undefined> =>
+      openQuestion(
+        await getAsyncToolResult(answer.statusId),
+        event.conversationKey,
+      ),
+    ),
+  );
+  const missing = open.findIndex((question) => question === undefined);
+  if (missing >= 0) {
+    return jsonResponse(404, {
+      error: `No open question ${answers[missing]!.statusId} on this conversation`,
+    });
+  }
+  let last: Awaited<ReturnType<typeof settleQuestion>> = null;
+  let outcome: ContinuationOutcome = { kind: "skip" };
+  for (const [index, question] of open.entries()) {
+    const settled = await settleQuestion(question!.record, {
+      status: "answered",
+      answers: answers[index]!.answers,
+    });
+    if (!settled) {
+      return jsonResponse(409, {
+        error: `Question ${question!.record.resultId} was already answered`,
+      });
+    }
+    last = settled;
+    outcome = await continueAfterAsyncToolSettlement(settled);
+  }
+
+  return last
+    ? continuationResponse(last, outcome)
+    : jsonResponse(400, { error: "Request body must include answers" });
+}
+
+/**
+ * A channel message while a prompt is open is its answer, not a turn. A
+ * button click names its prompt; typed text answers the oldest open one.
+ * True when a prompt settled and the conversation is resuming.
+ */
+async function settleChannelQuestion(
   event: ChannelInboundEvent,
 ): Promise<boolean> {
-  if (event.commandToken) return false;
-  const open = await listOpenQuestions(event.conversationKey);
-  const record = event.answer
-    ? open.find(
-        (row) =>
-          pendingQuestionInput(row.input)?.answerKey ===
-          event.answer!.answerKey,
+  const click = event.answer;
+  const open = click
+    ? openQuestion(
+        await getAsyncToolResult(click.statusId),
+        event.conversationKey,
       )
-    : open[0];
-  const pending = record ? pendingQuestionInput(record.input) : undefined;
+    : (await listOpenQuestions(event.conversationKey))[0];
   const chosen =
-    pending && event.answer
-      ? answersFromChoice(pending, event.answer)
-      : undefined;
-  // A click that names no open prompt (expired, already answered, or a stale
-  // keyboard) is consumed here; its placeholder text is not a turn.
-  if (event.answer && (!record || !pending || !chosen)) {
+    open && click ? answersFromChoice(open.pending, click) : undefined;
+  if (click && !chosen) {
     await event.channel
       .sendText("That question is no longer open.")
-      .catch(() => {});
+      .catch((): void => {});
 
     return true;
   }
-  if (!record || !pending) {
-    return false;
-  }
+  if (!open) return false;
   const answer: QuestionAnswerResult = chosen
     ? { status: "answered", answers: chosen }
-    : answersFromText(pending, extractText(event.content));
-  const settled = await settleQuestion(record, {
+    : answersFromText(open.pending, extractText(event.content));
+  const settled = await settleQuestion(open.record, {
     ...answer,
-    ...(event.identity?.userId || event.identity?.userName
-      ? {
-          answeredBy: {
-            ...(event.identity.userId ? { userId: event.identity.userId } : {}),
-            ...(event.identity.userName
-              ? { userName: event.identity.userName }
-              : {}),
-          },
-        }
-      : {}),
+    ...(event.identity ? { answeredBy: event.identity } : {}),
   });
   if (!settled) return false;
   const outcome = await continueAfterAsyncToolSettlement(settled);
@@ -584,46 +608,6 @@ async function handleChannelQuestionAnswer(
   });
 
   return true;
-}
-
-/**
- * Settle open ask_questions prompts from a direct API body and resume the
- * conversation. A prompt is only answerable from its own conversation.
- */
-async function handleDirectAnswers(
-  event: DirectInboundEvent,
-): Promise<Response> {
-  const answered: string[] = [];
-  for (const answer of event.answers ?? []) {
-    const record = await getAsyncToolResult(answer.statusId);
-    if (
-      !record ||
-      record.conversationKey !== event.conversationKey ||
-      record.toolName !== ASK_QUESTIONS_TOOL_NAME ||
-      record.status !== "processing"
-    ) {
-      return jsonResponse(404, {
-        error: `No open question ${answer.statusId} on this conversation`,
-      });
-    }
-    const settled = await settleQuestion(record, {
-      status: "answered",
-      answers: answer.answers,
-    });
-    if (!settled) {
-      return jsonResponse(409, {
-        error: `Question ${answer.statusId} was already answered`,
-      });
-    }
-    answered.push(settled.resultId);
-    await continueAfterAsyncToolSettlement(settled);
-  }
-
-  return jsonResponse(202, {
-    status: "accepted",
-    conversationKey: event.publicConversationKey,
-    answered: answered,
-  });
 }
 
 /**
@@ -1221,6 +1205,7 @@ async function handleChannelRequest(
   if (!event.accountId || !event.agentId) {
     throw new Error("Channel ingress requires account and agent scope");
   }
+  if (await settleChannelQuestion(event)) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
   // Before admission, so a turn that lands in the queue still carries its
@@ -2689,8 +2674,8 @@ async function runParentContinuationLoop(options: {
         questions: [],
       };
     }
-    // A blocking question ends the turn here, like an approval: the answer
-    // resumes the conversation, so nothing waits for injected work now.
+    // Like an approval: the answer resumes the conversation later, so nothing
+    // waits for injected work now.
     const questions = stream.questionSummaries();
     if (questions.length > 0) {
       await options.onQuestionsPending?.(questions);

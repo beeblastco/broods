@@ -16,11 +16,11 @@ export const runtimeQueries = {
   getSandboxReservation: internal.runtime.getSandboxReservation,
   getSandboxReservationRecord: internal.runtime.getSandboxReservationRecord,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,
-  listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
   listExpiredSandboxReservations:
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
+  listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
 } as const;
