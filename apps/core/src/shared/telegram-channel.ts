@@ -21,6 +21,7 @@ import type {
   ChannelFile,
   ChannelImage,
   ChannelParseResult,
+  ChannelQuestionPrompt,
 } from "./channels.ts";
 import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
@@ -38,6 +39,8 @@ const TELEGRAM_MEDIA_GROUP_MAX = 10;
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
 // A quote is context for the turn, not the turn itself; Telegram allows 4096.
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
+// callback_data on an ask_questions button: answer key, question, option.
+const QUESTION_CALLBACK_PATTERN = /^q:([a-z0-9]+):(\d+):(\d+)$/;
 
 export interface TelegramChannelOptions {
   botUsername?: string;
@@ -110,6 +113,15 @@ export function createTelegramChannel(
 
     parse: function (req): ChannelParseResult {
       const update: TelegramUpdate = JSON.parse(req.body);
+      if (update.callback_query) {
+        return parseQuestionCallback(update, {
+          allowedChannelIds: allowedChannelIds,
+          allowedUserIds: allowedUserIds,
+          apiUrl: apiUrl,
+          botToken: botToken,
+          transport: transport,
+        });
+      }
       const message = extractInboundMessage(update);
       // A photo, voice note or document with no caption is still a message. It
       // is only nothing to answer when it carries no media either.
@@ -224,6 +236,16 @@ export function createTelegramChannel(
               : {}),
           });
         },
+        sendQuestions: async function (prompt): Promise<void> {
+          await callTelegramBotApi(apiUrl, botToken, "sendMessage", {
+            chat_id: source.chatId,
+            text: prompt.text,
+            ...(source.messageThreadId !== undefined
+              ? { message_thread_id: source.messageThreadId }
+              : {}),
+            reply_markup: { inline_keyboard: questionKeyboard(prompt) },
+          });
+        },
         sendText: async function (text) {
           for (const chunk of splitTelegramRawText(text)) {
             await transport.postMessage(source.threadId, { markdown: chunk });
@@ -282,6 +304,121 @@ function addressesTelegramBot(
 
 function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.edited_message ?? null;
+}
+
+/**
+ * A click on an ask_questions button. Only our own `q:` callbacks run the
+ * intake; anything else is acknowledged and dropped. The click is answered
+ * and the keyboard cleared right here, best effort, so the chat does not keep
+ * a spinner or a second chance to click.
+ */
+function parseQuestionCallback(
+  update: TelegramUpdate,
+  options: {
+    allowedChannelIds: Set<string> | null;
+    allowedUserIds: Set<string> | null;
+    apiUrl: string | undefined;
+    botToken: string;
+    transport: TelegramAdapter;
+  },
+): ChannelParseResult {
+  const callback = update.callback_query!;
+  const acknowledge = (): void => {
+    void callTelegramBotApi(
+      options.apiUrl,
+      options.botToken,
+      "answerCallbackQuery",
+      {
+        callback_query_id: callback.id,
+      },
+    ).catch((err: unknown) => {
+      logWarn("Telegram answerCallbackQuery failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  };
+  const match = QUESTION_CALLBACK_PATTERN.exec(callback.data ?? "");
+  const message = callback.message;
+  if (!match || !message) {
+    acknowledge();
+
+    return { kind: "ignore", reason: "unknown callback" };
+  }
+  if (!isAllowedId(options.allowedChannelIds, String(message.chat.id))) {
+    acknowledge();
+
+    return { kind: "ignore", reason: "chat not allowed" };
+  }
+  const senderId = String(callback.from.id);
+  if (!isAllowedId(options.allowedUserIds, senderId)) {
+    acknowledge();
+
+    return { kind: "ignore", reason: "sender not allowed" };
+  }
+  acknowledge();
+  void callTelegramBotApi(
+    options.apiUrl,
+    options.botToken,
+    "editMessageReplyMarkup",
+    {
+      chat_id: message.chat.id,
+      message_id: message.message_id,
+      reply_markup: { inline_keyboard: [] },
+    },
+  ).catch(() => {});
+
+  const parsed = options.transport.parseMessage(message);
+  const source: TelegramSource = {
+    chatId: message.chat.id,
+    messageId: parsed.id,
+    ...(message.message_thread_id !== undefined
+      ? { messageThreadId: message.message_thread_id }
+      : {}),
+    threadId: parsed.threadId,
+    fromUserId: callback.from.id,
+    fromUsername: callback.from.username,
+  };
+
+  return {
+    kind: "message",
+    message: {
+      eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
+      conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
+      channelName: "telegram",
+      content: "[button answer]",
+      identity: {
+        channelId: String(message.chat.id),
+        ...(message.message_thread_id !== undefined
+          ? { threadId: String(message.message_thread_id) }
+          : {}),
+        userId: senderId,
+        ...(callback.from.username ? { userName: callback.from.username } : {}),
+      },
+      source: { ...source },
+      answer: {
+        answerKey: match[1]!,
+        questionIndex: Number(match[2]),
+        optionIndex: Number(match[3]),
+      },
+    },
+  };
+}
+
+// One button per option, one row each; the header disambiguates when the
+// prompt carries more than one question.
+function questionKeyboard(
+  prompt: ChannelQuestionPrompt,
+): { text: string; callback_data: string }[][] {
+  const single = prompt.questions.length === 1;
+
+  return prompt.questions.flatMap((question, questionIndex) =>
+    question.options.map((option, optionIndex) => [
+      {
+        text: single ? option.label : `${question.header}: ${option.label}`,
+        callback_data: `q:${prompt.answerKey}:${questionIndex}:${optionIndex}`,
+      },
+    ]),
+  );
 }
 
 // Whether the message carries anything the agent could look at. Kept beside the
@@ -444,7 +581,11 @@ function repliesToTelegramBot(
 async function callTelegramBotApi(
   apiUrl: string | undefined,
   botToken: string,
-  method: "sendSticker",
+  method:
+    | "answerCallbackQuery"
+    | "editMessageReplyMarkup"
+    | "sendMessage"
+    | "sendSticker",
   body: Record<string, unknown>,
 ): Promise<void> {
   const controller = new AbortController();

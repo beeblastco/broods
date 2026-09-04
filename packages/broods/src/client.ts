@@ -373,7 +373,7 @@ export class BroodsClient {
     return (await response.json()) as AsyncStatus;
   }
 
-  /** Poll async status until it reaches completed, failed, awaiting_approval, or timeout. */
+  /** Poll async status until it reaches completed, failed, awaiting_approval, awaiting_input, or timeout. */
   async waitForAsyncStatus(
     status: AsyncRequestAccepted | string,
     options: AsyncPollOptions & { agentId?: string } = {},
@@ -387,6 +387,7 @@ export class BroodsClient {
       const payload = await this.getAsyncStatus(status, options);
       if (
         payload.status === "awaiting_approval" ||
+        payload.status === "awaiting_input" ||
         payload.status === "completed" ||
         payload.status === "failed" ||
         payload.status === "expired" ||

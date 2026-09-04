@@ -42,6 +42,7 @@ import {
   type McpConnection,
 } from "../mcp/client.ts";
 import { mcpTools } from "../mcp/mcp.tool.ts";
+import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import {
@@ -372,9 +373,32 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  // Auto-add the background-job status tool when the agent has any async tool or
-  // a reserved sandbox that can launch background jobs.
-  if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
+  // ask_questions needs somewhere to put the prompt and somewhere to resume: a
+  // channel turn, or a WebSocket turn whose answer comes back through the direct
+  // API. A subagent has neither (its parent asks for it), and a cron-fired run
+  // has nobody typing.
+  const canAskQuestions =
+    context.session !== undefined &&
+    context.session.trigger !== "cron" &&
+    (context.channel !== undefined || context.session.delivery !== undefined);
+  if (canAskQuestions) {
+    Object.assign(
+      tools,
+      askQuestionsTool({
+        conversationKey: context.conversationKey,
+        eventId: context.session!.eventId,
+        ...(context.session!.delivery
+          ? { delivery: context.session!.delivery }
+          : {}),
+        ...(context.channel ? { channel: context.channel } : {}),
+      }),
+    );
+  }
+
+  // Auto-add the background-job status tool when the agent has any async tool,
+  // a reserved sandbox that can launch background jobs, or an open question to
+  // check on.
+  if (asyncToolNames.size > 0 || hasBackgroundWorkspace || canAskQuestions) {
     Object.assign(
       tools,
       asyncStatusTool({

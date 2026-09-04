@@ -141,7 +141,27 @@ if (status.status === "completed") {
   console.error(status.error);
 } else if (status.status === "awaiting_approval") {
   console.log("Approval needed:", status.approvals);
+} else if (status.status === "awaiting_input") {
+  // The agent asked something with ask_questions and stopped for the answer.
+  const [question] = status.questions!;
+  console.log("Question:", question.questions[0].question);
 }
+```
+
+Answer an open question by posting `answers` on the same route, with no `events`; the conversation resumes on its own:
+
+```bash
+curl -X POST "https://gateway.broods.app/async" \
+  -H "Authorization: Bearer $BROODS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent_...",
+    "eventId": "req-004",
+    "conversationKey": "my-conversation",
+    "answers": [
+      { "statusId": "async_tool_...", "answers": { "deploy_target": ["dev"] } }
+    ]
+  }'
 ```
 
 **Curl equivalent:**

@@ -969,12 +969,15 @@ export const runtimeAsyncAgentResultsFields = {
   status: v.union(
     v.literal("processing"),
     v.literal("awaiting_approval"),
+    v.literal("awaiting_input"),
     v.literal("completed"),
     v.literal("failed"),
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
   approvals: v.optional(v.array(v.any())),
+  // Open ask_questions prompts while status is awaiting_input.
+  questions: v.optional(v.array(v.any())),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

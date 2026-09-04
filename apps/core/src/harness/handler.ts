@@ -45,6 +45,7 @@ import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
   markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultAwaitingInput,
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
@@ -100,6 +101,16 @@ import {
   Session,
   type ConversationIngressEvent,
 } from "./session.ts";
+import {
+  ASK_QUESTIONS_TOOL_NAME,
+  answersFromChoice,
+  answersFromText,
+  listOpenQuestions,
+  pendingQuestionInput,
+  settleQuestion,
+  type PendingQuestionSummary,
+  type QuestionAnswerResult,
+} from "./questions.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
 type ContinuationOutcome =
@@ -141,6 +152,8 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   traceId?: string;
   approvals: ToolApprovalSummary[];
+  // Blocking ask_questions prompts the turn ended on.
+  questions: PendingQuestionSummary[];
 }
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -242,6 +255,7 @@ async function handleRequest(
       handleChannelRequest: (channelEvent) =>
         handleChannelRequest(channelEvent, context),
       handleChannelContext: handleChannelContext,
+      handleQuestionAnswer: handleChannelQuestionAnswer,
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
@@ -452,7 +466,10 @@ async function continueAfterAsyncToolSettlement(
       scope.agentId,
     ),
     events: events,
-    requestedMode: "followup",
+    // An answer joins a live run at its next step boundary; a finished job
+    // waits its turn behind the current one.
+    requestedMode:
+      settled.toolName === ASK_QUESTIONS_TOOL_NAME ? "steer" : "followup",
     idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
   };
 
@@ -508,12 +525,117 @@ function continuationResponse(
 }
 
 /**
+ * Settle an open ask_questions prompt with a channel message. A button click
+ * names its prompt; typed text answers the oldest open one. Consumes the
+ * message (returns true) only when a prompt actually settled.
+ */
+async function handleChannelQuestionAnswer(
+  event: ChannelInboundEvent,
+): Promise<boolean> {
+  if (event.commandToken) return false;
+  const open = await listOpenQuestions(event.conversationKey);
+  const record = event.answer
+    ? open.find(
+        (row) =>
+          pendingQuestionInput(row.input)?.answerKey ===
+          event.answer!.answerKey,
+      )
+    : open[0];
+  const pending = record ? pendingQuestionInput(record.input) : undefined;
+  const chosen =
+    pending && event.answer
+      ? answersFromChoice(pending, event.answer)
+      : undefined;
+  // A click that names no open prompt (expired, already answered, or a stale
+  // keyboard) is consumed here; its placeholder text is not a turn.
+  if (event.answer && (!record || !pending || !chosen)) {
+    await event.channel
+      .sendText("That question is no longer open.")
+      .catch(() => {});
+
+    return true;
+  }
+  if (!record || !pending) {
+    return false;
+  }
+  const answer: QuestionAnswerResult = chosen
+    ? { status: "answered", answers: chosen }
+    : answersFromText(pending, extractText(event.content));
+  const settled = await settleQuestion(record, {
+    ...answer,
+    ...(event.identity?.userId || event.identity?.userName
+      ? {
+          answeredBy: {
+            ...(event.identity.userId ? { userId: event.identity.userId } : {}),
+            ...(event.identity.userName
+              ? { userName: event.identity.userName }
+              : {}),
+          },
+        }
+      : {}),
+  });
+  if (!settled) return false;
+  const outcome = await continueAfterAsyncToolSettlement(settled);
+  logInfo("Question answered", {
+    channel: event.channelName,
+    conversationKey: event.conversationKey,
+    resultId: settled.resultId,
+    outcome: outcome.kind,
+  });
+
+  return true;
+}
+
+/**
+ * Settle open ask_questions prompts from a direct API body and resume the
+ * conversation. A prompt is only answerable from its own conversation.
+ */
+async function handleDirectAnswers(
+  event: DirectInboundEvent,
+): Promise<Response> {
+  const answered: string[] = [];
+  for (const answer of event.answers ?? []) {
+    const record = await getAsyncToolResult(answer.statusId);
+    if (
+      !record ||
+      record.conversationKey !== event.conversationKey ||
+      record.toolName !== ASK_QUESTIONS_TOOL_NAME ||
+      record.status !== "processing"
+    ) {
+      return jsonResponse(404, {
+        error: `No open question ${answer.statusId} on this conversation`,
+      });
+    }
+    const settled = await settleQuestion(record, {
+      status: "answered",
+      answers: answer.answers,
+    });
+    if (!settled) {
+      return jsonResponse(409, {
+        error: `Question ${answer.statusId} was already answered`,
+      });
+    }
+    answered.push(settled.resultId);
+    await continueAfterAsyncToolSettlement(settled);
+  }
+
+  return jsonResponse(202, {
+    status: "accepted",
+    conversationKey: event.publicConversationKey,
+    answered: answered,
+  });
+}
+
+/**
  * Handle a direct SSE request.
  */
 async function handleDirectRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
 ): Promise<Response> {
+  if (event.answers?.length) {
+    return handleDirectAnswers(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }
@@ -638,6 +760,9 @@ async function handleDirectRequest(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
+  if (event.answers?.length) {
+    return handleDirectAnswers(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return errorResponse(
       400,
@@ -824,6 +949,16 @@ async function handleAsyncWorkerRequest(
       },
     );
 
+    if (result.questions.length > 0) {
+      await Promise.all(
+        asyncResultEventIds(event).map((eventId) =>
+          markAsyncAgentResultAwaitingInput({
+            eventId: eventId,
+            questions: result.questions,
+          }),
+        ),
+      );
+    }
     if (result.didFail && !didSettle) {
       didSettle = true;
       terminalSettled = true;
@@ -973,6 +1108,11 @@ async function handleNatsWorkerRequest(
           // This is intentional (the user will receive the tool-approval-request event separately)
           fencedPublisher
             .publish({ type: "tool-approval-request", approvals: approvals })
+            .catch(() => {});
+        },
+        onQuestionsPending: async (questions) => {
+          fencedPublisher
+            .publish({ type: "question-request", questions: questions })
             .catch(() => {});
         },
         onHeartbeat: (pendingCount) => {
@@ -1455,6 +1595,7 @@ async function handleStatusRequest(
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
+      asyncResult.status === "awaiting_input" ||
       (asyncResult.status === "processing" && result?.status !== "failed"))
       ? asyncResult.status
       : (result?.status ?? asyncResult!.status);
@@ -1492,6 +1633,9 @@ async function handleStatusRequest(
       : {}),
     ...(asyncResult?.approvals !== undefined
       ? { approvals: asyncResult.approvals }
+      : {}),
+    ...(asyncResult?.questions !== undefined
+      ? { questions: asyncResult.questions }
       : {}),
     ...((result?.error ?? asyncResult?.error)
       ? { error: result?.error ?? asyncResult?.error }
@@ -2405,6 +2549,7 @@ async function runAgentLoopUntilSubagentsIdle(
   didFail: boolean;
   failureText: string | null;
   traceId?: string;
+  questions: PendingQuestionSummary[];
 }> {
   const subagentCoordinator = new SubagentCoordinator(
     session,
@@ -2436,6 +2581,7 @@ async function runAgentLoopUntilSubagentsIdle(
       didFail: false,
       failureText: null,
       ...(result.traceId ? { traceId: result.traceId } : {}),
+      questions: [],
     };
   }
 
@@ -2449,6 +2595,7 @@ async function runAgentLoopUntilSubagentsIdle(
       didFail: true,
       failureText: result.failureText,
       ...(result.traceId ? { traceId: result.traceId } : {}),
+      questions: [],
     };
   }
 
@@ -2460,6 +2607,7 @@ async function runAgentLoopUntilSubagentsIdle(
     didFail: false,
     failureText: null,
     ...(result.traceId ? { traceId: result.traceId } : {}),
+    questions: result.questions,
   };
 }
 
@@ -2480,6 +2628,7 @@ async function runParentContinuationLoop(options: {
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
   onHeartbeat?(pendingCount: number): void;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
@@ -2537,6 +2686,24 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
+        questions: [],
+      };
+    }
+    // A blocking question ends the turn here, like an approval: the answer
+    // resumes the conversation, so nothing waits for injected work now.
+    const questions = stream.questionSummaries();
+    if (questions.length > 0) {
+      await options.onQuestionsPending?.(questions);
+
+      return {
+        didFail: false,
+        failureText: null,
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
+        ...(traceId ? { traceId: traceId } : {}),
+        approvals: [],
+        questions: questions,
       };
     }
     if (stream.didFail()) {
@@ -2561,6 +2728,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
 
@@ -2581,6 +2749,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
 
@@ -2594,6 +2763,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
   }

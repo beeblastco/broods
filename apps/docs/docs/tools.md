@@ -21,15 +21,18 @@ flowchart LR
 
 ## Current Tools
 
-| Tool                  | File                                                                                                                                       | External dependency                                                         | Config key                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------- |
-| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                      | `config.tools.<providerTool>` |
-| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                              | —                             |
-| MCP server tool       | [`src/harness/mcp/mcp.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/mcp/mcp.tool.ts)                       | The registered MCP server; the tool-runner Lambda for `transport: "hosted"` | `config.mcp.<serverId>`       |
+| Tool                  | File                                                                                                                                         | External dependency                                                         | Config key                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------- |
+| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)           | The configured AI SDK provider's own `tools` namespace                      | `config.tools.<providerTool>` |
+| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts)   | — (auto-registered, see below)                                              | —                             |
+| `ask_questions`       | [`src/harness/tools/ask-questions.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/ask-questions.tool.ts) | — (auto-registered, see below)                                              | —                             |
+| MCP server tool       | [`src/harness/mcp/mcp.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/mcp/mcp.tool.ts)                         | The registered MCP server; the tool-runner Lambda for `transport: "hosted"` | `config.mcp.<serverId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
-`async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
+`async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true`, a workspace has a persistent sandbox, or `ask_questions` is available. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
+
+`ask_questions` is registered on every run that has somewhere to put a question and somewhere to resume: a channel turn, or a WebSocket/direct turn. Subagents never get it (the parent asks on their behalf) and neither does a cron-fired run. See [Asking the user](#asking-the-user).
 
 Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
 
@@ -59,6 +62,27 @@ Notes:
 - Future: when NATS uses JetStream, missed WebSocket stream chunks can be replayed from persisted stream/consumer state. Until then, NATS continuation reaches the client only while the gateway/client remains subscribed.
 
 > Warning: Provider-defined tools have no local `execute`, so they cannot use this wrapper. If `async: true` is configured for one of those tools, the runtime logs a warning and leaves the tool in its normal provider-defined behavior.
+
+## Asking the user
+
+`ask_questions` lets the agent put one to three structured questions to the person behind the conversation and carry on. Each question has an `id`, a short `header`, the `question`, two to four `options` (`label` + optional `description`), and optional `multiSelect` / `allowFreeText` flags. The call also takes `blocking` and `timeoutSeconds` (default 900, clamped to 30..3600).
+
+The tool never holds the run open. It writes an open async-tool row (the same detached shape a `bash` background job uses), posts the prompt where the turn came from, and returns a `statusId` at once:
+
+- `blocking: false` (default): the model keeps working. The answer is injected into the conversation as an async tool result when it arrives, at the next step boundary if the run is still live, or as a new turn if it already ended.
+- `blocking: true`: the harness ends the turn after that step. Direct and async callers see status `awaiting_input` with the open `questions`; a channel turn just goes quiet. The answer resumes the conversation.
+
+How the answer gets in:
+
+| Surface           | Prompt                                  | Answer                                                                                                     |
+| ----------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Telegram          | inline keyboard, one button per option  | button click (`callback_query`), matched by the key on the button                                          |
+| Other channels    | numbered text                           | a reply while a question is open answers the oldest one: an option number, an option label, or free text   |
+| Direct HTTP/async | status `awaiting_input` + `questions[]` | `POST` the same route with `answers: [{ statusId, answers: { <question id>: [labels] } }]` and no `events` |
+
+The injected result is `{ status: "answered", answers: { <id>: [labels] }, answeredBy? }`. A prompt nobody answers by its deadline settles as `no_answer` the next time the conversation sees a message; a reply after that is an ordinary turn. A typed reply answers only the first question of a multi-question prompt (buttons carry their own position); the result says so.
+
+Slack and Discord render the numbered text today. Native buttons for them are a follow-up on the same `ChannelActions.sendQuestions` seam Telegram uses.
 
 For sync direct API callers, approval requests are streamed as SSE and persisted in the conversation. The caller resumes the turn by sending a direct API `tool-approval-response`. Channel webhooks cannot complete approval; the handler denies channel approval requests with a channel-visible error.
 

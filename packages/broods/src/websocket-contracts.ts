@@ -12,6 +12,7 @@ export type IngressStatus =
   | "applied"
   | "processing"
   | "awaiting_approval"
+  | "awaiting_input"
   | "completed"
   | "failed"
   | "expired";

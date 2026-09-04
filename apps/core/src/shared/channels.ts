@@ -38,6 +38,10 @@ export interface ChannelActions {
   // Optional provider-native sticker delivery. Providers decide whether the
   // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;
+  // Optional native rendering for an ask_questions prompt (inline buttons).
+  // Providers without one omit it and the numbered `text` goes out as plain
+  // text, answered by a reply.
+  sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
   sendTyping(): Promise<void>;
   supportsReactions?: boolean;
   // Reactions target the inbound message. Omitting the emoji uses the channel's
@@ -49,6 +53,40 @@ export interface ChannelActions {
     textStream: AsyncIterable<unknown>,
     options?: StreamOptions,
   ): Promise<string | null>;
+}
+
+export interface ChannelQuestionOption {
+  label: string;
+  description?: string;
+}
+
+/** One question the agent asks through ask_questions, as a channel renders it. */
+export interface ChannelQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: ChannelQuestionOption[];
+  multiSelect?: boolean;
+  allowFreeText?: boolean;
+}
+
+/**
+ * What a channel posts for one ask_questions call. `text` is the numbered
+ * fallback every provider can send; `answerKey` is the short token a button
+ * carries back so the click is matched to its row (Telegram caps callback
+ * data at 64 bytes, so it is not the statusId).
+ */
+export interface ChannelQuestionPrompt {
+  answerKey: string;
+  questions: ChannelQuestion[];
+  text: string;
+}
+
+/** A button click on a posted question, by position. */
+export interface ChannelQuestionAnswer {
+  answerKey: string;
+  questionIndex: number;
+  optionIndex: number;
 }
 
 export interface ChannelRequest {
@@ -106,6 +144,9 @@ export interface InboundMessage {
   events?: ChannelIngressEvent[];
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
+  // Present when the message is a click on an ask_questions button rather than
+  // typed text; `content` then carries the chosen label for the transcript.
+  answer?: ChannelQuestionAnswer;
 }
 
 export interface ParsedChannelMessage {

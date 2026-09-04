@@ -20,6 +20,7 @@ import type { Attachment } from "chat";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import type {
   ChannelActions,
+  ChannelQuestionAnswer,
   ChannelAdapter,
   ChannelIdentity,
   ChannelRequest,
@@ -54,6 +55,7 @@ import {
 } from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
+import type { DirectQuestionAnswer } from "./questions.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -164,6 +166,9 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // Answers to open ask_questions prompts. A request carrying these settles
+  // the prompts and resumes the conversation; it runs no turn of its own.
+  answers?: DirectQuestionAnswer[];
 }
 
 /** The scope a queued envelope needs to be rebuilt into its own run. */
@@ -226,6 +231,8 @@ export interface ChannelInboundEvent {
   channel: ChannelActions;
   channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
+  // A click on an ask_questions button, matched to its prompt by handler.ts.
+  answer?: ChannelQuestionAnswer;
 }
 
 export interface ChannelContextEvent {
@@ -254,6 +261,9 @@ interface IntegrationHandlers {
   ): Promise<Response>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
   handleChannelContext?(event: ChannelContextEvent): Promise<void>;
+  // Settles an open ask_questions prompt with this message. True when the
+  // message was consumed as an answer and must not run a turn.
+  handleQuestionAnswer?(event: ChannelInboundEvent): Promise<boolean>;
 }
 
 export interface ChannelRegistry {
@@ -1373,6 +1383,7 @@ async function handleChannelWebhook(
             channel: channel,
             channelFactory: (replySource): ChannelActions =>
               adapter.actions({ ...message, source: replySource }),
+            ...(message.answer ? { answer: message.answer } : {}),
             accountId: account.accountId,
             agentId: target.agent.agentId,
             agentConfig: targetConfig,
@@ -1574,14 +1585,28 @@ async function processChannelMessage(
     ackInbound(event, "sendTyping", () => event.channel.sendTyping());
     ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
 
-    await handlers.handleChannelRequest({
+    const inbound: ChannelInboundEvent = {
       ...event,
       content: content,
       events: events,
       commandToken:
         resolveCommandToken(content, event.source, event.channelName) ??
         undefined,
-    });
+    };
+    // A reply while the agent has a question open is that question's answer,
+    // not a new turn; the answer resumes the conversation on its own.
+    if (await handlers.handleQuestionAnswer?.(inbound)) {
+      logInfo("Channel message consumed as a question answer", {
+        channel: event.channelName,
+        accountId: event.accountId,
+        agentId: event.agentId,
+        eventId: event.eventId,
+        conversationKey: event.conversationKey,
+      });
+
+      return;
+    }
+    await handlers.handleChannelRequest(inbound);
     logInfo("Channel message processing completed", {
       channel: event.channelName,
       accountId: event.accountId,
@@ -1931,8 +1956,14 @@ async function parseDirectPayload(
   );
 
   const events = parseDirectIngressEvents(record);
-  if (events.length === 0) {
+  const answers = parseDirectQuestionAnswers(record.answers);
+  if (events.length === 0 && answers.length === 0) {
     throw new Error("Request body must include a non-empty events array");
+  }
+  if (events.length > 0 && answers.length > 0) {
+    throw new Error(
+      "Request body cannot combine events with answers; send the answers first",
+    );
   }
   if (
     record.webhookUrl !== undefined ||
@@ -1980,7 +2011,42 @@ async function parseDirectPayload(
     idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId: connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
+    ...(answers.length > 0 ? { answers: answers } : {}),
   };
+}
+
+/** Validates `answers`: one entry per open prompt, labels keyed by question id. */
+function parseDirectQuestionAnswers(value: unknown): DirectQuestionAnswer[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Request body field 'answers' must be an array");
+  }
+
+  return value.map((entry): DirectQuestionAnswer => {
+    if (
+      !isPlainObject(entry) ||
+      typeof entry.statusId !== "string" ||
+      !isPlainObject(entry.answers)
+    ) {
+      throw new Error(
+        "Each answer must be an object with statusId and answers",
+      );
+    }
+    const answers: DirectQuestionAnswer["answers"] = {};
+    for (const [questionId, labels] of Object.entries(entry.answers)) {
+      if (
+        !Array.isArray(labels) ||
+        !labels.every((label) => typeof label === "string")
+      ) {
+        throw new Error(
+          `Answer for question '${questionId}' must be an array of strings`,
+        );
+      }
+      answers[questionId] = labels;
+    }
+
+    return { statusId: entry.statusId, answers: answers };
+  });
 }
 
 /** Validates the optional public ingress mode. */

@@ -351,6 +351,7 @@ export const updateAsyncAgentResult = internalMutation({
     response: v.optional(v.any()),
     error: v.optional(v.string()),
     approvals: v.optional(v.array(v.any())),
+    questions: v.optional(v.array(v.any())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -365,6 +366,7 @@ export const updateAsyncAgentResult = internalMutation({
       response: args.response,
       error: args.error,
       approvals: args.approvals,
+      questions: args.questions,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
@@ -497,6 +499,32 @@ export const listAsyncToolResults = internalQuery({
         )
         .take(1000)
     ).map(hideCompletionTokenHash),
+});
+/**
+ * Lists the still-processing rows one tool left on a conversation, oldest
+ * first. The ask_questions intake reads this to find the prompt a reply answers.
+ * @returns the public result documents still waiting to settle
+ */
+export const listPendingAsyncToolResults = internalQuery({
+  args: { conversationKey: v.string(), toolName: v.string() },
+  returns: v.array(asyncToolDoc),
+  handler: async (ctx, args) =>
+    (
+      await ctx.db
+        .query("runtimeAsyncToolResults")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", args.conversationKey),
+        )
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("status"), "processing"),
+            q.eq(q.field("toolName"), args.toolName),
+          ),
+        )
+        .take(100)
+    )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(hideCompletionTokenHash),
 });
 /**
  * Looks up fan-in group registration and seal state for a parent event.

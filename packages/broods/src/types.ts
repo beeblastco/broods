@@ -40,6 +40,22 @@ export interface ToolApprovalSummary {
   input: unknown;
 }
 
+/** One open `ask_questions` prompt while a run is `awaiting_input`. */
+export interface PendingQuestion {
+  /** Pass back as `answers[].statusId`. */
+  statusId: string;
+  /** After this the prompt settles as no_answer. */
+  answerBy: string;
+  questions: {
+    id: string;
+    header: string;
+    question: string;
+    options: { label: string; description?: string }[];
+    multiSelect?: boolean;
+    allowFreeText?: boolean;
+  }[];
+}
+
 export interface AsyncStatus {
   status:
     | "accepted"
@@ -47,6 +63,7 @@ export interface AsyncStatus {
     | "applied"
     | "processing"
     | "awaiting_approval"
+    | "awaiting_input"
     | "completed"
     | "failed"
     | "expired"
@@ -60,6 +77,7 @@ export interface AsyncStatus {
   /** True when `failed` was a deliberate /stop, not a fault. */
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
+  questions?: PendingQuestion[];
 }
 
 export interface AsyncRequestAccepted {
