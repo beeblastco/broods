@@ -57,13 +57,21 @@ function oauthRecord(overrides: Partial<McpRecord> = {}): McpRecord {
 /** Stub the token endpoint; returns the recorded requests. */
 function stubTokenEndpoint(
   responses: Array<{ status?: number; body: unknown }>,
-): Array<{ url: string; body: string }> {
-  const requests: Array<{ url: string; body: string }> = [];
+): Array<{ url: string; body: string; redirect: RequestInit["redirect"] }> {
+  const requests: Array<{
+    url: string;
+    body: string;
+    redirect: RequestInit["redirect"];
+  }> = [];
   globalThis.fetch = (async (
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> => {
-    requests.push({ url: String(input), body: String(init?.body ?? "") });
+    requests.push({
+      url: String(input),
+      body: String(init?.body ?? ""),
+      redirect: init?.redirect,
+    });
     const next = responses[Math.min(requests.length, responses.length) - 1]!;
 
     return new Response(JSON.stringify(next.body), {
@@ -90,6 +98,7 @@ describe("mcp oauth access tokens", () => {
     expect(token).toBe("token-a");
     expect(requests).toHaveLength(1);
     expect(requests[0]!.url).toBe(TOKEN_URL);
+    expect(requests[0]!.redirect).toBe("error");
     const params = new URLSearchParams(requests[0]!.body);
     expect(params.get("grant_type")).toBe("refresh_token");
     expect(params.get("client_id")).toBe("client-1");
@@ -118,6 +127,22 @@ describe("mcp oauth access tokens", () => {
 
     expect(await mcpAccessToken("gmail", resolvedOauth())).toBe("token-a");
     expect(await mcpAccessToken("gmail", resolvedOauth())).toBe("token-b");
+    expect(requests).toHaveLength(2);
+  });
+
+  it("shares one re-mint between callers that awaited the same stale entry", async () => {
+    const requests = stubTokenEndpoint([
+      { body: { access_token: "token-a", expires_in: 60 } },
+      { body: { access_token: "token-b", expires_in: 3600 } },
+    ]);
+
+    await mcpAccessToken("gmail", resolvedOauth());
+    const tokens = await Promise.all([
+      mcpAccessToken("gmail", resolvedOauth()),
+      mcpAccessToken("gmail", resolvedOauth()),
+    ]);
+
+    expect(tokens).toEqual(["token-b", "token-b"]);
     expect(requests).toHaveLength(2);
   });
 

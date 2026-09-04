@@ -3892,7 +3892,7 @@ components:
       type: object
       required: [clientId, clientSecret, refreshToken]
       description: >-
-        OAuth 2.0 refresh-token grant for an external (`url`) server whose
+        OAuth 2.0 refresh-token grant for an external (https `url`) server whose
         access tokens expire (Google's Workspace MCP endpoints). Core mints,
         caches and refreshes access tokens and sends `Authorization: Bearer
         <token>` itself, so an explicit Authorization header next to oauth is

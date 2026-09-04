@@ -404,39 +404,38 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("drop the explicit authorization header");
   });
 
-  test("rejects oauth next to an explicit Authorization header", async () => {
-    await expect(
-      normalizeMcpInput(
-        {
-          name: "gmail",
-          url: SERVER_URL,
-          headers: { authorization: "Bearer ${TOKEN}" },
-          oauth: {
-            clientId: "client-1",
-            clientSecret: "${GMAIL_CLIENT_SECRET}",
-            refreshToken: "${GMAIL_REFRESH_TOKEN}",
-          },
-        },
-        { requireConnection: true },
-      ),
-    ).rejects.toThrow("oauth mints the Authorization header itself");
-  });
+  test("create checks the oauth invariants on the row it writes", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const oauth = {
+      clientId: "client-1",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    };
+    const create = (args: Record<string, unknown>): Promise<Id<"mcp">> =>
+      tt.mutation(internal.account.mcp.create, {
+        accountId: scope.accountId,
+        projectId: scope.projectId,
+        stageId: scope.stageId,
+        name: "gmail",
+        oauth: oauth,
+        ...args,
+      });
 
-  test("rejects oauth on a hosted server", async () => {
     await expect(
-      normalizeMcpInput(
-        {
-          name: "hosted",
-          bundle: "export default () => new Response()",
-          oauth: {
-            clientId: "client-1",
-            clientSecret: "${GMAIL_CLIENT_SECRET}",
-            refreshToken: "${GMAIL_REFRESH_TOKEN}",
-          },
-        },
-        { requireConnection: true },
-      ),
+      create({ url: SERVER_URL, headers: { authorization: "Bearer x" } }),
+    ).rejects.toThrow("oauth mints the Authorization header itself");
+    await expect(
+      create({ url: "http://gmail.example.com/mcp" }),
+    ).rejects.toThrow("oauth needs an https url");
+    await expect(
+      create({
+        transport: "hosted",
+        bundleStorageKey: "account-mcp/acct/bundles/x.mjs",
+        sha256: "a".repeat(64),
+      }),
     ).rejects.toThrow("oauth applies to external (url) servers");
+    await create({ url: SERVER_URL });
   });
 
   test("a patch may carry any subset", async () => {

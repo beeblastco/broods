@@ -42,7 +42,7 @@ export function clearMcpOauthTokens(): void {
 /**
  * The access token for one oauth config, minted via grant_type=refresh_token
  * when the cache holds none or the cached one is inside the refresh margin.
- * Concurrent cold callers share one in-flight mint; a failed mint is evicted
+ * Concurrent callers, cold or stale, share one in-flight mint; a failed mint is evicted
  * so the next call retries instead of replaying the error for an hour.
  */
 export async function mcpAccessToken(
@@ -60,7 +60,11 @@ export async function mcpAccessToken(
   if (pending) {
     const minted = await pending.catch(() => null);
     if (minted && minted.expiresAt > Date.now()) return minted.accessToken;
-    if (tokenCache.get(key) === pending) tokenCache.delete(key);
+    // Another caller that awaited the same stale entry may have replaced it
+    // already; join that mint instead of starting a second one.
+    if (tokenCache.get(key) !== pending)
+      return mcpAccessToken(serverName, oauth);
+    tokenCache.delete(key);
   }
   const mint = mintAccessToken(serverName, oauth);
   mint.catch(() => {
@@ -97,6 +101,8 @@ async function mintAccessToken(
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      // The body carries the client secret; never follow it to another host.
+      redirect: "error",
     });
   } catch (error) {
     throw failure(error instanceof Error ? error.message : String(error));

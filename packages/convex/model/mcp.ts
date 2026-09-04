@@ -90,8 +90,36 @@ export interface McpInput {
 }
 
 /**
+ * The oauth invariants on the row a create or update produces, whichever side
+ * brings each field: external transport, an https url (the minted bearer
+ * rides every request) and no Authorization header (core mints it itself).
+ */
+export function assertOauthRow(row: {
+  transport: McpTransport;
+  url?: string;
+  headers?: Record<string, string>;
+  oauth?: McpOauth;
+}): void {
+  if (row.oauth === undefined) return;
+  if (row.transport === "hosted") {
+    throw new Error("oauth applies to external (url) servers, not hosted");
+  }
+  if (row.url !== undefined && new URL(row.url).protocol !== "https:") {
+    throw new Error(
+      "oauth needs an https url; the minted token rides every request",
+    );
+  }
+  const authorization = authorizationHeaderName(row.headers);
+  if (authorization !== undefined) {
+    throw new Error(
+      `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
+    );
+  }
+}
+
+/**
  * The name of the Authorization header as written, whatever its case, or
- * undefined. A row with oauth must not carry one: core mints it itself.
+ * undefined.
  */
 export function authorizationHeaderName(
   headers: Record<string, string> | undefined,
@@ -301,9 +329,9 @@ function normalizeName(value: unknown): string {
 }
 
 /**
- * Set input.oauth from the body, after the connection and headers are known:
- * oauth never sits on a hosted row or next to an Authorization header.
- * clientId may be inline (it is not a secret); clientSecret and refreshToken
+ * Set input.oauth from the body. The cross-field rules (external transport,
+ * https url, no Authorization header) live in assertOauthRow, which sees the
+ * whole row a create or patch produces. clientId may be inline (it is not a secret); clientSecret and refreshToken
  * must be ${NAME} refs, exactly like credential-bearing headers, so a token
  * never lands on the row or in a public projection.
  */
@@ -316,15 +344,6 @@ function normalizeOauth(
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(
       "oauth must be an object with clientId, clientSecret and refreshToken",
-    );
-  }
-  if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
-    throw new Error("oauth applies to external (url) servers, not hosted");
-  }
-  const authorization = authorizationHeaderName(input.headers);
-  if (authorization !== undefined) {
-    throw new Error(
-      `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
     );
   }
   const oauth = value as Record<string, unknown>;

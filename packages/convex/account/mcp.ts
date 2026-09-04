@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { authorizationHeaderName, type McpOauth } from "../model/mcp";
+import { assertOauthRow, type McpOauth } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields } from "../schema";
 
@@ -141,6 +141,12 @@ export const create = internalMutation({
     if (transport === "hosted" && (!args.bundleStorageKey || !args.sha256)) {
       throw new Error("hosted MCP servers need bundleStorageKey and sha256");
     }
+    assertOauthRow({
+      transport: transport,
+      url: args.url,
+      headers: args.headers,
+      oauth: args.oauth,
+    });
 
     const now = Date.now();
 
@@ -225,22 +231,10 @@ export const update = internalMutation({
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
     }
-    // The normalizer only sees one body, so the row the patch produces is
-    // checked here: oauth never lands on a hosted row or next to an
-    // Authorization header, whichever side the patch brings.
+    // The normalizer only sees one body; the row the patch produces is
+    // what has to hold.
     const patch = updatePatch(args, doc);
-    const next = { ...doc, ...patch };
-    if (next.oauth !== undefined) {
-      if (next.transport === "hosted") {
-        throw new Error("oauth applies to external (url) servers, not hosted");
-      }
-      const authorization = authorizationHeaderName(next.headers);
-      if (authorization !== undefined) {
-        throw new Error(
-          `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
-        );
-      }
-    }
+    assertOauthRow({ ...doc, ...patch });
 
     await ctx.db.patch(normalized, patch);
 
