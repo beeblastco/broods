@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import {
+  claimUploadedBlob,
   OPEN_UPLOADS_PER_HOUR,
   UPLOAD_GRANT_WINDOW_MS,
 } from "../model/uploads";
@@ -136,6 +137,38 @@ describe("upload grants", () => {
     await t.run(async (ctx) => {
       expect(await ctx.db.system.get(orphan)).toBeNull();
       expect(await ctx.db.system.get(kept)).not.toBeNull();
+    });
+  });
+});
+
+describe("claimUploadedBlob", () => {
+  test("refuses a blob another workspace file already owns", async () => {
+    const t = uploadTest();
+    await t.run(async (ctx) => {
+      const owned = await ctx.storage.store(new Blob(["owned"]));
+      const fresh = await ctx.storage.store(new Blob(["fresh"]));
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        name: "demo",
+        slug: "demo",
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("workspaceFiles", {
+        authId: "auth_owner",
+        projectId: projectId,
+        nodeId: "node-1",
+        path: "owned.txt",
+        name: "owned.txt",
+        isFolder: false,
+        storageId: owned,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      await expect(claimUploadedBlob(ctx, owned)).rejects.toThrow(
+        /already registered/,
+      );
+      expect((await claimUploadedBlob(ctx, fresh)).size).toBe(5);
     });
   });
 });

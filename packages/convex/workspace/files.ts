@@ -18,7 +18,11 @@ import {
 } from "../_generated/server";
 import { authKit } from "../auth";
 import { getProjectForRole } from "../model/ownership/project";
-import { grantUpload, uploadQuotaMessage } from "../model/uploads";
+import {
+  claimUploadedBlob,
+  grantUpload,
+  uploadQuotaMessage,
+} from "../model/uploads";
 import { getActiveAccountForUser } from "../org/orgs";
 import {
   MAX_WORKSPACE_FILE_BYTES,
@@ -116,10 +120,7 @@ export const create = mutation({
     const project = await getProjectForRole(ctx, user.id, projectId, "admin");
     if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
 
-    const blob = storageId ? await ctx.db.system.get(storageId) : null;
-    if (storageId && !blob) {
-      throw new Error("Uploaded file was not found in storage.");
-    }
+    const blob = storageId ? await claimUploadedBlob(ctx, storageId) : null;
     if (blob && blob.size > MAX_WORKSPACE_FILE_BYTES) {
       await ctx.storage.delete(blob._id);
       throw new Error(
