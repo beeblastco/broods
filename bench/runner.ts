@@ -10,6 +10,7 @@
 const BYTES_PER_OP_ITERATION_CAP = 20_000;
 const BYTES_PER_OP_ITERATION_FLOOR = 1_000;
 const DEFAULT_SAMPLES = 21;
+const MACHINE_RATIO_MIN_CASES = 5;
 const WARMUP_SAMPLES = 3;
 
 export type BenchGate = "blocking" | "informational";
@@ -93,11 +94,25 @@ export interface BenchComparison {
   measurement: BenchMeasurement;
   baseline: BenchBaseline | null;
   status: BenchStatus;
-  /** Positive means slower than baseline. Null when there is no baseline. */
+  /**
+   * Drift relative to the run's machine ratio, in percent. Positive means this
+   * case slowed down more than the suite as a whole did. Null without a baseline.
+   */
   deltaPct: number | null;
   /** Whether this comparison should fail the run. */
   failing: boolean;
   note: string;
+}
+
+export interface BenchGrading {
+  comparisons: BenchComparison[];
+  /**
+   * How much slower this run's machine is than the one the baselines were
+   * recorded on: the median of measured/baseline across every gated case. A
+   * hosted CI pool varies well over 1.3x between hosts, so drift is judged
+   * against this rather than against the raw clock.
+   */
+  machineRatio: number;
 }
 
 export interface BenchResultFile {
@@ -117,15 +132,23 @@ export function compareToBaselines(
   measurements: readonly BenchMeasurement[],
   baselines: BenchBaselineFile,
   environment: BenchEnvironment,
-): BenchComparison[] {
+): BenchGrading {
   // Ceilings are product statements and hold on any machine fit to serve
   // traffic. Drift is a comparison against a recorded clock, so it only carries
-  // weight on the hardware that clock was recorded on.
+  // weight on the hardware class that clock was recorded on: a different arch
+  // shifts the paths unevenly (hardware SHA-256, regex engines) and the
+  // machine ratio below cannot cancel that.
   const driftComparable =
     baselines.platform === environment.platform &&
     baselines.arch === environment.arch;
 
-  return measurements.map((measurement) => {
+  // Within one hardware class, hosts still differ in clock. A slower host slows
+  // every case by about the same factor, and a code regression slows one. So
+  // the ratio the suite as a whole moved by is the machine, and each case is
+  // judged against that rather than against the recorded nanoseconds.
+  const machineRatio = medianDriftRatio(measurements, baselines);
+
+  const comparisons = measurements.map((measurement): BenchComparison => {
     const baseline = baselines.cases[measurement.name] ?? null;
     if (!baseline) {
       return {
@@ -139,7 +162,7 @@ export function compareToBaselines(
     }
 
     const deltaPct =
-      ((measurement.nsPerOp - baseline.nsPerOp) / baseline.nsPerOp) * 100;
+      (measurement.nsPerOp / baseline.nsPerOp / machineRatio - 1) * 100;
     const maxRegressionPct =
       baseline.maxRegressionPct ?? baselines.policy.defaultMaxRegressionPct;
     const blocking = baseline.gate === "blocking";
@@ -206,6 +229,8 @@ export function compareToBaselines(
       note: "",
     };
   });
+
+  return { comparisons: comparisons, machineRatio: machineRatio };
 }
 
 /** Time one case: warmup samples discarded, then a median over `samples`. */
@@ -329,6 +354,27 @@ function measureBytesPerOp(benchCase: BenchCase): number {
   Bun.gc(true);
 
   return Math.max(0, (after - before) / iterations);
+}
+
+/**
+ * The factor the suite as a whole moved by since the baselines were recorded.
+ * With too few gated cases the median says nothing, so the ratio is 1 and drift
+ * is judged against the raw clock.
+ */
+function medianDriftRatio(
+  measurements: readonly BenchMeasurement[],
+  baselines: BenchBaselineFile,
+): number {
+  const ratios = measurements
+    .flatMap((measurement) => {
+      const baseline = baselines.cases[measurement.name];
+
+      return baseline ? [measurement.nsPerOp / baseline.nsPerOp] : [];
+    })
+    .sort((left, right) => left - right);
+  if (ratios.length < MACHINE_RATIO_MIN_CASES) return 1;
+
+  return median(ratios);
 }
 
 function median(sorted: readonly number[]): number {

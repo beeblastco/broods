@@ -18,9 +18,13 @@ bun run bench:test     # the gate's own grading rules
 - **Ceiling** (`ceilingNs`). An absolute product threshold, roughly 10x the
   laptop number. It holds on any machine fit to serve traffic, so it blocks
   everywhere from the first run. Only a catastrophe trips it.
-- **Drift** (`nsPerOp` plus `maxRegressionPct`, default 30%). A comparison
-  against a recorded clock. It blocks only when the run's `platform/arch` match
-  the baseline's; on other hardware it reports and moves on.
+- **Drift** (`nsPerOp` plus `maxRegressionPct`, default 30%). Judged against
+  the run's machine ratio, the median of measured/baseline across every gated
+  case: a slower host in the same runner pool moves every case by about the
+  same factor, and that factor is subtracted before any case is graded. A code
+  regression moves one path and still stands out. Blocks only when the run's
+  `platform/arch` match the baseline's, since a different arch shifts the paths
+  unevenly and the ratio cannot cancel that.
 
 A case whose own spread exceeds `noiseCeilingPct` reports as `NOISY` and never
 fails. Widen the case's sample, do not widen its threshold.

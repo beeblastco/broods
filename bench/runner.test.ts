@@ -32,9 +32,26 @@ const BASELINES: BenchBaselineFile = {
   },
 };
 
+// Enough gated cases for the suite's median drift to stand in for the host's
+// clock, the way it does on a real run.
+const SUITE_NAMES: readonly string[] = ["a", "b", "c", "d", "e", "f"].map(
+  (letter) => `suite/${letter}`,
+);
+const SUITE_BASELINES: BenchBaselineFile = {
+  ...BASELINES,
+  cases: Object.fromEntries(
+    SUITE_NAMES.map((name) => [
+      name,
+      { nsPerOp: 100, ceilingNs: 1_000, gate: "blocking" },
+    ]),
+  ),
+};
+
 describe("compareToBaselines", () => {
   it("passes a measurement inside the allowance", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 120 })],
       BASELINES,
       SAME_MACHINE,
@@ -45,7 +62,9 @@ describe("compareToBaselines", () => {
   });
 
   it("fails a blocking case that drifts past the allowance", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 140 })],
       BASELINES,
       SAME_MACHINE,
@@ -57,7 +76,9 @@ describe("compareToBaselines", () => {
   });
 
   it("honours a per-case allowance over the policy default", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/tight", nsPerOp: 110 })],
       BASELINES,
       SAME_MACHINE,
@@ -68,7 +89,9 @@ describe("compareToBaselines", () => {
   });
 
   it("fails a blocking case over its product ceiling even without a baseline drift", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 1_500 })],
       BASELINES,
       SAME_MACHINE,
@@ -79,7 +102,9 @@ describe("compareToBaselines", () => {
   });
 
   it("reports but never fails an informational case", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "watched/case", nsPerOp: 5_000 })],
       BASELINES,
       SAME_MACHINE,
@@ -90,7 +115,9 @@ describe("compareToBaselines", () => {
   });
 
   it("refuses to convict on a measurement noisier than the ceiling", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 140, rsdPct: 22 })],
       BASELINES,
       SAME_MACHINE,
@@ -101,7 +128,9 @@ describe("compareToBaselines", () => {
   });
 
   it("reports drift without failing when the baseline is from another machine", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 140 })],
       BASELINES,
       OTHER_MACHINE,
@@ -113,7 +142,9 @@ describe("compareToBaselines", () => {
   });
 
   it("still enforces the product ceiling across machines", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 1_500 })],
       BASELINES,
       OTHER_MACHINE,
@@ -124,7 +155,9 @@ describe("compareToBaselines", () => {
   });
 
   it("treats an unknown case as new rather than as a pass or a failure", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "brand/new", nsPerOp: 100 })],
       BASELINES,
       SAME_MACHINE,
@@ -135,8 +168,51 @@ describe("compareToBaselines", () => {
     expect(comparison?.deltaPct).toBeNull();
   });
 
+  it("does not convict a host that is uniformly slower than the baseline machine", () => {
+    // Every case +45%: a slower runner in the same pool, not a code change.
+    const { comparisons, machineRatio } = compareToBaselines(
+      SUITE_NAMES.map((name) => measurement({ name: name, nsPerOp: 145 })),
+      SUITE_BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(machineRatio).toBeCloseTo(1.45, 5);
+    expect(comparisons.every((comparison) => comparison.status === "ok")).toBe(
+      true,
+    );
+  });
+
+  it("still catches one path regressing on a uniformly slower host", () => {
+    const { comparisons } = compareToBaselines(
+      SUITE_NAMES.map((name, index) =>
+        measurement({ name: name, nsPerOp: index === 0 ? 145 * 1.6 : 145 }),
+      ),
+      SUITE_BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(comparisons[0]?.status).toBe("regressed");
+    expect(comparisons[0]?.failing).toBe(true);
+    expect(comparisons[0]?.deltaPct).toBeCloseTo(60, 5);
+    expect(
+      comparisons.slice(1).every((comparison) => comparison.status === "ok"),
+    ).toBe(true);
+  });
+
+  it("judges against the raw clock when too few cases have baselines", () => {
+    const { machineRatio } = compareToBaselines(
+      [measurement({ name: "gated/case", nsPerOp: 140 })],
+      BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(machineRatio).toBe(1);
+  });
+
   it("flags a large improvement so the baseline gets re-recorded", () => {
-    const [comparison] = compareToBaselines(
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 40 })],
       BASELINES,
       SAME_MACHINE,

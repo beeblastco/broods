@@ -96,11 +96,12 @@ if (!existsSync(BASELINES_PATH)) {
 const baselines = JSON.parse(
   readFileSync(BASELINES_PATH, "utf8"),
 ) as BenchBaselineFile;
-const comparisons = compareToBaselines(measurements, baselines, {
-  platform: result.platform,
-  arch: result.arch,
-});
-printComparisons(result, comparisons);
+const { comparisons, machineRatio } = compareToBaselines(
+  measurements,
+  baselines,
+  { platform: result.platform, arch: result.arch },
+);
+printComparisons(result, comparisons, machineRatio);
 
 const failures = comparisons.filter((comparison) => comparison.failing);
 if (failures.length > 0) {
@@ -121,8 +122,12 @@ console.log("\nNo blocking performance regressions.");
 function printComparisons(
   resultFile: BenchResultFile,
   graded: readonly BenchComparison[],
+  machineRatio: number,
 ): void {
   printHeader(resultFile);
+  console.log(
+    `This host runs ${machineRatio.toFixed(2)}x the baseline clock; delta is drift beyond that.\n`,
+  );
   console.log(
     `${"case".padEnd(38)}${"ns/op".padStart(12)}${"baseline".padStart(12)}${"delta".padStart(10)}${"spread".padStart(9)}  status`,
   );
