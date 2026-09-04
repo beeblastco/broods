@@ -8,5 +8,8 @@
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules"]
+  // fixtures/project is a user-style broods project the CLI cases compile; its
+  // `broods` import resolves through a link the cases create at setup, not
+  // through the workspace, so it is not part of the suite's own typecheck.
+  "exclude": ["node_modules", "fixtures/project"]
 }
