@@ -32,10 +32,10 @@ fails. Widen the case's sample, do not widen its threshold.
   `maxRegressionPct` forward, so re-recording a number never quietly relaxes the
   policy that was reviewed with it. Change those fields by hand, in a commit
   that says why.
-- The current numbers were recorded on darwin/arm64. Every CI run uploads a
-  `benchmark-<run id>` artifact containing the runner's own `baselines.json`.
-  Commit that file to arm the drift gate on CI. Until then CI enforces ceilings
-  only.
+- The numbers are recorded on the CI runner class (linux/x64, GitHub
+  `ubuntu-24.04`), so drift blocks in CI and only reports on a laptop. Every CI
+  run uploads a `benchmark-<run id>` artifact containing the runner's fresh
+  `baselines.json`; adopt it from there rather than recording locally.
 - A `FASTER` result is a prompt to re-record, so the next regression is measured
   against the gain rather than the old number.
 
