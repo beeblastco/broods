@@ -5,14 +5,111 @@
  */
 
 import { convexTest, type TestConvex } from "convex-test";
+import type { FunctionReference } from "convex/server";
 import { readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import schema from "../schema";
 
-export { internal } from "../_generated/api";
-
 export type RuntimeTest = TestConvex<typeof schema>;
+
+/** The runtime functions the suite calls, with the arguments it passes. */
+export interface RuntimeFunctions {
+  runtime: {
+    appendConversationEvent: FunctionReference<
+      "mutation",
+      "internal",
+      { conversationKey: string; cursor: string; event: unknown },
+      unknown
+    >;
+    getHarnessSession: FunctionReference<
+      "query",
+      "internal",
+      { conversationKey: string },
+      unknown
+    >;
+    listConversationEvents: FunctionReference<
+      "query",
+      "internal",
+      { conversationKey: string },
+      unknown
+    >;
+    saveHarnessSession: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        conversationKey: string;
+        harnessType: "codex";
+        sessionId: string;
+        resumeState: unknown;
+      },
+      unknown
+    >;
+  };
+  runtimeIngress: {
+    accept: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        accountId: string;
+        agentId: string;
+        conversationKey: string;
+        eventId: string;
+        idempotencyKey: string;
+        payloadDigest: string;
+        events: unknown[];
+        delivery: { kind: "http" };
+        requestedMode: "followup";
+        sizeBytes: number;
+        leaseTtlMs: number;
+        envelopeTtlMs: number;
+        statusTtlMs: number;
+        maxQueuedCount: number;
+        maxQueuedBytes: number;
+      },
+      { outcome: string; ownerGeneration?: number }
+    >;
+    settle: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        conversationKey: string;
+        ownerEventId: string;
+        ownerGeneration: number;
+        status: "completed";
+        result: string;
+      },
+      unknown
+    >;
+    takeNext: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        conversationKey: string;
+        ownerEventId: string;
+        ownerGeneration: number;
+        leaseTtlMs: number;
+      },
+      unknown
+    >;
+  };
+}
+
+// The generated API's types reach back into every Convex source through
+// `typeof import(...)`, which would put the whole package under the suite's
+// stricter tsconfig. Core reaches it with `require()` for the same reason; the
+// shapes above are the calls the suite makes, and Convex validates them at
+// runtime regardless.
+export const internal: RuntimeFunctions = require("../_generated/api").internal;
+
+/** The env ref substitution the config plane runs at sync time, same reason. */
+export const envCodec: {
+  collectEnvPlaceholderNames(value: unknown): Set<string>;
+  substituteAccountEnvPlaceholders<T>(
+    config: T,
+    variables: Record<string, string>,
+  ): T;
+} = require("../model/agentConfigCodec");
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 

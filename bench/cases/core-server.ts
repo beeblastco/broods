@@ -62,9 +62,9 @@ export const coreServerCases: readonly BenchCase[] = [
     iterations: 5_000,
     run: (): Promise<unknown> => {
       return toCoreRequest(
-        new Request(INVOKE_URL, {
+        new Request(INVOKE_URL.href, {
           method: "POST",
-          headers: INVOKE_HEADERS,
+          headers: { ...INVOKE_HEADERS },
           body: INVOKE_BODY,
         }),
         INVOKE_URL,

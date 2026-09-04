@@ -11,10 +11,7 @@ import {
   encryptAgentConfig,
   normalizeAgentConfig,
 } from "../../apps/core/src/shared/domain/agent-config.ts";
-import {
-  collectEnvPlaceholderNames,
-  substituteAccountEnvPlaceholders,
-} from "../../packages/convex/model/agentConfigCodec.ts";
+import { envCodec } from "../../packages/convex/bench/harness.ts";
 import type { BenchCase } from "../runner.ts";
 
 const ENCRYPTION_SECRET = "bench-only-account-config-secret-0000";
@@ -115,11 +112,14 @@ export const coreConfigCases: readonly BenchCase[] = [
     name: "core/config-env-inject",
     iterations: 5_000,
     run: (): unknown => {
-      const names = collectEnvPlaceholderNames(PLACEHOLDER_CONFIG);
+      const names = envCodec.collectEnvPlaceholderNames(PLACEHOLDER_CONFIG);
 
       return [
         names.size,
-        substituteAccountEnvPlaceholders(PLACEHOLDER_CONFIG, ACCOUNT_ENV),
+        envCodec.substituteAccountEnvPlaceholders(
+          PLACEHOLDER_CONFIG,
+          ACCOUNT_ENV,
+        ),
       ];
     },
   },
