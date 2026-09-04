@@ -41,6 +41,7 @@ import {
   relativeTime,
 } from "./sandboxFormat";
 import {
+  sandboxLogId,
   SandboxLogTail,
   type SandboxObservabilityScope,
 } from "./SandboxLogTail";
@@ -121,9 +122,11 @@ export function SandboxInstanceSheet({
   // no runtime snapshot-to-image API, so the capture action is hidden for them —
   // their state is still preserved across idle via suspend/resume.
   const supportsSnapshot = instance.provider === "sandbox";
-  // Only a provider with its own guest log stream can be tailed; the id the
-  // gateway filters on is the last segment of the stream core named at launch.
-  const logSandboxId = instance.logStream?.split("/").at(-1);
+  // Only a provider with its own guest log stream can be tailed, and only a
+  // deployment-scoped run has lines the gateway can find.
+  const logSandboxId = instance.logStream
+    ? sandboxLogId(instance.logStream)
+    : undefined;
 
   function dashboardHref(params: Record<string, string>): string {
     const next = new URLSearchParams();

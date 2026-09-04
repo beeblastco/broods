@@ -95,6 +95,9 @@ const SERVICE_REGIONS = [
   { region: "us-east-1", label: "us-east-1 (US East)" },
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
 ] as const;
+// CSI and OSC escape sequences plus C0 control bytes other than tab.
+const TERMINAL_CONTROL_PATTERN =
+  /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|[\x00-\x08\x0b-\x1f\x7f]/g;
 
 // Options every command accepts, appended to each command's own help so a
 // reader never has to jump back to the top-level page for them.
@@ -2134,12 +2137,17 @@ function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
-/** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
+/**
+ * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
+ * A sandbox line is raw guest output, so terminal escapes and control bytes
+ * are dropped before it can move the cursor or retitle the window.
+ */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
   const level = entry.level.padEnd(5);
+  const message = entry.message.replace(TERMINAL_CONTROL_PATTERN, "");
 
-  return `${time} ${level} ${entry.eventType} ${entry.message}`;
+  return `${time} ${level} ${entry.eventType} ${message}`;
 }
 
 // `broods stream` — live tail of the whole project/stage log stream
@@ -2187,17 +2195,19 @@ async function logs(args: string[]): Promise<void> {
     baseUrl: baseUrl,
     apiKey: apiKey,
   });
-  const minLevel = resolveMinLevel(args);
-  const limit = Number(
-    optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
-  );
-  const jsonMode = hasFlag(args, "--json");
   const sandboxId = optionValue(args, "--sandbox");
   // A bare or malformed --sandbox must not fall through to the deployment tail.
   if (hasFlag(args, "--sandbox") && !isSandboxLogId(sandboxId))
     throw new Error(
       "--sandbox needs the instance log id, the UUID shown in the dashboard Instances sheet.",
     );
+  // Guest lines carry no level (the bridge stamps INFO), so the WARN default
+  // would show nothing; a sandbox tail is everything the guest wrote.
+  const minLevel: LogLevel = sandboxId ? "DEBUG" : resolveMinLevel(args);
+  const limit = Number(
+    optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
+  );
+  const jsonMode = hasFlag(args, "--json");
 
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();

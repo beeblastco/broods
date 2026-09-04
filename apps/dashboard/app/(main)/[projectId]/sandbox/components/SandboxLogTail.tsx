@@ -13,6 +13,8 @@ import { formatTime } from "@/app/lib/formatTime";
 import Link from "next/link";
 
 const BACKFILL = 200;
+// Core writes "-" for a run with no deployment scope (channel, cron).
+const UNSCOPED = "-";
 
 /** The stage-scoped WS inputs the Sandbox page resolves once for every sheet. */
 export interface SandboxObservabilityScope {
@@ -29,6 +31,19 @@ interface Props {
   scope: SandboxObservabilityScope | null;
   /** Monitoring tab, where the stage's viewing key is minted. */
   monitoringHref: string;
+}
+
+/**
+ * The id a tail subscribes with, read out of the stream name core wrote at
+ * launch: `<accountId>/<project>/<stage>/<uuid>/<mac>`. Undefined when the run
+ * had no deployment scope, since the gateway scopes every query on project and
+ * stage and such a VM's lines can never match.
+ */
+export function sandboxLogId(logStream: string): string | undefined {
+  const [, project, stage, id] = logStream.split("/");
+  const scoped = project !== UNSCOPED && stage !== UNSCOPED;
+
+  return scoped && id ? id : undefined;
 }
 
 export function SandboxLogTail({

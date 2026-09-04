@@ -2,8 +2,11 @@
  * AWS Lambda entry for the sandbox log bridge. A CloudWatch subscription filter on
  * the per-stage MicroVM runtime log group invokes this with a gzipped batch of guest
  * stdout/stderr lines. Core names every VM's log stream
- * `<accountId>/<project>/<stage>/<uuid>` at launch, so the tenant labels Loki
- * indexes come from splitting the stream name: no lookup, no shared state. Lines
+ * `<accountId>/<project>/<stage>/<uuid>/<mac>` at launch, so the tenant labels
+ * Loki indexes come from splitting the stream name: no lookup, no shared state.
+ * The mac is core's HMAC over the first four segments, keyed by the OTLP client
+ * secret both sides hold; a guest can reach the VM role and create any stream
+ * in the group, so only a name core signed earns tenant labels. Lines
  * are redacted with the same string patterns core's log.ts applies, then posted as
  * one OTLP/HTTP request to the cluster collector, whose groupbyattrs processor
  * already routes them by tenant. The collector is reached exactly like core
@@ -12,10 +15,13 @@
  * unknown here, so only the pattern half of core's redaction runs; the docs say so.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 
 const SERVICE_NAME = "broods-sandbox";
 const PROVIDER = "lambda";
+// Hex chars of the stream-name HMAC. Keep in step with core's microvm-executor.
+const LOG_STREAM_MAC_LENGTH = 16;
 // A "-" segment means the run had no deployment scope (channel, cron). The line
 // still ships for operators, but a "-" is not a tenant, so it is left unlabeled
 // rather than indexed as one.
@@ -39,7 +45,8 @@ export async function handler(event) {
   if (payload.messageType !== "DATA_MESSAGE" || payload.logEvents.length === 0)
     return;
 
-  const body = otlpLogsRequest(payload);
+  const otlpAuth = requiredEnv("OTEL_EXPORTER_OTLP_HEADERS");
+  const body = otlpLogsRequest(payload, otlpAuth);
   const endpoint = requiredEnv("OTEL_EXPORTER_OTLP_ENDPOINT").replace(
     /\/+$/,
     "",
@@ -47,7 +54,7 @@ export async function handler(event) {
   const response = await fetch(`${endpoint}/v1/logs`, {
     method: "POST",
     headers: {
-      ...otlpHeaders(requiredEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+      ...otlpHeaders(otlpAuth),
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
@@ -81,9 +88,10 @@ export function otlpHeaders(raw) {
  * the collector's groupbyattrs and Loki's index_label config pick them up; the
  * per-VM id is a log attribute so an ephemeral VM never becomes a new Loki stream.
  */
-export function otlpLogsRequest(payload) {
+export function otlpLogsRequest(payload, key) {
   const { accountId, project, stage, sandboxId } = parseLogStream(
     payload.logStream,
+    key,
   );
   const resource = {
     "service.name": SERVICE_NAME,
@@ -116,12 +124,13 @@ export function otlpLogsRequest(payload) {
 
 /**
  * Split core's stream name into labels. A stream that does not follow the
- * `<accountId>/<project>/<stage>/<uuid>` shape (a VM launched by an older core)
- * keeps the whole name as its sandbox id and carries no tenant.
+ * `<accountId>/<project>/<stage>/<uuid>/<mac>` shape, or whose mac does not
+ * verify under `key`, keeps the whole name as its sandbox id and carries no
+ * tenant: still visible to operators, never attributed to an account.
  */
-export function parseLogStream(logStream) {
+export function parseLogStream(logStream, key) {
   const parts = logStream.split("/");
-  if (parts.length !== 4) {
+  if (parts.length !== 5 || !verifyLogStream(parts, key)) {
     return {
       accountId: undefined,
       project: undefined,
@@ -171,4 +180,16 @@ function requiredEnv(name) {
 
 function scoped(segment) {
   return segment === UNSCOPED || segment === "" ? undefined : segment;
+}
+
+function verifyLogStream(parts, key) {
+  const expected = Buffer.from(
+    createHmac("sha256", key)
+      .update(parts.slice(0, 4).join("/"))
+      .digest("hex")
+      .slice(0, LOG_STREAM_MAC_LENGTH),
+  );
+  const given = Buffer.from(parts[4]);
+
+  return given.length === expected.length && timingSafeEqual(given, expected);
 }

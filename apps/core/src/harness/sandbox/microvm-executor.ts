@@ -32,6 +32,7 @@ import {
   SuspendMicrovmCommand,
   TerminateMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
+import { createHmac } from "node:crypto";
 import {
   removeSandboxInstance,
   upsertSandboxInstance,
@@ -114,6 +115,8 @@ const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
+// Hex chars of the log stream name HMAC. Keep in step with the forwarder.
+const LOG_STREAM_MAC_LENGTH = 16;
 
 // A reservation whose VM cannot be reconnected because it reached a terminal state.
 // GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
@@ -858,16 +861,26 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // ever has to look a microvmId up. "-" marks a run with no deployment scope
   // (channel, cron): those lines still reach Loki for operators and stay out of
   // the dashboard, exactly like core's own NATS sink skips them. One fresh id per
-  // launch, since the microvmId does not exist until RunMicrovm returns.
+  // launch, since the microvmId does not exist until RunMicrovm returns. The
+  // last segment signs the rest with the OTLP client secret the forwarder also
+  // holds: a guest can reach the VM role and create any stream in the group, so
+  // the forwarder labels only what core signed. Unsigned names ship unlabeled.
   #logStream(): string {
     const scope = getObservabilityContext();
-
-    return [
+    const name = [
       scope?.accountId || this.#config.controlPlane?.accountId || "-",
       scope?.project || "-",
       scope?.stage || "-",
       crypto.randomUUID(),
     ].join("/");
+    const key = optionalEnv("OTEL_EXPORTER_OTLP_HEADERS");
+    if (!key) return name;
+    const mac = createHmac("sha256", key)
+      .update(name)
+      .digest("hex")
+      .slice(0, LOG_STREAM_MAC_LENGTH);
+
+    return `${name}/${mac}`;
   }
 
   // Per-VM init delivered to the image's /run hook. Carries the workspace mount

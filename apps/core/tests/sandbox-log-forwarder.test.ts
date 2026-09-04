@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { createHmac } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import type {
   CloudWatchLogsDecodedData,
@@ -18,7 +19,9 @@ import {
   redact,
 } from "../../lambda/sandbox-log-forwarder.mjs";
 
-const STREAM = "acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+// The OTLP client line doubles as the stream-name signing key on both sides.
+const KEY = "Authorization=Basic dXNlcjpwYXNz";
+const STREAM = signed("acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b");
 const LOG_GROUP = "/broods/dev/microvms";
 
 type CloudWatchPayload = Pick<
@@ -42,6 +45,12 @@ function cloudWatchEvent(payload: CloudWatchPayload): CloudWatchLogsEvent {
   };
 }
 
+function signed(name: string): string {
+  const mac = createHmac("sha256", KEY).update(name).digest("hex").slice(0, 16);
+
+  return `${name}/${mac}`;
+}
+
 function payload(
   overrides: Partial<CloudWatchPayload> = {},
 ): CloudWatchPayload {
@@ -57,8 +66,8 @@ function payload(
 }
 
 describe("parseLogStream", () => {
-  it("splits core's stream name into tenant labels and the sandbox id", () => {
-    expect(parseLogStream(STREAM)).toEqual({
+  it("splits core's signed stream name into tenant labels and the sandbox id", () => {
+    expect(parseLogStream(STREAM, KEY)).toEqual({
       accountId: "acct-1",
       project: "proj",
       stage: "dev",
@@ -67,7 +76,7 @@ describe("parseLogStream", () => {
   });
 
   it("leaves unscoped runs unlabeled instead of indexing '-' as a tenant", () => {
-    expect(parseLogStream("acct-1/-/-/uuid")).toEqual({
+    expect(parseLogStream(signed("acct-1/-/-/uuid"), KEY)).toEqual({
       accountId: "acct-1",
       project: undefined,
       stage: undefined,
@@ -75,13 +84,26 @@ describe("parseLogStream", () => {
     });
   });
 
-  it("keeps a legacy microvmId stream whole, with no tenant", () => {
-    expect(parseLogStream("ai-12345678")).toEqual({
+  // A guest holds the VM role and can name a stream after any tenant; without
+  // core's signature the name is just an operator-visible id.
+  it("refuses tenant labels for a stream core did not sign", () => {
+    const unlabeled = (sandboxId: string) => ({
       accountId: undefined,
       project: undefined,
       stage: undefined,
-      sandboxId: "ai-12345678",
+      sandboxId: sandboxId,
     });
+    const forged = "victim/shop/prod/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
+    expect(parseLogStream(forged, KEY)).toEqual(unlabeled(forged));
+    expect(parseLogStream(`${forged}/0123456789abcdef`, KEY)).toEqual(
+      unlabeled(`${forged}/0123456789abcdef`),
+    );
+    expect(parseLogStream(signed(forged), "other-key")).toEqual(
+      unlabeled(signed(forged)),
+    );
+    expect(parseLogStream("ai-12345678", KEY)).toEqual(
+      unlabeled("ai-12345678"),
+    );
   });
 });
 
@@ -114,6 +136,7 @@ describe("otlpLogsRequest", () => {
           { id: "2", timestamp: 1_700_000_000_250, message: "Bearer tok" },
         ],
       }),
+      KEY,
     );
     const resourceLogs = body.resourceLogs[0]!;
 
@@ -144,7 +167,7 @@ describe("handler", () => {
 
   beforeEach(() => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "https://otel.example.test/";
-    process.env.OTEL_EXPORTER_OTLP_HEADERS = "Authorization=Basic dXNlcjpwYXNz";
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = KEY;
     fetchMock.mockClear();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -164,7 +187,10 @@ describe("handler", () => {
     expect(url).toBe("https://otel.example.test/v1/logs");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Basic dXNlcjpwYXNz");
-    expect(JSON.parse(init.body).resourceLogs).toHaveLength(1);
+    const [resourceLogs] = JSON.parse(init.body).resourceLogs;
+    expect(attributes(resourceLogs.resource.attributes).account_id).toBe(
+      "acct-1",
+    );
   });
 
   it("ignores control messages and empty batches", async () => {

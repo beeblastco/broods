@@ -243,14 +243,15 @@ const microvmRunInput = (): Record<string, unknown> => {
 
   return (call![0] as { input: Record<string, unknown> }).input;
 };
-// The MicroVM log stream is `<accountId>/<project>/<stage>/<uuid>`.
+// The MicroVM log stream is `<accountId>/<project>/<stage>/<uuid>/<mac>`; the
+// mac is absent when core has no OTLP client secret to sign with.
 const logStreamPattern = (
   accountId: string,
   project: string,
   stage: string,
 ): RegExp =>
   new RegExp(
-    `^${accountId}/${project}/${stage}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+    `^${accountId}/${project}/${stage}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/[0-9a-f]{16})?$`,
   );
 mock.module("e2b", () => ({
   Sandbox: {
