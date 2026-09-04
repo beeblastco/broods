@@ -222,6 +222,7 @@ Rules that follow from the transport and the policy layer:
 
 - The server name namespaces its tools (`search__query`), so it is 1-32 lowercase letters, digits, or hyphens; unique per stage.
 - Credential-bearing headers (`Authorization`, `X-Api-Key`, ...) must reference an account env var (`Bearer ${NAME}`); inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
+- A server that only accepts expiring access tokens (Google's Workspace MCP endpoints) registers `oauth` instead of an Authorization header: core mints access tokens with the OAuth 2.0 refresh-token grant, caches them per config, re-mints before expiry, and sends `Authorization: Bearer <token>` itself. `clientSecret` and `refreshToken` must be `${NAME}` refs like credential headers, and the agent's `mcp.<serverId>.oauth` entry repeats them so they resolve at sync; `tokenUrl` defaults to `https://oauth2.googleapis.com/token` and must be https, and so must the server `url`; an explicit Authorization header next to `oauth` is rejected at registration and on update.
 - Per-server OPA rules use the `mcpIds` selector on `tool.call`; `needsApproval` on the entry applies to every tool the server exposes; the row's `allowedTools` filters what registers at all.
 - `subscriptions/listen` (server-push list changes) is deliberately unsupported: tool lists refresh when their `ttlMs` expires. MRTR `input_required` results surface as tool errors.
 

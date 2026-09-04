@@ -38,6 +38,7 @@ import {
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
+import type { McpOauth } from "./mcp.ts";
 import { normalizePolicyIds } from "./policy.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
@@ -398,6 +399,12 @@ export interface AgentMcpEntry {
   needsApproval?: boolean;
   /** Extra request headers; values resolved from account env vars at sync. */
   headers?: Record<string, string>;
+  /**
+   * Overrides for the row's oauth credentials; values resolved from account
+   * env vars at sync, so the row's ${NAME} refs never reach the token
+   * endpoint. tokenUrl stays on the row, where registration checked it.
+   */
+  oauth?: Partial<Omit<McpOauth, "tokenUrl">>;
   [key: string]: unknown;
 }
 
@@ -1305,6 +1312,11 @@ function normalizeMcpConfig(value: unknown): void {
     if (config.headers !== undefined && !isStringRecord(config.headers)) {
       throw new Error(
         `config.mcp.${serverId}.headers must be an object of string values`,
+      );
+    }
+    if (config.oauth !== undefined && !isStringRecord(config.oauth)) {
+      throw new Error(
+        `config.mcp.${serverId}.oauth must be an object of string values`,
       );
     }
   }

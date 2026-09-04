@@ -5,8 +5,9 @@
  * per operation, no session state. An "http" row dials its url; a "hosted"
  * row runs the same transport with every request routed through the Lambda
  * host (hosted.ts). The version probe and tool listings are cached in-process
- * per server row (keyed by row version and resolved headers, so an edit is a
- * cache miss), honoring the ttlMs the spec puts on cacheable results.
+ * per server row (keyed by row version, resolved headers and oauth config, so
+ * an edit is a cache miss), honoring the ttlMs the spec puts on cacheable
+ * results. A row with oauth mints a bearer token (oauth.ts) at connect time.
  */
 
 import {
@@ -16,11 +17,20 @@ import {
   type DiscoverResult,
   type Tool,
 } from "@modelcontextprotocol/client";
+import type { AgentMcpEntry } from "../../shared/domain/agent-config.ts";
 import {
+  authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
+  type McpOauth,
   type McpRecord,
 } from "../../shared/domain/mcp.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
+import {
+  clearMcpOauthTokens,
+  DEFAULT_OAUTH_TOKEN_URL,
+  mcpAccessToken,
+  type ResolvedMcpOauth,
+} from "./oauth.ts";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 
@@ -37,6 +47,8 @@ let testOverrides: McpTestOverrides | null = null;
 export interface McpConnection {
   record: McpRecord;
   headers: Record<string, string>;
+  /** Set when the row carries oauth; the Authorization header is minted from it. */
+  oauth?: ResolvedMcpOauth;
 }
 
 /** Per-call options. onCpuUsec fires only for hosted rows, off the Lambda's
@@ -153,13 +165,14 @@ export async function listMcpTools(
 }
 
 /**
- * Build the connection for a server row: row headers overlaid with the agent
- * config's headers (those resolved their ${NAME} refs at sync). A value still
- * carrying a placeholder never reaches the wire.
+ * Build the connection for a server row: row headers and oauth overlaid with
+ * the agent config's (those resolved their ${NAME} refs at sync). A value
+ * still carrying a placeholder never reaches the wire.
  */
 export function mcpConnection(
   record: McpRecord,
   configHeaders: Record<string, string> | undefined,
+  configOauth?: AgentMcpEntry["oauth"],
 ): McpConnection {
   const headers: Record<string, string> = {
     ...record.headers,
@@ -172,8 +185,21 @@ export function mcpConnection(
       );
     }
   }
+  const oauth = resolveOauth(record, configOauth);
+  if (oauth) {
+    const authorization = authorizationHeaderName(headers);
+    if (authorization !== undefined) {
+      throw new Error(
+        `config.mcp.${record.serverId} sets both an ${authorization} header and oauth; oauth mints that header itself`,
+      );
+    }
+  }
 
-  return { record: record, headers: headers };
+  return {
+    record: record,
+    headers: headers,
+    ...(oauth !== undefined ? { oauth: oauth } : {}),
+  };
 }
 
 /** Tests only: stub the network edge, and drop any cached state. */
@@ -181,18 +207,20 @@ export function setMcpForTests(overrides: McpTestOverrides | null): void {
   testOverrides = overrides;
   discoverCache.clear();
   toolListCache.clear();
+  clearMcpOauthTokens();
 }
 
 /**
- * One cache identity per server row version and resolved header set, so a
- * row edit or a header change is a miss instead of stale data for a TTL.
+ * One cache identity per server row version, resolved header set and oauth
+ * config, so a row edit or a credential change is a miss instead of stale
+ * data for a TTL.
  */
 function cacheKeyFor(connection: McpConnection): string {
   const headers = Object.entries(connection.headers).sort(([a], [b]) =>
     a < b ? -1 : 1,
   );
 
-  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}`;
+  return `${connection.record.serverId}:${connection.record.updatedAt}:${JSON.stringify(headers)}:${JSON.stringify(connection.oauth ?? null)}`;
 }
 
 /** A cacheable result's ttlMs (typed unknown by the SDK), defaulted and clamped. */
@@ -222,10 +250,19 @@ async function connectClient(
   const makeClient = async (
     discover: DiscoverResult | undefined,
   ): Promise<Client> => {
+    // Minted (or served from the token cache) per connect: clients are
+    // per-operation, so every request carries a token outside its refresh
+    // margin instead of a static header that expires mid-conversation.
+    const headers = connection.oauth
+      ? {
+          ...connection.headers,
+          Authorization: `Bearer ${await mcpAccessToken(connection.record.name, connection.oauth)}`,
+        }
+      : connection.headers;
     const transport = new StreamableHTTPClientTransport(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
-        requestInit: { headers: connection.headers },
+        requestInit: { headers: headers },
         ...(hosted
           ? { fetch: hostedMcpFetch(connection.record, onCpuUsec) }
           : {}),
@@ -296,6 +333,45 @@ function renderContent(content: CallToolResult["content"]): string {
       }
     })
     .join("\n");
+}
+
+/**
+ * Merge the row's oauth credentials with the agent config's overrides (config
+ * wins per field) and refuse values still carrying ${NAME} refs, mirroring
+ * the header rule: secrets resolve into the agent config at sync, never on
+ * the row. tokenUrl comes from the row alone: registration is the one place
+ * that checked it is https, and the agent config is only a string record.
+ */
+function resolveOauth(
+  record: McpRecord,
+  configOauth: AgentMcpEntry["oauth"],
+): ResolvedMcpOauth | undefined {
+  if (record.oauth === undefined && configOauth === undefined) return undefined;
+  const merged: Partial<McpOauth> = { ...record.oauth, ...configOauth };
+  const resolved = (
+    field: "clientId" | "clientSecret" | "refreshToken",
+  ): string => {
+    const value = merged[field];
+    if (value === undefined || value === "") {
+      throw new Error(
+        `config.mcp.${record.serverId} oauth is missing ${field}`,
+      );
+    }
+    if (ENV_PLACEHOLDER_PATTERN.test(value)) {
+      throw new Error(
+        `config.mcp.${record.serverId} oauth ${field} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
+      );
+    }
+
+    return value;
+  };
+
+  return {
+    clientId: resolved("clientId"),
+    clientSecret: resolved("clientSecret"),
+    refreshToken: resolved("refreshToken"),
+    tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
+  };
 }
 
 async function withClient<T>(

@@ -246,6 +246,15 @@ export const mcpFields = {
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
   headers: v.optional(v.record(v.string(), v.string())),
+  /** OAuth 2.0 refresh-token grant for "http" rows; secret fields are ${NAME} refs. */
+  oauth: v.optional(
+    v.object({
+      clientId: v.string(),
+      clientSecret: v.string(),
+      refreshToken: v.string(),
+      tokenUrl: v.optional(v.string()),
+    }),
+  ),
   /** Tool names the harness may register from this server; absent means all. */
   allowedTools: v.optional(v.array(v.string())),
   /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */

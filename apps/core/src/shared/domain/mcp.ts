@@ -6,10 +6,14 @@
  * Connection and tool registration live in harness/mcp/.
  */
 
-import type { McpTransport } from "@broods/convex/model/mcp";
+import type { McpOauth, McpTransport } from "@broods/convex/model/mcp";
 
 export { ACCOUNT_ENV_PLACEHOLDER_PATTERN as ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
-export type { McpTransport } from "@broods/convex/model/mcp";
+export {
+  authorizationHeaderName,
+  type McpOauth,
+  type McpTransport,
+} from "@broods/convex/model/mcp";
 
 export type McpStatus = "active" | "deleted";
 
@@ -27,6 +31,8 @@ export interface McpRecord {
   bundleStorageKey?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  /** OAuth 2.0 refresh-token grant; secret fields carry ${NAME} refs on the row. */
+  oauth?: McpOauth;
   allowedTools?: string[];
   disabled?: boolean;
   status: McpStatus;

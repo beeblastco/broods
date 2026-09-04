@@ -886,6 +886,7 @@ async function syncMcpResources(
         ? { description: input.description }
         : {}),
       ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      ...(input.oauth !== undefined ? { oauth: input.oauth } : {}),
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),

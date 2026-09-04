@@ -310,6 +310,134 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("headers values must be single-line");
   });
 
+  test("accepts oauth whose secret fields are env refs", async () => {
+    const input = await normalizeMcpInput(
+      {
+        name: "gmail",
+        url: SERVER_URL,
+        oauth: {
+          clientId: "client-1.apps.googleusercontent.com",
+          clientSecret: "${GMAIL_CLIENT_SECRET}",
+          refreshToken: "${GMAIL_REFRESH_TOKEN}",
+          tokenUrl: "https://oauth2.googleapis.com/token",
+        },
+      },
+      { requireConnection: true },
+    );
+    expect(input.oauth).toEqual({
+      clientId: "client-1.apps.googleusercontent.com",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+    });
+  });
+
+  test("rejects inline secrets in oauth fields", async () => {
+    for (const field of ["clientSecret", "refreshToken"]) {
+      await expect(
+        normalizeMcpInput(
+          {
+            name: "gmail",
+            url: SERVER_URL,
+            oauth: {
+              clientId: "client-1",
+              clientSecret: "${GMAIL_CLIENT_SECRET}",
+              refreshToken: "${GMAIL_REFRESH_TOKEN}",
+              [field]: "raw-secret-value",
+            },
+          },
+          { requireConnection: true },
+        ),
+      ).rejects.toThrow(`oauth.${field} must reference an account env var`);
+    }
+  });
+
+  test("rejects a plain-http oauth token endpoint", async () => {
+    await expect(
+      normalizeMcpInput(
+        {
+          name: "gmail",
+          url: SERVER_URL,
+          oauth: {
+            clientId: "client-1",
+            clientSecret: "${GMAIL_CLIENT_SECRET}",
+            refreshToken: "${GMAIL_REFRESH_TOKEN}",
+            tokenUrl: "http://oauth.example.com/token",
+          },
+        },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("oauth.tokenUrl must use https");
+  });
+
+  test("update checks oauth against the row the patch produces", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const serverId = await seedServer(tt, scope);
+    const oauth = {
+      clientId: "client-1",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    };
+
+    // The seeded row carries an Authorization header; oauth alone conflicts.
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        oauth: oauth,
+      }),
+    ).rejects.toThrow("oauth mints the Authorization header itself");
+    await tt.mutation(internal.account.mcp.update, {
+      accountId: scope.accountId,
+      serverId: serverId,
+      headers: {},
+      oauth: oauth,
+    });
+    // Now the stored oauth conflicts with a header the patch brings back.
+    await expect(
+      tt.mutation(internal.account.mcp.update, {
+        accountId: scope.accountId,
+        serverId: serverId,
+        headers: { authorization: "Bearer ${SEARCH_TOKEN}" },
+      }),
+    ).rejects.toThrow("drop the explicit authorization header");
+  });
+
+  test("create checks the oauth invariants on the row it writes", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const oauth = {
+      clientId: "client-1",
+      clientSecret: "${GMAIL_CLIENT_SECRET}",
+      refreshToken: "${GMAIL_REFRESH_TOKEN}",
+    };
+    const create = (args: Record<string, unknown>): Promise<Id<"mcp">> =>
+      tt.mutation(internal.account.mcp.create, {
+        accountId: scope.accountId,
+        projectId: scope.projectId,
+        stageId: scope.stageId,
+        name: "gmail",
+        oauth: oauth,
+        ...args,
+      });
+
+    await expect(
+      create({ url: SERVER_URL, headers: { authorization: "Bearer x" } }),
+    ).rejects.toThrow("oauth mints the Authorization header itself");
+    await expect(
+      create({ url: "http://gmail.example.com/mcp" }),
+    ).rejects.toThrow("oauth needs an https url");
+    await expect(
+      create({
+        transport: "hosted",
+        bundleStorageKey: "account-mcp/acct/bundles/x.mjs",
+        sha256: "a".repeat(64),
+      }),
+    ).rejects.toThrow("oauth applies to external (url) servers");
+    await create({ url: SERVER_URL });
+  });
+
   test("a patch may carry any subset", async () => {
     const input = await normalizeMcpInput(
       { disabled: true },

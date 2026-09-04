@@ -47,6 +47,13 @@ describe("agent rules", () => {
     ).toThrow(
       `config.mcp.${serverId}.headers must be an object of string values`,
     );
+    expect(() =>
+      normalizeAgentConfig({
+        mcp: { [serverId]: { oauth: { clientSecret: 5 } } },
+      }),
+    ).toThrow(
+      `config.mcp.${serverId}.oauth must be an object of string values`,
+    );
   });
 
   it("validates channel trace settings", () => {

@@ -228,6 +228,19 @@ export interface StageScope {
   stage: string;
 }
 
+/**
+ * OAuth 2.0 refresh-token grant on an external MCP row. The runtime mints and
+ * refreshes access tokens and sends `Authorization: Bearer <token>` itself.
+ * `clientSecret` and `refreshToken` must be `${NAME}` account env refs;
+ * `tokenUrl` defaults to https://oauth2.googleapis.com/token.
+ */
+export interface McpOauthInput {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  tokenUrl?: string;
+}
+
 /** Public MCP server registration returned by the `/v1/mcp` routes (#331). */
 export interface AccountMcp {
   accountId: string;
@@ -242,6 +255,7 @@ export interface AccountMcp {
   /** Hosted servers only: content hash of the uploaded bundle. */
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauthInput;
   allowedTools?: string[];
   disabled: boolean;
   status: string;
@@ -262,6 +276,7 @@ export interface CreateMcpInput {
   bundleStorageId?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauthInput;
   allowedTools?: string[];
 }
 
@@ -274,6 +289,7 @@ export interface UpdateMcpInput {
   bundleStorageId?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauthInput;
   allowedTools?: string[];
   disabled?: boolean;
 }

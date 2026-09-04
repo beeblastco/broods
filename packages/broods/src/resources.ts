@@ -181,6 +181,20 @@ export interface McpDefinitionConfig {
    * `Bearer ${env("TOKEN")}` — never carry an inline secret.
    */
   headers?: Record<string, string>;
+  /**
+   * OAuth 2.0 refresh-token grant for an external server whose access tokens
+   * expire (Google's Workspace MCP endpoints). The runtime mints, caches and
+   * refreshes access tokens and sends `Authorization: Bearer <token>` itself,
+   * so do not also set an Authorization header. `clientSecret` and
+   * `refreshToken` must be `env("NAME")` refs; `tokenUrl` defaults to
+   * https://oauth2.googleapis.com/token.
+   */
+  oauth?: {
+    clientId: string | EnvRef;
+    clientSecret: string | EnvRef;
+    refreshToken: string | EnvRef;
+    tokenUrl?: string;
+  };
   /** Tool names agents may use from this server; omit to allow all. */
   allowedTools?: string[];
 }

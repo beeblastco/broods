@@ -6,7 +6,8 @@
  * always travels with the bundle. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one
- * instead of an inline secret.
+ * instead of an inline secret. `oauth` follows the same rule: clientSecret
+ * and refreshToken must be ${NAME} refs, so the row never holds a secret.
  */
 
 import { sha256Hex } from "./accountSecrets";
@@ -54,6 +55,20 @@ const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type McpTransport = "http" | "hosted";
 
+/**
+ * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
+ * at connect time and sends `Authorization: Bearer <token>`, so a server
+ * whose tokens expire (Google's Workspace MCP endpoints) still works where a
+ * static header cannot. Secret fields hold ${NAME} refs on the row.
+ */
+export interface McpOauth {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  /** Token endpoint, https only; core defaults to https://oauth2.googleapis.com/token. */
+  tokenUrl?: string;
+}
+
 export interface McpInput {
   name?: string;
   description?: string;
@@ -69,8 +84,49 @@ export interface McpInput {
   bundleStorageId?: string;
   sha256?: string;
   headers?: Record<string, string>;
+  oauth?: McpOauth;
   allowedTools?: string[];
   disabled?: boolean;
+}
+
+/**
+ * The oauth invariants on the row a create or update produces, whichever side
+ * brings each field: external transport, an https url (the minted bearer
+ * rides every request) and no Authorization header (core mints it itself).
+ */
+export function assertOauthRow(row: {
+  transport: McpTransport;
+  url?: string;
+  headers?: Record<string, string>;
+  oauth?: McpOauth;
+}): void {
+  if (row.oauth === undefined) return;
+  if (row.transport === "hosted") {
+    throw new Error("oauth applies to external (url) servers, not hosted");
+  }
+  if (row.url !== undefined && new URL(row.url).protocol !== "https:") {
+    throw new Error(
+      "oauth needs an https url; the minted token rides every request",
+    );
+  }
+  const authorization = authorizationHeaderName(row.headers);
+  if (authorization !== undefined) {
+    throw new Error(
+      `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
+    );
+  }
+}
+
+/**
+ * The name of the Authorization header as written, whatever its case, or
+ * undefined.
+ */
+export function authorizationHeaderName(
+  headers: Record<string, string> | undefined,
+): string | undefined {
+  return Object.keys(headers ?? {}).find(
+    (name) => name.toLowerCase() === "authorization",
+  );
 }
 
 /**
@@ -112,6 +168,7 @@ export async function normalizeMcpInput(
   if (record.headers !== undefined && record.headers !== null) {
     input.headers = normalizeHeaders(record.headers);
   }
+  normalizeOauth(record, input);
   if (record.allowedTools !== undefined && record.allowedTools !== null) {
     input.allowedTools = normalizeAllowedTools(record.allowedTools);
   }
@@ -269,6 +326,64 @@ function normalizeName(value: unknown): string {
   }
 
   return value;
+}
+
+/**
+ * Set input.oauth from the body. The cross-field rules (external transport,
+ * https url, no Authorization header) live in assertOauthRow, which sees the
+ * whole row a create or patch produces. clientId may be inline (it is not a secret); clientSecret and refreshToken
+ * must be ${NAME} refs, exactly like credential-bearing headers, so a token
+ * never lands on the row or in a public projection.
+ */
+function normalizeOauth(
+  record: Record<string, unknown>,
+  input: McpInput,
+): void {
+  const value = record.oauth;
+  if (value === undefined || value === null) return;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      "oauth must be an object with clientId, clientSecret and refreshToken",
+    );
+  }
+  const oauth = value as Record<string, unknown>;
+  const field = (
+    name: "clientId" | "clientSecret" | "refreshToken",
+    secret: boolean,
+  ): string => {
+    const fieldValue = oauth[name];
+    if (
+      typeof fieldValue !== "string" ||
+      fieldValue.length === 0 ||
+      fieldValue.length > MAX_HEADER_VALUE_LENGTH ||
+      /[\r\n]/.test(fieldValue)
+    ) {
+      throw new Error(
+        `oauth.${name} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
+      );
+    }
+    if (secret && !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(fieldValue)) {
+      throw new Error(
+        `oauth.${name} must reference an account env var like \${NAME}, not an inline secret`,
+      );
+    }
+
+    return fieldValue;
+  };
+  const tokenUrl =
+    oauth.tokenUrl === undefined || oauth.tokenUrl === null
+      ? undefined
+      : normalizeUrl(oauth.tokenUrl);
+  // The refresh request carries the client secret in its body.
+  if (tokenUrl !== undefined && new URL(tokenUrl).protocol !== "https:") {
+    throw new Error("oauth.tokenUrl must use https");
+  }
+  input.oauth = {
+    clientId: field("clientId", false),
+    clientSecret: field("clientSecret", true),
+    refreshToken: field("refreshToken", true),
+    ...(tokenUrl !== undefined ? { tokenUrl: tokenUrl } : {}),
+  };
 }
 
 function normalizeUrl(value: unknown): string {

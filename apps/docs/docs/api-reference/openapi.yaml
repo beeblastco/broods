@@ -3880,11 +3880,36 @@ components:
           description: >-
             Extra request headers. Credential-bearing header values must
             reference an account env var (`Bearer ${NAME}`).
+        oauth:
+          $ref: "#/components/schemas/McpOauth"
         allowedTools:
           type: array
           items:
             type: string
           description: Tool names agents may use from this server; omit to allow all.
+
+    McpOauth:
+      type: object
+      required: [clientId, clientSecret, refreshToken]
+      description: >-
+        OAuth 2.0 refresh-token grant for an external (https `url`) server whose
+        access tokens expire (Google's Workspace MCP endpoints). Core mints,
+        caches and refreshes access tokens and sends `Authorization: Bearer
+        <token>` itself, so an explicit Authorization header next to oauth is
+        rejected. clientSecret and refreshToken must reference account env
+        vars (`${NAME}`), never carry inline secrets.
+      properties:
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+          description: Must be a `${NAME}` account env ref.
+        refreshToken:
+          type: string
+          description: Must be a `${NAME}` account env ref.
+        tokenUrl:
+          type: string
+          description: Token endpoint, https only; defaults to https://oauth2.googleapis.com/token.
 
     McpUpdate:
       type: object
@@ -3899,6 +3924,8 @@ components:
           type: object
           additionalProperties:
             type: string
+        oauth:
+          $ref: "#/components/schemas/McpOauth"
         allowedTools:
           type: array
           items:
@@ -3933,6 +3960,8 @@ components:
           type: object
           additionalProperties:
             type: string
+        oauth:
+          $ref: "#/components/schemas/McpOauth"
         allowedTools:
           type: array
           items:
