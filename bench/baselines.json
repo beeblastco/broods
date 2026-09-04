@@ -1,0 +1,87 @@
+{
+  "recordedAt": "2026-09-04T15:22:25.435Z",
+  "bun": "1.4.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "policy": {
+    "defaultMaxRegressionPct": 30,
+    "noiseCeilingPct": 15
+  },
+  "cases": {
+    "gateway/route-classify": {
+      "nsPerOp": 125.7,
+      "ceilingNs": 1250,
+      "gate": "blocking"
+    },
+    "gateway/websocket-path-match": {
+      "nsPerOp": 67.2,
+      "ceilingNs": 700,
+      "gate": "blocking"
+    },
+    "gateway/rate-limiter-allow": {
+      "nsPerOp": 25.5,
+      "ceilingNs": 300,
+      "gate": "blocking"
+    },
+    "core/bearer-token-extract": {
+      "nsPerOp": 43,
+      "ceilingNs": 450,
+      "gate": "blocking"
+    },
+    "core/timing-safe-token-compare": {
+      "nsPerOp": 453.6,
+      "ceilingNs": 4500,
+      "gate": "blocking"
+    },
+    "core/log-redact-payload": {
+      "nsPerOp": 13427.4,
+      "ceilingNs": 135000,
+      "gate": "blocking"
+    },
+    "core/log-redact-text-with-env-scan": {
+      "nsPerOp": 10050.8,
+      "ceilingNs": 100000,
+      "gate": "blocking"
+    },
+    "core/log-redact-text-precomputed": {
+      "nsPerOp": 828.3,
+      "ceilingNs": 8500,
+      "gate": "blocking"
+    },
+    "core/log-collect-secret-values": {
+      "nsPerOp": 3557.1,
+      "ceilingNs": 36000,
+      "gate": "blocking"
+    },
+    "core/runner-frame-parse": {
+      "nsPerOp": 140.3,
+      "ceilingNs": 1400,
+      "gate": "blocking"
+    },
+    "core/runner-frame-chunk-ingest": {
+      "nsPerOp": 1947.2,
+      "ceilingNs": 20000,
+      "gate": "blocking"
+    },
+    "core/session-prune-40-messages": {
+      "nsPerOp": 2774.2,
+      "ceilingNs": 28000,
+      "gate": "blocking"
+    },
+    "core/session-prune-200-messages": {
+      "nsPerOp": 13804.3,
+      "ceilingNs": 140000,
+      "gate": "blocking"
+    },
+    "convex/api-authorize-allow": {
+      "nsPerOp": 39.9,
+      "ceilingNs": 400,
+      "gate": "blocking"
+    },
+    "convex/api-authorize-default-deny": {
+      "nsPerOp": 30.4,
+      "ceilingNs": 400,
+      "gate": "blocking"
+    }
+  }
+}

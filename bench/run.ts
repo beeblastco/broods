@@ -1,0 +1,207 @@
+/**
+ * `bun run bench` — measure the suite and print it.
+ * `bun run bench:check` — measure, grade against bench/baselines.json, exit 1
+ *   on a blocking regression. This is what CI runs.
+ * `bun run bench:record` — overwrite the baselines from a fresh measurement.
+ *   Never called by CI: a baseline moves only through a reviewed commit.
+ */
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { allCases } from "./cases/index.ts";
+import {
+  compareToBaselines,
+  formatNs,
+  measureCases,
+  type BenchBaselineFile,
+  type BenchComparison,
+  type BenchMeasurement,
+  type BenchResultFile,
+} from "./runner.ts";
+
+const BASELINES_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "baselines.json",
+);
+const DEFAULT_CEILING_MULTIPLIER = 3;
+const STATUS_MARKS: Readonly<Record<string, string>> = {
+  improved: "FASTER",
+  new: "NEW",
+  noisy: "NOISY",
+  ok: "ok",
+  "over-ceiling": "CEILING",
+  regressed: "SLOWER",
+};
+
+const args = new Set(process.argv.slice(2));
+const mode = args.has("--record")
+  ? "record"
+  : args.has("--check")
+    ? "check"
+    : "run";
+
+const measurements = measureCases(allCases, (measurement) => {
+  process.stderr.write(
+    `  measured ${measurement.name} (${formatNs(measurement.nsPerOp)}/op)\n`,
+  );
+});
+
+const result: BenchResultFile = {
+  ranAt: new Date().toISOString(),
+  bun: Bun.version,
+  platform: process.platform,
+  arch: process.arch,
+  cpus: availableParallelism(),
+  measurements: measurements,
+};
+
+const outIndex = process.argv.indexOf("--out");
+if (outIndex !== -1) {
+  const outPath = process.argv[outIndex + 1];
+  if (!outPath) {
+    console.error("--out needs a path");
+    process.exit(2);
+  }
+  writeFileSync(outPath, `${JSON.stringify(result, null, 2)}\n`);
+}
+
+if (mode === "record") {
+  writeFileSync(
+    BASELINES_PATH,
+    `${JSON.stringify(recordBaselines(measurements), null, 2)}\n`,
+  );
+  console.log(
+    `\nRecorded ${measurements.length} baselines to bench/baselines.json.`,
+  );
+  console.log(
+    "Review the diff before committing: this is the only way a gate moves.",
+  );
+  process.exit(0);
+}
+
+if (mode === "run") {
+  printMeasurements(result);
+  process.exit(0);
+}
+
+if (!existsSync(BASELINES_PATH)) {
+  console.error(
+    "bench/baselines.json is missing. Run `bun run bench:record` first.",
+  );
+  process.exit(2);
+}
+
+const baselines = JSON.parse(
+  readFileSync(BASELINES_PATH, "utf8"),
+) as BenchBaselineFile;
+const comparisons = compareToBaselines(measurements, baselines, {
+  platform: result.platform,
+  arch: result.arch,
+});
+printComparisons(result, comparisons);
+
+const failures = comparisons.filter((comparison) => comparison.failing);
+if (failures.length > 0) {
+  console.error(
+    `\n${failures.length} blocking performance regression${failures.length === 1 ? "" : "s"}:`,
+  );
+  for (const failure of failures) {
+    console.error(`  ${failure.measurement.name}: ${failure.note}`);
+  }
+  console.error(
+    "\nIf the slowdown is intended, re-record with `bun run bench:record` and explain it in the PR.",
+  );
+  process.exit(1);
+}
+
+console.log("\nNo blocking performance regressions.");
+
+function printComparisons(
+  resultFile: BenchResultFile,
+  graded: readonly BenchComparison[],
+): void {
+  printHeader(resultFile);
+  console.log(
+    `${"case".padEnd(38)}${"ns/op".padStart(12)}${"baseline".padStart(12)}${"delta".padStart(10)}${"spread".padStart(9)}  status`,
+  );
+  for (const comparison of graded) {
+    const { measurement: measured, baseline, deltaPct } = comparison;
+    console.log(
+      measured.name.padEnd(38) +
+        formatNs(measured.nsPerOp).padStart(12) +
+        (baseline ? formatNs(baseline.nsPerOp) : "-").padStart(12) +
+        (deltaPct === null
+          ? "-"
+          : `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(1)}%`
+        ).padStart(10) +
+        `${measured.rsdPct.toFixed(1)}%`.padStart(9) +
+        `  ${STATUS_MARKS[comparison.status] ?? comparison.status}` +
+        (comparison.note ? ` (${comparison.note})` : ""),
+    );
+  }
+}
+
+function printHeader(resultFile: BenchResultFile): void {
+  console.log(
+    `\nBun ${resultFile.bun} on ${resultFile.platform}/${resultFile.arch}, ${resultFile.cpus} cpus, ${resultFile.ranAt}\n`,
+  );
+}
+
+function printMeasurements(resultFile: BenchResultFile): void {
+  printHeader(resultFile);
+  console.log(
+    `${"case".padEnd(38)}${"ns/op".padStart(12)}${"min".padStart(12)}${"p95".padStart(12)}${"spread".padStart(9)}${"bytes/op".padStart(11)}`,
+  );
+  for (const measured of resultFile.measurements) {
+    console.log(
+      measured.name.padEnd(38) +
+        formatNs(measured.nsPerOp).padStart(12) +
+        formatNs(measured.minNsPerOp).padStart(12) +
+        formatNs(measured.p95NsPerOp).padStart(12) +
+        `${measured.rsdPct.toFixed(1)}%`.padStart(9) +
+        measured.bytesPerOp.toFixed(0).padStart(11),
+    );
+  }
+}
+
+/**
+ * Build a baselines file from a measurement run, carrying forward each case's
+ * existing gate and ceiling so re-recording a number never quietly relaxes the
+ * policy that was reviewed with it.
+ */
+function recordBaselines(
+  measured: readonly BenchMeasurement[],
+): BenchBaselineFile {
+  const previous: BenchBaselineFile | null = existsSync(BASELINES_PATH)
+    ? (JSON.parse(readFileSync(BASELINES_PATH, "utf8")) as BenchBaselineFile)
+    : null;
+
+  const cases: BenchBaselineFile["cases"] = {};
+  for (const measurement of measured) {
+    const prior = previous?.cases[measurement.name];
+    cases[measurement.name] = {
+      nsPerOp: Number(measurement.nsPerOp.toFixed(1)),
+      ceilingNs:
+        prior?.ceilingNs ??
+        Number((measurement.nsPerOp * DEFAULT_CEILING_MULTIPLIER).toFixed(0)),
+      gate: prior?.gate ?? "informational",
+      ...(prior?.maxRegressionPct !== undefined
+        ? { maxRegressionPct: prior.maxRegressionPct }
+        : {}),
+    };
+  }
+
+  return {
+    recordedAt: new Date().toISOString(),
+    bun: Bun.version,
+    platform: process.platform,
+    arch: process.arch,
+    policy: previous?.policy ?? {
+      defaultMaxRegressionPct: 40,
+      noiseCeilingPct: 12,
+    },
+    cases: cases,
+  };
+}
