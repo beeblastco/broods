@@ -53,3 +53,7 @@ jobs:
       - name: Pack check
         working-directory: packages/broods
         run: bun run pack:check
+
+      - name: Check CLI bundle budget
+        # pack:check leaves dist built; the budget reads it.
+        run: bun bench/bundles.ts --check cli

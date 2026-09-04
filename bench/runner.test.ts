@@ -209,6 +209,24 @@ describe("compareToBaselines", () => {
     expect(machineRatio).toBe(1);
   });
 
+  it("reports a skipped case without grading it or moving the machine ratio", () => {
+    const { comparisons, machineRatio } = compareToBaselines(
+      [
+        ...SUITE_NAMES.map((name) => measurement({ name: name, nsPerOp: 145 })),
+        measurement({ name: "gated/case", nsPerOp: 0, skipped: true }),
+      ],
+      {
+        ...SUITE_BASELINES,
+        cases: { ...SUITE_BASELINES.cases, ...BASELINES.cases },
+      },
+      SAME_MACHINE,
+    );
+
+    expect(machineRatio).toBeCloseTo(1.45, 5);
+    expect(comparisons.at(-1)?.status).toBe("skipped");
+    expect(comparisons.at(-1)?.failing).toBe(false);
+  });
+
   it("flags a large improvement so the baseline gets re-recorded", () => {
     const {
       comparisons: [comparison],

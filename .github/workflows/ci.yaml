@@ -99,6 +99,19 @@ jobs:
         # worse than no gate, so it is tested before it is trusted.
         run: bun run bench:test
 
+      - name: Prepare what the runtime cases need
+        # The harness imports a generated prompt that the skipped postinstall
+        # writes; the CLI startup cases run the built dist; the isolate cases
+        # spawn the Node runner with its native addon, prepared the same way
+        # the validate job prepares it for the isolate tests.
+        run: |
+          bun run --filter @broods/core scripts/compaction-prompt.ts
+          bun run --filter broods build
+          mkdir -p /tmp/broods-ivm-bench
+          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-bench/
+          npm install --prefix /tmp/broods-ivm-bench isolated-vm@7.0.0
+          echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-bench/runner.mjs" >> "$GITHUB_ENV"
+
       - name: Check performance against baselines
         run: bun bench/run.ts --check --out bench-result.json
 
@@ -165,3 +178,6 @@ jobs:
 
       - name: Build dashboard
         run: bun run --filter @broods/dashboard build
+
+      - name: Check dashboard bundle budget
+        run: bun bench/bundles.ts --check dashboard

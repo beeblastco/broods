@@ -9,6 +9,7 @@ import type { BenchCase } from "../runner.ts";
 import { cliCases } from "./cli.ts";
 import { configPlaneAuthzCases } from "./config-plane-authz.ts";
 import { convexRuntimeCases } from "./convex-runtime.ts";
+import { coreAgentRunCases } from "./core-agent-run.ts";
 import { coreAuthCases } from "./core-auth.ts";
 import { coreConfigCases } from "./core-config.ts";
 import { coreIsolateCases } from "./core-isolate.ts";
@@ -27,6 +28,7 @@ export const allCases: readonly BenchCase[] = [
   ...coreRunnerFrameCases,
   ...coreSessionCases,
   ...coreIsolateCases,
+  ...coreAgentRunCases,
   ...configPlaneAuthzCases,
   ...convexRuntimeCases,
   ...cliCases,

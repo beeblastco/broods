@@ -1,87 +1,183 @@
 {
-  "recordedAt": "2026-09-04T15:27:50.431Z",
-  "bun": "1.4.0",
-  "platform": "linux",
-  "arch": "x64",
+  "recordedAt": "2026-09-04T16:03:34.054Z",
+  "bun": "1.4.1",
+  "platform": "darwin",
+  "arch": "arm64",
   "policy": {
     "defaultMaxRegressionPct": 30,
     "noiseCeilingPct": 15
   },
   "cases": {
     "gateway/route-classify": {
-      "nsPerOp": 228.3,
+      "nsPerOp": 136.7,
       "ceilingNs": 1250,
       "gate": "blocking"
     },
     "gateway/websocket-path-match": {
-      "nsPerOp": 106.2,
+      "nsPerOp": 72,
       "ceilingNs": 700,
       "gate": "blocking"
     },
     "gateway/rate-limiter-allow": {
-      "nsPerOp": 45.3,
+      "nsPerOp": 28.2,
       "ceilingNs": 300,
       "gate": "blocking"
     },
+    "core/server-route-request": {
+      "nsPerOp": 48.2,
+      "ceilingNs": 500,
+      "gate": "blocking"
+    },
+    "core/server-lower-request": {
+      "nsPerOp": 1621.7,
+      "ceilingNs": 16000,
+      "gate": "blocking"
+    },
     "core/bearer-token-extract": {
-      "nsPerOp": 67.1,
+      "nsPerOp": 45.8,
       "ceilingNs": 450,
       "gate": "blocking"
     },
     "core/timing-safe-token-compare": {
-      "nsPerOp": 1016,
+      "nsPerOp": 499.9,
       "ceilingNs": 4500,
       "gate": "blocking"
     },
+    "core/config-normalize": {
+      "nsPerOp": 439.1,
+      "ceilingNs": 4500,
+      "gate": "blocking"
+    },
+    "core/config-encrypt-decrypt": {
+      "nsPerOp": 4189,
+      "ceilingNs": 42000,
+      "gate": "blocking"
+    },
+    "core/config-env-inject": {
+      "nsPerOp": 3331.5,
+      "ceilingNs": 33000,
+      "gate": "blocking"
+    },
     "core/log-redact-payload": {
-      "nsPerOp": 28894.7,
+      "nsPerOp": 14286.8,
       "ceilingNs": 135000,
       "gate": "blocking"
     },
     "core/log-redact-text-with-env-scan": {
-      "nsPerOp": 18078.5,
+      "nsPerOp": 10222.4,
       "ceilingNs": 100000,
       "gate": "blocking"
     },
     "core/log-redact-text-precomputed": {
-      "nsPerOp": 1631.3,
+      "nsPerOp": 884.2,
       "ceilingNs": 8500,
       "gate": "blocking"
     },
     "core/log-collect-secret-values": {
-      "nsPerOp": 6018.3,
+      "nsPerOp": 3679.1,
       "ceilingNs": 36000,
       "gate": "blocking"
     },
     "core/runner-frame-parse": {
-      "nsPerOp": 229.9,
+      "nsPerOp": 158.3,
       "ceilingNs": 1400,
       "gate": "blocking"
     },
     "core/runner-frame-chunk-ingest": {
-      "nsPerOp": 3402,
+      "nsPerOp": 2002.7,
       "ceilingNs": 20000,
       "gate": "blocking"
     },
     "core/session-prune-40-messages": {
-      "nsPerOp": 5085.5,
+      "nsPerOp": 3456.1,
       "ceilingNs": 28000,
       "gate": "blocking"
     },
     "core/session-prune-200-messages": {
-      "nsPerOp": 23535.9,
+      "nsPerOp": 16919.1,
       "ceilingNs": 140000,
       "gate": "blocking"
     },
+    "core/isolate-cold-run": {
+      "nsPerOp": 82658792,
+      "ceilingNs": 1000000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/isolate-warm-run": {
+      "nsPerOp": 753220.8,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-first-token": {
+      "nsPerOp": 725397.9,
+      "ceilingNs": 20000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-text-turn": {
+      "nsPerOp": 543264.6,
+      "ceilingNs": 20000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-tool-turn": {
+      "nsPerOp": 830981.3,
+      "ceilingNs": 30000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
     "convex/api-authorize-allow": {
-      "nsPerOp": 55,
+      "nsPerOp": 47.7,
       "ceilingNs": 400,
       "gate": "blocking"
     },
     "convex/api-authorize-default-deny": {
-      "nsPerOp": 45.5,
+      "nsPerOp": 38.6,
       "ceilingNs": 400,
       "gate": "blocking"
+    },
+    "convex/ingress-accept-take-settle": {
+      "nsPerOp": 794195.9,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "convex/session-save-get": {
+      "nsPerOp": 203095.8,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "convex/conversation-append-list": {
+      "nsPerOp": 311404.2,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "cli/compile-project-cached": {
+      "nsPerOp": 77972.9,
+      "ceilingNs": 1000000,
+      "gate": "blocking"
+    },
+    "cli/compile-project-cold": {
+      "nsPerOp": 24417417,
+      "ceilingNs": 500000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "cli/startup-node": {
+      "nsPerOp": 99957042,
+      "ceilingNs": 1000000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "cli/startup-bun": {
+      "nsPerOp": 29851041,
+      "ceilingNs": 500000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
     }
   }
 }
