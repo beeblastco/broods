@@ -77,6 +77,11 @@
   "peerDependencies": {
     "ai": "^7.0.87"
   },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  },
   "engines": {
     "node": ">=22.15"
   }
