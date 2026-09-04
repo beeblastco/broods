@@ -20,7 +20,8 @@ export type BenchStatus =
   | "noisy"
   | "ok"
   | "over-ceiling"
-  | "regressed";
+  | "regressed"
+  | "skipped";
 
 /**
  * One measured hot path. `name` is the baseline key, so renaming a case orphans
@@ -30,9 +31,17 @@ export interface BenchCase {
   name: string;
   /** Calls per timed sample. Tune so one sample lands near 1-5 ms. */
   iterations: number;
-  run: () => unknown;
-  setup?: () => void;
-  teardown?: () => void;
+  /** Timed samples; the default suits sub-millisecond cases. Lower it for a spawn. */
+  samples?: number;
+  run: () => unknown | Promise<unknown>;
+  /**
+   * Whether the case can run here. A case that needs a runtime the machine
+   * lacks (the Node isolate runner, a built artifact) reports as skipped rather
+   * than failing or silently measuring a fallback.
+   */
+  available?: () => boolean;
+  setup?: () => void | Promise<void>;
+  teardown?: () => void | Promise<void>;
 }
 
 export interface BenchBaseline {
@@ -86,8 +95,16 @@ export interface BenchMeasurement {
   rsdPct: number;
   /** Heap growth per op. Informational: GC timing makes it too coarse to gate. */
   bytesPerOp: number;
+  /**
+   * Process CPU time per op in microseconds, user plus system, over the timed
+   * samples. Wall time and CPU time diverge on a path that waits (a spawn, a
+   * socket), which is exactly what tells an I/O-bound case from a busy one.
+   */
+  cpuUsPerOp: number;
   iterations: number;
   samples: number;
+  /** Set when the case could not run here; every number above is then zero. */
+  skipped?: boolean;
 }
 
 export interface BenchComparison {
@@ -150,6 +167,16 @@ export function compareToBaselines(
 
   const comparisons = measurements.map((measurement): BenchComparison => {
     const baseline = baselines.cases[measurement.name] ?? null;
+    if (measurement.skipped) {
+      return {
+        measurement: measurement,
+        baseline: baseline,
+        status: "skipped",
+        deltaPct: null,
+        failing: false,
+        note: "runtime this case needs is not available here",
+      };
+    }
     if (!baseline) {
       return {
         measurement: measurement,
@@ -234,23 +261,43 @@ export function compareToBaselines(
 }
 
 /** Time one case: warmup samples discarded, then a median over `samples`. */
-export function measureCase(
+export async function measureCase(
   benchCase: BenchCase,
-  samples: number = DEFAULT_SAMPLES,
-): BenchMeasurement {
-  benchCase.setup?.();
+): Promise<BenchMeasurement> {
+  const samples = benchCase.samples ?? DEFAULT_SAMPLES;
+  if (benchCase.available && !benchCase.available()) {
+    return {
+      name: benchCase.name,
+      nsPerOp: 0,
+      minNsPerOp: 0,
+      p95NsPerOp: 0,
+      rsdPct: 0,
+      bytesPerOp: 0,
+      cpuUsPerOp: 0,
+      iterations: benchCase.iterations,
+      samples: samples,
+      skipped: true,
+    };
+  }
+
+  await benchCase.setup?.();
   try {
     for (let sample = 0; sample < WARMUP_SAMPLES; sample += 1) {
-      timeSample(benchCase);
+      await timeSample(benchCase);
     }
 
     const timings: number[] = [];
+    let cpuUs = 0;
     for (let sample = 0; sample < samples; sample += 1) {
       // Collect between samples, never inside one. An allocation-heavy case
       // otherwise has a full GC land in a random sample and read as a spike in
-      // the code under test rather than as the cost of measuring it.
+      // the code under test rather than as the cost of measuring it. CPU is
+      // read around the sample alone for the same reason.
       Bun.gc(true);
-      timings.push(timeSample(benchCase));
+      const cpuBefore = process.cpuUsage();
+      timings.push(await timeSample(benchCase));
+      const cpu = process.cpuUsage(cpuBefore);
+      cpuUs += cpu.user + cpu.system;
     }
     timings.sort((left, right) => left - right);
 
@@ -260,23 +307,24 @@ export function measureCase(
       minNsPerOp: timings[0]!,
       p95NsPerOp: percentile(timings, 95),
       rsdPct: robustSpreadPct(timings),
-      bytesPerOp: measureBytesPerOp(benchCase),
+      bytesPerOp: await measureBytesPerOp(benchCase),
+      cpuUsPerOp: cpuUs / (samples * benchCase.iterations),
       iterations: benchCase.iterations,
       samples: samples,
     };
   } finally {
-    benchCase.teardown?.();
+    await benchCase.teardown?.();
   }
 }
 
 /** Run the whole suite in declaration order, reporting progress as it goes. */
-export function measureCases(
+export async function measureCases(
   cases: readonly BenchCase[],
   onProgress?: (measurement: BenchMeasurement) => void,
-): BenchMeasurement[] {
+): Promise<BenchMeasurement[]> {
   const measurements: BenchMeasurement[] = [];
   for (const benchCase of cases) {
-    const measurement = measureCase(benchCase);
+    const measurement = await measureCase(benchCase);
     measurements.push(measurement);
     onProgress?.(measurement);
   }
@@ -340,15 +388,22 @@ function consume(value: unknown): void {
  * Heap growth per op, measured over its own pass with GC forced on both sides.
  * Coarse by construction — reported, never gated.
  */
-function measureBytesPerOp(benchCase: BenchCase): number {
-  const iterations = Math.min(
-    BYTES_PER_OP_ITERATION_CAP,
-    Math.max(benchCase.iterations, BYTES_PER_OP_ITERATION_FLOOR),
-  );
+async function measureBytesPerOp(benchCase: BenchCase): Promise<number> {
+  // A case slow enough to set its own sample count is a spawn or a socket;
+  // its allocation is not the interesting number and the floor would take
+  // minutes. Measure one sample's worth instead.
+  const iterations =
+    benchCase.samples === undefined
+      ? Math.min(
+          BYTES_PER_OP_ITERATION_CAP,
+          Math.max(benchCase.iterations, BYTES_PER_OP_ITERATION_FLOOR),
+        )
+      : benchCase.iterations;
   Bun.gc(true);
   const before = process.memoryUsage().heapUsed;
   for (let iteration = 0; iteration < iterations; iteration += 1) {
-    consume(benchCase.run());
+    const result = benchCase.run();
+    consume(result instanceof Promise ? await result : result);
   }
   const after = process.memoryUsage().heapUsed;
   Bun.gc(true);
@@ -369,7 +424,9 @@ function medianDriftRatio(
     .flatMap((measurement) => {
       const baseline = baselines.cases[measurement.name];
 
-      return baseline ? [measurement.nsPerOp / baseline.nsPerOp] : [];
+      return baseline && !measurement.skipped
+        ? [measurement.nsPerOp / baseline.nsPerOp]
+        : [];
     })
     .sort((left, right) => left - right);
   if (ratios.length < MACHINE_RATIO_MIN_CASES) return 1;
@@ -412,10 +469,16 @@ function robustSpreadPct(sorted: readonly number[]): number {
   return ((median(deviations) * 1.4826) / centre) * 100;
 }
 
-function timeSample(benchCase: BenchCase): number {
+/**
+ * Await only what is actually a promise. `await` on a plain value still
+ * yields a microtask, about 30 ns, which would be most of the time a cheap
+ * synchronous case takes.
+ */
+async function timeSample(benchCase: BenchCase): Promise<number> {
   const startedAt = Bun.nanoseconds();
   for (let iteration = 0; iteration < benchCase.iterations; iteration += 1) {
-    consume(benchCase.run());
+    const result = benchCase.run();
+    consume(result instanceof Promise ? await result : result);
   }
 
   return (Bun.nanoseconds() - startedAt) / benchCase.iterations;

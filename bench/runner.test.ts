@@ -231,6 +231,7 @@ function measurement(
     p95NsPerOp: overrides.nsPerOp,
     rsdPct: 2,
     bytesPerOp: 0,
+    cpuUsPerOp: 0,
     iterations: 1_000,
     samples: 21,
     ...overrides,

@@ -1,0 +1,6 @@
+{
+  "name": "bench-fixture-project",
+  "private": true,
+  "description": "A minimal broods project the CLI compile benchmarks build. The `broods` package is linked in by bench/cases/cli.ts at setup, not installed.",
+  "type": "module"
+}

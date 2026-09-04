@@ -33,6 +33,7 @@ const STATUS_MARKS: Readonly<Record<string, string>> = {
   ok: "ok",
   "over-ceiling": "CEILING",
   regressed: "SLOWER",
+  skipped: "SKIPPED",
 };
 
 const args = new Set(process.argv.slice(2));
@@ -42,9 +43,27 @@ const mode = args.has("--record")
     ? "check"
     : "run";
 
-const measurements = measureCases(allCases, (measurement) => {
+// `--only <prefix>` runs a slice of the suite while iterating on a case; a
+// partial run is never graded or recorded, since the machine ratio needs the
+// whole suite to mean anything.
+const onlyIndex = process.argv.indexOf("--only");
+const only = onlyIndex === -1 ? null : (process.argv[onlyIndex + 1] ?? null);
+const selectedCases =
+  only === null
+    ? allCases
+    : allCases.filter((benchCase) => benchCase.name.startsWith(only));
+if (only !== null && mode !== "run") {
+  console.error(
+    "--only is for `bun run bench`; check and record need the whole suite",
+  );
+  process.exit(2);
+}
+
+const measurements = await measureCases(selectedCases, (measurement) => {
   process.stderr.write(
-    `  measured ${measurement.name} (${formatNs(measurement.nsPerOp)}/op)\n`,
+    measurement.skipped
+      ? `  skipped ${measurement.name}\n`
+      : `  measured ${measurement.name} (${formatNs(measurement.nsPerOp)}/op)\n`,
   );
 });
 
@@ -157,15 +176,20 @@ function printHeader(resultFile: BenchResultFile): void {
 function printMeasurements(resultFile: BenchResultFile): void {
   printHeader(resultFile);
   console.log(
-    `${"case".padEnd(38)}${"ns/op".padStart(12)}${"min".padStart(12)}${"p95".padStart(12)}${"spread".padStart(9)}${"bytes/op".padStart(11)}`,
+    `${"case".padEnd(38)}${"ns/op".padStart(12)}${"min".padStart(12)}${"p95".padStart(12)}${"spread".padStart(9)}${"cpu/op".padStart(11)}${"bytes/op".padStart(11)}`,
   );
   for (const measured of resultFile.measurements) {
+    if (measured.skipped) {
+      console.log(`${measured.name.padEnd(38)}${"skipped".padStart(12)}`);
+      continue;
+    }
     console.log(
       measured.name.padEnd(38) +
         formatNs(measured.nsPerOp).padStart(12) +
         formatNs(measured.minNsPerOp).padStart(12) +
         formatNs(measured.p95NsPerOp).padStart(12) +
         `${measured.rsdPct.toFixed(1)}%`.padStart(9) +
+        formatNs(measured.cpuUsPerOp * 1_000).padStart(11) +
         measured.bytesPerOp.toFixed(0).padStart(11),
     );
   }
@@ -186,6 +210,12 @@ function recordBaselines(
   const cases: BenchBaselineFile["cases"] = {};
   for (const measurement of measured) {
     const prior = previous?.cases[measurement.name];
+    // A case that could not run here has no number to record. Keep whatever
+    // baseline it already had rather than overwriting it with a zero.
+    if (measurement.skipped) {
+      if (prior) cases[measurement.name] = prior;
+      continue;
+    }
     cases[measurement.name] = {
       nsPerOp: Number(measurement.nsPerOp.toFixed(1)),
       ceilingNs:
