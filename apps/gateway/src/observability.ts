@@ -31,16 +31,16 @@ export type ObservabilityGatewayData = {
 // A NATS consumer for the deployment's own stream, or the Loki poll loop that
 // serves a sandbox tail; the socket state only ever needs to stop it.
 type LiveSubscription = { unsubscribe(): void };
+type LokiRange = {
+  startNs: bigint;
+  limit: number;
+  direction: "backward" | "forward";
+};
 type ObservabilitySocketState = {
   scope: ObservabilityScope;
   logsSub: LiveSubscription | null;
   tracesSub: LiveSubscription | null;
   logsMinLevel: LogLevel;
-};
-type LokiRange = {
-  startNs: bigint;
-  limit: number;
-  direction: "backward" | "forward";
 };
 type OtelValue = {
   stringValue?: string;
@@ -61,19 +61,14 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 // a wider window is rejected with HTTP 400 and the backfill delivers nothing.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
-// Sandbox guest lines reach Loki through the CloudWatch bridge and never NATS, so a
-// per-sandbox tail polls Loki. The tail endpoint was not used on purpose: Loki's
-// max_concurrent_tail_requests defaults to 10, and with auth off that is 10 for
-// every dashboard at once. Lines carry the guest's own timestamp, which trails
-// their arrival in Loki by the bridge latency, so each poll re-reads a lookback
-// window and drops what it already sent instead of trusting a cursor.
+// Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
+// polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
+// timestamps trail arrival, so each poll re-reads a lookback window and dedupes.
 const SANDBOX_LOG_POLL_MS = 2_000;
 const SANDBOX_LOG_POLL_LIMIT = 500;
 const SANDBOX_LOG_POLL_LOOKBACK_NS = 15n * 1_000_000_000n;
-// A sandbox filter is structured metadata, so Loki scans every chunk of the
-// tenant in the window: measured 8 s over 30 days against 0.2 s over one day,
-// and the gateway's 5 s query timeout sits in between. A day covers any VM's
-// maximum lifetime, so the tail loses nothing by asking for less.
+// The sandbox_id filter is structured metadata and scans every chunk in the window;
+// one day covers any VM's lifetime and stays under the 5 s query timeout (30 days: 8 s).
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;

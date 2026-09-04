@@ -63,6 +63,20 @@ export async function handler(event) {
 }
 
 /**
+ * Parse the OTEL_EXPORTER_OTLP_HEADERS line (`K=V,K2=V2`) the way core's otel.ts
+ * does, so the same secret value works on both sides.
+ */
+export function otlpHeaders(raw) {
+  const headers = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq > 0) headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+
+  return headers;
+}
+
+/**
  * Build the OTLP/HTTP JSON body for one batch. Tenant labels ride the resource so
  * the collector's groupbyattrs and Loki's index_label config pick them up; the
  * per-VM id is a log attribute so an ephemeral VM never becomes a new Loki stream.
@@ -98,20 +112,6 @@ export function otlpLogsRequest(payload) {
       },
     ],
   };
-}
-
-/**
- * Parse the OTEL_EXPORTER_OTLP_HEADERS line (`K=V,K2=V2`) the way core's otel.ts
- * does, so the same secret value works on both sides.
- */
-export function otlpHeaders(raw) {
-  const headers = {};
-  for (const pair of raw.split(",")) {
-    const eq = pair.indexOf("=");
-    if (eq > 0) headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
-  }
-
-  return headers;
 }
 
 /**

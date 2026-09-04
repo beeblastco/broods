@@ -9,6 +9,7 @@
  */
 
 import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
+import { formatTime } from "@/app/lib/formatTime";
 import Link from "next/link";
 
 const BACKFILL = 200;
@@ -93,13 +94,4 @@ export function SandboxLogTail({
       </div>
     </div>
   );
-}
-
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
 }

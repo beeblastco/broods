@@ -337,8 +337,8 @@ export function useObservabilityStream(
     connectRef.current = connect;
   }, [connect]);
 
-  // `connect` changes exactly when a connection parameter does, so it is the one
-  // dependency that reopens the socket. Connecting is the effect's purpose; the
+  // `connect` already changes whenever a connection parameter does; the other
+  // deps only satisfy the hooks lint. Connecting is the effect's purpose; the
   // status setState it performs is external-system synchronization.
   useEffect(() => {
     destroyedRef.current = false;

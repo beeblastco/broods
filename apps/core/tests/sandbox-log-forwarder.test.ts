@@ -6,6 +6,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { gzipSync } from "node:zlib";
+import type {
+  CloudWatchLogsDecodedData,
+  CloudWatchLogsEvent,
+} from "aws-lambda";
 import {
   handler,
   otlpHeaders,
@@ -17,12 +21,10 @@ import {
 const STREAM = "acct-1/proj/dev/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b";
 const LOG_GROUP = "/broods/dev/microvms";
 
-type CloudWatchPayload = {
-  messageType: string;
-  logGroup: string;
-  logStream: string;
-  logEvents: Array<{ id: string; timestamp: number; message: string }>;
-};
+type CloudWatchPayload = Pick<
+  CloudWatchLogsDecodedData,
+  "messageType" | "logGroup" | "logStream" | "logEvents"
+>;
 
 function attributes(
   list: Array<{ key: string; value: { stringValue: string } }>,
@@ -32,9 +34,7 @@ function attributes(
   );
 }
 
-function cloudWatchEvent(payload: CloudWatchPayload): {
-  awslogs: { data: string };
-} {
+function cloudWatchEvent(payload: CloudWatchPayload): CloudWatchLogsEvent {
   return {
     awslogs: {
       data: gzipSync(Buffer.from(JSON.stringify(payload))).toString("base64"),

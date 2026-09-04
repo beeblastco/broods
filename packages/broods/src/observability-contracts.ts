@@ -164,15 +164,15 @@ export function isLogLevel(value: unknown): value is LogLevel {
   );
 }
 
+/** Whether a span is a top-level run, each of which owns its own trace. */
+export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
+  return kind === "task" || kind === "cron" || kind === "subtask";
+}
+
 /**
  * Narrow a wire value to a sandbox log id. Strict on purpose: the gateway
  * interpolates it into LogQL, so only the UUID shape core mints may pass.
  */
 export function isSandboxLogId(value: unknown): value is string {
   return typeof value === "string" && SANDBOX_LOG_ID_PATTERN.test(value);
-}
-
-/** Whether a span is a top-level run, each of which owns its own trace. */
-export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
-  return kind === "task" || kind === "cron" || kind === "subtask";
 }

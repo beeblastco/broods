@@ -2,8 +2,8 @@
 
 Every log line and trace span the platform emits flows through **one redaction
 chokepoint** and fans out to three sinks. This page describes that pipeline and how
-**sandbox** activity (agent exec output, MicroVM runtime, and the workdir host) joins
-it so the dashboard, Loki, and Tempo all see a single correlated stream per tenant.
+**sandbox** activity (tool output on the trace, MicroVM guest output, and the workdir
+host) joins it so the dashboard, Loki, and Tempo all see one correlated view per tenant.
 
 ## The three sinks
 
@@ -70,17 +70,17 @@ stream mechanics.
 
 ## Sandbox observability
 
-A sandbox run produces logs in three places. The goal of this phase is that **all
-three reach the same per-tenant view** with no change to the executor code.
+A sandbox run produces output in three places, and each reaches the tenant by a
+different road. Only the second one is a log stream.
 
 ```mermaid
 flowchart TD
   subgraph harness["harness-processing (Bun container)"]
-    Exec["bash / read / write / edit tool result"] --> Log["log.ts emit()"]
-    Life["sandbox lifecycle<br/>acquire / suspend / resume / terminate"] --> Log
+    Exec["bash / read / write / edit tool result"] --> Span["tool.call span<br/>tool.output, 32k cap"]
+    Life["sandbox lifecycle<br/>reserve / exec / terminal / terminate"] --> Audit["Convex sandboxAuditEvents"]
   end
-  Log --> Sinks["3 sinks (above)"]
-  Sinks --> View["per-tenant view<br/>(dashboard + Loki + Tempo)"]
+  Span --> Tempo2["Tempo + Tracing tab"]
+  Audit --> Sheet["Instances sheet Activity"]
 
   subgraph microvm["lambda provider (AWS MicroVM)"]
     VM["guest stdout/stderr<br/>/run hook, background jobs, servers"] --> CW["CloudWatch<br/>/broods/&lt;stage&gt;/microvms<br/>(stream = acct/project/stage/uuid)"]
@@ -94,14 +94,16 @@ flowchart TD
   Coll --> Ops["operator view (Grafana only)"]
 ```
 
-**1 — In-band (already live, no executor work).** When the agent runs a tool inside a
-sandbox, the result is logged through `log.ts` from within the harness process, where
-the observability context is already set. Sandbox **lifecycle** events
-(`microvm-executor.ts` / `workdir-executor.ts` / `daytona-executor.ts` calling
-`logWarn`/`logInfo`) flow the same way. So exec output and lifecycle already appear on
-the dashboard and in Loki/Tempo under the originating `endpointId` — correlated with
-the model step that triggered them by `trace_id`. **No change to the executors is
-required for this path.**
+**1 — Tool output on the trace (already live, every provider).** When the agent runs a
+tool inside a sandbox, the harness does not log the output. It puts the redacted result
+on the `tool.call` span as `tool.output`, capped at 32k characters, so it lands in Tempo
+and the dashboard Tracing tab under the model step that triggered it. Lifecycle actions
+(reserve, exec, terminal, terminate) go to Convex `sandboxAuditEvents` and show in the
+Instances sheet Activity list. The Logs tab sees almost none of this: the bash tool
+emits one INFO line when a background job starts, `microvm-executor.ts` and
+`daytona-executor.ts` emit a few `logWarn` lines, and `workdir-executor.ts` emits
+nothing. Output the guest writes on its own, with no tool call in front of it, is not
+captured by this path on any provider.
 
 **2 — MicroVM guest output (CloudWatch → Loki, built).** What the guest itself writes
 to stdout/stderr — the `/run` hook, detached background jobs, servers the agent started —
@@ -132,8 +134,8 @@ journald and each VM keeps a Firecracker log under its jail path, and neither ca
 tenant. When the production host lands (#89), an otel-collector-contrib on the host
 (`journald` + `filelog` receivers, OTLP out to the same collector) ships those as
 operator-only logs — `host`, `unit`, `sandbox_id`, no `account_id` — so they reach
-Grafana and never a customer dashboard. Exec output already reaches the dashboard via
-path 1.
+Grafana and never a customer dashboard. Tool output on workdir still reaches the
+Tracing tab via path 1; there is no Logs tab source for workdir until then.
 
 ## Security
 
