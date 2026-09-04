@@ -105,7 +105,7 @@ jobs:
         # spawn the Node runner with its native addon, prepared the same way
         # the validate job prepares it for the isolate tests.
         run: |
-          bun run --filter @broods/core scripts/compaction-prompt.ts
+          (cd apps/core && bun run scripts/compaction-prompt.ts)
           bun run --filter broods build
           mkdir -p /tmp/broods-ivm-bench
           cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-bench/

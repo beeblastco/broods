@@ -5,8 +5,6 @@
  */
 
 import { convexTest, type TestConvex } from "convex-test";
-import { convexToJson, jsonToConvex, type Value } from "convex/values";
-import { makeFunctionReference } from "convex/server";
 import { readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,29 +36,6 @@ for (const path of listFunctionModules(PACKAGE_ROOT)) {
 /** A fresh, empty in-memory deployment. Cheap: modules load on first use. */
 export function createRuntimeTest(): RuntimeTest {
   return convexTest(schema, modules);
-}
-
-/**
- * Run a function by its wire path ("runtime:saveHarnessSession"), with args
- * and result in the JSON encoding `ConvexHttpClient` speaks. This is what lets
- * a fake `/api/mutation` endpoint hand core's real client to convex-test.
- */
-export async function dispatchByPath(
-  test: RuntimeTest,
-  kind: "query" | "mutation" | "action",
-  path: string,
-  encodedArgs: unknown,
-): Promise<unknown> {
-  const args = jsonToConvex(encodedArgs as Value) as Record<string, Value>;
-  const reference = makeFunctionReference<typeof kind>(path);
-  const result =
-    kind === "query"
-      ? await test.query(reference, args)
-      : kind === "mutation"
-        ? await test.mutation(reference, args)
-        : await test.action(reference, args);
-
-  return convexToJson(result === undefined ? null : (result as Value));
 }
 
 /** One active account, the way every runtime function expects to find one. */
