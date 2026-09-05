@@ -2529,7 +2529,6 @@ components:
         - agentId
         - eventId
         - conversationKey
-        - events
       properties:
         agentId:
           type: string
@@ -2550,9 +2549,17 @@ components:
           description: Stable retry identity scoped to account, agent, and conversation. Defaults to eventId and remains bound for the seven-day status window.
         events:
           type: array
-          description: Vercel AI SDK-style messages
+          description: Vercel AI SDK-style messages. Required unless `answers` is sent.
           items:
             $ref: "#/components/schemas/Message"
+        answers:
+          type: array
+          description: >-
+            Answers to open `ask_questions` prompts on this conversation. A
+            request carrying answers settles them and resumes the conversation;
+            it cannot also carry `events`.
+          items:
+            $ref: "#/components/schemas/QuestionAnswer"
         system:
           oneOf:
             - $ref: "#/components/schemas/SystemRunEvent"
@@ -2860,6 +2867,7 @@ components:
               applied,
               processing,
               awaiting_approval,
+              awaiting_input,
               completed,
               failed,
               expired,
@@ -2881,11 +2889,71 @@ components:
           description: Pending tool approvals while status is awaiting_approval.
           items:
             $ref: "#/components/schemas/PendingToolApproval"
+        questions:
+          type: array
+          description: Open ask_questions prompts while status is awaiting_input.
+          items:
+            $ref: "#/components/schemas/PendingQuestion"
         error:
           type: string
         stoppedByUser:
           type: boolean
           description: True when a `failed` status was a deliberate /stop rather than a fault.
+
+    PendingQuestion:
+      type: object
+      required: [statusId, questions, answerBy]
+      properties:
+        statusId:
+          type: string
+          description: Pass back as `answers[].statusId`.
+        answerBy:
+          type: string
+          format: date-time
+          description: After this the prompt settles as no_answer.
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: object
+            required: [id, header, question, options]
+            properties:
+              id:
+                type: string
+              header:
+                type: string
+                maxLength: 12
+              question:
+                type: string
+              options:
+                type: array
+                minItems: 2
+                maxItems: 4
+                items:
+                  type: object
+                  required: [label]
+                  properties:
+                    label:
+                      type: string
+                    description:
+                      type: string
+              allowFreeText:
+                type: boolean
+
+    QuestionAnswer:
+      type: object
+      required: [statusId, answers]
+      properties:
+        statusId:
+          type: string
+        answers:
+          type: object
+          description: Chosen option labels (or free text) keyed by question id.
+          additionalProperties:
+            type: array
+            items:
+              type: string
 
     PendingToolApproval:
       type: object

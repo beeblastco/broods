@@ -45,6 +45,7 @@ import {
   createPendingAsyncAgentResult,
   getAsyncAgentResult,
   markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultAwaitingInput,
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
@@ -100,6 +101,17 @@ import {
   Session,
   type ConversationIngressEvent,
 } from "./session.ts";
+import {
+  ASK_QUESTIONS_TOOL_NAME,
+  answersFromChoice,
+  answersFromText,
+  listOpenQuestions,
+  openQuestion,
+  settleQuestion,
+  type OpenQuestion,
+  type PendingQuestionSummary,
+  type QuestionAnswerResult,
+} from "./questions.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
 type ContinuationOutcome =
@@ -141,6 +153,7 @@ interface ParentContinuationResult {
   finalResponse?: JSONValue;
   traceId?: string;
   approvals: ToolApprovalSummary[];
+  questions: PendingQuestionSummary[];
 }
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
@@ -452,7 +465,10 @@ async function continueAfterAsyncToolSettlement(
       scope.agentId,
     ),
     events: events,
-    requestedMode: "followup",
+    // An answer joins a live run at its next step boundary; a finished job
+    // waits its turn behind the current one.
+    requestedMode:
+      settled.toolName === ASK_QUESTIONS_TOOL_NAME ? "steer" : "followup",
     idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
   };
 
@@ -508,12 +524,115 @@ function continuationResponse(
 }
 
 /**
+ * Settle open ask_questions prompts from a direct API body and resume the
+ * conversation, answering with the last continuation's outcome.
+ */
+async function handleDirectAnswers(
+  event: DirectInboundEvent,
+): Promise<Response> {
+  const answers = event.answers ?? [];
+  const open = await Promise.all(
+    answers.map(async (answer): Promise<OpenQuestion | undefined> =>
+      openQuestion(
+        await getAsyncToolResult(answer.statusId),
+        event.conversationKey,
+      ),
+    ),
+  );
+  const missing = open.findIndex((question) => question === undefined);
+  if (missing >= 0) {
+    return jsonResponse(404, {
+      error: `No open question ${answers[missing]!.statusId} on this conversation`,
+    });
+  }
+  const settled = await Promise.all(
+    open.map((question, index) =>
+      settleQuestion(question!.record, {
+        status: "answered",
+        answers: answers[index]!.answers,
+      }),
+    ),
+  );
+  let last: AsyncToolResultRecord | null = null;
+  let outcome: ContinuationOutcome = { kind: "skip" };
+  for (const row of settled) {
+    if (!row) continue;
+    last = row;
+    outcome = await continueAfterAsyncToolSettlement(row);
+  }
+  const alreadyAnswered = open
+    .filter((_question, index) => settled[index] === null)
+    .map((question) => question!.record.resultId);
+  if (alreadyAnswered.length > 0) {
+    return jsonResponse(409, {
+      error: "Some questions were already answered",
+      alreadyAnswered: alreadyAnswered,
+      answered: settled
+        .filter((row): row is AsyncToolResultRecord => row !== null)
+        .map((row) => row.resultId),
+    });
+  }
+
+  return last
+    ? continuationResponse(last, outcome)
+    : jsonResponse(400, { error: "Request body must include answers" });
+}
+
+/**
+ * A channel message while a prompt is open is its answer, not a turn. A
+ * button click names its prompt; typed text answers the oldest open one.
+ * True when a prompt settled and the conversation is resuming.
+ */
+async function settleChannelQuestion(
+  event: ChannelInboundEvent,
+): Promise<boolean> {
+  const click = event.answer;
+  const open = click
+    ? openQuestion(
+        await getAsyncToolResult(click.statusId),
+        event.conversationKey,
+      )
+    : (await listOpenQuestions(event.conversationKey))[0];
+  const chosen =
+    open && click ? answersFromChoice(open.pending, click) : undefined;
+  if (click && !chosen) {
+    await event.channel
+      .sendText("That question is no longer open.")
+      .catch((): void => {});
+
+    return true;
+  }
+  if (!open) return false;
+  const answer: QuestionAnswerResult | undefined = chosen
+    ? { status: "answered", answers: chosen }
+    : answersFromText(open.pending, extractText(event.content));
+  if (!answer) return false;
+  const settled = await settleQuestion(open.record, {
+    ...answer,
+    ...(event.identity ? { answeredBy: event.identity } : {}),
+  });
+  if (!settled) return false;
+  const outcome = await continueAfterAsyncToolSettlement(settled);
+  logInfo("Question answered", {
+    channel: event.channelName,
+    conversationKey: event.conversationKey,
+    resultId: settled.resultId,
+    outcome: outcome.kind,
+  });
+
+  return true;
+}
+
+/**
  * Handle a direct SSE request.
  */
 async function handleDirectRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
 ): Promise<Response> {
+  if (event.answers?.length) {
+    return handleDirectAnswers(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }
@@ -638,6 +757,9 @@ async function handleDirectRequest(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
+  if (event.answers?.length) {
+    return handleDirectAnswers(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return errorResponse(
       400,
@@ -821,6 +943,21 @@ async function handleAsyncWorkerRequest(
             result: { status: "awaiting_approval", approvals: approvals },
           });
         },
+        onQuestionsPending: async (questions) => {
+          await Promise.all(
+            asyncResultEventIds(event).map((eventId) =>
+              markAsyncAgentResultAwaitingInput({
+                eventId: eventId,
+                questions: questions,
+              }),
+            ),
+          );
+          didSettle = true;
+          terminalSettled = true;
+          await session!.settleIngress("completed", {
+            result: { status: "awaiting_input", questions: questions },
+          });
+        },
       },
     );
 
@@ -975,6 +1112,11 @@ async function handleNatsWorkerRequest(
             .publish({ type: "tool-approval-request", approvals: approvals })
             .catch(() => {});
         },
+        onQuestionsPending: async (questions) => {
+          fencedPublisher
+            .publish({ type: "question-request", questions: questions })
+            .catch(() => {});
+        },
         onHeartbeat: (pendingCount) => {
           fencedPublisher
             .publish({
@@ -990,22 +1132,24 @@ async function handleNatsWorkerRequest(
         await session.settleIngress("failed", {
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-      } else if (result.approvals.length === 0) {
-        await session.settleIngress(
-          "completed",
-          result.finalResponse !== undefined
-            ? { result: result.finalResponse }
-            : {},
-        );
-      }
-
-      if (result.approvals.length > 0) {
+      } else if (result.approvals.length > 0) {
         await session.settleIngress("completed", {
           result: {
             status: "awaiting_approval",
             approvals: result.approvals,
           },
         });
+      } else if (result.questions.length > 0) {
+        await session.settleIngress("completed", {
+          result: { status: "awaiting_input", questions: result.questions },
+        });
+      } else {
+        await session.settleIngress(
+          "completed",
+          result.finalResponse !== undefined
+            ? { result: result.finalResponse }
+            : {},
+        );
       }
       await fencedPublisher.publish({ type: "done" });
       transferred = await dispatchNextIngress(session, event);
@@ -1081,6 +1225,7 @@ async function handleChannelRequest(
   if (!event.accountId || !event.agentId) {
     throw new Error("Channel ingress requires account and agent scope");
   }
+  if (await settleChannelQuestion(event)) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
   // Before admission, so a turn that lands in the queue still carries its
@@ -1208,6 +1353,7 @@ async function handleChannelRequest(
           let terminal: "completed" | "failed" | null = null;
           let finalResult: JSONValue | undefined;
           let approvalRequired = false;
+          let awaitingInput = false;
           let streamed = false;
           const result = await runAgentLoopUntilSubagentsIdle(
             session,
@@ -1273,6 +1419,13 @@ async function handleChannelRequest(
                   createChannelApprovalDenial(approvals),
                 ]);
               },
+              onQuestionsPending: async (questions) => {
+                await session.assertCurrentOwner();
+                awaitingInput = true;
+                await session.settleIngress("completed", {
+                  result: { status: "awaiting_input", questions: questions },
+                });
+              },
             },
             hooks,
           );
@@ -1282,7 +1435,9 @@ async function handleChannelRequest(
             continue;
           }
           if (result.didFail) terminal = "failed";
-          if (terminal === "failed") {
+          if (awaitingInput) {
+            // Settled in the hook; the answer resumes the conversation.
+          } else if (terminal === "failed") {
             await session.settleIngress("failed", {
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
@@ -1455,6 +1610,7 @@ async function handleStatusRequest(
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
+      asyncResult.status === "awaiting_input" ||
       (asyncResult.status === "processing" && result?.status !== "failed"))
       ? asyncResult.status
       : (result?.status ?? asyncResult!.status);
@@ -1492,6 +1648,9 @@ async function handleStatusRequest(
       : {}),
     ...(asyncResult?.approvals !== undefined
       ? { approvals: asyncResult.approvals }
+      : {}),
+    ...(asyncResult?.questions !== undefined
+      ? { questions: asyncResult.questions }
       : {}),
     ...((result?.error ?? asyncResult?.error)
       ? { error: result?.error ?? asyncResult?.error }
@@ -2339,21 +2498,26 @@ function createDirectContinuationSseBody(
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
             transferred = await dispatchNextIngress(session, event);
-          } else if (result.approvals.length === 0) {
-            await session.settleIngress(
-              "completed",
-              result.finalResponse !== undefined
-                ? { result: result.finalResponse }
-                : {},
-            );
-            transferred = await dispatchNextIngress(session, event);
-          } else {
+          } else if (result.approvals.length > 0) {
             await session.settleIngress("completed", {
               result: {
                 status: "awaiting_approval",
                 approvals: result.approvals,
               },
             });
+            transferred = await dispatchNextIngress(session, event);
+          } else if (result.questions.length > 0) {
+            await session.settleIngress("completed", {
+              result: { status: "awaiting_input", questions: result.questions },
+            });
+            transferred = await dispatchNextIngress(session, event);
+          } else {
+            await session.settleIngress(
+              "completed",
+              result.finalResponse !== undefined
+                ? { result: result.finalResponse }
+                : {},
+            );
             transferred = await dispatchNextIngress(session, event);
           }
         } catch (err) {
@@ -2398,6 +2562,7 @@ async function runAgentLoopUntilSubagentsIdle(
     onFinalText(response: JSONValue, traceId?: string): Promise<void>;
     onErrorText(error: string, traceId?: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+    onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
     streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
   hooks?: HookDispatcher,
@@ -2405,6 +2570,7 @@ async function runAgentLoopUntilSubagentsIdle(
   didFail: boolean;
   failureText: string | null;
   traceId?: string;
+  questions: PendingQuestionSummary[];
 }> {
   const subagentCoordinator = new SubagentCoordinator(
     session,
@@ -2423,6 +2589,9 @@ async function runAgentLoopUntilSubagentsIdle(
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
+    ...(reply.onQuestionsPending
+      ? { onQuestionsPending: reply.onQuestionsPending }
+      : {}),
     consumeStream:
       reply.streamMessage ??
       (async (stream) => {
@@ -2436,6 +2605,7 @@ async function runAgentLoopUntilSubagentsIdle(
       didFail: false,
       failureText: null,
       ...(result.traceId ? { traceId: result.traceId } : {}),
+      questions: [],
     };
   }
 
@@ -2449,6 +2619,7 @@ async function runAgentLoopUntilSubagentsIdle(
       didFail: true,
       failureText: result.failureText,
       ...(result.traceId ? { traceId: result.traceId } : {}),
+      questions: [],
     };
   }
 
@@ -2460,6 +2631,7 @@ async function runAgentLoopUntilSubagentsIdle(
     didFail: false,
     failureText: null,
     ...(result.traceId ? { traceId: result.traceId } : {}),
+    questions: result.questions,
   };
 }
 
@@ -2480,6 +2652,7 @@ async function runParentContinuationLoop(options: {
   consumeStream(stream: AgentLoopStream): Promise<void>;
   onLoopErrorText?(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
   onHeartbeat?(pendingCount: number): void;
 }): Promise<ParentContinuationResult> {
   let turnContext = options.initialTurnContext;
@@ -2513,6 +2686,9 @@ async function runParentContinuationLoop(options: {
           approvals = approvalSummaries;
           await options.onApprovalRequired?.(approvalSummaries);
         },
+        onQuestionsPending: async (questions) => {
+          await options.onQuestionsPending?.(questions);
+        },
       },
       {
         dispatchAppliedIngress: dispatchAppliedIngress,
@@ -2537,6 +2713,22 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
+        questions: [],
+      };
+    }
+    // Like an approval: the answer resumes the conversation later, so nothing
+    // waits for injected work now.
+    const questions = stream.questionSummaries();
+    if (questions.length > 0) {
+      return {
+        didFail: false,
+        failureText: null,
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
+        ...(traceId ? { traceId: traceId } : {}),
+        approvals: [],
+        questions: questions,
       };
     }
     if (stream.didFail()) {
@@ -2561,6 +2753,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
 
@@ -2581,6 +2774,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
 
@@ -2594,6 +2788,7 @@ async function runParentContinuationLoop(options: {
           : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
+        questions: [],
       };
     }
   }

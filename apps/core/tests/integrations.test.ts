@@ -694,7 +694,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({
-      error: "Request body must include a non-empty events array",
+      error: "Request body must include a non-empty events or answers array",
     });
   });
 

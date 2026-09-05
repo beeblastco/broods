@@ -3,9 +3,11 @@
 import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
+import type { PendingQuestionSummary } from "./questions.ts";
 export type AsyncAgentStatus =
   | "processing"
   | "awaiting_approval"
+  | "awaiting_input"
   | "completed"
   | "failed";
 export interface AsyncAgentResultRecord {
@@ -18,6 +20,7 @@ export interface AsyncAgentResultRecord {
   response?: JSONValue;
   error?: string;
   approvals?: ToolApprovalSummary[];
+  questions?: PendingQuestionSummary[];
   expiresAt: number;
 }
 export function createPendingAsyncAgentResult(options: {
@@ -59,5 +62,15 @@ export async function markAsyncAgentResultAwaitingApproval(options: {
     eventId: options.eventId,
     status: "awaiting_approval",
     approvals: options.approvals,
+  });
+}
+export async function markAsyncAgentResultAwaitingInput(options: {
+  eventId: string;
+  questions: PendingQuestionSummary[];
+}): Promise<void> {
+  await runtime.mutate("updateAsyncAgentResult", {
+    eventId: options.eventId,
+    status: "awaiting_input",
+    questions: options.questions,
   });
 }

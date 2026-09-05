@@ -99,6 +99,7 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
+import type { PendingQuestionSummary } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
@@ -194,6 +195,7 @@ export interface AgentReplyHooks {
   onFinalText(response: JSONValue): Promise<void>;
   onErrorText(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
 }
 
 // Link back to the parent task for a subagent run. The subagent is its OWN
@@ -230,6 +232,7 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   didFail(): boolean;
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
+  questionSummaries(): PendingQuestionSummary[];
   hasStructuredOutput(): boolean;
   finalResponse(): JSONValue | undefined;
   traceId(): string;
@@ -518,6 +521,9 @@ export async function runAgentLoop(
         dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
+        onBlockingQuestion: (question): void => {
+          questionSummaries.push(question);
+        },
         approvalRequirements: configuredApprovals,
         policyMcpIdsByName: policyMcpIdsByName,
         sandboxMetadata: {
@@ -603,6 +609,7 @@ export async function runAgentLoop(
     session.conversationKey,
   );
   let approvalSummaries: ToolApprovalSummary[] = [];
+  const questionSummaries: PendingQuestionSummary[] = [];
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";
 
@@ -978,7 +985,12 @@ export async function runAgentLoop(
       recordInputs: false,
       recordOutputs: false,
     },
-    stopWhen: isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
+    // A blocking ask_questions call ends the turn after its step; the answer
+    // resumes the conversation through the async-tool continuation.
+    stopWhen: [
+      isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
+      (): boolean => questionSummaries.length > 0,
+    ],
     prepareStep: async ({ messages }) => {
       const renewal = await session.renewConversationLease();
       if (renewal === "stopped") {
@@ -1587,7 +1599,8 @@ export async function runAgentLoop(
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
-        // already answered through that tool.
+        // already answered through that tool, and one that stopped on a
+        // blocking question is waiting on the person.
         const deliveredByTool =
           finishReason === "stop" &&
           tools.toolCalls.some(
@@ -1597,6 +1610,7 @@ export async function runAgentLoop(
           );
         if (
           approvals.length === 0 &&
+          questionSummaries.length === 0 &&
           !modelOutput &&
           !finalText &&
           !deliveredByTool
@@ -1666,6 +1680,13 @@ export async function runAgentLoop(
             });
           }
           await reply?.onApprovalRequired?.(approvals);
+
+          return;
+        }
+        // Same exit as an approval: the turn is waiting on the person, so no
+        // final text is delivered and nothing settles as completed.
+        if (questionSummaries.length > 0) {
+          await reply?.onQuestionsPending?.(questionSummaries);
 
           return;
         }
@@ -1918,6 +1939,7 @@ export async function runAgentLoop(
     didFail: () => didFail,
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,
+    questionSummaries: () => questionSummaries,
     hasStructuredOutput: () => Boolean(modelOutput),
     finalResponse: () => finalResponse,
     traceId: () => traceId,

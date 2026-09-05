@@ -35,6 +35,10 @@ export interface ChannelActions {
   // A batch arrives whole and the provider decides how to spend it: Telegram
   // groups it into one album, Zalo has no album and sends them in sequence.
   sendImages?(images: ChannelImage[], caption?: string): Promise<void>;
+  // Optional native rendering for an ask_questions prompt (inline buttons).
+  // Providers without one omit it and the numbered `text` goes out as plain
+  // text, answered by a reply.
+  sendQuestions?(prompt: ChannelQuestionPrompt): Promise<void>;
   // Optional provider-native sticker delivery. Providers decide whether the
   // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;
@@ -49,6 +53,37 @@ export interface ChannelActions {
     textStream: AsyncIterable<unknown>,
     options?: StreamOptions,
   ): Promise<string | null>;
+}
+
+/** One question the agent asks through ask_questions, as a channel renders it. */
+export interface ChannelQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: ChannelQuestionOption[];
+  allowFreeText?: boolean;
+}
+
+/** A button click on a posted question, by position. */
+export interface ChannelQuestionAnswer {
+  statusId: string;
+  questionIndex: number;
+  optionIndex: number;
+}
+
+export interface ChannelQuestionOption {
+  label: string;
+  description?: string;
+}
+
+/**
+ * What a channel posts for one ask_questions call. `text` is the numbered
+ * fallback every provider can send; a button carries `statusId` back.
+ */
+export interface ChannelQuestionPrompt {
+  statusId: string;
+  questions: ChannelQuestion[];
+  text: string;
 }
 
 export interface ChannelRequest {
@@ -106,6 +141,9 @@ export interface InboundMessage {
   events?: ChannelIngressEvent[];
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
+  // Present when the message is a click on an ask_questions button rather than
+  // typed text; `content` then carries the chosen label for the transcript.
+  answer?: ChannelQuestionAnswer;
 }
 
 export interface ParsedChannelMessage {

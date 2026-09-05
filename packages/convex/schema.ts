@@ -969,12 +969,15 @@ export const runtimeAsyncAgentResultsFields = {
   status: v.union(
     v.literal("processing"),
     v.literal("awaiting_approval"),
+    v.literal("awaiting_input"),
     v.literal("completed"),
     v.literal("failed"),
   ),
   response: v.optional(v.any()),
   error: v.optional(v.string()),
   approvals: v.optional(v.array(v.any())),
+  // Open ask_questions prompts while status is awaiting_input.
+  questions: v.optional(v.array(v.any())),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
@@ -1373,6 +1376,11 @@ export default defineSchema({
     .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
     .index("by_conversationKey", ["conversationKey"])
+    .index("by_conversationKey_and_toolName_and_status", [
+      "conversationKey",
+      "toolName",
+      "status",
+    ])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields)
     .index("by_parentEventId", ["parentEventId"])

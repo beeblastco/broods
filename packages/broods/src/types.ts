@@ -7,6 +7,7 @@
 
 import type { ModelMessage } from "ai";
 import type { CronLastStatus, CronStatus } from "./contracts.ts";
+import type { PendingQuestion } from "./websocket-contracts.ts";
 
 export interface Account {
   account: {
@@ -47,6 +48,7 @@ export interface AsyncStatus {
     | "applied"
     | "processing"
     | "awaiting_approval"
+    | "awaiting_input"
     | "completed"
     | "failed"
     | "expired"
@@ -60,6 +62,7 @@ export interface AsyncStatus {
   /** True when `failed` was a deliberate /stop, not a fault. */
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
+  questions?: PendingQuestion[];
 }
 
 export interface AsyncRequestAccepted {
