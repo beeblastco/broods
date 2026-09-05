@@ -617,7 +617,7 @@ export const agent = defineAgent({
 });
 ```
 
-Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file:
+Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file. The server package is the project's own dependency (`bun add @modelcontextprotocol/server`); the CLI bundles it from there:
 
 ```ts
 import { defineMcp } from "broods";

@@ -232,14 +232,10 @@
         "zod": "^4.4.3",
       },
       "peerDependencies": {
-        "@modelcontextprotocol/server": "2.0.0",
         "ai": "^7.0.87",
-        "zod": "^4.4.3",
       },
       "optionalPeers": [
-        "@modelcontextprotocol/server",
         "ai",
-        "zod",
       ],
     },
     "packages/convex": {
