@@ -1,6 +1,6 @@
 # Build from the monorepo root: docker build -f apps/gateway/Dockerfile .
 # Pin the digest: the version tag is republished when the base image rebuilds.
-ARG BUN_IMAGE=oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb
+ARG BUN_IMAGE=oven/bun:1.4.1-alpine@sha256:2ef545220f7a886f22fcb3f2309bbd6bcf1c0aa04b7d79c31765c7aa4a13aac1
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./

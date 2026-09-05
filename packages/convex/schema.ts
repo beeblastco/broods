@@ -1320,7 +1320,6 @@ export default defineSchema({
   workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
-    .index("by_workspaceId", ["workspaceId"])
     .index("by_expiresAt", ["expiresAt"]),
   uploadGrants: defineTable(uploadGrantsFields)
     .index("by_accountId_and_expiresAt", ["accountId", "expiresAt"])

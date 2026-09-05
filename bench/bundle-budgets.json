@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-09-04T15:57:55.706Z",
+  "metrics": {
+    "dashboard/client-js-total": {
+      "bytes": 3942475,
+      "ceilingBytes": 5913713,
+      "maxGrowthPct": 10
+    },
+    "dashboard/largest-chunk": {
+      "bytes": 508304,
+      "ceilingBytes": 762456,
+      "maxGrowthPct": 10
+    },
+    "cli/dist-js-total": {
+      "bytes": 667424,
+      "ceilingBytes": 1001136,
+      "maxGrowthPct": 10
+    },
+    "cli/entry": {
+      "bytes": 313569,
+      "ceilingBytes": 470354,
+      "maxGrowthPct": 10
+    }
+  }
+}

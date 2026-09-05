@@ -1,0 +1,183 @@
+{
+  "recordedAt": "2026-09-04T16:12:52.503Z",
+  "bun": "1.4.1",
+  "platform": "linux",
+  "arch": "x64",
+  "policy": {
+    "defaultMaxRegressionPct": 30,
+    "noiseCeilingPct": 15
+  },
+  "cases": {
+    "gateway/route-classify": {
+      "nsPerOp": 272.1,
+      "ceilingNs": 1250,
+      "gate": "blocking"
+    },
+    "gateway/websocket-path-match": {
+      "nsPerOp": 140.8,
+      "ceilingNs": 700,
+      "gate": "blocking"
+    },
+    "gateway/rate-limiter-allow": {
+      "nsPerOp": 55.1,
+      "ceilingNs": 300,
+      "gate": "blocking"
+    },
+    "core/server-route-request": {
+      "nsPerOp": 86.1,
+      "ceilingNs": 500,
+      "gate": "blocking"
+    },
+    "core/server-lower-request": {
+      "nsPerOp": 4182.8,
+      "ceilingNs": 16000,
+      "gate": "blocking"
+    },
+    "core/bearer-token-extract": {
+      "nsPerOp": 90.7,
+      "ceilingNs": 450,
+      "gate": "blocking"
+    },
+    "core/timing-safe-token-compare": {
+      "nsPerOp": 1245.8,
+      "ceilingNs": 4500,
+      "gate": "blocking"
+    },
+    "core/config-normalize": {
+      "nsPerOp": 1209.8,
+      "ceilingNs": 4500,
+      "gate": "blocking"
+    },
+    "core/config-encrypt-decrypt": {
+      "nsPerOp": 11695.9,
+      "ceilingNs": 42000,
+      "gate": "blocking"
+    },
+    "core/config-env-inject": {
+      "nsPerOp": 7705.4,
+      "ceilingNs": 33000,
+      "gate": "blocking"
+    },
+    "core/log-redact-payload": {
+      "nsPerOp": 35447.1,
+      "ceilingNs": 135000,
+      "gate": "blocking"
+    },
+    "core/log-redact-text-with-env-scan": {
+      "nsPerOp": 26154.7,
+      "ceilingNs": 100000,
+      "gate": "blocking"
+    },
+    "core/log-redact-text-precomputed": {
+      "nsPerOp": 2498,
+      "ceilingNs": 8500,
+      "gate": "blocking"
+    },
+    "core/log-collect-secret-values": {
+      "nsPerOp": 8301.2,
+      "ceilingNs": 36000,
+      "gate": "blocking"
+    },
+    "core/runner-frame-parse": {
+      "nsPerOp": 384.6,
+      "ceilingNs": 1400,
+      "gate": "blocking"
+    },
+    "core/runner-frame-chunk-ingest": {
+      "nsPerOp": 5355.4,
+      "ceilingNs": 20000,
+      "gate": "blocking"
+    },
+    "core/session-prune-40-messages": {
+      "nsPerOp": 6562.1,
+      "ceilingNs": 28000,
+      "gate": "blocking"
+    },
+    "core/session-prune-200-messages": {
+      "nsPerOp": 27973.4,
+      "ceilingNs": 140000,
+      "gate": "blocking"
+    },
+    "core/isolate-cold-run": {
+      "nsPerOp": 75533703,
+      "ceilingNs": 1000000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/isolate-warm-run": {
+      "nsPerOp": 2147774.4,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-first-token": {
+      "nsPerOp": 2066534.8,
+      "ceilingNs": 20000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-text-turn": {
+      "nsPerOp": 1632193.4,
+      "ceilingNs": 20000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "core/agent-run-tool-turn": {
+      "nsPerOp": 2899145.4,
+      "ceilingNs": 30000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "convex/api-authorize-allow": {
+      "nsPerOp": 72.5,
+      "ceilingNs": 400,
+      "gate": "blocking"
+    },
+    "convex/api-authorize-default-deny": {
+      "nsPerOp": 65.9,
+      "ceilingNs": 400,
+      "gate": "blocking"
+    },
+    "convex/ingress-accept-take-settle": {
+      "nsPerOp": 2058103.6,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "convex/session-save-get": {
+      "nsPerOp": 584367.9,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "convex/conversation-append-list": {
+      "nsPerOp": 863278.3,
+      "ceilingNs": 10000000,
+      "gate": "informational",
+      "maxRegressionPct": 50
+    },
+    "cli/compile-project-cached": {
+      "nsPerOp": 171479.1,
+      "ceilingNs": 1000000,
+      "gate": "blocking"
+    },
+    "cli/compile-project-cold": {
+      "nsPerOp": 33234669,
+      "ceilingNs": 500000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "cli/startup-node": {
+      "nsPerOp": 104997426,
+      "ceilingNs": 1000000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    },
+    "cli/startup-bun": {
+      "nsPerOp": 59407306,
+      "ceilingNs": 500000000,
+      "gate": "blocking",
+      "maxRegressionPct": 50
+    }
+  }
+}

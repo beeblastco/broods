@@ -72,10 +72,12 @@ export const create = mutation({
     // unrelated manifest entry on the next `broods deploy`.
     const duplicate = await ctx.db
       .query("agentPolicies")
-      .withIndex("by_stageId_and_name", (q) =>
-        q.eq("stageId", args.stageId).eq("name", args.name.trim()),
+      .withIndex("by_stageId_and_status_and_name", (q) =>
+        q
+          .eq("stageId", args.stageId)
+          .eq("status", "active")
+          .eq("name", args.name.trim()),
       )
-      .filter((q) => q.eq(q.field("status"), "active"))
       .first();
     if (duplicate)
       throw new Error(
