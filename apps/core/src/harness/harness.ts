@@ -195,6 +195,7 @@ export interface AgentReplyHooks {
   onFinalText(response: JSONValue): Promise<void>;
   onErrorText(error: string): Promise<void>;
   onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
 }
 
 // Link back to the parent task for a subagent run. The subagent is its OWN
@@ -1679,6 +1680,13 @@ export async function runAgentLoop(
             });
           }
           await reply?.onApprovalRequired?.(approvals);
+
+          return;
+        }
+        // Same exit as an approval: the turn is waiting on the person, so no
+        // final text is delivered and nothing settles as completed.
+        if (questionSummaries.length > 0) {
+          await reply?.onQuestionsPending?.(questionSummaries);
 
           return;
         }

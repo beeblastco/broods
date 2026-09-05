@@ -166,16 +166,23 @@ describe("ask_questions tool", () => {
 
 describe("question answers", () => {
   it("reads a typed reply as an option number, a label, or free text", () => {
-    expect(answersFromText(PENDING, "2").answers).toEqual({
+    expect(answersFromText(PENDING, "2")?.answers).toEqual({
       deploy_target: ["prod"],
     });
-    expect(answersFromText(PENDING, " Dev ").answers).toEqual({
+    expect(answersFromText(PENDING, " Dev ")?.answers).toEqual({
       deploy_target: ["dev"],
     });
-    expect(answersFromText(PENDING, "staging please").answers).toEqual({
-      deploy_target: ["staging please"],
-    });
-    expect(answersFromText(PENDING, "1").note).toBeUndefined();
+    expect(answersFromText(PENDING, "1")?.note).toBeUndefined();
+  });
+
+  it("takes free text only when the question allows it", () => {
+    expect(answersFromText(PENDING, "staging please")).toBeUndefined();
+    expect(
+      answersFromText(
+        { ...PENDING, questions: [{ ...QUESTION, allowFreeText: true }] },
+        "staging please",
+      )?.answers,
+    ).toEqual({ deploy_target: ["staging please"] });
   });
 
   it("says so when a typed reply only answers the first of several", () => {
@@ -184,8 +191,8 @@ describe("question answers", () => {
       "1",
     );
 
-    expect(result.answers).toEqual({ deploy_target: ["dev"] });
-    expect(result.note).toContain("first question only");
+    expect(result?.answers).toEqual({ deploy_target: ["dev"] });
+    expect(result?.note).toContain("first question only");
   });
 
   it("resolves a button click by position and rejects a stale one", () => {

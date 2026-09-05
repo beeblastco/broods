@@ -61,7 +61,6 @@ export interface ChannelQuestion {
   header: string;
   question: string;
   options: ChannelQuestionOption[];
-  multiSelect?: boolean;
   allowFreeText?: boolean;
 }
 

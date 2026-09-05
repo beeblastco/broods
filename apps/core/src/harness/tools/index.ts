@@ -374,8 +374,6 @@ export async function createTools(
     if (toolConfig.async === true) asyncToolNames.add(toolName);
   }
 
-  await registerMcpTools(tools, agentConfig, context);
-
   // ask_questions needs a delivery to resume on: a channel or a WebSocket turn.
   // A subagent session carries none, and a cron-fired run has nobody typing.
   const session = context.session;
@@ -393,6 +391,8 @@ export async function createTools(
       }),
     );
   }
+
+  await registerMcpTools(tools, agentConfig, context);
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.

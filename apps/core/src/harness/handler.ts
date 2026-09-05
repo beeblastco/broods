@@ -545,20 +545,32 @@ async function handleDirectAnswers(
       error: `No open question ${answers[missing]!.statusId} on this conversation`,
     });
   }
-  let last: Awaited<ReturnType<typeof settleQuestion>> = null;
+  const settled = await Promise.all(
+    open.map((question, index) =>
+      settleQuestion(question!.record, {
+        status: "answered",
+        answers: answers[index]!.answers,
+      }),
+    ),
+  );
+  let last: AsyncToolResultRecord | null = null;
   let outcome: ContinuationOutcome = { kind: "skip" };
-  for (const [index, question] of open.entries()) {
-    const settled = await settleQuestion(question!.record, {
-      status: "answered",
-      answers: answers[index]!.answers,
+  for (const row of settled) {
+    if (!row) continue;
+    last = row;
+    outcome = await continueAfterAsyncToolSettlement(row);
+  }
+  const alreadyAnswered = open
+    .filter((_question, index) => settled[index] === null)
+    .map((question) => question!.record.resultId);
+  if (alreadyAnswered.length > 0) {
+    return jsonResponse(409, {
+      error: "Some questions were already answered",
+      alreadyAnswered: alreadyAnswered,
+      answered: settled
+        .filter((row): row is AsyncToolResultRecord => row !== null)
+        .map((row) => row.resultId),
     });
-    if (!settled) {
-      return jsonResponse(409, {
-        error: `Question ${question!.record.resultId} was already answered`,
-      });
-    }
-    last = settled;
-    outcome = await continueAfterAsyncToolSettlement(settled);
   }
 
   return last
@@ -591,9 +603,10 @@ async function settleChannelQuestion(
     return true;
   }
   if (!open) return false;
-  const answer: QuestionAnswerResult = chosen
+  const answer: QuestionAnswerResult | undefined = chosen
     ? { status: "answered", answers: chosen }
     : answersFromText(open.pending, extractText(event.content));
+  if (!answer) return false;
   const settled = await settleQuestion(open.record, {
     ...answer,
     ...(event.identity ? { answeredBy: event.identity } : {}),
@@ -930,19 +943,24 @@ async function handleAsyncWorkerRequest(
             result: { status: "awaiting_approval", approvals: approvals },
           });
         },
+        onQuestionsPending: async (questions) => {
+          await Promise.all(
+            asyncResultEventIds(event).map((eventId) =>
+              markAsyncAgentResultAwaitingInput({
+                eventId: eventId,
+                questions: questions,
+              }),
+            ),
+          );
+          didSettle = true;
+          terminalSettled = true;
+          await session!.settleIngress("completed", {
+            result: { status: "awaiting_input", questions: questions },
+          });
+        },
       },
     );
 
-    if (result.questions.length > 0) {
-      await Promise.all(
-        asyncResultEventIds(event).map((eventId) =>
-          markAsyncAgentResultAwaitingInput({
-            eventId: eventId,
-            questions: result.questions,
-          }),
-        ),
-      );
-    }
     if (result.didFail && !didSettle) {
       didSettle = true;
       terminalSettled = true;
@@ -1114,22 +1132,24 @@ async function handleNatsWorkerRequest(
         await session.settleIngress("failed", {
           error: result.failureText ?? AGENT_PROCESSING_FAILED,
         });
-      } else if (result.approvals.length === 0) {
-        await session.settleIngress(
-          "completed",
-          result.finalResponse !== undefined
-            ? { result: result.finalResponse }
-            : {},
-        );
-      }
-
-      if (result.approvals.length > 0) {
+      } else if (result.approvals.length > 0) {
         await session.settleIngress("completed", {
           result: {
             status: "awaiting_approval",
             approvals: result.approvals,
           },
         });
+      } else if (result.questions.length > 0) {
+        await session.settleIngress("completed", {
+          result: { status: "awaiting_input", questions: result.questions },
+        });
+      } else {
+        await session.settleIngress(
+          "completed",
+          result.finalResponse !== undefined
+            ? { result: result.finalResponse }
+            : {},
+        );
       }
       await fencedPublisher.publish({ type: "done" });
       transferred = await dispatchNextIngress(session, event);
@@ -1333,6 +1353,7 @@ async function handleChannelRequest(
           let terminal: "completed" | "failed" | null = null;
           let finalResult: JSONValue | undefined;
           let approvalRequired = false;
+          let awaitingInput = false;
           let streamed = false;
           const result = await runAgentLoopUntilSubagentsIdle(
             session,
@@ -1398,6 +1419,13 @@ async function handleChannelRequest(
                   createChannelApprovalDenial(approvals),
                 ]);
               },
+              onQuestionsPending: async (questions) => {
+                await session.assertCurrentOwner();
+                awaitingInput = true;
+                await session.settleIngress("completed", {
+                  result: { status: "awaiting_input", questions: questions },
+                });
+              },
             },
             hooks,
           );
@@ -1407,7 +1435,9 @@ async function handleChannelRequest(
             continue;
           }
           if (result.didFail) terminal = "failed";
-          if (terminal === "failed") {
+          if (awaitingInput) {
+            // Settled in the hook; the answer resumes the conversation.
+          } else if (terminal === "failed") {
             await session.settleIngress("failed", {
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
@@ -2468,21 +2498,26 @@ function createDirectContinuationSseBody(
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
             transferred = await dispatchNextIngress(session, event);
-          } else if (result.approvals.length === 0) {
-            await session.settleIngress(
-              "completed",
-              result.finalResponse !== undefined
-                ? { result: result.finalResponse }
-                : {},
-            );
-            transferred = await dispatchNextIngress(session, event);
-          } else {
+          } else if (result.approvals.length > 0) {
             await session.settleIngress("completed", {
               result: {
                 status: "awaiting_approval",
                 approvals: result.approvals,
               },
             });
+            transferred = await dispatchNextIngress(session, event);
+          } else if (result.questions.length > 0) {
+            await session.settleIngress("completed", {
+              result: { status: "awaiting_input", questions: result.questions },
+            });
+            transferred = await dispatchNextIngress(session, event);
+          } else {
+            await session.settleIngress(
+              "completed",
+              result.finalResponse !== undefined
+                ? { result: result.finalResponse }
+                : {},
+            );
             transferred = await dispatchNextIngress(session, event);
           }
         } catch (err) {
@@ -2527,6 +2562,7 @@ async function runAgentLoopUntilSubagentsIdle(
     onFinalText(response: JSONValue, traceId?: string): Promise<void>;
     onErrorText(error: string, traceId?: string): Promise<void>;
     onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
+    onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
     streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
   hooks?: HookDispatcher,
@@ -2553,6 +2589,9 @@ async function runAgentLoopUntilSubagentsIdle(
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     ...(hooks ? { hooks: hooks } : {}),
+    ...(reply.onQuestionsPending
+      ? { onQuestionsPending: reply.onQuestionsPending }
+      : {}),
     consumeStream:
       reply.streamMessage ??
       (async (stream) => {
@@ -2647,6 +2686,9 @@ async function runParentContinuationLoop(options: {
           approvals = approvalSummaries;
           await options.onApprovalRequired?.(approvalSummaries);
         },
+        onQuestionsPending: async (questions) => {
+          await options.onQuestionsPending?.(questions);
+        },
       },
       {
         dispatchAppliedIngress: dispatchAppliedIngress,
@@ -2678,8 +2720,6 @@ async function runParentContinuationLoop(options: {
     // waits for injected work now.
     const questions = stream.questionSummaries();
     if (questions.length > 0) {
-      await options.onQuestionsPending?.(questions);
-
       return {
         didFail: false,
         failureText: null,

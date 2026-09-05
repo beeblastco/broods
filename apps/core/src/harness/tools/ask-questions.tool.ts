@@ -102,10 +102,6 @@ The tool returns a statusId at once and the answer is delivered into this conver
                     additionalProperties: false,
                   },
                 },
-                multiSelect: {
-                  type: "boolean",
-                  description: "Allow more than one option to be chosen.",
-                },
                 allowFreeText: {
                   type: "boolean",
                   description:
@@ -196,12 +192,13 @@ The tool returns a statusId at once and the answer is delivered into this conver
 }
 
 function clampTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_ANSWER_TIMEOUT_SECONDS;
+  }
+
   return Math.min(
     MAX_ANSWER_TIMEOUT_SECONDS,
-    Math.max(
-      MIN_ANSWER_TIMEOUT_SECONDS,
-      Math.floor(value ?? DEFAULT_ANSWER_TIMEOUT_SECONDS),
-    ),
+    Math.max(MIN_ANSWER_TIMEOUT_SECONDS, Math.floor(value)),
   );
 }
 

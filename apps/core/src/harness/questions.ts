@@ -78,16 +78,15 @@ export function answersFromChoice(
 
 /**
  * A typed reply against the first question: an option number or label picks
- * that option, anything else is free text.
+ * that option; anything else is free text when the question allows it, and
+ * otherwise not an answer at all.
  */
 export function answersFromText(
   pending: PendingQuestionInput,
   text: string,
-): QuestionAnswerResult {
+): QuestionAnswerResult | undefined {
   const question = pending.questions[0];
-  if (!question) {
-    return { status: "answered", answers: {} };
-  }
+  if (!question) return undefined;
   const trimmed = text.trim();
   const byNumber = /^\d+$/.test(trimmed)
     ? question.options[Number(trimmed) - 1]
@@ -96,6 +95,7 @@ export function answersFromText(
     (option): boolean => option.label.toLowerCase() === trimmed.toLowerCase(),
   );
   const chosen = byNumber ?? byLabel;
+  if (!chosen && question.allowFreeText !== true) return undefined;
 
   return {
     status: "answered",

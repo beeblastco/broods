@@ -4,6 +4,7 @@
 
 import type { AgentRunEventInput, AgentRunOverrides } from "./run-input.ts";
 import type { AgentStreamPart } from "./stream.ts";
+import type { PendingQuestion } from "./types.ts";
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type IngressStatus =
@@ -19,6 +20,7 @@ export type IngressStatus =
 
 export type WebSocketStreamMessage =
   | AgentStreamPart
+  | { type: "question-request"; questions: PendingQuestion[] }
   | {
       type: string;
       [key: string]: unknown;

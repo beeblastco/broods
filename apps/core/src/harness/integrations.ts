@@ -1589,9 +1589,10 @@ async function processChannelMessage(
       ...event,
       content: content,
       events: events,
-      commandToken:
-        resolveCommandToken(content, event.source, event.channelName) ??
-        undefined,
+      commandToken: event.answer
+        ? undefined
+        : (resolveCommandToken(content, event.source, event.channelName) ??
+          undefined),
     });
     logInfo("Channel message processing completed", {
       channel: event.channelName,
@@ -1944,7 +1945,9 @@ async function parseDirectPayload(
   const events = parseDirectIngressEvents(record);
   const answers = parseDirectQuestionAnswers(record.answers);
   if (events.length === 0 && answers.length === 0) {
-    throw new Error("Request body must include a non-empty events array");
+    throw new Error(
+      "Request body must include a non-empty events or answers array",
+    );
   }
   if (events.length > 0 && answers.length > 0) {
     throw new Error(

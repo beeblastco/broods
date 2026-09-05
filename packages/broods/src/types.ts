@@ -51,7 +51,6 @@ export interface PendingQuestion {
     header: string;
     question: string;
     options: { label: string; description?: string }[];
-    multiSelect?: boolean;
     allowFreeText?: boolean;
   }[];
 }

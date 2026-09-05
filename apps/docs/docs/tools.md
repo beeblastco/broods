@@ -65,7 +65,7 @@ Notes:
 
 ## Asking the user
 
-`ask_questions` lets the agent put one to three structured questions to the person behind the conversation and carry on. Each question has an `id`, a short `header`, the `question`, two to four `options` (`label` + optional `description`), and optional `multiSelect` / `allowFreeText` flags. The call also takes `blocking` and `timeoutSeconds` (default one day, clamped to 30 seconds..7 days, the row's own TTL).
+`ask_questions` lets the agent put one to three structured questions to the person behind the conversation and carry on. Each question has an `id`, a short `header`, the `question`, two to four `options` (`label` + optional `description`), and an optional `allowFreeText` flag. The call also takes `blocking` and `timeoutSeconds` (default one day, clamped to 30 seconds..7 days, the row's own TTL).
 
 The tool never holds the run open. It writes an open async-tool row (the same detached shape a `bash` background job uses), posts the prompt where the turn came from, and returns a `statusId` at once:
 
@@ -74,15 +74,17 @@ The tool never holds the run open. It writes an open async-tool row (the same de
 
 How the answer gets in:
 
-| Surface           | Prompt                                  | Answer                                                                                                     |
-| ----------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Telegram          | inline keyboard, one button per option  | button click (`callback_query`), the button carries the statusId                                           |
-| Other channels    | numbered text                           | a reply while a question is open answers the oldest one: an option number, an option label, or free text   |
-| Direct HTTP/async | status `awaiting_input` + `questions[]` | `POST` the same route with `answers: [{ statusId, answers: { <question id>: [labels] } }]` and no `events` |
+| Surface           | Prompt                                  | Answer                                                                                                                                                                  |
+| ----------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Telegram          | inline keyboard, one button per option  | button click (`callback_query`), the button carries the statusId                                                                                                        |
+| Other channels    | numbered text                           | a reply while a question is open answers the oldest one: an option number, an option label, or free text when the question allows it. Anything else is an ordinary turn |
+| Direct HTTP/async | status `awaiting_input` + `questions[]` | `POST` the same route with `answers: [{ statusId, answers: { <question id>: [labels] } }]` and no `events`                                                              |
 
 The injected result is `{ status: "answered", answers: { <id>: [labels] }, answeredBy? }`. A prompt nobody answers by its deadline settles as `no_answer` the next time the conversation sees a message; a reply after that is an ordinary turn. A typed reply answers only the first question of a multi-question prompt (buttons carry their own position); the result says so.
 
-Slack and Discord render the numbered text today. Native buttons for them are a follow-up on the same `ChannelActions.sendQuestions` seam Telegram uses.
+The outbound message hook sees the numbered text; button labels go out as the model wrote them.
+
+Slack and Discord render the numbered text today. Native buttons for them, and picking several options at once, are a follow-up on the same `ChannelActions.sendQuestions` seam Telegram uses.
 
 For sync direct API callers, approval requests are streamed as SSE and persisted in the conversation. The caller resumes the turn by sending a direct API `tool-approval-response`. Channel webhooks cannot complete approval; the handler denies channel approval requests with a channel-visible error.
 
