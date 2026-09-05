@@ -148,7 +148,7 @@ async function refreshSourceBackedAgents(
   const values = await loadValuesForAccount(ctx, accountId);
   const agents = await ctx.db
     .query("agents")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
     .collect();
   for (const agent of agents) {
     if (

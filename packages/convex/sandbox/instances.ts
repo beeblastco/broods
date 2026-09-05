@@ -178,7 +178,9 @@ export const listForAccount = internalQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("sandboxInstances")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_accountId_projectId_and_stageId", (q) =>
+        q.eq("accountId", args.accountId),
+      )
       .take(1000);
   },
 });

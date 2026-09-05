@@ -599,7 +599,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
 
     const existing = await ctx.db
       .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
         q.eq("projectId", resolved.projectDoc._id).eq("nodeId", nodeId),
       )
       .collect();

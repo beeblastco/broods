@@ -1175,12 +1175,10 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_accountHandle", ["accountHandle"])
     .index("by_email", ["email"]),
+  // Both composites also serve the single-field reads, in slug order. The two
+  // callers that need creation order sort for it explicitly.
   projects: defineTable(projectsFields)
-    .index("by_authId", ["authId"])
     .index("by_authId_and_slug", ["authId", "slug"])
-    // by_orgId looks redundant against the composite but is not: its callers
-    // read in creation order, which prefixing the slug would silently reorder.
-    .index("by_orgId", ["orgId"])
     .index("by_orgId_and_slug", ["orgId", "slug"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
@@ -1196,7 +1194,6 @@ export default defineSchema({
     ["projectId", "stageId"],
   ),
   agentDeployments: defineTable(agentDeploymentsFields)
-    .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_projectId_and_stageId_and_status", [
       "projectId",
       "stageId",
@@ -1229,25 +1226,25 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_ownerAuthId", ["ownerAuthId"]),
   orgMembers: defineTable(orgMembersFields)
-    .index("by_orgId", ["orgId"])
     .index("by_userId", ["userId"])
     .index("by_orgId_and_userId", ["orgId", "userId"]),
   accounts: defineTable(accountsFields)
     .index("by_orgId", ["orgId"])
     .index("by_secretHash", ["secretHash"]),
-  agents: defineTable(agentsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_name", ["accountId", "name"]),
-  accountHooks: defineTable(accountHooksFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_status", ["accountId", "status"]),
+  agents: defineTable(agentsFields).index("by_accountId_and_name", [
+    "accountId",
+    "name",
+  ]),
+  accountHooks: defineTable(accountHooksFields).index(
+    "by_accountId_and_status",
+    ["accountId", "status"],
+  ),
   mcp: defineTable(mcpFields)
     .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_stageId_and_status", ["stageId", "status"])
     .index("by_stageId_and_name", ["stageId", "name"])
     .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   agentPolicies: defineTable(agentPoliciesFields)
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_stageId_and_name", ["stageId", "name"])
     .index("by_stageId_and_status_and_name", ["stageId", "status", "name"]),
@@ -1259,7 +1256,6 @@ export default defineSchema({
     .index("by_roleId", ["roleId"])
     .index("by_expiresAt", ["expiresAt"]),
   channelRecords: defineTable(channelRecordsFields)
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
     // The inbound-webhook lookup: which record owns this place? `status` is in
     // the key because deleting leaves the row, so a place churned repeatedly
@@ -1272,15 +1268,12 @@ export default defineSchema({
     ])
     .index("by_stageId_and_name", ["stageId", "name"]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])
     .index("by_stageId_and_name", ["stageId", "name"]),
   workspaceConfigs: defineTable(workspaceConfigsFields)
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])
     .index("by_stageId_and_name", ["stageId", "name"]),
   sandboxInstances: defineTable(sandboxInstancesFields)
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_projectId_and_stageId", [
       "accountId",
       "projectId",
@@ -1288,16 +1281,14 @@ export default defineSchema({
     ])
     .index("by_lastUsedAt", ["lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"]),
-  sandboxSnapshots: defineTable(sandboxSnapshotsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_name", ["accountId", "name"]),
-  sandboxAuditEvents: defineTable(sandboxAuditEventsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_reservationKey_and_createdAt", [
-      "accountId",
-      "reservationKey",
-      "createdAt",
-    ]),
+  sandboxSnapshots: defineTable(sandboxSnapshotsFields).index(
+    "by_accountId_and_name",
+    ["accountId", "name"],
+  ),
+  sandboxAuditEvents: defineTable(sandboxAuditEventsFields).index(
+    "by_accountId_and_reservationKey_and_createdAt",
+    ["accountId", "reservationKey", "createdAt"],
+  ),
   environmentVariables: defineTable(environmentVariablesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_stageId_and_name", ["stageId", "name"]),
@@ -1317,7 +1308,6 @@ export default defineSchema({
     .index("by_updatedAt", ["updatedAt"]),
   skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
-    .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
     .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
     .index("by_storageId", ["storageId"]),
   workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
@@ -1390,9 +1380,10 @@ export default defineSchema({
     .index("by_provider_and_reservationKey", ["provider", "reservationKey"])
     .index("by_accountId", ["accountId"])
     .index("by_expiresAt", ["expiresAt"]),
-  crons: defineTable(cronsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
+  crons: defineTable(cronsFields).index("by_accountId_and_agentId", [
+    "accountId",
+    "agentId",
+  ]),
   cronRuns: defineTable(cronRunsFields).index(
     "by_accountId_and_cronId_and_startedAt",
     ["accountId", "cronId", "startedAt"],

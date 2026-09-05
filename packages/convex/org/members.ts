@@ -51,10 +51,12 @@ export const list = query({
     const org = await ctx.db.get(orgId);
     if (!org) return [];
 
-    const memberships = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-      .collect();
+    const memberships = (
+      await ctx.db
+        .query("orgMembers")
+        .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
+        .collect()
+    ).sort((left, right) => left.createdAt - right.createdAt);
 
     const rows = await Promise.all(
       memberships.map(async (m) => {

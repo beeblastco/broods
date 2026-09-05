@@ -435,7 +435,7 @@ async function listProjects(
   if (orgId === null) {
     const ownedByAuth = await ctx.db
       .query("projects")
-      .withIndex("by_authId", (q) => q.eq("authId", authId))
+      .withIndex("by_authId_and_slug", (q) => q.eq("authId", authId))
       .collect();
 
     return ownedByAuth
@@ -447,7 +447,7 @@ async function listProjects(
   // or another caller's orgId-less projects.
   const orgProjects = await ctx.db
     .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
     .collect();
 
   return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);

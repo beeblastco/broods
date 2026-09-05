@@ -30,7 +30,7 @@ export const listForActiveOrg = query({
 
     return await ctx.db
       .query("sandboxSnapshots")
-      .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", account._id))
       .collect();
   },
 });

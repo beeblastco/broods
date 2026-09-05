@@ -57,7 +57,9 @@ export const list = internalQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("agents")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
       .collect();
   },
 });

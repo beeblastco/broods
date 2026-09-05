@@ -237,11 +237,14 @@ async function ensureCanvasTarget(
   const now = Date.now();
 
   // Oldest project in the org, so repeated calls converge on one target
-  // instead of scattering agents across whichever project sorted first.
-  const existingProject = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .first();
+  // instead of scattering agents across whichever project sorted first. The
+  // index orders by slug, so oldest is picked here.
+  const existingProject = oldest(
+    await ctx.db
+      .query("projects")
+      .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
+      .collect(),
+  );
 
   const project =
     existingProject ??
@@ -317,17 +320,15 @@ export async function backSyncCanvasFromAgentRow(
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) return;
 
-  const ownerMembership = await ctx.db
+  // The longest-standing owner, else the longest-standing member: one read,
+  // and the same pick every time regardless of index order.
+  const members = await ctx.db
     .query("orgMembers")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .filter((q) => q.eq(q.field("role"), "owner"))
-    .first();
+    .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
+    .collect();
   const membership =
-    ownerMembership ??
-    (await ctx.db
-      .query("orgMembers")
-      .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-      .first());
+    oldest(members.filter((member) => member.role === "owner")) ??
+    oldest(members);
   if (!membership) return;
 
   const user = await ctx.db.get(membership.userId);
@@ -565,4 +566,15 @@ function flatAgentConfigFields(
     searchToolConfig: flat?.searchToolConfig,
     extraConfig: flat?.extraConfig,
   };
+}
+
+/** The earliest-created row, or undefined for an empty list. */
+function oldest<T extends { _creationTime: number }>(rows: T[]): T | undefined {
+  return rows.reduce<T | undefined>(
+    (earliest, row) =>
+      earliest === undefined || row._creationTime < earliest._creationTime
+        ? row
+        : earliest,
+    undefined,
+  );
 }
