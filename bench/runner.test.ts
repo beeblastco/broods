@@ -199,6 +199,20 @@ describe("compareToBaselines", () => {
     ).toBe(true);
   });
 
+  it("does not convict a case that ran faster than its baseline on a much faster host", () => {
+    const { comparisons, machineRatio } = compareToBaselines(
+      SUITE_NAMES.map((name, index) =>
+        measurement({ name: name, nsPerOp: index === 0 ? 95 : 60 }),
+      ),
+      SUITE_BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(machineRatio).toBeCloseTo(0.6, 5);
+    expect(comparisons[0]?.status).toBe("ok");
+    expect(comparisons[0]?.failing).toBe(false);
+  });
+
   it("judges against the raw clock when too few cases have baselines", () => {
     const { machineRatio } = compareToBaselines(
       [measurement({ name: "gated/case", nsPerOp: 140 })],
