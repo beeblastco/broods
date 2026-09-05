@@ -152,10 +152,9 @@ export const nodeContext = internalQuery({
     if (!stage || stage.projectId !== projectId) {
       throw new Error("Stage not found.");
     }
-    if (!project.orgId) throw new Error("Project is not linked to an org");
     const account = await ctx.db
       .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId as string))
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
       .first();
     if (!account) throw new Error("Account not found for project org");
 

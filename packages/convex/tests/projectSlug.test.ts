@@ -34,7 +34,7 @@ async function seedProject(
 ): Promise<void> {
   await tt.run(async (ctx) => {
     await ctx.db.insert("projects", {
-      authId: owner.authId,
+      authId: "auth_owner",
       orgId: owner.orgId,
       name: name,
       slug: name,
@@ -55,15 +55,9 @@ test("the same name in another org keeps the unsuffixed slug", async () => {
   const tt = t();
   const personal = await seedOrg(tt, "personal");
   const beeblast = await seedOrg(tt, "beeblast");
-  await seedProject(tt, "client-lamy", {
-    authId: "auth_owner",
-    orgId: personal,
-  });
+  await seedProject(tt, "client-lamy", { orgId: personal });
 
-  const slug = await slugFor(tt, "client-lamy", {
-    authId: "auth_owner",
-    orgId: beeblast,
-  });
+  const slug = await slugFor(tt, "client-lamy", { orgId: beeblast });
 
   expect(slug).toBe("client-lamy");
 });
@@ -71,44 +65,9 @@ test("the same name in another org keeps the unsuffixed slug", async () => {
 test("a sibling in the same org still forces a suffix", async () => {
   const tt = t();
   const beeblast = await seedOrg(tt, "beeblast");
-  await seedProject(tt, "client-lamy", {
-    authId: "auth_owner",
-    orgId: beeblast,
-  });
+  await seedProject(tt, "client-lamy", { orgId: beeblast });
 
-  const slug = await slugFor(tt, "client-lamy", {
-    authId: "auth_member",
-    orgId: beeblast,
-  });
+  const slug = await slugFor(tt, "client-lamy", { orgId: beeblast });
 
   expect(slug).toBe("client-lamy-1");
-});
-
-// Legacy rows carry no orgId, so they keep colliding per login rather than
-// against every other login's orgId-less projects.
-test("orgId-less projects stay scoped to their owner", async () => {
-  const tt = t();
-  await seedProject(tt, "client-lamy", { authId: "auth_owner" });
-
-  expect(await slugFor(tt, "client-lamy", { authId: "auth_owner" })).toBe(
-    "client-lamy-1",
-  );
-  expect(await slugFor(tt, "client-lamy", { authId: "auth_other" })).toBe(
-    "client-lamy",
-  );
-});
-
-// An org-owned project must not block a legacy row's slug, or the suffix
-// creeps back in through the other direction.
-test("an org project does not block an orgId-less slug", async () => {
-  const tt = t();
-  const beeblast = await seedOrg(tt, "beeblast");
-  await seedProject(tt, "client-lamy", {
-    authId: "auth_owner",
-    orgId: beeblast,
-  });
-
-  const slug = await slugFor(tt, "client-lamy", { authId: "auth_owner" });
-
-  expect(slug).toBe("client-lamy");
 });

@@ -22,7 +22,11 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertStageName } from "../lib/slug";
 import { sha256Hex } from "../model/accountSecrets";
-import { duplicateStageContents, stageKindForName } from "../stage";
+import {
+  duplicateStageContents,
+  kindForStageName,
+  type StageKind,
+} from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
 
 const CANONICAL_NAMES = {
@@ -80,7 +84,7 @@ export const createByAccount = internalMutation({
       .query("stages")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
       .collect();
-    const kind = stageKindForName({ name: trimmed, kind: undefined });
+    const kind = kindForStageName(trimmed);
     const displayName =
       kind === "custom" ? assertStageName(trimmed) : CANONICAL_NAMES[kind];
     if (stages.some((entry) => stageNameEquals(entry.name, displayName))) {
@@ -280,7 +284,7 @@ async function summarize(
 ): Promise<{
   id: Id<"stages">;
   name: string;
-  kind: ReturnType<typeof stageKindForName>;
+  kind: StageKind;
   isDefault: boolean;
   deploymentRegion?: Doc<"stages">["deploymentRegion"];
   agentCount: number;
@@ -303,7 +307,7 @@ async function summarize(
   return {
     id: stage._id,
     name: stage.name,
-    kind: stageKindForName(stage),
+    kind: stage.kind,
     isDefault: stage.isDefault,
     ...(stage.deploymentRegion
       ? { deploymentRegion: stage.deploymentRegion }

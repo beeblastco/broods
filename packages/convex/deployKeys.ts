@@ -41,9 +41,6 @@ export const create = mutation({
 
     const project = await getProjectForRole(ctx, user.id, projectId, "admin");
     if (!project) throw new Error("Project not found.");
-    if (!project.orgId) {
-      throw new Error("Project is not linked to an organization.");
-    }
 
     const stage = await getOwnedStage(ctx, user.id, stageId);
     if (!stage || stage.projectId !== projectId) {
@@ -54,7 +51,7 @@ export const create = mutation({
     // already be provisioned (Settings → API Access).
     const account = await ctx.db
       .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
       .unique();
     if (!account) {
       throw new Error(

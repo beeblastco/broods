@@ -111,6 +111,13 @@ describe("upload grants", () => {
       const keptId = await ctx.storage.store(new Blob(["kept"]));
       const projectId = await ctx.db.insert("projects", {
         authId: "auth_owner",
+        orgId: await ctx.db.insert("orgs", {
+          name: "demo",
+          slug: "demo",
+          ownerAuthId: "auth_owner",
+          plan: "free",
+          createdAt: Date.now(),
+        }),
         name: "demo",
         slug: "demo",
         updatedAt: Date.now(),
@@ -149,6 +156,13 @@ describe("claimUploadedBlob", () => {
       const fresh = await ctx.storage.store(new Blob(["fresh"]));
       const projectId = await ctx.db.insert("projects", {
         authId: "auth_owner",
+        orgId: await ctx.db.insert("orgs", {
+          name: "demo",
+          slug: "demo",
+          ownerAuthId: "auth_owner",
+          plan: "free",
+          createdAt: Date.now(),
+        }),
         name: "demo",
         slug: "demo",
         updatedAt: Date.now(),

@@ -27,9 +27,17 @@ async function seed(tt: T) {
       updatedAt: now,
     });
 
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
     const mkProject = async (name: string) =>
       await ctx.db.insert("projects", {
         authId: "auth_owner",
+        orgId: orgId,
         name: name,
         slug: name,
         updatedAt: now,
@@ -39,6 +47,7 @@ async function seed(tt: T) {
         authId: "auth_owner",
         projectId: projectId,
         name: "Development",
+        kind: "development",
         isDefault: true,
         updatedAt: now,
       });

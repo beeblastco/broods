@@ -9,7 +9,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { CliManifestResource } from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
-import { stageKindForName } from "../stage";
+import { kindForStageName } from "../stage";
 import {
   decryptAgentConfigBlob,
   toNestedAgentConfig,
@@ -210,7 +210,7 @@ export async function decryptSandboxManifestConfig(
 }
 
 export function displayStageName(name: string): string {
-  const kind = stageKindForName({ name: name, kind: undefined });
+  const kind = kindForStageName(name);
   if (kind === "development") return "Development";
   if (kind === "production") return "Production";
 
@@ -242,11 +242,7 @@ export async function ensureProject(
     authId: org.ownerAuthId,
     orgId: orgId,
     name: name,
-    slug: await uniqueProjectSlug(
-      ctx,
-      { authId: org.ownerAuthId, orgId: orgId },
-      name,
-    ),
+    slug: await uniqueProjectSlug(ctx, { orgId: orgId }, name),
     updatedAt: now,
   });
   const created = await ctx.db.get(projectId);
@@ -277,7 +273,7 @@ export async function ensureStage(
     .collect();
   const name = resourceName(stage);
   const existing = stages.find((entry) => stageNameEquals(entry.name, name));
-  const kind = stageKindForName({ name: name, kind: undefined });
+  const kind = kindForStageName(name);
   if (existing) {
     if (existing.kind !== kind || existing.name !== displayStageName(name)) {
       await ctx.db.patch(existing._id, {
