@@ -41,6 +41,9 @@ const AGENT_CONFIG: AgentConfig = {
   },
   model: { provider: "groq", modelId: "bench-model" },
   provider: { groq: { apiKey: "gsk_bench_0000" } },
+  // The tool turn calls list_schedules, which the registry only offers to an
+  // agent with the scheduler on.
+  scheduler: { enabled: true },
 };
 
 const ANSWER =
@@ -82,7 +85,9 @@ export const coreAgentRunCases: readonly BenchCase[] = [
     run: async (): Promise<unknown> => {
       scenario = "text";
 
-      return drain(await runAgentLoop(session(), turnContext(), AGENT_CONFIG));
+      return (
+        await drain(await runAgentLoop(session(), turnContext(), AGENT_CONFIG))
+      ).text;
     },
   },
   {
@@ -94,38 +99,47 @@ export const coreAgentRunCases: readonly BenchCase[] = [
     run: async (): Promise<unknown> => {
       scenario = "tool";
       modelCalls = 0;
-      const text = await drain(
+      const drained = await drain(
         await runAgentLoop(session(), turnContext(), AGENT_CONFIG),
       );
-      // Two model calls means the tool call was executed in between; a run
-      // that skipped the tool would measure the wrong thing and still pass.
-      if (modelCalls !== 2) {
-        throw new Error(`tool turn made ${modelCalls} model calls, expected 2`);
+      // The harness feeds a missing tool back to the model as an error and
+      // calls it again, so the call count alone cannot tell a tool run from a
+      // tool-not-found round trip. A tool result can.
+      if (drained.toolResults !== 1 || modelCalls !== 2) {
+        throw new Error(
+          `tool turn produced ${drained.toolResults} tool results over ${modelCalls} model calls, expected 1 over 2`,
+        );
       }
 
-      return text;
+      return drained.text;
     },
   },
 ];
 
 type Scenario = "text" | "tool";
 
+interface Drained {
+  text: number;
+  toolResults: number;
+}
+
 let modelCalls = 0;
 let originalFetch: typeof fetch | null = null;
 let savedEnv: Record<string, string | undefined> = {};
 let scenario: Scenario = "text";
 
-/** Read every part and settle the run; returns the text so it is observably used. */
-async function drain(stream: AgentLoopStream): Promise<unknown> {
-  let text = 0;
+/** Read every part and settle the run; what was read comes back so it is observably used. */
+async function drain(stream: AgentLoopStream): Promise<Drained> {
+  const drained: Drained = { text: 0, toolResults: 0 };
   for await (const part of stream.fullStream) {
-    if (part.type === "text-delta") text += part.text.length;
+    if (part.type === "text-delta") drained.text += part.text.length;
+    if (part.type === "tool-result") drained.toolResults += 1;
   }
   await stream.ensureFinalized();
   if (stream.didFail())
     throw new Error(stream.failureText() ?? "agent run failed");
 
-  return text;
+  return drained;
 }
 
 /**

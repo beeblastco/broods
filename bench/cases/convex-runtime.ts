@@ -15,7 +15,7 @@ import {
   internal,
   seedAccount,
   type RuntimeTest,
-} from "../../packages/convex/bench/harness.ts";
+} from "../../packages/convex/bench/harness.bench.ts";
 import type { BenchCase } from "../runner.ts";
 
 const LEASE_TTL_MS = 60_000;

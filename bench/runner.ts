@@ -130,6 +130,11 @@ export interface BenchGrading {
    * against this rather than against the raw clock.
    */
   machineRatio: number;
+  /**
+   * Baselines with no measurement in this run. A renamed or deleted case would
+   * otherwise take its regression off the board without a trace.
+   */
+  orphaned: string[];
 }
 
 export interface BenchResultFile {
@@ -196,6 +201,20 @@ export function compareToBaselines(
     const overCeiling = measurement.nsPerOp > baseline.ceilingNs;
     const regressed = deltaPct > maxRegressionPct;
 
+    // Noise only ever inflates a sample. When even the fastest one is over the
+    // ceiling, the spread is a symptom of the regression, not a reason to
+    // withhold judgement on it.
+    if (measurement.minNsPerOp > baseline.ceilingNs) {
+      return {
+        measurement: measurement,
+        baseline: baseline,
+        status: "over-ceiling",
+        deltaPct: deltaPct,
+        failing: blocking,
+        note: `fastest sample ${formatNs(measurement.minNsPerOp)} over the ${formatNs(baseline.ceilingNs)} product ceiling`,
+      };
+    }
+
     // A case whose own samples disagree cannot convict the code under test.
     // Report the noise rather than widening the threshold until it fits.
     if (
@@ -257,7 +276,16 @@ export function compareToBaselines(
     };
   });
 
-  return { comparisons: comparisons, machineRatio: machineRatio };
+  const measured = new Set(measurements.map((measurement) => measurement.name));
+  const orphaned = Object.keys(baselines.cases).filter(
+    (name) => !measured.has(name),
+  );
+
+  return {
+    comparisons: comparisons,
+    machineRatio: machineRatio,
+    orphaned: orphaned,
+  };
 }
 
 /** Time one case: warmup samples discarded, then a median over `samples`. */
@@ -412,9 +440,10 @@ async function measureBytesPerOp(benchCase: BenchCase): Promise<number> {
 }
 
 /**
- * The factor the suite as a whole moved by since the baselines were recorded.
- * With too few gated cases the median says nothing, so the ratio is 1 and drift
- * is judged against the raw clock.
+ * The factor the suite as a whole moved by since the baselines were recorded:
+ * the median of measured/baseline across every case that has a baseline and
+ * ran. With too few such cases the median says nothing, so the ratio is 1 and
+ * drift is judged against the raw clock.
  */
 function medianDriftRatio(
   measurements: readonly BenchMeasurement[],

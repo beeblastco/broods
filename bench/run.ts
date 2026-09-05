@@ -2,8 +2,9 @@
  * `bun run bench` — measure the suite and print it.
  * `bun run bench:check` — measure, grade against bench/baselines.json, exit 1
  *   on a blocking regression. This is what CI runs.
- * `bun run bench:record` — overwrite the baselines from a fresh measurement.
- *   Never called by CI: a baseline moves only through a reviewed commit.
+ * `bun run bench:record` — overwrite the baselines from a fresh measurement,
+ *   or from a result file with `--from <bench-result.json>`. Never called by
+ *   CI to commit anything: a baseline moves only through a reviewed commit.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -17,7 +18,6 @@ import {
   measureCases,
   type BenchBaselineFile,
   type BenchComparison,
-  type BenchMeasurement,
   type BenchResultFile,
 } from "./runner.ts";
 
@@ -59,22 +59,34 @@ if (only !== null && mode !== "run") {
   process.exit(2);
 }
 
-const measurements = await measureCases(selectedCases, (measurement) => {
-  process.stderr.write(
-    measurement.skipped
-      ? `  skipped ${measurement.name}\n`
-      : `  measured ${measurement.name} (${formatNs(measurement.nsPerOp)}/op)\n`,
-  );
-});
+// `--record --from <result.json>` adopts a run already measured, so CI can
+// upload a baselines file from the same numbers it graded instead of running
+// the suite a second time.
+const fromIndex = process.argv.indexOf("--from");
+const from = fromIndex === -1 ? null : (process.argv[fromIndex + 1] ?? null);
+if (from !== null && mode !== "record") {
+  console.error("--from is for `bun run bench:record`");
+  process.exit(2);
+}
 
-const result: BenchResultFile = {
-  ranAt: new Date().toISOString(),
-  bun: Bun.version,
-  platform: process.platform,
-  arch: process.arch,
-  cpus: availableParallelism(),
-  measurements: measurements,
-};
+const result: BenchResultFile =
+  from !== null
+    ? (JSON.parse(readFileSync(from, "utf8")) as BenchResultFile)
+    : {
+        ranAt: new Date().toISOString(),
+        bun: Bun.version,
+        platform: process.platform,
+        arch: process.arch,
+        cpus: availableParallelism(),
+        measurements: await measureCases(selectedCases, (measurement) => {
+          process.stderr.write(
+            measurement.skipped
+              ? `  skipped ${measurement.name}\n`
+              : `  measured ${measurement.name} (${formatNs(measurement.nsPerOp)}/op)\n`,
+          );
+        }),
+      };
+const measurements = result.measurements;
 
 const outIndex = process.argv.indexOf("--out");
 if (outIndex !== -1) {
@@ -89,7 +101,7 @@ if (outIndex !== -1) {
 if (mode === "record") {
   writeFileSync(
     BASELINES_PATH,
-    `${JSON.stringify(recordBaselines(measurements), null, 2)}\n`,
+    `${JSON.stringify(recordBaselines(result), null, 2)}\n`,
   );
   console.log(
     `\nRecorded ${measurements.length} baselines to bench/baselines.json.`,
@@ -115,12 +127,25 @@ if (!existsSync(BASELINES_PATH)) {
 const baselines = JSON.parse(
   readFileSync(BASELINES_PATH, "utf8"),
 ) as BenchBaselineFile;
-const { comparisons, machineRatio } = compareToBaselines(
+const { comparisons, machineRatio, orphaned } = compareToBaselines(
   measurements,
   baselines,
   { platform: result.platform, arch: result.arch },
 );
 printComparisons(result, comparisons, machineRatio);
+
+// A baseline nothing measured is a case that was renamed or deleted with its
+// gate still on the books. Re-recording drops it; until then the check fails.
+if (orphaned.length > 0) {
+  console.error(
+    `\n${orphaned.length} baseline${orphaned.length === 1 ? "" : "s"} with no case in this run:`,
+  );
+  for (const name of orphaned) console.error(`  ${name}`);
+  console.error(
+    "\nRe-record with `bun run bench:record` to drop them, and explain the removal in the PR.",
+  );
+  process.exit(1);
+}
 
 const failures = comparisons.filter((comparison) => comparison.failing);
 if (failures.length > 0) {
@@ -200,15 +225,13 @@ function printMeasurements(resultFile: BenchResultFile): void {
  * existing gate and ceiling so re-recording a number never quietly relaxes the
  * policy that was reviewed with it.
  */
-function recordBaselines(
-  measured: readonly BenchMeasurement[],
-): BenchBaselineFile {
+function recordBaselines(measured: BenchResultFile): BenchBaselineFile {
   const previous: BenchBaselineFile | null = existsSync(BASELINES_PATH)
     ? (JSON.parse(readFileSync(BASELINES_PATH, "utf8")) as BenchBaselineFile)
     : null;
 
   const cases: BenchBaselineFile["cases"] = {};
-  for (const measurement of measured) {
+  for (const measurement of measured.measurements) {
     const prior = previous?.cases[measurement.name];
     // A case that could not run here has no number to record. Keep whatever
     // baseline it already had rather than overwriting it with a zero.
@@ -229,10 +252,10 @@ function recordBaselines(
   }
 
   return {
-    recordedAt: new Date().toISOString(),
-    bun: Bun.version,
-    platform: process.platform,
-    arch: process.arch,
+    recordedAt: measured.ranAt,
+    bun: measured.bun,
+    platform: measured.platform,
+    arch: measured.arch,
     policy: previous?.policy ?? {
       defaultMaxRegressionPct: 40,
       noiseCeilingPct: 12,

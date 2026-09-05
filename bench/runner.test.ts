@@ -239,6 +239,36 @@ describe("compareToBaselines", () => {
     expect(comparison?.status).toBe("improved");
     expect(comparison?.failing).toBe(false);
   });
+
+  it("still fails the ceiling on a noisy case whose fastest sample is over it", () => {
+    const {
+      comparisons: [comparison],
+    } = compareToBaselines(
+      [
+        measurement({
+          name: "gated/case",
+          nsPerOp: 1_800,
+          minNsPerOp: 1_200,
+          rsdPct: 30,
+        }),
+      ],
+      BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(comparison?.status).toBe("over-ceiling");
+    expect(comparison?.failing).toBe(true);
+  });
+
+  it("names every baseline that no case measured", () => {
+    const { orphaned } = compareToBaselines(
+      [measurement({ name: "gated/case", nsPerOp: 100 })],
+      BASELINES,
+      SAME_MACHINE,
+    );
+
+    expect(orphaned).toEqual(["gated/tight", "watched/case"]);
+  });
 });
 
 function measurement(

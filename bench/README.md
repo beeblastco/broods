@@ -59,8 +59,14 @@ bun bench/bundles.ts --check dashboard|cli   # payload budgets, run where each i
   shifts the paths unevenly and the ratio cannot cancel that.
 
 A case whose own spread exceeds `noiseCeilingPct` reports as `NOISY` and never
-fails. Widen the case's sample, do not widen its threshold. A case whose
-runtime is missing reports as `SKIPPED` and keeps its baseline.
+fails on drift; it still fails the ceiling when even its fastest sample is over
+it. Widen the case's sample, do not widen its threshold. A case whose runtime
+is missing reports as `SKIPPED` and keeps its baseline. A baseline whose case
+no longer exists fails the check until a `--record` drops it, so a case cannot
+be renamed or deleted around its own regression.
+
+The machine ratio is a median, so it absorbs a change that moves more than half
+the suite the same way. Only the ceilings catch that; keep them honest.
 
 ## Baseline policy
 
@@ -72,8 +78,8 @@ runtime is missing reports as `SKIPPED` and keeps its baseline.
 - One file, one machine. The numbers should come from the CI runner class
   (linux/x64, GitHub `ubuntu-24.04`), so drift blocks in CI and only reports
   on a laptop. Every CI run uploads a `benchmark-<run id>` artifact containing
-  the runner's fresh `baselines.json`; adopt it from there rather than
-  recording locally. Never mix a laptop number into a runner file: the machine
+  the runner's fresh `baselines.json`, built from the same numbers the check
+  graded; adopt it from there rather than recording locally. Never mix a laptop number into a runner file: the machine
   ratio is a median and a mixed file bends it.
 - A `FASTER` result is a prompt to re-record, so the next regression is measured
   against the gain rather than the old number.

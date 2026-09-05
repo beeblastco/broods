@@ -116,11 +116,12 @@ jobs:
         run: bun bench/run.ts --check --out bench-result.json
 
       - name: Record this runner's numbers
-        # Never committed from CI. Uploaded so a maintainer can adopt runner
-        # hardware baselines in a reviewed commit, which is what arms the drift
-        # half of the gate.
+        # Built from the run just graded, never measured twice and never
+        # committed from CI. Uploaded so a maintainer can adopt runner hardware
+        # baselines in a reviewed commit, which is what arms the drift half of
+        # the gate.
         if: always()
-        run: bun bench/run.ts --record
+        run: bun bench/run.ts --record --from bench-result.json
 
       - name: Upload benchmark results
         if: always()

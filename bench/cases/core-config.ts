@@ -11,7 +11,7 @@ import {
   encryptAgentConfig,
   normalizeAgentConfig,
 } from "../../apps/core/src/shared/domain/agent-config.ts";
-import { envCodec } from "../../packages/convex/bench/harness.ts";
+import { envCodec } from "../../packages/convex/bench/harness.bench.ts";
 import type { BenchCase } from "../runner.ts";
 
 const ENCRYPTION_SECRET = "bench-only-account-config-secret-0000";
