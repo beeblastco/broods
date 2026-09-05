@@ -13,8 +13,7 @@ export const STAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
 /** Who a project belongs to, which is also the namespace its slug is unique in. */
 export interface ProjectOwner {
-  authId: string;
-  orgId?: Id<"orgs">;
+  orgId: Id<"orgs">;
 }
 
 /** Trim a custom stage name and refuse anything that is not already a slug. */
@@ -57,30 +56,18 @@ export async function uniqueProjectSlug(
 }
 
 // Orgs are separate namespaces, so only a sibling in the same org may force a
-// suffix. Legacy rows predate org scoping and stay keyed to their owner.
+// suffix.
 async function slugTaken(
   ctx: QueryCtx,
   owner: ProjectOwner,
   slug: string,
 ): Promise<boolean> {
-  const orgId = owner.orgId;
-  if (orgId) {
-    const sibling = await ctx.db
-      .query("projects")
-      .withIndex("by_orgId_and_slug", (q) =>
-        q.eq("orgId", orgId).eq("slug", slug),
-      )
-      .first();
-
-    return sibling !== null;
-  }
-
-  const owned = await ctx.db
+  const sibling = await ctx.db
     .query("projects")
-    .withIndex("by_authId_and_slug", (q) =>
-      q.eq("authId", owner.authId).eq("slug", slug),
+    .withIndex("by_orgId_and_slug", (q) =>
+      q.eq("orgId", owner.orgId).eq("slug", slug),
     )
-    .collect();
+    .first();
 
-  return owned.some((project) => project.orgId === undefined);
+  return sibling !== null;
 }

@@ -68,10 +68,10 @@ export async function accountIdForProject(
   projectId: Id<"projects">,
 ): Promise<Id<"accounts"> | null> {
   const project = await ctx.db.get(projectId);
-  if (!project?.orgId) return null;
+  if (!project) return null;
   const account = await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
 
   return account?._id ?? null;

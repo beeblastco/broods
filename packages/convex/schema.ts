@@ -23,8 +23,8 @@ export const usersFields = {
 
 export const projectsFields = {
   authId: v.string(),
-  /** Org that owns this project. Optional only for legacy rows created before org scoping. */
-  orgId: v.optional(v.id("orgs")),
+  /** Org that owns this project. */
+  orgId: v.id("orgs"),
   name: v.string(),
   description: v.optional(v.string()),
   slug: v.string(),
@@ -35,13 +35,11 @@ export const stagesFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   name: v.string(),
-  /** Semantic stage role. Optional for legacy rows created before roles existed. */
-  kind: v.optional(
-    v.union(
-      v.literal("development"),
-      v.literal("production"),
-      v.literal("custom"),
-    ),
+  /** Semantic stage role. */
+  kind: v.union(
+    v.literal("development"),
+    v.literal("production"),
+    v.literal("custom"),
   ),
   /** Lambda deploy region for promoted/deployable stages. */
   deploymentRegion: v.optional(
@@ -1175,11 +1173,12 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_accountHandle", ["accountHandle"])
     .index("by_email", ["email"]),
-  // Both composites also serve the single-field reads, in slug order. The two
-  // callers that need creation order sort for it explicitly.
-  projects: defineTable(projectsFields)
-    .index("by_authId_and_slug", ["authId", "slug"])
-    .index("by_orgId_and_slug", ["orgId", "slug"]),
+  // Also serves the org's project list, in slug order; the one caller that
+  // needs creation order picks it explicitly.
+  projects: defineTable(projectsFields).index("by_orgId_and_slug", [
+    "orgId",
+    "slug",
+  ]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_authId", ["authId"])

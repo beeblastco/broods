@@ -577,7 +577,7 @@ async function resolveStageContext(
 
   const account = await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
   if (!account) {
     throw new Error(

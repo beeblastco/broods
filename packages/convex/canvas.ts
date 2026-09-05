@@ -86,14 +86,14 @@ export const cliManagedResourceNames = query({
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project || !project.orgId) return empty;
+    if (!project) return empty;
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return empty;
 
     const account = await ctx.db
       .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
       .unique();
     if (!account) return empty;
 
@@ -185,14 +185,14 @@ export const resourceOwnership = query({
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project || !project.orgId) return {};
+    if (!project) return {};
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return {};
 
     const account = await ctx.db
       .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
       .unique();
     if (!account) return {};
 
@@ -298,11 +298,9 @@ async function accountForProject(
   ctx: MutationCtx,
   project: Doc<"projects">,
 ): Promise<Doc<"accounts"> | null> {
-  if (!project.orgId) return null;
-
   return await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
 }
 

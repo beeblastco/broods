@@ -30,7 +30,7 @@ const stageDoc = v.object({
   _creationTime: v.number(),
 });
 
-type StageKind = "development" | "production" | "custom";
+export type StageKind = "development" | "production" | "custom";
 
 // Creating, cloning, or promoting a stage copies agents, secrets and runtime
 // wiring, so it is an org admin operation like deleting one.
@@ -410,29 +410,6 @@ export const ensureDefault = mutation({
       return development?._id ?? null;
     }
 
-    // Legacy rows predating `kind` named "Production" were really the dev
-    // workspace, so promote a lone one to Development. A row with an explicit
-    // `kind` is an intentional choice and must never be renamed.
-    const legacyProductionToPromote =
-      !development &&
-      existing.length === 1 &&
-      existing[0]?.kind === undefined &&
-      stageKindForName(existing[0]) === "production"
-        ? existing[0]
-        : undefined;
-    if (legacyProductionToPromote) {
-      await ctx.db.patch(legacyProductionToPromote._id, {
-        name: "Development",
-        kind: "development",
-        deploymentRegion: undefined,
-        isDefault: true,
-        updatedAt: now,
-      });
-      await ctx.db.patch(projectId, { updatedAt: now });
-
-      return legacyProductionToPromote._id;
-    }
-
     // Otherwise guarantee a Development row that is the sole default, creating
     // one if needed and demoting any other stage that claims the default.
     let changed = !development;
@@ -536,7 +513,7 @@ export const initializeProduction = mutation({
       (entry) =>
         entry._id !== productionId &&
         entry.isDefault &&
-        stageKindForName(entry) !== "development",
+        entry.kind !== "development",
     )) {
       await ctx.db.patch(stage._id, { isDefault: false, updatedAt: now });
     }
@@ -615,12 +592,9 @@ export const remove = mutation({
   },
 });
 
-/** Infer semantic stage role for legacy rows that predate `kind`. */
-export function stageKindForName(
-  stage: Pick<Doc<"stages">, "name" | "kind">,
-): StageKind {
-  if (stage.kind) return stage.kind;
-  const normalized = stage.name.trim().toLowerCase();
+/** The role a stage name implies at creation: the two reserved names, else custom. */
+export function kindForStageName(name: string): StageKind {
+  const normalized = name.trim().toLowerCase();
   if (normalized === "development") return "development";
   if (normalized === "production") return "production";
 
@@ -642,7 +616,7 @@ async function assertCustomStageNameFree(
   name: string,
 ): Promise<string> {
   const stageName = assertStageName(name);
-  if (stageKindForName({ name: stageName, kind: undefined }) !== "custom") {
+  if (kindForStageName(stageName) !== "custom") {
     throw new Error(
       "Development and Production are created by the project, not by name.",
     );
@@ -662,7 +636,7 @@ function findStageByKind(
   stages: Doc<"stages">[],
   kind: StageKind,
 ): Doc<"stages"> | undefined {
-  return stages.find((stage) => stageKindForName(stage) === kind);
+  return stages.find((stage) => stage.kind === kind);
 }
 
 /** Returns true when a stage already has user/configuration content. */

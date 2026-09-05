@@ -149,19 +149,16 @@ export const create = mutation({
 
     const now = Date.now();
     const orgId = await getCallerActiveOrgId(ctx, authUser.id);
-    if (orgId && !(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
+    if (!orgId) throw new Error("Join or create an organization first.");
+    if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
       throw new Error("Projects can only be created by an org admin.");
     }
     const projectId = await ctx.db.insert("projects", {
       authId: authUser.id,
-      orgId: orgId ?? undefined,
+      orgId: orgId,
       name: trimmedName,
       description: description?.trim() || undefined,
-      slug: await uniqueProjectSlug(
-        ctx,
-        { authId: authUser.id, orgId: orgId ?? undefined },
-        trimmedName,
-      ),
+      slug: await uniqueProjectSlug(ctx, { orgId: orgId }, trimmedName),
       updatedAt: now,
     });
 
@@ -219,27 +216,23 @@ export const getOrCreateDefault = mutation({
       return existing._id;
     }
 
-    if (orgId) {
-      const org = await ctx.db.get(orgId);
-      if (org?.onboardedAt) {
-        return null;
-      }
-      // A member never creates the first project; an admin will.
-      if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) return null;
+    // No org yet means no first project yet: onboarding creates the org first.
+    if (!orgId) return null;
+    const org = await ctx.db.get(orgId);
+    if (org?.onboardedAt) {
+      return null;
     }
+    // A member never creates the first project; an admin will.
+    if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) return null;
 
     const now = Date.now();
     const name = randomProjectName();
     const projectId = await ctx.db.insert("projects", {
       authId: authUser.id,
-      orgId: orgId ?? undefined,
+      orgId: orgId,
       name: name,
       description: undefined,
-      slug: await uniqueProjectSlug(
-        ctx,
-        { authId: authUser.id, orgId: orgId ?? undefined },
-        name,
-      ),
+      slug: await uniqueProjectSlug(ctx, { orgId: orgId }, name),
       updatedAt: now,
     });
 
@@ -365,11 +358,7 @@ export const update = mutation({
     const slug =
       trimmedName === project.name
         ? project.slug
-        : await uniqueProjectSlug(
-            ctx,
-            { authId: project.authId, orgId: project.orgId },
-            trimmedName,
-          );
+        : await uniqueProjectSlug(ctx, { orgId: project.orgId }, trimmedName);
 
     await ctx.db.patch(projectId, {
       name: trimmedName,
@@ -384,7 +373,7 @@ export const update = mutation({
 
 /**
  * Resolve the caller's active org id, used to scope new and listed projects.
- * Returns null when the user has no membership yet (legacy / first-load flow).
+ * Returns null when the user has no membership yet (first-load flow).
  */
 /** Whether the caller may write in `orgId`: the org owner, or an admin member. */
 async function callerCanWriteOrg(
@@ -421,30 +410,16 @@ async function getCallerActiveOrgId(
 }
 
 /**
- * Lists the projects visible to the caller, scoped to their active org. When
- * the caller has no active org (legacy / first-load), falls back to their
- * orgId-less projects owned by authId so older accounts keep working.
+ * Lists the projects visible to the caller: their active org's, newest first.
+ * Nothing before the caller has joined an org.
  */
 async function listProjects(
   ctx: Ctx,
   authId: string,
 ): Promise<Doc<"projects">[]> {
   const orgId = await getCallerActiveOrgId(ctx, authId);
+  if (orgId === null) return [];
 
-  // No active org: surface only the caller's legacy, orgId-less projects.
-  if (orgId === null) {
-    const ownedByAuth = await ctx.db
-      .query("projects")
-      .withIndex("by_authId_and_slug", (q) => q.eq("authId", authId))
-      .collect();
-
-    return ownedByAuth
-      .filter((p) => !p.orgId)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  // Active org set: return only that org's projects, never another org's
-  // or another caller's orgId-less projects.
   const orgProjects = await ctx.db
     .query("projects")
     .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
