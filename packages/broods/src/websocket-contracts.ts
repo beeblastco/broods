@@ -4,7 +4,6 @@
 
 import type { AgentRunEventInput, AgentRunOverrides } from "./run-input.ts";
 import type { AgentStreamPart } from "./stream.ts";
-import type { PendingQuestion } from "./types.ts";
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type IngressStatus =
@@ -17,6 +16,21 @@ export type IngressStatus =
   | "completed"
   | "failed"
   | "expired";
+
+/** One open `ask_questions` prompt while a run is `awaiting_input`. */
+export interface PendingQuestion {
+  /** Pass back as `answers[].statusId`. */
+  statusId: string;
+  /** After this the prompt settles as no_answer. */
+  answerBy: string;
+  questions: {
+    id: string;
+    header: string;
+    question: string;
+    options: { label: string; description?: string }[];
+    allowFreeText?: boolean;
+  }[];
+}
 
 export type WebSocketStreamMessage =
   | AgentStreamPart

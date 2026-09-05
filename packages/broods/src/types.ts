@@ -7,6 +7,7 @@
 
 import type { ModelMessage } from "ai";
 import type { CronLastStatus, CronStatus } from "./contracts.ts";
+import type { PendingQuestion } from "./websocket-contracts.ts";
 
 export interface Account {
   account: {
@@ -38,21 +39,6 @@ export interface ToolApprovalSummary {
   toolCallId: string;
   toolName: string;
   input: unknown;
-}
-
-/** One open `ask_questions` prompt while a run is `awaiting_input`. */
-export interface PendingQuestion {
-  /** Pass back as `answers[].statusId`. */
-  statusId: string;
-  /** After this the prompt settles as no_answer. */
-  answerBy: string;
-  questions: {
-    id: string;
-    header: string;
-    question: string;
-    options: { label: string; description?: string }[];
-    allowFreeText?: boolean;
-  }[];
 }
 
 export interface AsyncStatus {
