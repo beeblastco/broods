@@ -142,8 +142,9 @@ export const migrateCronsToConvexScheduler = internalMutation({
  * Give every pre-org project its owner's org so `projects.orgId` can become
  * required. The org is the creator's active org when they are still a member
  * of it, else the org they own, else their longest-standing membership. A
- * project whose creator has no org at all is counted in `unresolved` and left
- * alone: the schema cannot tighten until that count is zero everywhere.
+ * project whose creator has no org at all is counted in `unresolved`, named
+ * in the deployment log and left alone: the schema cannot tighten until that
+ * count is zero everywhere.
  * Idempotent, paginated, self-rescheduling. Kick off with no args.
  * @returns rows patched and left unresolved in this batch, and whether the walk finished
  */
@@ -165,6 +166,9 @@ export const backfillProjectOrgIds = internalMutation({
       if (project.orgId !== undefined) continue;
       const orgId = await orgForAuthId(ctx, project.authId);
       if (orgId === null) {
+        console.warn(
+          `backfillProjectOrgIds: project ${project._id} (${project.slug}) has no org for creator ${project.authId}`,
+        );
         unresolved += 1;
         continue;
       }
@@ -189,8 +193,11 @@ export const backfillProjectOrgIds = internalMutation({
 /**
  * Stamp every stage that predates `kind` with the role its name implied, the
  * same rule `stageKindForName` has applied on read, so `stages.kind` can
- * become required. Idempotent, paginated, self-rescheduling. Kick off with no
- * args.
+ * become required. A project whose only stage is a kind-less "Production"
+ * gets what `stage.ensureDefault` would have given it on the next admin load:
+ * that row was the dev workspace, so it becomes Development and the default,
+ * instead of a fresh empty Development demoting it. Idempotent, paginated,
+ * self-rescheduling. Kick off with no args.
  * @returns rows patched in this batch and whether the walk finished
  */
 export const backfillStageKinds = internalMutation({
@@ -204,7 +211,25 @@ export const backfillStageKinds = internalMutation({
     let patched = 0;
     for (const stage of page.page) {
       if (stage.kind !== undefined) continue;
-      await ctx.db.patch(stage._id, { kind: stageKindForName(stage) });
+      const siblings = await ctx.db
+        .query("stages")
+        .withIndex("by_projectId", (q) => q.eq("projectId", stage.projectId))
+        .collect();
+      const lonePromotedProduction =
+        siblings.length === 1 && stageKindForName(stage) === "production";
+      if (lonePromotedProduction) {
+        const now = Date.now();
+        await ctx.db.patch(stage._id, {
+          name: "Development",
+          kind: "development",
+          deploymentRegion: undefined,
+          isDefault: true,
+          updatedAt: now,
+        });
+        await ctx.db.patch(stage.projectId, { updatedAt: now });
+      } else {
+        await ctx.db.patch(stage._id, { kind: stageKindForName(stage) });
+      }
       patched += 1;
     }
 
