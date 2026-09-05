@@ -19,8 +19,8 @@ import {
 } from "./async-tool-result.ts";
 
 export const ASK_QUESTIONS_TOOL_NAME = "ask_questions";
-export const DEFAULT_ANSWER_TIMEOUT_SECONDS = 900;
-export const MAX_ANSWER_TIMEOUT_SECONDS = 3600;
+export const DEFAULT_ANSWER_TIMEOUT_SECONDS = 24 * 60 * 60;
+export const MAX_ANSWER_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_OPTIONS = 4;
 export const MAX_QUESTIONS = 3;
 export const MIN_ANSWER_TIMEOUT_SECONDS = 30;

@@ -65,7 +65,7 @@ Notes:
 
 ## Asking the user
 
-`ask_questions` lets the agent put one to three structured questions to the person behind the conversation and carry on. Each question has an `id`, a short `header`, the `question`, two to four `options` (`label` + optional `description`), and optional `multiSelect` / `allowFreeText` flags. The call also takes `blocking` and `timeoutSeconds` (default 900, clamped to 30..3600).
+`ask_questions` lets the agent put one to three structured questions to the person behind the conversation and carry on. Each question has an `id`, a short `header`, the `question`, two to four `options` (`label` + optional `description`), and optional `multiSelect` / `allowFreeText` flags. The call also takes `blocking` and `timeoutSeconds` (default one day, clamped to 30 seconds..7 days, the row's own TTL).
 
 The tool never holds the run open. It writes an open async-tool row (the same detached shape a `bash` background job uses), posts the prompt where the turn came from, and returns a `statusId` at once:
 
