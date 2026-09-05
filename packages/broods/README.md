@@ -24,15 +24,17 @@ broods dev
 `broods update` installs the newest release over the copy you are running, and
 `broods dev` says so when one is out.
 
-`ai` is a peer dependency. npm and bun install it for you; add it explicitly on
-package managers that do not auto-install peers:
+The published types import from `ai` directly, and it is an optional peer so a
+global CLI install stays small. A project that uses the SDK installs it next to
+`broods`, or `defineAgent`'s model options resolve to error types and a valid
+agent config fails to compile:
 
 ```bash
-npm install ai
+npm install broods ai
 ```
 
-The published types import from `ai` directly, so without it `defineAgent`'s
-model options resolve to error types and a valid agent config fails to compile.
+A hosted MCP server (`defineMcp` with a `handler`) needs
+`@modelcontextprotocol/server` in the project the same way.
 
 ## Invoke an Agent
 

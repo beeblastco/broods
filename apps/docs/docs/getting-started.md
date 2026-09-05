@@ -30,8 +30,10 @@ Or install locally in your project:
 ```bash
 mkdir my-agent-project && cd my-agent-project
 bun init
-bun add broods
+bun add broods ai
 ```
+
+`ai` is the AI SDK the `broods` types build on; a global CLI install does not need it, a project that imports `defineAgent` does.
 
 ## 2. Set Your Model Secret
 
