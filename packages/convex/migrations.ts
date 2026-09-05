@@ -6,9 +6,11 @@
  */
 
 import { internal } from "./_generated/api";
-import { internalMutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { cronSchedules, registerSchedule } from "./model/cronSchedules";
+import { stageKindForName } from "./stage";
 import { USAGE_GRAIN_MS, foldRollupBucket } from "./usage";
 
 /**
@@ -135,3 +137,115 @@ export const migrateCronsToConvexScheduler = internalMutation({
     return { registered: registered, skipped: skipped, isDone: page.isDone };
   },
 });
+
+/**
+ * Give every pre-org project its owner's org so `projects.orgId` can become
+ * required. The org is the creator's active org when they are still a member
+ * of it, else the org they own, else their longest-standing membership. A
+ * project whose creator has no org at all is counted in `unresolved` and left
+ * alone: the schema cannot tighten until that count is zero everywhere.
+ * Idempotent, paginated, self-rescheduling. Kick off with no args.
+ * @returns rows patched and left unresolved in this batch, and whether the walk finished
+ */
+export const backfillProjectOrgIds = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    patched: v.number(),
+    unresolved: v.number(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("projects")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let patched = 0;
+    let unresolved = 0;
+    for (const project of page.page) {
+      if (project.orgId !== undefined) continue;
+      const orgId = await orgForAuthId(ctx, project.authId);
+      if (orgId === null) {
+        unresolved += 1;
+        continue;
+      }
+      await ctx.db.patch(project._id, { orgId: orgId });
+      patched += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.backfillProjectOrgIds,
+        {
+          cursor: page.continueCursor,
+        },
+      );
+    }
+
+    return { patched: patched, unresolved: unresolved, isDone: page.isDone };
+  },
+});
+
+/**
+ * Stamp every stage that predates `kind` with the role its name implied, the
+ * same rule `stageKindForName` has applied on read, so `stages.kind` can
+ * become required. Idempotent, paginated, self-rescheduling. Kick off with no
+ * args.
+ * @returns rows patched in this batch and whether the walk finished
+ */
+export const backfillStageKinds = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({ patched: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("stages")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let patched = 0;
+    for (const stage of page.page) {
+      if (stage.kind !== undefined) continue;
+      await ctx.db.patch(stage._id, { kind: stageKindForName(stage) });
+      patched += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.migrations.backfillStageKinds, {
+        cursor: page.continueCursor,
+      });
+    }
+
+    return { patched: patched, isDone: page.isDone };
+  },
+});
+
+async function orgForAuthId(
+  ctx: MutationCtx,
+  authId: string,
+): Promise<Id<"orgs"> | null> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  const memberships = user
+    ? await ctx.db
+        .query("orgMembers")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .collect()
+    : [];
+  if (
+    user?.activeOrgId &&
+    memberships.some((membership) => membership.orgId === user.activeOrgId)
+  ) {
+    return user.activeOrgId;
+  }
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", authId))
+    .first();
+  if (owned) return owned._id;
+  const earliest = memberships.sort(
+    (left, right) => left.createdAt - right.createdAt,
+  )[0];
+
+  return earliest?.orgId ?? null;
+}
