@@ -198,7 +198,7 @@ export const listByAccount = internalQuery({
 
     const projectDocs = await ctx.db
       .query("projects")
-      .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+      .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
       .collect();
     const projects = [];
     for (const project of projectDocs) {
@@ -315,13 +315,15 @@ async function summarize(
     .take(COUNT_LIMIT);
   const deployments = await ctx.db
     .query("agentDeployments")
-    .withIndex("by_projectId_and_stageId", (q) =>
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
       q.eq("projectId", project._id),
     )
     .take(COUNT_LIMIT);
   const files = await ctx.db
     .query("workspaceFiles")
-    .withIndex("by_projectId_and_nodeId", (q) => q.eq("projectId", project._id))
+    .withIndex("by_projectId_nodeId_and_path", (q) =>
+      q.eq("projectId", project._id),
+    )
     .take(COUNT_LIMIT);
 
   return {

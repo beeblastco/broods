@@ -314,7 +314,7 @@ export const list = query({
 
     return await ctx.db
       .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
         q.eq("projectId", projectId).eq("nodeId", nodeId),
       )
       .collect();
@@ -341,7 +341,7 @@ export const listForMigrationInternal = internalQuery({
 
     return await ctx.db
       .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
         q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
       )
       .collect();

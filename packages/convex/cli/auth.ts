@@ -456,7 +456,7 @@ async function onboardingContext(
 
   const projects = await ctx.db
     .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", currentOrgId))
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", currentOrgId))
     .collect();
   const currentAccount = await ctx.db
     .query("accounts")

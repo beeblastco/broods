@@ -260,7 +260,9 @@ export const list = internalQuery({
           .collect()
       : ctx.db
           .query("crons")
-          .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+          .withIndex("by_accountId_and_agentId", (q) =>
+            q.eq("accountId", accountId),
+          )
           .collect(),
 });
 

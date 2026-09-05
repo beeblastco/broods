@@ -229,7 +229,7 @@ export async function ensureProject(
 
   const existing = await ctx.db
     .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
     .collect();
   const name = resourceName(project);
   const projectDoc = existing.find(

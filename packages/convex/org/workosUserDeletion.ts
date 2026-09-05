@@ -27,7 +27,7 @@ export const listSoleOwnedAccounts = internalQuery({
     for (const org of orgs) {
       const members = await ctx.db
         .query("orgMembers")
-        .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+        .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
         .collect();
       if (members.some((member) => member.userId !== user._id)) continue;
 

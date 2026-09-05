@@ -40,7 +40,7 @@ export async function resolveProject(
 
   const projects = await ctx.db
     .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
     .collect();
 
   return (
@@ -127,7 +127,7 @@ export async function cronsInProject(
 
   const crons = await ctx.db
     .query("crons")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .withIndex("by_accountId_and_agentId", (q) => q.eq("accountId", accountId))
     .collect();
 
   return crons.filter((cron) => agentIds.has(cron.agentId));

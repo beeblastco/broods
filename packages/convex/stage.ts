@@ -135,7 +135,7 @@ export async function deleteStageContents(
   // authenticating requests against a deleted stage.
   const stageDeployments = await ctx.db
     .query("agentDeployments")
-    .withIndex("by_projectId_and_stageId", (q) =>
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
       q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();

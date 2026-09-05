@@ -5,7 +5,7 @@
  * mutation→mutation calls and to keep one source of truth for the ownership graph.
  */
 
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
@@ -13,28 +13,120 @@ import { unregisterSchedule } from "./cronSchedules";
 import { cronsInProject } from "./projectScope";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
-const accountScopedTables = [
-  "agents",
-  "accountHooks",
-  "agentPolicies",
-  "sandboxConfigs",
-  "workspaceConfigs",
-  "workspaceDownloadTokens",
-  "sandboxInstances",
-  "sandboxSnapshots",
-  "sandboxAuditEvents",
-  "skills",
-  "channelEndpoints",
-  "runtimeConversationEvents",
-  "runtimeClaims",
-  "runtimeAsyncAgentResults",
-  "runtimeAsyncToolResults",
-  "runtimeAsyncToolGroups",
-  "sandboxReservations",
-  "cliAuthCodes",
-  "cliTokens",
-  "cliExternalResources",
-] as const;
+// One bounded read per account-scoped table. Each names the index whose
+// leading field is accountId, which is a composite on the tables that also
+// list by name or status; the reads only exist to find rows to delete.
+const accountScopedReads: ReadonlyArray<
+  (
+    ctx: MutationCtx,
+    accountId: Id<"accounts">,
+  ) => Promise<Array<{ _id: Id<TableNames> }>>
+> = [
+  (ctx, accountId) =>
+    ctx.db
+      .query("agents")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountHooks")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("agentPolicies")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("sandboxConfigs")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("workspaceConfigs")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("workspaceDownloadTokens")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_accountId_projectId_and_stageId", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("sandboxAuditEvents")
+      .withIndex("by_accountId_and_reservationKey_and_createdAt", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("skills")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("channelEndpoints")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeConversationEvents")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeClaims")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeAsyncToolGroups")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("cliAuthCodes")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("cliTokens")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("cliExternalResources")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+];
 
 /**
  * Deletes one bounded batch of account data. Call repeatedly until it returns
@@ -55,7 +147,7 @@ export async function deleteAccountContentsBatch(
   // exists.
   const crons = await ctx.db
     .query("crons")
-    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .withIndex("by_accountId_and_agentId", (q) => q.eq("accountId", accountId))
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (crons.length > 0) {
     for (const cron of crons) {
@@ -66,11 +158,8 @@ export async function deleteAccountContentsBatch(
     return false;
   }
 
-  for (const table of accountScopedTables) {
-    const rows = await ctx.db
-      .query(table)
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .take(ACCOUNT_DELETE_BATCH_SIZE);
+  for (const read of accountScopedReads) {
+    const rows = await read(ctx, accountId);
     if (rows.length > 0) {
       for (const row of rows) await ctx.db.delete(row._id);
 
@@ -164,7 +253,9 @@ export async function purgeProject(
 
   const files = await ctx.db
     .query("workspaceFiles")
-    .withIndex("by_projectId_and_nodeId", (q) => q.eq("projectId", projectId))
+    .withIndex("by_projectId_nodeId_and_path", (q) =>
+      q.eq("projectId", projectId),
+    )
     .collect();
   for (const file of files) {
     if (file.storageId) await ctx.storage.delete(file.storageId);
@@ -186,7 +277,7 @@ export async function purgeOrg(
 ): Promise<void> {
   const projects = await ctx.db
     .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
     .collect();
   for (const project of projects) await purgeProject(ctx, project._id);
 
@@ -202,7 +293,7 @@ export async function purgeOrg(
 
   const members = await ctx.db
     .query("orgMembers")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", orgId))
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
@@ -228,7 +319,7 @@ export async function purgeUser(
   for (const org of ownedOrgs) {
     const members = await ctx.db
       .query("orgMembers")
-      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
       .collect();
     const others = members.filter((m) => m.userId !== user._id);
     if (others.length === 0) {
@@ -284,7 +375,7 @@ export async function purgeUser(
   // orgId, so they are safe to remove with their sole WorkOS owner.
   const legacyProjects = await ctx.db
     .query("projects")
-    .withIndex("by_authId", (q) => q.eq("authId", user.authId))
+    .withIndex("by_authId_and_slug", (q) => q.eq("authId", user.authId))
     .collect();
   for (const project of legacyProjects) {
     if (!project.orgId) await purgeProject(ctx, project._id);
