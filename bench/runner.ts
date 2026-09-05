@@ -199,7 +199,12 @@ export function compareToBaselines(
       baseline.maxRegressionPct ?? baselines.policy.defaultMaxRegressionPct;
     const blocking = baseline.gate === "blocking";
     const overCeiling = measurement.nsPerOp > baseline.ceilingNs;
-    const regressed = deltaPct > maxRegressionPct;
+    // A host far from the baseline clock does not move every path by the same
+    // factor, and the ratio is a median that cannot know which paths lagged.
+    // A case is slower only when it is slower by both clocks: on a slower host
+    // the ratio-adjusted delta is the stricter one, on a faster host the raw.
+    const rawDeltaPct = (measurement.nsPerOp / baseline.nsPerOp - 1) * 100;
+    const regressed = Math.min(deltaPct, rawDeltaPct) > maxRegressionPct;
 
     // Noise only ever inflates a sample. When even the fastest one is over the
     // ceiling, the spread is a symptom of the regression, not a reason to

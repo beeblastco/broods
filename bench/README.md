@@ -54,9 +54,12 @@ bun bench/bundles.ts --check dashboard|cli   # payload budgets, run where each i
   Judged against the run's machine ratio, the median of measured/baseline
   across every gated case: a slower host in the same runner pool moves every
   case by about the same factor, and that factor is subtracted before any case
-  is graded. A code regression moves one path and still stands out. Blocks only
-  when the run's `platform/arch` match the baseline's, since a different arch
-  shifts the paths unevenly and the ratio cannot cancel that.
+  is graded. A code regression moves one path and still stands out. A case
+  counts as slower only when it is slower by both the raw and the adjusted
+  clock, since a host far from the baseline's does not move every path by the
+  same factor. Blocks only when the run's `platform/arch` match the
+  baseline's, since a different arch shifts the paths unevenly and the ratio
+  cannot cancel that.
 
 A case whose own spread exceeds `noiseCeilingPct` reports as `NOISY` and never
 fails on drift; it still fails the ceiling when even its fastest sample is over
