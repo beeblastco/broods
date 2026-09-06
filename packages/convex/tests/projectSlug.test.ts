@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import type { Id } from "../_generated/dataModel";
-import { uniqueProjectSlug, type ProjectOwner } from "../lib/slug";
+import { uniqueProjectSlug } from "../lib/slug";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -30,12 +30,12 @@ async function seedOrg(tt: T, slug: string): Promise<Id<"orgs">> {
 async function seedProject(
   tt: T,
   name: string,
-  owner: ProjectOwner,
+  orgId: Id<"orgs">,
 ): Promise<void> {
   await tt.run(async (ctx) => {
     await ctx.db.insert("projects", {
       authId: "auth_owner",
-      orgId: owner.orgId,
+      orgId: orgId,
       name: name,
       slug: name,
       updatedAt: Date.now(),
@@ -46,18 +46,18 @@ async function seedProject(
 async function slugFor(
   tt: T,
   name: string,
-  owner: ProjectOwner,
+  orgId: Id<"orgs">,
 ): Promise<string> {
-  return await tt.run(async (ctx) => await uniqueProjectSlug(ctx, owner, name));
+  return await tt.run(async (ctx) => await uniqueProjectSlug(ctx, orgId, name));
 }
 
 test("the same name in another org keeps the unsuffixed slug", async () => {
   const tt = t();
   const personal = await seedOrg(tt, "personal");
   const beeblast = await seedOrg(tt, "beeblast");
-  await seedProject(tt, "client-lamy", { orgId: personal });
+  await seedProject(tt, "client-lamy", personal);
 
-  const slug = await slugFor(tt, "client-lamy", { orgId: beeblast });
+  const slug = await slugFor(tt, "client-lamy", beeblast);
 
   expect(slug).toBe("client-lamy");
 });
@@ -65,9 +65,9 @@ test("the same name in another org keeps the unsuffixed slug", async () => {
 test("a sibling in the same org still forces a suffix", async () => {
   const tt = t();
   const beeblast = await seedOrg(tt, "beeblast");
-  await seedProject(tt, "client-lamy", { orgId: beeblast });
+  await seedProject(tt, "client-lamy", beeblast);
 
-  const slug = await slugFor(tt, "client-lamy", { orgId: beeblast });
+  const slug = await slugFor(tt, "client-lamy", beeblast);
 
   expect(slug).toBe("client-lamy-1");
 });

@@ -30,12 +30,12 @@ const stageDoc = v.object({
   _creationTime: v.number(),
 });
 
-export type StageKind = "development" | "production" | "custom";
-
 // Creating, cloning, or promoting a stage copies agents, secrets and runtime
 // wiring, so it is an org admin operation like deleting one.
 const STAGE_ADMIN_REQUIRED =
   "Stages can only be created or promoted by an org admin.";
+
+export type StageKind = "development" | "production" | "custom";
 
 export const create = mutation({
   args: {
@@ -404,7 +404,7 @@ export const ensureDefault = mutation({
       .collect();
 
     const now = Date.now();
-    const development = findStageByKind(existing, "development");
+    const development = existing.find((stage) => stage.kind === "development");
     // A member reads the current default and never repairs or creates one.
     if (!(await getProjectForRole(ctx, authUser.id, projectId, "admin"))) {
       return development?._id ?? null;
@@ -474,7 +474,7 @@ export const initializeProduction = mutation({
       .query("stages")
       .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
       .collect();
-    const production = findStageByKind(existing, "production");
+    const production = existing.find((stage) => stage.kind === "production");
     const now = Date.now();
     const productionId =
       production?._id ??
@@ -522,6 +522,15 @@ export const initializeProduction = mutation({
     return productionId;
   },
 });
+
+/** The role a stage name implies at creation: the two reserved names, else custom. */
+export function kindForStageName(name: string): StageKind {
+  const normalized = name.trim().toLowerCase();
+  if (normalized === "development") return "development";
+  if (normalized === "production") return "production";
+
+  return "custom";
+}
 
 export const list = query({
   args: { projectId: v.id("projects") },
@@ -592,15 +601,6 @@ export const remove = mutation({
   },
 });
 
-/** The role a stage name implies at creation: the two reserved names, else custom. */
-export function kindForStageName(name: string): StageKind {
-  const normalized = name.trim().toLowerCase();
-  if (normalized === "development") return "development";
-  if (normalized === "production") return "production";
-
-  return "custom";
-}
-
 /** Coerce an unknown JSON-ish value into a mutable record. */
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -608,7 +608,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** Case-insensitive lookup by explicit kind or conventional stage name. */
 /** The slug rule plus: reserved names come from the project, and no sibling may share the name. */
 async function assertCustomStageNameFree(
   ctx: QueryCtx,
@@ -630,13 +629,6 @@ async function assertCustomStageNameFree(
   }
 
   return stageName;
-}
-
-function findStageByKind(
-  stages: Doc<"stages">[],
-  kind: StageKind,
-): Doc<"stages"> | undefined {
-  return stages.find((stage) => stage.kind === kind);
 }
 
 /** Returns true when a stage already has user/configuration content. */

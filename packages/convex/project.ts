@@ -158,7 +158,7 @@ export const create = mutation({
       orgId: orgId,
       name: trimmedName,
       description: description?.trim() || undefined,
-      slug: await uniqueProjectSlug(ctx, { orgId: orgId }, trimmedName),
+      slug: await uniqueProjectSlug(ctx, orgId, trimmedName),
       updatedAt: now,
     });
 
@@ -232,7 +232,7 @@ export const getOrCreateDefault = mutation({
       orgId: orgId,
       name: name,
       description: undefined,
-      slug: await uniqueProjectSlug(ctx, { orgId: orgId }, name),
+      slug: await uniqueProjectSlug(ctx, orgId, name),
       updatedAt: now,
     });
 
@@ -358,7 +358,7 @@ export const update = mutation({
     const slug =
       trimmedName === project.name
         ? project.slug
-        : await uniqueProjectSlug(ctx, { orgId: project.orgId }, trimmedName);
+        : await uniqueProjectSlug(ctx, project.orgId, trimmedName);
 
     await ctx.db.patch(projectId, {
       name: trimmedName,
@@ -371,10 +371,6 @@ export const update = mutation({
   },
 });
 
-/**
- * Resolve the caller's active org id, used to scope new and listed projects.
- * Returns null when the user has no membership yet (first-load flow).
- */
 /** Whether the caller may write in `orgId`: the org owner, or an admin member. */
 async function callerCanWriteOrg(
   ctx: Ctx,
@@ -394,6 +390,10 @@ async function callerCanWriteOrg(
   return Boolean(membership && orgRoleMeets(membership.role, "admin"));
 }
 
+/**
+ * Resolve the caller's active org id, used to scope new and listed projects.
+ * Returns null when the user has no membership yet (first-load flow).
+ */
 async function getCallerActiveOrgId(
   ctx: Ctx,
   authId: string,

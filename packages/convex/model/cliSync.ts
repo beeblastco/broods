@@ -242,7 +242,7 @@ export async function ensureProject(
     authId: org.ownerAuthId,
     orgId: orgId,
     name: name,
-    slug: await uniqueProjectSlug(ctx, { orgId: orgId }, name),
+    slug: await uniqueProjectSlug(ctx, orgId, name),
     updatedAt: now,
   });
   const created = await ctx.db.get(projectId);

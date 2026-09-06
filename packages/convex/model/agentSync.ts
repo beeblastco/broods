@@ -254,7 +254,7 @@ async function ensureCanvasTarget(
         orgId: orgId,
         name: account.username,
         description: `Agents provisioned through the ${account.username} account API.`,
-        slug: await uniqueProjectSlug(ctx, { orgId: orgId }, account.username),
+        slug: await uniqueProjectSlug(ctx, orgId, account.username),
         updatedAt: now,
       }),
     ))!;

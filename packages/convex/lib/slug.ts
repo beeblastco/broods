@@ -11,11 +11,6 @@ import type { QueryCtx } from "../_generated/server";
  */
 export const STAGE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
-/** Who a project belongs to, which is also the namespace its slug is unique in. */
-export interface ProjectOwner {
-  orgId: Id<"orgs">;
-}
-
 /** Trim a custom stage name and refuse anything that is not already a slug. */
 export function assertStageName(name: string): string {
   const trimmed = name.trim();
@@ -40,9 +35,10 @@ export function slugifyName(name: string, fallback = "project"): string {
   return slug.length > 0 ? slug : fallback;
 }
 
+/** The org is the namespace a project slug is unique in. */
 export async function uniqueProjectSlug(
   ctx: QueryCtx,
-  owner: ProjectOwner,
+  orgId: Id<"orgs">,
   baseName: string,
 ): Promise<string> {
   const baseSlug = slugifyName(baseName);
@@ -50,7 +46,7 @@ export async function uniqueProjectSlug(
 
   while (true) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    if (!(await slugTaken(ctx, owner, candidate))) return candidate;
+    if (!(await slugTaken(ctx, orgId, candidate))) return candidate;
     suffix += 1;
   }
 }
@@ -59,13 +55,13 @@ export async function uniqueProjectSlug(
 // suffix.
 async function slugTaken(
   ctx: QueryCtx,
-  owner: ProjectOwner,
+  orgId: Id<"orgs">,
   slug: string,
 ): Promise<boolean> {
   const sibling = await ctx.db
     .query("projects")
     .withIndex("by_orgId_and_slug", (q) =>
-      q.eq("orgId", owner.orgId).eq("slug", slug),
+      q.eq("orgId", orgId).eq("slug", slug),
     )
     .first();
 

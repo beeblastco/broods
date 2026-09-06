@@ -1174,7 +1174,7 @@ export default defineSchema({
     .index("by_accountHandle", ["accountHandle"])
     .index("by_email", ["email"]),
   // Also serves the org's project list, in slug order; the one caller that
-  // needs creation order picks it explicitly.
+  // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields).index("by_orgId_and_slug", [
     "orgId",
     "slug",

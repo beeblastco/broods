@@ -375,17 +375,16 @@ export async function purgeUser(
 }
 
 // Crons are account-scoped, so the project's org resolves the account that
-// owns them. Pre-org projects have no orgId and predate crons entirely.
+// owns them.
 async function cronsForProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<Doc<"crons">[]> {
   const project = await ctx.db.get(projectId);
-  const orgId = project?.orgId;
-  if (!orgId) return [];
+  if (!project) return [];
   const account = await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
   if (!account) return [];
 
