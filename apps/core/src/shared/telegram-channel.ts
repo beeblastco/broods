@@ -609,8 +609,14 @@ function telegramBotApiUrl(
   if (base.protocol !== "https:") {
     throw new Error("config.channels.telegram.apiUrl must use https");
   }
+  if (base.search || base.hash) {
+    throw new Error(
+      "config.channels.telegram.apiUrl must not carry a query or fragment",
+    );
+  }
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}/bot${botToken}/${method}`;
 
-  return `${base.toString().replace(/\/+$/, "")}/bot${botToken}/${method}`;
+  return base.href;
 }
 
 function assertTelegramStickerUrl(value: string): void {

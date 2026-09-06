@@ -189,6 +189,16 @@ describe("telegram bot api", () => {
     ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
   });
 
+  it("refuses a base with a query, which would push the token into it", async () => {
+    await expect(
+      telegramActions("https://bot-api.example?route=1").sendQuestions!(
+        QUESTION_PROMPT,
+      ),
+    ).rejects.toThrow(
+      "config.channels.telegram.apiUrl must not carry a query or fragment",
+    );
+  });
+
   it("fails on a redirect instead of carrying the token to the new host", async () => {
     await expect(
       withTelegramApi(
