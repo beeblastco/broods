@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { ChannelRequest } from "../src/shared/channels.ts";
+import type { ChannelActions, ChannelRequest } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 const STATUS_ID = "async_tool_2f1c9a9e-8d2f-4a7b-9c3d-0e1f2a3b4c5d";
@@ -13,8 +13,29 @@ const WEBHOOK_SECRET = "secret";
 
 interface TelegramApiCall {
   url: string;
+  init: RequestInit | undefined;
   body: unknown;
 }
+
+const QUESTION_PROMPT = {
+  statusId: STATUS_ID,
+  text: "Which stage?",
+  questions: [
+    {
+      id: "deploy_target",
+      header: "Target",
+      question: "Which stage?",
+      options: [{ label: "dev" }],
+    },
+  ],
+};
+const SOURCE = {
+  eventId: "telegram:1",
+  conversationKey: "tg:123",
+  channelName: "telegram",
+  content: "hi",
+  source: { chatId: 123, messageId: "5", threadId: "123" },
+};
 
 const adapter = createTelegramChannel(
   "bot-token",
@@ -137,6 +158,72 @@ describe("telegram ask_questions", () => {
   });
 });
 
+describe("telegram bot api", () => {
+  it("posts JSON to the configured https endpoint without following redirects", async () => {
+    const calls = await withTelegramApi(() =>
+      telegramActions("https://bot-api.example/").sendQuestions!(
+        QUESTION_PROMPT,
+      ),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(
+      "https://bot-api.example/botbot-token/sendMessage",
+    );
+    expect(calls[0]!.init).toMatchObject({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      redirect: "manual",
+    });
+    expect(calls[0]!.body).toMatchObject({
+      chat_id: 123,
+      text: "Which stage?",
+    });
+  });
+
+  // No fetch stub here on purpose: a request that got out would fail on the
+  // network with a different error than the one asserted.
+  it("refuses a plain http endpoint before the token leaves", async () => {
+    await expect(
+      telegramActions("http://bot-api.example").sendQuestions!(QUESTION_PROMPT),
+    ).rejects.toThrow("config.channels.telegram.apiUrl must use https");
+  });
+
+  it("refuses a base with a query, which would push the token into it", async () => {
+    await expect(
+      telegramActions("https://bot-api.example?route=1").sendQuestions!(
+        QUESTION_PROMPT,
+      ),
+    ).rejects.toThrow(
+      "config.channels.telegram.apiUrl must not carry a query or fragment",
+    );
+  });
+
+  it("fails on a redirect instead of carrying the token to the new host", async () => {
+    await expect(
+      withTelegramApi(
+        () => telegramActions().sendQuestions!(QUESTION_PROMPT),
+        () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://elsewhere.example/" },
+          }),
+      ),
+    ).rejects.toThrow("Telegram sendMessage answered a redirect (302)");
+  });
+});
+
+function telegramActions(apiUrl?: string): ChannelActions {
+  return createTelegramChannel(
+    "bot-token",
+    WEBHOOK_SECRET,
+    null,
+    null,
+    "👀",
+    apiUrl,
+  ).actions(SOURCE);
+}
+
 function telegramRequest(update: unknown): ChannelRequest {
   return {
     method: "POST",
@@ -148,9 +235,12 @@ function telegramRequest(update: unknown): ChannelRequest {
 }
 
 // Captures every Bot API call made while `run` executes, including the
-// fire-and-forget acknowledgements, which a timer tick lets land.
+// fire-and-forget acknowledgements, which a timer tick lets land. `respond`
+// stands in for Telegram; by default it answers every call with `ok: true`.
 async function withTelegramApi(
   run: () => Promise<void>,
+  respond: () => Response = () =>
+    new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }),
 ): Promise<TelegramApiCall[]> {
   const calls: TelegramApiCall[] = [];
   const originalFetch = globalThis.fetch;
@@ -160,12 +250,11 @@ async function withTelegramApi(
   ): Promise<Response> => {
     calls.push({
       url: String(input),
+      init: init,
       body: JSON.parse(String(init?.body)) as unknown,
     });
 
-    return new Response(JSON.stringify({ ok: true, result: {} }), {
-      status: 200,
-    });
+    return respond();
   }) as typeof globalThis.fetch;
   try {
     await run();
