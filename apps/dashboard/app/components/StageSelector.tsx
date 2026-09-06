@@ -39,7 +39,7 @@ import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type StageKind = "development" | "production" | "custom";
+type StageKind = Doc<"stages">["kind"];
 type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
 const regionOptions: Array<{
@@ -62,19 +62,6 @@ const regionOptions: Array<{
     enabled: false,
   },
 ];
-
-/** Infer stage type for legacy rows that predate the explicit kind field. */
-function stageKind(
-  stage: Pick<Doc<"stages">, "name" | "kind"> | null | undefined,
-): StageKind {
-  if (!stage) return "custom";
-  if (stage.kind) return stage.kind;
-  const normalized = stage.name.trim().toLowerCase();
-  if (normalized === "development") return "development";
-  if (normalized === "production") return "production";
-
-  return "custom";
-}
 
 /** Color dot indicating stage type: green for Development, purple for Production. */
 export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
@@ -125,18 +112,16 @@ export function StageSelector(): React.JSX.Element | null {
     useState(false);
 
   const developmentStage = stages?.find(
-    (stage) => stageKind(stage) === "development",
+    (stage) => stage.kind === "development",
   );
-  const productionStage = stages?.find(
-    (stage) => stageKind(stage) === "production",
-  );
+  const productionStage = stages?.find((stage) => stage.kind === "production");
 
   // Ensure default Development stage exists when project loads.
   useEffect(() => {
     if (!projectId || stages === undefined) return;
     const defaultStage = stages.find((stage) => stage.isDefault);
     const hasDevelopmentDefault =
-      defaultStage && stageKind(defaultStage) === "development";
+      defaultStage && defaultStage.kind === "development";
     if (stages.length === 0 || !developmentStage || !hasDevelopmentDefault) {
       ensureDefault({ projectId: projectId }).catch(console.error);
     }
@@ -149,9 +134,9 @@ export function StageSelector(): React.JSX.Element | null {
     if (!currentValid) {
       const defaultStage =
         stages.find(
-          (e: Doc<"stages">) => stageKind(e) === "development" && e.isDefault,
+          (e: Doc<"stages">) => e.kind === "development" && e.isDefault,
         ) ??
-        stages.find((e: Doc<"stages">) => stageKind(e) === "development") ??
+        stages.find((e: Doc<"stages">) => e.kind === "development") ??
         stages.find((e: Doc<"stages">) => e.isDefault) ??
         stages[0];
       setStageId(defaultStage._id);
@@ -173,10 +158,10 @@ export function StageSelector(): React.JSX.Element | null {
   }
 
   const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
-  const selectedKind = stageKind(selectedStage);
+  const selectedKind = selectedStage?.kind ?? "custom";
 
   function handleSelectStage(stage: Doc<"stages">) {
-    if (stageKind(stage) === "production" && !stage.deploymentRegion) {
+    if (stage.kind === "production" && !stage.deploymentRegion) {
       setProductionOpen(true);
 
       return;
@@ -272,7 +257,7 @@ export function StageSelector(): React.JSX.Element | null {
                   )}
                   onClick={() => handleSelectStage(stage)}
                 >
-                  <StageDot kind={stageKind(stage)} />
+                  <StageDot kind={stage.kind} />
                   {stage.name}
                 </DropdownMenuItem>
               ))}

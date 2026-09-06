@@ -371,31 +371,20 @@ export async function purgeUser(
     .collect();
   for (const reveal of cliReveals) await ctx.db.delete(reveal._id);
 
-  // Pre-org records belong to the original single-user model. They have no
-  // orgId, so they are safe to remove with their sole WorkOS owner.
-  const legacyProjects = await ctx.db
-    .query("projects")
-    .withIndex("by_authId_and_slug", (q) => q.eq("authId", user.authId))
-    .collect();
-  for (const project of legacyProjects) {
-    if (!project.orgId) await purgeProject(ctx, project._id);
-  }
-
   await ctx.db.delete(user._id);
 }
 
 // Crons are account-scoped, so the project's org resolves the account that
-// owns them. Pre-org projects have no orgId and predate crons entirely.
+// owns them.
 async function cronsForProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<Doc<"crons">[]> {
   const project = await ctx.db.get(projectId);
-  const orgId = project?.orgId;
-  if (!orgId) return [];
+  if (!project) return [];
   const account = await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
   if (!account) return [];
 

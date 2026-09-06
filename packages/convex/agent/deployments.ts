@@ -569,15 +569,14 @@ async function resolveStageContext(
   authId: string;
 }> {
   const project = await ctx.db.get(projectId);
-  if (!project?.orgId)
-    throw new Error("Project is not linked to an organization.");
+  if (!project) throw new Error("Project not found.");
   const stage = await ctx.db.get(stageId);
   if (!stage || stage.projectId !== projectId)
     throw new Error("Stage not found.");
 
   const account = await ctx.db
     .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId))
     .unique();
   if (!account) {
     throw new Error(

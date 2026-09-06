@@ -67,7 +67,6 @@ import {
 } from "../model/environmentValues";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
-import { stageKindForName } from "../stage";
 
 const resourceValidator = v.object({
   kind: v.union(
@@ -427,7 +426,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       endpointId: result.endpointId,
       projectSlug: result.projectSlug,
       stageSlug: result.stageSlug,
-      stageKind: stageKindForName(stageDoc),
+      stageKind: stageDoc.kind,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
     };

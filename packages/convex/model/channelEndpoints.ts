@@ -124,7 +124,7 @@ export function webhookPath(
 ): string {
   const account = encodeURIComponent(accountId);
   const name = encodeURIComponent(channel);
-  if (stage.kind === undefined || stage.kind === "production") {
+  if (stage.kind === "production") {
     return `/webhooks/${account}/${name}`;
   }
 

@@ -26,10 +26,10 @@ beforeEach(() => {
   process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET = SECRET;
 });
 
-/** An org, account, project and one stage. `kind: null` seeds a legacy row. */
+/** An org, account, project and one stage. */
 async function seedScope(
   tt: T,
-  kind: "development" | "production" | null = "development",
+  kind: "development" | "production" = "development",
 ): Promise<Scope> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -59,7 +59,7 @@ async function seedScope(
       authId: "auth_owner@example.com",
       projectId: projectId,
       name: "Development",
-      ...(kind ? { kind: kind } : {}),
+      kind: kind,
       isDefault: true,
       updatedAt: now,
     });
@@ -183,19 +183,6 @@ describe("listConnections", () => {
   test("a production stage keeps the bare webhook path", async () => {
     const tt = t();
     const scope = await seedScope(tt, "production");
-    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
-    await seedDeployment(tt, scope, "endpoint-1");
-
-    const connections = await listConnections(tt, "discord");
-
-    expect(connections[0]?.webhookPath).toBe(
-      `/webhooks/${scope.accountId}/discord`,
-    );
-  });
-
-  test("a legacy stage with no kind is treated as production", async () => {
-    const tt = t();
-    const scope = await seedScope(tt, null);
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
