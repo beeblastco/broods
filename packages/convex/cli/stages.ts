@@ -22,11 +22,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertStageName } from "../lib/slug";
 import { sha256Hex } from "../model/accountSecrets";
-import {
-  duplicateStageContents,
-  kindForStageName,
-  type StageKind,
-} from "../stage";
+import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
 
 const CANONICAL_NAMES = {
@@ -284,7 +280,7 @@ async function summarize(
 ): Promise<{
   id: Id<"stages">;
   name: string;
-  kind: StageKind;
+  kind: Doc<"stages">["kind"];
   isDefault: boolean;
   deploymentRegion?: Doc<"stages">["deploymentRegion"];
   agentCount: number;

@@ -35,8 +35,6 @@ const stageDoc = v.object({
 const STAGE_ADMIN_REQUIRED =
   "Stages can only be created or promoted by an org admin.";
 
-export type StageKind = "development" | "production" | "custom";
-
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -524,7 +522,7 @@ export const initializeProduction = mutation({
 });
 
 /** The role a stage name implies at creation: the two reserved names, else custom. */
-export function kindForStageName(name: string): StageKind {
+export function kindForStageName(name: string): Doc<"stages">["kind"] {
   const normalized = name.trim().toLowerCase();
   if (normalized === "development") return "development";
   if (normalized === "production") return "production";

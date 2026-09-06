@@ -200,25 +200,22 @@ export const getOrCreateDefault = mutation({
   handler: async (ctx) => {
     const authUser = await requireAuth(ctx);
 
-    const existing = (await listProjects(ctx, authUser.id))[0];
+    // No org yet means no first project yet: onboarding creates the org first.
     const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+    if (!orgId) return null;
 
+    const existing = (await listProjects(ctx, authUser.id))[0];
+    const org = await ctx.db.get(orgId);
     if (existing) {
-      // Lazy-backfill the flag for legacy orgs whose projects predate it,
-      // so the first-time path doesn't silently re-trigger.
-      if (orgId) {
-        const org = await ctx.db.get(orgId);
-        if (org && !org.onboardedAt) {
-          await ctx.db.patch(orgId, { onboardedAt: Date.now() });
-        }
+      // Stamp the flag on an org whose projects predate it, so the first-time
+      // path doesn't silently re-trigger.
+      if (org && !org.onboardedAt) {
+        await ctx.db.patch(orgId, { onboardedAt: Date.now() });
       }
 
       return existing._id;
     }
 
-    // No org yet means no first project yet: onboarding creates the org first.
-    if (!orgId) return null;
-    const org = await ctx.db.get(orgId);
     if (org?.onboardedAt) {
       return null;
     }
@@ -245,9 +242,7 @@ export const getOrCreateDefault = mutation({
       updatedAt: now,
     });
 
-    if (orgId) {
-      await ctx.db.patch(orgId, { onboardedAt: now });
-    }
+    await ctx.db.patch(orgId, { onboardedAt: now });
 
     return projectId;
   },
