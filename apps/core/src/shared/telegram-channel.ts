@@ -32,6 +32,7 @@ const BOT_COMMAND_ENTITY = "bot_command";
 const MENTION_ENTITY = "mention";
 const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+const TELEGRAM_API_URL = "https://api.telegram.org";
 // Telegram takes 2-10 attachments as a single album and one attachment on its
 // own; past ten it rejects the batch, so a longer list goes out as consecutive
 // albums rather than failing.
@@ -544,6 +545,12 @@ function repliesToTelegramBot(
   );
 }
 
+/**
+ * One Bot API call outside the Chat SDK. The bot token rides the URL path, so
+ * the endpoint is checked for https before anything is sent and a redirect is
+ * refused rather than followed: either would hand the token to a host the
+ * operator never configured.
+ */
 async function callTelegramBotApi(
   apiUrl: string | undefined,
   botToken: string,
@@ -554,20 +561,24 @@ async function callTelegramBotApi(
     | "sendSticker",
   body: Record<string, unknown>,
 ): Promise<void> {
+  const url = telegramBotApiUrl(apiUrl, botToken, method);
   const controller = new AbortController();
   const timeout = setTimeout((): void => {
     controller.abort();
   }, TELEGRAM_REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(
-      `${(apiUrl ?? "https://api.telegram.org").replace(/\/+$/, "")}/bot${botToken}/${method}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      },
-    );
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error(
+        `Telegram ${method} answered a redirect (${response.status}); refusing to follow it with the bot token`,
+      );
+    }
     const result = (await response.json()) as {
       ok?: boolean;
       description?: string;
@@ -580,6 +591,26 @@ async function callTelegramBotApi(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// A configured Bot API base is only accepted over https: the token sits in the
+// path, so plain http would send it in clear.
+function telegramBotApiUrl(
+  apiUrl: string | undefined,
+  botToken: string,
+  method: string,
+): string {
+  let base: URL;
+  try {
+    base = new URL(apiUrl ?? TELEGRAM_API_URL);
+  } catch {
+    throw new Error("config.channels.telegram.apiUrl must be a valid URL");
+  }
+  if (base.protocol !== "https:") {
+    throw new Error("config.channels.telegram.apiUrl must use https");
+  }
+
+  return `${base.toString().replace(/\/+$/, "")}/bot${botToken}/${method}`;
 }
 
 function assertTelegramStickerUrl(value: string): void {
