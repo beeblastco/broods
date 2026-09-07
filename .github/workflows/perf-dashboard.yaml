@@ -46,9 +46,13 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        # Pinned to a SHA (matching ci.yaml) because this job holds the probe
+        # login secrets: a retargeted tag must not be able to run new code here.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # This job never pushes, so it needs no git credential left on disk.
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -66,7 +70,7 @@ jobs:
 
       - name: Upload traces of a failed probe
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dashboard-perf-${{ github.run_id }}
           path: apps/dashboard/test-results

@@ -71,9 +71,11 @@ interface UseObservabilityStreamResult<T> {
   /**
    * Pull one trace by id from Tempo, for a trace older than the backfill
    * window ("traces" stream only). Its spans merge into `entries`; a miss
-   * lands in `error`. No-op while the socket is not live.
+   * lands in `error`. Returns whether the request was actually sent — false
+   * when the socket is not live, so the caller does not record a request that
+   * never went out.
    */
-  fetchTrace: (traceId: string) => void;
+  fetchTrace: (traceId: string) => boolean;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -386,9 +388,9 @@ export function useObservabilityStream(
     if (projectSlug && stageSlug && apiKey) connect();
   }, [projectSlug, stageSlug, apiKey, connect]);
 
-  const fetchTrace = useCallback((traceId: string) => {
+  const fetchTrace = useCallback((traceId: string): boolean => {
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     const message: ObservabilityClientMessage = {
       type: "fetchTrace",
       traceId: traceId,
@@ -396,6 +398,8 @@ export function useObservabilityStream(
     setHistory("loading");
     setError(null);
     socket.send(JSON.stringify(message));
+
+    return true;
   }, []);
 
   return {

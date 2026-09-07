@@ -16,6 +16,7 @@ import {
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   cleanupObservabilitySocket,
+  fetchTempoBackfill,
   handleObservabilityMessage,
   lokiBackfillQuery,
   lokiLogEntry,
@@ -1682,6 +1683,63 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
     process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches", async () => {
+  const originalFetch = globalThis.fetch;
+  const scope = {
+    accountId: "acct-1",
+    projectSlug: "shop",
+    stageSlug: "dev",
+    endpointIds: [],
+  };
+  // Search finds two traces; the first detail loads, the second 503s. The
+  // result keeps the good row and reports the one failure, so the caller sends
+  // the recovered trace with an error rather than an empty, error-free list.
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search")) {
+      return new Response(
+        JSON.stringify({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.includes("/api/traces/aaa")) {
+      return new Response(
+        JSON.stringify({
+          batches: [
+            {
+              scopeSpans: [
+                {
+                  spans: [
+                    {
+                      traceId: "aaa",
+                      spanId: "root",
+                      name: "agent.task",
+                      startTimeUnixNano: "1000000000",
+                      endTimeUnixNano: "2000000000",
+                      status: { code: 1 },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    return new Response("boom", { status: 503 });
+  }) as unknown as typeof fetch;
+
+  try {
+    const result = await fetchTempoBackfill("http://tempo.example", scope, 10);
+    expect(result.failures).toBe(1);
+    expect(result.rows.map((row) => row.traceId)).toEqual(["aaa"]);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -811,8 +811,11 @@ export function TracingPanel({
     fromMs !== null ||
     toMs !== null;
 
+  // Every task in the buffer, before filters. Focus resolution runs against
+  // this so a filtered-out trace is never mistaken for one absent from history.
+  const allGroups = useMemo(() => groupSpans(entries), [entries]);
+
   const groups = useMemo(() => {
-    const allGroups = groupSpans(entries);
     const needle = filter.trim().toLowerCase();
 
     return allGroups.filter((group) => {
@@ -836,7 +839,7 @@ export function TracingPanel({
         ].some((value) => value.toLowerCase().includes(needle)),
       );
     });
-  }, [entries, filter, statusFilter, fromMs, toMs]);
+  }, [allGroups, filter, statusFilter, fromMs, toMs]);
 
   // Shared duration scale for the top-level task bars so bar length is
   // comparable across tasks (longest visible task fills the column).
@@ -907,13 +910,24 @@ export function TracingPanel({
       (group) => group.root.traceId === focusTraceId,
     );
     if (index === -1) {
+      // The trace is in the buffer but a filter is hiding it: clear the filters
+      // so it renders, then let the effect re-run and scroll to it. Only a
+      // trace absent from the whole buffer is a candidate for a Tempo fetch.
+      if (allGroups.some((group) => group.root.traceId === focusTraceId)) {
+        setFilter("");
+        setStatusFilter("all");
+        setFromTime("");
+        setToTime("");
+
+        return;
+      }
       // Not in the recent history: ask Tempo for that one trace, once the
-      // backfill has settled so the two answers cannot race. A second miss
-      // (or a failed lookup) is reported rather than left as a blank table.
+      // backfill has settled so the two answers cannot race. Record the request
+      // only if it actually went out, so a closed socket doesn't get reported as
+      // a miss without ever asking. A second real miss is reported.
       if (history === "loading" || history === "none") return;
       if (fetchedRef.current !== focusKey) {
-        fetchedRef.current = focusKey;
-        fetchTrace(focusTraceId);
+        if (fetchTrace(focusTraceId)) fetchedRef.current = focusKey;
 
         return;
       }
@@ -944,6 +958,7 @@ export function TracingPanel({
     focusTraceId,
     refocusNonce,
     groups,
+    allGroups,
     visibleCount,
     history,
     fetchTrace,

@@ -1,8 +1,11 @@
 /**
- * Render-budget probe against a deployed dashboard. Signs in through the
- * hosted AuthKit form, then loads every page cold and reaches every page by
- * client-side navigation, timing each until the page's own content is on
- * screen. Any page over PAGE_RENDER_BUDGET_MS fails the run.
+ * Render-budget probe against a deployed dashboard. Signs in once through the
+ * hosted AuthKit form and reuses that session. Loads every page cold in its
+ * own fresh browser context (so no page is served from another's cache), and
+ * reaches every header destination by client-side navigation. Each is timed
+ * until its own content is on screen; anything over PAGE_RENDER_BUDGET_MS
+ * fails the run. The dashboard sub-tabs (Monitoring, Tracing, Usage, Billing)
+ * are covered by the cold loads; header navigation covers the top-level routes.
  *
  * Env: PERF_BASE_URL (the deployment), PERF_EMAIL + PERF_PASSWORD (a member
  * of an org with at least one project), optional PERF_PROJECT_ID.
@@ -77,42 +80,72 @@ test.skip(
   "PERF_BASE_URL, PERF_EMAIL and PERF_PASSWORD pick the deployment to probe",
 );
 
-test("every page renders within the budget, cold and by navigation", async ({
-  page,
+// Header destinations reached by client-side navigation, each paired with the
+// marker that means it has rendered. "Dashboard" lands on the Monitoring tab,
+// so its marker is the log table, not a probe named "Dashboard".
+const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
+  { label: "Dashboard", ready: (page) => page.getByRole("table") },
+  {
+    label: "Scheduler",
+    ready: (page) => page.getByRole("heading", { name: "Scheduler" }),
+  },
+  {
+    label: "Sandbox",
+    ready: (page) => page.getByRole("heading", { name: "Sandboxes" }),
+  },
+  {
+    label: "Settings",
+    ready: (page) => page.getByRole("heading", { name: "Settings" }).first(),
+  },
+  {
+    label: "Architecture",
+    ready: (page) => page.locator(".react-flow__viewport"),
+  },
+];
+
+test("every page renders cold within budget, and every header destination by navigation", async ({
+  browser,
 }) => {
-  await signIn(page);
-  const projectId = process.env.PERF_PROJECT_ID ?? (await firstProjectId(page));
+  // Sign in once and reuse the session; capturing storageState lets each cold
+  // probe start from a fresh, empty-cache context that is still authenticated.
+  const authContext = await browser.newContext();
+  const authPage = await authContext.newPage();
+  await signIn(authPage);
+  const projectId =
+    process.env.PERF_PROJECT_ID ?? (await firstProjectId(authPage));
+  const storageState = await authContext.storageState();
+  await authContext.close();
+
   const samples: Sample[] = [];
 
+  // Cold load: one throwaway context per page, so nothing is served from
+  // another page's cache and each timing is a true first visit.
   for (const probe of PROJECT_PAGES) {
-    const url = `/${projectId}${probe.path}`;
-    await page.goto(url, { waitUntil: "commit" });
+    const context = await browser.newContext({ storageState: storageState });
+    const page = await context.newPage();
+    await page.goto(`/${projectId}${probe.path}`, { waitUntil: "commit" });
     await probe.ready(page).first().waitFor({ timeout: 30_000 });
     // performance.now() counts from this document's navigation start, so it
     // is the cold-load time to the ready marker without any harness overhead.
     const ms = await page.evaluate(() => performance.now());
     samples.push({ page: probe.name, kind: "cold", ms: ms });
+    await context.close();
   }
 
-  // Client-side navigation: Architecture → Dashboard → Scheduler → Sandbox →
-  // Settings → Architecture through the header links, the path a user takes.
-  const navLinks = [
-    "Dashboard",
-    "Scheduler",
-    "Sandbox",
-    "Settings",
-    "Architecture",
-  ];
-  await page.goto(`/${projectId}`, { waitUntil: "commit" });
-  await PROJECT_PAGES[0].ready(page).first().waitFor({ timeout: 30_000 });
-  for (const label of navLinks) {
-    const target = PROJECT_PAGES.find((probe) => probe.name === label)!;
-    const start = await page.evaluate(() => performance.now());
-    await page.getByRole("link", { name: label, exact: true }).click();
-    await target.ready(page).first().waitFor({ timeout: 30_000 });
-    const end = await page.evaluate(() => performance.now());
-    samples.push({ page: label, kind: "navigate", ms: end - start });
+  // Client-side navigation across the header, one warm context, the path a
+  // user actually walks between top-level routes.
+  const navContext = await browser.newContext({ storageState: storageState });
+  const navPage = await navContext.newPage();
+  await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
+  await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });
+  for (const dest of HEADER_NAV) {
+    const start = await navPage.evaluate(() => performance.now());
+    await navPage.getByRole("link", { name: dest.label, exact: true }).click();
+    await dest.ready(navPage).first().waitFor({ timeout: 30_000 });
+    const end = await navPage.evaluate(() => performance.now());
+    samples.push({ page: dest.label, kind: "navigate", ms: end - start });
   }
+  await navContext.close();
 
   const report = samples
     .map(

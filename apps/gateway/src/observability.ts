@@ -497,10 +497,20 @@ async function sendBackfill(
       const tempoUrl = process.env.TEMPO_URL?.trim();
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
+      const { rows, failures } = await fetchTempoBackfill(
+        tempoUrl,
+        scope,
+        limit,
+      );
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
-        entries: await fetchTempoBackfill(tempoUrl, scope, limit),
+        entries: rows,
+        ...(failures > 0
+          ? {
+              error: `${failures} trace${failures === 1 ? "" : "s"} could not be loaded from Tempo`,
+            }
+          : {}),
       });
     }
   } catch (error) {
@@ -603,11 +613,11 @@ async function fetchLokiLogs(
   return rows;
 }
 
-async function fetchTempoBackfill(
+export async function fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
-): Promise<ObservabilitySpanRow[]> {
+): Promise<{ rows: ObservabilitySpanRow[]; failures: number }> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
   const start = end - TEMPO_BACKFILL_WINDOW_S;
@@ -628,15 +638,22 @@ async function fetchTempoBackfill(
   const body = (await response.json()) as {
     traces?: Array<{ traceID: string }>;
   };
-  const rows = await mapWithConcurrency(
+  const results = await mapWithConcurrency(
     body?.traces ?? [],
     TEMPO_DETAIL_CONCURRENCY,
     (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
   );
-
-  return rows
+  // A detail fetch that failed is counted, not silently dropped: the caller
+  // turns a non-zero count into the backfill's `error` so a half- or fully-
+  // failed history reads as a failure, not an empty stage.
+  const failures = results.filter(
+    (result) => result.status === "rejected",
+  ).length;
+  const rows = results
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
     .sort((a, b) => b.startTimeMs - a.startTimeMs);
+
+  return { rows: rows, failures: failures };
 }
 
 async function fetchTempoTrace(

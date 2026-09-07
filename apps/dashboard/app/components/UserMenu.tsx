@@ -170,7 +170,16 @@ export function UserMenu(): React.JSX.Element | null {
           <Shield />
           Privacy Policy
         </DropdownMenuItem>
-        <DropdownMenuItem className="cursor-pointer">
+        <DropdownMenuItem
+          className="cursor-pointer"
+          render={
+            <a
+              href="https://broods.app/support"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+        >
           <HelpCircle />
           Support
         </DropdownMenuItem>
