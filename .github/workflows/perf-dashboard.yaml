@@ -24,6 +24,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Checkout is all this job does with the token; deny everything else.
+    permissions:
+      contents: read
     environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'development' }}
     env:
       PERF_BASE_URL: ${{ inputs.base_url || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
