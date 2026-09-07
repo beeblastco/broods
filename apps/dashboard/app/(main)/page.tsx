@@ -3,7 +3,13 @@
 /** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
-import { useAction, useConvex, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useConvexAuth,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -14,9 +20,30 @@ export default function HomePage(): React.JSX.Element {
   const getOrCreateOrg = useMutation(api.org.orgs.getOrCreate);
   const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
   const provision = useAction(api.org.lifecycle.provision);
+  const ensureSynced = useAction(api.user.ensureSynced);
   const currentUser = useQuery(api.user.getCurrent);
+  const { isAuthenticated } = useConvexAuth();
   const bootstrapped = useRef(false);
+  const synced = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A signed-in caller with no user row is a signup whose WorkOS webhook has
+  // not landed yet. Sync it directly; `currentUser` then flips and the
+  // bootstrap below runs.
+  useEffect(() => {
+    if (currentUser !== null || !isAuthenticated || synced.current) return;
+
+    synced.current = true;
+    ensureSynced({}).catch((err: unknown) => {
+      console.error("Failed to sync user:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to set up your account. Please refresh.",
+      );
+      synced.current = false;
+    });
+  }, [currentUser, isAuthenticated, ensureSynced]);
 
   // Ensure the caller has an org, then open the requested or default project.
   useEffect(() => {
@@ -107,6 +134,7 @@ export default function HomePage(): React.JSX.Element {
             className="text-xs text-muted-foreground underline cursor-pointer"
             onClick={() => {
               bootstrapped.current = false;
+              synced.current = false;
               setError(null);
             }}
           >
