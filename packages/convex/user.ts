@@ -1,9 +1,11 @@
 /**
- * Public user queries and mutations for authentication-gated user management.
+ * Public user queries, mutations and the signup sync action for authentication-gated user management.
  */
 
+import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { components, internal } from "./_generated/api";
+import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { usersFields } from "./schema";
 
@@ -13,6 +15,51 @@ const userDoc = v.object({
   ...usersFields,
   _id: v.id("users"),
   _creationTime: v.number(),
+});
+
+/**
+ * Creates the caller's user rows when a valid session has none. Signup relies
+ * on the WorkOS `user.created` webhook to populate both the AuthKit component's
+ * `users` table and ours; while that delivery is late or misrouted, a freshly
+ * signed-up user holds a valid JWT but every dashboard read returns null.
+ * Fetches the user from WorkOS server-side and replays it through the same
+ * `user.created` path the webhook uses, so both rows land in one transaction.
+ * Idempotent: the component dedups the synthetic event id across concurrent
+ * calls, and skips `user.created` for an id it already has, so a later real
+ * webhook delivery is a no-op.
+ */
+export const ensureSynced = action({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    // Check authenticated user
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("User not found or not authenticated");
+    }
+    // The webhook already landed.
+    if (await authKit.getAuthUser(ctx)) {
+      return null;
+    }
+
+    const workosUser = await authKit.workos.userManagement.getUser(
+      identity.subject,
+    );
+    await ctx.runMutation(components.workOSAuthKit.lib.onWebhookEvent, {
+      // The component only reads the key for non-create events; the
+      // validator still wants a string.
+      apiKey: process.env.WORKOS_API_KEY ?? "",
+      event: {
+        id: `sync:${workosUser.id}`,
+        createdAt: new Date().toISOString(),
+        event: "user.created",
+        data: workosUser,
+      },
+      onEventHandle: await createFunctionHandle(internal.auth.authKitEvent),
+    });
+
+    return null;
+  },
 });
 
 export const getCurrent = query({

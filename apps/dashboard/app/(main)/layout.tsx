@@ -10,10 +10,13 @@ import {
 } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+
+/** Backoff before re-running the signup sync after a failed attempt. */
+const SYNC_RETRY_MS = 5_000;
 
 // Shown once, on the first login of an account's life — it has no business
 // riding along in the layout chunk every other session loads.
@@ -31,6 +34,7 @@ export default function MainLayout({
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const router = useRouter();
+  const ensureSynced = useAction(api.user.ensureSynced);
   const syncProfile = useMutation(api.user.syncProfile);
   const currentUser = useQuery(
     api.user.getCurrent,
@@ -38,6 +42,7 @@ export default function MainLayout({
   );
   const profileSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
+  const [syncRetry, setSyncRetry] = useState(0);
 
   // Surface the one-time account secret produced by first-login auto-provision
   // in the onboarding dialog, even after the home route navigates away.
@@ -53,6 +58,21 @@ export default function MainLayout({
       router.replace("/auth/sign-in?returnTo=/");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // A signed-in caller with no user row is a signup whose WorkOS webhook has
+  // not landed yet. Create the rows directly; `currentUser` then flips and the
+  // routes below proceed as usual. Nothing else re-renders while the row is
+  // missing, so a failed attempt schedules its own retry.
+  useEffect(() => {
+    if (currentUser !== null) return;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    ensureSynced({}).catch((err: unknown) => {
+      console.error("Failed to sync user:", err);
+      retry = setTimeout(() => setSyncRetry(syncRetry + 1), SYNC_RETRY_MS);
+    });
+
+    return () => clearTimeout(retry);
+  }, [currentUser, ensureSynced, syncRetry]);
 
   useEffect(() => {
     if (profileSynced.current || !isAuthenticated || !user || !currentUser)
