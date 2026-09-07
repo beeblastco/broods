@@ -30,6 +30,13 @@ import {
   type AiSdkHarnessSandbox,
 } from "./sandbox.ts";
 
+/**
+ * The harness pauses the turn on this builtin and waits for the host to answer
+ * through `pendingToolResults`, which core does not drive. Core asks people
+ * through its own `ask_questions` tool, so the native prompt stays off.
+ */
+const HARNESS_QUESTION_TOOL_NAME = "askUserQuestions";
+
 interface HarnessAgentCommonOptions {
   activeTools?: string[];
   adapter: HarnessAgentAdapter;
@@ -152,6 +159,7 @@ function createHarnessAgent(
     options.tools ?? {},
     options.adapter,
   );
+  const inactiveTools = inactiveToolsWithoutQuestionPrompt(options);
 
   const settings = {
     harness: options.adapter,
@@ -182,10 +190,10 @@ function createHarnessAgent(
       activeTools: options.activeTools,
     });
   }
-  if (options.inactiveTools !== undefined) {
+  if (inactiveTools !== undefined) {
     return new HarnessAgent<HarnessAgentAdapter, ToolSet>({
       ...settings,
-      inactiveTools: options.inactiveTools,
+      inactiveTools: inactiveTools,
     });
   }
 
@@ -211,6 +219,22 @@ function createHarnessRuntime(
     reservationKey: provisioned.reservationKey,
     sandbox: provisioned.sandbox,
   };
+}
+
+// An explicit `activeTools` list already leaves the question prompt out.
+function inactiveToolsWithoutQuestionPrompt(
+  options: HarnessAgentCommonOptions,
+): string[] | undefined {
+  if (
+    options.activeTools !== undefined ||
+    !(HARNESS_QUESTION_TOOL_NAME in options.adapter.builtinTools)
+  ) {
+    return options.inactiveTools;
+  }
+
+  return [
+    ...new Set([...(options.inactiveTools ?? []), HARNESS_QUESTION_TOOL_NAME]),
+  ];
 }
 
 function logHarnessDiagnostic(diagnostic: HarnessDiagnostic): void {

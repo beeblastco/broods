@@ -166,6 +166,49 @@ describe("createConfiguredHarnessAgent", () => {
     ).not.toContain("bash");
   });
 
+  // The harness pauses a turn on its `askUserQuestions` builtin and waits for
+  // an answer core never supplies; people are asked through `ask_questions`.
+  it("keeps the harness question prompt off where the adapter declares it", async () => {
+    const result = await runProbe(`
+      const runtime = module.createConfiguredHarnessAgent({
+        agentConfig: {
+          harness: { type: "opencode", inactiveTools: ["bash"] },
+          model: { provider: "openai", modelId: "gpt-5.1" },
+          provider: { openai: { apiKey: "test-key" } },
+        },
+        compute: ${JSON.stringify(COMPUTE)},
+        instructions: "",
+        reservationKey: "acct:agent:conversation",
+        tools: {},
+      });
+      const codex = module.createConfiguredHarnessAgent({
+        agentConfig: {
+          harness: { type: "codex", permissionMode: "allow-all" },
+          model: { provider: "openai", modelId: "gpt-5.1" },
+          provider: { openai: { apiKey: "test-key" } },
+        },
+        compute: ${JSON.stringify(COMPUTE)},
+        instructions: "",
+        reservationKey: "acct:agent:conversation",
+        tools: {},
+      });
+      console.log(JSON.stringify({
+        inactiveTools: runtime.agent.settings.inactiveTools,
+        builtinToolFiltering: runtime.agent.builtinToolFiltering,
+        codexInactiveTools: codex.agent.settings.inactiveTools ?? null,
+      }));
+    `);
+
+    expect(JSON.parse(result)).toEqual({
+      inactiveTools: ["bash", "askUserQuestions"],
+      builtinToolFiltering: {
+        mode: "deny",
+        toolNames: ["askUserQuestions", "bash"],
+      },
+      codexInactiveTools: null,
+    });
+  });
+
   // OpenCode derives credential discovery from its own provider name, and a
   // custom endpoint label resolves to Anthropic, so the OpenAI-compatible key
   // would never reach the sandbox.

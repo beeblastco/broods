@@ -24,8 +24,6 @@ test("project deletion purges its managed workspace namespace", async () => {
   const originalFilesystemBucketName = process.env.FILESYSTEM_BUCKET_NAME;
   vi.useFakeTimers();
   process.env.FILESYSTEM_BUCKET_NAME = "managed-workspace-bucket";
-  mockS3Client.mockClear();
-  mockSend.mockClear();
 
   try {
     const t = convexTest(schema, modules);
