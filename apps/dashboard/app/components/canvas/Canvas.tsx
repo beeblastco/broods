@@ -1115,9 +1115,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         defaultEdgeOptions={defaultEdgeOptions}
       >
         <Background
+          bgColor={isDark ? "#000" : undefined}
+          color={isDark ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.08)"}
           gap={GRID}
           size={1.5}
-          color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}
         />
         <Panel position="top-left" className="flex flex-col gap-2">
           <CanvasControls onTidy={tidyLayout} />
