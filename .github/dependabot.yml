@@ -2,11 +2,11 @@
 #
 # Known limitation (npm ecosystem): Dependabot does not regenerate `bun.lock`
 # in a workspaces repo — https://github.com/dependabot/dependabot-core/issues/14223.
-# Runner jobs install with `--no-save`, so an npm PR now arrives GREEN while
-# `bun.lock` still pins the old version — CI proves nothing about the bump.
-# Check the branch out, run `bun install`, and push the lockfile before
-# believing it. Treat those PRs as "a release exists", and use
-# `bun run deps:check` for the authoritative picture.
+# CI installs with `--frozen-lockfile`, so every npm PR arrives RED with
+# "lockfile had changes, but lockfile is frozen". Treat those PRs as "a release
+# exists": apply the bumps on a branch, run `bun install`, commit the lockfile,
+# and close the Dependabot PRs. `bun run deps:check` is the authoritative
+# picture for the AI SDK family.
 #
 # Everything is grouped. The AI SDK packages pin `ai` at an exact version inside
 # their own manifests, so one PR per package would each install a second copy of

@@ -32,7 +32,7 @@ Provider-defined tool names come from the provider package, not from core. With 
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true`, a workspace has a persistent sandbox, or `ask_questions` is available. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
-`ask_questions` is registered on every run that has somewhere to put a question and somewhere to resume: a channel turn, or a WebSocket/direct turn. Subagents never get it (the parent asks on their behalf) and neither does a cron-fired run. See [Asking the user](#asking-the-user).
+`ask_questions` is registered on every run that has somewhere to put a question and somewhere to resume: a channel turn, or a WebSocket/direct turn. Subagents never get it (the parent asks on their behalf) and neither does a cron-fired run. It is also the only question tool under an AI SDK Harness: the adapter's native `askUserQuestions` builtin is switched off. See [Asking the user](#asking-the-user).
 
 Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
 

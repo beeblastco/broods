@@ -30,6 +30,13 @@ import {
   type AiSdkHarnessSandbox,
 } from "./sandbox.ts";
 
+/**
+ * The harness pauses the turn on this builtin and waits for the host to answer
+ * through `pendingToolResults`, which core does not drive. Core asks people
+ * through its own `ask_questions` tool, so the native prompt stays off.
+ */
+const HARNESS_QUESTION_TOOL_NAME = "askUserQuestions";
+
 interface HarnessAgentCommonOptions {
   activeTools?: string[];
   adapter: HarnessAgentAdapter;
@@ -152,6 +159,7 @@ function createHarnessAgent(
     options.tools ?? {},
     options.adapter,
   );
+  const filtering = withoutHarnessQuestionPrompt(options);
 
   const settings = {
     harness: options.adapter,
@@ -176,16 +184,16 @@ function createHarnessAgent(
     },
     tools: tools,
   };
-  if (options.activeTools !== undefined) {
+  if (filtering.activeTools !== undefined) {
     return new HarnessAgent<HarnessAgentAdapter, ToolSet>({
       ...settings,
-      activeTools: options.activeTools,
+      activeTools: filtering.activeTools,
     });
   }
-  if (options.inactiveTools !== undefined) {
+  if (filtering.inactiveTools !== undefined) {
     return new HarnessAgent<HarnessAgentAdapter, ToolSet>({
       ...settings,
-      inactiveTools: options.inactiveTools,
+      inactiveTools: filtering.inactiveTools,
     });
   }
 
@@ -254,6 +262,32 @@ function resolveHarnessToolFiltering(
   return inactiveTools.length > 0
     ? { inactiveTools: [...new Set(inactiveTools)] }
     : {};
+}
+
+function withoutHarnessQuestionPrompt(
+  options: HarnessAgentCommonOptions,
+): HarnessToolFiltering {
+  if (options.activeTools !== undefined) {
+    return {
+      activeTools: options.activeTools.filter(
+        (name) => name !== HARNESS_QUESTION_TOOL_NAME,
+      ),
+    };
+  }
+  if (!(HARNESS_QUESTION_TOOL_NAME in options.adapter.builtinTools)) {
+    return options.inactiveTools !== undefined
+      ? { inactiveTools: options.inactiveTools }
+      : {};
+  }
+
+  return {
+    inactiveTools: [
+      ...new Set([
+        ...(options.inactiveTools ?? []),
+        HARNESS_QUESTION_TOOL_NAME,
+      ]),
+    ],
+  };
 }
 
 function withoutHarnessBuiltinTools(

@@ -246,6 +246,9 @@ All AI SDK Harness adapters receive enabled Broods MCP server tools and account
 skills.
 Use `activeTools` or `inactiveTools` on `defineHarness()` to filter adapter
 built-ins and MCP tools. Channel-level denied tools are applied in addition.
+The adapter's own `askUserQuestions` builtin (Claude Code, OpenCode) is always
+off: it pauses the harness turn waiting for an answer core never supplies, and
+the agent asks through [`ask_questions`](tools.md#asking-the-user) instead.
 Adapter capabilities still differ:
 
 | Harness     | MCP tools | Account skills | Built-in approval | Built-in filtering |
