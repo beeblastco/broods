@@ -3,6 +3,8 @@
 /** Monitoring panel: dense, full-height log table streamed live from the gateway observability WS. */
 import { Badge } from "@/app/components/ui/badge";
 import {
+  entryKey,
+  isTraceId,
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
@@ -12,6 +14,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
 import {
+  emptyStreamMessage,
   ObservabilityToolbar,
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
@@ -191,15 +194,18 @@ function LogDetails({
   onViewTrace: (traceId: string) => void;
 }) {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
+  // A line logged outside any task run carries no trace, or the all-zero
+  // sentinel; neither has anything to open on the Tracing tab.
+  const traceId = isTraceId(entry.traceId) ? entry.traceId : null;
 
   return (
     <div className="flex flex-col gap-2">
-      {entry.traceId && (
+      {traceId && (
         <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-          <span className="truncate">trace: {entry.traceId}</span>
+          <span className="truncate">trace: {traceId}</span>
           <button
             type="button"
-            onClick={() => onViewTrace(entry.traceId!)}
+            onClick={() => onViewTrace(traceId)}
             className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
           >
             View trace
@@ -258,7 +264,7 @@ export function MonitoringPanel({
     router.push(`${pathname}?${next.toString()}`);
   };
 
-  const { entries, status, error, refresh } = useObservabilityStream({
+  const { entries, status, history, error, refresh } = useObservabilityStream({
     stream: "logs",
     projectSlug: projectSlug,
     stageSlug: stageSlug,
@@ -356,9 +362,9 @@ export function MonitoringPanel({
               </tr>
             </thead>
             <tbody>
-              {visible.map((entry, i) => (
+              {visible.map((entry) => (
                 <LogRow
-                  key={`${entry.ts}-${i}`}
+                  key={entryKey(entry)}
                   entry={entry}
                   isSelected={selected === entry}
                   onSelect={() => setSelected(entry)}
@@ -371,7 +377,7 @@ export function MonitoringPanel({
                     className="h-32 text-center text-xs text-muted-foreground"
                   >
                     {entries.length === 0
-                      ? "Waiting for logs…"
+                      ? emptyStreamMessage(history, error, "logs", "30 days")
                       : "No logs match the current filters."}
                   </td>
                 </tr>

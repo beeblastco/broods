@@ -14,6 +14,14 @@ const MAX_BUFFERED = 128;
 const FLUSH_DELAY_MS = 10_000;
 
 /**
+ * Every page has to be fully on screen within this, on a cold load and on a
+ * client-side navigation alike. The deployed probe (e2e/perf) fails a
+ * page over it; the web-vital budgets below hold the field data to the same
+ * line.
+ */
+export const PAGE_RENDER_BUDGET_MS = 1000;
+
+/**
  * Budget per metric, in the metric's own unit. Every event carries
  * `over_budget`, so a Grafana alert is a filter rather than a threshold
  * duplicated in the query.
@@ -22,12 +30,12 @@ export const PERF_BUDGETS: Record<string, number> = {
   "canvas.render": 200,
   "long-task": 200,
   "optimistic-save": 1000,
-  "route.transition": 600,
+  "route.transition": PAGE_RENDER_BUDGET_MS,
   "side-panel.open": 300,
   "web-vital.CLS": 0.1,
-  "web-vital.FCP": 1800,
+  "web-vital.FCP": PAGE_RENDER_BUDGET_MS,
   "web-vital.INP": 200,
-  "web-vital.LCP": 2500,
+  "web-vital.LCP": PAGE_RENDER_BUDGET_MS,
   "web-vital.TTFB": 800,
 };
 

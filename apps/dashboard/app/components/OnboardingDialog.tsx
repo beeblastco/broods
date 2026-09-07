@@ -84,7 +84,9 @@ function CommandBlock({ command }: { command: string }) {
   const { copied, copy } = useCopy();
 
   return (
-    <div className="relative">
+    // min-w-0: as a grid item this would otherwise grow to the command's
+    // intrinsic width and push the whole card past its edge.
+    <div className="relative min-w-0">
       <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-2.5 pr-12 font-mono text-xs leading-relaxed text-foreground">
         <span className="select-none text-muted-foreground">$ </span>
         {command}
@@ -156,7 +158,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
 
         <div
           key={step}
-          className="min-h-36 animate-in fade-in slide-in-from-right-2 duration-200 motion-reduce:animate-none"
+          className="min-h-36 min-w-0 animate-in fade-in slide-in-from-right-2 duration-200 motion-reduce:animate-none"
         >
           {step === 0 && (
             <div className="grid gap-3 text-sm leading-relaxed text-muted-foreground">

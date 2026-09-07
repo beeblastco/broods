@@ -175,8 +175,10 @@ function SelectScrollUpButton({ className }: SelectScrollButtonProps) {
   return (
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
+      // Base UI lays the arrow over the list, so a solid background would hide
+      // the first row behind it; fade it instead.
       className={cn(
-        "bg-popover top-0 flex w-full cursor-pointer items-center justify-center py-1",
+        "top-0 flex w-full cursor-pointer items-center justify-center bg-linear-to-b from-popover to-popover/0 py-1",
         className,
       )}
     >
@@ -190,7 +192,7 @@ function SelectScrollDownButton({ className }: SelectScrollButtonProps) {
     <SelectPrimitive.ScrollDownArrow
       data-slot="select-scroll-down-button"
       className={cn(
-        "bg-popover bottom-0 flex w-full cursor-pointer items-center justify-center py-1",
+        "bottom-0 flex w-full cursor-pointer items-center justify-center bg-linear-to-t from-popover to-popover/0 py-1",
         className,
       )}
     >

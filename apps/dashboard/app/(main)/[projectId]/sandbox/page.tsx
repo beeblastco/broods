@@ -10,6 +10,7 @@
 
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
+import { useStageSession } from "@/app/hooks/useStageSession";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -131,22 +132,25 @@ export default function SandboxPage(): React.JSX.Element {
 
 /**
  * The instance sheet's Logs tab streams over the same gateway socket as the
- * Monitoring tab: the stage's slugs from its deployment plus its runtime key,
- * recovered from its encrypted copy. Minting a key stays on the Monitoring tab.
+ * Monitoring tab: the stage's slugs from its deployment plus a short-lived
+ * stage session any member can mint. The permanent runtime key never has to
+ * reach this page. Minting a key stays on the Monitoring tab.
  */
 function useObservabilityScope(
   projectId: Id<"projects">,
   stageId: Id<"stages"> | null,
 ): SandboxObservabilityScope | null {
-  const args = stageId ? { projectId: projectId, stageId: stageId } : "skip";
-  const deployment = useQuery(api.agent.deployments.getForStage, args);
-  const runtimeKey = useQuery(api.agent.deployments.revealKeyForStage, args);
+  const deployment = useQuery(
+    api.agent.deployments.getForStage,
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
+  const session = useStageSession(projectId, stageId);
 
   return deployment
     ? {
         projectSlug: deployment.projectSlug,
         stageSlug: deployment.stageSlug,
-        apiKey: runtimeKey ?? undefined,
+        apiKey: session ?? undefined,
       }
     : null;
 }

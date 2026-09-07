@@ -170,12 +170,16 @@ export function UserMenu(): React.JSX.Element | null {
           <Shield />
           Privacy Policy
         </DropdownMenuItem>
-        <DropdownMenuItem>
+        <DropdownMenuItem className="cursor-pointer">
           <HelpCircle />
           Support
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={() => signOut()}>
+        <DropdownMenuItem
+          variant="destructive"
+          className="cursor-pointer"
+          onClick={() => signOut()}
+        >
           <LogOut />
           Sign out
         </DropdownMenuItem>

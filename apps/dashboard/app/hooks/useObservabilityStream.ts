@@ -9,7 +9,10 @@
 
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isRootSpanKind } from "../../../../packages/broods/src/observability-contracts";
+import {
+  isRootSpanKind,
+  isTraceId,
+} from "../../../../packages/broods/src/observability-contracts";
 import type {
   LogLevel,
   ObservabilityClientMessage,
@@ -19,7 +22,7 @@ import type {
 } from "../../../../packages/broods/src/observability-contracts";
 
 // Re-export for consumers.
-export { isRootSpanKind };
+export { isRootSpanKind, isTraceId };
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
 export type ObservabilityStreamStatus =
@@ -27,6 +30,17 @@ export type ObservabilityStreamStatus =
   | "connecting"
   | "live"
   | "error";
+
+/**
+ * Where the durable backfill (Loki or Tempo) stands for this connection. The
+ * live relay keeps flowing whatever this says; it decides only what an empty
+ * list means. "none" = no backfill was asked for.
+ */
+export type ObservabilityHistoryStatus =
+  | "none"
+  | "loading"
+  | "loaded"
+  | "failed";
 
 interface UseObservabilityStreamOptions {
   /** Which realtime stream to subscribe to. */
@@ -51,8 +65,15 @@ interface UseObservabilityStreamOptions {
 interface UseObservabilityStreamResult<T> {
   entries: T[];
   status: ObservabilityStreamStatus;
+  history: ObservabilityHistoryStatus;
   error: string | null;
   refresh: () => void;
+  /**
+   * Pull one trace by id from Tempo, for a trace older than the backfill
+   * window ("traces" stream only). Its spans merge into `entries`; a miss
+   * lands in `error`. No-op while the socket is not live.
+   */
+  fetchTrace: (traceId: string) => void;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -113,6 +134,7 @@ export function useObservabilityStream(
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
   >(() => STREAM_CACHE.get(connKey) ?? []);
   const [status, setStatus] = useState<ObservabilityStreamStatus>("idle");
+  const [history, setHistory] = useState<ObservabilityHistoryStatus>("none");
   const [error, setError] = useState<string | null>(null);
 
   // Seed from cache when the connection target changes (e.g. switching
@@ -155,14 +177,18 @@ export function useObservabilityStream(
 
   const closeSocket = useCallback(() => {
     const s = socketRef.current;
-    if (s) {
-      socketRef.current = null;
-      if (
-        s.readyState === WebSocket.OPEN ||
-        s.readyState === WebSocket.CONNECTING
-      ) {
-        s.close(1000, "cleanup");
-      }
+    if (!s) return;
+    socketRef.current = null;
+    if (s.readyState === WebSocket.OPEN) {
+      s.close(1000, "cleanup");
+    } else if (s.readyState === WebSocket.CONNECTING) {
+      // Closing mid-handshake makes the browser log "WebSocket is closed
+      // before the connection is established" and counts as a failed
+      // connection; let the handshake finish, then hang up cleanly.
+      s.onopen = () => s.close(1000, "superseded");
+      s.onmessage = null;
+      s.onerror = null;
+      s.onclose = null;
     }
   }, []);
 
@@ -184,6 +210,7 @@ export function useObservabilityStream(
     closeSocket();
     clearReconnect();
     setStatus("connecting");
+    setHistory(backfill > 0 ? "loading" : "none");
     setError(null);
 
     const wsUrl =
@@ -232,6 +259,10 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
+        // One backfill message answers the subscribe's backfill and each
+        // fetchTrace alike; a failure names itself instead of looking empty.
+        setHistory(msg.error ? "failed" : "loaded");
+        if (msg.error) setError(msg.error);
         setEntries((prev) => {
           const incoming = msg.entries as (
             | ObservabilityLogEntry
@@ -355,17 +386,34 @@ export function useObservabilityStream(
     if (projectSlug && stageSlug && apiKey) connect();
   }, [projectSlug, stageSlug, apiKey, connect]);
 
+  const fetchTrace = useCallback((traceId: string) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const message: ObservabilityClientMessage = {
+      type: "fetchTrace",
+      traceId: traceId,
+    };
+    setHistory("loading");
+    setError(null);
+    socket.send(JSON.stringify(message));
+  }, []);
+
   return {
     entries: entries,
     status: status,
+    history: history,
     error: error,
     refresh: refresh,
+    fetchTrace: fetchTrace,
   };
 }
 
 // Dedup key: spans use the stable traceId+spanId; logs have no wire id, so fall
-// back to ts + eventType + message.
-function entryKey(entry: ObservabilityLogEntry | ObservabilitySpanRow): string {
+// back to ts + eventType + message. Also the React key for a row: an index key
+// remounts every row when a live entry is prepended.
+export function entryKey(
+  entry: ObservabilityLogEntry | ObservabilitySpanRow,
+): string {
   if ("spanId" in entry) {
     return `span:${entry.traceId}:${entry.spanId}`;
   }

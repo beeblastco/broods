@@ -2,6 +2,10 @@
 
 /** Main canvas component that renders nodes and edges from the database. */
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
+import {
+  CanvasSaveStatus,
+  type CanvasSaveState,
+} from "@/app/components/canvas/CanvasSaveStatus";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import {
   isCodeManagedEdgeId,
@@ -126,7 +130,6 @@ const NODE_TEMPLATES = [
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 type FlowPosition = { x: number; y: number };
-type CanvasSaveState = "idle" | "saving" | "saved" | "error";
 
 function hydrateEncodedHandleEdge(
   edge: Edge,
@@ -1120,33 +1123,13 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           gap={GRID}
           size={1.5}
         />
-        <Panel position="top-left" className="flex flex-col gap-2">
+        <Panel position="top-left">
           <CanvasControls onTidy={tidyLayout} />
-          {saveState !== "idle" && (
-            <div
-              aria-live="polite"
-              className="rounded-lg border border-border bg-card/80 px-2 py-1 text-xs backdrop-blur-md"
-            >
-              {saveState === "saving" && (
-                <span className="text-muted-foreground">Saving…</span>
-              )}
-              {saveState === "saved" && (
-                <span className="text-muted-foreground">Saved</span>
-              )}
-              {saveState === "error" && (
-                <span className="flex items-center gap-2 text-destructive">
-                  Couldn&apos;t save
-                  <button
-                    type="button"
-                    className="cursor-pointer underline underline-offset-2"
-                    onClick={scheduleSave}
-                  >
-                    Retry
-                  </button>
-                </span>
-              )}
-            </div>
-          )}
+        </Panel>
+        {/* Save status lives away from the controls so it never crowds or
+            reflows them; it clears itself once a save lands. */}
+        <Panel position="bottom-left">
+          <CanvasSaveStatus state={saveState} onRetry={scheduleSave} />
         </Panel>
       </ReactFlow>
     </>
@@ -1183,6 +1166,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
                       <ContextMenuSeparator />
                     )}
                     <ContextMenuItem
+                      className="cursor-pointer"
                       onClick={() =>
                         type === "agent"
                           ? onOpenSourcePicker()

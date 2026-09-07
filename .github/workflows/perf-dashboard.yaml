@@ -1,0 +1,70 @@
+name: Dashboard render budget
+
+# A green build and rollout say the image is on the cluster, not that the
+# pages it serves are fast. This signs in to the deployment the rollout just
+# updated and fails when any page takes longer than the render budget in
+# apps/dashboard/app/lib/perfReport.ts to put its content on screen.
+
+on:
+  workflow_run:
+    workflows: ["Build Dashboard Image"]
+    types: [completed]
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Dashboard to probe (defaults to the branch's deployment)"
+        required: false
+        type: string
+
+jobs:
+  probe:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'development' }}
+    env:
+      PERF_BASE_URL: ${{ inputs.base_url || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
+      PERF_EMAIL: ${{ secrets.DASHBOARD_PERF_EMAIL }}
+      PERF_PASSWORD: ${{ secrets.DASHBOARD_PERF_PASSWORD }}
+      PERF_PROJECT_ID: ${{ vars.DASHBOARD_PERF_PROJECT_ID }}
+    steps:
+      - name: Require a probe account
+        # The probe signs in as a real member. Without one there is nothing to
+        # measure, and a silent pass would look like a met budget.
+        shell: bash
+        run: |
+          if [[ -z "$PERF_EMAIL" || -z "$PERF_PASSWORD" ]]; then
+            echo "Missing DASHBOARD_PERF_EMAIL / DASHBOARD_PERF_PASSWORD secrets." >&2
+            echo "Create a WorkOS user with email + password auth in an org that owns a project, then add both secrets to the environment." >&2
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+
+      - name: Install Chromium
+        run: cd apps/dashboard && bunx playwright install --with-deps chromium
+
+      - name: Probe every page against the render budget
+        run: cd apps/dashboard && bunx playwright test --project=perf
+
+      - name: Upload traces of a failed probe
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-perf-${{ github.run_id }}
+          path: apps/dashboard/test-results
+          if-no-files-found: ignore

@@ -47,3 +47,6 @@ next-env.d.ts
 # local tooling output
 .migration
 .impeccable
+# playwright
+/test-results
+/playwright-report

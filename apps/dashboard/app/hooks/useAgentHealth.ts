@@ -100,22 +100,6 @@ function subscribe(listener: () => void) {
 }
 
 /**
- * Returns whether the core service is reachable.
- * @returns true if healthy, false if unhealthy, null if not yet checked
- */
-export function useCoreServiceHealth(): boolean | null {
-  const [, forceUpdate] = useState(0);
-
-  useEffect(() => {
-    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1));
-
-    return unsubscribe;
-  }, []);
-
-  return healthCache.healthy;
-}
-
-/**
  * Returns the health status of an agent based on core service reachability.
  * @param agentConfigId agent config to check health for
  * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy

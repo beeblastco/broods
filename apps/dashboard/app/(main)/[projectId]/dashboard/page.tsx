@@ -20,6 +20,7 @@ import {
 } from "./components/RuntimeKeyDialog";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
+import DashboardLoading from "./loading";
 
 const TABS = [
   { id: "monitoring", label: "Monitoring" },
@@ -153,13 +154,9 @@ export default function DashboardPage(): React.JSX.Element {
   const projectSlug = activeDeployment?.projectSlug;
   const stageSlug = activeDeployment?.stageSlug;
 
-  if (project === undefined) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
+  // The same skeleton the route's loading.tsx paints, so a client navigation
+  // does not flash skeleton → bare text → content.
+  if (project === undefined) return <DashboardLoading />;
 
   if (project === null) {
     return (

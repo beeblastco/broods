@@ -13,7 +13,9 @@
     "build": "next build",
     "start": "next start",
     "check": "tsc --noEmit",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test tests --pass-with-no-tests",
+    "test:ui": "playwright test --project=ui",
+    "perf": "playwright test --project=perf"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -49,6 +51,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",

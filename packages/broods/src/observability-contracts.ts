@@ -11,6 +11,8 @@ export const MAX_OBSERVABILITY_BACKFILL = 500;
 // The per-launch UUID core puts last in a MicroVM's CloudWatch log stream name.
 const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// A W3C trace id: 32 lowercase hex chars. All zeros is the "no span" sentinel.
+const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
 
 // Matches the shape core's shared/log.ts emits. Backfilled entries can be any
 // level; the live NATS stream is INFO+ only.
@@ -79,18 +81,31 @@ export type ObservabilityUnsubscribeMessage = {
   stream: "logs" | "traces";
 };
 
+// Pull one trace out of Tempo by id, outside the recent-history window the
+// "traces" backfill covers. The answer is a "backfill" message holding that
+// trace's spans, or carrying `error` when Tempo has no such trace in scope.
+export type ObservabilityFetchTraceMessage = {
+  type: "fetchTrace";
+  traceId: string;
+};
+
 export type ObservabilityClientMessage =
   | ObservabilitySubscribeMessage
-  | ObservabilityUnsubscribeMessage;
+  | ObservabilityUnsubscribeMessage
+  | ObservabilityFetchTraceMessage;
 
 // Sent once the live subscription (NATS relay, or the Loki poll of a sandbox
 // tail) is active. The backfill, when one was asked for, follows it.
 export type ObservabilityReadyMessage = { type: "ready" };
 
+// Sent once per requested backfill or fetchTrace, failure included, so a
+// client can tell "history loaded, nothing there" from "still loading".
+// `error` marks a failed history query; `entries` then holds what was recovered.
 export type ObservabilityBackfillMessage = {
   type: "backfill";
   stream: "logs" | "traces";
   entries: ObservabilityLogEntry[] | ObservabilitySpanRow[];
+  error?: string;
 };
 
 export type ObservabilityLogMessage = {
@@ -120,36 +135,9 @@ export function isObservabilityClientMessage(
 ): v is ObservabilityClientMessage {
   if (typeof v !== "object" || v === null) return false;
   const msg = v as Record<string, unknown>;
-  if (msg["type"] === "subscribe") {
-    const stream = msg["stream"];
-    if (stream !== "logs" && stream !== "traces") return false;
-    const backfill = msg["backfill"];
-    if (
-      backfill !== undefined &&
-      (typeof backfill !== "number" ||
-        !Number.isSafeInteger(backfill) ||
-        backfill < 0 ||
-        backfill > MAX_OBSERVABILITY_BACKFILL)
-    )
-      return false;
-    if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
-      return false;
-    const minLevel = msg["minLevel"];
-    if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
-    const sandboxId = msg["sandboxId"];
-    if (
-      sandboxId !== undefined &&
-      (stream !== "logs" || !isSandboxLogId(sandboxId))
-    )
-      return false;
-
-    return true;
-  }
-  if (msg["type"] === "unsubscribe") {
-    const stream = msg["stream"];
-
-    return stream === "logs" || stream === "traces";
-  }
+  if (msg["type"] === "subscribe") return isSubscribeMessage(msg);
+  if (msg["type"] === "unsubscribe") return isStreamName(msg["stream"]);
+  if (msg["type"] === "fetchTrace") return isTraceId(msg["traceId"]);
 
   return false;
 }
@@ -169,10 +157,42 @@ export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
   return kind === "task" || kind === "cron" || kind === "subtask";
 }
 
+/** Whether a value is a real trace id a log line can be followed to. */
+export function isTraceId(value: unknown): value is string {
+  return typeof value === "string" && TRACE_ID_PATTERN.test(value);
+}
+
 /**
  * Narrow a wire value to a sandbox log id. Strict on purpose: the gateway
  * interpolates it into LogQL, so only the UUID shape core mints may pass.
  */
 export function isSandboxLogId(value: unknown): value is string {
   return typeof value === "string" && SANDBOX_LOG_ID_PATTERN.test(value);
+}
+
+function isStreamName(value: unknown): value is "logs" | "traces" {
+  return value === "logs" || value === "traces";
+}
+
+function isSubscribeMessage(msg: Record<string, unknown>): boolean {
+  const stream = msg["stream"];
+  if (!isStreamName(stream)) return false;
+  const backfill = msg["backfill"];
+  if (
+    backfill !== undefined &&
+    (typeof backfill !== "number" ||
+      !Number.isSafeInteger(backfill) ||
+      backfill < 0 ||
+      backfill > MAX_OBSERVABILITY_BACKFILL)
+  )
+    return false;
+  if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
+    return false;
+  const minLevel = msg["minLevel"];
+  if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
+  const sandboxId = msg["sandboxId"];
+
+  return (
+    sandboxId === undefined || (stream === "logs" && isSandboxLogId(sandboxId))
+  );
 }

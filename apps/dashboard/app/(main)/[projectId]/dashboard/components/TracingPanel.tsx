@@ -21,6 +21,7 @@ import {
 } from "react";
 import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
 import {
+  emptyStreamMessage,
   ObservabilityToolbar,
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
@@ -793,13 +794,14 @@ export function TracingPanel({
   const [toTime, setToTime] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  const { entries, status, error, refresh } = useObservabilityStream({
-    stream: "traces",
-    projectSlug: projectSlug,
-    stageSlug: stageSlug,
-    apiKey: apiKey,
-    backfill: 100,
-  });
+  const { entries, status, history, error, refresh, fetchTrace } =
+    useObservabilityStream({
+      stream: "traces",
+      projectSlug: projectSlug,
+      stageSlug: stageSlug,
+      apiKey: apiKey,
+      backfill: 100,
+    });
 
   const fromMs = toEpochMs(fromTime);
   const toMs = toEpochMs(toTime);
@@ -879,16 +881,48 @@ export function TracingPanel({
   // Arriving from a log's "View trace": expand that trace, page it into view,
   // scroll to it, then drop the param so a manual collapse is not re-fought.
   const focusedRef = useRef<string | null>(null);
+  // The focus key a one-trace Tempo fetch was already sent for, so a miss
+  // ends in a notice instead of another fetch.
+  const fetchedRef = useRef<string | null>(null);
+  const [missingTrace, setMissingTrace] = useState<string | null>(null);
+  // A new focus target retires the notice about the previous one.
+  const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
+  if (focusTraceId !== prevFocusTraceId) {
+    setPrevFocusTraceId(focusTraceId);
+    if (focusTraceId) setMissingTrace(null);
+  }
   // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
   // below would otherwise swallow a repeat click on the same "↳ from parent" link).
   const [refocusNonce, setRefocusNonce] = useState(0);
+  const dropFocusParam = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("trace");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [searchParams, pathname, router]);
   useEffect(() => {
-    const focusKey = focusTraceId ? `${focusTraceId}:${refocusNonce}` : null;
-    if (!focusKey || focusedRef.current === focusKey) return;
+    if (!focusTraceId) return;
+    const focusKey = `${focusTraceId}:${refocusNonce}`;
+    if (focusedRef.current === focusKey) return;
     const index = groups.findIndex(
       (group) => group.root.traceId === focusTraceId,
     );
-    if (index === -1) return;
+    if (index === -1) {
+      // Not in the recent history: ask Tempo for that one trace, once the
+      // backfill has settled so the two answers cannot race. A second miss
+      // (or a failed lookup) is reported rather than left as a blank table.
+      if (history === "loading" || history === "none") return;
+      if (fetchedRef.current !== focusKey) {
+        fetchedRef.current = focusKey;
+        fetchTrace(focusTraceId);
+
+        return;
+      }
+      focusedRef.current = focusKey;
+      setMissingTrace(focusTraceId);
+      dropFocusParam();
+
+      return;
+    }
     const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
     setExpanded((current) =>
       current.has(rootKey) ? current : new Set([...current, rootKey]),
@@ -905,17 +939,15 @@ export function TracingPanel({
     if (!target) return;
     focusedRef.current = focusKey;
     target.scrollIntoView({ block: "center" });
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("trace");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    dropFocusParam();
   }, [
     focusTraceId,
     refocusNonce,
     groups,
     visibleCount,
-    searchParams,
-    pathname,
-    router,
+    history,
+    fetchTrace,
+    dropFocusParam,
   ]);
 
   const toggle = (key: string) => {
@@ -982,6 +1014,25 @@ export function TracingPanel({
         isError={status === "error"}
       />
 
+      {missingTrace && (
+        <p
+          aria-live="polite"
+          className="flex shrink-0 items-center gap-2 text-xs text-destructive"
+        >
+          <span className="truncate font-mono">
+            Trace {missingTrace} is not available
+            {error ? `: ${error}` : " in this stage's history."}
+          </span>
+          <button
+            type="button"
+            onClick={() => setMissingTrace(null)}
+            className="cursor-pointer underline underline-offset-2"
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
+
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
         <div className="min-h-0 min-w-0 flex-1 overflow-auto">
           <table className="w-full text-xs font-mono table-fixed">
@@ -1026,7 +1077,7 @@ export function TracingPanel({
                     className="h-32 text-center text-xs text-muted-foreground"
                   >
                     {entries.length === 0
-                      ? "Waiting for traces…"
+                      ? emptyStreamMessage(history, error, "traces", "7 days")
                       : "No tasks match the current filters."}
                   </td>
                 </tr>
