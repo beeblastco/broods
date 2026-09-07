@@ -192,10 +192,22 @@ describe("createConfiguredHarnessAgent", () => {
         reservationKey: "acct:agent:conversation",
         tools: {},
       });
+      const explicit = module.createConfiguredHarnessAgent({
+        agentConfig: {
+          harness: { type: "opencode", activeTools: ["bash", "askUserQuestions"] },
+          model: { provider: "openai", modelId: "gpt-5.1" },
+          provider: { openai: { apiKey: "test-key" } },
+        },
+        compute: ${JSON.stringify(COMPUTE)},
+        instructions: "",
+        reservationKey: "acct:agent:conversation",
+        tools: {},
+      });
       console.log(JSON.stringify({
         inactiveTools: runtime.agent.settings.inactiveTools,
         builtinToolFiltering: runtime.agent.builtinToolFiltering,
         codexInactiveTools: codex.agent.settings.inactiveTools ?? null,
+        explicitActiveTools: explicit.agent.settings.activeTools,
       }));
     `);
 
@@ -206,6 +218,7 @@ describe("createConfiguredHarnessAgent", () => {
         toolNames: ["askUserQuestions", "bash"],
       },
       codexInactiveTools: null,
+      explicitActiveTools: ["bash"],
     });
   });
 

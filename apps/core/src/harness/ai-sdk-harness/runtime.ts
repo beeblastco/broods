@@ -159,7 +159,7 @@ function createHarnessAgent(
     options.tools ?? {},
     options.adapter,
   );
-  const inactiveTools = inactiveToolsWithoutQuestionPrompt(options);
+  const filtering = withoutHarnessQuestionPrompt(options);
 
   const settings = {
     harness: options.adapter,
@@ -184,16 +184,16 @@ function createHarnessAgent(
     },
     tools: tools,
   };
-  if (options.activeTools !== undefined) {
+  if (filtering.activeTools !== undefined) {
     return new HarnessAgent<HarnessAgentAdapter, ToolSet>({
       ...settings,
-      activeTools: options.activeTools,
+      activeTools: filtering.activeTools,
     });
   }
-  if (inactiveTools !== undefined) {
+  if (filtering.inactiveTools !== undefined) {
     return new HarnessAgent<HarnessAgentAdapter, ToolSet>({
       ...settings,
-      inactiveTools: inactiveTools,
+      inactiveTools: filtering.inactiveTools,
     });
   }
 
@@ -219,22 +219,6 @@ function createHarnessRuntime(
     reservationKey: provisioned.reservationKey,
     sandbox: provisioned.sandbox,
   };
-}
-
-// An explicit `activeTools` list already leaves the question prompt out.
-function inactiveToolsWithoutQuestionPrompt(
-  options: HarnessAgentCommonOptions,
-): string[] | undefined {
-  if (
-    options.activeTools !== undefined ||
-    !(HARNESS_QUESTION_TOOL_NAME in options.adapter.builtinTools)
-  ) {
-    return options.inactiveTools;
-  }
-
-  return [
-    ...new Set([...(options.inactiveTools ?? []), HARNESS_QUESTION_TOOL_NAME]),
-  ];
 }
 
 function logHarnessDiagnostic(diagnostic: HarnessDiagnostic): void {
@@ -278,6 +262,32 @@ function resolveHarnessToolFiltering(
   return inactiveTools.length > 0
     ? { inactiveTools: [...new Set(inactiveTools)] }
     : {};
+}
+
+function withoutHarnessQuestionPrompt(
+  options: HarnessAgentCommonOptions,
+): HarnessToolFiltering {
+  if (options.activeTools !== undefined) {
+    return {
+      activeTools: options.activeTools.filter(
+        (name) => name !== HARNESS_QUESTION_TOOL_NAME,
+      ),
+    };
+  }
+  if (!(HARNESS_QUESTION_TOOL_NAME in options.adapter.builtinTools)) {
+    return options.inactiveTools !== undefined
+      ? { inactiveTools: options.inactiveTools }
+      : {};
+  }
+
+  return {
+    inactiveTools: [
+      ...new Set([
+        ...(options.inactiveTools ?? []),
+        HARNESS_QUESTION_TOOL_NAME,
+      ]),
+    ],
+  };
 }
 
 function withoutHarnessBuiltinTools(
