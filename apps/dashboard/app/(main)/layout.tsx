@@ -15,6 +15,9 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+/** Backoff before re-running the signup sync after a failed attempt. */
+const SYNC_RETRY_MS = 5_000;
+
 // Shown once, on the first login of an account's life — it has no business
 // riding along in the layout chunk every other session loads.
 const OnboardingDialog = dynamic(() =>
@@ -38,8 +41,8 @@ export default function MainLayout({
     isAuthenticated ? {} : "skip",
   );
   const profileSynced = useRef(false);
-  const userSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
+  const [syncRetry, setSyncRetry] = useState(0);
 
   // Surface the one-time account secret produced by first-login auto-provision
   // in the onboarding dialog, even after the home route navigates away.
@@ -58,15 +61,18 @@ export default function MainLayout({
 
   // A signed-in caller with no user row is a signup whose WorkOS webhook has
   // not landed yet. Create the rows directly; `currentUser` then flips and the
-  // routes below proceed as usual.
+  // routes below proceed as usual. Nothing else re-renders while the row is
+  // missing, so a failed attempt schedules its own retry.
   useEffect(() => {
-    if (userSynced.current || currentUser !== null) return;
-    userSynced.current = true;
+    if (currentUser !== null) return;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     ensureSynced({}).catch((err: unknown) => {
       console.error("Failed to sync user:", err);
-      userSynced.current = false;
+      retry = setTimeout(() => setSyncRetry(syncRetry + 1), SYNC_RETRY_MS);
     });
-  }, [currentUser, ensureSynced]);
+
+    return () => clearTimeout(retry);
+  }, [currentUser, ensureSynced, syncRetry]);
 
   useEffect(() => {
     if (profileSynced.current || !isAuthenticated || !user || !currentUser)
