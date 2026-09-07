@@ -27,6 +27,6 @@
     "@edge-runtime/vm": "^5.0.0",
     "convex-test": "^0.0.56",
     "vite": "^8.2.1",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   }
 }
