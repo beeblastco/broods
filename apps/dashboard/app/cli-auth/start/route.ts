@@ -30,7 +30,13 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     const client = new ConvexHttpClient(convexUrl);
     client.setAuth(auth.accessToken);
-    const { code } = await createLoginCodeWithRetry(client, codeChallenge);
+    // A login right after signup can beat the WorkOS webhook that creates the
+    // user row; sync it before minting a code.
+    await client.action(api.user.ensureSynced, {});
+    const { code } = await client.mutation(
+      api.cli.auth.createLoginCode,
+      codeChallenge ? { codeChallenge: codeChallenge } : {},
+    );
     const target = new URL(callback);
     target.searchParams.set("code", code);
     target.searchParams.set("state", state);
@@ -45,39 +51,6 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return text(`broods CLI login failed: ${message}`, 500);
   }
-}
-
-async function createLoginCodeWithRetry(
-  client: ConvexHttpClient,
-  codeChallenge: string | undefined,
-): Promise<{ code: string }> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      return await client.mutation(
-        api.cli.auth.createLoginCode,
-        codeChallenge ? { codeChallenge: codeChallenge } : {},
-      );
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableLoginRace(error) || attempt === 3) {
-        throw error;
-      }
-      await wait(350 * (attempt + 1));
-    }
-  }
-
-  throw lastError;
-}
-
-function isRetryableLoginRace(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-
-  return /User not found/i.test(message);
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Public base URL the CLI should call for the /v1/account/* control-plane routes. */

@@ -4,7 +4,7 @@
 
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
-import { api, components, internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { usersFields } from "./schema";
@@ -24,36 +24,36 @@ const userDoc = v.object({
  * signed-up user holds a valid JWT but every dashboard read returns null.
  * Fetches the user from WorkOS server-side and replays it through the same
  * `user.created` path the webhook uses, so both rows land in one transaction.
- * Idempotent: the component dedups the synthetic event id, so concurrent calls
- * and a later real webhook delivery are no-ops.
+ * Idempotent: the component dedups the synthetic event id across concurrent
+ * calls, and skips `user.created` for an id it already has, so a later real
+ * webhook delivery is a no-op.
  */
 export const ensureSynced = action({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
+    // Check authenticated user
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
-      return null;
+      throw new Error("User not found or not authenticated");
     }
-    const existing = await ctx.runQuery(api.user.getCurrent, {});
-    if (existing) {
+    // The webhook already landed.
+    if (await authKit.getAuthUser(ctx)) {
       return null;
-    }
-    const apiKey = process.env.WORKOS_API_KEY;
-    if (!apiKey) {
-      throw new Error("WORKOS_API_KEY is not set");
     }
 
     const workosUser = await authKit.workos.userManagement.getUser(
       identity.subject,
     );
     await ctx.runMutation(components.workOSAuthKit.lib.onWebhookEvent, {
-      apiKey: apiKey,
+      // The component only reads the key for non-create events; the
+      // validator still wants a string.
+      apiKey: process.env.WORKOS_API_KEY ?? "",
       event: {
         id: `sync:${workosUser.id}`,
         createdAt: new Date().toISOString(),
         event: "user.created",
-        data: { ...workosUser },
+        data: workosUser,
       },
       onEventHandle: await createFunctionHandle(internal.auth.authKitEvent),
     });

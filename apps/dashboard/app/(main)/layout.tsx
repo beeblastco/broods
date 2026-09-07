@@ -10,7 +10,7 @@ import {
 } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -31,12 +31,14 @@ export default function MainLayout({
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const router = useRouter();
+  const ensureSynced = useAction(api.user.ensureSynced);
   const syncProfile = useMutation(api.user.syncProfile);
   const currentUser = useQuery(
     api.user.getCurrent,
     isAuthenticated ? {} : "skip",
   );
   const profileSynced = useRef(false);
+  const userSynced = useRef(false);
   const [onboardingSecret, setOnboardingSecret] = useState<string | null>(null);
 
   // Surface the one-time account secret produced by first-login auto-provision
@@ -53,6 +55,18 @@ export default function MainLayout({
       router.replace("/auth/sign-in?returnTo=/");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  // A signed-in caller with no user row is a signup whose WorkOS webhook has
+  // not landed yet. Create the rows directly; `currentUser` then flips and the
+  // routes below proceed as usual.
+  useEffect(() => {
+    if (userSynced.current || currentUser !== null) return;
+    userSynced.current = true;
+    ensureSynced({}).catch((err: unknown) => {
+      console.error("Failed to sync user:", err);
+      userSynced.current = false;
+    });
+  }, [currentUser, ensureSynced]);
 
   useEffect(() => {
     if (profileSynced.current || !isAuthenticated || !user || !currentUser)
