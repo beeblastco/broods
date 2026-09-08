@@ -10,12 +10,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import type { ObservabilityHistoryStatus } from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
 import { RefreshCw, Search, X } from "lucide-react";
 
 export interface ToolbarFilterOption {
   value: string;
   label: string;
+}
+
+/**
+ * What an empty logs or traces table should say. "Waiting" alone hid a failed
+ * or still-running history query behind the same text as a quiet stage.
+ */
+export function emptyStreamMessage(
+  history: ObservabilityHistoryStatus,
+  error: string | null,
+  noun: "logs" | "traces",
+  window: string,
+): string {
+  if (history === "loading") return `Loading ${noun} from the last ${window}…`;
+  if (history === "failed")
+    return `Couldn't load ${noun}: ${error ?? "history query failed"}`;
+  if (history === "loaded") return `No ${noun} in the last ${window}.`;
+
+  return `Waiting for ${noun}…`;
 }
 
 interface Props {

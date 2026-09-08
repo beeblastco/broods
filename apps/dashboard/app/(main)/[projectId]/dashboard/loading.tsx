@@ -5,8 +5,8 @@ export default function DashboardLoading(): React.JSX.Element {
   return (
     <SidebarPageSkeleton
       title="Dashboard"
-      tabCount={4}
-      contentMaxWidth="max-w-6xl"
+      tabCount={5}
+      contentMaxWidth="max-w-none"
     />
   );
 }

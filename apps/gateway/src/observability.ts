@@ -11,7 +11,12 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
-import { decoder, mapWithConcurrency, parseJson } from "./utils.ts";
+import {
+  decoder,
+  errorMessage,
+  mapWithConcurrency,
+  parseJson,
+} from "./utils.ts";
 
 export type ObservabilityScope = {
   accountId: string;
@@ -65,6 +70,11 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 // a wider window is rejected with HTTP 400 and the backfill delivers nothing.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
+// A search over the whole window walks every block in it; a single trace by
+// id is an index hit. Both used to share 5 s, which the search blew through on
+// a busy stage and left the Tracing tab "waiting" with no history at all.
+const TEMPO_SEARCH_TIMEOUT_MS = 15_000;
+const TEMPO_TRACE_TIMEOUT_MS = 5_000;
 // Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
 // polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
 // timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
@@ -108,6 +118,11 @@ export async function handleObservabilityMessage(
   const msg = parsed as ObservabilityClientMessage;
   if (msg.type === "unsubscribe") {
     cleanupObservabilityStream(socket, msg.stream);
+
+    return;
+  }
+  if (msg.type === "fetchTrace") {
+    await sendTrace(socket, socket.data.scope, msg.traceId);
 
     return;
   }
@@ -446,18 +461,20 @@ async function handleObservabilitySubscribe(
 }
 
 // Backfill honours the same minLevel as the live relay, so a client asking for
-// errors never has to re-filter a screenful of Loki history.
+// errors never has to re-filter a screenful of Loki history. The client always
+// gets exactly one backfill message back, failure included: a swallowed error
+// used to leave the Tracing tab "waiting for traces" for good.
 async function sendBackfill(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
   stream: "logs" | "traces",
   limit: number,
   minLevel: LogLevel,
-): Promise<boolean> {
+): Promise<void> {
   try {
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
-      if (!lokiUrl) return false;
+      if (!lokiUrl) throw new Error("Log history is not configured (LOKI_URL)");
       const rows = await fetchLokiLogs(
         lokiUrl,
         scope,
@@ -478,20 +495,60 @@ async function sendBackfill(
       });
     } else {
       const tempoUrl = process.env.TEMPO_URL?.trim();
-      if (!tempoUrl) return false;
+      if (!tempoUrl)
+        throw new Error("Trace history is not configured (TEMPO_URL)");
+      const { rows, failures } = await fetchTempoBackfill(
+        tempoUrl,
+        scope,
+        limit,
+      );
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
-        entries: await fetchTempoBackfill(tempoUrl, scope, limit),
+        entries: rows,
+        ...(failures > 0
+          ? {
+              error: `${failures} trace${failures === 1 ? "" : "s"} could not be loaded from Tempo`,
+            }
+          : {}),
       });
     }
-
-    return true;
   } catch (error) {
-    // Surface the failure instead of letting it look like empty history.
     console.error(`observability ${stream} backfill failed:`, error);
+    sendObs(socket, {
+      type: "backfill",
+      stream: stream,
+      entries: [],
+      error: errorMessage(error),
+    });
+  }
+}
 
-    return false;
+// One trace by id, for a log line's "View trace" when the trace is older than
+// the backfill window covers. Tempo's id lookup is not tenant-scoped, so the
+// spans are checked against the socket's scope before anything leaves.
+async function sendTrace(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  scope: ObservabilityScope,
+  traceId: string,
+): Promise<void> {
+  try {
+    const tempoUrl = process.env.TEMPO_URL?.trim();
+    if (!tempoUrl)
+      throw new Error("Trace history is not configured (TEMPO_URL)");
+    const rows = (await fetchTempoTrace(tempoUrl, traceId)).filter((row) =>
+      rowInScope(row, scope),
+    );
+    if (rows.length === 0) throw new Error("Trace not found in this stage");
+    sendObs(socket, { type: "backfill", stream: "traces", entries: rows });
+  } catch (error) {
+    console.error("observability trace fetch failed:", error);
+    sendObs(socket, {
+      type: "backfill",
+      stream: "traces",
+      entries: [],
+      error: errorMessage(error),
+    });
   }
 }
 
@@ -553,11 +610,11 @@ async function fetchLokiLogs(
   return rows;
 }
 
-async function fetchTempoBackfill(
+export async function fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
-): Promise<ObservabilitySpanRow[]> {
+): Promise<{ rows: ObservabilitySpanRow[]; failures: number }> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
   const start = end - TEMPO_BACKFILL_WINDOW_S;
@@ -570,45 +627,46 @@ async function fetchTempoBackfill(
   url.searchParams.set("end", String(end));
 
   const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
   });
   if (!response.ok)
     throw new Error(`Tempo search failed with HTTP ${response.status}`);
 
   const body = (await response.json()) as {
-    traces?: Array<{
-      traceID: string;
-      rootSpanName?: string;
-      rootTraceName?: string;
-      startTimeUnixNano?: string;
-      durationMs?: number;
-    }>;
+    traces?: Array<{ traceID: string }>;
   };
-  const rows = await mapWithConcurrency(
+  const results = await mapWithConcurrency(
     body?.traces ?? [],
     TEMPO_DETAIL_CONCURRENCY,
-    async (traceSummary) => {
-      const detailResponse = await fetch(
-        `${tempoUrl}/api/traces/${encodeURIComponent(traceSummary.traceID)}`,
-        {
-          signal: AbortSignal.timeout(5_000),
-        },
-      );
-      if (!detailResponse.ok)
-        throw new Error(
-          `Tempo trace query failed with HTTP ${detailResponse.status}`,
-        );
-
-      return tempoTraceRowsFromResponse(
-        await detailResponse.json(),
-        traceSummary.traceID,
-      );
-    },
+    (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
   );
-
-  return rows
+  // A detail fetch that failed is counted, not silently dropped: the caller
+  // turns a non-zero count into the backfill's `error` so a half- or fully-
+  // failed history reads as a failure, not an empty stage.
+  const failures = results.filter(
+    (result) => result.status === "rejected",
+  ).length;
+  const rows = results
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .filter((row) => rowInScope(row, scope))
     .sort((a, b) => b.startTimeMs - a.startTimeMs);
+
+  return { rows: rows, failures: failures };
+}
+
+async function fetchTempoTrace(
+  tempoUrl: string,
+  traceId: string,
+): Promise<ObservabilitySpanRow[]> {
+  const response = await fetch(
+    `${tempoUrl}/api/traces/${encodeURIComponent(traceId)}`,
+    { signal: AbortSignal.timeout(TEMPO_TRACE_TIMEOUT_MS) },
+  );
+  if (response.status === 404) return [];
+  if (!response.ok)
+    throw new Error(`Tempo trace query failed with HTTP ${response.status}`);
+
+  return tempoTraceRowsFromResponse(await response.json(), traceId);
 }
 
 async function startLiveSubscription(
@@ -730,6 +788,12 @@ function startSandboxLogPoll(
         });
       } catch (error) {
         console.error("observability sandbox backfill failed:", error);
+        sendObs(socket, {
+          type: "backfill",
+          stream: "logs",
+          entries: [],
+          error: errorMessage(error),
+        });
       }
     }
     if (!stopped) timer = setInterval(() => void poll(), SANDBOX_LOG_POLL_MS);
@@ -803,6 +867,20 @@ function nowNs(): bigint {
 }
 
 /** Whether an entry is at or above the subscription's minimum level. */
+// Tempo's search is scoped by tag, but a matched trace's detail can carry spans
+// from other scopes, so every row is checked against the socket's scope before
+// it leaves. Both the backfill and the single-trace fetch go through here.
+function rowInScope(
+  row: ObservabilitySpanRow,
+  scope: ObservabilityScope,
+): boolean {
+  return (
+    row.attributes?.account_id === scope.accountId &&
+    row.attributes?.project === scope.projectSlug &&
+    row.attributes?.stage === scope.stageSlug
+  );
+}
+
 function meetsMinLevel(
   entry: ObservabilityLogEntry,
   minLevel: LogLevel,

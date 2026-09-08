@@ -182,3 +182,12 @@ jobs:
 
       - name: Check dashboard bundle budget
         run: bun bench/bundles.ts --check dashboard
+
+      - name: Install Chromium for the dashboard fixtures
+        run: cd apps/dashboard && bunx playwright install --with-deps chromium
+
+      - name: Browser-test the dashboard fixtures
+        # Real layout of the pieces that broke in the wild (select popup,
+        # onboarding card, canvas controls), driven on a local next dev
+        # against the /ui-gallery fixture. No Convex or WorkOS involved.
+        run: bun run --filter @broods/dashboard test:ui
