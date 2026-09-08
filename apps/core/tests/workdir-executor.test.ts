@@ -736,14 +736,14 @@ describe("WorkdirSandboxExecutor.run", () => {
   });
 
   it("retires a reserved sandbox workdir reports as failed and creates a fresh one", async (): Promise<void> => {
+    storedSandboxExternalId = "sbx_stored";
+    reconnectState = "failed";
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
       options: { workdirUrl: BASE },
     });
 
-    storedSandboxExternalId = "sbx_stored";
-    reconnectState = "failed";
     await executor.run({
       code: "echo again",
       reservationKey: "tool:acct_1",
@@ -777,7 +777,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(await executor.getInstanceInfo({ namespace: NS })).toEqual({
       externalId: "sbx_stored",
       state: "error",
-      error: "standby failed: snapshot boom",
+      errorMessage: "standby failed: snapshot boom",
     });
   });
 

@@ -106,9 +106,6 @@ export const upsert = internalMutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         ...fields,
-        // A reconnect only mirrors once the provider handed back a usable
-        // sandbox, so a stale error reason is cleared with the status.
-        errorMessage: undefined,
         ...(!existing.createdByTraceId && args.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
@@ -309,6 +306,7 @@ function upsertRefreshFields(
       | "workspaceId"
       | "logStream"
       | "ephemeral"
+      | "errorMessage"
     >
   > {
   return {
@@ -316,6 +314,10 @@ function upsertRefreshFields(
     name: args.name,
     specs: args.specs,
     status: "running" as const,
+    // A reconnect only mirrors once the provider handed back a usable sandbox,
+    // so the reason goes with the status: `undefined` unsets it on patch and is
+    // dropped on insert.
+    errorMessage: undefined,
     lastUsedAt: now,
     ...(args.projectId ? { projectId: args.projectId } : {}),
     ...(args.stageId ? { stageId: args.stageId } : {}),
