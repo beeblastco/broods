@@ -108,7 +108,7 @@ test("every page renders cold within budget, and every header destination by nav
 }) => {
   // Sign in once and reuse the session; capturing storageState lets each cold
   // probe start from a fresh, empty-cache context that is still authenticated.
-  const authContext = await browser.newContext();
+  const authContext = await browser.newContext({ baseURL: BASE_URL! });
   const authPage = await authContext.newPage();
   await signIn(authPage);
   const projectId =
@@ -121,7 +121,10 @@ test("every page renders cold within budget, and every header destination by nav
   // Cold load: one throwaway context per page, so nothing is served from
   // another page's cache and each timing is a true first visit.
   for (const probe of PROJECT_PAGES) {
-    const context = await browser.newContext({ storageState: storageState });
+    const context = await browser.newContext({
+      baseURL: BASE_URL!,
+      storageState: storageState,
+    });
     const page = await context.newPage();
     await page.goto(`/${projectId}${probe.path}`, { waitUntil: "commit" });
     await probe.ready(page).first().waitFor({ timeout: 30_000 });
@@ -134,7 +137,10 @@ test("every page renders cold within budget, and every header destination by nav
 
   // Client-side navigation across the header, one warm context, the path a
   // user actually walks between top-level routes.
-  const navContext = await browser.newContext({ storageState: storageState });
+  const navContext = await browser.newContext({
+    baseURL: BASE_URL!,
+    storageState: storageState,
+  });
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });

@@ -1710,6 +1710,13 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
         JSON.stringify({
           batches: [
             {
+              resource: {
+                attributes: [
+                  { key: "account_id", value: { stringValue: "acct-1" } },
+                  { key: "project", value: { stringValue: "shop" } },
+                  { key: "stage", value: { stringValue: "dev" } },
+                ],
+              },
               scopeSpans: [
                 {
                   spans: [
@@ -1738,6 +1745,63 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
     const result = await fetchTempoBackfill("http://tempo.example", scope, 10);
     expect(result.failures).toBe(1);
     expect(result.rows.map((row) => row.traceId)).toEqual(["aaa"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchTempoBackfill drops spans from other scopes in a matched trace", async () => {
+  const originalFetch = globalThis.fetch;
+  const scope = {
+    accountId: "acct-1",
+    projectSlug: "shop",
+    stageSlug: "dev",
+    endpointIds: [],
+  };
+  // Tempo's search is tag-scoped, but a matched trace's detail can carry spans
+  // from another scope (here a "prod" batch). Only the in-scope span may leave.
+  const batch = (stage: string, spanId: string): unknown => ({
+    resource: {
+      attributes: [
+        { key: "account_id", value: { stringValue: "acct-1" } },
+        { key: "project", value: { stringValue: "shop" } },
+        { key: "stage", value: { stringValue: stage } },
+      ],
+    },
+    scopeSpans: [
+      {
+        spans: [
+          {
+            traceId: "aaa",
+            spanId: spanId,
+            name: "agent.task",
+            startTimeUnixNano: "1000000000",
+            endTimeUnixNano: "2000000000",
+            status: { code: 1 },
+          },
+        ],
+      },
+    ],
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search")) {
+      return new Response(JSON.stringify({ traces: [{ traceID: "aaa" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ batches: [batch("dev", "in"), batch("prod", "out")] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const result = await fetchTempoBackfill("http://tempo.example", scope, 10);
+    expect(result.failures).toBe(0);
+    expect(result.rows.map((row) => row.spanId)).toEqual(["in"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

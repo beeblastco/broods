@@ -536,11 +536,8 @@ async function sendTrace(
     const tempoUrl = process.env.TEMPO_URL?.trim();
     if (!tempoUrl)
       throw new Error("Trace history is not configured (TEMPO_URL)");
-    const rows = (await fetchTempoTrace(tempoUrl, traceId)).filter(
-      (row) =>
-        row.attributes?.account_id === scope.accountId &&
-        row.attributes?.project === scope.projectSlug &&
-        row.attributes?.stage === scope.stageSlug,
+    const rows = (await fetchTempoTrace(tempoUrl, traceId)).filter((row) =>
+      rowInScope(row, scope),
     );
     if (rows.length === 0) throw new Error("Trace not found in this stage");
     sendObs(socket, { type: "backfill", stream: "traces", entries: rows });
@@ -651,6 +648,7 @@ export async function fetchTempoBackfill(
   ).length;
   const rows = results
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .filter((row) => rowInScope(row, scope))
     .sort((a, b) => b.startTimeMs - a.startTimeMs);
 
   return { rows: rows, failures: failures };
@@ -869,6 +867,20 @@ function nowNs(): bigint {
 }
 
 /** Whether an entry is at or above the subscription's minimum level. */
+// Tempo's search is scoped by tag, but a matched trace's detail can carry spans
+// from other scopes, so every row is checked against the socket's scope before
+// it leaves. Both the backfill and the single-trace fetch go through here.
+function rowInScope(
+  row: ObservabilitySpanRow,
+  scope: ObservabilityScope,
+): boolean {
+  return (
+    row.attributes?.account_id === scope.accountId &&
+    row.attributes?.project === scope.projectSlug &&
+    row.attributes?.stage === scope.stageSlug
+  );
+}
+
 function meetsMinLevel(
   entry: ObservabilityLogEntry,
   minLevel: LogLevel,
