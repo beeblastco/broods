@@ -334,6 +334,11 @@ export function SandboxInstancesTable({
                   </td>
                   <td className="px-4 py-2.5">
                     {instanceStatusBadge(instance.status)}
+                    {instance.errorMessage && (
+                      <div className="mt-1 max-w-xs truncate text-xs text-muted-foreground">
+                        {instance.errorMessage}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     {formatSpecs(instance.specs)}

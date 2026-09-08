@@ -94,6 +94,30 @@ export interface WorkdirHarnessReservation {
   readonly isFirstCreate: boolean;
 }
 
+// The slice of workdir's `GET /v1/sandboxes/:id` record the SDK's Sandbox
+// object does not expose: `error` is set while the sandbox is `failed`.
+interface WorkdirSandboxRecord {
+  error?: unknown;
+}
+
+// workdir's `failed` is terminal (boot, pause, standby or resume failed): exec
+// answers 409 and only delete is allowed. Acquire retires such a sandbox and
+// creates a fresh one; every other caller gets the provider's reason instead of
+// a bare conflict.
+export class WorkdirSandboxFailedError extends Error {
+  readonly externalId: string;
+  readonly reason: string | undefined;
+
+  constructor(externalId: string, reason: string | undefined) {
+    super(
+      `workdir sandbox ${externalId} is failed${reason ? `: ${reason}` : ""}`,
+    );
+    this.name = "WorkdirSandboxFailedError";
+    this.externalId = externalId;
+    this.reason = reason;
+  }
+}
+
 export class WorkdirSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #client: Client;
@@ -319,8 +343,15 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (!externalId) return null;
     try {
       const sandbox = await this.#client.sandboxes.get(externalId);
+      const state = mapWorkdirState(sandbox.state);
+      if (state !== "error") return { externalId: externalId, state: state };
+      const reason = await this.#failureReason(externalId);
 
-      return { externalId: externalId, state: mapWorkdirState(sandbox.state) };
+      return {
+        externalId: externalId,
+        state: state,
+        ...(reason ? { error: reason } : {}),
+      };
     } catch (err) {
       if (isSandboxGoneError(err))
         return { externalId: externalId, state: "terminating" };
@@ -619,16 +650,26 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
         return { sandbox: sandbox, isFirstCreate: false };
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
+        // Recreate only when the sandbox is really gone or failed; a transient
+        // error must propagate or the still-live sandbox is orphaned at the
+        // provider. A failed one is retired like an expired one (delete at
+        // workdir, then the row), since retrying it only ever yields 409. The
         // conditional delete keeps a row a concurrent call already re-claimed.
-        if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance(
-          "sandbox",
-          ns,
-          this.#config.controlPlane?.accountId,
-          externalId,
-        ).catch(() => {});
+        if (error instanceof WorkdirSandboxFailedError) {
+          await this.release({
+            reservationKey: ns,
+            expectedExternalId: externalId,
+          });
+        } else if (isSandboxGoneError(error)) {
+          await deleteSandboxInstance(
+            "sandbox",
+            ns,
+            this.#config.controlPlane?.accountId,
+            externalId,
+          ).catch(() => {});
+        } else {
+          throw error;
+        }
       }
     }
     const created = await this.#client.sandboxes.create(
@@ -681,10 +722,37 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     };
   }
 
+  // The SDK's Sandbox object hides the record's `error` field, so the reason a
+  // sandbox failed takes one raw read of the same endpoint. Best-effort: a
+  // failure here must not mask the failed state itself.
+  async #failureReason(externalId: string): Promise<string | undefined> {
+    const { baseUrl, apiKey } = workdirConnection(this.#config);
+    try {
+      const response = await fetch(
+        `${baseUrl.replace(/\/$/, "")}/v1/sandboxes/${externalId}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+      if (!response.ok) return undefined;
+      const record: WorkdirSandboxRecord = JSON.parse(await response.text());
+
+      return configString(record.error);
+    } catch {
+      return undefined;
+    }
+  }
+
   // A reserved sandbox idles into `stopped`/`standby`; resume it before use.
   // (`standby` auto-resumes on exec, but resuming an explicit `stopped` is not.)
+  // A `failed` one cannot be resumed at all, so it is reported as such rather
+  // than handed back for an exec that would only 409.
   async #reconnect(externalId: string): Promise<Sandbox> {
     const sandbox = await this.#client.sandboxes.get(externalId);
+    if (sandbox.state === "failed") {
+      throw new WorkdirSandboxFailedError(
+        externalId,
+        await this.#failureReason(externalId),
+      );
+    }
     if (sandbox.state === "stopped" || sandbox.state === "standby") {
       await sandbox.resume();
     }

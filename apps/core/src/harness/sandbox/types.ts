@@ -200,6 +200,9 @@ export interface SandboxSnapshotResult {
 export interface SandboxInstanceInfo {
   externalId: string;
   state: "running" | "suspended" | "terminating" | "error" | "unknown";
+  // The provider's own reason when `state` is "error", so the dashboard can show
+  // why instead of a bare badge.
+  error?: string;
 }
 
 export interface SandboxExecutor {

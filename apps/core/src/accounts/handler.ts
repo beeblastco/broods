@@ -518,9 +518,12 @@ async function refreshSandboxStatus(
     context.accountId,
     context.reservationKey,
     status,
-    true,
+    { observed: true, errorMessage: info.error },
   );
-  await context.audit(status === "error" ? "error" : "ok", { status: status });
+  await context.audit(status === "error" ? "error" : "ok", {
+    status: status,
+    errorMessage: info.error,
+  });
 
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }

@@ -38,6 +38,8 @@ function sandboxObject(id: string, state: string): Record<string, unknown> {
     mounts: [],
     volumes: [],
     network: { egress: "default" },
+    // workdir keeps the reason on the record only while the sandbox is failed.
+    ...(state === "failed" ? { error: "standby failed: snapshot boom" } : {}),
   };
 }
 
@@ -731,6 +733,52 @@ describe("WorkdirSandboxExecutor.run", () => {
     ).toBe(false);
     expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(true);
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("retires a reserved sandbox workdir reports as failed and creates a fresh one", async (): Promise<void> => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    storedSandboxExternalId = "sbx_stored";
+    reconnectState = "failed";
+    await executor.run({
+      code: "echo again",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    // The failed sandbox is deleted at workdir and its row dropped, then a new
+    // one is created and the exec lands there; nothing tries to resume a corpse.
+    expect(
+      fetchCalls.some(
+        (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_stored",
+      ),
+    ).toBe(true);
+    expect(deleteSandboxInstanceMock).toHaveBeenCalled();
+    expect(
+      fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
+    ).toBe(true);
+    expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(false);
+    expect(execCalls().every((c) => c.path.includes("/sbx_new/"))).toBe(true);
+  });
+
+  it("reports a failed sandbox as error with workdir's reason", async (): Promise<void> => {
+    storedSandboxExternalId = "sbx_stored";
+    reconnectState = "failed";
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    expect(await executor.getInstanceInfo({ namespace: NS })).toEqual({
+      externalId: "sbx_stored",
+      state: "error",
+      error: "standby failed: snapshot boom",
+    });
   });
 
   it("retires a reserved sandbox that outlived lifecycle.maxLifetimeSeconds", async (): Promise<void> => {
