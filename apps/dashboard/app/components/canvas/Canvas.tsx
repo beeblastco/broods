@@ -45,6 +45,8 @@ import {
 } from "@/app/lib/canvasRuntimeRefs";
 import {
   applyTidyLayout,
+  CELL_HEIGHT,
+  CELL_WIDTH,
   findFreePosition,
   GRID,
 } from "@broods/convex/model/canvasLayout";
@@ -129,6 +131,8 @@ const NODE_TEMPLATES = [
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
+/** Drags step one card-sized cell at a time, the same cells the tidy layout fills. */
+const SNAP_GRID: [number, number] = [CELL_WIDTH, CELL_HEIGHT];
 type FlowPosition = { x: number; y: number };
 
 function hydrateEncodedHandleEdge(
@@ -863,11 +867,35 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     isDraggingNode.current = true;
   }, []);
 
-  /** Save after a node drag completes. */
-  const onNodeDragStop: OnNodeDrag = useCallback(() => {
-    isDraggingNode.current = false;
-    scheduleSave();
-  }, [scheduleSave]);
+  /**
+   * Settle a drop. ReactFlow already snapped the dragged cards to cells, but it
+   * lets two cards share one, so each dragged card steps to the nearest free
+   * cell before the save.
+   */
+  const onNodeDragStop: OnNodeDrag = useCallback(
+    (_event, _node, dragged) => {
+      isDraggingNode.current = false;
+      const draggedIds = new Set(dragged.map((node) => node.id));
+      const occupied = nodesRef.current
+        .filter((node) => !draggedIds.has(node.id))
+        .map((node) => node.position);
+      const settled = new Map<string, FlowPosition>();
+      for (const node of dragged) {
+        const position = findFreePosition(node.position, occupied);
+        occupied.push(position);
+        settled.set(node.id, position);
+      }
+      setNodes((nds) =>
+        nds.map((node) => {
+          const position = settled.get(node.id);
+
+          return position ? { ...node, position: position } : node;
+        }),
+      );
+      scheduleSave();
+    },
+    [setNodes, scheduleSave],
+  );
 
   /** Persist and close side panel when nodes are deleted via keyboard/context actions. */
   const onNodesDelete = useCallback(() => {
@@ -1106,6 +1134,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         onPaneClick={onPaneClick}
         nodesDraggable={canWrite}
         nodesConnectable={canWrite}
+        snapToGrid
+        snapGrid={SNAP_GRID}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}

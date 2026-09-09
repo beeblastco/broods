@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CELL_HEIGHT,
+  CELL_WIDTH,
   findFreePosition,
   GRID,
   NODE_HEIGHT,
@@ -118,13 +120,15 @@ describe("tidyCanvasLayout", () => {
     expect(reversed.get("a1")!.x).toBeLessThan(reversed.get("a2")!.x);
   });
 
-  it("is deterministic and snapped to the background grid", () => {
+  it("is deterministic and puts every card on a whole cell", () => {
     const second = tidyCanvasLayout([...nodes].reverse(), [...edges].reverse());
 
+    expect(CELL_WIDTH % GRID).toBe(0);
+    expect(CELL_HEIGHT % GRID).toBe(0);
     for (const [id, position] of positions) {
       expect(second.get(id)).toEqual(position);
-      expect(position.x % GRID).toBe(0);
-      expect(position.y % GRID).toBe(0);
+      expect(position.x % CELL_WIDTH).toBe(0);
+      expect(position.y % CELL_HEIGHT).toBe(0);
     }
   });
 
@@ -140,21 +144,38 @@ describe("tidyCanvasLayout", () => {
 
 describe("findFreePosition", () => {
   it("keeps the requested spot when nothing is in the way", () => {
-    expect(findFreePosition({ x: 240, y: 96 }, [])).toEqual({ x: 240, y: 96 });
+    const cell = { x: CELL_WIDTH, y: CELL_HEIGHT };
+
+    expect(findFreePosition(cell, [])).toEqual(cell);
   });
 
-  it("snaps the requested spot to the grid", () => {
-    expect(findFreePosition({ x: 251, y: 91 }, [])).toEqual({ x: 240, y: 96 });
+  it("snaps the requested spot to the nearest cell", () => {
+    expect(findFreePosition({ x: CELL_WIDTH + 30, y: 50 }, [])).toEqual({
+      x: CELL_WIDTH,
+      y: 0,
+    });
   });
 
-  it("steps to the nearest clear slot when the spot is taken", () => {
-    const occupied = [{ x: 240, y: 96 }];
-    const placed = findFreePosition({ x: 244, y: 98 }, occupied);
+  it("steps to a neighbouring cell when the spot is taken", () => {
+    const occupied = [{ x: CELL_WIDTH, y: CELL_HEIGHT }];
+    const placed = findFreePosition(
+      { x: CELL_WIDTH + 4, y: CELL_HEIGHT + 2 },
+      occupied,
+    );
 
     expect(placed).not.toEqual(occupied[0]);
+    expect(placed.x % CELL_WIDTH).toBe(0);
+    expect(placed.y % CELL_HEIGHT).toBe(0);
     expect(
-      Math.abs(placed.x - 240) >= NODE_WIDTH ||
-        Math.abs(placed.y - 96) >= NODE_HEIGHT,
-    ).toBe(true);
+      Math.abs(placed.x - CELL_WIDTH) + Math.abs(placed.y - CELL_HEIGHT),
+    ).toBeLessThanOrEqual(CELL_WIDTH + CELL_HEIGHT);
+  });
+
+  it("treats a legacy off-cell card as filling every cell it reaches into", () => {
+    // A card straddling the first two cells of the top row blocks both of them.
+    const occupied = [{ x: CELL_WIDTH / 2, y: 0 }];
+
+    expect(findFreePosition({ x: 0, y: 0 }, occupied).y).not.toBe(0);
+    expect(findFreePosition({ x: CELL_WIDTH, y: 0 }, occupied).y).not.toBe(0);
   });
 });
