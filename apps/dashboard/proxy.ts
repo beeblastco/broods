@@ -4,6 +4,11 @@ import type { NextFetchEvent, NextRequest } from "next/server";
 import { redirectUri } from "@/app/lib/authConfig";
 const authProxy = authkitProxy({
   redirectUri: redirectUri,
+  // Hands the access token to the browser in a 30 s cookie on document loads,
+  // so the client token store starts full instead of asking a server action.
+  // With `initialAuth` in the root layout that removes both auth round trips
+  // from a cold load.
+  eagerAuth: true,
   middlewareAuth: {
     enabled: true,
     unauthenticatedPaths: [

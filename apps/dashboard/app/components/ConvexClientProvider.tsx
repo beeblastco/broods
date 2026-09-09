@@ -8,12 +8,37 @@ import {
 } from "@workos-inc/authkit-nextjs/components";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useCallback } from "react";
+
+type InitialAuth = ComponentProps<typeof AuthKitProvider>["initialAuth"];
 
 const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL as string,
 );
+
+/**
+ * Wraps the app with theme, auth, and Convex providers. `initialAuth` is the
+ * session the root layout resolved on the server; with it AuthKit mounts
+ * signed in and skips its server action on load.
+ */
+export function ConvexClientProvider({
+  children,
+  initialAuth,
+}: {
+  children: ReactNode;
+  initialAuth: InitialAuth;
+}): React.JSX.Element {
+  return (
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+      <AuthKitProvider initialAuth={initialAuth}>
+        <ConvexProviderWithAuth client={convex} useAuth={useAuthAdapter}>
+          {children}
+        </ConvexProviderWithAuth>
+      </AuthKitProvider>
+    </ThemeProvider>
+  );
+}
 
 /** Adapts WorkOS AuthKit authentication to the shape required by ConvexProviderWithAuth. */
 function useAuthAdapter() {
@@ -48,21 +73,4 @@ function useAuthAdapter() {
     isAuthenticated: !!user,
     fetchAccessToken: fetchAccessToken,
   };
-}
-
-/** Wraps the app with theme, auth, and Convex providers. */
-export function ConvexClientProvider({
-  children,
-}: {
-  children: ReactNode;
-}): React.JSX.Element {
-  return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
-      <AuthKitProvider>
-        <ConvexProviderWithAuth client={convex} useAuth={useAuthAdapter}>
-          {children}
-        </ConvexProviderWithAuth>
-      </AuthKitProvider>
-    </ThemeProvider>
-  );
 }

@@ -33,7 +33,7 @@ import {
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
-import { reportPerf } from "@/app/lib/perfReport";
+import { reportPerf, reportPerfSinceNavigation } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
   defaultRuntimeNodeData,
@@ -630,6 +630,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       if (!didInitialFit.current) {
         didInitialFit.current = true;
         if (canvasLayout.nodes.length > 0) fitView(FIT_VIEW_OPTIONS);
+        // The cold-load milestone: navigation start to the first frame that
+        // has the real architecture on it. LCP stops at the header, so this
+        // is the number that tracks the whole auth-to-canvas chain.
+        requestAnimationFrame(() =>
+          reportPerfSinceNavigation("first-load.canvas", {
+            nodes: canvasLayout.nodes.length,
+          }),
+        );
       }
     } else {
       setNodes([]);

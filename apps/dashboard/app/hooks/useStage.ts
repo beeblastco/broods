@@ -6,8 +6,8 @@
  * selection is shareable, bookmarkable, and survives page refreshes.
  */
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useTransition } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useCallback } from "react";
 
 /**
  * Returns the current stage ID from the URL and a setter that updates the URL.
@@ -19,8 +19,6 @@ export function useStage(): {
 } {
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const router = useRouter();
-  const [, startTransition] = useTransition();
 
   const stageId = searchParams.get("stage") as Id<"stages"> | null;
 
@@ -33,13 +31,17 @@ export function useStage(): {
         next.delete("stage");
       }
       const query = next.toString();
-      // Wrap in startTransition so the URL change is non-urgent and avoids
-      // blocking user interactions while the canvas tree re-renders.
-      startTransition(() => {
-        router.replace(query ? `${pathname}?${query}` : pathname);
-      });
+      // The native History API is wired into the App Router, so this updates
+      // `useSearchParams` without the server round trip `router.replace`
+      // makes for a new URL. The default stage lands on every bare project
+      // URL, so that trip used to sit on the cold-load path.
+      window.history.replaceState(
+        null,
+        "",
+        query ? `${pathname}?${query}` : pathname,
+      );
     },
-    [searchParams, pathname, router, startTransition],
+    [searchParams, pathname],
   );
 
   return { stageId: stageId, setStageId: setStageId };

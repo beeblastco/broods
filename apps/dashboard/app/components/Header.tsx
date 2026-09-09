@@ -1,14 +1,13 @@
 "use client";
 
 /** Displays the top header bar with logo, project selector, stage selector, navigation links, and user menu. */
+import { BroodsLogo } from "@/app/components/BroodsLogo";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Lock } from "lucide-react";
-import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
-import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -40,7 +39,6 @@ const ProjectHeaderRight = dynamic(
 export function Header(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const isProjectPage = Boolean(params.projectId);
-  const { resolvedTheme } = useTheme();
   const { role } = useOrgRole();
 
   return (
@@ -48,25 +46,10 @@ export function Header(): React.JSX.Element {
       <div className="flex w-full items-center gap-3 px-5">
         <Link
           href={isProjectPage ? `/${params.projectId}` : "/"}
-          className="hover:opacity-80 transition-opacity cursor-pointer"
+          aria-label="Broods"
+          className="hover:opacity-80 transition-opacity cursor-pointer text-foreground"
         >
-          {resolvedTheme === "dark" ? (
-            <Image
-              src="/assets/logo/dark-broods-full.svg"
-              alt="Broods"
-              width={232}
-              height={64}
-              className="h-7 w-auto"
-            />
-          ) : (
-            <Image
-              src="/assets/logo/light-broods-full.svg"
-              alt="Broods"
-              width={232}
-              height={64}
-              className="h-7 w-auto"
-            />
-          )}
+          <BroodsLogo className="h-7 w-auto" />
         </Link>
 
         <div className="h-4 w-px bg-border" />
