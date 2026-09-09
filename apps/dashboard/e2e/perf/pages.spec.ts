@@ -10,11 +10,11 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { PAGE_RENDER_BUDGET_MS } from "../../app/lib/perfReport";
 import {
+  CANVAS_READY,
   hasProbe,
   MISSING_PROBE,
-  probe,
   readProjectId,
-  STORAGE_STATE,
+  SIGNED_IN_CONTEXT,
 } from "../lib/session";
 
 interface ProbePage {
@@ -35,7 +35,7 @@ const PROJECT_PAGES: ProbePage[] = [
   {
     name: "Architecture",
     path: "",
-    ready: (page) => page.locator(".react-flow__viewport"),
+    ready: (page) => page.locator(CANVAS_READY),
   },
   {
     name: "Dashboard",
@@ -93,7 +93,7 @@ const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
   },
   {
     label: "Architecture",
-    ready: (page) => page.locator(".react-flow__viewport"),
+    ready: (page) => page.locator(CANVAS_READY),
   },
 ];
 
@@ -107,27 +107,21 @@ test("every page renders cold within budget, and every header destination by nav
 
   // Cold load: one throwaway context per page, so nothing is served from
   // another page's cache and each timing is a true first visit.
-  for (const probePage of PROJECT_PAGES) {
-    const context = await browser.newContext({
-      baseURL: probe.baseUrl,
-      storageState: STORAGE_STATE,
-    });
+  for (const probe of PROJECT_PAGES) {
+    const context = await browser.newContext(SIGNED_IN_CONTEXT);
     const page = await context.newPage();
-    await page.goto(`/${projectId}${probePage.path}`, { waitUntil: "commit" });
-    await probePage.ready(page).first().waitFor({ timeout: 30_000 });
+    await page.goto(`/${projectId}${probe.path}`, { waitUntil: "commit" });
+    await probe.ready(page).first().waitFor({ timeout: 30_000 });
     // performance.now() counts from this document's navigation start, so it
     // is the cold-load time to the ready marker without any harness overhead.
     const ms = await page.evaluate(() => performance.now());
-    samples.push({ page: probePage.name, kind: "cold", ms: ms });
+    samples.push({ page: probe.name, kind: "cold", ms: ms });
     await context.close();
   }
 
   // Client-side navigation across the header, one warm context, the path a
   // user actually walks between top-level routes.
-  const navContext = await browser.newContext({
-    baseURL: probe.baseUrl,
-    storageState: STORAGE_STATE,
-  });
+  const navContext = await browser.newContext(SIGNED_IN_CONTEXT);
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await PROJECT_PAGES[0].ready(navPage).first().waitFor({ timeout: 30_000 });

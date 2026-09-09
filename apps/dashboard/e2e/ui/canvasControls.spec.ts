@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { openGallery } from "../lib/gallery";
 
 // Base UI gives the popup no ARIA role; the trigger is described by it instead.
 const TOOLTIP = '[data-slot="tooltip-content"]';
 
 test("each canvas control names itself in a tooltip", async ({ page }) => {
-  await page.goto("/ui-gallery");
+  await openGallery(page);
   const controls = page.locator('[data-fixture="canvas-controls"]');
   for (const label of [
     "Zoom in",
@@ -12,13 +13,8 @@ test("each canvas control names itself in a tooltip", async ({ page }) => {
     "Center the whole architecture",
     "Tidy up: re-lay out every node by its wiring",
   ]) {
-    const control = controls.getByRole("button", { name: label });
-    // A hover that lands before hydration has no listener to answer it, and
-    // the assertion alone never re-hovers; retry the pair until it shows.
-    await expect(async () => {
-      await control.hover();
-      await expect(page.locator(TOOLTIP)).toHaveText(label, { timeout: 1_000 });
-    }).toPass({ timeout: 10_000 });
+    await controls.getByRole("button", { name: label }).hover();
+    await expect(page.locator(TOOLTIP)).toHaveText(label);
     await page.mouse.move(0, 0);
     await expect(page.locator(TOOLTIP)).toHaveCount(0);
   }
@@ -27,7 +23,7 @@ test("each canvas control names itself in a tooltip", async ({ page }) => {
 test("the save pill shows a save, clears after it lands, and keeps a failure", async ({
   page,
 }) => {
-  await page.goto("/ui-gallery");
+  await openGallery(page);
   const controls = page.locator('[data-fixture="canvas-controls"]');
   const pill = controls.locator("[aria-live]");
 

@@ -33,7 +33,7 @@ import {
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
-import { reportPerf, reportPerfSinceNavigation } from "@/app/lib/perfReport";
+import { reportPerf } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
   defaultRuntimeNodeData,
@@ -132,6 +132,11 @@ const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 /** Drags step along the background dots, the same pitch the tidy layout cells sit on. */
 const SNAP_GRID: [number, number] = [GRID, GRID];
+
+// Once per document: a later client-side navigation mounts a new canvas, but
+// performance.now() still counts from the first navigation.
+let firstCanvasReported = false;
+
 type FlowPosition = { x: number; y: number };
 
 function hydrateEncodedHandleEdge(
@@ -633,11 +638,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         // The cold-load milestone: navigation start to the first frame that
         // has the real architecture on it. LCP stops at the header, so this
         // is the number that tracks the whole auth-to-canvas chain.
-        requestAnimationFrame(() =>
-          reportPerfSinceNavigation("first-load.canvas", {
-            nodes: canvasLayout.nodes.length,
-          }),
-        );
+        if (!firstCanvasReported) {
+          firstCanvasReported = true;
+          requestAnimationFrame(() =>
+            reportPerf("first-load.canvas", performance.now(), {
+              attributes: { nodes: canvasLayout.nodes.length },
+            }),
+          );
+        }
       }
     } else {
       setNodes([]);
