@@ -44,7 +44,10 @@ import {
   writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
 import {
+  applyPositions,
   applyTidyLayout,
+  CELL_HEIGHT,
+  CELL_WIDTH,
   findFreePosition,
   GRID,
 } from "@broods/convex/model/canvasLayout";
@@ -129,6 +132,8 @@ const NODE_TEMPLATES = [
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
+/** Drags step one card-sized cell at a time, the same cells the tidy layout fills. */
+const SNAP_GRID: [number, number] = [CELL_WIDTH, CELL_HEIGHT];
 type FlowPosition = { x: number; y: number };
 
 function hydrateEncodedHandleEdge(
@@ -794,10 +799,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   );
 
   /**
-   * Position a manually added node: right under the cursor, stepped onto the
-   * nearest free grid slot only when that spot is already taken. The right-click
-   * point is consumed, so a later add that did not come from the context menu
-   * lands in view rather than at a spot the user has since panned away from.
+   * Position a manually added node: the cell under the cursor, or the nearest
+   * free one when that cell is already taken. The right-click point is
+   * consumed, so a later add that did not come from the context menu lands in
+   * view rather than at a spot the user has since panned away from.
    */
   const getFreeAddPosition = useCallback((): FlowPosition => {
     const requested = lastRightClick.current ?? getViewportCenterPosition();
@@ -863,11 +868,34 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     isDraggingNode.current = true;
   }, []);
 
-  /** Save after a node drag completes. */
-  const onNodeDragStop: OnNodeDrag = useCallback(() => {
-    isDraggingNode.current = false;
-    scheduleSave();
-  }, [scheduleSave]);
+  /**
+   * Settle a drop. ReactFlow snaps the grabbed card to a cell and moves the
+   * rest of the selection by the same offset, so a legacy off-cell card can
+   * still land between cells and two cards can share one. The grabbed card
+   * keeps its cell; every other dragged card steps to the nearest free one.
+   */
+  const onNodeDragStop: OnNodeDrag = useCallback(
+    (_event, grabbed, dragged) => {
+      isDraggingNode.current = false;
+      const draggedIds = new Set(dragged.map((node) => node.id));
+      const occupied = nodesRef.current
+        .filter((node) => !draggedIds.has(node.id))
+        .map((node) => node.position);
+      const settled = new Map<string, FlowPosition>();
+      const ordered = [
+        grabbed,
+        ...dragged.filter((node) => node.id !== grabbed.id),
+      ];
+      for (const node of ordered) {
+        const position = findFreePosition(node.position, occupied);
+        occupied.push(position);
+        settled.set(node.id, position);
+      }
+      setNodes((nds) => applyPositions(nds, settled));
+      scheduleSave();
+    },
+    [setNodes, scheduleSave],
+  );
 
   /** Persist and close side panel when nodes are deleted via keyboard/context actions. */
   const onNodesDelete = useCallback(() => {
@@ -1106,6 +1134,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         onPaneClick={onPaneClick}
         nodesDraggable={canWrite}
         nodesConnectable={canWrite}
+        snapToGrid
+        snapGrid={SNAP_GRID}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}

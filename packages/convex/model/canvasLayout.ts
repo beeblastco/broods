@@ -2,6 +2,10 @@
  * Deterministic canvas auto-layout, shared by the dashboard, the CLI sync and
  * the account API sync so every writer draws the same picture.
  *
+ * The canvas is a grid of card-sized cells. Every position this module emits,
+ * and every position the dashboard lets a drag settle on, is a whole cell, so
+ * columns and rows line up across the whole board.
+ *
  * Each agent owns a cluster: the agent card sits centred above a block of
  * typed columns holding the services only that agent uses. Sub-agents follow
  * their parent, so the side-handle link between them stays short. Services
@@ -15,20 +19,19 @@ import type { CanvasNode } from "../canvas";
 export const NODE_WIDTH = 176;
 export const NODE_HEIGHT = 96;
 
-/** Background grid pitch. Every emitted position is a multiple of it. */
+/** Background dot pitch. Cell sizes are multiples of it so cards sit on the dots. */
 export const GRID = 24;
 
-/** Clearance a nudged node keeps from the cards it stepped around. */
-const NODE_MARGIN = 16;
+/** One grid cell: a card plus the gap to the next one. */
+export const CELL_WIDTH = NODE_WIDTH + 40;
+export const CELL_HEIGHT = NODE_HEIGHT + 48;
 
-const COLUMN_GAP = 40;
-const ROW_GAP = 48;
-const AGENT_GAP = 120;
-const CLUSTER_GAP = 144;
-const LANE_GAP = 144;
+/** Empty cells between two agent clusters, and above each lane. */
+const CLUSTER_GAP_COLUMNS = 1;
+const LANE_GAP_ROWS = 1;
 
-/** How far {@link findFreePosition} steps out before giving up, in grid cells. */
-const MAX_NUDGE_RINGS = 48;
+/** How far {@link findFreePosition} steps out before giving up, in cells. */
+const MAX_NUDGE_RINGS = 16;
 
 /**
  * Column order for an agent's services, mirroring the dashboard's "Add service"
@@ -66,12 +69,12 @@ type CanvasGraph = {
   sharedServices: LayoutNode[];
 };
 
-/** A block of typed columns, and the box it occupies. */
+/** A block of typed columns, and the cells it occupies. */
 type LayoutBlock = {
-  /** Lowest placed card, or 0 when the block is empty. */
-  bottom: number;
+  /** Row below the lowest placed card, or the origin row when empty. */
+  bottomRow: number;
+  columns: number;
   positions: Map<string, LayoutPosition>;
-  width: number;
 };
 
 /** The subset of a canvas edge the layout reads. */
@@ -95,12 +98,10 @@ export type LayoutNode = {
 
 export type LayoutPosition = CanvasNode["position"];
 
-/** Re-position every node by {@link tidyCanvasLayout}, leaving the rest untouched. */
-export function applyTidyLayout<
+/** Overlay new positions by node id, leaving every other node field untouched. */
+export function applyPositions<
   T extends LayoutNode & { position: LayoutPosition },
->(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
-  const positions = tidyCanvasLayout(nodes, edges);
-
+>(nodes: readonly T[], positions: ReadonlyMap<string, LayoutPosition>): T[] {
   return nodes.map((node) => {
     const position = positions.get(node.id);
 
@@ -108,21 +109,28 @@ export function applyTidyLayout<
   });
 }
 
+/** Re-position every node by {@link tidyCanvasLayout}, leaving the rest untouched. */
+export function applyTidyLayout<
+  T extends LayoutNode & { position: LayoutPosition },
+>(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
+  return applyPositions(nodes, tidyCanvasLayout(nodes, edges));
+}
+
 /**
- * Nearest grid position to `desired` whose card clears every occupied card.
- * Manual dashboard adds land under the cursor and only move when that exact
- * spot is already taken.
+ * Nearest cell to `desired` whose card clears every occupied card. Manual adds
+ * and drag drops land on that cell, and only step aside when it is taken:
+ * first to the cell below, then right, left, above, then further out.
  */
 export function findFreePosition(
   desired: LayoutPosition,
   occupied: readonly LayoutPosition[],
 ): LayoutPosition {
-  const start = snapToGrid(desired);
+  const start = snapToCell(desired);
   for (let ring = 0; ring <= MAX_NUDGE_RINGS; ring++) {
     for (const offset of ringOffsets(ring)) {
       const candidate = {
-        x: start.x + offset.x * GRID,
-        y: start.y + offset.y * GRID,
+        x: start.x + offset.x * CELL_WIDTH,
+        y: start.y + offset.y * CELL_HEIGHT,
       };
       if (!occupied.some((taken) => cardsOverlap(candidate, taken))) {
         return candidate;
@@ -140,55 +148,57 @@ export function tidyCanvasLayout(
 ): Map<string, LayoutPosition> {
   const graph = indexGraph(nodes, edges);
   const positions = new Map<string, LayoutPosition>();
-  let cursorX = 0;
-  let deepestY = NODE_HEIGHT;
+  let cursorColumn = 0;
+  let deepestRow = 1;
 
   for (const agent of orderAgents(graph)) {
     const services = graph.exclusiveServices.get(agent.id) ?? [];
-    const block = layoutBlock(services, cursorX, NODE_HEIGHT + AGENT_GAP);
-    positions.set(agent.id, {
-      x: cursorX + (block.width - NODE_WIDTH) / 2,
-      y: 0,
-    });
+    const block = layoutBlock(services, cursorColumn, 1);
+    // Middle column of the block; the left one of the two when the count is even.
+    positions.set(
+      agent.id,
+      cellPosition(cursorColumn + Math.floor((block.columns - 1) / 2), 0),
+    );
     for (const [id, position] of block.positions) positions.set(id, position);
-    deepestY = Math.max(deepestY, block.bottom);
-    cursorX += block.width + CLUSTER_GAP;
+    deepestRow = Math.max(deepestRow, block.bottomRow);
+    cursorColumn += block.columns + CLUSTER_GAP_COLUMNS;
   }
 
-  const totalWidth = Math.max(cursorX - CLUSTER_GAP, NODE_WIDTH);
+  const totalColumns = Math.max(cursorColumn - CLUSTER_GAP_COLUMNS, 1);
   const lanes = [
     // Centred, because a shared service belongs to no single cluster.
     { centered: true, services: graph.sharedServices },
     // Left-aligned, so unwired cards read as parked rather than part of the graph.
     { centered: false, services: graph.orphanServices },
   ];
-  let laneY = deepestY + LANE_GAP;
+  let laneRow = deepestRow + LANE_GAP_ROWS;
 
   for (const lane of lanes) {
     if (lane.services.length === 0) continue;
-    const block = layoutBlock(lane.services, 0, laneY);
+    const block = layoutBlock(lane.services, 0, laneRow);
     const offsetX = lane.centered
-      ? Math.max(0, (totalWidth - block.width) / 2)
+      ? Math.max(0, Math.floor((totalColumns - block.columns) / 2)) * CELL_WIDTH
       : 0;
     for (const [id, position] of block.positions) {
       positions.set(id, { x: position.x + offsetX, y: position.y });
     }
-    laneY = block.bottom + LANE_GAP;
-  }
-
-  for (const [id, position] of positions) {
-    positions.set(id, snapToGrid(position));
+    laneRow = block.bottomRow + LANE_GAP_ROWS;
   }
 
   return positions;
 }
 
-/** Whether two same-sized cards would touch, margin included. */
+/**
+ * Whether two card boxes touch. Cards already on cells never clash across a
+ * cell boundary; a legacy off-cell card blocks every cell its box reaches into.
+ */
 function cardsOverlap(a: LayoutPosition, b: LayoutPosition): boolean {
-  return (
-    Math.abs(a.x - b.x) < NODE_WIDTH + NODE_MARGIN &&
-    Math.abs(a.y - b.y) < NODE_HEIGHT + NODE_MARGIN
-  );
+  return Math.abs(a.x - b.x) < NODE_WIDTH && Math.abs(a.y - b.y) < NODE_HEIGHT;
+}
+
+/** Top-left corner of a cell. */
+function cellPosition(column: number, row: number): LayoutPosition {
+  return { x: column * CELL_WIDTH, y: row * CELL_HEIGHT };
 }
 
 /** Position of a service type in {@link SERVICE_COLUMN_ORDER}; unknown types sort last. */
@@ -299,31 +309,34 @@ function labelOf(node: LayoutNode): string {
   return typeof node.data.label === "string" ? node.data.label : node.id;
 }
 
-/** Place services as typed columns growing right, rows growing down. */
+/**
+ * Place services as typed columns growing right, rows growing down, starting
+ * at the given cell. An empty block still claims one column for its agent.
+ */
 function layoutBlock(
   services: readonly LayoutNode[],
-  originX: number,
-  originY: number,
+  originColumn: number,
+  originRow: number,
 ): LayoutBlock {
   const columns = groupIntoColumns(services);
   const positions = new Map<string, LayoutPosition>();
-  let bottom = 0;
+  let bottomRow = originRow;
 
   columns.forEach((column, columnIndex) => {
-    const x = originX + columnIndex * (NODE_WIDTH + COLUMN_GAP);
     column.forEach((node, rowIndex) => {
-      const y = originY + rowIndex * (NODE_HEIGHT + ROW_GAP);
-      positions.set(node.id, { x: x, y: y });
-      bottom = Math.max(bottom, y + NODE_HEIGHT);
+      positions.set(
+        node.id,
+        cellPosition(originColumn + columnIndex, originRow + rowIndex),
+      );
+      bottomRow = Math.max(bottomRow, originRow + rowIndex + 1);
     });
   });
 
-  const width =
-    columns.length > 0
-      ? columns.length * NODE_WIDTH + (columns.length - 1) * COLUMN_GAP
-      : NODE_WIDTH;
-
-  return { bottom: bottom, positions: positions, width: width };
+  return {
+    bottomRow: bottomRow,
+    columns: Math.max(columns.length, 1),
+    positions: positions,
+  };
 }
 
 /** Agents in draw order: roots by label, each followed by its sub-agents. */
@@ -360,7 +373,11 @@ function orderAgents(graph: CanvasGraph): LayoutNode[] {
   return ordered;
 }
 
-/** Grid offsets on the square ring `ring` cells out. */
+/**
+ * Cell offsets on the square ring `ring` cells out, nearest first: axis
+ * neighbours before diagonals, and below or right before above or left, so a
+ * displaced card stays close and stays inside the drawn graph.
+ */
 function ringOffsets(ring: number): LayoutPosition[] {
   if (ring === 0) return [{ x: 0, y: 0 }];
 
@@ -372,12 +389,18 @@ function ringOffsets(ring: number): LayoutPosition[] {
     offsets.push({ x: -ring, y: y }, { x: ring, y: y });
   }
 
-  return offsets;
+  return offsets.sort(
+    (a, b) =>
+      Math.abs(a.x) + Math.abs(a.y) - (Math.abs(b.x) + Math.abs(b.y)) ||
+      b.y - a.y ||
+      b.x - a.x,
+  );
 }
 
-function snapToGrid(position: LayoutPosition): LayoutPosition {
-  return {
-    x: Math.round(position.x / GRID) * GRID,
-    y: Math.round(position.y / GRID) * GRID,
-  };
+/** Nearest cell corner to an arbitrary point. */
+function snapToCell(position: LayoutPosition): LayoutPosition {
+  return cellPosition(
+    Math.round(position.x / CELL_WIDTH),
+    Math.round(position.y / CELL_HEIGHT),
+  );
 }
