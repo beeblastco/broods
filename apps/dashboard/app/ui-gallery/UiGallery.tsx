@@ -8,7 +8,7 @@ import {
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { Button } from "@/app/components/ui/button";
 import { ReactFlowProvider } from "@xyflow/react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 
 const LEVEL_OPTIONS = [
@@ -21,13 +21,25 @@ const LEVEL_OPTIONS = [
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
+const subscribeNever = (): (() => void) => () => {};
+
 export function UiGallery(): React.JSX.Element {
   const [level, setLevel] = useState("INFO");
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  // False in the server HTML, true once React owns the page: a spec waits on
+  // it so its first interaction lands on a listener, not on static markup.
+  const hydrated = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
 
   return (
-    <main className="flex flex-col gap-10 p-8">
+    <main
+      className="flex flex-col gap-10 p-8"
+      data-hydrated={hydrated ? "true" : undefined}
+    >
       <section
         data-fixture="observability-toolbar"
         className="flex flex-col gap-2"

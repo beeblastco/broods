@@ -1,29 +1,16 @@
 name: Dashboard e2e
 
 # The signed-in browser suites (apps/dashboard/e2e: `app` for behaviour,
-# `perf` for the render budget) against a real Convex and WorkOS.
+# `perf` for the render budget) against the deployment a rollout just
+# updated, since a green build and rollout only say the image is on the
+# cluster. On a pull request the same suites run inside ci.yaml, against the
+# build that job makes.
 #
-# - On a pull request that touches the dashboard: build the PR's dashboard on
-#   the runner, start it against the dev backend, and run both suites against
-#   it. A regression shows up before anything deploys.
-# - After a rollout: the same suites against the deployment the rollout just
-#   updated, since a green build and rollout only say the image is on the
-#   cluster.
-#
-# Both need the probe account (DASHBOARD_E2E_EMAIL / DASHBOARD_E2E_PASSWORD, a
-# WorkOS user with email + password auth; the suites provision its org and
-# project on first sign-in). The pull request job also needs the WorkOS
-# secrets the dashboard runs with, and the WorkOS app must allow
-# http://localhost:3000/auth/callback as a redirect URI.
+# Needs the probe account in the target environment: DASHBOARD_E2E_EMAIL and
+# DASHBOARD_E2E_PASSWORD, a WorkOS user with email + password auth. The suites
+# provision its org and project on first sign-in.
 
 on:
-  pull_request:
-    paths:
-      - "apps/dashboard/**"
-      - "packages/convex/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/e2e-dashboard.yaml"
   workflow_run:
     workflows: ["Build Dashboard Image"]
     types: [completed]
@@ -38,96 +25,11 @@ on:
         type: string
 
 jobs:
-  pull-request:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    # Checkout is all this job does with the token; deny everything else.
-    permissions:
-      contents: read
-    environment: development
-    env:
-      E2E_BASE_URL: http://localhost:3000
-      E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
-      E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
-      E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
-      NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
-      NEXT_PUBLIC_BROODS_BASE_URL: ${{ vars.NEXT_PUBLIC_BROODS_BASE_URL }}
-      NEXT_PUBLIC_WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
-      WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
-      WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
-      WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
-      WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
-    steps:
-      - name: Require the probe account and the WorkOS app
-        # A silent skip would look like a met budget, so missing setup fails.
-        shell: bash
-        run: |
-          missing=()
-          [[ -z "$E2E_EMAIL" ]] && missing+=(DASHBOARD_E2E_EMAIL)
-          [[ -z "$E2E_PASSWORD" ]] && missing+=(DASHBOARD_E2E_PASSWORD)
-          [[ -z "$WORKOS_API_KEY" ]] && missing+=(WORKOS_API_KEY)
-          [[ -z "$WORKOS_CLIENT_ID" ]] && missing+=(WORKOS_CLIENT_ID)
-          [[ -z "$WORKOS_COOKIE_PASSWORD" ]] && missing+=(WORKOS_COOKIE_PASSWORD)
-          [[ -z "$NEXT_PUBLIC_CONVEX_URL" ]] && missing+=(NEXT_PUBLIC_CONVEX_URL)
-          if (( ${#missing[@]} )); then
-            echo "Missing in the development environment: ${missing[*]}" >&2
-            echo "See apps/dashboard/AGENTS.md, section Tests, for what each one is." >&2
-            exit 1
-          fi
-
-      - name: Checkout repository
-        # Pinned to a SHA (matching ci.yaml) because this job holds the probe
-        # login and WorkOS secrets: a retargeted tag must not run new code here.
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          # This job never pushes, so it needs no git credential left on disk.
-          persist-credentials: false
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version-file: .bun-version
-
-      - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
-
-      - name: Build the dashboard
-        run: bun run --filter @broods/dashboard build
-
-      - name: Install Chromium
-        run: cd apps/dashboard && bunx playwright install --with-deps chromium
-
-      - name: Start the dashboard
-        shell: bash
-        run: |
-          cd apps/dashboard
-          bun run start > "$RUNNER_TEMP/dashboard.log" 2>&1 &
-          for _ in $(seq 1 60); do
-            curl -sf http://localhost:3000/healthz > /dev/null && exit 0
-            sleep 1
-          done
-          echo "The dashboard did not answer on :3000 within 60 s." >&2
-          cat "$RUNNER_TEMP/dashboard.log" >&2
-          exit 1
-
-      - name: Run the signed-in suites
-        run: cd apps/dashboard && bunx playwright test --project=app --project=perf
-
-      - name: Upload traces and the server log of a failed run
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: dashboard-e2e-pr-${{ github.run_id }}
-          path: |
-            apps/dashboard/test-results
-            ${{ runner.temp }}/dashboard.log
-          if-no-files-found: ignore
-
   deployed:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Checkout is all this job does with the token; deny everything else.
     permissions:
       contents: read
     environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'development' }}
@@ -138,18 +40,26 @@ jobs:
       E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
     steps:
       - name: Require the probe account
+        # A silent skip would look like a passing suite, so missing setup fails.
         shell: bash
         run: |
-          if [[ -z "$E2E_EMAIL" || -z "$E2E_PASSWORD" ]]; then
-            echo "Missing DASHBOARD_E2E_EMAIL / DASHBOARD_E2E_PASSWORD secrets in this environment." >&2
-            echo "See apps/dashboard/AGENTS.md, section Tests." >&2
+          missing=()
+          for name in E2E_EMAIL E2E_PASSWORD; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "Missing from this environment: ${missing[*]} (DASHBOARD_E2E_EMAIL / DASHBOARD_E2E_PASSWORD)." >&2
+            echo "scripts/setup-dashboard-e2e.sh creates them; apps/dashboard/AGENTS.md, section Tests, explains each." >&2
             exit 1
           fi
 
       - name: Checkout repository
+        # Pinned to a SHA (matching ci.yaml) because this job holds the probe
+        # login secrets: a retargeted tag must not be able to run new code here.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # This job never pushes, so it needs no git credential left on disk.
           persist-credentials: false
 
       - name: Setup Bun

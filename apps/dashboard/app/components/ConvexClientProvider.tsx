@@ -15,8 +15,6 @@ const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL as string,
 );
 
-type InitialAuth = ComponentProps<typeof AuthKitProvider>["initialAuth"];
-
 type ConvexAuthAdapter = ReturnType<
   NonNullable<ComponentProps<typeof ConvexProviderWithAuth>["useAuth"]>
 >;
@@ -31,7 +29,7 @@ export function ConvexClientProvider({
   initialAuth,
 }: {
   children: ReactNode;
-  initialAuth: InitialAuth;
+  initialAuth: ComponentProps<typeof AuthKitProvider>["initialAuth"];
 }): React.JSX.Element {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>

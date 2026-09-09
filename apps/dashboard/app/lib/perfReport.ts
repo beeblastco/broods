@@ -74,7 +74,6 @@ export type PerfEvent = {
 let buffer: PerfEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
-const reportedSinceNavigation = new Set<string>();
 
 /**
  * Queue one measurement. Safe to call from anywhere in the client — it no-ops
@@ -113,22 +112,6 @@ export function reportPerf(
     return;
   }
   if (!flushTimer) flushTimer = setTimeout(flushPerf, FLUSH_DELAY_MS);
-}
-
-/**
- * Queue a first-load milestone: the time from navigation start to now, once
- * per document. Later client-side navigations never report it again, so the
- * value is always the cold path.
- */
-export function reportPerfSinceNavigation(
-  name: string,
-  attributes?: Record<string, string | number | boolean>,
-): void {
-  if (typeof window === "undefined" || reportedSinceNavigation.has(name)) {
-    return;
-  }
-  reportedSinceNavigation.add(name);
-  reportPerf(name, performance.now(), { attributes: attributes });
 }
 
 /** Ship whatever is buffered. Called on a full batch, on idle, and on unload. */

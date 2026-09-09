@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { openGallery } from "../lib/gallery";
 
 // The last onboarding step holds a long one-line command. It used to widen
 // the card past its own border and push the footer with it.
 test("the onboarding card keeps its command block inside its edges", async ({
   page,
 }) => {
-  await page.goto("/ui-gallery");
+  await openGallery(page);
   await page.getByRole("button", { name: "Open onboarding" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();

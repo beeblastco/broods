@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openGallery } from "../lib/gallery";
 
 // The level select once opened with a blank first row and its list pushed
 // down from the trigger. The popup must sit flush under the trigger and show
@@ -6,7 +7,7 @@ import { expect, test } from "@playwright/test";
 test("the level select opens flush under its trigger with every option visible", async ({
   page,
 }) => {
-  await page.goto("/ui-gallery");
+  await openGallery(page);
   const trigger = page.getByRole("combobox", { name: "Filter by log level" });
   await expect(trigger).toHaveText(/INFO/);
   await trigger.click();
