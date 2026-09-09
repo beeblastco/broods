@@ -12,6 +12,7 @@ import {
 import { internal } from "./_generated/api";
 import { sha256Hex } from "./model/accountSecrets";
 import {
+  asyncToolSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   sandboxProviderValidator,
@@ -448,6 +449,27 @@ export const createAsyncToolResult = internalMutation({
   },
 });
 
+/**
+ * Records the sandbox a detached job launched on, once the launch reports it.
+ * Only a row still processing takes the binding: a job that already reported
+ * back settled before its fence existed and keeps that result.
+ * @returns null after the patch attempt
+ */
+export const bindAsyncToolResultSandbox = internalMutation({
+  args: { resultId: v.string(), sandbox: asyncToolSandboxValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
+      .unique();
+    if (!row || row.status !== "processing") return null;
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, { sandbox: args.sandbox });
+
+    return null;
+  },
+});
 /**
  * Looks up an async tool result without exposing callback authorization.
  * @returns the public result document or null when it does not exist

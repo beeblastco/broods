@@ -455,6 +455,47 @@ describe("runtime persistence", () => {
     ).toBeNull();
   });
 
+  test("binds a detached job to its sandbox only while it is still processing", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const sandbox = {
+      provider: "sandbox" as const,
+      reservationKey: `acct:${accountId}:workspace:one`,
+      externalId: "sandbox-1",
+    };
+    await t.mutation(internal.runtime.createAsyncToolResult, {
+      resultId: "job-1",
+      parentEventId: `acct:${accountId}:parent:job-1`,
+      conversationKey: conversationKey,
+      toolName: "bash",
+      toolCallId: "call-1",
+      input: { kind: "sandbox_job" },
+      completionToken: "tok",
+    });
+    await t.mutation(internal.runtime.bindAsyncToolResultSandbox, {
+      resultId: "job-1",
+      sandbox: sandbox,
+    });
+    expect(
+      await t.query(internal.runtime.getAsyncToolResult, { resultId: "job-1" }),
+    ).toMatchObject({ sandbox: sandbox });
+
+    // A job that reported before its launch was recorded keeps its unfenced result.
+    await t.mutation(internal.runtime.updateAsyncToolResult, {
+      resultId: "job-1",
+      status: "completed",
+      response: { ok: true },
+    });
+    await t.mutation(internal.runtime.bindAsyncToolResultSandbox, {
+      resultId: "job-1",
+      sandbox: { ...sandbox, externalId: "sandbox-2" },
+    });
+    expect(
+      await t.query(internal.runtime.getAsyncToolResult, { resultId: "job-1" }),
+    ).toMatchObject({ status: "completed", sandbox: sandbox });
+  });
+
   test("refreshes a reservation only while it still names the same sandbox", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

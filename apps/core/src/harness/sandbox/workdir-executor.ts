@@ -235,7 +235,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    return { jobId: jobId };
+    return { jobId: jobId, externalId: sandbox.id };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {

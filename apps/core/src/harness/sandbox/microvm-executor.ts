@@ -389,7 +389,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    return { jobId: jobId };
+    return { jobId: jobId, externalId: microvmId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {

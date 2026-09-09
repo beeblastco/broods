@@ -11,6 +11,7 @@ import { logDebug, logInfo } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
+  bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
 } from "../async-tool-result.ts";
@@ -291,11 +292,23 @@ async function dispatchBackground(
   });
 
   try {
-    await runSandboxBackground(ws.sandbox, ws.namespace, command, {
-      jobId: jobId,
-      metadata: sandboxRunMetadata(context, ws),
-      ...(callback ? { callback: callback } : {}),
-    });
+    const handle = await runSandboxBackground(
+      ws.sandbox,
+      ws.namespace,
+      command,
+      {
+        jobId: jobId,
+        metadata: sandboxRunMetadata(context, ws),
+        ...(callback ? { callback: callback } : {}),
+      },
+    );
+    // Recorded after the launch because only the launch knows which machine took
+    // the job. A job fast enough to report first settles unfenced, as before.
+    await bindAsyncToolResultSandbox(resultId, {
+      provider: ws.sandbox.provider,
+      reservationKey: ws.namespace,
+      externalId: handle.externalId,
+    }).catch(() => {});
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
     await markAsyncToolResultFailed({ resultId: resultId, error: error }).catch(

@@ -141,7 +141,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    return { jobId: jobId };
+    return { jobId: jobId, externalId: persistentSandboxName(ns) };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {

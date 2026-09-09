@@ -93,7 +93,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     );
     await handle.disconnect().catch(() => {});
 
-    return { jobId: jobId };
+    return { jobId: jobId, externalId: sandbox.sandboxId };
   }
 
   async release(request: SandboxReleaseRequest): Promise<void> {

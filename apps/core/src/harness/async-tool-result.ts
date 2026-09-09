@@ -3,6 +3,8 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import { getSandboxExternalId } from "./sandbox/instance-store.ts";
+import type { SandboxProvider } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
   | { kind: "async" }
@@ -18,6 +20,12 @@ export type AsyncToolDelivery =
       identity?: ChannelIdentity;
       source: Record<string, unknown>;
     };
+/** The reserved sandbox a detached job launched on: the fence for its callback. */
+export interface AsyncToolSandbox {
+  provider: SandboxProvider;
+  reservationKey: string;
+  externalId: string;
+}
 export interface AsyncToolResultRecord {
   resultId: string;
   parentEventId: string;
@@ -32,6 +40,7 @@ export interface AsyncToolResultRecord {
   error?: string;
   delivery?: AsyncToolDelivery;
   observed?: boolean;
+  sandbox?: AsyncToolSandbox;
   expiresAt: number;
 }
 export interface DetachedAsyncToolGroup {
@@ -61,6 +70,30 @@ export function createDetachedAsyncToolResult(options: {
     ...row,
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
     sealed: true,
+  });
+}
+/**
+ * Whether the reservation still names the sandbox a detached job launched on.
+ * A job that reported before its launch was recorded has no fence and passes.
+ */
+export async function asyncToolSandboxStillReserved(
+  record: Pick<AsyncToolResultRecord, "sandbox">,
+): Promise<boolean> {
+  if (!record.sandbox) return true;
+  const current = await getSandboxExternalId(
+    record.sandbox.provider,
+    record.sandbox.reservationKey,
+  );
+
+  return current === record.sandbox.externalId;
+}
+export function bindAsyncToolResultSandbox(
+  resultId: string,
+  sandbox: AsyncToolSandbox,
+): Promise<null> {
+  return runtime.mutate("bindAsyncToolResultSandbox", {
+    resultId: resultId,
+    sandbox: sandbox,
   });
 }
 export function createPendingAsyncToolResult(options: {

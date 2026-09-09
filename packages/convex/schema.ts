@@ -983,6 +983,12 @@ export const runtimeAsyncAgentResultsFields = {
   expiresAt: v.number(),
 };
 /** Detached async tool state, including delivery and hashed callback authorization. */
+/** The reserved sandbox a detached job launched on: the fence for its callback. */
+export const asyncToolSandboxValidator = v.object({
+  provider: sandboxProviderValidator,
+  reservationKey: v.string(),
+  externalId: v.string(),
+});
 export const runtimeAsyncToolResultsFields = {
   accountId: v.string(),
   resultId: v.string(),
@@ -1001,6 +1007,9 @@ export const runtimeAsyncToolResultsFields = {
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
   observed: v.optional(v.boolean()),
+  // Set once the launch reports which machine took the job. A callback from a
+  // machine the reservation no longer names is refused on it.
+  sandbox: v.optional(asyncToolSandboxValidator),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),
