@@ -21,6 +21,7 @@ import {
   s3ObjectExists,
 } from "../../shared/s3.ts";
 import { getHarnessPublicUrl, requireEnv } from "../../shared/env.ts";
+import { logWarn } from "../../shared/log.ts";
 import {
   MEDIA_PATH_PREFIX,
   sealMediaTicket,
@@ -30,6 +31,7 @@ import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
+import { isSandboxCapacityError } from "../sandbox/utils.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -236,13 +238,60 @@ export async function runSandbox(
     metadata?: SandboxRunMetadata;
   },
 ): Promise<SandboxRunResult> {
+  let result: SandboxRunResult;
+  try {
+    result = await runSandboxOn(config, namespace, code, options?.metadata);
+  } catch (error) {
+    const fallback = sandboxFallbackFor(config, error);
+    if (!fallback) throw error;
+    logWarn("Sandbox create refused for capacity; running on the fallback", {
+      provider: config.provider,
+      fallbackProvider: fallback.provider,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    result = await runSandboxOn(fallback, namespace, code, options?.metadata);
+  }
+  if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
+    options?.onSandboxCpu?.({
+      type: result.provider,
+      role: "agent",
+      cpuUsec: result.cpuUsec,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * The config to retry a refused create on, or null when the run stays put: the
+ * error was not a capacity refusal, no fallback is configured, or the run is
+ * persistent and so belongs to the provider holding its reservation.
+ */
+export function sandboxFallbackFor(
+  config: SandboxExecutorConfig,
+  error: unknown,
+): SandboxExecutorConfig | null {
+  if (!config.fallbackProvider || config.persistent === true) return null;
+  if (!isSandboxCapacityError(error)) return null;
+  const { fallbackProvider: _fallbackProvider, ...rest } = config;
+
+  return { ...rest, provider: config.fallbackProvider };
+}
+
+async function runSandboxOn(
+  config: SandboxExecutorConfig,
+  namespace: string | undefined,
+  code: string,
+  metadata: SandboxRunMetadata | undefined,
+): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
   const reservationKey =
     !namespace && config.persistent === true
       ? statelessReservationKeyFor(config)
       : undefined;
-  const result = await executor.run({
+
+  return executor.run({
     code: code,
     ...(namespace
       ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
@@ -253,7 +302,7 @@ export async function runSandbox(
           workspaceRoot: workspaceRootFor(config),
         }
       : {}),
-    ...(options?.metadata ? { metadata: options.metadata } : {}),
+    ...(metadata ? { metadata: metadata } : {}),
     timeoutSeconds: boundedInteger(
       config.timeout,
       limits.defaultTimeoutSeconds,
@@ -265,15 +314,6 @@ export async function runSandbox(
       limits.maxOutputLimitBytes,
     ),
   });
-  if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-    options?.onSandboxCpu?.({
-      type: result.provider,
-      role: "agent",
-      cpuUsec: result.cpuUsec,
-    });
-  }
-
-  return result;
 }
 
 /**

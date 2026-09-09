@@ -73,6 +73,7 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
   "name": "default",
   "config": {
     "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel
+    "fallbackProvider": "lambda", // ephemeral only: where a run goes when provider is out of capacity
     "size": "small", // tiny | xsmall | small | medium | large (see Snapshots & Sizes)
     "snapshot": "img_curated", // prebuilt image/snapshot to boot from (see Snapshots & Sizes); omit for the provider default
     "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted (see Networking)
@@ -91,6 +92,12 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 other provider rejects it at validation. Per-call `envVars` on a run cannot override the
 runtime's reserved keys (`PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`,
 the job-callback slots); those overrides are dropped.
+
+`fallbackProvider` names a second provider for **ephemeral** configs. When the primary
+refuses the create for capacity (the MicroVM memory quota, workdir's admission ceiling,
+no Daytona runner), the same run is handed to the fallback once, and the switch is logged.
+It must differ from `provider` and is rejected beside `persistent: true`: a reserved
+sandbox belongs to one provider.
 
 `onCreate` / `onResume` command hooks are also available, but only on persistent
 configs — see [Hooks](hook.md) and [Best Practice → Reserved

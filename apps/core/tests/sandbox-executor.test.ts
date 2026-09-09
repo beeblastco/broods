@@ -1934,6 +1934,45 @@ describe("isNoRunnersError", () => {
   });
 });
 
+describe("isSandboxCapacityError", () => {
+  it("matches the refusals nothing ran under", async () => {
+    const { isSandboxCapacityError } =
+      await import("../src/harness/sandbox/utils.ts");
+    const quota = Object.assign(new Error("maximum allocated memory limit"), {
+      name: "ServiceQuotaExceededException",
+    });
+    expect(isSandboxCapacityError(quota)).toBe(true);
+    expect(
+      isSandboxCapacityError(
+        Object.assign(new Error("throttled"), {
+          name: "TooManyRequestsException",
+        }),
+      ),
+    ).toBe(true);
+    // workdir's SandboxError carries the HTTP status of the admission refusal.
+    expect(
+      isSandboxCapacityError(
+        Object.assign(new Error("no capacity"), { status: 503, code: "full" }),
+      ),
+    ).toBe(true);
+    expect(isSandboxCapacityError(new Error("No available runners"))).toBe(
+      true,
+    );
+  });
+
+  it("leaves every other failure alone", async () => {
+    const { isSandboxCapacityError } =
+      await import("../src/harness/sandbox/utils.ts");
+    expect(isSandboxCapacityError(new Error("connection reset"))).toBe(false);
+    expect(
+      isSandboxCapacityError(
+        Object.assign(new Error("not found"), { status: 404 }),
+      ),
+    ).toBe(false);
+    expect(isSandboxCapacityError(undefined)).toBe(false);
+  });
+});
+
 describe("classifyVercelError", () => {
   it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
     const { classifyVercelError } =

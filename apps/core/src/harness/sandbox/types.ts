@@ -39,6 +39,9 @@ export interface SandboxNetworkConfig {
 // resolves one, so an executor config never carries an undefined provider.
 export interface SandboxExecutorConfig {
   provider: SandboxProvider;
+  // Where an ephemeral run goes when `provider` refuses the create for capacity.
+  // Validation refuses it beside `persistent`; the reserved machine has one home.
+  fallbackProvider?: SandboxProvider;
   // Predefined compute size; drives workdir create-time resources (see
   // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;

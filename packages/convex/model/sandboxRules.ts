@@ -66,6 +66,9 @@ export interface SandboxNetworkConfig {
  */
 export interface SandboxConfig {
   provider: SandboxProvider;
+  // Where an ephemeral run goes when `provider` refuses the create for capacity.
+  // Never set with `persistent`: a reserved sandbox belongs to one provider.
+  fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
   snapshot?: string;
   runtimes?: RuntimeName[];
@@ -152,6 +155,11 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(
+    config.fallbackProvider,
+    "config.fallbackProvider",
+    SANDBOX_PROVIDERS,
+  );
+  assertOptionalEnum(
     config.permissionMode,
     "config.permissionMode",
     SANDBOX_PERMISSION_MODES,
@@ -162,6 +170,14 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   const provider =
     (config.provider as SandboxProvider | undefined) ?? "sandbox";
+  if (config.fallbackProvider === provider) {
+    throw new Error("config.fallbackProvider must differ from config.provider");
+  }
+  if (config.fallbackProvider !== undefined && config.persistent === true) {
+    throw new Error(
+      "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
+    );
+  }
   const network = normalizeNetwork(config.network);
   if (provider === "e2b" && network.mode !== "allow-all") {
     throw new Error(
@@ -354,6 +370,9 @@ function buildNormalizedConfig(
 ): SandboxConfig {
   return {
     provider: provider,
+    ...(config.fallbackProvider !== undefined
+      ? { fallbackProvider: config.fallbackProvider as SandboxProvider }
+      : {}),
     network: network,
     permissionMode:
       (config.permissionMode as PermissionMode | undefined) ?? "ask",

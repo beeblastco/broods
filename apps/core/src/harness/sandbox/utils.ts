@@ -216,6 +216,28 @@ export function isSandboxGoneError(error: unknown): boolean {
 }
 
 /**
+ * True when a provider refused to create a sandbox because it has no room for it
+ * right now: the MicroVM memory quota, a throttled control plane, workdir's
+ * admission ceiling (429/503 from its API), or Daytona with no runner. Nothing
+ * ran, so the same request is safe to hand to another provider.
+ */
+export function isSandboxCapacityError(error: unknown): boolean {
+  if (isNoRunnersError(error)) return true;
+  if (!isPlainObject(error) && !(error instanceof Error)) return false;
+  const { name, status } = error as { name?: unknown; status?: unknown };
+  if (
+    name === "ServiceQuotaExceededException" ||
+    name === "TooManyRequestsException"
+  ) {
+    return true;
+  }
+  if (status === 429 || status === 503) return true;
+  const message = error instanceof Error ? error.message : "";
+
+  return /allocated memory limit|quota/i.test(message);
+}
+
+/**
  * True when a provider rejected sandbox creation because no runner could host it
  * (capacity, or a region-pinned/non-general snapshot). Capacity is the provider's
  * to resolve; the executor only surfaces a clearer message.

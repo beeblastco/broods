@@ -130,6 +130,37 @@ describe("sandbox config defaults & validation", () => {
     });
   });
 
+  it("accepts a fallback provider only for ephemeral configs, and never the same one", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "sandbox",
+      }).fallbackProvider,
+    ).toBe("sandbox");
+    expect(
+      normalizeSandboxConfig({ provider: "lambda" }).fallbackProvider,
+    ).toBeUndefined();
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "fargate",
+      }),
+    ).toThrow("config.fallbackProvider must be one of");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "lambda",
+      }),
+    ).toThrow("config.fallbackProvider must differ from config.provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "sandbox",
+        persistent: true,
+      }),
+    ).toThrow("config.fallbackProvider requires config.persistent to be false");
+  });
+
   it("rejects unknown providers, permission modes, and runtimes", () => {
     expect(() => normalizeSandboxConfig({ provider: "fargate" })).toThrow(
       "config.provider must be one of",
