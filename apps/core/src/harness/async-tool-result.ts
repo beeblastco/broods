@@ -34,7 +34,8 @@ export interface AsyncToolResultRecord {
   delivery?: AsyncToolDelivery;
   observed?: boolean;
   // The machine a detached job launched on; Convex fails the settle if the
-  // reservation stops naming it.
+  // reservation stops naming it. Vercel's id is a name shared by every
+  // replacement, so the fence never trips there.
   sandbox?: ReservedSandbox;
   expiresAt: number;
 }
