@@ -46,8 +46,6 @@ import {
 import {
   applyPositions,
   applyTidyLayout,
-  CELL_HEIGHT,
-  CELL_WIDTH,
   findFreePosition,
   GRID,
 } from "@broods/convex/model/canvasLayout";
@@ -132,8 +130,8 @@ const NODE_TEMPLATES = [
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
-/** Drags step one card-sized cell at a time, the same cells the tidy layout fills. */
-const SNAP_GRID: [number, number] = [CELL_WIDTH, CELL_HEIGHT];
+/** Drags step along the background dots, the same pitch the tidy layout cells sit on. */
+const SNAP_GRID: [number, number] = [GRID, GRID];
 type FlowPosition = { x: number; y: number };
 
 function hydrateEncodedHandleEdge(
@@ -799,10 +797,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   );
 
   /**
-   * Position a manually added node: the cell under the cursor, or the nearest
-   * free one when that cell is already taken. The right-click point is
-   * consumed, so a later add that did not come from the context menu lands in
-   * view rather than at a spot the user has since panned away from.
+   * Position a manually added node: right under the cursor, stepped along the
+   * dot grid only when that spot would cover another card. The right-click
+   * point is consumed, so a later add that did not come from the context menu
+   * lands in view rather than at a spot the user has since panned away from.
    */
   const getFreeAddPosition = useCallback((): FlowPosition => {
     const requested = lastRightClick.current ?? getViewportCenterPosition();
@@ -869,10 +867,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, []);
 
   /**
-   * Settle a drop. ReactFlow snaps the grabbed card to a cell and moves the
-   * rest of the selection by the same offset, so a legacy off-cell card can
-   * still land between cells and two cards can share one. The grabbed card
-   * keeps its cell; every other dragged card steps to the nearest free one.
+   * Settle a drop. ReactFlow snaps the grabbed card to the dot grid and moves
+   * the rest of the selection by the same offset, so nothing stops a card from
+   * landing on top of another. The grabbed card keeps its spot; every other
+   * dragged card steps to the nearest clear one.
    */
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, grabbed, dragged) => {
