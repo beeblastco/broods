@@ -12,8 +12,13 @@ test("each canvas control names itself in a tooltip", async ({ page }) => {
     "Center the whole architecture",
     "Tidy up: re-lay out every node by its wiring",
   ]) {
-    await controls.getByRole("button", { name: label }).hover();
-    await expect(page.locator(TOOLTIP)).toHaveText(label);
+    const control = controls.getByRole("button", { name: label });
+    // A hover that lands before hydration has no listener to answer it, and
+    // the assertion alone never re-hovers; retry the pair until it shows.
+    await expect(async () => {
+      await control.hover();
+      await expect(page.locator(TOOLTIP)).toHaveText(label, { timeout: 1_000 });
+    }).toPass({ timeout: 10_000 });
     await page.mouse.move(0, 0);
     await expect(page.locator(TOOLTIP)).toHaveCount(0);
   }
