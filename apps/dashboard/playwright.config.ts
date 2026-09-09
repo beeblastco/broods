@@ -1,16 +1,26 @@
 /**
- * Two browser suites, picked by project name:
+ * Browser suites, picked by project name:
  *
  * - `ui`: drives the /ui-gallery fixture on a local `next dev` and asserts
- *   real layout (popup placement, card overflow, tooltips, save pill).
- * - `perf`: signs in to a deployed dashboard and fails any page that takes
- *   longer than the render budget. Needs PERF_BASE_URL, PERF_EMAIL and
- *   PERF_PASSWORD; skipped without them.
+ *   real layout (popup placement, card overflow, tooltips, save pill). No
+ *   backend behind it.
+ * - `setup`: signs in the probe account through hosted AuthKit once and saves
+ *   the session; `app` and `perf` depend on it.
+ * - `app`: signed-in behaviour of the real pages against a real Convex and
+ *   WorkOS.
+ * - `perf`: cold and navigated render times against the budget.
+ *
+ * The signed-in suites need E2E_EMAIL and E2E_PASSWORD, and run against
+ * E2E_BASE_URL: a deployment, or a local server on the self-hosted backend
+ * (default http://localhost:3000, started here when not already running).
+ * They skip without the account.
  */
 import { defineConfig, devices } from "@playwright/test";
+import { STORAGE_STATE } from "./e2e/lib/session";
 
 const DEV_URL = "http://localhost:3000";
 const GALLERY_URL = `${DEV_URL}/ui-gallery`;
+const BASE_URL = process.env.E2E_BASE_URL ?? DEV_URL;
 
 export default defineConfig({
   testDir: "e2e",
@@ -29,13 +39,25 @@ export default defineConfig({
       use: { baseURL: DEV_URL },
     },
     {
+      name: "setup",
+      testMatch: /auth\.setup\.ts/,
+      use: { baseURL: BASE_URL },
+    },
+    {
+      name: "app",
+      testMatch: /app\/.*\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { baseURL: BASE_URL, storageState: STORAGE_STATE },
+    },
+    {
       name: "perf",
       testMatch: /perf\/.*\.spec\.ts/,
+      dependencies: ["setup"],
       timeout: 120_000,
-      use: { baseURL: process.env.PERF_BASE_URL },
+      use: { baseURL: BASE_URL },
     },
   ],
-  webServer: process.env.PERF_BASE_URL
+  webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
         command: "bun run dev",
@@ -44,7 +66,8 @@ export default defineConfig({
         timeout: 120_000,
         // The fixture never talks to Convex or WorkOS; the app only needs
         // well-formed values to construct its clients and its auth proxy.
-        // A real .env.local wins when present.
+        // A real .env.local wins when present, which is what the signed-in
+        // suites need locally.
         env: {
           NEXT_PUBLIC_CONVEX_URL:
             process.env.NEXT_PUBLIC_CONVEX_URL ??

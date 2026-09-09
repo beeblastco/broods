@@ -15,6 +15,7 @@
     "check": "tsc --noEmit",
     "test": "bun test tests --pass-with-no-tests",
     "test:ui": "playwright test --project=ui",
+    "test:app": "playwright test --project=app",
     "perf": "playwright test --project=perf"
   },
   "dependencies": {
