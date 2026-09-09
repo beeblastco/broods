@@ -8,6 +8,7 @@ import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
+import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
@@ -36,23 +37,36 @@ export interface SandboxReservationRef {
 /**
  * Release the reservations the sweeper found expired. Unlike the namespace-deletion
  * path it never drops a row the provider teardown did not confirm: that row holds the
- * only copy of `externalId`, so deleting it early strands the sandbox.
+ * only copy of `externalId`, so deleting it early strands the sandbox. The row goes
+ * here, conditional on that id, because the executors built from a stored config
+ * carry no control-plane account and so cannot drop it themselves.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
-  reservations: SandboxReservationRef[],
-): Promise<SandboxReservationRef[]> {
+  reservations: ReservedSandbox[],
+): Promise<ReservedSandbox[]> {
   if (reservations.length === 0) {
     return [];
   }
   const configs = await persistentSandboxConfigs(accountId);
 
-  const released: SandboxReservationRef[] = [];
+  const released: ReservedSandbox[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
-    if (!(await releaseFromConfigs(reservation.provider, configs, key)))
-      continue;
+    const done = await releaseFromConfigs(
+      reservation.provider,
+      configs,
+      key,
+      reservation.externalId,
+    );
+    if (!done) continue;
     released.push(reservation);
+    await deleteSandboxInstance(
+      reservation.provider,
+      key,
+      accountId,
+      reservation.externalId,
+    ).catch(() => {});
     await removeSandboxInstance(accountId, key);
   }
 
@@ -129,6 +143,7 @@ async function releaseFromConfigs(
   provider: SandboxProvider,
   configs: SandboxConfig[],
   namespace: string,
+  expectedExternalId?: string,
 ): Promise<boolean> {
   for (const config of configs) {
     if (config.provider !== provider) continue;
@@ -143,7 +158,10 @@ async function releaseFromConfigs(
               : provider === "e2b"
                 ? new E2BSandboxExecutor(config)
                 : new VercelSandboxExecutor(config);
-      await executor.release({ namespace: namespace });
+      await executor.release({
+        namespace: namespace,
+        expectedExternalId: expectedExternalId,
+      });
 
       return true;
     } catch (error) {

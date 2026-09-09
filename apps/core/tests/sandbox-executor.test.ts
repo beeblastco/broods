@@ -23,7 +23,7 @@ const e2bRunMock = mock(
     };
   },
 );
-const e2bKillMock = mock(async () => {});
+const e2bKillMock = mock(async (_sandboxId: string) => {});
 const e2bConnectMock = mock(async (sandboxId: string) => ({
   sandboxId: sandboxId,
   commands: {
@@ -50,7 +50,7 @@ const daytonaExecuteCommandMock = mock(
     result: "ok\n",
   }),
 );
-const daytonaDeleteMock = mock(async () => {});
+const daytonaDeleteMock = mock(async (_id?: string) => {});
 let daytonaClientOptionsSeen: Record<string, unknown>[] = [];
 const daytonaCreateMock = mock(async (_options: Record<string, unknown>) => ({
   process: {
@@ -268,6 +268,11 @@ mock.module("@daytona/sdk", () => ({
     }
 
     create = daytonaCreateMock;
+    // Release reaches an existing sandbox by id; it deletes through the same
+    // handle shape create returns.
+    get = mock(async (id: string) => ({
+      delete: () => daytonaDeleteMock(id),
+    }));
   },
 }));
 
@@ -2035,6 +2040,66 @@ describe("persistent acquire teardown", () => {
     expect(vercelDeleteMock).not.toHaveBeenCalled();
     expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe("vercel");
   });
+});
+
+describe("conditional release", () => {
+  // The sweeper reads a reservation, then releases it later. The release tears
+  // down the machine it was given, never the one the key points at now, and the
+  // row delete is conditional on that same id.
+  const cases = [
+    {
+      provider: "lambda",
+      destroyed: () =>
+        microvmSendMock.mock.calls
+          .filter(
+            (c) => (c[0] as { _type?: string })?._type === "TerminateMicrovm",
+          )
+          .map(
+            (c) =>
+              (c[0] as { input: { microvmIdentifier: string } }).input
+                .microvmIdentifier,
+          ),
+      options: {},
+    },
+    {
+      provider: "daytona",
+      destroyed: () => daytonaDeleteMock.mock.calls.map((c) => c[0]),
+      options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces" },
+    },
+    {
+      provider: "e2b",
+      destroyed: () => e2bKillMock.mock.calls.map((c) => c[0]),
+      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+    },
+    {
+      provider: "vercel",
+      destroyed: () => vercelGetMock.mock.calls.map((c) => c[0]?.name),
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    },
+  ];
+
+  for (const { provider, destroyed, options } of cases) {
+    it(`${provider} release tears down the named machine, not the key's current one`, async () => {
+      storedSandboxExternalId = "sbx-current";
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+      const executor = createSandboxExecutor({
+        provider: provider,
+        persistent: true,
+        options: options,
+      });
+
+      await executor.release({ namespace: NS, expectedExternalId: "sbx-old" });
+      expect(destroyed()).toEqual(["sbx-old"]);
+      expect(deleteSandboxInstanceMock.mock.calls[0]?.[3]).toBe("sbx-old");
+
+      storedSandboxExternalId = "sbx-current";
+      await executor.release({ namespace: NS });
+      expect(destroyed()).toEqual(["sbx-old", "sbx-current"]);
+      expect(deleteSandboxInstanceMock.mock.calls[1]?.[3]).toBe("sbx-current");
+    });
+  }
 });
 
 describe("workspaceNamespacePrefix", () => {

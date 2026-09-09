@@ -38,6 +38,7 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxReleaseRequest,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -177,13 +178,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  async release(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const name = await getSandboxExternalId("vercel", key);
+    const name =
+      request.expectedExternalId ?? (await getSandboxExternalId("vercel", key));
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
@@ -199,6 +198,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       "vercel",
       key,
       this.#config.controlPlane?.accountId,
+      name,
     ).catch(() => {});
   }
 

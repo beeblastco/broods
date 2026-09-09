@@ -44,6 +44,7 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxReleaseRequest,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -176,13 +177,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  async release(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const externalId = await getSandboxExternalId("daytona", key);
+    const externalId =
+      request.expectedExternalId ??
+      (await getSandboxExternalId("daytona", key));
     if (!externalId) return;
     try {
       const sandbox = await new Daytona(daytonaClientOptions(this.#config)).get(
@@ -198,6 +198,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       "daytona",
       key,
       this.#config.controlPlane?.accountId,
+      externalId,
     ).catch(() => {});
   }
 

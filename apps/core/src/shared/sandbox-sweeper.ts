@@ -5,13 +5,12 @@
  * sandbox means calling the in-cluster workdir control plane.
  */
 
+import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { runtime } from "./convex/runtime.ts";
 import { positiveIntegerEnv } from "./env.ts";
+import { toErrorMessage } from "./errors.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
-import {
-  releaseExpiredSandboxes,
-  type SandboxReservationRef,
-} from "./sandbox-cleanup.ts";
+import { releaseExpiredSandboxes } from "./sandbox-cleanup.ts";
 
 const DEFAULT_SWEEP_INTERVAL_SECONDS = 60 * 60;
 const FIRST_SWEEP_JITTER_MS = 30_000;
@@ -19,9 +18,8 @@ const SWEEP_LEASE_KEY = "sandbox-sweep";
 const SWEEP_LEASE_SECONDS = 5 * 60;
 const SWEEP_PAGE_SIZE = 100;
 
-interface SandboxReservationSummary extends SandboxReservationRef {
+interface SandboxReservationSummary extends ReservedSandbox {
   accountId: string;
-  externalId: string;
 }
 
 let firstSweep: ReturnType<typeof setTimeout> | undefined;
@@ -115,7 +113,7 @@ async function adoptOrphanedInstances(): Promise<SandboxReservationSummary[]> {
         logWarn("Orphaned sandbox adoption failed", {
           accountId: orphan.accountId,
           provider: orphan.provider,
-          error: errorMessage(error),
+          error: toErrorMessage(error),
         });
 
         return false;
@@ -146,13 +144,9 @@ async function deferAttempted(
     .catch((error: unknown) => {
       logWarn("Sandbox sweep deferral failed", {
         accountId: accountId,
-        error: errorMessage(error),
+        error: toErrorMessage(error),
       });
     });
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -165,7 +159,7 @@ function runSweep(): void {
   sweeping = true;
   void sweepExpiredSandboxes()
     .catch((error: unknown) => {
-      logWarn("Sandbox sweep failed", { error: errorMessage(error) });
+      logWarn("Sandbox sweep failed", { error: toErrorMessage(error) });
     })
     .finally(() => {
       sweeping = false;
@@ -192,7 +186,7 @@ async function sweepAccount(
     // Expected, and it would otherwise warn once an hour forever.
     logDebug("Sandbox sweep skipped an inactive account", {
       accountId: accountId,
-      error: errorMessage(error),
+      error: toErrorMessage(error),
     });
     await deferAttempted(accountId, reservations);
 
@@ -216,5 +210,15 @@ async function sweepAccount(
     return released.length;
   } finally {
     await deferAttempted(accountId, pending);
+    // Freed here rather than left to lapse, so a replica that comes up after this
+    // one died mid-pass is not parked for the rest of the lease.
+    await runtime
+      .mutate("releaseClaim", { accountId: accountId, key: SWEEP_LEASE_KEY })
+      .catch((error: unknown) => {
+        logWarn("Sandbox sweep lease release failed", {
+          accountId: accountId,
+          error: toErrorMessage(error),
+        });
+      });
   }
 }

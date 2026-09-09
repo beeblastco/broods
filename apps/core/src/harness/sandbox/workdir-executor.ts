@@ -57,6 +57,7 @@ import type {
   SandboxJobRequest,
   SandboxJobStatus,
   SandboxNetworkConfig,
+  SandboxReleaseRequest,
   SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
@@ -335,24 +336,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async release(request: {
-    namespace?: string;
-    reservationKey?: string;
-    expectedExternalId?: string;
-  }): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const externalId = await getSandboxExternalId("sandbox", key);
+    const externalId =
+      request.expectedExternalId ??
+      (await getSandboxExternalId("sandbox", key));
     if (!externalId) return;
-    // A caller releasing a sandbox it already looked up names it, because between
-    // that lookup and this read another acquire can have claimed the key. Deleting
-    // whatever the key points at now would destroy the replacement.
-    if (
-      request.expectedExternalId !== undefined &&
-      request.expectedExternalId !== externalId
-    ) {
-      return;
-    }
     try {
       await (await this.#client.sandboxes.get(externalId)).delete();
     } catch (err) {

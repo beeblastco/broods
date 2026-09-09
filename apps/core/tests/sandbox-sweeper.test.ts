@@ -104,6 +104,8 @@ it("sweeps each account under its own lease", async () => {
   expect(accountsOf("claimEvent")).toEqual(["acct-a", "acct-b"]);
   // Everything was released, so there is nothing left to hold off.
   expect(accountsOf("deferSandboxReservations")).toEqual([]);
+  // The lease is handed back at the end of each pass, not left to lapse.
+  expect(accountsOf("releaseClaim")).toEqual(["acct-a", "acct-b"]);
 });
 
 it("defers only what it could not release", async () => {
@@ -153,6 +155,8 @@ it("leaves an account another replica already holds to that replica", async () =
   expect(await sweepExpiredSandboxes()).toBe(0);
   expect(releaseMock).not.toHaveBeenCalled();
   expect(accountsOf("deferSandboxReservations")).toEqual([]);
+  // Never held, so never released: that would free the other replica's lease.
+  expect(accountsOf("releaseClaim")).toEqual([]);
 });
 
 it("adopts an orphaned mirror row so the normal teardown can reach it", async () => {

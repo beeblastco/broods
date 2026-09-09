@@ -72,6 +72,7 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxReleaseRequest,
   SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
@@ -473,17 +474,19 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async release(request: SandboxReservationRef): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
+    const microvmId =
+      request.expectedExternalId ?? (await getSandboxExternalId(PROVIDER, key));
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
-    const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
     await deleteSandboxInstance(
       PROVIDER,
       key,
       this.#config.controlPlane?.accountId,
+      microvmId ?? undefined,
     ).catch(() => {});
   }
 

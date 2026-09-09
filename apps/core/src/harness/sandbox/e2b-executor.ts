@@ -22,6 +22,7 @@ import type {
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
+  SandboxReleaseRequest,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -95,13 +96,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     return { jobId: jobId };
   }
 
-  async release(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const externalId = await getSandboxExternalId("e2b", key);
+    const externalId =
+      request.expectedExternalId ?? (await getSandboxExternalId("e2b", key));
     if (!externalId) return;
     const Sandbox = await e2bSandboxApi();
     try {
@@ -115,6 +114,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       "e2b",
       key,
       this.#config.controlPlane?.accountId,
+      externalId,
     ).catch(() => {});
   }
 
