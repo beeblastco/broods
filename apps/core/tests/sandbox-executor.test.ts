@@ -1934,32 +1934,47 @@ describe("isNoRunnersError", () => {
   });
 });
 
-describe("isSandboxCapacityError", () => {
-  it("matches the refusals nothing ran under", async () => {
-    const { isSandboxCapacityError, SandboxCapacityError } =
+describe("MicroVM capacity refusal", () => {
+  it("types a quota or throttle refusal of the create as SandboxCapacityError", async () => {
+    const { SandboxCapacityError } =
       await import("../src/harness/sandbox/utils.ts");
-    const { SandboxError } = await import("@mv37/workdir");
-    const quota = Object.assign(new Error("maximum allocated memory limit"), {
-      name: "ServiceQuotaExceededException",
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("maximum allocated memory limit"), {
+        name: "ServiceQuotaExceededException",
+      });
     });
-    expect(isSandboxCapacityError(quota)).toBe(true);
-    expect(
-      isSandboxCapacityError(new SandboxError(503, "full", "no capacity")),
-    ).toBe(true);
-    expect(isSandboxCapacityError(new SandboxCapacityError("no runner"))).toBe(
-      true,
-    );
+
+    await expect(
+      createSandboxExecutor({ provider: "lambda" }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toBeInstanceOf(SandboxCapacityError);
   });
 
-  it("leaves every other failure alone", async () => {
-    const { isSandboxCapacityError } =
+  it("passes every other refusal through untyped", async () => {
+    const { SandboxCapacityError } =
       await import("../src/harness/sandbox/utils.ts");
-    const { SandboxError } = await import("@mv37/workdir");
-    expect(isSandboxCapacityError(new Error("connection reset"))).toBe(false);
-    expect(
-      isSandboxCapacityError(new SandboxError(404, "not_found", "gone")),
-    ).toBe(false);
-    expect(isSandboxCapacityError(undefined)).toBe(false);
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("denied"), {
+        name: "AccessDeniedException",
+      });
+    });
+
+    await expect(
+      createSandboxExecutor({ provider: "lambda" }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.not.toBeInstanceOf(SandboxCapacityError);
   });
 });
 

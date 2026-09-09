@@ -161,6 +161,23 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("config.fallbackProvider requires config.persistent to be false");
   });
 
+  it("refuses a fallback provider that cannot enforce the config's network policy", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        fallbackProvider: "e2b",
+        network: { mode: "deny-all" },
+      }),
+    ).toThrow("e2b cannot enforce egress restrictions");
+    expect(
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        fallbackProvider: "e2b",
+        network: { mode: "allow-all" },
+      }).fallbackProvider,
+    ).toBe("e2b");
+  });
+
   it("rejects unknown providers, permission modes, and runtimes", () => {
     expect(() => normalizeSandboxConfig({ provider: "fargate" })).toThrow(
       "config.provider must be one of",

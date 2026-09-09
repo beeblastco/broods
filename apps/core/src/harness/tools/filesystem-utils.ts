@@ -32,7 +32,7 @@ import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import { isSandboxCapacityError } from "../sandbox/utils.ts";
+import { SandboxCapacityError } from "../sandbox/utils.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -243,8 +243,12 @@ export async function runSandbox(
   try {
     result = await runSandboxOn(config, namespace, code, options?.metadata);
   } catch (error) {
-    const { fallbackProvider, ...primary } = config;
-    if (!fallbackProvider || !isSandboxCapacityError(error)) throw error;
+    // `options` are the primary provider's (its URL, key, template); the
+    // fallback runs on the platform's own defaults for that provider.
+    const { fallbackProvider, options: _options, ...primary } = config;
+    if (!fallbackProvider || !(error instanceof SandboxCapacityError)) {
+      throw error;
+    }
     logWarn("Sandbox create refused for capacity; running on the fallback", {
       provider: config.provider,
       fallbackProvider: fallbackProvider,

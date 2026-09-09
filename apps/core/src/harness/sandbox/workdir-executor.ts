@@ -16,7 +16,12 @@
  * org secrets (no role configured). Both honor an S3-compatible endpoint (R2/MinIO).
  */
 
-import { Client, type CreateOptions, type Sandbox } from "@mv37/workdir";
+import {
+  Client,
+  type CreateOptions,
+  type Sandbox,
+  SandboxError,
+} from "@mv37/workdir";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
@@ -68,6 +73,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
+  SandboxCapacityError,
   SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
@@ -565,6 +571,23 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return (await this.#acquireWithState(request)).sandbox;
   }
 
+  // workdir answers a create it has no room for with 429/503 (admission ceiling).
+  // Only the create is read that way: a later exec failing with the same status
+  // means the command may have run, which must never be retried elsewhere.
+  async #create(options: CreateOptions): Promise<Sandbox> {
+    try {
+      return await this.#client.sandboxes.create(options);
+    } catch (error) {
+      if (
+        error instanceof SandboxError &&
+        (error.status === 429 || error.status === 503)
+      ) {
+        throw new SandboxCapacityError(error.message);
+      }
+      throw error;
+    }
+  }
+
   async #acquireWithState(
     request:
       | SandboxRunRequest
@@ -572,9 +595,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   ): Promise<WorkdirHarnessReservation> {
     if (!this.#persistent(request)) {
       return {
-        sandbox: await this.#client.sandboxes.create(
-          this.#createOptions(request, false),
-        ),
+        sandbox: await this.#create(this.#createOptions(request, false)),
         isFirstCreate: true,
       };
     }
@@ -628,9 +649,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         });
       }
     }
-    const created = await this.#client.sandboxes.create(
-      this.#createOptions(request, true),
-    );
+    const created = await this.#create(this.#createOptions(request, true));
     try {
       if (
         await claimSandboxInstance(

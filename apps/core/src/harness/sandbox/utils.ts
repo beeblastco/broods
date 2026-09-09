@@ -3,16 +3,8 @@
  * Keep small coercion, path, quoting, and output utilities here.
  */
 
-import { SandboxError } from "@mv37/workdir";
 import { isPlainObject } from "../../shared/object.ts";
 
-// The MicroVM control plane's refusals that mean "no room right now".
-const MICROVM_CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
-  "InsufficientCapacityException",
-  "ServiceQuotaExceededException",
-  "ThrottlingException",
-  "TooManyRequestsException",
-]);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -200,8 +192,10 @@ export function shellQuote(value: string): string {
 export class SandboxGoneError extends Error {}
 
 /**
- * Thrown by an executor whose provider refused the create for lack of room
- * (Daytona with no runner). Nothing ran, so the request may go elsewhere.
+ * Thrown by an executor whose provider refused the *create* for lack of room:
+ * the MicroVM quota or throttle, workdir's admission ceiling, Daytona with no
+ * runner. Raised only at the create call, so it always means nothing ran and
+ * the same request may go to another provider.
  */
 export class SandboxCapacityError extends Error {}
 
@@ -227,20 +221,6 @@ export function isSandboxGoneError(error: unknown): boolean {
   return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(
     message,
   );
-}
-
-/**
- * True when a provider refused to create a sandbox because it has no room for it
- * right now: the MicroVM quota or throttle, workdir's admission ceiling, or
- * Daytona with no runner. Nothing ran, so the same request may go elsewhere.
- */
-export function isSandboxCapacityError(error: unknown): boolean {
-  if (error instanceof SandboxCapacityError) return true;
-  if (error instanceof SandboxError) {
-    return error.status === 429 || error.status === 503;
-  }
-
-  return error instanceof Error && MICROVM_CAPACITY_EXCEPTIONS.has(error.name);
 }
 
 /**

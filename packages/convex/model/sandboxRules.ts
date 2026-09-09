@@ -179,23 +179,14 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     );
   }
   const network = normalizeNetwork(config.network);
-  if (provider === "e2b" && network.mode !== "allow-all") {
-    throw new Error(
-      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
-    );
-  }
-  if (
-    provider === "lambda" &&
-    network.mode === "restricted" &&
-    (network.allowDomains || network.allowCidrs)
-  ) {
-    throw new Error(
-      "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
-    );
-  }
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
-  assertResourceLimits(config, provider);
+  // The fallback runs this same config, so it has to be able to enforce it too.
+  for (const runsOn of [provider, config.fallbackProvider as SandboxProvider]) {
+    if (!runsOn) continue;
+    assertNetworkEnforceable(runsOn, network);
+    assertResourceLimits(config, runsOn);
+  }
   assertEnvVarsAndOptions(config, provider);
 
   return buildNormalizedConfig(
@@ -271,6 +262,26 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 // Validates the envVars record and provider-specific options blob.
+function assertNetworkEnforceable(
+  provider: SandboxProvider,
+  network: SandboxNetworkConfig,
+): void {
+  if (provider === "e2b" && network.mode !== "allow-all") {
+    throw new Error(
+      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+    );
+  }
+  if (
+    provider === "lambda" &&
+    network.mode === "restricted" &&
+    (network.allowDomains || network.allowCidrs)
+  ) {
+    throw new Error(
+      "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
+    );
+  }
+}
+
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
