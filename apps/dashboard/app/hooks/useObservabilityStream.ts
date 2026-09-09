@@ -395,6 +395,19 @@ export function useObservabilityStream(
   };
 }
 
+// Dedup key: spans use the stable traceId+spanId; logs have no wire id, so fall
+// back to ts + eventType + message. Also the React key for a row: an index key
+// remounts every row when a live entry is prepended.
+export function entryKey(
+  entry: ObservabilityLogEntry | ObservabilitySpanRow,
+): string {
+  if ("spanId" in entry) {
+    return `span:${entry.traceId}:${entry.spanId}`;
+  }
+
+  return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+}
+
 // Fold one backfill piece into the list: dedup by key, keep the better copy of
 // a span seen twice, newest first, capped. The closing piece of a traces
 // backfill carries no rows and leaves the list untouched.
@@ -415,19 +428,6 @@ export function mergeBackfill<
   return combined.length > MAX_ENTRIES
     ? combined.slice(0, MAX_ENTRIES)
     : combined;
-}
-
-// Dedup key: spans use the stable traceId+spanId; logs have no wire id, so fall
-// back to ts + eventType + message. Also the React key for a row: an index key
-// remounts every row when a live entry is prepended.
-export function entryKey(
-  entry: ObservabilityLogEntry | ObservabilitySpanRow,
-): string {
-  if ("spanId" in entry) {
-    return `span:${entry.traceId}:${entry.spanId}`;
-  }
-
-  return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
 }
 
 function entryTime(

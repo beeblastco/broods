@@ -57,9 +57,12 @@ jobs:
           context: .
           file: apps/core/Dockerfile
           push: true
+          # The floating branch tag only for dev and main: a feature branch's
+          # name has a slash, which no image tag may hold, so a manual dispatch
+          # to test a branch on the dev stage ships by sha alone.
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

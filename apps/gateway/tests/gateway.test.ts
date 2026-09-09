@@ -42,6 +42,7 @@ import {
   clientIp,
   gatewayLimitsFromEnv,
   isOriginAllowed,
+  json,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
   websocketToken,
@@ -1638,7 +1639,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const { socket, sent } = observabilitySocket();
   const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
   const tempoTrace = (accountId: string): Response =>
-    tempoJson({
+    json({
       batches: [
         tempoBatch({
           traceId: traceId,
@@ -1683,9 +1684,9 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/search"))
-      return tempoJson({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
+      return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
     if (url.includes("/api/traces/aaa"))
-      return tempoJson({
+      return json({
         batches: [tempoBatch({ traceId: "aaa", spanId: "root" })],
       });
 
@@ -1709,18 +1710,15 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
   // 25 traces, listed oldest first as Tempo may return them. Each chunk paints
   // on its own, so the first one must hold the newest traces, and a consumer
   // that stops after two chunks must not cost a third round of lookups.
-  const searchHits = Array.from({ length: 25 }, (_, index) => ({
-    traceID: `t${index}`,
-    startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
-  }));
+  const searchHits = tempoSearchHits(25);
   const fetched: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) return tempoJson({ traces: searchHits });
+    if (url.includes("/api/search")) return json({ traces: searchHits });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
     fetched.push(traceId);
 
-    return tempoJson({
+    return json({
       batches: [tempoBatch({ traceId: traceId, spanId: "root" })],
     });
   }) as unknown as typeof fetch;
@@ -1751,9 +1749,9 @@ test("fetchTempoBackfill drops spans from other scopes in a matched trace", asyn
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/search"))
-      return tempoJson({ traces: [{ traceID: "aaa" }] });
+      return json({ traces: [{ traceID: "aaa" }] });
 
-    return tempoJson({
+    return json({
       batches: [
         tempoBatch({ traceId: "aaa", spanId: "in" }),
         tempoBatch({ traceId: "aaa", spanId: "out", stage: "prod" }),
@@ -1776,16 +1774,13 @@ test("a traces backfill streams newest-first pieces and a closing message", asyn
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
-  const searchHits = Array.from({ length: 25 }, (_, index) => ({
-    traceID: `t${index}`,
-    startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
-  }));
+  const searchHits = tempoSearchHits(25);
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) return tempoJson({ traces: searchHits });
+    if (url.includes("/api/search")) return json({ traces: searchHits });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
 
-    return tempoJson({
+    return json({
       batches: [tempoBatch({ traceId: traceId, spanId: "root" })],
     });
   }) as unknown as typeof fetch;
@@ -1832,9 +1827,9 @@ test("a traces backfill closes with the count of lookups Tempo could not serve",
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/search"))
-      return tempoJson({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
+      return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
     if (url.includes("/api/traces/aaa"))
-      return tempoJson({
+      return json({
         batches: [tempoBatch({ traceId: "aaa", spanId: "root" })],
       });
 
@@ -1873,24 +1868,67 @@ test("a traces backfill closes with the count of lookups Tempo could not serve",
   }
 });
 
+test("an unsubscribe cancels the traces backfill still streaming for it", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const searchHits = tempoSearchHits(25);
+  let lookups = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search")) return json({ traces: searchHits });
+    lookups += 1;
+    await Bun.sleep(10);
+
+    return json({
+      batches: [
+        tempoBatch({
+          traceId: url.slice(url.lastIndexOf("/") + 1),
+          spanId: "root",
+        }),
+      ],
+    });
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "traces", backfill: 100 }),
+      idleNats,
+    );
+    // The first chunk is in flight; the client walks away from the stream.
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "unsubscribe", stream: "traces" }),
+      idleNats,
+    );
+    await Bun.sleep(150);
+
+    expect(lookups).toBe(12);
+    expect(sent.filter((message) => message.type === "backfill")).toEqual([]);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
 test("a traces backfill stops asking Tempo once the socket is gone", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
-  const searchHits = Array.from({ length: 25 }, (_, index) => ({
-    traceID: `t${index}`,
-    startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
-  }));
+  const searchHits = tempoSearchHits(25);
   let lookups = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) return tempoJson({ traces: searchHits });
+    if (url.includes("/api/search")) return json({ traces: searchHits });
     lookups += 1;
     // The tab closes while the first chunk is in flight.
     (socket as { readyState: number }).readyState = WebSocket.CLOSED;
 
-    return tempoJson({
+    return json({
       batches: [
         tempoBatch({
           traceId: url.slice(url.lastIndexOf("/") + 1),
@@ -2454,6 +2492,16 @@ function gatewaySocket(sent: Array<Record<string, unknown>>) {
   >;
 }
 
+/** `count` search hits, oldest first as Tempo may list them: t0 is the oldest, t(count-1) the newest. */
+function tempoSearchHits(
+  count: number,
+): Array<{ traceID: string; startTimeUnixNano: string }> {
+  return Array.from({ length: count }, (_, index) => ({
+    traceID: `t${index}`,
+    startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
+  }));
+}
+
 /** One resource batch of a Tempo trace response holding a single 1 s agent.task span. */
 function tempoBatch({
   traceId,
@@ -2491,14 +2539,6 @@ function tempoBatch({
   };
 }
 
-/** A 200 JSON response, the shape every Tempo endpoint answers with. */
-function tempoJson(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 /** A live subscription that opens and then stays quiet, for tests about the backfill alone. */
 const idleNats = async (): Promise<NatsConnection> =>
   zeroBufferConnection(async () => ({
@@ -2523,12 +2563,7 @@ function observabilitySocket(): {
       project: "shop",
       stage: "dev",
       token: "runtime-key",
-      scope: {
-        accountId: "acct-1",
-        projectSlug: "shop",
-        stageSlug: "dev",
-        endpointIds: [],
-      },
+      scope: TEST_SCOPE,
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
 

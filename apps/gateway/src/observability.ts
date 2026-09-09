@@ -50,6 +50,10 @@ type ObservabilitySocketState = {
   // The sandbox a logs subscription tails, so a repeat of the same subscribe
   // does not fire another Loki backfill scan.
   logsSandboxId: string | null;
+  // Bumped whenever the traces stream is torn down, so a chunked backfill
+  // still running for the old subscription stops instead of interleaving
+  // its pieces, and its closing message, with the new one's.
+  tracesBackfillRun: number;
 };
 type OtelValue = {
   stringValue?: string;
@@ -90,12 +94,13 @@ const SANDBOX_SERVICE_NAME = "broods-sandbox";
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
-// Tempo serves trace-by-id lookups one at a time whatever the client
-// parallelism, so the backfill goes out newest first in chunks: the Tracing
-// tab paints after one chunk instead of after the whole batch. A single
-// TraceQL search cannot replace the lookups: on Tempo 2.7 `select()` has no
-// attribute wildcard and rejects `span:parentID`, both of which the rows need.
+// Tempo mostly serialises trace-by-id lookups; 6 in flight buys about 20%
+// over 1, more buys nothing.
 const TEMPO_DETAIL_CONCURRENCY = 6;
+// The backfill goes out newest first in chunks, so the Tracing tab paints
+// after one chunk instead of after the whole batch. A single TraceQL search
+// cannot replace the lookups: on Tempo 2.7 `select()` has no attribute
+// wildcard and rejects `span:parentID`, both of which the rows need.
 const TEMPO_BACKFILL_CHUNK = 12;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 // Span relay backpressure: re-check cadence and cap before shedding.
@@ -189,6 +194,7 @@ export function openObservabilitySocket(
     tracesSub: null,
     logsMinLevel: "INFO",
     logsSandboxId: null,
+    tracesBackfillRun: 0,
   });
 }
 
@@ -503,8 +509,13 @@ async function sendBackfill(
       const tempoUrl = process.env.TEMPO_URL?.trim();
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
+      const state = obsState.get(socket);
+      const run = state?.tracesBackfillRun;
       let failures = 0;
       for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
+        // A re-subscribe or unsubscribe landed while this chunk was in
+        // flight: a newer backfill owns the stream now.
+        if (state?.tracesBackfillRun !== run) return;
         failures += chunk.failures;
         const sent = sendObs(socket, {
           type: "backfill",
@@ -515,6 +526,7 @@ async function sendBackfill(
         // The socket is gone: stop paying Tempo for a tab nobody is watching.
         if (!sent) return;
       }
+      if (state?.tracesBackfillRun !== run) return;
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
@@ -848,9 +860,10 @@ function cleanupObservabilityStream(
     state.logsSub.unsubscribe();
     state.logsSub = null;
     state.logsSandboxId = null;
-  } else if (stream === "traces" && state.tracesSub) {
-    state.tracesSub.unsubscribe();
+  } else if (stream === "traces") {
+    state.tracesSub?.unsubscribe();
     state.tracesSub = null;
+    state.tracesBackfillRun += 1;
   }
 }
 
