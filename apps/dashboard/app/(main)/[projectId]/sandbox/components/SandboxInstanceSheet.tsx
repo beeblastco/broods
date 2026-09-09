@@ -344,7 +344,7 @@ export function SandboxInstanceSheet({
           {logSandboxId && (
             <TabsContent value="logs" className="mt-4">
               <SandboxLogTail
-                sandboxId={logSandboxId}
+                logSandboxId={logSandboxId}
                 scope={observability}
                 monitoringHref={dashboardHref({ tab: "monitoring" })}
               />
