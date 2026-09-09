@@ -473,17 +473,28 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async release(request: SandboxReservationRef): Promise<void> {
+  async release(
+    request: SandboxReservationRef & { expectedExternalId?: string },
+  ): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
+    const microvmId = await getSandboxExternalId(PROVIDER, key);
+    // A caller that already read the reservation names the VM it means; a key
+    // re-claimed since then points at a replacement this release must not touch.
+    if (
+      request.expectedExternalId !== undefined &&
+      request.expectedExternalId !== microvmId
+    ) {
+      return;
+    }
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
-    const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
     await deleteSandboxInstance(
       PROVIDER,
       key,
       this.#config.controlPlane?.accountId,
+      microvmId ?? undefined,
     ).catch(() => {});
   }
 

@@ -34,24 +34,38 @@ export interface SandboxReservationRef {
 }
 
 /**
+ * A reservation the sweeper read, naming the machine it saw. The release is
+ * conditional on that id, so a key re-claimed between the read and the release
+ * keeps its replacement.
+ */
+export interface ExpiredSandboxReservation extends SandboxReservationRef {
+  externalId: string;
+}
+
+/**
  * Release the reservations the sweeper found expired. Unlike the namespace-deletion
  * path it never drops a row the provider teardown did not confirm: that row holds the
  * only copy of `externalId`, so deleting it early strands the sandbox.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
-  reservations: SandboxReservationRef[],
-): Promise<SandboxReservationRef[]> {
+  reservations: ExpiredSandboxReservation[],
+): Promise<ExpiredSandboxReservation[]> {
   if (reservations.length === 0) {
     return [];
   }
   const configs = await persistentSandboxConfigs(accountId);
 
-  const released: SandboxReservationRef[] = [];
+  const released: ExpiredSandboxReservation[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
-    if (!(await releaseFromConfigs(reservation.provider, configs, key)))
-      continue;
+    const done = await releaseFromConfigs(
+      reservation.provider,
+      configs,
+      key,
+      reservation.externalId,
+    );
+    if (!done) continue;
     released.push(reservation);
     await removeSandboxInstance(accountId, key);
   }
@@ -129,6 +143,7 @@ async function releaseFromConfigs(
   provider: SandboxProvider,
   configs: SandboxConfig[],
   namespace: string,
+  expectedExternalId?: string,
 ): Promise<boolean> {
   for (const config of configs) {
     if (config.provider !== provider) continue;
@@ -143,7 +158,10 @@ async function releaseFromConfigs(
               : provider === "e2b"
                 ? new E2BSandboxExecutor(config)
                 : new VercelSandboxExecutor(config);
-      await executor.release({ namespace: namespace });
+      await executor.release({
+        namespace: namespace,
+        expectedExternalId: expectedExternalId,
+      });
 
       return true;
     } catch (error) {

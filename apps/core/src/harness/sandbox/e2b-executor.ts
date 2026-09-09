@@ -98,11 +98,20 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   async release(request: {
     namespace?: string;
     reservationKey?: string;
+    expectedExternalId?: string;
   }): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
     const externalId = await getSandboxExternalId("e2b", key);
     if (!externalId) return;
+    // A caller that already read the reservation names the sandbox it means; a key
+    // re-claimed since then points at a replacement this release must not touch.
+    if (
+      request.expectedExternalId !== undefined &&
+      request.expectedExternalId !== externalId
+    ) {
+      return;
+    }
     const Sandbox = await e2bSandboxApi();
     try {
       await Sandbox.kill(externalId, e2bApiOptions(this.#config));
@@ -115,6 +124,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       "e2b",
       key,
       this.#config.controlPlane?.accountId,
+      externalId,
     ).catch(() => {});
   }
 

@@ -179,11 +179,20 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async release(request: {
     namespace?: string;
     reservationKey?: string;
+    expectedExternalId?: string;
   }): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
     const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId) return;
+    // A caller that already read the reservation names the sandbox it means; a key
+    // re-claimed since then points at a replacement this release must not touch.
+    if (
+      request.expectedExternalId !== undefined &&
+      request.expectedExternalId !== externalId
+    ) {
+      return;
+    }
     try {
       const sandbox = await new Daytona(daytonaClientOptions(this.#config)).get(
         externalId,
@@ -198,6 +207,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       "daytona",
       key,
       this.#config.controlPlane?.accountId,
+      externalId,
     ).catch(() => {});
   }
 

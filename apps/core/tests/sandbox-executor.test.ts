@@ -268,6 +268,9 @@ mock.module("@daytona/sdk", () => ({
     }
 
     create = daytonaCreateMock;
+    // Release reaches an existing sandbox by id; it deletes through the same
+    // handle shape create returns.
+    get = mock(async (_id: string) => ({ delete: daytonaDeleteMock }));
   },
 }));
 
@@ -2036,6 +2039,64 @@ describe("persistent acquire teardown", () => {
     expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe("vercel");
   });
 });
+
+describe("conditional release", () => {
+  // The sweeper reads a reservation, then releases it later. A key re-claimed in
+  // between names a replacement the release must leave alone; a matching id is
+  // the machine the caller meant.
+  const cases = [
+    { provider: "lambda", destroy: () => microvmTerminateCalls(), options: {} },
+    {
+      provider: "daytona",
+      destroy: () => daytonaDeleteMock.mock.calls.length,
+      options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces" },
+    },
+    {
+      provider: "e2b",
+      destroy: () => e2bKillMock.mock.calls.length,
+      options: { workspaceRoot: "/workspace", template: "mounted-template" },
+    },
+    {
+      provider: "vercel",
+      destroy: () => vercelDeleteMock.mock.calls.length,
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    },
+  ];
+
+  for (const { provider, destroy, options } of cases) {
+    it(`${provider} release leaves a re-claimed key alone and tears down a named one`, async () => {
+      storedSandboxExternalId = "sbx-current";
+      const {
+        createSandboxExecutor,
+      } = require("../src/harness/sandbox/index.ts");
+      const executor = createSandboxExecutor({
+        provider: provider,
+        persistent: true,
+        options: options,
+      });
+
+      await executor.release({
+        namespace: NS,
+        expectedExternalId: "sbx-replaced",
+      });
+      expect(destroy()).toBe(0);
+      expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+
+      await executor.release({
+        namespace: NS,
+        expectedExternalId: "sbx-current",
+      });
+      expect(destroy()).toBe(1);
+      expect(deleteSandboxInstanceMock.mock.calls[0]?.[3]).toBe("sbx-current");
+    });
+  }
+});
+
+function microvmTerminateCalls(): number {
+  return microvmSendMock.mock.calls.filter(
+    (call) => (call[0] as { _type?: string })?._type === "TerminateMicrovm",
+  ).length;
+}
 
 describe("workspaceNamespacePrefix", () => {
   it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
