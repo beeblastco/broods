@@ -16,6 +16,15 @@ const BACKFILL = 200;
 // Core writes "-" for a run with no deployment scope (channel, cron).
 const UNSCOPED = "-";
 
+/**
+ * A guest log stream id. Branded because the sheet also holds an
+ * `Id<"sandboxConfigs">` that Convex names `sandboxId`, and a plain string type
+ * lets the two swap silently: the tail would then subscribe with a config id,
+ * fail the gateway's UUID check, and render empty with nothing to point at.
+ * Only `sandboxLogId` mints one, at the point it validates the stream name.
+ */
+export type SandboxLogId = string & { readonly __brand: "sandboxLogId" };
+
 /** The stage-scoped WS inputs the Sandbox page resolves once for every sheet. */
 export interface SandboxObservabilityScope {
   projectSlug: string;
@@ -25,8 +34,8 @@ export interface SandboxObservabilityScope {
 }
 
 interface Props {
-  /** Last segment of the instance's `logStream`. */
-  sandboxId: string;
+  /** Last segment of the instance's `logStream`, from `sandboxLogId`. */
+  logSandboxId: SandboxLogId;
   /** Null until the stage has an active deployment. */
   scope: SandboxObservabilityScope | null;
   /** Monitoring tab, where the stage's viewing key is minted. */
@@ -39,15 +48,15 @@ interface Props {
  * had no deployment scope, since the gateway scopes every query on project and
  * stage and such a VM's lines can never match.
  */
-export function sandboxLogId(logStream: string): string | undefined {
+export function sandboxLogId(logStream: string): SandboxLogId | undefined {
   const [, project, stage, id] = logStream.split("/");
   const scoped = project !== UNSCOPED && stage !== UNSCOPED;
 
-  return scoped && id ? id : undefined;
+  return scoped && id ? (id as SandboxLogId) : undefined;
 }
 
 export function SandboxLogTail({
-  sandboxId,
+  logSandboxId,
   scope,
   monitoringHref,
 }: Props): React.JSX.Element {
@@ -58,7 +67,7 @@ export function SandboxLogTail({
     apiKey: scope?.apiKey,
     backfill: BACKFILL,
     minLevel: "DEBUG",
-    sandboxId: sandboxId,
+    sandboxId: logSandboxId,
   });
 
   if (!scope?.apiKey) {
@@ -79,7 +88,7 @@ export function SandboxLogTail({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span className="font-mono">{sandboxId}</span>
+        <span className="font-mono">{logSandboxId}</span>
         <span className={status === "error" ? "text-red-500" : undefined}>
           {status === "error" ? (error ?? "stream error") : status}
         </span>
