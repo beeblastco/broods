@@ -189,6 +189,25 @@ export interface SandboxReservationRef {
   reservationKey?: string;
 }
 
+/**
+ * A reservation and the machine it names. Provider ids are never reused, so the
+ * id is the fence for every write to the reservation row.
+ */
+export interface ReservedSandbox {
+  provider: SandboxProvider;
+  reservationKey: string;
+  externalId: string;
+}
+
+/**
+ * A release, optionally pinned to the machine the caller already read. Vercel's
+ * id is a name derived from the key, shared by every replacement, so the pin is
+ * a no-op there.
+ */
+export interface SandboxReleaseRequest extends SandboxReservationRef {
+  expectedExternalId?: string;
+}
+
 /** Result of capturing a sandbox snapshot/image (workdir snapshot or MicroVM image). */
 export interface SandboxSnapshotResult {
   snapshotId: string;
@@ -245,14 +264,10 @@ export interface SandboxExecutor {
   // (workdir/daytona/e2b sandbox) plus its instance record.
   // Best-effort + idempotent: a missing sandbox is a no-op. Called on
   // account/workspace deletion to prevent leaked compute/disk.
-  // `expectedExternalId` makes the teardown conditional: a caller that already read
-  // the reservation names the sandbox it means, so a key re-claimed in between is
-  // left alone. Omit it to release whatever the key points at now.
-  release?(request: {
-    namespace?: string;
-    reservationKey?: string;
-    expectedExternalId?: string;
-  }): Promise<void>;
+  // With `expectedExternalId` it tears down that machine and drops the row only
+  // while it still names it, so a key re-claimed in between keeps its replacement.
+  // Without it, whatever the key points at now.
+  release?(request: SandboxReleaseRequest): Promise<void>;
   // --- Snapshot/standby lifecycle (workdir + lambda-microvm). All optional; callers
   // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---
   // Suspend a reserved sandbox, preserving disk+memory while freeing compute.

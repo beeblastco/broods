@@ -103,9 +103,16 @@ const saveSandboxInstanceMock = mock(
     storedSandboxExternalId = externalId;
   },
 );
-const deleteSandboxInstanceMock = mock(async () => {
-  storedSandboxExternalId = null;
-});
+const deleteSandboxInstanceMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+    _accountId?: string,
+    _externalId?: string,
+  ) => {
+    storedSandboxExternalId = null;
+  },
+);
 const upsertSandboxInstanceMock = mock(async () => {});
 // Epoch ms the stored reservation was claimed; drives the max-lifetime check.
 // Defaults to "just now" so the reserved-sandbox tests are not accidentally expired.
@@ -1140,9 +1147,8 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
     ).toBe(true);
   });
 
-  it("leaves a reservation alone when another acquire already re-claimed it", async (): Promise<void> => {
-    // The caller read sbx_old, but the key now points at a sandbox someone else
-    // just claimed — deleting it would destroy live work.
+  it("tears down the named sandbox, not the one another acquire re-claimed", async (): Promise<void> => {
+    // The caller read sbx_old; the key now points at sbx_new, which stays.
     storedSandboxExternalId = "sbx_new";
     const executor = await newExecutor({
       provider: "sandbox",
@@ -1151,8 +1157,10 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
     });
 
     await executor.release({ namespace: NS, expectedExternalId: "sbx_old" });
-    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
-    expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+    expect(
+      fetchCalls.filter((c) => c.method === "DELETE").map((c) => c.path),
+    ).toEqual(["/v1/sandboxes/sbx_old"]);
+    expect(deleteSandboxInstanceMock.mock.calls[0]?.[3]).toBe("sbx_old");
   });
 
   it("returns null instance info when nothing is reserved", async () => {

@@ -38,6 +38,7 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxReleaseRequest,
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
@@ -177,23 +178,12 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  async release(request: {
-    namespace?: string;
-    reservationKey?: string;
-    expectedExternalId?: string;
-  }): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const name = await getSandboxExternalId("vercel", key);
+    const name =
+      request.expectedExternalId ?? (await getSandboxExternalId("vercel", key));
     if (!name) return;
-    // A caller that already read the reservation names the sandbox it means; a key
-    // re-claimed since then points at a replacement this release must not touch.
-    if (
-      request.expectedExternalId !== undefined &&
-      request.expectedExternalId !== name
-    ) {
-      return;
-    }
     try {
       const Sandbox = await this.#Sandbox();
       const sandbox = await Sandbox.get({

@@ -8,6 +8,7 @@ import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
 import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
+import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
@@ -34,29 +35,20 @@ export interface SandboxReservationRef {
 }
 
 /**
- * A reservation the sweeper read, naming the machine it saw. The release is
- * conditional on that id, so a key re-claimed between the read and the release
- * keeps its replacement.
- */
-export interface ExpiredSandboxReservation extends SandboxReservationRef {
-  externalId: string;
-}
-
-/**
  * Release the reservations the sweeper found expired. Unlike the namespace-deletion
  * path it never drops a row the provider teardown did not confirm: that row holds the
  * only copy of `externalId`, so deleting it early strands the sandbox.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
-  reservations: ExpiredSandboxReservation[],
-): Promise<ExpiredSandboxReservation[]> {
+  reservations: ReservedSandbox[],
+): Promise<ReservedSandbox[]> {
   if (reservations.length === 0) {
     return [];
   }
   const configs = await persistentSandboxConfigs(accountId);
 
-  const released: ExpiredSandboxReservation[] = [];
+  const released: ReservedSandbox[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
     const done = await releaseFromConfigs(

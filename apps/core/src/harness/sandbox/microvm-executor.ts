@@ -72,6 +72,7 @@ import type {
   SandboxJobLogs,
   SandboxJobRequest,
   SandboxJobStatus,
+  SandboxReleaseRequest,
   SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
@@ -473,20 +474,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async release(
-    request: SandboxReservationRef & { expectedExternalId?: string },
-  ): Promise<void> {
+  async release(request: SandboxReleaseRequest): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const microvmId = await getSandboxExternalId(PROVIDER, key);
-    // A caller that already read the reservation names the VM it means; a key
-    // re-claimed since then points at a replacement this release must not touch.
-    if (
-      request.expectedExternalId !== undefined &&
-      request.expectedExternalId !== microvmId
-    ) {
-      return;
-    }
+    const microvmId =
+      request.expectedExternalId ?? (await getSandboxExternalId(PROVIDER, key));
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
     if (microvmId) await this.#terminate(microvmId);
