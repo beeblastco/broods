@@ -765,8 +765,11 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 /**
- * Refreshes or creates a persistent sandbox reservation mapping.
- * @returns null after the mapping is saved
+ * Pushes the idle deadline out on a reservation that still names this sandbox.
+ * The id is the fence: a caller that reconnected to one machine must not point
+ * the key back at it after a concurrent acquire replaced it, and a key that has
+ * been released must not come back at all. Either case is a no-op here.
+ * @returns whether the reservation still named this sandbox and was refreshed
  */
 export const saveSandboxReservation = internalMutation({
   args: {
@@ -775,7 +778,7 @@ export const saveSandboxReservation = internalMutation({
     externalId: v.string(),
     accountId: v.string(),
   },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (ctx, args) => {
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
@@ -786,19 +789,13 @@ export const saveSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    const patch = {
-      externalId: args.externalId,
+    if (!row || row.externalId !== args.externalId) return false;
+    await ctx.db.patch(row._id, {
       expiresAt:
         Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
-    };
-    if (row) await ctx.db.patch(row._id, patch);
-    else
-      await ctx.db.insert("sandboxReservations", {
-        ...args,
-        ...patch,
-      });
+    });
 
-    return null;
+    return true;
   },
 });
 /**
