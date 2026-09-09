@@ -144,49 +144,32 @@ describe("tidyCanvasLayout", () => {
 
 describe("findFreePosition", () => {
   it("keeps the requested spot when nothing is in the way", () => {
-    const cell = { x: CELL_WIDTH, y: CELL_HEIGHT };
-
-    expect(findFreePosition(cell, [])).toEqual(cell);
+    expect(findFreePosition({ x: 240, y: 96 }, [])).toEqual({ x: 240, y: 96 });
   });
 
-  it("snaps the requested spot to the nearest cell", () => {
-    expect(findFreePosition({ x: CELL_WIDTH + 30, y: 50 }, [])).toEqual({
-      x: CELL_WIDTH,
-      y: 0,
+  it("snaps the requested spot to the nearest background dot", () => {
+    expect(findFreePosition({ x: 251, y: 91 }, [])).toEqual({ x: 240, y: 96 });
+  });
+
+  it("steps down the dot grid to the first row that clears a taken spot", () => {
+    const occupied = [{ x: 240, y: 96 }];
+
+    // Five 24px steps: the first offset past the card height plus margin.
+    expect(findFreePosition({ x: 244, y: 98 }, occupied)).toEqual({
+      x: 240,
+      y: 216,
     });
   });
 
-  it("steps below, then right, then left, then above when cells are taken", () => {
-    const cell = { x: CELL_WIDTH, y: CELL_HEIGHT };
-    const below = { x: CELL_WIDTH, y: 2 * CELL_HEIGHT };
-    const right = { x: 2 * CELL_WIDTH, y: CELL_HEIGHT };
-    const left = { x: 0, y: CELL_HEIGHT };
-    const above = { x: CELL_WIDTH, y: 0 };
-    const nudged = { x: CELL_WIDTH + 4, y: CELL_HEIGHT + 2 };
+  it("keeps a margin from a card it would otherwise touch", () => {
+    const taken = { x: 240, y: 96 };
+    const placed = findFreePosition({ x: 240 + NODE_WIDTH, y: 96 }, [taken]);
 
-    expect(findFreePosition(nudged, [cell])).toEqual(below);
-    expect(findFreePosition(nudged, [cell, below])).toEqual(right);
-    expect(findFreePosition(nudged, [cell, below, right])).toEqual(left);
-    expect(findFreePosition(nudged, [cell, below, right, left])).toEqual(above);
-  });
-
-  it("treats a legacy off-cell card as blocking every cell its box reaches into", () => {
-    // A card straddling the first two cells of the top row blocks both of them.
-    const occupied = [{ x: CELL_WIDTH / 2, y: 0 }];
-
-    expect(findFreePosition({ x: 0, y: 0 }, occupied)).toEqual({
-      x: 0,
-      y: CELL_HEIGHT,
-    });
-    expect(findFreePosition({ x: CELL_WIDTH, y: 0 }, occupied)).toEqual({
-      x: CELL_WIDTH,
-      y: CELL_HEIGHT,
-    });
-  });
-
-  it("ignores a legacy card that only reaches into the gap around a cell", () => {
-    const inTheGap = [{ x: NODE_WIDTH + 8, y: NODE_HEIGHT + 8 }];
-
-    expect(findFreePosition({ x: 0, y: 0 }, inTheGap)).toEqual({ x: 0, y: 0 });
+    expect(placed.x % GRID).toBe(0);
+    expect(placed.y % GRID).toBe(0);
+    expect(
+      Math.abs(placed.x - taken.x) > NODE_WIDTH ||
+        Math.abs(placed.y - taken.y) > NODE_HEIGHT,
+    ).toBe(true);
   });
 });

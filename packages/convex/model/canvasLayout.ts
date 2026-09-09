@@ -2,9 +2,9 @@
  * Deterministic canvas auto-layout, shared by the dashboard, the CLI sync and
  * the account API sync so every writer draws the same picture.
  *
- * The canvas is a grid of card-sized cells. Every position this module emits,
- * and every position the dashboard lets a drag settle on, is a whole cell, so
- * columns and rows line up across the whole board.
+ * The tidy layout works in card-sized cells, so its columns and rows line up
+ * across the whole board. Drags and manual adds are finer: they snap to the
+ * background dot grid and only step aside when they would cover another card.
  *
  * Each agent owns a cluster: the agent card sits centred above a block of
  * typed columns holding the services only that agent uses. Sub-agents follow
@@ -19,10 +19,10 @@ import type { CanvasNode } from "../canvas";
 export const NODE_WIDTH = 176;
 export const NODE_HEIGHT = 96;
 
-/** Background dot pitch. Cell sizes are multiples of it so cards sit on the dots. */
+/** Background dot pitch. Drags snap to it, and cell sizes are multiples of it. */
 export const GRID = 24;
 
-/** One grid cell: a card plus the gap to the next one. */
+/** One tidy-layout cell: a card plus the gap to the next one. */
 export const CELL_WIDTH = NODE_WIDTH + 40;
 export const CELL_HEIGHT = NODE_HEIGHT + 48;
 
@@ -30,8 +30,11 @@ export const CELL_HEIGHT = NODE_HEIGHT + 48;
 const CLUSTER_GAP_COLUMNS = 1;
 const LANE_GAP_ROWS = 1;
 
-/** How far {@link findFreePosition} steps out before giving up, in cells. */
-const MAX_NUDGE_RINGS = 16;
+/** Clearance a nudged card keeps from the cards it stepped around. */
+const NODE_MARGIN = 16;
+
+/** How far {@link findFreePosition} steps out before giving up, in dot-grid steps. */
+const MAX_NUDGE_RINGS = 48;
 
 /**
  * Column order for an agent's services, mirroring the dashboard's "Add service"
@@ -117,20 +120,20 @@ export function applyTidyLayout<
 }
 
 /**
- * Nearest cell to `desired` whose card clears every occupied card. Manual adds
- * and drag drops land on that cell, and only step aside when it is taken:
- * first to the cell below, then right, left, above, then further out.
+ * Nearest dot-grid point to `desired` whose card clears every occupied card.
+ * Manual adds and drag drops land right there, and only step aside when they
+ * would cover another card: below first, then right, left, above, then out.
  */
 export function findFreePosition(
   desired: LayoutPosition,
   occupied: readonly LayoutPosition[],
 ): LayoutPosition {
-  const start = snapToCell(desired);
+  const start = snapToGrid(desired);
   for (let ring = 0; ring <= MAX_NUDGE_RINGS; ring++) {
     for (const offset of ringOffsets(ring)) {
       const candidate = {
-        x: start.x + offset.x * CELL_WIDTH,
-        y: start.y + offset.y * CELL_HEIGHT,
+        x: start.x + offset.x * GRID,
+        y: start.y + offset.y * GRID,
       };
       if (!occupied.some((taken) => cardsOverlap(candidate, taken))) {
         return candidate;
@@ -188,12 +191,12 @@ export function tidyCanvasLayout(
   return positions;
 }
 
-/**
- * Whether two card boxes touch. Cards already on cells never clash across a
- * cell boundary; a legacy off-cell card blocks every cell its box reaches into.
- */
+/** Whether two same-sized cards would touch, margin included. */
 function cardsOverlap(a: LayoutPosition, b: LayoutPosition): boolean {
-  return Math.abs(a.x - b.x) < NODE_WIDTH && Math.abs(a.y - b.y) < NODE_HEIGHT;
+  return (
+    Math.abs(a.x - b.x) < NODE_WIDTH + NODE_MARGIN &&
+    Math.abs(a.y - b.y) < NODE_HEIGHT + NODE_MARGIN
+  );
 }
 
 /** Top-left corner of a cell. */
@@ -374,7 +377,7 @@ function orderAgents(graph: CanvasGraph): LayoutNode[] {
 }
 
 /**
- * Cell offsets on the square ring `ring` cells out, nearest first: axis
+ * Grid-step offsets on the square ring `ring` steps out, nearest first: axis
  * neighbours before diagonals, and below or right before above or left, so a
  * displaced card stays close and stays inside the drawn graph.
  */
@@ -397,10 +400,10 @@ function ringOffsets(ring: number): LayoutPosition[] {
   );
 }
 
-/** Nearest cell corner to an arbitrary point. */
-function snapToCell(position: LayoutPosition): LayoutPosition {
-  return cellPosition(
-    Math.round(position.x / CELL_WIDTH),
-    Math.round(position.y / CELL_HEIGHT),
-  );
+/** Nearest background dot to an arbitrary point. */
+function snapToGrid(position: LayoutPosition): LayoutPosition {
+  return {
+    x: Math.round(position.x / GRID) * GRID,
+    y: Math.round(position.y / GRID) * GRID,
+  };
 }
