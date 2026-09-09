@@ -89,35 +89,32 @@ export default function MainLayout({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
-  // Mounted above the auth gates: LCP usually lands while this is still
-  // loading, and a reporter mounted after it would miss the metric entirely.
-  if (isLoading) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <PerfReporter />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
-
+  // One reporter at one tree position, mounted before the auth gates resolve:
+  // LCP usually lands while this is still loading, and a reporter that
+  // remounted with the authenticated tree would register every web-vital
+  // observer a second time.
   return (
-    <div className="flex h-screen w-screen flex-col bg-background">
+    <>
       <PerfReporter />
-      <Header />
-      {onboardingSecret && (
-        <OnboardingDialog
-          secret={onboardingSecret}
-          onDone={() => {
-            clearOnboardingSecret();
-            router.push("/projects");
-          }}
-        />
-      )}
-      <div className="flex-1 overflow-hidden">{children}</div>
-    </div>
+      {isLoading ? (
+        <div className="flex h-screen w-screen items-center justify-center bg-background">
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      ) : isAuthenticated ? (
+        <div className="flex h-screen w-screen flex-col bg-background">
+          <Header />
+          {onboardingSecret && (
+            <OnboardingDialog
+              secret={onboardingSecret}
+              onDone={() => {
+                clearOnboardingSecret();
+                router.push("/projects");
+              }}
+            />
+          )}
+          <div className="flex-1 overflow-hidden">{children}</div>
+        </div>
+      ) : null}
+    </>
   );
 }
