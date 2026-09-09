@@ -31,7 +31,7 @@ const CLUSTER_GAP_COLUMNS = 1;
 const LANE_GAP_ROWS = 1;
 
 /** How far {@link findFreePosition} steps out before giving up, in cells. */
-const MAX_NUDGE_RINGS = 48;
+const MAX_NUDGE_RINGS = 16;
 
 /**
  * Column order for an agent's services, mirroring the dashboard's "Add service"
@@ -98,12 +98,10 @@ export type LayoutNode = {
 
 export type LayoutPosition = CanvasNode["position"];
 
-/** Re-position every node by {@link tidyCanvasLayout}, leaving the rest untouched. */
-export function applyTidyLayout<
+/** Overlay new positions by node id, leaving every other node field untouched. */
+export function applyPositions<
   T extends LayoutNode & { position: LayoutPosition },
->(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
-  const positions = tidyCanvasLayout(nodes, edges);
-
+>(nodes: readonly T[], positions: ReadonlyMap<string, LayoutPosition>): T[] {
   return nodes.map((node) => {
     const position = positions.get(node.id);
 
@@ -111,9 +109,17 @@ export function applyTidyLayout<
   });
 }
 
+/** Re-position every node by {@link tidyCanvasLayout}, leaving the rest untouched. */
+export function applyTidyLayout<
+  T extends LayoutNode & { position: LayoutPosition },
+>(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
+  return applyPositions(nodes, tidyCanvasLayout(nodes, edges));
+}
+
 /**
  * Nearest cell to `desired` whose card clears every occupied card. Manual adds
- * and drag drops land on that cell, and only step aside when it is taken.
+ * and drag drops land on that cell, and only step aside when it is taken:
+ * first to the cell below, then right, left, above, then further out.
  */
 export function findFreePosition(
   desired: LayoutPosition,
@@ -148,6 +154,7 @@ export function tidyCanvasLayout(
   for (const agent of orderAgents(graph)) {
     const services = graph.exclusiveServices.get(agent.id) ?? [];
     const block = layoutBlock(services, cursorColumn, 1);
+    // Middle column of the block; the left one of the two when the count is even.
     positions.set(
       agent.id,
       cellPosition(cursorColumn + Math.floor((block.columns - 1) / 2), 0),
@@ -168,11 +175,13 @@ export function tidyCanvasLayout(
 
   for (const lane of lanes) {
     if (lane.services.length === 0) continue;
-    const offsetColumn = lane.centered
-      ? Math.max(0, Math.floor((totalColumns - laneColumns(lane.services)) / 2))
+    const block = layoutBlock(lane.services, 0, laneRow);
+    const offsetX = lane.centered
+      ? Math.max(0, Math.floor((totalColumns - block.columns) / 2)) * CELL_WIDTH
       : 0;
-    const block = layoutBlock(lane.services, offsetColumn, laneRow);
-    for (const [id, position] of block.positions) positions.set(id, position);
+    for (const [id, position] of block.positions) {
+      positions.set(id, { x: position.x + offsetX, y: position.y });
+    }
     laneRow = block.bottomRow + LANE_GAP_ROWS;
   }
 
@@ -180,12 +189,11 @@ export function tidyCanvasLayout(
 }
 
 /**
- * Whether two cards would share a cell. Cards already on cells never clash
- * across a cell boundary; a legacy off-cell card claims every cell its box
- * reaches into.
+ * Whether two card boxes touch. Cards already on cells never clash across a
+ * cell boundary; a legacy off-cell card blocks every cell its box reaches into.
  */
 function cardsOverlap(a: LayoutPosition, b: LayoutPosition): boolean {
-  return Math.abs(a.x - b.x) < CELL_WIDTH && Math.abs(a.y - b.y) < CELL_HEIGHT;
+  return Math.abs(a.x - b.x) < NODE_WIDTH && Math.abs(a.y - b.y) < NODE_HEIGHT;
 }
 
 /** Top-left corner of a cell. */
@@ -301,11 +309,6 @@ function labelOf(node: LayoutNode): string {
   return typeof node.data.label === "string" ? node.data.label : node.id;
 }
 
-/** Columns a lane of services will take, so it can be centred before placing. */
-function laneColumns(services: readonly LayoutNode[]): number {
-  return groupIntoColumns(services).length;
-}
-
 /**
  * Place services as typed columns growing right, rows growing down, starting
  * at the given cell. An empty block still claims one column for its agent.
@@ -370,7 +373,11 @@ function orderAgents(graph: CanvasGraph): LayoutNode[] {
   return ordered;
 }
 
-/** Cell offsets on the square ring `ring` cells out. */
+/**
+ * Cell offsets on the square ring `ring` cells out, nearest first: axis
+ * neighbours before diagonals, and below or right before above or left, so a
+ * displaced card stays close and stays inside the drawn graph.
+ */
 function ringOffsets(ring: number): LayoutPosition[] {
   if (ring === 0) return [{ x: 0, y: 0 }];
 
@@ -382,7 +389,12 @@ function ringOffsets(ring: number): LayoutPosition[] {
     offsets.push({ x: -ring, y: y }, { x: ring, y: y });
   }
 
-  return offsets;
+  return offsets.sort(
+    (a, b) =>
+      Math.abs(a.x) + Math.abs(a.y) - (Math.abs(b.x) + Math.abs(b.y)) ||
+      b.y - a.y ||
+      b.x - a.x,
+  );
 }
 
 /** Nearest cell corner to an arbitrary point. */

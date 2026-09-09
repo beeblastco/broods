@@ -44,6 +44,7 @@ import {
   writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
 import {
+  applyPositions,
   applyTidyLayout,
   CELL_HEIGHT,
   CELL_WIDTH,
@@ -798,10 +799,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   );
 
   /**
-   * Position a manually added node: right under the cursor, stepped onto the
-   * nearest free grid slot only when that spot is already taken. The right-click
-   * point is consumed, so a later add that did not come from the context menu
-   * lands in view rather than at a spot the user has since panned away from.
+   * Position a manually added node: the cell under the cursor, or the nearest
+   * free one when that cell is already taken. The right-click point is
+   * consumed, so a later add that did not come from the context menu lands in
+   * view rather than at a spot the user has since panned away from.
    */
   const getFreeAddPosition = useCallback((): FlowPosition => {
     const requested = lastRightClick.current ?? getViewportCenterPosition();
@@ -868,30 +869,29 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, []);
 
   /**
-   * Settle a drop. ReactFlow already snapped the dragged cards to cells, but it
-   * lets two cards share one, so each dragged card steps to the nearest free
-   * cell before the save.
+   * Settle a drop. ReactFlow snaps the grabbed card to a cell and moves the
+   * rest of the selection by the same offset, so a legacy off-cell card can
+   * still land between cells and two cards can share one. The grabbed card
+   * keeps its cell; every other dragged card steps to the nearest free one.
    */
   const onNodeDragStop: OnNodeDrag = useCallback(
-    (_event, _node, dragged) => {
+    (_event, grabbed, dragged) => {
       isDraggingNode.current = false;
       const draggedIds = new Set(dragged.map((node) => node.id));
       const occupied = nodesRef.current
         .filter((node) => !draggedIds.has(node.id))
         .map((node) => node.position);
       const settled = new Map<string, FlowPosition>();
-      for (const node of dragged) {
+      const ordered = [
+        grabbed,
+        ...dragged.filter((node) => node.id !== grabbed.id),
+      ];
+      for (const node of ordered) {
         const position = findFreePosition(node.position, occupied);
         occupied.push(position);
         settled.set(node.id, position);
       }
-      setNodes((nds) =>
-        nds.map((node) => {
-          const position = settled.get(node.id);
-
-          return position ? { ...node, position: position } : node;
-        }),
-      );
+      setNodes((nds) => applyPositions(nds, settled));
       scheduleSave();
     },
     [setNodes, scheduleSave],

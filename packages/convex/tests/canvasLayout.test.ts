@@ -156,26 +156,37 @@ describe("findFreePosition", () => {
     });
   });
 
-  it("steps to a neighbouring cell when the spot is taken", () => {
-    const occupied = [{ x: CELL_WIDTH, y: CELL_HEIGHT }];
-    const placed = findFreePosition(
-      { x: CELL_WIDTH + 4, y: CELL_HEIGHT + 2 },
-      occupied,
-    );
+  it("steps below, then right, then left, then above when cells are taken", () => {
+    const cell = { x: CELL_WIDTH, y: CELL_HEIGHT };
+    const below = { x: CELL_WIDTH, y: 2 * CELL_HEIGHT };
+    const right = { x: 2 * CELL_WIDTH, y: CELL_HEIGHT };
+    const left = { x: 0, y: CELL_HEIGHT };
+    const above = { x: CELL_WIDTH, y: 0 };
+    const nudged = { x: CELL_WIDTH + 4, y: CELL_HEIGHT + 2 };
 
-    expect(placed).not.toEqual(occupied[0]);
-    expect(placed.x % CELL_WIDTH).toBe(0);
-    expect(placed.y % CELL_HEIGHT).toBe(0);
-    expect(
-      Math.abs(placed.x - CELL_WIDTH) + Math.abs(placed.y - CELL_HEIGHT),
-    ).toBeLessThanOrEqual(CELL_WIDTH + CELL_HEIGHT);
+    expect(findFreePosition(nudged, [cell])).toEqual(below);
+    expect(findFreePosition(nudged, [cell, below])).toEqual(right);
+    expect(findFreePosition(nudged, [cell, below, right])).toEqual(left);
+    expect(findFreePosition(nudged, [cell, below, right, left])).toEqual(above);
   });
 
-  it("treats a legacy off-cell card as filling every cell it reaches into", () => {
+  it("treats a legacy off-cell card as blocking every cell its box reaches into", () => {
     // A card straddling the first two cells of the top row blocks both of them.
     const occupied = [{ x: CELL_WIDTH / 2, y: 0 }];
 
-    expect(findFreePosition({ x: 0, y: 0 }, occupied).y).not.toBe(0);
-    expect(findFreePosition({ x: CELL_WIDTH, y: 0 }, occupied).y).not.toBe(0);
+    expect(findFreePosition({ x: 0, y: 0 }, occupied)).toEqual({
+      x: 0,
+      y: CELL_HEIGHT,
+    });
+    expect(findFreePosition({ x: CELL_WIDTH, y: 0 }, occupied)).toEqual({
+      x: CELL_WIDTH,
+      y: CELL_HEIGHT,
+    });
+  });
+
+  it("ignores a legacy card that only reaches into the gap around a cell", () => {
+    const inTheGap = [{ x: NODE_WIDTH + 8, y: NODE_HEIGHT + 8 }];
+
+    expect(findFreePosition({ x: 0, y: 0 }, inTheGap)).toEqual({ x: 0, y: 0 });
   });
 });
