@@ -9,6 +9,16 @@ import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Next reads .env.local for the app; Playwright does not, so the E2E_* values
+// kept there (by scripts/setup-dashboard-e2e.sh) are loaded here, before
+// anything below reads the environment. Absent in CI, where the workflow
+// sets the environment.
+try {
+  process.loadEnvFile(join(__dirname, "..", "..", ".env.local"));
+} catch {
+  // No local env file: the suites read whatever the shell provides.
+}
+
 export const DEV_URL = "http://localhost:3000";
 export const BASE_URL = process.env.E2E_BASE_URL ?? DEV_URL;
 export const AUTH_DIR = join(__dirname, "..", ".auth");

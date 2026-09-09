@@ -40,12 +40,12 @@ const PROJECT_PAGES: ProbePage[] = [
   {
     name: "Dashboard",
     path: "/dashboard?tab=monitoring",
-    ready: (page) => page.getByRole("table"),
+    ready: (page) => page.getByRole("heading", { name: "Monitoring" }),
   },
   {
     name: "Tracing",
     path: "/dashboard?tab=tracing",
-    ready: (page) => page.getByRole("table"),
+    ready: (page) => page.getByRole("heading", { name: "Tracing" }),
   },
   {
     name: "Usage",
@@ -76,9 +76,12 @@ const PROJECT_PAGES: ProbePage[] = [
 
 // Header destinations reached by client-side navigation, each paired with the
 // marker that means it has rendered. "Dashboard" lands on the Monitoring tab,
-// so its marker is the log table, not a probe named "Dashboard".
+// so its marker is that tab's heading, not a probe named "Dashboard".
 const HEADER_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
-  { label: "Dashboard", ready: (page) => page.getByRole("table") },
+  {
+    label: "Dashboard",
+    ready: (page) => page.getByRole("heading", { name: "Monitoring" }),
+  },
   {
     label: "Scheduler",
     ready: (page) => page.getByRole("heading", { name: "Scheduler" }),
