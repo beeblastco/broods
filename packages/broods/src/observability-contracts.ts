@@ -98,13 +98,16 @@ export type ObservabilityClientMessage =
 // tail) is active. The backfill, when one was asked for, follows it.
 export type ObservabilityReadyMessage = { type: "ready" };
 
-// Sent once per requested backfill or fetchTrace, failure included, so a
-// client can tell "history loaded, nothing there" from "still loading".
-// `error` marks a failed history query; `entries` then holds what was recovered.
+// Answers a requested backfill or fetchTrace, failure included, so a client
+// can tell "history loaded, nothing there" from "still loading". A traces
+// backfill is one Tempo lookup per trace, so it arrives in pieces: every piece
+// but the last carries `more`, and the last one settles history and carries
+// `error` when a query failed. Logs and fetchTrace answer in one message.
 export type ObservabilityBackfillMessage = {
   type: "backfill";
   stream: "logs" | "traces";
   entries: ObservabilityLogEntry[] | ObservabilitySpanRow[];
+  more?: boolean;
   error?: string;
 };
 

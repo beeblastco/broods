@@ -50,6 +50,10 @@ type ObservabilitySocketState = {
   // The sandbox a logs subscription tails, so a repeat of the same subscribe
   // does not fire another Loki backfill scan.
   logsSandboxId: string | null;
+  // Bumped whenever the traces stream is torn down, so a chunked backfill
+  // still running for the old subscription stops instead of interleaving
+  // its pieces, and its closing message, with the new one's.
+  tracesBackfillRun: number;
 };
 type OtelValue = {
   stringValue?: string;
@@ -90,7 +94,14 @@ const SANDBOX_SERVICE_NAME = "broods-sandbox";
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
+// Tempo mostly serialises trace-by-id lookups; 6 in flight buys about 20%
+// over 1, more buys nothing.
 const TEMPO_DETAIL_CONCURRENCY = 6;
+// The backfill goes out newest first in chunks, so the Tracing tab paints
+// after one chunk instead of after the whole batch. A single TraceQL search
+// cannot replace the lookups: on Tempo 2.7 `select()` has no attribute
+// wildcard and rejects `span:parentID`, both of which the rows need.
+const TEMPO_BACKFILL_CHUNK = 12;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 // Span relay backpressure: re-check cadence and cap before shedding.
 const OBS_DRAIN_POLL_MS = 20;
@@ -183,6 +194,7 @@ export function openObservabilitySocket(
     tracesSub: null,
     logsMinLevel: "INFO",
     logsSandboxId: null,
+    tracesBackfillRun: 0,
   });
 }
 
@@ -462,8 +474,8 @@ async function handleObservabilitySubscribe(
 
 // Backfill honours the same minLevel as the live relay, so a client asking for
 // errors never has to re-filter a screenful of Loki history. The client always
-// gets exactly one backfill message back, failure included: a swallowed error
-// used to leave the Tracing tab "waiting for traces" for good.
+// gets a closing backfill message (one without `more`), failure included: a
+// swallowed error used to leave the Tracing tab "waiting for traces" for good.
 async function sendBackfill(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -497,15 +509,28 @@ async function sendBackfill(
       const tempoUrl = process.env.TEMPO_URL?.trim();
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
-      const { rows, failures } = await fetchTempoBackfill(
-        tempoUrl,
-        scope,
-        limit,
-      );
+      const state = obsState.get(socket);
+      const run = state?.tracesBackfillRun;
+      let failures = 0;
+      for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
+        // A re-subscribe or unsubscribe landed while this chunk was in
+        // flight: a newer backfill owns the stream now.
+        if (state?.tracesBackfillRun !== run) return;
+        failures += chunk.failures;
+        const sent = sendObs(socket, {
+          type: "backfill",
+          stream: "traces",
+          entries: chunk.rows,
+          more: true,
+        });
+        // The socket is gone: stop paying Tempo for a tab nobody is watching.
+        if (!sent) return;
+      }
+      if (state?.tracesBackfillRun !== run) return;
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
-        entries: rows,
+        entries: [],
         ...(failures > 0
           ? {
               error: `${failures} trace${failures === 1 ? "" : "s"} could not be loaded from Tempo`,
@@ -610,11 +635,18 @@ async function fetchLokiLogs(
   return rows;
 }
 
-export async function fetchTempoBackfill(
+/**
+ * The traces backfill: one tag-scoped Tempo search, then each trace's spans by
+ * id, newest trace first, yielded a chunk at a time with the count of lookups
+ * that failed in it. The caller turns a non-zero total into the closing
+ * message's `error` so a half- or fully-failed history reads as a failure, not
+ * an empty stage.
+ */
+export async function* fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
-): Promise<{ rows: ObservabilitySpanRow[]; failures: number }> {
+): AsyncGenerator<{ rows: ObservabilitySpanRow[]; failures: number }> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
   const start = end - TEMPO_BACKFILL_WINDOW_S;
@@ -633,25 +665,32 @@ export async function fetchTempoBackfill(
     throw new Error(`Tempo search failed with HTTP ${response.status}`);
 
   const body = (await response.json()) as {
-    traces?: Array<{ traceID: string }>;
+    traces?: Array<{ traceID: string; startTimeUnixNano?: string }>;
   };
-  const results = await mapWithConcurrency(
-    body?.traces ?? [],
-    TEMPO_DETAIL_CONCURRENCY,
-    (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
+  // Tempo's search result is not ordered; sort here so the first chunk is the
+  // newest traces, the ones the Tracing tab shows at the top. The client
+  // orders the rows inside a chunk itself.
+  const summaries = (body?.traces ?? []).sort((a, b) =>
+    BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
+      ? 1
+      : -1,
   );
-  // A detail fetch that failed is counted, not silently dropped: the caller
-  // turns a non-zero count into the backfill's `error` so a half- or fully-
-  // failed history reads as a failure, not an empty stage.
-  const failures = results.filter(
-    (result) => result.status === "rejected",
-  ).length;
-  const rows = results
-    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
-    .filter((row) => rowInScope(row, scope))
-    .sort((a, b) => b.startTimeMs - a.startTimeMs);
 
-  return { rows: rows, failures: failures };
+  for (let at = 0; at < summaries.length; at += TEMPO_BACKFILL_CHUNK) {
+    const results = await mapWithConcurrency(
+      summaries.slice(at, at + TEMPO_BACKFILL_CHUNK),
+      TEMPO_DETAIL_CONCURRENCY,
+      (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
+    );
+    yield {
+      rows: results
+        .flatMap((result) =>
+          result.status === "fulfilled" ? result.value : [],
+        )
+        .filter((row) => rowInScope(row, scope)),
+      failures: results.filter((result) => result.status === "rejected").length,
+    };
+  }
 }
 
 async function fetchTempoTrace(
@@ -821,9 +860,10 @@ function cleanupObservabilityStream(
     state.logsSub.unsubscribe();
     state.logsSub = null;
     state.logsSandboxId = null;
-  } else if (stream === "traces" && state.tracesSub) {
-    state.tracesSub.unsubscribe();
+  } else if (stream === "traces") {
+    state.tracesSub?.unsubscribe();
     state.tracesSub = null;
+    state.tracesBackfillRun += 1;
   }
 }
 
@@ -843,23 +883,27 @@ async function waitForObsDrain(
   }
 }
 
+// True when the payload went out; false for a closed socket, a shed live
+// entry, or a send that threw.
 function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   payload: ObservabilityServerMessage,
-): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
+): boolean {
+  if (socket.readyState !== WebSocket.OPEN) return false;
   if (
     (payload.type === "log" || payload.type === "span") &&
     socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES
   ) {
-    return;
+    return false;
   }
 
   try {
     socket.send(JSON.stringify(payload));
   } catch {
-    return;
+    return false;
   }
+
+  return true;
 }
 
 function nowNs(): bigint {

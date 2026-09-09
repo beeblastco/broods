@@ -261,29 +261,12 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
-        // One backfill message answers the subscribe's backfill and each
-        // fetchTrace alike; a failure names itself instead of looking empty.
-        setHistory(msg.error ? "failed" : "loaded");
+        // A traces backfill arrives newest-first in pieces flagged `more`;
+        // the closing piece (no flag) settles history and names a failure
+        // instead of looking empty. Logs and fetchTrace answer in one piece.
+        if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
         if (msg.error) setError(msg.error);
-        setEntries((prev) => {
-          const incoming = msg.entries as (
-            | ObservabilityLogEntry
-            | ObservabilitySpanRow
-          )[];
-          const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
-          for (const entry of incoming) {
-            const key = entryKey(entry);
-            const existing = merged.get(key);
-            merged.set(key, existing ? preferEntry(existing, entry) : entry);
-          }
-          const combined = [...merged.values()].sort(
-            (a, b) => entryTime(b) - entryTime(a),
-          );
-
-          return combined.length > MAX_ENTRIES
-            ? combined.slice(0, MAX_ENTRIES)
-            : combined;
-        });
+        setEntries((prev) => mergeBackfill(prev, msg.entries));
 
         return;
       }
@@ -423,6 +406,28 @@ export function entryKey(
   }
 
   return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+}
+
+// Fold one backfill piece into the list: dedup by key, keep the better copy of
+// a span seen twice, newest first, capped. The closing piece of a traces
+// backfill carries no rows and leaves the list untouched.
+export function mergeBackfill<
+  T extends ObservabilityLogEntry | ObservabilitySpanRow,
+>(prev: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return prev;
+  const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
+  for (const entry of incoming) {
+    const key = entryKey(entry);
+    const existing = merged.get(key);
+    merged.set(key, existing ? preferEntry(existing, entry) : entry);
+  }
+  const combined = [...merged.values()].sort(
+    (a, b) => entryTime(b) - entryTime(a),
+  );
+
+  return combined.length > MAX_ENTRIES
+    ? combined.slice(0, MAX_ENTRIES)
+    : combined;
 }
 
 function entryTime(
