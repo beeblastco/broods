@@ -765,8 +765,9 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 /**
- * Refreshes the idle deadline of a reservation that still names this sandbox.
- * Never inserts or repoints: a released or replaced key is a no-op.
+ * Refreshes the idle deadline of a reservation that still names this sandbox
+ * and belongs to this account. Never inserts or repoints: a released or
+ * replaced key is a no-op.
  * @returns null after the patch attempt
  */
 export const saveSandboxReservation = internalMutation({
@@ -787,7 +788,13 @@ export const saveSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (!row || row.externalId !== args.externalId) return null;
+    if (
+      !row ||
+      row.accountId !== args.accountId ||
+      row.externalId !== args.externalId
+    ) {
+      return null;
+    }
     await ctx.db.patch(row._id, {
       expiresAt:
         Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
@@ -859,9 +866,11 @@ export const deleteSandboxReservation = internalMutation({
       .unique();
     if (
       row &&
+      row.accountId === args.accountId &&
       (!args.expectedExternalId || row.externalId === args.expectedExternalId)
-    )
+    ) {
       await ctx.db.delete(row._id);
+    }
 
     return null;
   },

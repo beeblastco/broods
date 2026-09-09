@@ -484,6 +484,22 @@ describe("runtime persistence", () => {
     expect(await t.query(internal.runtime.getSandboxReservation, lookup)).toBe(
       "sandbox-1",
     );
+
+    // Another account naming the same key can neither refresh nor drop the row.
+    const otherAccountId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.saveSandboxReservation, {
+      ...lookup,
+      accountId: otherAccountId,
+      externalId: "sandbox-1",
+    });
+    await t.mutation(internal.runtime.deleteSandboxReservation, {
+      ...lookup,
+      accountId: otherAccountId,
+      expectedExternalId: "sandbox-1",
+    });
+    expect(await t.query(internal.runtime.getSandboxReservation, lookup)).toBe(
+      "sandbox-1",
+    );
   });
 
   test("rejects admitted runtime writes after account disable or removal", async () => {
