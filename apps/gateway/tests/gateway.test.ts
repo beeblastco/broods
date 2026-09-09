@@ -1742,9 +1742,100 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
   }) as unknown as typeof fetch;
 
   try {
-    const result = await fetchTempoBackfill("http://tempo.example", scope, 10);
-    expect(result.failures).toBe(1);
-    expect(result.rows.map((row) => row.traceId)).toEqual(["aaa"]);
+    const rows: string[] = [];
+    const failures = await fetchTempoBackfill(
+      "http://tempo.example",
+      scope,
+      10,
+      (chunk) => {
+        rows.push(...chunk.map((row) => row.traceId));
+
+        return true;
+      },
+    );
+    expect(failures).toBe(1);
+    expect(rows).toEqual(["aaa"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchTempoBackfill hands traces over newest first, a chunk at a time", async () => {
+  const originalFetch = globalThis.fetch;
+  const scope = {
+    accountId: "acct-1",
+    projectSlug: "shop",
+    stageSlug: "dev",
+    endpointIds: [],
+  };
+  // 25 traces, listed oldest first as Tempo may return them. Each chunk paints
+  // on its own, so the first one must be the newest traces and the one
+  // after the socket bows out must never be fetched.
+  const searchHits = Array.from({ length: 25 }, (_, index) => ({
+    traceID: `t${index}`,
+    startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
+  }));
+  const fetched: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search")) {
+      return new Response(JSON.stringify({ traces: searchHits }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const traceId = url.slice(url.lastIndexOf("/") + 1);
+    fetched.push(traceId);
+
+    return new Response(
+      JSON.stringify({
+        batches: [
+          {
+            resource: {
+              attributes: [
+                { key: "account_id", value: { stringValue: "acct-1" } },
+                { key: "project", value: { stringValue: "shop" } },
+                { key: "stage", value: { stringValue: "dev" } },
+              ],
+            },
+            scopeSpans: [
+              {
+                spans: [
+                  {
+                    traceId: traceId,
+                    spanId: "root",
+                    name: "agent.task",
+                    startTimeUnixNano: "1000000000",
+                    endTimeUnixNano: "2000000000",
+                    status: { code: 1 },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const chunks: string[][] = [];
+    const failures = await fetchTempoBackfill(
+      "http://tempo.example",
+      scope,
+      25,
+      (chunk) => {
+        chunks.push(chunk.map((row) => row.traceId));
+
+        return chunks.length < 2;
+      },
+    );
+    expect(failures).toBe(0);
+    expect(chunks.map((chunk) => chunk.length)).toEqual([12, 12]);
+    expect(chunks[0]).toContain("t24");
+    expect(chunks[0]).not.toContain("t12");
+    expect(fetched).toHaveLength(24);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1799,9 +1890,19 @@ test("fetchTempoBackfill drops spans from other scopes in a matched trace", asyn
   }) as unknown as typeof fetch;
 
   try {
-    const result = await fetchTempoBackfill("http://tempo.example", scope, 10);
-    expect(result.failures).toBe(0);
-    expect(result.rows.map((row) => row.spanId)).toEqual(["in"]);
+    const rows: string[] = [];
+    const failures = await fetchTempoBackfill(
+      "http://tempo.example",
+      scope,
+      10,
+      (chunk) => {
+        rows.push(...chunk.map((row) => row.spanId));
+
+        return true;
+      },
+    );
+    expect(failures).toBe(0);
+    expect(rows).toEqual(["in"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

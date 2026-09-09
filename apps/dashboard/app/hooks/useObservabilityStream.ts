@@ -261,9 +261,10 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
-        // One backfill message answers the subscribe's backfill and each
-        // fetchTrace alike; a failure names itself instead of looking empty.
-        setHistory(msg.error ? "failed" : "loaded");
+        // A traces backfill arrives newest-first in pieces flagged `more`;
+        // the closing piece (no flag) settles history and names a failure
+        // instead of looking empty. Logs and fetchTrace answer in one piece.
+        if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
         if (msg.error) setError(msg.error);
         setEntries((prev) => {
           const incoming = msg.entries as (

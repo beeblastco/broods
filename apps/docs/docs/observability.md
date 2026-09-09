@@ -68,10 +68,12 @@ replays on connect before tailing live. Loki/Tempo own everything older. See
 [WebSocket Gateway](architecture.md#websocket-gateway-durable-nats-jetstream) for the
 stream mechanics.
 
-A `subscribe` that asks for `backfill` gets exactly one `backfill` message back, even
-when Loki or Tempo could not answer: that message then carries `error` and whatever
-was recovered, so a client can tell an empty stage from a failed history query
-instead of waiting on nothing. `fetchTrace { traceId }` pulls one trace out of Tempo
+A `subscribe` that asks for `backfill` always gets a closing `backfill` message back,
+even when Loki or Tempo could not answer: that message then carries `error`, so a
+client can tell an empty stage from a failed history query instead of waiting on
+nothing. Logs come back in that one message. Traces cost one Tempo lookup per trace,
+so they arrive newest-first in pieces flagged `more: true`, and the closing message
+(no flag) carries the failure count if any lookup failed. `fetchTrace { traceId }` pulls one trace out of Tempo
 by id, for a log line whose trace is older than the seven-day search window the
 traces backfill covers; the answer is a `backfill` message holding that trace's
 spans, filtered to the socket's account, project and stage before anything leaves
