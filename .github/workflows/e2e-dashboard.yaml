@@ -71,7 +71,9 @@ jobs:
         run: bun install --ignore-scripts --frozen-lockfile
 
       - name: Install Chromium
-        run: cd apps/dashboard && bunx playwright install --with-deps chromium
+        # No --with-deps: that runs apt, which fails whenever a mirror is off,
+        # and the ubuntu-24.04 image already ships Chromium's libraries.
+        run: cd apps/dashboard && bunx playwright install chromium
 
       - name: Run the signed-in suites against the deployment
         run: cd apps/dashboard && bunx playwright test --project=app --project=perf
