@@ -21,6 +21,7 @@ import {
   s3ObjectExists,
 } from "../../shared/s3.ts";
 import { getHarnessPublicUrl, requireEnv } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import {
   MEDIA_PATH_PREFIX,
@@ -242,14 +243,19 @@ export async function runSandbox(
   try {
     result = await runSandboxOn(config, namespace, code, options?.metadata);
   } catch (error) {
-    const fallback = sandboxFallbackFor(config, error);
-    if (!fallback) throw error;
+    const { fallbackProvider, ...primary } = config;
+    if (!fallbackProvider || !isSandboxCapacityError(error)) throw error;
     logWarn("Sandbox create refused for capacity; running on the fallback", {
       provider: config.provider,
-      fallbackProvider: fallback.provider,
-      error: error instanceof Error ? error.message : String(error),
+      fallbackProvider: fallbackProvider,
+      error: toErrorMessage(error),
     });
-    result = await runSandboxOn(fallback, namespace, code, options?.metadata);
+    result = await runSandboxOn(
+      { ...primary, provider: fallbackProvider },
+      namespace,
+      code,
+      options?.metadata,
+    );
   }
   if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
     options?.onSandboxCpu?.({
@@ -260,22 +266,6 @@ export async function runSandbox(
   }
 
   return result;
-}
-
-/**
- * The config to retry a refused create on, or null when the run stays put: the
- * error was not a capacity refusal, no fallback is configured, or the run is
- * persistent and so belongs to the provider holding its reservation.
- */
-export function sandboxFallbackFor(
-  config: SandboxExecutorConfig,
-  error: unknown,
-): SandboxExecutorConfig | null {
-  if (!config.fallbackProvider || config.persistent === true) return null;
-  if (!isSandboxCapacityError(error)) return null;
-  const { fallbackProvider: _fallbackProvider, ...rest } = config;
-
-  return { ...rest, provider: config.fallbackProvider };
 }
 
 async function runSandboxOn(

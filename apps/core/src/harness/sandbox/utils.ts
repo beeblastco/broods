@@ -3,8 +3,16 @@
  * Keep small coercion, path, quoting, and output utilities here.
  */
 
+import { SandboxError } from "@mv37/workdir";
 import { isPlainObject } from "../../shared/object.ts";
 
+// The MicroVM control plane's refusals that mean "no room right now".
+const MICROVM_CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
+  "InsufficientCapacityException",
+  "ServiceQuotaExceededException",
+  "ThrottlingException",
+  "TooManyRequestsException",
+]);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -192,6 +200,12 @@ export function shellQuote(value: string): string {
 export class SandboxGoneError extends Error {}
 
 /**
+ * Thrown by an executor whose provider refused the create for lack of room
+ * (Daytona with no runner). Nothing ran, so the request may go elsewhere.
+ */
+export class SandboxCapacityError extends Error {}
+
+/**
  * True when a provider error means the sandbox is already gone (safe to forget),
  * as opposed to wrong credentials or a transient fault (which must propagate so a
  * caller can try another config rather than silently drop the instance record).
@@ -217,24 +231,16 @@ export function isSandboxGoneError(error: unknown): boolean {
 
 /**
  * True when a provider refused to create a sandbox because it has no room for it
- * right now: the MicroVM memory quota, a throttled control plane, workdir's
- * admission ceiling (429/503 from its API), or Daytona with no runner. Nothing
- * ran, so the same request is safe to hand to another provider.
+ * right now: the MicroVM quota or throttle, workdir's admission ceiling, or
+ * Daytona with no runner. Nothing ran, so the same request may go elsewhere.
  */
 export function isSandboxCapacityError(error: unknown): boolean {
-  if (isNoRunnersError(error)) return true;
-  if (!isPlainObject(error) && !(error instanceof Error)) return false;
-  const { name, status } = error as { name?: unknown; status?: unknown };
-  if (
-    name === "ServiceQuotaExceededException" ||
-    name === "TooManyRequestsException"
-  ) {
-    return true;
+  if (error instanceof SandboxCapacityError) return true;
+  if (error instanceof SandboxError) {
+    return error.status === 429 || error.status === 503;
   }
-  if (status === 429 || status === 503) return true;
-  const message = error instanceof Error ? error.message : "";
 
-  return /allocated memory limit|quota/i.test(message);
+  return error instanceof Error && MICROVM_CAPACITY_EXCEPTIONS.has(error.name);
 }
 
 /**
