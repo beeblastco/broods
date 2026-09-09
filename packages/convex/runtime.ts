@@ -765,11 +765,9 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 /**
- * Pushes the idle deadline out on a reservation that still names this sandbox.
- * The id is the fence: a caller that reconnected to one machine must not point
- * the key back at it after a concurrent acquire replaced it, and a key that has
- * been released must not come back at all. Either case is a no-op here.
- * @returns whether the reservation still named this sandbox and was refreshed
+ * Refreshes the idle deadline of a reservation that still names this sandbox.
+ * Never inserts or repoints: a released or replaced key is a no-op.
+ * @returns null after the patch attempt
  */
 export const saveSandboxReservation = internalMutation({
   args: {
@@ -778,7 +776,7 @@ export const saveSandboxReservation = internalMutation({
     externalId: v.string(),
     accountId: v.string(),
   },
-  returns: v.boolean(),
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
@@ -789,13 +787,13 @@ export const saveSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (!row || row.externalId !== args.externalId) return false;
+    if (!row || row.externalId !== args.externalId) return null;
     await ctx.db.patch(row._id, {
       expiresAt:
         Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
     });
 
-    return true;
+    return null;
   },
 });
 /**
