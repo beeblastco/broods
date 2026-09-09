@@ -73,12 +73,12 @@ even when Loki or Tempo could not answer: that message then carries `error`, so 
 client can tell an empty stage from a failed history query instead of waiting on
 nothing. Logs come back in that one message. Traces cost one Tempo lookup per trace,
 so they arrive newest-first in pieces flagged `more: true`, and the closing message
-(no flag) carries the failure count if any lookup failed. `fetchTrace { traceId }` pulls one trace out of Tempo
-by id, for a log line whose trace is older than the seven-day search window the
-traces backfill covers; the answer is a `backfill` message holding that trace's
-spans, filtered to the socket's account, project and stage before anything leaves
-the gateway (Tempo's id lookup is not tenant-scoped). The dashboard's "View trace"
-uses it when the trace is not already on screen.
+(no flag) carries the failure count if any lookup failed. `fetchTrace { traceId }`
+pulls one trace out of Tempo by id, for a log line whose trace is older than the
+seven-day search window the traces backfill covers; the answer is a `backfill`
+message holding that trace's spans, filtered to the socket's account, project and
+stage before anything leaves the gateway (Tempo's id lookup is not tenant-scoped).
+The dashboard's "View trace" uses it when the trace is not already on screen.
 
 ## Sandbox observability
 

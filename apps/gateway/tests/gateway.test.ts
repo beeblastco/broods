@@ -21,6 +21,7 @@ import {
   lokiBackfillQuery,
   lokiLogEntry,
   type ObservabilityGatewayData,
+  type ObservabilityScope,
   openObservabilitySocket,
   quoteLabel,
   normalizeOtelId,
@@ -55,6 +56,14 @@ import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
+
+// The scope every observability fixture lives in: stage shop/dev of acct-1.
+const TEST_SCOPE: ObservabilityScope = {
+  accountId: "acct-1",
+  projectSlug: "shop",
+  stageSlug: "dev",
+  endpointIds: [],
+};
 
 test("builds the core direct API body from a websocket execute message", () => {
   const body = buildCoreRunBody({
@@ -1628,36 +1637,15 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const { socket, sent } = observabilitySocket();
   const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
   const tempoTrace = (accountId: string): Response =>
-    new Response(
-      JSON.stringify({
-        batches: [
-          {
-            resource: {
-              attributes: [
-                { key: "account_id", value: { stringValue: accountId } },
-                { key: "project", value: { stringValue: "shop" } },
-                { key: "stage", value: { stringValue: "dev" } },
-              ],
-            },
-            scopeSpans: [
-              {
-                spans: [
-                  {
-                    traceId: traceId,
-                    spanId: "root-1",
-                    name: "agent.task",
-                    startTimeUnixNano: "1000000000",
-                    endTimeUnixNano: "3000000000",
-                    status: { code: 1 },
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
+    tempoJson({
+      batches: [
+        tempoBatch({
+          traceId: traceId,
+          spanId: "root-1",
+          accountId: accountId,
+        }),
+      ],
+    });
   let accountId = "someone-else";
   globalThis.fetch = (async () =>
     tempoTrace(accountId)) as unknown as typeof fetch;
@@ -1688,73 +1676,28 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
 
 test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches", async () => {
   const originalFetch = globalThis.fetch;
-  const scope = {
-    accountId: "acct-1",
-    projectSlug: "shop",
-    stageSlug: "dev",
-    endpointIds: [],
-  };
   // Search finds two traces; the first detail loads, the second 503s. The
-  // result keeps the good row and reports the one failure, so the caller sends
+  // chunk keeps the good row and reports the one failure, so the caller sends
   // the recovered trace with an error rather than an empty, error-free list.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) {
-      return new Response(
-        JSON.stringify({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-    if (url.includes("/api/traces/aaa")) {
-      return new Response(
-        JSON.stringify({
-          batches: [
-            {
-              resource: {
-                attributes: [
-                  { key: "account_id", value: { stringValue: "acct-1" } },
-                  { key: "project", value: { stringValue: "shop" } },
-                  { key: "stage", value: { stringValue: "dev" } },
-                ],
-              },
-              scopeSpans: [
-                {
-                  spans: [
-                    {
-                      traceId: "aaa",
-                      spanId: "root",
-                      name: "agent.task",
-                      startTimeUnixNano: "1000000000",
-                      endTimeUnixNano: "2000000000",
-                      status: { code: 1 },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
+    if (url.includes("/api/search"))
+      return tempoJson({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
+    if (url.includes("/api/traces/aaa"))
+      return tempoJson({
+        batches: [tempoBatch({ traceId: "aaa", spanId: "root" })],
+      });
 
     return new Response("boom", { status: 503 });
   }) as unknown as typeof fetch;
 
   try {
-    const rows: string[] = [];
-    const failures = await fetchTempoBackfill(
-      "http://tempo.example",
-      scope,
-      10,
-      (chunk) => {
-        rows.push(...chunk.map((row) => row.traceId));
-
-        return true;
-      },
+    const chunks = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 10),
     );
-    expect(failures).toBe(1);
-    expect(rows).toEqual(["aaa"]);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].failures).toBe(1);
+    expect(chunks[0].rows.map((row) => row.traceId)).toEqual(["aaa"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1762,15 +1705,9 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
 
 test("fetchTempoBackfill hands traces over newest first, a chunk at a time", async () => {
   const originalFetch = globalThis.fetch;
-  const scope = {
-    accountId: "acct-1",
-    projectSlug: "shop",
-    stageSlug: "dev",
-    endpointIds: [],
-  };
   // 25 traces, listed oldest first as Tempo may return them. Each chunk paints
-  // on its own, so the first one must be the newest traces and the one
-  // after the socket bows out must never be fetched.
+  // on its own, so the first one must hold the newest traces, and a consumer
+  // that stops after two chunks must not cost a third round of lookups.
   const searchHits = Array.from({ length: 25 }, (_, index) => ({
     traceID: `t${index}`,
     startTimeUnixNano: `${(index + 1) * 1_000_000_000}`,
@@ -1778,60 +1715,25 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
   const fetched: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) {
-      return new Response(JSON.stringify({ traces: searchHits }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    if (url.includes("/api/search")) return tempoJson({ traces: searchHits });
     const traceId = url.slice(url.lastIndexOf("/") + 1);
     fetched.push(traceId);
 
-    return new Response(
-      JSON.stringify({
-        batches: [
-          {
-            resource: {
-              attributes: [
-                { key: "account_id", value: { stringValue: "acct-1" } },
-                { key: "project", value: { stringValue: "shop" } },
-                { key: "stage", value: { stringValue: "dev" } },
-              ],
-            },
-            scopeSpans: [
-              {
-                spans: [
-                  {
-                    traceId: traceId,
-                    spanId: "root",
-                    name: "agent.task",
-                    startTimeUnixNano: "1000000000",
-                    endTimeUnixNano: "2000000000",
-                    status: { code: 1 },
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
+    return tempoJson({
+      batches: [tempoBatch({ traceId: traceId, spanId: "root" })],
+    });
   }) as unknown as typeof fetch;
 
   try {
     const chunks: string[][] = [];
-    const failures = await fetchTempoBackfill(
+    for await (const chunk of fetchTempoBackfill(
       "http://tempo.example",
-      scope,
+      TEST_SCOPE,
       25,
-      (chunk) => {
-        chunks.push(chunk.map((row) => row.traceId));
-
-        return chunks.length < 2;
-      },
-    );
-    expect(failures).toBe(0);
+    )) {
+      chunks.push(chunk.rows.map((row) => row.traceId));
+      if (chunks.length === 2) break;
+    }
     expect(chunks.map((chunk) => chunk.length)).toEqual([12, 12]);
     expect(chunks[0]).toContain("t24");
     expect(chunks[0]).not.toContain("t12");
@@ -1843,71 +1745,31 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
 
 test("fetchTempoBackfill drops spans from other scopes in a matched trace", async () => {
   const originalFetch = globalThis.fetch;
-  const scope = {
-    accountId: "acct-1",
-    projectSlug: "shop",
-    stageSlug: "dev",
-    endpointIds: [],
-  };
   // Tempo's search is tag-scoped, but a matched trace's detail can carry spans
   // from another scope (here a "prod" batch). Only the in-scope span may leave.
-  const batch = (stage: string, spanId: string): unknown => ({
-    resource: {
-      attributes: [
-        { key: "account_id", value: { stringValue: "acct-1" } },
-        { key: "project", value: { stringValue: "shop" } },
-        { key: "stage", value: { stringValue: stage } },
-      ],
-    },
-    scopeSpans: [
-      {
-        spans: [
-          {
-            traceId: "aaa",
-            spanId: spanId,
-            name: "agent.task",
-            startTimeUnixNano: "1000000000",
-            endTimeUnixNano: "2000000000",
-            status: { code: 1 },
-          },
-        ],
-      },
-    ],
-  });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/search")) {
-      return new Response(JSON.stringify({ traces: [{ traceID: "aaa" }] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    if (url.includes("/api/search"))
+      return tempoJson({ traces: [{ traceID: "aaa" }] });
 
-    return new Response(
-      JSON.stringify({ batches: [batch("dev", "in"), batch("prod", "out")] }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
+    return tempoJson({
+      batches: [
+        tempoBatch({ traceId: "aaa", spanId: "in" }),
+        tempoBatch({ traceId: "aaa", spanId: "out", stage: "prod" }),
+      ],
+    });
   }) as unknown as typeof fetch;
 
   try {
-    const rows: string[] = [];
-    const failures = await fetchTempoBackfill(
-      "http://tempo.example",
-      scope,
-      10,
-      (chunk) => {
-        rows.push(...chunk.map((row) => row.spanId));
-
-        return true;
-      },
+    const chunks = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 10),
     );
-    expect(failures).toBe(0);
-    expect(rows).toEqual(["in"]);
+    expect(chunks[0].failures).toBe(0);
+    expect(chunks[0].rows.map((row) => row.spanId)).toEqual(["in"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
-
 test("reads a lowercase Loki level label as its real level", () => {
   expect(
     lokiLogEntry(
@@ -2443,6 +2305,51 @@ function gatewaySocket(sent: Array<Record<string, unknown>>) {
   } as unknown as Bun.ServerWebSocket<
     import("../src/agent.ts").AgentTestGatewayData
   >;
+}
+
+/** One resource batch of a Tempo trace response holding a single 1 s agent.task span. */
+function tempoBatch({
+  traceId,
+  spanId,
+  accountId = TEST_SCOPE.accountId,
+  stage = TEST_SCOPE.stageSlug,
+}: {
+  traceId: string;
+  spanId: string;
+  accountId?: string;
+  stage?: string;
+}): unknown {
+  return {
+    resource: {
+      attributes: [
+        { key: "account_id", value: { stringValue: accountId } },
+        { key: "project", value: { stringValue: TEST_SCOPE.projectSlug } },
+        { key: "stage", value: { stringValue: stage } },
+      ],
+    },
+    scopeSpans: [
+      {
+        spans: [
+          {
+            traceId: traceId,
+            spanId: spanId,
+            name: "agent.task",
+            startTimeUnixNano: "1000000000",
+            endTimeUnixNano: "2000000000",
+            status: { code: 1 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** A 200 JSON response, the shape every Tempo endpoint answers with. */
+function tempoJson(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /** An open observability socket for stage shop/dev of acct-1, capturing what the gateway sends. */

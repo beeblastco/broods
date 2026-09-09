@@ -90,11 +90,11 @@ const SANDBOX_SERVICE_NAME = "broods-sandbox";
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
-// Tempo answers trace-by-id lookups one at a time whatever the client
-// parallelism (48 lookups: 4.2 s at 1 in flight, 3.3 s at 24, measured
-// 2026-09-09), so a 100-trace backfill is seconds of Tempo time however it is
-// fetched. Newest first, in chunks, so the Tracing tab paints the traces the
-// user came for after one chunk instead of after the whole batch.
+// Tempo serves trace-by-id lookups one at a time whatever the client
+// parallelism, so the backfill goes out newest first in chunks: the Tracing
+// tab paints after one chunk instead of after the whole batch. A single
+// TraceQL search cannot replace the lookups: on Tempo 2.7 `select()` has no
+// attribute wildcard and rejects `span:parentID`, both of which the rows need.
 const TEMPO_DETAIL_CONCURRENCY = 6;
 const TEMPO_BACKFILL_CHUNK = 12;
 export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
@@ -503,22 +503,18 @@ async function sendBackfill(
       const tempoUrl = process.env.TEMPO_URL?.trim();
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
-      const failures = await fetchTempoBackfill(
-        tempoUrl,
-        scope,
-        limit,
-        (rows) => {
-          if (socket.readyState !== WebSocket.OPEN) return false;
-          sendObs(socket, {
-            type: "backfill",
-            stream: "traces",
-            entries: rows,
-            more: true,
-          });
-
-          return true;
-        },
-      );
+      let failures = 0;
+      for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
+        failures += chunk.failures;
+        const sent = sendObs(socket, {
+          type: "backfill",
+          stream: "traces",
+          entries: chunk.rows,
+          more: true,
+        });
+        // The socket is gone: stop paying Tempo for a tab nobody is watching.
+        if (!sent) return;
+      }
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
@@ -629,18 +625,16 @@ async function fetchLokiLogs(
 
 /**
  * The traces backfill: one tag-scoped Tempo search, then each trace's spans by
- * id, newest trace first, handed to `onRows` a chunk at a time. `onRows`
- * returns false to stop early (the socket is gone). Resolves to the number of
- * trace lookups that failed; the caller turns a non-zero count into the closing
+ * id, newest trace first, yielded a chunk at a time with the count of lookups
+ * that failed in it. The caller turns a non-zero total into the closing
  * message's `error` so a half- or fully-failed history reads as a failure, not
  * an empty stage.
  */
-export async function fetchTempoBackfill(
+export async function* fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
-  onRows: (rows: ObservabilitySpanRow[]) => boolean,
-): Promise<number> {
+): AsyncGenerator<{ rows: ObservabilitySpanRow[]; failures: number }> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
   const start = end - TEMPO_BACKFILL_WINDOW_S;
@@ -662,13 +656,13 @@ export async function fetchTempoBackfill(
     traces?: Array<{ traceID: string; startTimeUnixNano?: string }>;
   };
   // Tempo's search result is not ordered; sort here so the first chunk is the
-  // newest traces, the ones the Tracing tab shows at the top. Number() loses
-  // the sub-microsecond digits, which never decide the order.
-  const summaries = (body?.traces ?? []).sort(
-    (a, b) =>
-      Number(b.startTimeUnixNano ?? 0) - Number(a.startTimeUnixNano ?? 0),
+  // newest traces, the ones the Tracing tab shows at the top. The client
+  // orders the rows inside a chunk itself.
+  const summaries = (body?.traces ?? []).sort((a, b) =>
+    BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
+      ? 1
+      : -1,
   );
-  let failures = 0;
 
   for (let at = 0; at < summaries.length; at += TEMPO_BACKFILL_CHUNK) {
     const results = await mapWithConcurrency(
@@ -676,15 +670,15 @@ export async function fetchTempoBackfill(
       TEMPO_DETAIL_CONCURRENCY,
       (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
     );
-    failures += results.filter((result) => result.status === "rejected").length;
-    const rows = results
-      .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
-      .filter((row) => rowInScope(row, scope))
-      .sort((a, b) => b.startTimeMs - a.startTimeMs);
-    if (!onRows(rows)) break;
+    yield {
+      rows: results
+        .flatMap((result) =>
+          result.status === "fulfilled" ? result.value : [],
+        )
+        .filter((row) => rowInScope(row, scope)),
+      failures: results.filter((result) => result.status === "rejected").length,
+    };
   }
-
-  return failures;
 }
 
 async function fetchTempoTrace(
@@ -876,23 +870,27 @@ async function waitForObsDrain(
   }
 }
 
+// True when the payload went out; false for a closed socket, a shed live
+// entry, or a send that threw.
 function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   payload: ObservabilityServerMessage,
-): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
+): boolean {
+  if (socket.readyState !== WebSocket.OPEN) return false;
   if (
     (payload.type === "log" || payload.type === "span") &&
     socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES
   ) {
-    return;
+    return false;
   }
 
   try {
     socket.send(JSON.stringify(payload));
   } catch {
-    return;
+    return false;
   }
+
+  return true;
 }
 
 function nowNs(): bigint {

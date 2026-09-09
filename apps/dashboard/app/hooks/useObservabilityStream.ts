@@ -271,6 +271,8 @@ export function useObservabilityStream(
             | ObservabilityLogEntry
             | ObservabilitySpanRow
           )[];
+          // The closing piece of a traces backfill carries no rows.
+          if (incoming.length === 0) return prev;
           const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
           for (const entry of incoming) {
             const key = entryKey(entry);
