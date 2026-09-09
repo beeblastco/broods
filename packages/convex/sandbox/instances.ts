@@ -192,6 +192,7 @@ export const listForAccount = internalQuery({
  * @param accountId the owning account.
  * @param reservationKey the broods reconnection key.
  * @param status the new lifecycle status.
+ * @param errorMessage the provider's reason when `status` is `error`.
  */
 export const setStatus = internalMutation({
   args: {
@@ -199,11 +200,12 @@ export const setStatus = internalMutation({
     reservationKey: v.string(),
     status: sandboxInstancesFields.status,
     observed: v.optional(v.boolean()),
+    errorMessage: sandboxInstancesFields.errorMessage,
   },
   returns: v.null(),
   handler: async (
     ctx,
-    { accountId, reservationKey, status, observed },
+    { accountId, reservationKey, status, observed, errorMessage },
   ): Promise<null> => {
     const instance = await ctx.db
       .query("sandboxInstances")
@@ -216,6 +218,8 @@ export const setStatus = internalMutation({
     const now = Date.now();
     await ctx.db.patch(instance._id, {
       status: status,
+      // `undefined` unsets the field, so a reason never outlives its error.
+      errorMessage: status === "error" ? errorMessage : undefined,
       // Only a use moves "last used". Stamping every transition let a suspend --
       // or a status read that merely observed one -- rewrite it to now, so a row
       // untouched for a day still read as seconds old.
@@ -302,6 +306,7 @@ function upsertRefreshFields(
       | "workspaceId"
       | "logStream"
       | "ephemeral"
+      | "errorMessage"
     >
   > {
   return {
@@ -309,6 +314,10 @@ function upsertRefreshFields(
     name: args.name,
     specs: args.specs,
     status: "running" as const,
+    // A reconnect only mirrors once the provider handed back a usable sandbox,
+    // so the reason goes with the status: `undefined` unsets it on patch and is
+    // dropped on insert.
+    errorMessage: undefined,
     lastUsedAt: now,
     ...(args.projectId ? { projectId: args.projectId } : {}),
     ...(args.stageId ? { stageId: args.stageId } : {}),

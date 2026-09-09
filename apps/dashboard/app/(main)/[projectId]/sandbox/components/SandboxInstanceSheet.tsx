@@ -609,6 +609,9 @@ function InstanceDetailFields({
     <div className="rounded-lg border border-border bg-card px-4">
       <Field label="Provider" value={formatProvider(instance.provider)} />
       <Field label="Status" value={instance.status} />
+      {instance.errorMessage && (
+        <Field label="Reason" value={instance.errorMessage} />
+      )}
       <Field label="Size" value={formatSpecs(instance.specs)} />
       <Field
         label="External ID"

@@ -513,14 +513,23 @@ async function refreshSandboxStatus(
     return jsonResponse(200, { status: "terminated" });
   }
   const status = info.state === "unknown" ? "error" : info.state;
+  // An unrecognised state lands as `error` too; say so rather than show a bare badge.
+  const errorMessage =
+    info.errorMessage ??
+    (info.state === "unknown"
+      ? "provider reported an unrecognised state"
+      : undefined);
   // A refresh reads the provider's state; it does not use the sandbox.
   await setSandboxInstanceStatus(
     context.accountId,
     context.reservationKey,
     status,
-    true,
+    { observed: true, errorMessage: errorMessage },
   );
-  await context.audit(status === "error" ? "error" : "ok", { status: status });
+  await context.audit(status === "error" ? "error" : "ok", {
+    status: status,
+    errorMessage: errorMessage,
+  });
 
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }

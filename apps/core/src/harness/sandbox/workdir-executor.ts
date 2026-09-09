@@ -67,6 +67,7 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
+  SandboxGoneError,
   sandboxReservationKey,
   shellQuote,
   stripTrailingSlashes,
@@ -319,8 +320,14 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (!externalId) return null;
     try {
       const sandbox = await this.#client.sandboxes.get(externalId);
+      const state = mapWorkdirState(sandbox.state);
 
-      return { externalId: externalId, state: mapWorkdirState(sandbox.state) };
+      return {
+        externalId: externalId,
+        state: state,
+        errorMessage:
+          state === "error" ? workdirRecordError(sandbox) : undefined,
+      };
     } catch (err) {
       if (isSandboxGoneError(err))
         return { externalId: externalId, state: "terminating" };
@@ -619,16 +626,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
         return { sandbox: sandbox, isFirstCreate: false };
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
-        // conditional delete keeps a row a concurrent call already re-claimed.
+        // Recreate only when the sandbox is really gone (provider 404, or a
+        // `failed` one #reconnect refused); a transient error must propagate or
+        // the still-live sandbox is orphaned at the provider. Retire it the way
+        // an expired one is: release deletes whatever is still at workdir, then
+        // the row, conditionally so a concurrent re-claim keeps its own.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance(
-          "sandbox",
-          ns,
-          this.#config.controlPlane?.accountId,
-          externalId,
-        ).catch(() => {});
+        await this.release({
+          reservationKey: ns,
+          expectedExternalId: externalId,
+        });
       }
     }
     const created = await this.#client.sandboxes.create(
@@ -683,8 +690,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
   // A reserved sandbox idles into `stopped`/`standby`; resume it before use.
   // (`standby` auto-resumes on exec, but resuming an explicit `stopped` is not.)
+  // A `failed` one cannot be resumed at all (exec answers 409, only delete is
+  // allowed), so it is reported gone rather than handed back.
   async #reconnect(externalId: string): Promise<Sandbox> {
     const sandbox = await this.#client.sandboxes.get(externalId);
+    if (mapWorkdirState(sandbox.state) === "error") {
+      const reason = workdirRecordError(sandbox);
+      throw new SandboxGoneError(
+        `workdir sandbox ${externalId} is ${sandbox.state}${reason ? `: ${reason}` : ""}`,
+      );
+    }
     if (sandbox.state === "stopped" || sandbox.state === "standby") {
       await sandbox.resume();
     }
@@ -906,6 +921,15 @@ function mapWorkdirState(state: unknown): SandboxInstanceInfo["state"] {
     default:
       return "unknown";
   }
+}
+
+// The SDK types `Sandbox.data` private, but it is the parsed `GET /v1/sandboxes/:id`
+// body, and the `error` workdir sets while a sandbox is `failed` has no getter.
+// Read past the typing rather than fetch the same record a second time.
+function workdirRecordError(sandbox: Sandbox): string | undefined {
+  const record = sandbox as unknown as { data?: { error?: unknown } };
+
+  return configString(record.data?.error);
 }
 
 function s3SecretNames(options: Record<string, unknown>): string[] {

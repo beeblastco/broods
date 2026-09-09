@@ -38,6 +38,7 @@ import {
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getObservabilityContext } from "../../shared/otel.ts";
@@ -464,7 +465,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         return null;
       }
 
-      return { externalId: microvmId, state: "unknown" };
+      return {
+        externalId: microvmId,
+        state: "unknown",
+        errorMessage: toErrorMessage(error),
+      };
     }
   }
 

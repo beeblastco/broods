@@ -522,6 +522,8 @@ export const sandboxInstancesFields = {
     v.literal("terminating"),
     v.literal("error"),
   ),
+  /** The provider's own reason while `status` is `error`; cleared on every other status. */
+  errorMessage: v.optional(v.string()),
   /** Snapshot/image this instance launched from, when any. */
   snapshotId: v.optional(v.string()),
   /** Non-secret egress policy summary (config `network.mode`); powers the dashboard Networking view. */

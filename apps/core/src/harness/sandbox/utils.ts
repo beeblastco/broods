@@ -184,11 +184,20 @@ export function shellQuote(value: string): string {
 }
 
 /**
+ * Thrown by an executor that read the sandbox back from its provider and found
+ * it past recovery (workdir `failed`: exec answers 409, only delete is allowed),
+ * so the caller retires the reservation and creates a fresh one, exactly as it
+ * would for a provider 404.
+ */
+export class SandboxGoneError extends Error {}
+
+/**
  * True when a provider error means the sandbox is already gone (safe to forget),
  * as opposed to wrong credentials or a transient fault (which must propagate so a
  * caller can try another config rather than silently drop the instance record).
  */
 export function isSandboxGoneError(error: unknown): boolean {
+  if (error instanceof SandboxGoneError) return true;
   if (!isPlainObject(error)) {
     return (
       typeof error === "string" &&
