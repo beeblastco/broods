@@ -37,7 +37,9 @@ export interface SandboxReservationRef {
 /**
  * Release the reservations the sweeper found expired. Unlike the namespace-deletion
  * path it never drops a row the provider teardown did not confirm: that row holds the
- * only copy of `externalId`, so deleting it early strands the sandbox.
+ * only copy of `externalId`, so deleting it early strands the sandbox. The row goes
+ * here, conditional on that id, because the executors built from a stored config
+ * carry no control-plane account and so cannot drop it themselves.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
@@ -59,6 +61,12 @@ export async function releaseExpiredSandboxes(
     );
     if (!done) continue;
     released.push(reservation);
+    await deleteSandboxInstance(
+      reservation.provider,
+      key,
+      accountId,
+      reservation.externalId,
+    ).catch(() => {});
     await removeSandboxInstance(accountId, key);
   }
 
