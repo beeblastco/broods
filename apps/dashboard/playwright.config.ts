@@ -66,26 +66,27 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: process.env.E2E_SERVER_COMMAND ?? "bun run dev",
+        command: process.env.E2E_SERVER_COMMAND || "bun run dev",
         url: `${DEV_URL}/healthz`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
         // The fixture never talks to Convex or WorkOS; the app only needs
         // well-formed values to construct its clients and its auth proxy.
         // A real .env.local wins when present, which is what the signed-in
-        // suites need locally.
+        // suites need locally. `||`, not `??`: CI passes an unset secret as
+        // an empty string, and an empty cookie password crashes the server.
         env: {
           NEXT_PUBLIC_CONVEX_URL:
-            process.env.NEXT_PUBLIC_CONVEX_URL ??
+            process.env.NEXT_PUBLIC_CONVEX_URL ||
             "https://placeholder.convex.cloud",
-          WORKOS_API_KEY: process.env.WORKOS_API_KEY ?? "sk_test_placeholder",
+          WORKOS_API_KEY: process.env.WORKOS_API_KEY || "sk_test_placeholder",
           WORKOS_CLIENT_ID:
-            process.env.WORKOS_CLIENT_ID ?? "client_placeholder",
+            process.env.WORKOS_CLIENT_ID || "client_placeholder",
           WORKOS_COOKIE_PASSWORD:
-            process.env.WORKOS_COOKIE_PASSWORD ??
+            process.env.WORKOS_COOKIE_PASSWORD ||
             "ui-gallery-placeholder-cookie-password-32",
           NEXT_PUBLIC_WORKOS_REDIRECT_URI:
-            process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ??
+            process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ||
             "http://localhost:3000/auth/callback",
         },
       },
