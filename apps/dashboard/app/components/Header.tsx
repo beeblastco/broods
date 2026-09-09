@@ -47,7 +47,7 @@ export function Header(): React.JSX.Element {
         <Link
           href={isProjectPage ? `/${params.projectId}` : "/"}
           aria-label="Broods"
-          className="hover:opacity-80 transition-opacity cursor-pointer text-foreground"
+          className="hover:opacity-80 transition-opacity cursor-pointer"
         >
           <BroodsLogo className="h-7 w-auto" />
         </Link>
