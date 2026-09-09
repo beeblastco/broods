@@ -13,6 +13,12 @@ import { useCallback } from "react";
 
 const convex = new ConvexReactClient(
   process.env.NEXT_PUBLIC_CONVEX_URL as string,
+  {
+    // Keep the token the server just confirmed. Off, the client fetches a
+    // fresh one at once (a server action on every cold load) and sends a
+    // second Authenticate that re-runs every subscribed query.
+    initialAuthTokenReuse: true,
+  },
 );
 
 type ConvexAuthAdapter = ReturnType<
