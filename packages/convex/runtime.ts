@@ -765,8 +765,10 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 /**
- * Refreshes or creates a persistent sandbox reservation mapping.
- * @returns null after the mapping is saved
+ * Refreshes the idle deadline of a reservation that still names this sandbox
+ * and belongs to this account. Never inserts or repoints: a released or
+ * replaced key is a no-op.
+ * @returns null after the patch attempt
  */
 export const saveSandboxReservation = internalMutation({
   args: {
@@ -786,17 +788,17 @@ export const saveSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
-    const patch = {
-      externalId: args.externalId,
+    if (
+      !row ||
+      row.accountId !== args.accountId ||
+      row.externalId !== args.externalId
+    ) {
+      return null;
+    }
+    await ctx.db.patch(row._id, {
       expiresAt:
         Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS,
-    };
-    if (row) await ctx.db.patch(row._id, patch);
-    else
-      await ctx.db.insert("sandboxReservations", {
-        ...args,
-        ...patch,
-      });
+    });
 
     return null;
   },
@@ -864,9 +866,11 @@ export const deleteSandboxReservation = internalMutation({
       .unique();
     if (
       row &&
+      row.accountId === args.accountId &&
       (!args.expectedExternalId || row.externalId === args.expectedExternalId)
-    )
+    ) {
       await ctx.db.delete(row._id);
+    }
 
     return null;
   },

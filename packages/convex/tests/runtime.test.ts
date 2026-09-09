@@ -455,6 +455,53 @@ describe("runtime persistence", () => {
     ).toBeNull();
   });
 
+  test("refreshes a reservation only while it still names the same sandbox", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const lookup = {
+      provider: "sandbox" as const,
+      reservationKey: `acct:${accountId}:workspace:one`,
+    };
+    const ref = { ...lookup, accountId: accountId };
+    // A refresh for a key nobody claimed must not conjure a reservation.
+    await t.mutation(internal.runtime.saveSandboxReservation, {
+      ...ref,
+      externalId: "sandbox-ghost",
+    });
+    expect(
+      await t.query(internal.runtime.getSandboxReservation, lookup),
+    ).toBeNull();
+
+    await t.mutation(internal.runtime.claimSandboxReservation, {
+      ...ref,
+      externalId: "sandbox-1",
+    });
+    // A late refresh from a caller still holding the replaced id is dropped.
+    await t.mutation(internal.runtime.saveSandboxReservation, {
+      ...ref,
+      externalId: "sandbox-stale",
+    });
+    expect(await t.query(internal.runtime.getSandboxReservation, lookup)).toBe(
+      "sandbox-1",
+    );
+
+    // Another account naming the same key can neither refresh nor drop the row.
+    const otherAccountId = await createActiveAccount(t);
+    await t.mutation(internal.runtime.saveSandboxReservation, {
+      ...lookup,
+      accountId: otherAccountId,
+      externalId: "sandbox-1",
+    });
+    await t.mutation(internal.runtime.deleteSandboxReservation, {
+      ...lookup,
+      accountId: otherAccountId,
+      expectedExternalId: "sandbox-1",
+    });
+    expect(await t.query(internal.runtime.getSandboxReservation, lookup)).toBe(
+      "sandbox-1",
+    );
+  });
+
   test("rejects admitted runtime writes after account disable or removal", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

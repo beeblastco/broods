@@ -56,6 +56,8 @@ export async function deleteSandboxInstance(
     accountId: accountId,
   });
 }
+// Refreshes the idle deadline of the reservation that still names `externalId`.
+// Never creates or repoints a row: the acquire path owns that through the claim.
 export async function saveSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
