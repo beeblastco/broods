@@ -1447,7 +1447,7 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
     });
 
-    expect(handle).toEqual({ jobId: "job_test" });
+    expect(handle).toEqual({ jobId: "job_test", externalId: "e2b-sandbox" });
     expect(e2bRunMock).toHaveBeenCalledWith("node runner.js", {
       background: true,
       timeoutMs: 30000,

@@ -7,10 +7,11 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { getHarnessPublicUrl } from "../../shared/env.ts";
-import { logDebug, logInfo } from "../../shared/log.ts";
+import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
+  bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
   markAsyncToolResultFailed,
 } from "../async-tool-result.ts";
@@ -291,10 +292,27 @@ async function dispatchBackground(
   });
 
   try {
-    await runSandboxBackground(ws.sandbox, ws.namespace, command, {
-      jobId: jobId,
-      metadata: sandboxRunMetadata(context, ws),
-      ...(callback ? { callback: callback } : {}),
+    const handle = await runSandboxBackground(
+      ws.sandbox,
+      ws.namespace,
+      command,
+      {
+        jobId: jobId,
+        metadata: sandboxRunMetadata(context, ws),
+        ...(callback ? { callback: callback } : {}),
+      },
+    );
+    // Only the launch knows which machine took the job, so the fence lands after
+    // it, off the tool's return path. A job that reports first settles unfenced.
+    void bindAsyncToolResultSandbox(resultId, {
+      provider: ws.sandbox.provider,
+      reservationKey: ws.namespace,
+      externalId: handle.externalId,
+    }).catch((error: unknown) => {
+      logWarn("Background job left unfenced: sandbox binding failed", {
+        resultId: resultId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);

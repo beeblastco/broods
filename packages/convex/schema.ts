@@ -982,6 +982,12 @@ export const runtimeAsyncAgentResultsFields = {
   updatedAt: v.string(),
   expiresAt: v.number(),
 };
+/** A reservation and the machine it names; the id is the fence for writes to the row. */
+export const reservedSandboxValidator = v.object({
+  provider: sandboxProviderValidator,
+  reservationKey: v.string(),
+  externalId: v.string(),
+});
 /** Detached async tool state, including delivery and hashed callback authorization. */
 export const runtimeAsyncToolResultsFields = {
   accountId: v.string(),
@@ -1001,6 +1007,9 @@ export const runtimeAsyncToolResultsFields = {
   delivery: v.optional(v.any()),
   completionTokenHash: v.optional(v.string()),
   observed: v.optional(v.boolean()),
+  // Set once the launch reports which machine took the job. A settle after the
+  // reservation stopped naming it fails the row instead.
+  sandbox: v.optional(reservedSandboxValidator),
   createdAt: v.string(),
   updatedAt: v.string(),
   expiresAt: v.number(),

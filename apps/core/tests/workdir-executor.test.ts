@@ -915,7 +915,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
       outputLimitBytes: 4096,
     });
 
-    expect(handle).toEqual({ jobId: "job_test" });
+    expect(handle).toEqual({ jobId: "job_test", externalId: "sbx_new" });
     const launch = execCalls().find((c) =>
       String(c.body?.cmd).includes("setsid bash -c"),
     );

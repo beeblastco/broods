@@ -27,6 +27,7 @@ export const runtimeQueries = {
 
 export const runtimeMutations = {
   appendConversationEvent: internal.runtime.appendConversationEvent,
+  bindAsyncToolResultSandbox: internal.runtime.bindAsyncToolResultSandbox,
   claimEvent: internal.runtime.claimEvent,
   claimSandboxReservation: internal.runtime.claimSandboxReservation,
   clearConversation: internal.runtime.clearConversation,

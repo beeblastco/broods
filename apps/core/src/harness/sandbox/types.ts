@@ -160,6 +160,9 @@ export type SandboxJobState = "running" | "completed" | "failed" | "unknown";
 
 export interface SandboxJobHandle {
   jobId: string;
+  // The provider id of the reserved sandbox the job launched on, so the caller
+  // can fence the job's completion callback on it.
+  externalId: string;
 }
 
 export interface SandboxJobStatus {

@@ -3,6 +3,7 @@
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
   | { kind: "async" }
@@ -32,6 +33,10 @@ export interface AsyncToolResultRecord {
   error?: string;
   delivery?: AsyncToolDelivery;
   observed?: boolean;
+  // The machine a detached job launched on; Convex fails the settle if the
+  // reservation stops naming it. Vercel's id is a name shared by every
+  // replacement, so the fence never trips there.
+  sandbox?: ReservedSandbox;
   expiresAt: number;
 }
 export interface DetachedAsyncToolGroup {
@@ -61,6 +66,15 @@ export function createDetachedAsyncToolResult(options: {
     ...row,
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
     sealed: true,
+  });
+}
+export function bindAsyncToolResultSandbox(
+  resultId: string,
+  sandbox: ReservedSandbox,
+): Promise<null> {
+  return runtime.mutate("bindAsyncToolResultSandbox", {
+    resultId: resultId,
+    sandbox: sandbox,
   });
 }
 export function createPendingAsyncToolResult(options: {
