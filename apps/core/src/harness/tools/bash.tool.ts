@@ -302,9 +302,9 @@ async function dispatchBackground(
         ...(callback ? { callback: callback } : {}),
       },
     );
-    // Recorded after the launch because only the launch knows which machine took
-    // the job. A job fast enough to report first settles unfenced, as before.
-    await bindAsyncToolResultSandbox(resultId, {
+    // Only the launch knows which machine took the job, so the fence lands after
+    // it, off the tool's return path. A job that reports first settles unfenced.
+    void bindAsyncToolResultSandbox(resultId, {
       provider: ws.sandbox.provider,
       reservationKey: ws.namespace,
       externalId: handle.externalId,

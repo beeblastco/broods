@@ -27,11 +27,11 @@ export const runtimeQueries = {
 
 export const runtimeMutations = {
   appendConversationEvent: internal.runtime.appendConversationEvent,
+  bindAsyncToolResultSandbox: internal.runtime.bindAsyncToolResultSandbox,
   claimEvent: internal.runtime.claimEvent,
   claimSandboxReservation: internal.runtime.claimSandboxReservation,
   clearConversation: internal.runtime.clearConversation,
   createAsyncAgentResult: internal.runtime.createAsyncAgentResult,
-  bindAsyncToolResultSandbox: internal.runtime.bindAsyncToolResultSandbox,
   createAsyncToolResult: internal.runtime.createAsyncToolResult,
   deferSandboxReservations: internal.runtime.deferSandboxReservations,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,

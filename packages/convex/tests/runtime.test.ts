@@ -455,7 +455,7 @@ describe("runtime persistence", () => {
     ).toBeNull();
   });
 
-  test("binds a detached job to its sandbox only while it is still processing", async () => {
+  test("fails a detached job whose sandbox the reservation stopped naming", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -464,36 +464,59 @@ describe("runtime persistence", () => {
       reservationKey: `acct:${accountId}:workspace:one`,
       externalId: "sandbox-1",
     };
-    await t.mutation(internal.runtime.createAsyncToolResult, {
-      resultId: "job-1",
-      parentEventId: `acct:${accountId}:parent:job-1`,
-      conversationKey: conversationKey,
-      toolName: "bash",
-      toolCallId: "call-1",
-      input: { kind: "sandbox_job" },
-      completionToken: "tok",
-    });
-    await t.mutation(internal.runtime.bindAsyncToolResultSandbox, {
-      resultId: "job-1",
-      sandbox: sandbox,
-    });
-    expect(
-      await t.query(internal.runtime.getAsyncToolResult, { resultId: "job-1" }),
-    ).toMatchObject({ sandbox: sandbox });
+    const reservation = { ...sandbox, accountId: accountId };
+    await t.mutation(internal.runtime.claimSandboxReservation, reservation);
+    const createJob = (resultId: string): Promise<boolean> =>
+      t.mutation(internal.runtime.createAsyncToolResult, {
+        resultId: resultId,
+        parentEventId: `acct:${accountId}:parent:${resultId}`,
+        conversationKey: conversationKey,
+        toolName: "bash",
+        toolCallId: `call-${resultId}`,
+        input: { kind: "sandbox_job" },
+        completionToken: "tok",
+      });
+    const bind = (resultId: string): Promise<null> =>
+      t.mutation(internal.runtime.bindAsyncToolResultSandbox, {
+        resultId: resultId,
+        sandbox: sandbox,
+      });
+    const settle = (resultId: string): Promise<unknown> =>
+      t.mutation(internal.runtime.updateAsyncToolResult, {
+        resultId: resultId,
+        status: "completed",
+        response: { ok: true },
+        onlyWhenProcessing: true,
+      });
 
-    // A job that reported before its launch was recorded keeps its unfenced result.
-    await t.mutation(internal.runtime.updateAsyncToolResult, {
-      resultId: "job-1",
-      status: "completed",
-      response: { ok: true },
-    });
-    await t.mutation(internal.runtime.bindAsyncToolResultSandbox, {
-      resultId: "job-1",
-      sandbox: { ...sandbox, externalId: "sandbox-2" },
-    });
+    // Bound while the reservation still names the machine: the report counts.
+    await createJob("job-1");
+    await bind("job-1");
+    await settle("job-1");
     expect(
       await t.query(internal.runtime.getAsyncToolResult, { resultId: "job-1" }),
-    ).toMatchObject({ status: "completed", sandbox: sandbox });
+    ).toMatchObject({ status: "completed", response: { ok: true } });
+
+    // The key moved to another machine before this job reported.
+    await createJob("job-2");
+    await bind("job-2");
+    await t.mutation(internal.runtime.deleteSandboxReservation, {
+      provider: sandbox.provider,
+      reservationKey: sandbox.reservationKey,
+      expectedExternalId: "sandbox-1",
+      accountId: accountId,
+    });
+    await t.mutation(internal.runtime.claimSandboxReservation, {
+      ...reservation,
+      externalId: "sandbox-2",
+    });
+    await settle("job-2");
+    expect(
+      await t.query(internal.runtime.getAsyncToolResult, { resultId: "job-2" }),
+    ).toMatchObject({
+      status: "failed",
+      error: "Background job ran on a sandbox that has since been replaced",
+    });
   });
 
   test("refreshes a reservation only while it still names the same sandbox", async () => {

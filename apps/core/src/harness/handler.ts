@@ -50,7 +50,6 @@ import {
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import {
-  asyncToolSandboxStillReserved,
   getAsyncToolResult,
   getDetachedAsyncToolGroup,
   listAsyncToolResultsByParentEvent,
@@ -379,24 +378,12 @@ async function handleSandboxJobCompletionRequest(
     return jsonResponse(404, { error: "Background job result not found" });
   }
 
-  // A report from a machine the reservation no longer names is not this job's
-  // result: its workspace writes are unowned. The row settles failed with the
-  // reason, so the turn resumes instead of waiting on a callback that never counts.
-  const owned = await asyncToolSandboxStillReserved(existing);
-  const settled = await settleAsyncToolResultFromCallback(
-    owned
-      ? {
-          resultId: event.resultId,
-          status: event.status,
-          ...(event.response !== undefined ? { response: event.response } : {}),
-          ...(event.error ? { error: event.error } : {}),
-        }
-      : {
-          resultId: event.resultId,
-          status: "failed",
-          error: "Background job ran on a sandbox that has since been replaced",
-        },
-  );
+  const settled = await settleAsyncToolResultFromCallback({
+    resultId: event.resultId,
+    status: event.status,
+    ...(event.response !== undefined ? { response: event.response } : {}),
+    ...(event.error ? { error: event.error } : {}),
+  });
   if (!settled) {
     return jsonResponse(409, {
       error: "Background job result is already settled",

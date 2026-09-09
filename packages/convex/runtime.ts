@@ -12,7 +12,7 @@ import {
 import { internal } from "./_generated/api";
 import { sha256Hex } from "./model/accountSecrets";
 import {
-  asyncToolSandboxValidator,
+  reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
   sandboxProviderValidator,
@@ -24,6 +24,8 @@ const DAY_SECONDS = 24 * 60 * 60;
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
 // coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
+const REPLACED_SANDBOX_ERROR =
+  "Background job ran on a sandbox that has since been replaced";
 const RUNTIME_DELETE_BATCH_SIZE = 100;
 // Idle window a reservation survives, refreshed on every acquire. Only core's sandbox
 // sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
@@ -450,13 +452,12 @@ export const createAsyncToolResult = internalMutation({
 });
 
 /**
- * Records the sandbox a detached job launched on, once the launch reports it.
- * Only a row still processing takes the binding: a job that already reported
- * back settled before its fence existed and keeps that result.
+ * Records the sandbox a detached job launched on. A row that already settled
+ * did so before its fence existed and keeps that result.
  * @returns null after the patch attempt
  */
 export const bindAsyncToolResultSandbox = internalMutation({
-  args: { resultId: v.string(), sandbox: asyncToolSandboxValidator },
+  args: { resultId: v.string(), sandbox: reservedSandboxValidator },
   returns: v.null(),
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -609,16 +610,30 @@ export const updateAsyncToolResult = internalMutation({
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
       return null;
     }
+    // A job bound to a machine the reservation no longer names settles failed
+    // whatever it reported: its workspace writes are unowned.
+    const outcome =
+      row.status === "processing" &&
+      row.sandbox !== undefined &&
+      !(await sandboxStillReserved(ctx, row.sandbox))
+        ? {
+            status: "failed" as const,
+            response: undefined,
+            error: REPLACED_SANDBOX_ERROR,
+          }
+        : {
+            status: args.status,
+            response:
+              args.observed !== undefined && args.response === undefined
+                ? row.response
+                : args.response,
+            error:
+              args.observed !== undefined && args.error === undefined
+                ? row.error
+                : args.error,
+          };
     const patch = {
-      status: args.status,
-      response:
-        args.observed !== undefined && args.response === undefined
-          ? row.response
-          : args.response,
-      error:
-        args.observed !== undefined && args.error === undefined
-          ? row.error
-          : args.error,
+      ...outcome,
       observed: args.observed ?? row.observed,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
@@ -683,10 +698,8 @@ export const getSandboxReservationRecord = internalQuery({
   },
 });
 const sandboxReservationSummary = v.object({
+  ...reservedSandboxValidator.fields,
   accountId: v.string(),
-  provider: sandboxProviderValidator,
-  reservationKey: v.string(),
-  externalId: v.string(),
 });
 /**
  * One page of reservations whose idle window has lapsed, oldest first.
@@ -1214,6 +1227,23 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   const { completionTokenHash: _hidden, ...publicRow } = row;
 
   return publicRow;
+}
+
+/** Whether the reservation still names this machine. */
+async function sandboxStillReserved(
+  ctx: MutationCtx,
+  sandbox: Infer<typeof reservedSandboxValidator>,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("sandboxReservations")
+    .withIndex("by_provider_and_reservationKey", (q) =>
+      q
+        .eq("provider", sandbox.provider)
+        .eq("reservationKey", sandbox.reservationKey),
+    )
+    .unique();
+
+  return row?.externalId === sandbox.externalId;
 }
 
 /**
