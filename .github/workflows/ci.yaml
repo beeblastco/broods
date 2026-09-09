@@ -196,7 +196,9 @@ jobs:
         run: bun bench/bundles.ts --check dashboard
 
       - name: Install Chromium for the dashboard fixtures
-        run: cd apps/dashboard && bunx playwright install --with-deps chromium
+        # No --with-deps: that runs apt, which fails whenever a mirror is off,
+        # and the ubuntu-24.04 image already ships Chromium's libraries.
+        run: cd apps/dashboard && bunx playwright install chromium
 
       - name: Browser-test the dashboard fixtures
         # Real layout of the pieces that broke in the wild (select popup,
