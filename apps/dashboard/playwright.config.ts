@@ -18,6 +18,15 @@
 import { defineConfig, devices } from "@playwright/test";
 import { STORAGE_STATE } from "./e2e/lib/session";
 
+// Next reads .env.local for the app; Playwright does not, so the E2E_* values
+// kept there (by scripts/setup-dashboard-e2e.sh) are loaded here. Absent in
+// CI, where the workflow sets the environment.
+try {
+  process.loadEnvFile(".env.local");
+} catch {
+  // No local env file: the suites read whatever the shell provides.
+}
+
 const DEV_URL = "http://localhost:3000";
 const GALLERY_URL = `${DEV_URL}/ui-gallery`;
 const BASE_URL = process.env.E2E_BASE_URL ?? DEV_URL;
