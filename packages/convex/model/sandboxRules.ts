@@ -66,6 +66,9 @@ export interface SandboxNetworkConfig {
  */
 export interface SandboxConfig {
   provider: SandboxProvider;
+  // Where an ephemeral run goes when `provider` refuses the create for capacity.
+  // Never set with `persistent`: a reserved sandbox belongs to one provider.
+  fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
   snapshot?: string;
   runtimes?: RuntimeName[];
@@ -152,6 +155,11 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
   assertOptionalEnum(
+    config.fallbackProvider,
+    "config.fallbackProvider",
+    SANDBOX_PROVIDERS,
+  );
+  assertOptionalEnum(
     config.permissionMode,
     "config.permissionMode",
     SANDBOX_PERMISSION_MODES,
@@ -162,24 +170,23 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   const provider =
     (config.provider as SandboxProvider | undefined) ?? "sandbox";
+  if (config.fallbackProvider === provider) {
+    throw new Error("config.fallbackProvider must differ from config.provider");
+  }
+  if (config.fallbackProvider !== undefined && config.persistent === true) {
+    throw new Error(
+      "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
+    );
+  }
   const network = normalizeNetwork(config.network);
-  if (provider === "e2b" && network.mode !== "allow-all") {
-    throw new Error(
-      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
-    );
-  }
-  if (
-    provider === "lambda" &&
-    network.mode === "restricted" &&
-    (network.allowDomains || network.allowCidrs)
-  ) {
-    throw new Error(
-      "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
-    );
-  }
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
-  assertResourceLimits(config, provider);
+  // The fallback runs this same config, so it has to be able to enforce it too.
+  for (const runsOn of [provider, config.fallbackProvider as SandboxProvider]) {
+    if (!runsOn) continue;
+    assertNetworkEnforceable(runsOn, network);
+    assertResourceLimits(config, runsOn);
+  }
   assertEnvVarsAndOptions(config, provider);
 
   return buildNormalizedConfig(
@@ -255,6 +262,26 @@ function asObject(value: unknown): Record<string, unknown> {
 }
 
 // Validates the envVars record and provider-specific options blob.
+function assertNetworkEnforceable(
+  provider: SandboxProvider,
+  network: SandboxNetworkConfig,
+): void {
+  if (provider === "e2b" && network.mode !== "allow-all") {
+    throw new Error(
+      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+    );
+  }
+  if (
+    provider === "lambda" &&
+    network.mode === "restricted" &&
+    (network.allowDomains || network.allowCidrs)
+  ) {
+    throw new Error(
+      "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
+    );
+  }
+}
+
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -354,6 +381,9 @@ function buildNormalizedConfig(
 ): SandboxConfig {
   return {
     provider: provider,
+    ...(config.fallbackProvider !== undefined
+      ? { fallbackProvider: config.fallbackProvider as SandboxProvider }
+      : {}),
     network: network,
     permissionMode:
       (config.permissionMode as PermissionMode | undefined) ?? "ask",

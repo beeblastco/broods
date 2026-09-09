@@ -16,7 +16,9 @@ the account's _allocated memory_ quota while it is **running or suspended** — 
 still holds its full allocation until `suspendedDurationSeconds` (or a dashboard Terminate)
 releases it. A handful of persistent agents/workspaces can exhaust the quota and every new
 launch then fails with `ServiceQuotaExceededException` ("maximum allocated memory limit").
-Ephemeral runs hold quota only for the seconds a command executes.
+Ephemeral runs hold quota only for the seconds a command executes. Give an ephemeral
+config a `fallbackProvider` so a full primary hands the run to a second provider instead
+of failing the tool call.
 
 Reserve a persistent sandbox (`persistent: true`) when **installed packages, code, or
 running processes need to survive across calls** — a cloud dev box where `pip`/`npm`/`uv`

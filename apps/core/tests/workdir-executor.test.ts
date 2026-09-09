@@ -24,6 +24,9 @@ let fetchCalls: FetchCall[] = [];
 // GET /v1/sandboxes/:id returns this state (drives reconnect/resume).
 let reconnectState = "running";
 let execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
+// HTTP status the next POST /v1/sandboxes answers with; null means created.
+let createRefusal: number | null = null;
+let execRefusal: number | null = null;
 
 // The documented sandbox object shape (docs/API.md:124-152), trimmed.
 function sandboxObject(id: string, state: string): Record<string, unknown> {
@@ -66,15 +69,31 @@ const fetchMock = mock(
       headers: (init?.headers ?? {}) as Record<string, string>,
     });
 
-    if (method === "POST" && path === "/v1/sandboxes")
+    if (method === "POST" && path === "/v1/sandboxes") {
+      if (createRefusal !== null) {
+        return jsonResponse(
+          { error: { code: "capacity", message: "admission ceiling" } },
+          createRefusal,
+        );
+      }
+
       return jsonResponse(sandboxObject("sbx_new", "running"), 201);
+    }
     if (method === "GET" && /^\/v1\/sandboxes\/[^/]+$/.test(path)) {
       return jsonResponse(
         sandboxObject(path.split("/").pop()!, reconnectState),
       );
     }
-    if (method === "POST" && path.endsWith("/exec"))
+    if (method === "POST" && path.endsWith("/exec")) {
+      if (execRefusal !== null) {
+        return jsonResponse(
+          { error: { code: "busy", message: "proxy" } },
+          execRefusal,
+        );
+      }
+
       return jsonResponse(execResult);
+    }
     if (method === "POST" && path.endsWith("/snapshot"))
       return jsonResponse({ id: "snap_1", image_id: "img_1" });
     if (method === "POST" && path.endsWith("/pause"))
@@ -203,6 +222,8 @@ beforeEach(() => {
   fetchCalls = [];
   reconnectState = "running";
   execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
+  createRefusal = null;
+  execRefusal = null;
   storedSandboxExternalId = null;
   storedReservedAt = Date.now();
   process.env.AWS_REGION = "us-east-1";
@@ -1126,6 +1147,33 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       undefined,
       "sbx_stored",
     );
+  });
+
+  it("types a 503 on the create as a capacity refusal, and a 503 on exec as an error", async (): Promise<void> => {
+    const { SandboxCapacityError } =
+      await import("../src/harness/sandbox/utils.ts");
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+    });
+    createRefusal = 503;
+    await expect(
+      executor.run({
+        code: "echo hi",
+        timeoutSeconds: 10,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toBeInstanceOf(SandboxCapacityError);
+
+    createRefusal = null;
+    execRefusal = 503;
+    await expect(
+      executor.run({
+        code: "echo hi",
+        timeoutSeconds: 10,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.not.toBeInstanceOf(SandboxCapacityError);
   });
 
   it("releases the named sandbox when the reservation still points at it", async (): Promise<void> => {

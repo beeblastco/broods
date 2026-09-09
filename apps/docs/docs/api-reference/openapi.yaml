@@ -1192,6 +1192,12 @@ paths:
                         type: boolean,
                         description: "Reserve one long-lived sandbox per workspace, or per agent for a sandbox reached with no workspace attached (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max).",
                       }
+                    fallbackProvider:
+                      {
+                        type: string,
+                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. options do not carry over to the fallback.",
+                      }
                     lifecycle:
                       type: object
                       description: "Idle/expiry policy when persistent. Requires persistent: true."

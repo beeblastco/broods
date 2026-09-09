@@ -54,6 +54,7 @@ import {
   isNoRunnersError,
   isSandboxGoneError,
   mergeSandboxEnv,
+  SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
   truncateText,
@@ -370,7 +371,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
             ? this.#config.options.snapshot
             : undefined,
         );
-        throw new Error(
+        throw new SandboxCapacityError(
           `Daytona has no available runner for ${snapshot ? `snapshot '${snapshot}'` : "the request"} in the ` +
             `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity — ` +
             `rebuild it as a general snapshot or retry.`,

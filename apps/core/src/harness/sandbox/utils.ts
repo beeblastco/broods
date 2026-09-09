@@ -192,6 +192,14 @@ export function shellQuote(value: string): string {
 export class SandboxGoneError extends Error {}
 
 /**
+ * Thrown by an executor whose provider refused the *create* for lack of room:
+ * the MicroVM quota or throttle, workdir's admission ceiling, Daytona with no
+ * runner. Raised only at the create call, so it always means nothing ran and
+ * the same request may go to another provider.
+ */
+export class SandboxCapacityError extends Error {}
+
+/**
  * True when a provider error means the sandbox is already gone (safe to forget),
  * as opposed to wrong credentials or a transient fault (which must propagate so a
  * caller can try another config rather than silently drop the instance record).

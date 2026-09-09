@@ -80,6 +80,7 @@ import type {
 import {
   configString,
   mergeSandboxEnv,
+  SandboxCapacityError,
   sandboxReservationKey,
   shellQuote,
   stripTrailingSlashes,
@@ -97,6 +98,13 @@ const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 // fast at first (a resumed VM is usually ready in well under a second) then backing
 // off — a flat delay put its whole value on the floor of every single call.
 const WARMUP_BUDGET_MS = 30_000;
+// The control plane's refusals of a RunMicrovm that mean "no room right now".
+const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
+  "InsufficientCapacityException",
+  "ServiceQuotaExceededException",
+  "ThrottlingException",
+  "TooManyRequestsException",
+]);
 const WARMUP_RETRY_MIN_DELAY_MS = 150;
 const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // A cached endpoint is a guess, so it gets a short warm-up before the call falls back
@@ -800,9 +808,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
   ): Promise<{ microvmId: string; endpoint: string; logStream: string }> {
     const logStream = this.#logStream();
-    const result = await this.#client.send(
-      new RunMicrovmCommand(await this.#runInput(request, logStream)),
+    const command = new RunMicrovmCommand(
+      await this.#runInput(request, logStream),
     );
+    const result = await this.#client.send(command).catch((error: unknown) => {
+      if (error instanceof Error && CAPACITY_EXCEPTIONS.has(error.name)) {
+        throw new SandboxCapacityError(error.message);
+      }
+      throw error;
+    });
     if (!result.microvmId || !result.endpoint) {
       throw new Error("RunMicrovm did not return a microvmId and endpoint");
     }

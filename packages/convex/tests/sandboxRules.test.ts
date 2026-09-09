@@ -130,6 +130,54 @@ describe("sandbox config defaults & validation", () => {
     });
   });
 
+  it("accepts a fallback provider only for ephemeral configs, and never the same one", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "sandbox",
+      }).fallbackProvider,
+    ).toBe("sandbox");
+    expect(
+      normalizeSandboxConfig({ provider: "lambda" }).fallbackProvider,
+    ).toBeUndefined();
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "fargate",
+      }),
+    ).toThrow("config.fallbackProvider must be one of");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "lambda",
+      }),
+    ).toThrow("config.fallbackProvider must differ from config.provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "sandbox",
+        persistent: true,
+      }),
+    ).toThrow("config.fallbackProvider requires config.persistent to be false");
+  });
+
+  it("refuses a fallback provider that cannot enforce the config's network policy", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        fallbackProvider: "e2b",
+        network: { mode: "deny-all" },
+      }),
+    ).toThrow("e2b cannot enforce egress restrictions");
+    expect(
+      normalizeSandboxConfig({
+        provider: "sandbox",
+        fallbackProvider: "e2b",
+        network: { mode: "allow-all" },
+      }).fallbackProvider,
+    ).toBe("e2b");
+  });
+
   it("rejects unknown providers, permission modes, and runtimes", () => {
     expect(() => normalizeSandboxConfig({ provider: "fargate" })).toThrow(
       "config.provider must be one of",

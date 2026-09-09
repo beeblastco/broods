@@ -39,6 +39,9 @@ export interface SandboxNetworkConfig {
 // resolves one, so an executor config never carries an undefined provider.
 export interface SandboxExecutorConfig {
   provider: SandboxProvider;
+  // Where runSandbox sends an ephemeral run when `provider` refuses the create
+  // for capacity. Validation refuses it beside `persistent`.
+  fallbackProvider?: SandboxProvider;
   // Predefined compute size; drives workdir create-time resources (see
   // _shared/sandbox-sizes). Advisory on providers that size natively.
   size?: SandboxSize;

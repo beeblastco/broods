@@ -1934,6 +1934,50 @@ describe("isNoRunnersError", () => {
   });
 });
 
+describe("MicroVM capacity refusal", () => {
+  it("types a quota or throttle refusal of the create as SandboxCapacityError", async () => {
+    const { SandboxCapacityError } =
+      await import("../src/harness/sandbox/utils.ts");
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("maximum allocated memory limit"), {
+        name: "ServiceQuotaExceededException",
+      });
+    });
+
+    await expect(
+      createSandboxExecutor({ provider: "lambda" }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toBeInstanceOf(SandboxCapacityError);
+  });
+
+  it("passes every other refusal through untyped", async () => {
+    const { SandboxCapacityError } =
+      await import("../src/harness/sandbox/utils.ts");
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    microvmSendMock.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("denied"), {
+        name: "AccessDeniedException",
+      });
+    });
+
+    await expect(
+      createSandboxExecutor({ provider: "lambda" }).run({
+        code: "echo ok",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.not.toBeInstanceOf(SandboxCapacityError);
+  });
+});
+
 describe("classifyVercelError", () => {
   it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
     const { classifyVercelError } =
