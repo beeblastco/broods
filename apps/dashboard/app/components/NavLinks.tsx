@@ -1,16 +1,10 @@
 "use client";
 
 /** Right-side navigation links for the header bar. */
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
 import Link from "next/link";
-import {
-  useParams,
-  usePathname,
-  useRouter,
-  useSearchParams,
-} from "next/navigation";
-import { Suspense, useCallback } from "react";
+import { useParams, usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
 const NAV_ITEMS = [
   { segment: "", label: "Architecture" },
@@ -23,17 +17,10 @@ const NAV_ITEMS = [
 /** Inner nav links that read search params. */
 function NavLinksInner() {
   const pathname = usePathname();
-  const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId;
   const stageParam = searchParams.get("stage");
-  // Link queues the partial prefetch on viewport entry; navigation intent
-  // upgrades it to the full tree.
-  const warmProjectRoute = useCallback(
-    (href: string) => router.prefetch(href, FULL_ROUTE_PREFETCH),
-    [router],
-  );
 
   return (
     <nav className="flex items-center gap-1">
@@ -49,8 +36,12 @@ function NavLinksInner() {
             <Link
               key={segment}
               href={href}
-              onMouseEnter={() => warmProjectRoute(href)}
-              onFocus={() => warmProjectRoute(href)}
+              // The whole route, on viewport entry, except the page we are
+              // on. The default prefetch stops at loading.tsx and expires at
+              // once, so a click still fetched the tree, then its chunks,
+              // then data: three trips in a row. A hover upgrade cannot
+              // finish inside one trip.
+              prefetch={!isActive}
               className={cn(
                 "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                 isActive

@@ -42,13 +42,16 @@ test("a cold project load is one document, no server action, no logo fetch", asy
     urls((request) => "next-action" in request.headers()),
     "the session resolves on the server",
   ).toEqual([]);
-  // Link prefetches carry the RSC header too; a route refetch is one without
-  // the prefetch marker.
+  // The header prefetches every other route in full, and a full prefetch
+  // carries no prefetch marker, so it is told from a refetch by its path:
+  // the page's own route is never prefetched in full.
+  const ownPath = new URL(page.url()).pathname;
   expect(
     urls(
       (request) =>
         request.headers()["rsc"] === "1" &&
-        !request.headers()["next-router-prefetch"],
+        !request.headers()["next-router-prefetch"] &&
+        new URL(request.url()).pathname === ownPath,
     ),
     "the stage param must not refetch the route",
   ).toEqual([]);
