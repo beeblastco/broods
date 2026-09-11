@@ -206,6 +206,17 @@ async function sweepAccount(
     pending = reservations.filter(
       (one) => !done.has(`${one.provider}:${one.reservationKey}`),
     );
+    // Every release path that returns false has already said why, except a
+    // provider no persistent config covers any more; name what is left either way,
+    // or an hourly "released: 0" is the only trace of a sandbox that never dies.
+    if (pending.length > 0) {
+      logWarn("Sandbox sweep left expired reservations unreleased", {
+        accountId: accountId,
+        unreleased: pending.map(
+          (one) => `${one.provider}:${one.reservationKey}`,
+        ),
+      });
+    }
 
     return released.length;
   } finally {

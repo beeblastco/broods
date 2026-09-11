@@ -12,6 +12,7 @@ import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "../harness/sandbox/workdir-executor.ts";
 import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
+import { toErrorMessage } from "./errors.ts";
 import type {
   SandboxConfig,
   SandboxProvider,
@@ -132,7 +133,14 @@ async function persistentSandboxConfigs(
 ): Promise<SandboxConfig[]> {
   const configs = await getStorage()
     .sandboxConfigs.list(accountId)
-    .catch(() => []);
+    .catch((error: unknown) => {
+      logWarn("Sandbox config list failed, nothing can be released", {
+        accountId: accountId,
+        error: toErrorMessage(error),
+      });
+
+      return [];
+    });
 
   return configs
     .map((record) => record.config)

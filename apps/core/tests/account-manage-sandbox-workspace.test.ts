@@ -59,6 +59,9 @@ const fetchMock = mock(
         image: "base",
       });
     }
+    if (method === "DELETE" && path === "/v1/sandboxes/sbx_handler") {
+      return fetchResponse({});
+    }
     if (method === "POST" && path === "/v1/sandboxes/sbx_handler/exec") {
       return fetchResponse({
         exit_code: 7,
@@ -86,7 +89,14 @@ const getSandboxReservationRecordMock = mock(
 );
 const claimSandboxInstanceMock = mock(async () => true);
 const saveSandboxInstanceMock = mock(async () => {});
-const deleteSandboxInstanceMock = mock(async () => {});
+const deleteSandboxInstanceMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+    _accountId?: string,
+    _externalId?: string,
+  ) => {},
+);
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
@@ -271,6 +281,41 @@ describe("account-manage sandbox endpoints", () => {
       status: "running",
       externalId: "sbx_handler",
     });
+  });
+
+  it("terminate drops the reservation row the config-built executor cannot", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        `/v1/sandboxes/${created.sandboxId}/terminate`,
+        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+        { reservationKey: reservationKey },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({ status: "terminated" });
+    expect(
+      fetchCalls.some(
+        (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_handler",
+      ),
+    ).toBe(true);
+    // The executor's own delete has no account and is a no-op; the route's carries
+    // it, so the next run creates a fresh sandbox instead of reconnecting here.
+    expect(
+      deleteSandboxInstanceMock.mock.calls.filter((c) => c[2] !== undefined),
+    ).toEqual([["sandbox", reservationKey, ACCOUNT_ID]]);
   });
 
   it("runs bounded lifecycle exec commands without marking non-zero exits as sandbox errors", async () => {

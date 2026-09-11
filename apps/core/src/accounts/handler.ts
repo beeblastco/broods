@@ -9,7 +9,10 @@ import {
 } from "@broods/convex/model/apiAuthorization";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import type { SandboxExecutor } from "../harness/sandbox/types.ts";
-import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
+import {
+  deleteSandboxInstance,
+  getSandboxExternalId,
+} from "../harness/sandbox/instance-store.ts";
 import {
   MICROVM_SHELL_AUTH_HEADER,
   microvmShellConnection,
@@ -603,6 +606,14 @@ async function terminateSandbox(
   await auditedSandboxCall(context, async () => {
     await context.executor.release?.(context.ref);
   });
+  // The executor was built from the stored config and carries no control-plane
+  // account, so its own reservation delete is a no-op. Drop the row here like the
+  // sweeper does, or the next run reconnects to the deleted machine.
+  await deleteSandboxInstance(
+    context.provider,
+    context.reservationKey,
+    context.accountId,
+  );
   await removeSandboxInstance(context.accountId, context.reservationKey);
   await context.audit("ok", { status: "terminating" });
 
