@@ -309,15 +309,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       ...vercelCreateOptions(this.#config, request, true),
       name: name,
     });
-    let claimed: boolean;
     try {
-      claimed = await claimSandboxInstance(
-        "vercel",
-        key,
-        name,
-        this.#config.controlPlane?.accountId,
-      );
-      if (claimed) {
+      if (
+        await claimSandboxInstance(
+          "vercel",
+          key,
+          name,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "vercel",
@@ -457,14 +457,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// The name of one reserved machine: a prefix that reads back to the reservation
-// key, plus a generation nothing can derive from that key. The generation is what
-// makes `externalId` identify a machine, so the conditional writes that guard a
-// reservation refuse a machine some other caller created under the same key.
-function vercelSandboxName(reservationKey: string): string {
-  return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
-}
-
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
@@ -525,6 +517,14 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
       ? { subnets: { allow: network.allowCidrs } }
       : {}),
   };
+}
+
+// The name of one reserved machine: a prefix that reads back to the reservation
+// key, plus a generation nothing can derive from that key. The generation is what
+// makes `externalId` identify a machine, so the conditional writes that guard a
+// reservation refuse a machine some other caller created under the same key.
+function vercelSandboxName(reservationKey: string): string {
+  return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
 }
 
 async function commandError(
