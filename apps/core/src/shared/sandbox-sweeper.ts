@@ -64,14 +64,15 @@ export function stopSandboxSweeper(): void {
  * @returns the number of sandboxes released at their provider
  */
 export async function sweepExpiredSandboxes(): Promise<number> {
-  const expired = await runtime.query<SandboxReservationSummary[]>(
-    "listExpiredSandboxReservations",
-    { limit: SWEEP_PAGE_SIZE },
-  );
-  const orphaned = await runtime.query<SandboxReservationSummary[]>(
-    "listOrphanedSandboxInstances",
-    { limit: SWEEP_PAGE_SIZE },
-  );
+  const [expired, orphaned] = await Promise.all([
+    runtime.query<SandboxReservationSummary[]>(
+      "listExpiredSandboxReservations",
+      { limit: SWEEP_PAGE_SIZE },
+    ),
+    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
+      limit: SWEEP_PAGE_SIZE,
+    }),
+  ]);
   const byAccount = new Map<string, SandboxReservationSummary[]>();
   for (const reservation of [...expired, ...orphaned]) {
     const pending = byAccount.get(reservation.accountId) ?? [];

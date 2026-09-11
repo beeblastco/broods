@@ -94,10 +94,19 @@ _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
   local line; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
   line="${line#*=}"
-  if [[ ${#line} -ge 2 && ${line:0:1} == '"' && ${line: -1} == '"' ]]; then
+  if [[ ${#line} -ge 2 && $line == \"*\" ]]; then
     line="${line:1:${#line}-2}"
   fi
   printf '%s' "$line"
+}
+
+# _prompt "Prompt" CURRENT — print the prompt, noting when Enter keeps CURRENT.
+_prompt() {
+  if [[ -n "$2" ]]; then
+    printf '  %s%s%s %s[Enter keeps current]%s ' "$BOLD" "$1" "$RESET" "$DIM" "$RESET"
+  else
+    printf '  %s%s%s ' "$BOLD" "$1" "$RESET"
+  fi
 }
 
 # ask KEY "Prompt" — read a value into $KEY. Offers the existing .env value as
@@ -105,11 +114,7 @@ _existing() {
 ask() {
   local key="$1" prompt="$2" current input
   current=$(_existing "$key" || true)
-  if [[ -n "$current" ]]; then
-    printf '  %s%s%s %s[Enter keeps current]%s ' "$BOLD" "$prompt" "$RESET" "$DIM" "$RESET"
-  else
-    printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
-  fi
+  _prompt "$prompt" "$current"
   read -r input || true
   [[ -z "$input" && -n "$current" ]] && input="$current"
   printf -v "$key" '%s' "$input"
@@ -122,11 +127,7 @@ ask_secret() {
   local key="$1" prompt="$2" current input
   current=$(_existing "$key" || true)
   while :; do
-    if [[ -n "$current" ]]; then
-      printf '  %s%s%s %s[Enter keeps current]%s ' "$BOLD" "$prompt" "$RESET" "$DIM" "$RESET"
-    else
-      printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
-    fi
+    _prompt "$prompt" "$current"
     IFS= read -rs input || true
     printf '\n'
     [[ -z "$input" && -n "$current" ]] && input="$current"

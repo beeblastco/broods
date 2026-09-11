@@ -42,18 +42,19 @@ type LokiRange = {
   direction: "backward" | "forward";
 };
 type LokiRow = { entry: ObservabilityLogEntry; ns: bigint };
+type ObservabilityStream = "logs" | "traces";
 type ObservabilitySocketState = {
   scope: ObservabilityScope;
-  logsSub: LiveSubscription | null;
-  tracesSub: LiveSubscription | null;
+  // One live consumer per stream, and a generation bumped whenever that stream
+  // is torn down: a consumer still opening or a backfill still running for the
+  // old subscription sees the bump and stops instead of relaying into the new
+  // one's.
+  subs: Record<ObservabilityStream, LiveSubscription | null>;
+  runs: Record<ObservabilityStream, number>;
   logsMinLevel: LogLevel;
   // The sandbox a logs subscription tails, so a repeat of the same subscribe
   // does not fire another Loki backfill scan.
   logsSandboxId: string | null;
-  // Bumped whenever the traces stream is torn down, so a chunked backfill
-  // still running for the old subscription stops instead of interleaving
-  // its pieces, and its closing message, with the new one's.
-  tracesBackfillRun: number;
 };
 type OtelValue = {
   stringValue?: string;
@@ -190,11 +191,10 @@ export function openObservabilitySocket(
 ): void {
   obsState.set(socket, {
     scope: socket.data.scope,
-    logsSub: null,
-    tracesSub: null,
+    subs: { logs: null, traces: null },
+    runs: { logs: 0, traces: 0 },
     logsMinLevel: "INFO",
     logsSandboxId: null,
-    tracesBackfillRun: 0,
   });
 }
 
@@ -424,7 +424,7 @@ async function handleObservabilitySubscribe(
   // fresh backfill would only rescan a day of Loki for lines the client has.
   if (
     sandboxId &&
-    state.logsSub &&
+    state.subs.logs &&
     state.logsSandboxId === sandboxId &&
     state.logsMinLevel === minLevel
   ) {
@@ -434,10 +434,10 @@ async function handleObservabilitySubscribe(
   }
 
   cleanupObservabilityStream(socket, stream);
-  // The bump above is this subscribe's claim on the traces stream. Opening the
-  // NATS consumer yields, so a second subscribe can land meanwhile and bump
-  // again; the counter is read here, not after, so only the newest one wins.
-  const run = state.tracesBackfillRun;
+  // The bump above is this subscribe's claim on the stream. Opening the NATS
+  // consumer yields, so a second subscribe can land meanwhile and bump again;
+  // the generation is read here, not after, so only the newest one wins.
+  const run = state.runs[stream];
   if (stream === "logs") {
     state.logsMinLevel = minLevel;
     state.logsSandboxId = sandboxId ?? null;
@@ -463,20 +463,14 @@ async function handleObservabilitySubscribe(
 
     return;
   }
-  if (stream === "logs") {
-    // A second logs subscribe that landed while this consumer opened has
-    // already assigned its own; stop it so only one relays.
-    state.logsSub?.unsubscribe();
-    state.logsSub = live;
-  } else if (state.tracesBackfillRun !== run) {
+  if (state.runs[stream] !== run) {
     // Superseded while the consumer opened: the newer subscribe owns the
     // stream, so this consumer must not relay or backfill into it.
     live.unsubscribe();
 
     return;
-  } else {
-    state.tracesSub = live;
   }
+  state.subs[stream] = live;
 
   sendObs(socket, { type: "ready" });
   if (!sandboxId && typeof backfill === "number" && backfill > 0)
@@ -487,12 +481,12 @@ async function handleObservabilitySubscribe(
 // errors never has to re-filter a screenful of Loki history. The client always
 // gets a closing backfill message (one without `more`), failure included: a
 // swallowed error used to leave the Tracing tab "waiting for traces" for good.
-// `run` is the traces subscription this backfill serves; once the socket's
-// counter moves past it, nothing more goes out, not even the failure closer.
+// `run` is the subscription this backfill serves; once the stream's generation
+// moves past it, nothing more goes out, not even the failure closer.
 async function sendBackfill(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
-  stream: "logs" | "traces",
+  stream: ObservabilityStream,
   limit: number,
   minLevel: LogLevel,
   run: number,
@@ -514,6 +508,7 @@ async function sendBackfill(
           direction: "backward",
         },
       );
+      if (state.runs.logs !== run) return;
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
@@ -530,7 +525,7 @@ async function sendBackfill(
       for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
         // A re-subscribe or unsubscribe landed while this chunk was in
         // flight: a newer backfill owns the stream now.
-        if (state.tracesBackfillRun !== run) return;
+        if (state.runs.traces !== run) return;
         failures += chunk.failures;
         const sent = sendObs(socket, {
           type: "backfill",
@@ -541,7 +536,7 @@ async function sendBackfill(
         // The socket is gone: stop paying Tempo for a tab nobody is watching.
         if (!sent) return;
       }
-      if (state.tracesBackfillRun !== run) return;
+      if (state.runs.traces !== run) return;
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
@@ -557,7 +552,7 @@ async function sendBackfill(
     console.error(`observability ${stream} backfill failed:`, error);
     // A superseded run's failure would sit as `error` on the stream a newer
     // subscription owns, and a later good closer does not clear it.
-    if (stream === "traces" && state.tracesBackfillRun !== run) return;
+    if (state.runs[stream] !== run) return;
     sendObs(socket, {
       type: "backfill",
       stream: stream,
@@ -748,7 +743,7 @@ async function startLiveSubscription(
     });
     void relayNatsMessages(socket, messages, stream, state);
 
-    return { unsubscribe: () => messages.stop() };
+    return { unsubscribe: (): void => messages.stop() };
   } catch {
     return null;
   }
@@ -864,15 +859,10 @@ function cleanupObservabilityStream(
   const state = obsState.get(socket);
   if (!state) return;
 
-  if (stream === "logs" && state.logsSub) {
-    state.logsSub.unsubscribe();
-    state.logsSub = null;
-    state.logsSandboxId = null;
-  } else if (stream === "traces") {
-    state.tracesSub?.unsubscribe();
-    state.tracesSub = null;
-    state.tracesBackfillRun += 1;
-  }
+  state.subs[stream]?.unsubscribe();
+  state.subs[stream] = null;
+  state.runs[stream] += 1;
+  if (stream === "logs") state.logsSandboxId = null;
 }
 
 // Wait for a backed-up socket to drain below the shed threshold. Bounded so a

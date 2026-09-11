@@ -290,7 +290,6 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
-  takeExpiredSandboxInstance: mock(async (): Promise<boolean> => true),
 }));
 
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({

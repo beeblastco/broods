@@ -724,8 +724,8 @@ export const listExpiredSandboxReservations = internalQuery({
   },
 });
 /**
- * Mirror rows the old prune left without a reservation, still carrying the provider id
- * the sweeper needs to tear them down. Bounded to rows idle longer than a whole
+ * Mirror rows no reservation names any more (a teardown that failed, or the old
+ * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
  * reservation TTL so a live sandbox is never mistaken for one, and `ephemeral` rows are
  * skipped: their key is a provider id, not a reconnect key.
  * @returns the orphaned mirror rows, up to `limit`
@@ -878,60 +878,24 @@ export const deferSandboxReservations = internalMutation({
   },
 });
 /**
- * The sweeper's claim on a machine it read as expired, taken before the provider
- * teardown so a run cannot reconnect to it in between. Deletes the row only while
- * it still names `expectedExternalId` and its deadline has lapsed: a run that
- * refreshed the deadline or replaced the machine first keeps its row. A key no row
- * names at all is also the sweeper's to tear down (an orphaned mirror row), since
- * no run can reach a machine without a reservation naming it.
- * @returns whether the caller now owns the teardown of `expectedExternalId`
- */
-export const takeExpiredSandboxReservation = internalMutation({
-  args: {
-    provider: sandboxProviderValidator,
-    reservationKey: v.string(),
-    expectedExternalId: v.string(),
-    accountId: v.string(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    await requireActiveAccount(ctx, args.accountId);
-    const row = await ctx.db
-      .query("sandboxReservations")
-      .withIndex("by_provider_and_reservationKey", (q) =>
-        q
-          .eq("provider", args.provider)
-          .eq("reservationKey", args.reservationKey),
-      )
-      .unique();
-    if (!row) {
-      return true;
-    }
-    if (
-      row.accountId !== args.accountId ||
-      row.externalId !== args.expectedExternalId ||
-      row.expiresAt >= Math.floor(Date.now() / 1000)
-    ) {
-      return false;
-    }
-    await ctx.db.delete(row._id);
-
-    return true;
-  },
-});
-/**
- * Deletes a reservation when its optional expected provider ID still matches.
- * @returns null after the delete attempt
+ * Deletes a reservation while it still names `expectedExternalId` (when given)
+ * and, with `onlyExpired`, only once its deadline has lapsed: the sweeper takes
+ * a row this way before the provider teardown, so a run that refreshed the
+ * deadline or replaced the machine in between keeps its row. A key no row names
+ * is the caller's to tear down as well, since no run can reach a machine
+ * without a reservation naming it.
+ * @returns whether the caller now owns the teardown of that machine
  */
 export const deleteSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     expectedExternalId: v.optional(v.string()),
+    onlyExpired: v.optional(v.boolean()),
     accountId: v.string(),
   },
-  returns: v.null(),
-  handler: async (ctx, args) => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
@@ -941,15 +905,19 @@ export const deleteSandboxReservation = internalMutation({
           .eq("reservationKey", args.reservationKey),
       )
       .unique();
+    if (!row) return true;
     if (
-      row &&
-      row.accountId === args.accountId &&
-      (!args.expectedExternalId || row.externalId === args.expectedExternalId)
+      row.accountId !== args.accountId ||
+      (args.expectedExternalId !== undefined &&
+        row.externalId !== args.expectedExternalId) ||
+      (args.onlyExpired === true &&
+        row.expiresAt >= Math.floor(Date.now() / 1000))
     ) {
-      await ctx.db.delete(row._id);
+      return false;
     }
+    await ctx.db.delete(row._id);
 
-    return null;
+    return true;
   },
 });
 

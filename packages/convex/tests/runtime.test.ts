@@ -984,7 +984,7 @@ describe("sandbox reservation expiry", () => {
     ).toBe(0);
   });
 
-  test("take deletes an expired reservation that still names the sweeper's id", async () => {
+  test("an expired-only delete takes a reservation that still names the sweeper's id", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const now = Math.floor(Date.now() / 1000);
@@ -999,7 +999,8 @@ describe("sandbox reservation expiry", () => {
     });
 
     expect(
-      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+      await t.mutation(internal.runtime.deleteSandboxReservation, {
+        onlyExpired: true,
         ...lookup,
         expectedExternalId: "sbx-idle",
         accountId: accountId,
@@ -1010,7 +1011,8 @@ describe("sandbox reservation expiry", () => {
     );
     // Nothing names the key any more, so the machine is the sweeper's to tear down.
     expect(
-      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+      await t.mutation(internal.runtime.deleteSandboxReservation, {
+        onlyExpired: true,
         ...lookup,
         expectedExternalId: "sbx-idle",
         accountId: accountId,
@@ -1018,7 +1020,7 @@ describe("sandbox reservation expiry", () => {
     ).toBe(true);
   });
 
-  test("take refuses a reservation a run refreshed or replaced since the listing", async () => {
+  test("an expired-only delete refuses a reservation a run refreshed or replaced since the listing", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const now = Math.floor(Date.now() / 1000);
@@ -1040,7 +1042,8 @@ describe("sandbox reservation expiry", () => {
     });
 
     expect(
-      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+      await t.mutation(internal.runtime.deleteSandboxReservation, {
+        onlyExpired: true,
         provider: "sandbox",
         reservationKey: "refreshed",
         expectedExternalId: "sbx-refreshed",
@@ -1048,7 +1051,8 @@ describe("sandbox reservation expiry", () => {
       }),
     ).toBe(false);
     expect(
-      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+      await t.mutation(internal.runtime.deleteSandboxReservation, {
+        onlyExpired: true,
         provider: "sandbox",
         reservationKey: "replaced",
         expectedExternalId: "sbx-replaced-1",

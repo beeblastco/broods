@@ -153,7 +153,9 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
       "config.internet is no longer supported; use config.network",
     );
   }
-  assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
+  const provider =
+    assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
+    "sandbox";
   const fallbackProvider = assertOptionalEnum(
     config.fallbackProvider,
     "config.fallbackProvider",
@@ -168,8 +170,6 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
 
-  const provider =
-    (config.provider as SandboxProvider | undefined) ?? "sandbox";
   if (fallbackProvider === provider) {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }

@@ -17,18 +17,15 @@ const deleteSandboxInstanceMock = mock(
     _key: string,
     _accountId: string | undefined,
     _externalId?: string,
-  ) => {},
+    _onlyExpired?: boolean,
+  ): Promise<boolean> => true,
 );
 const removeSandboxInstanceMock = mock(
-  async (_accountId: string, _key: string, _externalId?: string) => {},
-);
-const takeExpiredSandboxInstanceMock = mock(
   async (
-    _provider: string,
-    _key: string,
     _accountId: string,
-    _externalId: string,
-  ): Promise<boolean> => true,
+    _key: string,
+    _externalId?: string,
+  ): Promise<void> => {},
 );
 
 mock.module("e2b", () => ({
@@ -44,7 +41,6 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: mock(async () => true),
   saveSandboxInstance: mock(async () => {}),
   deleteSandboxInstance: deleteSandboxInstanceMock,
-  takeExpiredSandboxInstance: takeExpiredSandboxInstanceMock,
 }));
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   removeSandboxInstance: removeSandboxInstanceMock,
@@ -68,7 +64,6 @@ beforeEach(() => {
   e2bKillMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   removeSandboxInstanceMock.mockClear();
-  takeExpiredSandboxInstanceMock.mockClear();
 });
 
 it("takes the row for the id it read before the teardown, and drops the mirror only once the provider confirmed", async () => {
@@ -81,9 +76,13 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
   ]);
 
   expect(released.map((r) => r.reservationKey)).toEqual(["key-b"]);
-  expect(takeExpiredSandboxInstanceMock.mock.calls).toEqual([
-    ["e2b", "key-a", "acct-1", "sbx-a"],
-    ["e2b", "key-b", "acct-1", "sbx-b"],
+  // The executor's own row delete inside release carries no account and is a
+  // no-op; the sweeper's take is the one with the expiry condition.
+  expect(
+    deleteSandboxInstanceMock.mock.calls.filter((c) => c[4] === true),
+  ).toEqual([
+    ["e2b", "key-a", "acct-1", "sbx-a", true],
+    ["e2b", "key-b", "acct-1", "sbx-b", true],
   ]);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a", "sbx-b"]);
   // The mirror row is what keeps a failed teardown reachable for the next sweep,
@@ -94,7 +93,7 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
 });
 
 it("leaves a machine alone when a run refreshed its reservation since the listing", async () => {
-  takeExpiredSandboxInstanceMock.mockImplementationOnce(async () => false);
+  deleteSandboxInstanceMock.mockImplementationOnce(async () => false);
   const released = await releaseExpiredSandboxes("acct-1", [
     { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
   ]);

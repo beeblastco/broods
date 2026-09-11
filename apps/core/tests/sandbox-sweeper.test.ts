@@ -160,6 +160,4 @@ it("hands an orphaned mirror row to the same teardown, by the id it still holds"
   expect(releaseMock.mock.calls[0]?.[1]).toEqual([
     reservation("acct-a", "ns-orphan"),
   ]);
-  // No reservation is written back first: the release path's take is the guard.
-  expect(accountsOf("claimSandboxReservation")).toEqual([]);
 });

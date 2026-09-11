@@ -31,12 +31,9 @@ export default async function RootLayout({
 /**
  * Resolved on the server so the client mounts already signed in, instead of
  * asking a server action who the user is. The token itself stays out of the
- * HTML: the proxy's `eagerAuth` cookie carries it to the browser.
- *
- * `withAuth` throws when the proxy did not run, and the proxy matcher skips
- * asset-looking paths (`/missing.svg`), whose not-found page still renders
- * through this layout: without the header there is no session to read, so
- * answer signed out rather than 500.
+ * HTML: the proxy's `eagerAuth` cookie carries it to the browser. Without the
+ * proxy header there is no session to read: the not-found page for an asset
+ * path the proxy matcher skips renders through this layout too.
  */
 async function initialAuthFromRequest(): Promise<
   ComponentProps<typeof ConvexClientProvider>["initialAuth"]

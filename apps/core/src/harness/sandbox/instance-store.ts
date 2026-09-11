@@ -41,33 +41,23 @@ export function claimSandboxInstance(
     accountId: accountId,
   });
 }
+// Drops the reservation row while it still names `expectedExternalId`; with
+// `onlyExpired`, only once its deadline lapsed. True when the caller now owns the
+// teardown of that machine, false when a run refreshed or replaced it first.
 export async function deleteSandboxInstance(
   provider: SandboxProvider,
   reservationKey: string,
   accountId: string | undefined,
   expectedExternalId?: string,
-): Promise<void> {
-  if (!accountId) return;
-
-  await runtime.mutate("deleteSandboxReservation", {
-    provider: provider,
-    reservationKey: reservationKey,
-    expectedExternalId: expectedExternalId,
-    accountId: accountId,
-  });
-}
-// The sweeper's claim on an expired machine, taken before the provider teardown.
-// False when a run refreshed or replaced the reservation first.
-export function takeExpiredSandboxInstance(
-  provider: SandboxProvider,
-  reservationKey: string,
-  accountId: string,
-  expectedExternalId: string,
+  onlyExpired?: boolean,
 ): Promise<boolean> {
-  return runtime.mutate("takeExpiredSandboxReservation", {
+  if (!accountId) return false;
+
+  return runtime.mutate("deleteSandboxReservation", {
     provider: provider,
     reservationKey: reservationKey,
     expectedExternalId: expectedExternalId,
+    onlyExpired: onlyExpired,
     accountId: accountId,
   });
 }

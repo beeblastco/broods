@@ -6,10 +6,7 @@
 
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
-import {
-  deleteSandboxInstance,
-  takeExpiredSandboxInstance,
-} from "../harness/sandbox/instance-store.ts";
+import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
@@ -37,9 +34,7 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
  * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
  * to the machine since the listing refreshed the deadline, and tearing it down
  * under that run would lose its sandbox. Only once the row is taken is the machine
- * torn down, by the id the sweeper holds. A teardown that then fails is not
- * re-inserted: the mirror row still names the machine, and the next sweep picks
- * up a mirror row without a reservation.
+ * torn down, by the id the sweeper holds.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
@@ -53,11 +48,12 @@ export async function releaseExpiredSandboxes(
   const released: ReservedSandbox[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
-    const taken = await takeExpiredSandboxInstance(
+    const taken = await deleteSandboxInstance(
       reservation.provider,
       key,
       accountId,
       reservation.externalId,
+      true,
     ).catch((error: unknown) => {
       logWarn("Expired sandbox reservation take failed", {
         provider: reservation.provider,
