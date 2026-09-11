@@ -57,10 +57,14 @@ import {
   prunePolicyResources,
   pruneSandboxResources,
   pruneWorkspaceResources,
+  sandboxConfigByName,
   syncAgentResources,
   syncPolicyResources,
   syncSandboxResources,
   syncWorkspaceResources,
+  undeclaredSandboxConfigs,
+  undeclaredWorkspaceConfigs,
+  workspaceConfigByName,
 } from "../model/cliSyncResources";
 import {
   assertEnvironmentVariableUnreferenced,
@@ -163,6 +167,79 @@ export const deleteResourceBySecretHash = internalMutation({
     await touchProject(ctx, resolved.projectDoc);
 
     return null;
+  },
+});
+
+/**
+ * The CLI-managed sandbox configs and workspaces a prune (`resources` is the
+ * synced manifest) or a single delete (`kind` + `name`) is about to remove.
+ * The HTTP layer terminates their reserved instances through core first:
+ * core's lifecycle route loads the config by id, so a reservation whose
+ * config is already gone can never be released again.
+ */
+export const deleteTargetsBySecretHash = internalQuery({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    target: v.union(
+      v.object({ resources: v.array(resourceValidator) }),
+      v.object({
+        kind: v.union(v.literal("workspace"), v.literal("sandbox")),
+        name: v.string(),
+      }),
+    ),
+  },
+  returns: v.object({
+    sandboxConfigIds: v.array(v.id("sandboxConfigs")),
+    workspaceIds: v.array(v.id("workspaceConfigs")),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    sandboxConfigIds: Id<"sandboxConfigs">[];
+    workspaceIds: Id<"workspaceConfigs">[];
+  }> => {
+    const { secretHash, project, stage, target } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new Error("Invalid Broods token");
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
+    if (!resolved) return { sandboxConfigIds: [], workspaceIds: [] };
+    const stageId = resolved.stageDoc._id;
+
+    if ("resources" in target) {
+      const sandboxes = await undeclaredSandboxConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+      const workspaces = await undeclaredWorkspaceConfigs(
+        ctx,
+        stageId,
+        target.resources,
+      );
+
+      return {
+        sandboxConfigIds: sandboxes.map((sandbox) => sandbox._id),
+        workspaceIds: workspaces.map((workspace) => workspace._id),
+      };
+    }
+    const name = resourceName(target.name);
+    if (target.kind === "sandbox") {
+      const sandbox = await sandboxConfigByName(ctx, stageId, name);
+
+      return {
+        sandboxConfigIds: sandbox?.managedBy === "cli" ? [sandbox._id] : [],
+        workspaceIds: [],
+      };
+    }
+    const workspace = await workspaceConfigByName(ctx, stageId, name);
+
+    return {
+      sandboxConfigIds: [],
+      workspaceIds: workspace?.managedBy === "cli" ? [workspace._id] : [],
+    };
   },
 });
 
@@ -474,6 +551,47 @@ export const listExternalResourcesForAccount = internalQuery({
   },
 });
 
+/**
+ * Delete the stage's CLI-managed resources the manifest no longer declares.
+ * Runs after `syncManifestBySecretHash` and after the HTTP layer terminated
+ * the reserved instances `deleteTargetsBySecretHash` named.
+ */
+export const pruneManifestBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    manifest: manifestValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const { secretHash, manifest } = args;
+    const account = await accountFromSecretHash(ctx, secretHash);
+    if (!account) throw new Error("Invalid Broods token");
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      manifest.project,
+      manifest.stage,
+    );
+    if (!resolved) throw new Error("Project/stage not found");
+    const { projectDoc, stageDoc } = resolved;
+
+    await pruneAgents(
+      ctx,
+      account._id,
+      projectDoc._id,
+      stageDoc._id,
+      manifest.resources,
+    );
+    await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
+    await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
+    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+    await pruneSandboxResources(ctx, stageDoc._id, manifest.resources);
+    await touchProject(ctx, projectDoc);
+
+    return null;
+  },
+});
+
 export const recordExternalResourcesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -755,11 +873,16 @@ export const setEnvBySecretHash = internalMutation({
   },
 });
 
+/**
+ * Create, rename and update the manifest's resources. Pruning what it no
+ * longer declares is `pruneManifestBySecretHash`, run by the HTTP layer after
+ * this: renames are settled by then, and the reserved instances of the rows
+ * about to go must be torn down through core while their configs still exist.
+ */
 export const syncManifestBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     manifest: manifestValidator,
-    prune: v.optional(v.boolean()),
   },
   returns: v.object({
     manifest: v.any(),
@@ -767,7 +890,7 @@ export const syncManifestBySecretHash = internalMutation({
     warnings: warningsValidator,
   }),
   handler: async (ctx, args) => {
-    const { secretHash, manifest, prune } = args;
+    const { secretHash, manifest } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
@@ -829,20 +952,6 @@ export const syncManifestBySecretHash = internalMutation({
       workspaceIds: workspaceIds,
       policyIds: policyIds,
     });
-
-    if (prune === true) {
-      await pruneAgents(
-        ctx,
-        account._id,
-        projectDoc._id,
-        stageDoc._id,
-        manifest.resources,
-      );
-      await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
-      await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
-      await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
-      await pruneSandboxResources(ctx, stageDoc._id, manifest.resources);
-    }
 
     await syncCanvasLayoutForManifest(ctx, {
       account: account,

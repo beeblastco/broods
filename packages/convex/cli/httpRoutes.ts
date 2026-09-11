@@ -4,10 +4,12 @@
  * (skills/hooks/mcp bundles, cron reconciliation) the manifest PUT drives.
  */
 
+import type { FunctionArgs } from "convex/server";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./types";
+import { terminateReservedInstances } from "../config/routes/shared";
 import { isExternalResourceKind } from "../model/cliSync";
 import { normalizeAccountHookUpload } from "../model/accountHooks";
 import { normalizeMcpInput } from "../model/mcp";
@@ -16,6 +18,7 @@ import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { workspaceNamespace } from "../model/workspaceRules";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
 export type CliAuth =
@@ -63,6 +66,11 @@ type CronResponse = {
 type DesiredCron = Omit<CronResponse, "cronId"> & {
   resourceName: string;
 };
+
+/** What a prune or single delete is about to remove, as the query names it. */
+type DeleteTarget = FunctionArgs<
+  typeof internal.cli.sync.deleteTargetsBySecretHash
+>["target"];
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
@@ -237,6 +245,12 @@ export async function handleResourceDeleteRoute(
   if (route.resourceKind === "cron") {
     await deleteCronByName(ctx, auth, route);
   } else {
+    if (route.resourceKind !== "agent") {
+      await terminateDoomedInstances(ctx, auth, route, {
+        kind: route.resourceKind,
+        name: route.name,
+      });
+    }
     await ctx.runMutation(internal.cli.sync.deleteResourceBySecretHash, {
       secretHash: auth.secretHash,
       project: route.project,
@@ -482,9 +496,17 @@ async function handleManifestSync(
     {
       secretHash: secretHash,
       manifest: syncManifest as never,
-      prune: prune,
     },
   );
+  if (prune) {
+    await terminateDoomedInstances(ctx, auth, route, {
+      resources: syncManifest.resources as never,
+    });
+    await ctx.runMutation(internal.cli.sync.pruneManifestBySecretHash, {
+      secretHash: secretHash,
+      manifest: syncManifest as never,
+    });
+  }
   await syncSkillNodeFiles(ctx, {
     secretHash: secretHash,
     project: route.project,
@@ -993,4 +1015,53 @@ async function syncSkillResources(
   }
 
   return ids;
+}
+
+/**
+ * Tear down the reserved instances of the sandbox configs and workspaces a
+ * prune or delete is about to drop, the way the config-plane DELETE routes do.
+ * Must run while the rows still exist: core's lifecycle route loads the config
+ * by id, and a reservation whose config is gone can never be released again.
+ * Best-effort, like those routes.
+ */
+async function terminateDoomedInstances(
+  ctx: ActionCtx,
+  auth: CliAuth,
+  route: { project: string; stage: string },
+  target: DeleteTarget,
+): Promise<void> {
+  const targets = await ctx.runQuery(
+    internal.cli.sync.deleteTargetsBySecretHash,
+    {
+      secretHash: auth.secretHash,
+      project: route.project,
+      stage: route.stage,
+      target: target,
+    },
+  );
+  if (
+    targets.sandboxConfigIds.length === 0 &&
+    targets.workspaceIds.length === 0
+  ) {
+    return;
+  }
+  const sandboxConfigIds = new Set<string>(targets.sandboxConfigIds);
+  // Workspace-bound reservation keys are the namespace or namespace-prefixed.
+  const namespaces = await Promise.all(
+    targets.workspaceIds.map((workspaceId) =>
+      workspaceNamespace(auth.accountId, workspaceId),
+    ),
+  );
+  await terminateReservedInstances(
+    ctx,
+    auth.accountId,
+    (instance) =>
+      (instance.sandboxConfigId !== undefined &&
+        sandboxConfigIds.has(instance.sandboxConfigId)) ||
+      namespaces.some(
+        (namespace) =>
+          instance.reservationKey === namespace ||
+          instance.reservationKey.startsWith(`${namespace}/`),
+      ),
+  ).catch(() => undefined);
 }
