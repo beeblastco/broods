@@ -1703,7 +1703,7 @@ function sdkStubPlugin(shimDir: string): Plugin {
 
   return {
     name: "broods-sdk-stub",
-    setup: function (build) {
+    setup: function (build): void {
       build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
     },
   };

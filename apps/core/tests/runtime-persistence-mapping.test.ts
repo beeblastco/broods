@@ -1,5 +1,3 @@
-/** Verifies runtime-persistence mappings against the registered Convex exports. */
-
 import { describe, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
 import {

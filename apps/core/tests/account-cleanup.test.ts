@@ -1,5 +1,3 @@
-/** Account cleanup retry-safety tests. */
-
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";

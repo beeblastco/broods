@@ -1,7 +1,3 @@
-/**
- * Account-management route auth boundary tests.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   resetStorageForTests,
@@ -9,6 +5,7 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
+import type { CoreRequest } from "../src/shared/http.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -73,6 +70,6 @@ function deploymentStorage(): Storage {
   } as unknown as Storage;
 }
 
-function event(method: string, rawPath: string) {
+function event(method: string, rawPath: string): CoreRequest {
   return coreRequest(method, rawPath, { authorization: "Bearer runtime-key" });
 }

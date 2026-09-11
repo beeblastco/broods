@@ -7,7 +7,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.sandboxAssistant, {
   input:
     "Interacte with the sandbox for me, write file, access internet, etc. Play with it.",

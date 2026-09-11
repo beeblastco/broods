@@ -1,9 +1,3 @@
-/**
- * Channel record routing and layering.
- * Covers the account-scoped webhook picking an agent from the record, the
- * fallback when no record claims the place, and the narrow-and-add contract.
- */
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import {
@@ -728,7 +722,7 @@ async function routeSlackMention(options: {
   replyIn?: "thread" | "source";
   posts?: Array<Record<string, unknown>>;
   runs?: ChannelInboundEvent[];
-}) {
+}): Promise<{ statusCode: number }> {
   const body = {
     type: "event_callback",
     event_id: "evt-thread-policy",
@@ -794,7 +788,7 @@ async function route(options: {
     platform: string,
     externalId: string,
   ) => Promise<ChannelRecord | null>;
-}) {
+}): Promise<{ statusCode: number }> {
   const waited: Promise<unknown>[] = [];
   const opa = Bun.serve({
     port: 0,

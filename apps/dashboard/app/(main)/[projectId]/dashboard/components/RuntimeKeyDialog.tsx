@@ -1,6 +1,5 @@
 "use client";
 
-/** Reveals a stage's runtime API key (fp_agent_…) with copy controls, a .env snippet, and a WebSocket streaming example. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -37,7 +36,6 @@ interface DialogProps {
   justCreated?: boolean;
 }
 
-/** Default SSE streaming example. Plain HTTP, works everywhere. */
 const SSE_SNIPPET = [
   `import { BroodsClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
@@ -53,7 +51,6 @@ const SSE_SNIPPET = [
   `}`,
 ].join("\n");
 
-/** WebSocket streaming example. Opt-in upgrade for lower latency and bidirectional messages. */
 const WS_SNIPPET = [
   `import { WebsocketClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
@@ -86,7 +83,6 @@ const TS_RE =
 const BASH_RE =
   /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b([A-Z_][A-Z0-9_]*)(?==)/g;
 
-/** Split code into colored spans using a per-language regex; unmatched text keeps the default color. */
 function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
   const re = lang === "bash" ? BASH_RE : TS_RE;
   re.lastIndex = 0;
@@ -124,7 +120,7 @@ function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
   return out;
 }
 
-/** A compact, syntax-highlighted code block with a corner copy button. `copyText` overrides what is copied (e.g. the real key behind a masked display). */
+/** `copyText` overrides what the button copies, so a masked display can still yield the real secret. */
 function CodeBlock({
   code,
   lang,
@@ -133,10 +129,10 @@ function CodeBlock({
   code: string;
   lang: "ts" | "bash";
   copyText?: string;
-}) {
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
 
-  function copy() {
+  function copy(): void {
     navigator.clipboard.writeText(copyText ?? code);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -163,13 +159,16 @@ function CodeBlock({
   );
 }
 
-/** Rotate control with an inline confirm step. Rotating invalidates the current key. */
-function RotateButton({ onRotate }: { onRotate: () => Promise<void> }) {
+function RotateButton({
+  onRotate,
+}: {
+  onRotate: () => Promise<void>;
+}): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function run() {
+  async function run(): Promise<void> {
     setRotating(true);
     setError(null);
     try {
@@ -226,8 +225,7 @@ function RotateButton({ onRotate }: { onRotate: () => Promise<void> }) {
   );
 }
 
-/** Inline `<code>` styling for prose mentions of env vars and hosts. */
-function Mono({ children }: { children: ReactNode }) {
+function Mono({ children }: { children: ReactNode }): React.JSX.Element {
   return (
     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
       {children}
@@ -235,7 +233,6 @@ function Mono({ children }: { children: ReactNode }) {
   );
 }
 
-/** The reusable runtime-key body: the secret, its .env line, and the streaming SDK examples. `onRotate` adds a rotate control. */
 export function RuntimeKeyView({
   apiKey,
   onRotate,
@@ -251,7 +248,7 @@ export function RuntimeKeyView({
   const envDisplay = `BROODS_API_KEY="${showKey ? apiKey : maskedKey}"`;
   const envReal = `BROODS_API_KEY="${apiKey}"`;
 
-  function copyKey() {
+  function copyKey(): void {
     navigator.clipboard.writeText(apiKey);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -259,7 +256,6 @@ export function RuntimeKeyView({
 
   return (
     <div className="grid gap-6">
-      {/* The key itself */}
       <section className="grid gap-2">
         <div className="flex min-h-7 items-center justify-between gap-2">
           <Label className="text-sm font-medium text-foreground">API key</Label>
@@ -304,7 +300,6 @@ export function RuntimeKeyView({
         </p>
       </section>
 
-      {/* Drop it into the environment */}
       <section className="grid gap-2">
         <Label className="text-sm font-medium text-foreground">
           Add it to your environment
@@ -316,7 +311,6 @@ export function RuntimeKeyView({
         <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
       </section>
 
-      {/* Stream the response: SSE by default, WebSocket as an opt-in upgrade */}
       <section className="grid gap-2">
         <Label className="text-sm font-medium text-foreground">
           Stream the response
@@ -359,7 +353,6 @@ export function RuntimeKeyView({
   );
 }
 
-/** Dialog that surfaces the runtime API key right after it is minted. */
 export function RuntimeKeyDialog({
   open,
   onOpenChange,

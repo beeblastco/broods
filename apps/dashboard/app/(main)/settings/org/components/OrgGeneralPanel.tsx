@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Org general settings: rename the organization and view its slug + plan.
- * Danger actions (delete) live in OrgDangerPanel.
- */
-
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -17,7 +12,6 @@ import { useMutation } from "convex/react";
 import { useState } from "react";
 
 interface Props {
-  /** The org being edited. */
   org: Doc<"orgs">;
 }
 
@@ -43,7 +37,7 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
 
   const dirty = name.trim() !== org.name && name.trim().length > 0;
 
-  async function handleSave() {
+  async function handleSave(): Promise<void> {
     if (!dirty) return;
     setSaving(true);
     setSaveError(null);

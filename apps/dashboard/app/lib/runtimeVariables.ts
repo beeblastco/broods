@@ -1,5 +1,3 @@
-/** Shared shape and guard for agent runtime environment variables. */
-
 /** A single runtime environment variable entry stored on an agent config. */
 export type RuntimeVariable = { key: string; value: string };
 

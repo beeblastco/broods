@@ -165,8 +165,8 @@ interface MessageProducer {
   retainsReasoning?: boolean;
 }
 
-// Internal normalized shapes persisted in Convex. We use AI SDK-style roles
-// here as well so an event is effectively a stored model message plus metadata.
+// Internal normalized shapes persisted in Convex: AI SDK roles here too, so an
+// event is a stored model message plus metadata.
 interface StoredConversationEventBase<
   TMessage extends ModelMessage,
 > extends StoredEventBase {
@@ -227,10 +227,6 @@ export interface SessionOptions {
   trigger?: RunTrigger;
 }
 
-/**
- * Agent conversation session.
- * Owns persistence, leases, prompt assembly, and in-memory child turns.
- */
 export class Session {
   readonly eventId: string;
   readonly conversationKey: string;
@@ -327,9 +323,6 @@ export class Session {
     });
   }
 
-  /**
-   * Persists the given ingress events into the stored conversation.
-   */
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
@@ -605,8 +598,6 @@ export class Session {
     systemContextSnapshot: SystemContextSnapshot;
     system: SystemModelMessage[];
   }> {
-    // Incremental refresh for prepareStep: load only conversation rows newer
-    // than the cursor, then fold any system-role rows into the snapshot.
     const entries = await this.loadConversationEntries({
       afterCreatedAt: options.systemContextSnapshot.cursor,
     });
@@ -872,12 +863,10 @@ export class Session {
   private async loadMemoryFile(
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
-    // Reads the memory/MEMORY.md index via the S3 API (not the sandbox mount). If the
-    // agent edited it through the mount less than ~1-2 min ago, S3 Files may not have
-    // synced it yet, so this can be briefly stale. Accepted: memory converges across
-    // turns and a per-turn sandbox round-trip is costly. Reading via S3 also lets a
-    // workspace serve memory without any sandbox attached. See docs/workspace/storage.md.
-
+    // Reads memory/MEMORY.md over the S3 API, not the sandbox mount, so a workspace
+    // with no sandbox still serves memory. A mount write takes ~1-2 min to reach S3
+    // Files, so this can be briefly stale; memory converges across turns. See
+    // docs/workspace/storage.md.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
     );
@@ -1016,14 +1005,12 @@ export interface IngestedChannelEvents {
  * Stores the media a channel delivered and folds it into the newest user event.
  *
  * Standalone rather than a Session method because the channel path must run it
- * before admission: a turn that arrives while another owns the conversation is
- * queued as its events alone, and the drain loop replays exactly what was
- * queued, so parts added after admission would never reach a queued turn. It runs
- * here rather than in the adapter because the workspace the bytes land in is
- * only known once the runtime resolves, and because parsing happens before the
- * webhook is acknowledged. Downloading there would hold the provider's
- * connection open for the length of a video. The events come back unchanged
- * when there is nothing attached, so every caller can route through it.
+ * before admission: a queued turn replays exactly the events that were queued, so
+ * parts added later never reach it. It cannot move into the adapter either, since
+ * the target workspace is only known once the runtime resolves and parsing runs
+ * before the webhook is acknowledged, where downloading would hold the provider's
+ * connection open for the length of a video. Events come back unchanged when
+ * nothing is attached.
  */
 export async function ingestChannelAttachments(
   events: ConversationIngressEvent[],
@@ -1407,7 +1394,6 @@ ${guidance}
 }
 
 /**
- * Checks if assistant content part should be persisted.
  * Reasoning rides along because OpenAI's Responses API replays a stored
  * assistant message by item id and rejects the reference when the reasoning
  * item that produced it is missing. See `retainsReasoningParts` in pruning.ts.
@@ -1424,9 +1410,6 @@ function isPersistedAssistantContentPart(
   );
 }
 
-/**
- * Checks if tool content part should be persisted.
- */
 function isPersistedToolContentPart(
   part: ToolModelMessage["content"][number],
 ): boolean {
@@ -1526,9 +1509,6 @@ function projectSystemContextMessages(
   });
 }
 
-/**
- * Filters assistant message to only persisted content parts.
- */
 function sanitizeAssistantMessage(
   message: AssistantModelMessage,
   retainsReasoning: boolean,
@@ -1546,9 +1526,6 @@ function sanitizeAssistantMessage(
   return content.length > 0 ? { ...message, content: content } : null;
 }
 
-/**
- * Filters tool message to only persisted content parts.
- */
 function sanitizeToolMessage(
   message: ToolModelMessage,
 ): ToolModelMessage | null {

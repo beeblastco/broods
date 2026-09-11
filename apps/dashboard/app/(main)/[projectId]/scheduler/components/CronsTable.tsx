@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Renders this project's cron jobs with per-row edit and delete actions.
- * Delete is a typed-confirm modal; edit opens the shared CronDialog in edit
- * mode.
- */
-
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -18,9 +12,7 @@ import { useState } from "react";
 import { CronDialog } from "./CronDialog";
 
 interface Props {
-  /** Cron job rows from Convex. */
   crons: Array<Doc<"crons">>;
-  /** Agents available in the active org. */
   agents: Array<Doc<"agents">>;
 }
 
@@ -38,7 +30,7 @@ function relativeTime(ts: number | undefined): string {
   return `${days}d ago`;
 }
 
-function statusBadge(status: Doc<"crons">["lastStatus"]) {
+function statusBadge(status: Doc<"crons">["lastStatus"]): React.JSX.Element {
   if (!status)
     return (
       <Badge variant="secondary" className="text-xs">
@@ -72,7 +64,7 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
 
   const agentNameById = new Map(agents.map((a) => [a._id, a.name]));
 
-  async function handleDelete() {
+  async function handleDelete(): Promise<void> {
     if (!deleting) return;
     setPending(true);
     setError(null);

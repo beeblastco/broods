@@ -29,7 +29,7 @@ export const getById = internalQuery({
     channelRecordId: v.string(),
   },
   returns: v.union(channelRecordDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
     const normalized = ctx.db.normalizeId(
       "channelRecords",
       args.channelRecordId,
@@ -54,7 +54,7 @@ export const getByExternalId = internalQuery({
     externalId: v.string(),
   },
   returns: v.union(channelRecordDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
     // Deleting a record leaves the row in place, so a place that has been
     // rebound a few times holds one active row and a pile of dead ones.
     // `status` is in the index key rather than a filter: this runs on every
@@ -81,7 +81,7 @@ export const getByExternalId = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(channelRecordDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
     return await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId_and_status", (q) =>
@@ -98,7 +98,7 @@ export const list = internalQuery({
 export const listActive = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(channelRecordDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
     return await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId_and_status", (q) =>
@@ -119,7 +119,7 @@ export const create = internalMutation({
     config: v.any(),
   },
   returns: v.id("channelRecords"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"channelRecords">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -170,7 +170,7 @@ export const update = internalMutation({
     status: v.optional(v.union(v.literal("active"), v.literal("deleted"))),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { accountId, channelRecordId, ...patch } = args;
     const doc = await loadOwnedRecord(ctx, accountId, channelRecordId);
     // Reactivating has to re-check the invariant create enforces, or two active
@@ -219,7 +219,7 @@ export const remove = internalMutation({
     channelRecordId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const doc = await loadOwnedRecord(
       ctx,
       args.accountId,

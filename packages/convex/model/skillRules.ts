@@ -75,7 +75,6 @@ export function normalizeBundlePath(value: string): string {
 }
 
 /**
- * Parse SKILL.md YAML frontmatter into validated name and description.
  * @param markdown the SKILL.md contents
  * @returns the skill's name and description
  * @throws when frontmatter is missing or fields are invalid
@@ -99,7 +98,6 @@ export function parseSkillMarkdown(markdown: string): {
 }
 
 /**
- * Pick the stored content type for a skill file path.
  * @param filePath bundle-relative path
  * @returns the S3 content type
  */
@@ -110,7 +108,6 @@ export function contentTypeForSkillPath(filePath: string): string {
 }
 
 /**
- * Parse and validate a GitHub tree URL into its tarball download location.
  * @param value candidate URL
  * @returns owner, repo, ref, subdirectory, and codeload archive URL
  * @throws when the URL is not a safe github.com tree URL
@@ -196,7 +193,6 @@ function stripYamlScalarQuotes(value: string): string {
 }
 
 /**
- * Reject GitHub path segments with characters outside the safe set.
  * @param value the segment
  * @param name which segment, for the error message
  * @throws when the segment has unsupported characters

@@ -564,7 +564,6 @@ function flatAgentConfigFields(
   };
 }
 
-/** The earliest-created row, or undefined for an empty list. */
 function oldest<T extends { _creationTime: number }>(rows: T[]): T | undefined {
   return rows.reduce<T | undefined>(
     (earliest, row) =>

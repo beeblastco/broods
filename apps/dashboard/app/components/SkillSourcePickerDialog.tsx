@@ -33,7 +33,6 @@ const SOURCE_OPTIONS = [
   },
 ] as const;
 
-/** Dialog for selecting the source when adding a new skill node. */
 export function SkillSourcePickerDialog({
   open,
   onOpenChange,

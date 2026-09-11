@@ -39,7 +39,7 @@ import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
 type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
-  (...args: any[]) => unknown
+  (...args: never[]) => unknown
 >;
 
 export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
@@ -541,7 +541,7 @@ function formatPolicyPreviewValue(value: unknown): string {
 function resolveWorkspaceForPolicy(
   workspaces: ResolvedWorkspace[],
   workspaceName: string | undefined,
-) {
+): ResolvedWorkspace | undefined {
   try {
     return resolveWorkspace(workspaces, workspaceName);
   } catch (error) {

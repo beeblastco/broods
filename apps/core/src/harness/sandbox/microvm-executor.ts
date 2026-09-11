@@ -9,15 +9,8 @@
  * headers. Only the transport changes from the old Invoke path.
  *
  * The workspace S3 mount happens INSIDE the VM (mount-s3 in the image's `/run`
- * hook), fed short-lived, namespace-scoped assume-role creds via `runHookPayload`.
- * That is the same scoped-credential model daytona/workdir use, so the harness's
- * broad creds never reach the VM (any code the agent runs can read that env).
- * Lifecycle (suspend/resume/terminate/getInstanceInfo) maps onto the MicroVM
- * control-plane commands; persistent reservations reconnect by microvmId via the
- * shared instance-store, mirroring the daytona executor. A persistent reservation
- * also runs detached background jobs and onCreate/onResume hooks over the same
- * /exec channel. The VM is not terminated after the request, so the work (and its
- * completion callback) survives, riding suspend/resume with the snapshot.
+ * hook), fed short-lived, namespace-scoped assume-role creds via `runHookPayload`,
+ * so the harness's own broad creds never reach the VM.
  */
 
 import {
@@ -169,7 +162,7 @@ export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
 
 // The JSON contract the lambda-sandbox image returns (snake_case), unchanged from
-// the Invoke era. Only the transport (HTTP vs Invoke) differs.
+// the Invoke era.
 interface SandboxResponse {
   ok: boolean;
   runtime?: string;
@@ -508,8 +501,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 
   #requireImageIdentifier(): string {
-    // The first-class `snapshot` pin (per-config image ARN) wins, then the
-    // `options.imageIdentifier` alias, then the harness-wide env default.
+    // `options.imageIdentifier` stays a back-compat alias for the `snapshot` pin.
     const identifier =
       configString(this.#config.snapshot) ??
       this.#optionOrEnv("imageIdentifier", "MICROVM_IMAGE_IDENTIFIER");
@@ -595,8 +587,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { microvmId: cached.microvmId, endpoint: cached.endpoint };
   }
 
-  // Acquire a MicroVM endpoint: a fresh ephemeral VM for stateless runs, or the
-  // reserved VM (resumed if suspended) for a persistent reservation.
   async #acquire(request: SandboxRunRequest): Promise<AcquiredMicrovm> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
@@ -1013,7 +1003,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return mergeSandboxEnv(this.#config.envVars, requestEnvVars);
   }
 
-  // POST the exec request to the VM endpoint, retrying while the snapshot warms.
   async #exec(
     microvmId: string,
     endpoint: string,
@@ -1118,9 +1107,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return token;
   }
 
-  // Run a control/lifecycle bash script in the VM and return its stdout + exit code.
-  // Used for onCreate/onResume hooks and background-job marker scripts (no workspace
-  // cwd, since the scripts use absolute paths).
+  // Control/lifecycle bash for onCreate/onResume hooks and background-job marker
+  // scripts. No workspace cwd, since those scripts use absolute paths.
   async #shell(
     microvmId: string,
     endpoint: string,
@@ -1275,8 +1263,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // onCreate (once, marker-guarded) / onResume (every acquire) hooks in the reserved
-  // VM, mirroring the daytona/workdir persistent lifecycle.
   async #runLifecycle(
     microvmId: string,
     endpoint: string,
@@ -1300,7 +1286,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // Reconnect to the reserved VM for a background-job control call.
   async #jobContext(
     request: SandboxJobRequest,
   ): Promise<{ microvmId: string; endpoint: string; jobsDir: string }> {

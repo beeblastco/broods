@@ -16,7 +16,6 @@ type OutputFormatConfig = {
   schema?: unknown;
 };
 
-/** Returns whether the agent config is using a non-text model output format. */
 function isStructuredOutputEnabled(outputFormat: unknown): boolean {
   if (
     !outputFormat ||
@@ -38,7 +37,6 @@ function isStructuredOutputEnabled(outputFormat: unknown): boolean {
   );
 }
 
-/** Agent node representing an AI agent on the canvas. */
 export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const agentConfigId = nodeData.agentConfigId as

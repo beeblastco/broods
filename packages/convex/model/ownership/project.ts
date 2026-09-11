@@ -1,7 +1,3 @@
-/**
- * Project ownership lookups for auth-gated read/write contexts.
- */
-
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { getOrgMembership, orgRoleMeets, type OrgRole } from "./org";

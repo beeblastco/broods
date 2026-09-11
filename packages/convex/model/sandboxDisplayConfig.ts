@@ -17,7 +17,6 @@ const DISPLAY_KEYS = [
   "provider",
 ] as const;
 
-/** Keep only the keys the canvas renders; drop everything else. */
 export function sandboxDisplayConfig(config: unknown): Record<string, unknown> {
   if (!isPlainObject(config)) {
     return {};

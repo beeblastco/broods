@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import type { OrgRole } from "../model/ownership/org";
@@ -14,7 +14,7 @@ const MEMBER_AUTH_ID = "auth_member";
 const ADMIN_AUTH_ID = "auth_admin";
 const STRANGER_AUTH_ID = "auth_stranger";
 
-const accessTest = () => convexTest(schema, modules);
+const accessTest = (): TestConvex<typeof schema> => convexTest(schema, modules);
 
 type T = ReturnType<typeof accessTest>;
 
@@ -55,7 +55,7 @@ async function seedOrgProject(t: T): Promise<Id<"projects">> {
       updatedAt: now,
     });
 
-    const seedMember = async (authId: string, role: OrgRole) => {
+    const seedMember = async (authId: string, role: OrgRole): Promise<void> => {
       const userId = await ctx.db.insert("users", {
         authId: authId,
         email: authId + "@example.com",

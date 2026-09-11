@@ -1,9 +1,7 @@
 /**
  * Bundles dashboard-authored MCP server source with the same esbuild flags
  * the CLI uses at deploy; validation, upload and the sandboxed probe live in
- * the Convex mcp service. AuthKit's proxy gates this path. Source imports are
- * limited to the packages the editor promises plus node builtins. Default
- * resolution would otherwise inline any file the server process can read.
+ * the Convex mcp service. AuthKit's proxy gates this path.
  */
 import type { BuildFailure, Plugin } from "esbuild";
 import { build } from "esbuild";
@@ -76,8 +74,10 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * Refuses source imports outside the allowlist. Imports resolved from inside
- * node_modules stay open so allowed packages can reach their own deps.
+ * Source imports are limited to the allowlist plus node builtins; default
+ * resolution would inline any file the server process can read. Imports
+ * resolved from inside node_modules stay open so allowed packages can reach
+ * their own deps.
  */
 const importAllowlist: Plugin = {
   name: "import-allowlist",

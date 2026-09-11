@@ -15,10 +15,6 @@ import {
 import { putHookBundle } from "../../model/bundles";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
-/**
- * Hooks CRUD: list/create on the collection, get/patch/delete by id. Bundle
- * bytes go to S3 via awsBundles; metadata lives in the accountHooks table.
- */
 export async function handleHookRoute(
   ctx: ActionCtx,
   req: Request,
@@ -192,7 +188,6 @@ async function patchHookRoute(
 }
 
 /**
- * Map an accountHooks document to the public hook shape.
  * @param record the accountHooks document
  * @returns the public record with hookId and ISO timestamps
  */

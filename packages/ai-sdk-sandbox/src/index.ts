@@ -405,7 +405,7 @@ class BroodsNetworkSandboxSession
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    start: function (controller) {
+    start: function (controller): void {
       controller.enqueue(bytes);
       controller.close();
     },

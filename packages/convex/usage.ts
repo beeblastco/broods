@@ -163,7 +163,7 @@ export const recordTaskUsage = internalMutation({
     toolCallCount: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     // Idempotency across Lambda retries: the harness `usageFinalized` flag only
     // guards within one process, so a retried invocation (same taskId, new
     // process) would otherwise insert a duplicate row and double-fold the
@@ -189,7 +189,6 @@ export const recordTaskUsage = internalMutation({
       }
     }
 
-    // Insert per-task row for line-item cost history.
     await ctx.db.insert("taskUsage", {
       accountId: args.accountId,
       endpointId: args.endpointId,

@@ -1,6 +1,5 @@
 "use client";
 
-/** Test tab with a streaming chat window for testing a deployed agent. */
 import type { StageDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
   Collapsible,
@@ -209,7 +208,6 @@ export function TestTab({
   );
 }
 
-/** Chat window that streams messages from the core service. */
 function ChatWindow({
   endpointId,
   agentId,
@@ -224,7 +222,7 @@ function ChatWindow({
   projectSlug?: string;
   nodeColor?: string;
   stageSlug?: string;
-}) {
+}): React.JSX.Element {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
     agentId: agentId,
@@ -237,12 +235,11 @@ function ChatWindow({
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent): void {
     e.preventDefault();
     if (!input.trim() || status === "streaming") return;
     sendMessage(input);
@@ -334,7 +331,7 @@ function AgentAvatar({
   color?: string;
   className?: string;
   label?: string;
-}) {
+}): React.JSX.Element {
   return (
     <span
       className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${className ?? ""}`}
@@ -349,7 +346,6 @@ function AgentAvatar({
   );
 }
 
-/** Safely format arbitrary values for rendering inside tool event blocks. */
 function formatToolValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -377,7 +373,6 @@ function getToolName(part: Record<string, unknown>): string {
   return derived || "unknown";
 }
 
-/** Checks if a tool part has reached a terminal output state. */
 function isToolOutputState(state: string): boolean {
   return (
     state === "output-available" ||
@@ -386,14 +381,13 @@ function isToolOutputState(state: string): boolean {
   );
 }
 
-/** Renders a single chat message with reasoning, tool, and text parts in order. */
 const MessageBubble = memo(function MessageBubble({
   message,
   nodeColor,
 }: {
   message: UIMessage;
   nodeColor?: string;
-}) {
+}): React.JSX.Element {
   const isUser = message.role === "user";
   const userText = isUser
     ? message.parts
@@ -430,7 +424,6 @@ const MessageBubble = memo(function MessageBubble({
     (part) => part.type === "text",
   );
 
-  // Render all parts in order for assistant messages
   return (
     <div className="flex items-start gap-2">
       <AgentAvatar color={avatarColor} label={avatarLabel} />
@@ -444,7 +437,6 @@ const MessageBubble = memo(function MessageBubble({
           const p = part as unknown as Record<string, unknown>;
           const type = typeof p.type === "string" ? p.type : "";
 
-          // Reasoning / thinking
           if (type === "reasoning") {
             const text = typeof p.text === "string" ? p.text : "";
             const state = typeof p.state === "string" ? p.state : "done";
@@ -458,7 +450,6 @@ const MessageBubble = memo(function MessageBubble({
             );
           }
 
-          // Tool invocation (typed tool-* or dynamic-tool)
           if (
             type === "dynamic-tool" ||
             (type.startsWith("tool-") && type !== "text")
@@ -502,7 +493,6 @@ const MessageBubble = memo(function MessageBubble({
             );
           }
 
-          // Text content
           if (type === "text") {
             let text = typeof p.text === "string" ? p.text : "";
             if (subagentSpeaker && index === firstTextPartIndex) {
@@ -540,7 +530,7 @@ function SubagentPanelBlock({
   status: "running" | "completed";
   events: SubagentPanelEvent[];
   text: string;
-}) {
+}): React.JSX.Element {
   const isStreaming = status === "running";
   const elapsed = useElapsedTime(isStreaming);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -599,18 +589,16 @@ function SubagentPanelBlock({
   );
 }
 
-/** Collapsible block showing the model's reasoning/thinking process. */
 function ReasoningBlock({
   text,
   isStreaming,
 }: {
   text: string;
   isStreaming: boolean;
-}) {
+}): React.JSX.Element {
   const elapsed = useElapsedTime(isStreaming);
   const preRef = useRef<HTMLPreElement>(null);
 
-  // Auto-scroll to bottom while streaming new content.
   useEffect(() => {
     if (isStreaming && preRef.current) {
       preRef.current.scrollTop = preRef.current.scrollHeight;
@@ -657,7 +645,7 @@ function ToolInvocationBlock({
   output: unknown | undefined;
   state: string;
   isError: boolean;
-}) {
+}): React.JSX.Element {
   const hasOutput = output !== undefined;
   const isRunning = state === "input-available" || state === "input-streaming";
   const elapsed = useElapsedTime(isRunning);
@@ -739,7 +727,11 @@ function ToolInvocationBlock({
  * sits on screen for as long as the model runs, and five elements pulsing in
  * step repaint the whole turn on a high-refresh display.
  */
-function ThinkingIndicator({ nodeColor }: { nodeColor?: string }) {
+function ThinkingIndicator({
+  nodeColor,
+}: {
+  nodeColor?: string;
+}): React.JSX.Element {
   return (
     <div className="flex items-start gap-2">
       <AgentAvatar color={nodeColor} />

@@ -42,7 +42,10 @@ export const create = mutation({
     duplicateFromId: v.optional(v.id("stages")),
   },
   returns: v.id("stages"),
-  handler: async (ctx, { projectId, name, duplicateFromId }) => {
+  handler: async (
+    ctx,
+    { projectId, name, duplicateFromId },
+  ): Promise<Id<"stages">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -73,7 +76,6 @@ export const create = mutation({
       updatedAt: now,
     });
 
-    // Deep-copy the source stage's full architecture into the new one.
     if (duplicateFromId) {
       await duplicateStageContents(
         ctx,
@@ -386,7 +388,7 @@ export async function duplicateStageContents(
 export const ensureDefault = mutation({
   args: { projectId: v.id("projects") },
   returns: v.union(v.null(), v.id("stages")),
-  handler: async (ctx, { projectId }) => {
+  handler: async (ctx, { projectId }): Promise<Id<"stages"> | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -451,7 +453,10 @@ export const initializeProduction = mutation({
     deploymentRegion: deploymentRegion,
   },
   returns: v.id("stages"),
-  handler: async (ctx, { projectId, sourceStageId, deploymentRegion }) => {
+  handler: async (
+    ctx,
+    { projectId, sourceStageId, deploymentRegion },
+  ): Promise<Id<"stages">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -533,7 +538,7 @@ export function kindForStageName(name: string): Doc<"stages">["kind"] {
 export const list = query({
   args: { projectId: v.id("projects") },
   returns: v.array(stageDoc),
-  handler: async (ctx, { projectId }) => {
+  handler: async (ctx, { projectId }): Promise<Doc<"stages">[]> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -573,7 +578,7 @@ export async function listStagesForProject(
 export const remove = mutation({
   args: { stageId: v.id("stages") },
   returns: v.id("stages"),
-  handler: async (ctx, { stageId }) => {
+  handler: async (ctx, { stageId }): Promise<Id<"stages">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -589,7 +594,6 @@ export const remove = mutation({
     );
     if (!project) throw new Error("Stage not found.");
 
-    // Cascade-delete every resource scoped to this stage before the row itself.
     await deleteStageContents(ctx, stage);
 
     await ctx.db.delete(stageId);
@@ -599,7 +603,6 @@ export const remove = mutation({
   },
 });
 
-/** Coerce an unknown JSON-ish value into a mutable record. */
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -629,7 +632,6 @@ async function assertCustomStageNameFree(
   return stageName;
 }
 
-/** Returns true when a stage already has user/configuration content. */
 async function hasStageContents(
   ctx: MutationCtx,
   projectId: Id<"projects">,

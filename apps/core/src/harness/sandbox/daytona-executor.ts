@@ -323,8 +323,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: discard our duplicate and reconnect to the
-    // sandbox the winner recorded.
+    // Lost a concurrent create race: the winner's sandbox is the one to use.
     const winner = await getSandboxExternalId("daytona", ns);
     await sandbox.delete().catch(() => {});
     if (!winner)
@@ -512,12 +511,10 @@ function daytonaNetworkOptions(
   };
 }
 
-// Resolve the S3 mount credentials (+ region) into the sandbox env at create time.
-// Daytona's mount-s3 runs via `sudo -E` and reads creds from the process env. The
-// shared resolver hands back short-lived, prefix-scoped assume-role creds (the
-// developer's bring-your-own-bucket role, or the platform role); a store with no
-// role falls back to whatever static keys the account itself supplied. The harness's
-// own broad runtime creds must never land here, since agent code can read the env.
+// Creds go into the sandbox env at create time because Daytona's mount-s3 runs via
+// `sudo -E` and reads them from the process env. The resolver hands back short-lived,
+// prefix-scoped assume-role creds; the harness's own broad runtime creds must never
+// land here, since agent code can read the env.
 async function daytonaEnvVars(
   config: SandboxExecutorConfig,
   request: { namespace?: string },
@@ -538,7 +535,6 @@ async function daytonaEnvVars(
   };
 }
 
-// Build the shared-resolver context from the executor options + env fallbacks.
 // Throws on a missing namespace before any STS call (the create path hits this first).
 function daytonaS3Context(
   config: SandboxExecutorConfig,
@@ -565,8 +561,7 @@ function daytonaS3Context(
   };
 }
 
-// Static keys the account supplied itself, for a store with no role configured.
-// The scoped mount role is preferred; these are only the fallback.
+// Fallback for a store with no mount role: whatever static keys the account supplied.
 function staticAwsKeys(env: Record<string, string>): Record<string, string> {
   const accessKeyId = env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
@@ -617,8 +612,7 @@ async function mountAwsS3Buckets(
 }
 
 /**
- * Mounts an S3 bucket into the sandbox with full read/write permissions, reading
- * creds from the process env (set at create time, preserved through `sudo -E`).
+ * Reads creds from the process env (set at create time, preserved through `sudo -E`).
  * Idempotent: skips the mount when the path is already a mountpoint (a restarted
  * persistent sandbox keeps its filesystem but loses FUSE mounts).
  */

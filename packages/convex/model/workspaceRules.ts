@@ -44,7 +44,6 @@ export interface WorkspaceConfig {
 }
 
 /**
- * Validate and normalize a workspace config object.
  * @param value the raw config value (null/undefined yields the s3 default)
  * @returns the normalized workspace config
  * @throws when a field is malformed or the storage provider is unsupported
@@ -93,7 +92,6 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 }
 
 /**
- * Validate a create-workspace request body.
  * @param value the raw request body
  * @returns the normalized name/description/config
  * @throws when a field is missing or malformed
@@ -116,7 +114,6 @@ export function normalizeCreateWorkspaceConfigInput(value: unknown): {
 }
 
 /**
- * Validate an update-workspace request body against the stored config.
  * @param existingConfig the stored workspace config (merge base)
  * @param value the raw request body
  * @returns the normalized patch with the fully merged config

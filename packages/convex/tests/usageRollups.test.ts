@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { collectUsageRollups, usageGrainForBinSeconds } from "../logs";
 import schema from "../schema";
 
@@ -86,7 +86,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
   const rows = await tt.run(
     async (ctx) => await ctx.db.query("usageRollups").collect(),
   );
-  const byGrain = (grain: "5m" | "hour" | "day") =>
+  const byGrain = (grain: "5m" | "hour" | "day"): Doc<"usageRollups">[] =>
     rows.filter((row) => row.grain === grain);
 
   expect(rows).toHaveLength(4);

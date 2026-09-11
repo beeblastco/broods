@@ -13,6 +13,7 @@ import {
   policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 
 let policyMode: "enforce" | "audit" = "enforce";
 
@@ -77,7 +78,7 @@ afterAll(() => {
   delete process.env.OPA_API_TOKEN;
 });
 
-function agentConfig() {
+function agentConfig(): AgentConfig {
   return {
     policies: ["policy_a"],
   } as Parameters<typeof createPolicyToolApproval>[0];

@@ -66,16 +66,13 @@ export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
  * and the model to ask it for when the account names none. Providers absent
  * here have none, and `config.model.transcriptionModelId` overrides the id.
  *
- * The default is whichever model takes the widest range of containers, not the
- * cheapest or newest: `whisper-1` reads the ogg/opus every voice-note channel
- * sends, and `gpt-4o-mini-transcribe` does not. An account that only ever sees
- * wav can say so in config and pay less.
+ * Defaults pick the widest container support, not the cheapest model:
+ * `whisper-1` reads the ogg/opus every voice-note channel sends and
+ * `gpt-4o-mini-transcribe` does not.
  *
- * Keyed to the factory rather than looked up on an already-built provider so
- * the compiler checks the method still exists. Both `transcription` and
- * `transcriptionModel` are there at runtime, but openai and groq declare only
- * the first, and a rename would otherwise degrade in silence: no model, a note
- * saying the provider has none, and nothing failing anywhere.
+ * Keyed to the factory rather than to an already-built provider so the compiler
+ * checks the method still exists: openai and groq declare `transcription` but
+ * not `transcriptionModel`, and a rename would otherwise fail in silence.
  */
 const PROVIDER_TRANSCRIPTION: Partial<
   Record<AccountModelProviderName, TranscriptionSource>
@@ -101,7 +98,6 @@ interface ModelProviderInstance {
   (modelId: string): Exclude<LanguageModel, string>;
 }
 
-// A provider that reads audio, and the model it reads with by default.
 interface TranscriptionSource {
   factory: (settings: never) => {
     transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
@@ -167,8 +163,7 @@ export function resolveConfiguredModel(
 
   // The registry's value type is a union of factories, so its parameter narrows
   // to an intersection no single provider's settings satisfy. Settings are
-  // validated by `normalizeProviderSettings` and passed through verbatim, so the
-  // cast is the one seam where account config meets the SDK's own typing.
+  // validated by `normalizeProviderSettings` and passed through verbatim.
   const createProvider = modelProviderFactories()[providerName] as (
     settings: AgentProviderSettings & { fetch?: typeof fetch },
   ) => ModelProviderInstance;
@@ -680,7 +675,6 @@ function customProviderBaseURL(
   return trimmed || undefined;
 }
 
-// Parse the structure output to vercel-ai sdk type
 function createModelOutput(
   output: Exclude<AgentModelOutputConfig, { type: "text" }>,
 ): ModelOutputSpec {

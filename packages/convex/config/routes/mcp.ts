@@ -22,7 +22,6 @@ type McpScope =
   | ({ ok: true } & ProjectStageScope)
   | { ok: false; response: Response };
 
-/** MCP server CRUD: list/create on the collection, get/patch/delete by id. */
 export async function handleMcpRoute(
   ctx: ActionCtx,
   req: Request,
@@ -96,7 +95,6 @@ export async function handleMcpUploadsRoute(
   return json({ uploadUrl: grant.uploadUrl });
 }
 
-/** Collection verbs: list the stage's servers on GET, register on POST. */
 async function handleMcpCollectionRoute(
   ctx: ActionCtx,
   req: Request,
@@ -166,7 +164,6 @@ async function handleMcpCollectionRoute(
   return methodNotAllowed(["GET", "POST"]);
 }
 
-/** PATCH one server: any subset of the registration fields. */
 async function patchMcpRoute(
   ctx: ActionCtx,
   req: Request,
@@ -273,7 +270,6 @@ async function resolveMcpScope(
   };
 }
 
-/** Map an mcp document to its public API shape. */
 function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
   return {
     accountId: record.accountId,

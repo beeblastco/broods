@@ -1,10 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
-/**
- * Field definitions for the users table.
- * Synced from WorkOS AuthKit webhooks with app-specific extensions.
- */
+/** Synced from WorkOS AuthKit webhooks, with app-specific extensions. */
 export const usersFields = {
   authId: v.string(),
   email: v.string(),
@@ -157,7 +154,6 @@ export const agentDeploymentsFields = {
   stageSlug: v.string(),
   apiKeyHash: v.string(),
   keyHint: v.string(),
-  // AES-GCM blob of the plaintext key (owner-recoverable without rotating).
   apiKeyCiphertext: v.string(),
   apiKeyIv: v.string(),
   apiKeyTag: v.string(),
@@ -391,7 +387,6 @@ export const orgsFields = {
   onboardedAt: v.optional(v.number()),
 };
 
-/** Membership join table between users and orgs with role-based access. */
 export const orgMembersFields = {
   orgId: v.id("orgs"),
   userId: v.id("users"),
@@ -714,7 +709,6 @@ export const environmentVariableRevealsFields = {
   revealedAt: v.number(),
 };
 
-/** Actor metadata for account-visible configuration audit events. */
 export const configAuditActorKindValidator = v.union(
   v.literal("dashboardUser"),
   v.literal("apiAccountSecret"),
@@ -725,7 +719,6 @@ export const configAuditActorKindValidator = v.union(
   v.literal("role"),
 );
 
-/** Resource types recorded in the account-visible configuration audit feed. */
 export const configAuditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("agent"),
@@ -770,7 +763,6 @@ export const configAuditEventsFields = {
   detailsJson: v.optional(v.string()),
 };
 
-/** Failed-auth counters for config HTTP routes. */
 export const configHttpAuthFailuresFields = {
   key: v.string(),
   windowStart: v.number(),
@@ -811,11 +803,6 @@ export const workspaceFilesFields = {
 };
 
 /**
- * Capability link for one file in a workspace's S3 namespace, redeemed with no
- * credential of its own. It exists because a presigned S3 URL cannot survive the
- * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
- */
-/**
  * One minted storage upload URL. The count of unexpired rows per account is
  * the upload quota (`model/uploads.ts`); nothing links a row to the blob,
  * because the storage id only exists once the client has uploaded.
@@ -827,6 +814,11 @@ export const uploadGrantsFields = {
   expiresAt: v.number(),
 };
 
+/**
+ * Capability link for one file in a workspace's S3 namespace, redeemed with no
+ * credential of its own. It exists because a presigned S3 URL cannot survive the
+ * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
+ */
 export const workspaceDownloadTokensFields = {
   accountId: v.id("accounts"),
   workspaceId: v.id("workspaceConfigs"),
@@ -1099,7 +1091,6 @@ export const taskUsageFields = {
   /** Wall-clock duration of the task in ms. */
   durationMs: v.number(),
   status: v.union(v.literal("completed"), v.literal("failed")),
-  // Token counts, raw only. The UI computes price.
   inputTokens: v.number(),
   outputTokens: v.number(),
   reasoningTokens: v.number(),

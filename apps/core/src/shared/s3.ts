@@ -1,7 +1,4 @@
-/**
- * Small Bun-native S3 wrapper.
- * Keep bucket helpers here so runtime code does not import the AWS S3 SDK.
- */
+/** Bucket helpers. The only module that imports the AWS S3 SDK. */
 
 import {
   S3Client as AwsS3Client,
@@ -11,6 +8,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  type GetObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logDebug, logError } from "./log.ts";
@@ -354,7 +352,11 @@ export async function deleteS3Prefix(
   return objects.length;
 }
 
-async function readS3Body(bucket: string, key: string, access?: S3Access) {
+async function readS3Body(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
   const result = await awsClient(access).send(
     new GetObjectCommand({
       Bucket: bucket,

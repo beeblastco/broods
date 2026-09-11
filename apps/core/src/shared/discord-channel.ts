@@ -1,7 +1,4 @@
-/**
- * Discord channel adapter.
- * Verify interaction signatures, normalize slash commands, and send replies through Chat SDK's Discord adapter.
- */
+/** Discord channel adapter. */
 
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
 import { ConsoleLogger, type Attachment, type FileUpload } from "chat";
@@ -143,14 +140,12 @@ export interface DiscordSource {
   userId?: string;
 }
 
-// Chat SDK's direct Discord webhook path is `handleWebhook()` + ChatInstance.
-// Broods cannot use that path wholesale because `integrations.ts` must first do
-// account/agent lookup, per-tenant config scoping, durable session setup, and
-// Convex conversation history writes. The SDK also keeps the lower-level hooks
-// we need protected (`verifySignature`, `parseSlashCommand`, and requestContext),
-// so this subclass is only a small access shim around the SDK implementation.
-// If those hooks become public in the SDK, remove this subclass and call the SDK
-// methods directly.
+// The Chat SDK's direct Discord webhook path (`handleWebhook()` + ChatInstance)
+// cannot be used wholesale: `integrations.ts` must first do account/agent lookup,
+// per-tenant config scoping, durable session setup, and Convex conversation
+// history writes. The SDK also keeps the lower-level hooks this needs protected
+// (`verifySignature`, `parseSlashCommand`, requestContext), so this subclass is an
+// access shim and nothing else. Delete it if those hooks become public.
 class BroodsDiscordAdapter extends DiscordAdapter {
   verifyRequestSignature(
     body: string,

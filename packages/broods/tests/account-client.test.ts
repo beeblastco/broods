@@ -12,7 +12,10 @@ type Call = {
   body?: string;
 };
 
-function mockClient(responses: Array<{ status: number; body: unknown }>) {
+function mockClient(responses: Array<{ status: number; body: unknown }>): {
+  client: BroodsAccountClient;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
     baseUrl: "https://gateway.example.com///",

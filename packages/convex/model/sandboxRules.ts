@@ -52,9 +52,6 @@ export interface SandboxLifecycleConfig {
   maxLifetimeSeconds?: number;
 }
 
-/**
- * Provider-normalized sandbox network policy.
- */
 export interface SandboxNetworkConfig {
   mode: NetworkMode;
   allowDomains?: string[];
@@ -86,9 +83,6 @@ export interface SandboxConfig {
   options?: Record<string, unknown>;
 }
 
-/**
- * Per-call sandbox limits for validation.
- */
 export interface WorkspaceSandboxLimits {
   maxTimeoutSeconds: number;
   maxMemoryLimitMb?: number;
@@ -131,7 +125,6 @@ export function workspaceSandboxLimits(
 }
 
 /**
- * Validate and normalize a sandbox config object.
  * @param value the raw config value
  * @returns the normalized sandbox config
  */
@@ -201,7 +194,6 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 }
 
 /**
- * Validate a create-sandbox request body.
  * @param value the raw request body
  * @returns normalized create fields
  */
@@ -263,7 +255,6 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-// Refuses a network policy the provider cannot enforce.
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
@@ -284,7 +275,6 @@ function assertNetworkEnforceable(
   }
 }
 
-// Validates the envVars record and provider-specific options blob.
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -333,7 +323,6 @@ function assertOptionalPositiveInteger(
   }
 }
 
-// Bounds timeout/memory/output against the provider-aware workspace limits.
 function assertResourceLimits(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -356,7 +345,6 @@ function assertResourceLimits(
   );
 }
 
-// Requires runtimes, when present, to be a non-empty list of known names.
 function assertRuntimes(value: unknown): void {
   if (value === undefined) return;
   if (
@@ -374,7 +362,6 @@ function assertRuntimes(value: unknown): void {
   }
 }
 
-// Assembles the normalized config from already-validated fields.
 function buildNormalizedConfig(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -503,7 +490,6 @@ function normalizeOptionalStringList(
   return entries;
 }
 
-// Normalizes lifecycle and hook fields, enforcing persistent/provider rules.
 function normalizePersistentFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,

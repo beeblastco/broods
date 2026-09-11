@@ -1,6 +1,5 @@
 "use client";
 
-/** Account settings page: profile, preferences, and danger zone. */
 import { AccountPanel } from "@/app/(main)/[projectId]/settings/components/AccountPanel";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
@@ -18,8 +17,7 @@ const TABS: Array<{ id: AccountTab; label: string; danger?: boolean }> = [
   { id: "danger", label: "Danger Zone", danger: true },
 ];
 
-/** Delete account section rendered inside the Danger Zone tab. */
-function AccountDangerPanel() {
+function AccountDangerPanel(): React.JSX.Element {
   const currentUser = useQuery(api.user.getCurrent);
   const requestAccountDeletion = useMutation(api.user.requestAccountDeletion);
   const router = useRouter();
@@ -32,7 +30,7 @@ function AccountDangerPanel() {
   const effectiveDeletionAt =
     scheduledAt ?? currentUser?.deletionScheduledFor ?? null;
 
-  async function handleDelete() {
+  async function handleDelete(): Promise<void> {
     setIsDeleting(true);
     setDeleteError(null);
     try {
@@ -126,7 +124,6 @@ export default function AccountSettingsPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
       <aside className="flex w-48 shrink-0 flex-col bg-transparent">
         <div className="px-6 pt-9.25 pb-3">
           <h2 className="text-xl font-semibold text-foreground">Account</h2>
@@ -159,7 +156,6 @@ export default function AccountSettingsPage(): React.JSX.Element {
         </nav>
       </aside>
 
-      {/* Content area */}
       <div className="flex flex-1 flex-col overflow-auto">
         <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
           <h2 className="text-xl font-semibold text-foreground">

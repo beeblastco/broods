@@ -1,6 +1,5 @@
 "use client";
 
-/** Main canvas component that renders nodes and edges from the database. */
 import {
   CanvasControls,
   FIT_VIEW_OPTIONS,
@@ -361,7 +360,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
-/** Find the nearest agent node to a given flow position. */
 function findNearestAgentNode(
   nodes: Node[],
   position: { x: number; y: number },
@@ -384,8 +382,11 @@ function findNearestAgentNode(
   return nearest;
 }
 
-/** Inner canvas that consumes ReactFlow context. */
-function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
+function CanvasInner({
+  projectId,
+}: {
+  projectId: Id<"projects">;
+}): React.JSX.Element {
   const { stageId } = useStage();
   const canvasLayout = useQuery(
     api.canvas.getByProject,
@@ -1071,7 +1072,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // Directed adjacency of "connects to": source→target for every edge, plus the reverse for
     // bidirectional mounts so selecting either a workspace or its sandbox reveals the other.
     const out = new Map<string, string[]>();
-    const link = (a: string, b: string) => {
+    const link = (a: string, b: string): void => {
       const list = out.get(a);
       if (list) list.push(b);
       else out.set(a, [b]);
@@ -1305,7 +1306,6 @@ function useEverTrue(flag: boolean): boolean {
   return seen || flag;
 }
 
-/** Main canvas wrapped with ReactFlowProvider. */
 export function Canvas({
   projectId,
 }: {

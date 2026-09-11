@@ -1294,7 +1294,10 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   });
 }
 
-async function requireAuthOrLogin(dashboardUrl: string, baseUrl?: string) {
+async function requireAuthOrLogin(
+  dashboardUrl: string,
+  baseUrl?: string,
+): Promise<StoredAuthConfig> {
   try {
     return await requireAuth(baseUrl);
   } catch (error) {

@@ -1,8 +1,3 @@
-/**
- * Terminal ingress orchestration tests.
- * Cover transfer-before-release behavior shared by direct and NATS failures.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { Session } from "../src/harness/session.ts";
 

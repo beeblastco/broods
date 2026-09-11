@@ -172,10 +172,6 @@ export async function syncChannelRecordResources(
   return ids;
 }
 
-/**
- * The webhook resolves a place account-wide, so one `(platform, externalId)` can
- * belong to exactly one record. Reject a second claim instead of overwriting.
- */
 async function assertChannelRecordPlaceIsFree(
   ctx: MutationCtx,
   options: {

@@ -189,11 +189,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
-      // A reservation expires long after the session idled out, so this machine is
-      // stopped. The SDK sends no `resume` of its own, leaving the choice to the
-      // API; say it here instead, because nothing in a teardown needs a running VM,
-      // and booting one to delete it costs compute and widens the window a
-      // concurrent acquire can slip into.
+      // The SDK sends no `resume` of its own, leaving the choice to the API. Say it
+      // here: a teardown never needs a running VM, and booting one to delete it costs
+      // compute and widens the window a concurrent acquire can slip into.
       const sandbox = await Sandbox.get({
         name: name,
         resume: false,
@@ -329,11 +327,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects, and
-      // the mirror write runs after it did. Drop the row while it still names
-      // this machine, then the machine itself: the generation makes the name
-      // unguessable, so a row or a sandbox left behind is one nothing reaches.
-      // Passing the name keeps a concurrent winner's row and machine intact.
+      // The claim may already have committed even when its caller rejects. Drop the
+      // row while it still names this machine, then the machine itself; passing the
+      // name keeps a concurrent winner's row and machine intact.
       await deleteSandboxInstance(
         "vercel",
         key,
@@ -519,10 +515,10 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
   };
 }
 
-// The name of one reserved machine: a prefix that reads back to the reservation
-// key, plus a generation nothing can derive from that key. The generation is what
-// makes `externalId` identify a machine, so the conditional writes that guard a
-// reservation refuse a machine some other caller created under the same key.
+// A prefix that reads back to the reservation key, plus a generation nothing can
+// derive from that key. The generation is what makes `externalId` identify a machine,
+// so the conditional writes guarding a reservation refuse a machine some other caller
+// created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
 }

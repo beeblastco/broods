@@ -1,8 +1,3 @@
-/**
- * Environment and logging helper tests.
- * Cover env lookup behavior and structured log emission here.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { booleanEnv, optionalEnv, requireEnv } from "../src/shared/env.ts";
 import {
@@ -140,11 +135,11 @@ describe("logging helpers", () => {
         super(value ?? FIXED_TIME);
       }
 
-      override toISOString() {
+      override toISOString(): string {
         return FIXED_TIME;
       }
 
-      static override now() {
+      static override now(): number {
         return new REAL_DATE(FIXED_TIME).valueOf();
       }
     } as DateConstructor;

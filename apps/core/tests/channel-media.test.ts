@@ -1,6 +1,4 @@
 /**
- * Inbound channel media tests.
- * Cover what reaches the model, what is stored, and what a failed read costs.
  * An attachment nobody can read must still leave the message legible.
  */
 

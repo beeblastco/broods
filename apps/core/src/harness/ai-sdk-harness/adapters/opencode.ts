@@ -27,12 +27,9 @@ export function createConfiguredOpenCodeAdapter(
   const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  // `custom` is absent on purpose. OpenCode routes credential discovery through
-  // its own provider name, and only `anthropic`, `openai`, and the gateway
-  // resolve to a set of environment variables it reads. A custom endpoint label
-  // resolves to Anthropic, which would drop the OpenAI-compatible key silently,
-  // so refuse the combination instead of starting a session that cannot
-  // authenticate.
+  // `custom` is absent on purpose: OpenCode discovers credentials by its own
+  // provider name and resolves an unrecognized label to Anthropic, silently
+  // dropping an OpenAI-compatible key.
   const auth =
     providerName === "anthropic"
       ? resolveAnthropicAuthEnv(provider)

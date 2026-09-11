@@ -1,10 +1,10 @@
 /**
  * The self-hosted core server (epic #85), the single entry point.
  *
- * One Bun.serve process fronts the whole runtime: it builds a transport-neutral
- * CoreRequest from each HTTP request and routes by path to the account or harness
- * handler, streaming their Web Response back (SSE included). Routing is by path,
- * never Host, because the gateway strips Host on proxy. There is no Lambda runtime.
+ * One Bun.serve process builds a transport-neutral CoreRequest per HTTP request
+ * and routes by path to the account or harness handler, streaming their Web
+ * Response back (SSE included). By path, never Host: the gateway strips Host on
+ * proxy. There is no Lambda runtime.
  */
 
 import type { CoreRequest, RequestContext } from "./shared/http.ts";
@@ -120,7 +120,6 @@ if (import.meta.main) {
   // One warm isolate worker so the first uploaded-tool call does not pay Node
   // startup. Failure is not fatal: the pool spawns on demand anyway.
   void prewarmIsolatePool().catch(() => undefined);
-  // Releases reserved sandboxes whose conversation never came back.
   startSandboxSweeper();
 
   const server = Bun.serve({

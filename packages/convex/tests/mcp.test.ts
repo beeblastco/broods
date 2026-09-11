@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /** MCP server registrations: stage scope, per-stage name uniqueness, input validation. */
 
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -19,7 +19,7 @@ type Scope = {
   stageId: Id<"stages">;
 };
 
-const t = () => convexTest(schema, modules);
+const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 /** An org, account, project and one stage, the scope a server hangs off. */

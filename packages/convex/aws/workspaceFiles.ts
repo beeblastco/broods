@@ -16,6 +16,7 @@ import {
   renameWorkspacePath,
   uploadWorkspaceFile,
   workspaceFileDownloadUrl,
+  type WorkspaceFileEntry,
 } from "../model/workspaceFs";
 
 // Every op takes the workspace's own storage block so a bring-your-own bucket is
@@ -35,7 +36,6 @@ const fileEntry = v.object({
 });
 
 /**
- * List a workspace's files and folders.
  * @param accountId account owning the workspace
  * @param workspaceId workspace config id
  * @returns files plus synthesized folder entries
@@ -43,7 +43,7 @@ const fileEntry = v.object({
 export const list = internalAction({
   args: workspaceRef,
   returns: v.array(fileEntry),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<WorkspaceFileEntry[]> => {
     return await listWorkspaceFiles(args);
   },
 });
@@ -63,7 +63,7 @@ export const upload = internalAction({
     contentType: v.optional(v.string()),
   },
   returns: fileEntry,
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<WorkspaceFileEntry> => {
     return await uploadWorkspaceFile(args, {
       path: args.path,
       contentBase64: args.contentBase64,
@@ -73,7 +73,6 @@ export const upload = internalAction({
 });
 
 /**
- * Presign a download URL for one workspace file.
  * @param accountId account owning the workspace
  * @param workspaceId workspace config id
  * @param path the file path
@@ -82,7 +81,7 @@ export const upload = internalAction({
 export const downloadUrl = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.string(),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<string> => {
     return await workspaceFileDownloadUrl(args, args.path);
   },
 });
@@ -97,7 +96,7 @@ export const downloadUrl = internalAction({
 export const removePath = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.number(),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<number> => {
     return await deleteWorkspacePath(args, args.path);
   },
 });
@@ -111,7 +110,7 @@ export const removePath = internalAction({
 export const purge = internalAction({
   args: workspaceRef,
   returns: v.number(),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<number> => {
     return await purgeWorkspaceFilesystem(args);
   },
 });
@@ -126,7 +125,7 @@ export const purge = internalAction({
 export const renamePath = internalAction({
   args: { ...workspaceRef, path: v.string(), newPath: v.string() },
   returns: v.number(),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<number> => {
     return await renameWorkspacePath(args, args.path, args.newPath);
   },
 });

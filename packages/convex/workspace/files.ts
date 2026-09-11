@@ -10,6 +10,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
@@ -82,6 +83,9 @@ export const workspaceStorageValidator = v.object({
   ),
 });
 
+const WORKSPACE_ADMIN_REQUIRED =
+  "Workspace files can only be changed by an org admin.";
+
 /**
  * Create a file or folder entry after the binary has been uploaded to storage.
  * @param projectId owning project
@@ -93,9 +97,6 @@ export const workspaceStorageValidator = v.object({
  * @param mimeType MIME type of the file
  * @returns the new document ID
  */
-const WORKSPACE_ADMIN_REQUIRED =
-  "Workspace files can only be changed by an org admin.";
-
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -107,7 +108,7 @@ export const create = mutation({
     mimeType: v.optional(v.string()),
   },
   returns: v.id("workspaceFiles"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"workspaceFiles">> => {
     const { projectId, nodeId, path, name, isFolder, storageId, mimeType } =
       args;
 
@@ -167,7 +168,7 @@ export const createDownloadToken = internalMutation({
     now: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await ctx.db.insert("workspaceDownloadTokens", {
       accountId: args.accountId,
       workspaceId: args.workspaceId,
@@ -195,7 +196,7 @@ export const createDownloadToken = internalMutation({
 export const generateUploadUrl = mutation({
   args: {},
   returns: v.string(),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<string> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -225,7 +226,7 @@ export const getFileDownloadUrl = query({
     path: v.string(),
   },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<string | null> => {
     const { projectId, nodeId, path } = args;
 
     // Check authenticated user
@@ -266,7 +267,7 @@ export const getFileDownloadUrlInternal = internalQuery({
     path: v.string(),
   },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<string | null> => {
     const project = await getProjectForRole(ctx, args.authId, args.projectId);
     if (!project) return null;
 
@@ -287,7 +288,6 @@ export const getFileDownloadUrlInternal = internalQuery({
 });
 
 /**
- * List all file/folder entries for a workspace node.
  * @param projectId owning project
  * @param nodeId canvas node ID of the workspace
  * @returns flat array of file metadata records
@@ -298,7 +298,7 @@ export const list = query({
     nodeId: v.string(),
   },
   returns: v.array(workspaceFileDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"workspaceFiles">[]> => {
     const { projectId, nodeId } = args;
 
     // Check authenticated user
@@ -335,7 +335,7 @@ export const listForMigrationInternal = internalQuery({
     nodeId: v.string(),
   },
   returns: v.array(workspaceFileDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"workspaceFiles">[]> => {
     const project = await getProjectForRole(ctx, args.authId, args.projectId);
     if (!project) return [];
 
@@ -355,7 +355,7 @@ export const listForMigrationInternal = internalQuery({
 export const remove = mutation({
   args: { fileId: v.id("workspaceFiles") },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { fileId } = args;
 
     // Check authenticated user
@@ -396,7 +396,7 @@ export const removeFolder = mutation({
     folderPath: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { projectId, nodeId, folderPath } = args;
 
     // Check authenticated user
@@ -443,7 +443,7 @@ export const removeForMigrationInternal = internalMutation({
     fileId: v.id("workspaceFiles"),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const file = await ctx.db.get(args.fileId);
     if (!file) return null;
 
@@ -470,7 +470,7 @@ export const rename = mutation({
     newName: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { fileId, newName } = args;
 
     // Check authenticated user

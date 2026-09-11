@@ -105,7 +105,6 @@ import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
-// Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
 // Tools whose successful call already delivered the run's output to a channel
 // or another session. Some models (gemini flash) legitimately stop with no
@@ -141,10 +140,9 @@ type TrackedSpan = {
   attributes: Record<string, string | number | boolean>;
 };
 
-/** Publish a span update to the live traces subject. Best-effort, non-blocking. */
-// Returns once the span's bytes have been handed to the NATS client; callers that
-// must guarantee delivery before the container freezes (the terminal span) await
-// this and then flushObservabilityNats(). Running/intermediate spans ignore it.
+// Best-effort and non-blocking: returns once the span's bytes reach the NATS
+// client. A caller needing delivery before the container freezes (the terminal
+// span) awaits this, then flushObservabilityNats(); others ignore it.
 function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const connPromise = getObservabilityNatsConn();
   if (!connPromise) return Promise.resolve();
@@ -214,7 +212,7 @@ export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
-  // Present when this run is a subagent; nests its trace under the parent.
+  // Present when this run is a subagent; links its trace to the parent's.
   subagentParent?: SubagentParentContext;
   // Request-shared hook dispatcher (one storage load + one ctx.state per
   // request); the loop builds its own when the handler does not pass one.
@@ -329,10 +327,9 @@ export async function runAgentLoop(
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const agentSandbox = session.agentSandbox();
-  // A subagent run is its own top-level trace, distinguished by kind "subtask" and
-  // linked to the parent via parent.trace_id/parent.task_id attributes (set below).
-  // A run the scheduler started is a "cron", anything a person asked for a "task".
-  // All three are roots, so each gets its own scaled waterfall.
+  // A subagent run is its own top-level trace (kind "subtask"), a scheduler run
+  // a "cron", anything a person asked for a "task". All three are roots, so
+  // each gets its own scaled waterfall.
   const subagentParent = options.subagentParent;
   const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent
     ? "subtask"
@@ -736,15 +733,13 @@ export async function runAgentLoop(
       ? new Error(redactSensitiveText(error.message, context?.secretValues))
       : undefined;
 
-    // Close the root OTel span. Published live via NATS and exported durably
-    // via the OTLP exporter registered in otel.ts.
     const endTimeMs = runStartedAt + durationMs;
     const orphanedSpans = [
       ...[...toolSpans.values()].map((tracked) => ({
         tracked: tracked,
         extraAttributes: undefined,
       })),
-      // A step whose every attempt failed never reaches onStepFinish, so its
+      // A step whose every attempt failed never reaches onStepEnd, so its
       // attempt attributes are attached here instead.
       ...[...stepSpans.entries()].map(([stepNumber, tracked]) => ({
         tracked: tracked,
@@ -1060,7 +1055,7 @@ export async function runAgentLoop(
       const now = Date.now();
       if (!firstChunkAt.has(step)) firstChunkAt.set(step, now);
       lastModelChunkAt.set(step, now);
-      const bump = (windows: Map<number, StreamWindow>) => {
+      const bump = (windows: Map<number, StreamWindow>): void => {
         const existing = windows.get(step);
         if (existing) existing.last = now;
         else windows.set(step, { first: now, last: now });
@@ -1256,8 +1251,6 @@ export async function runAgentLoop(
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
-      // Every surface quotes the same normalized number the span does, so a
-      // trace and its event log can never disagree about how long a tool took.
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber: stepNumber,
         durationMs: toolDurationMs,
@@ -1408,12 +1401,8 @@ export async function runAgentLoop(
       const tracked = stepSpans.get(stepNumber);
       if (tracked) {
         const stepEndMs = Date.now();
-        // Decompose the step so a slow step shows where the time went, without
-        // conflating model streaming with tool execution:
-        //   ttft      = step start      -> first token
-        //   stream    = first token     -> last generated token (pure streaming)
-        //   tool wait = last token      -> step finish (tool execution; also the
-        //               child tool.call spans). Absent when no chunk was observed.
+        // Non-overlapping segments that sum to the step duration; their windows
+        // are defined at firstChunkAt/lastModelChunkAt above.
         const firstTokenMs = firstChunkAt.get(stepNumber);
         const lastTokenMs = lastModelChunkAt.get(stepNumber) ?? firstTokenMs;
         const ttftMs =
@@ -1500,8 +1489,7 @@ export async function runAgentLoop(
       // until a sandbox exec actually reports CPU (keeps NATS traffic minimal).
       const liveRoleCpu = sandboxCpuRoleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
-        // A running span has no known end, so keep end == start (like the initial
-        // running publish) so a stale fresh-load copy never shows a fake duration.
+        // A running span has no known end; keep end == start, as above.
         publishSpan({
           traceId: traceId,
           spanId: rootSpanId,
@@ -1937,13 +1925,13 @@ export async function runAgentLoop(
     // Callers that drain the stream themselves must call this in a finally to
     // guarantee finalization.
     ensureFinalized: ensureFinalized,
-    didFail: () => didFail,
-    failureText: () => failureText,
-    approvalSummaries: () => approvalSummaries,
-    questionSummaries: () => questionSummaries,
-    hasStructuredOutput: () => Boolean(modelOutput),
-    finalResponse: () => finalResponse,
-    traceId: () => traceId,
+    didFail: (): boolean => didFail,
+    failureText: (): string | null => failureText,
+    approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
+    questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
+    hasStructuredOutput: (): boolean => Boolean(modelOutput),
+    finalResponse: (): JSONValue | undefined => finalResponse,
+    traceId: (): string => traceId,
   });
 }
 
@@ -2279,7 +2267,7 @@ function recordToolCallSummary(
   summaries: Map<string, ToolCallSummary>,
   toolCall: unknown,
   update: Partial<Omit<ToolCallSummary, "toolCallId" | "toolName">>,
-) {
+): void {
   const identity = toolCallIdentity(toolCall);
   if (!identity) {
     return;
@@ -2314,7 +2302,11 @@ function toolCallIdentity(
   };
 }
 
-function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>) {
+function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>): {
+  toolsUsed: string[];
+  toolUsage: Record<string, number>;
+  toolCalls: ToolCallSummary[];
+} {
   const toolCalls = [...summaries.values()].sort(
     (left, right) =>
       (left.stepNumber ?? 0) - (right.stepNumber ?? 0) ||

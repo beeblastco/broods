@@ -1,6 +1,5 @@
 "use client";
 
-/** Tracing panel: full-height task timelines with an indented span tree, a waterfall bar column, and model/tool span details. */
 import { Badge } from "@/app/components/ui/badge";
 import {
   isRootSpanKind,
@@ -126,7 +125,6 @@ function formatDateTime(ms: number): string {
   });
 }
 
-/** Parse a datetime-local input value into epoch ms, or null when empty/invalid. */
 function toEpochMs(value: string): number | null {
   if (!value) return null;
   const ms = new Date(value).getTime();
@@ -167,7 +165,6 @@ function spanKey(span: ObservabilitySpanRow): string {
 // Otherwise the spinner spins forever.
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
-/** Whether a root task/subtask is genuinely still running (bounded by freshness). */
 function isTaskRunning(root: ObservabilitySpanRow): boolean {
   return (
     root.status === "running" &&
@@ -182,7 +179,6 @@ function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
 
 // The hue carries meaning here, so each tone needs both themes: the 300/400
 // shades only clear WCAG AA on the dark card, the 700 shades only on the light.
-/** Text color per span status. Same cue as the logs panel. */
 function statusColor(status: ObservabilitySpanRow["status"]): string {
   if (status === "running") return "text-sky-700 dark:text-sky-400";
   if (status === "error") return "text-red-700 dark:text-red-400";
@@ -209,7 +205,7 @@ interface SpanGroup {
   taskDurationMs: number;
 }
 
-/** Group spans into per-task trees keyed by parent span, newest task first. */
+/** Newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   const tasks = spans.filter((span) => isRootSpanKind(span.kind));
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
@@ -279,7 +275,7 @@ function SpanStatusIcon({
 }: {
   span: ObservabilitySpanRow;
   taskRunning: boolean;
-}) {
+}): React.JSX.Element | null {
   // Static dot, not a spinner: a long run keeps many spans "running" at once and
   // per-row spin animations repaint the whole tree continuously.
   if (span.status === "running" && !isStale(span, taskRunning)) {
@@ -331,7 +327,7 @@ function TaskDurationBar({
 }: {
   group: SpanGroup;
   scaleMaxMs: number;
-}) {
+}): React.JSX.Element {
   const live = isTaskRunning(group.root);
   const barColor = kindTheme(group.root.kind).bar;
   const widthPct = Math.max(
@@ -372,7 +368,7 @@ function TimelineBar({
   windowStart: number;
   windowSpan: number;
   taskRunning: boolean;
-}) {
+}): React.JSX.Element {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
   const barColor = kindTheme(span.kind).bar;
@@ -426,7 +422,6 @@ function TimelineBar({
   );
 }
 
-/** One timing segment chip: label + value, shown only when the value is present. */
 function TimingChip({
   label,
   ms,
@@ -435,7 +430,7 @@ function TimingChip({
   label: string;
   ms: number | undefined;
   tone?: string;
-}) {
+}): React.JSX.Element | null {
   if (ms === undefined) {
     return null;
   }
@@ -450,7 +445,11 @@ function TimingChip({
   );
 }
 
-function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
+function SpanDetails({
+  span,
+}: {
+  span: ObservabilitySpanRow;
+}): React.JSX.Element {
   const attributes = span.attributes ?? {};
   const ttftMs = numericAttribute(span, "model.ttft_ms");
   const streamMs = numericAttribute(span, "model.stream_ms");
@@ -591,7 +590,7 @@ function SpanRow({
   taskRunning: boolean;
   highlighted: boolean;
   onFocusTrace: (traceId: string) => void;
-}) {
+}): React.JSX.Element {
   // Every root gets its own duration bar, anchor id, and subtitle.
   const isRoot = isRootSpanKind(span.kind);
   const stale = isStale(span, taskRunning);
@@ -709,8 +708,6 @@ function SpanRow({
 }
 
 /**
- * Recursively render a span row and its children when expanded. Clicking a row
- * selects it into the side detail panel; the chevron toggles the tree.
  * `enclosingRootLive` is whether the nearest enclosing root run is live. A subagent
  * subtask is itself a root: it runs independently (the parent task pass can finalize
  * while the subagent is still working), so it is judged by its own freshness, and its
@@ -866,10 +863,8 @@ export function TracingPanel({
     return null;
   }, [groups, selectedKey]);
 
-  // New tasks (including running ones) arrive collapsed. The row already shows
-  // live status and a pulsing bar, and a tree that pops open on every new task is
-  // noisy. The user opens a task to watch its steps. (The log "View trace"
-  // click-through below still expands its one target on demand.)
+  // Deliberately no auto-expand: new tasks arrive collapsed, since the row
+  // already shows live status and a tree popping open on every task is noisy.
 
   // Reset paging when the filters change so "Load more" starts from the top.
   // Render-time adjustment, not an effect.
@@ -965,7 +960,7 @@ export function TracingPanel({
     dropFocusParam,
   ]);
 
-  const toggle = (key: string) => {
+  const toggle = (key: string): void => {
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(key)) {
@@ -991,7 +986,7 @@ export function TracingPanel({
     [searchParams, pathname, router],
   );
 
-  const clearFilters = () => {
+  const clearFilters = (): void => {
     setFilter("");
     setStatusFilter("all");
     setFromTime("");

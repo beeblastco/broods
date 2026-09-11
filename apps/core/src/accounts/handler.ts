@@ -1,7 +1,4 @@
-/**
- * Account management HTTP API.
- * Keep account orchestration here and shared records/persistence at their boundaries.
- */
+/** Account management HTTP API. */
 
 import {
   roleDenial,

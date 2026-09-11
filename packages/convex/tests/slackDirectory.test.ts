@@ -27,7 +27,6 @@ function fetchStub(responses: Array<() => Response | Error>): {
   return { impl: impl, urls: urls };
 }
 
-/** JSON 200 response helper for Slack API payloads. */
 function slackJson(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status: status });
 }

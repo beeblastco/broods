@@ -1,8 +1,3 @@
-/**
- * Shared channel helper tests.
- * Cover shared content extraction and the reach gate here.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
 import { extractText, isAllowedId } from "../src/shared/channels.ts";

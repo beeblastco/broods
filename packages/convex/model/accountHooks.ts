@@ -53,7 +53,6 @@ export interface RequiredAccountHookUpload {
 }
 
 /**
- * Build the S3 object key used for an account hook bundle.
  * @param accountId account id owning the hook
  * @param sha256 hex sha256 of the bundle contents
  * @returns stable S3 key for the bundle object
@@ -66,7 +65,6 @@ export function accountHookBundleStorageKey(
 }
 
 /**
- * Normalize and validate a CLI/API-supplied code hook upload.
  * @param input upload object from the CLI manifest or HTTP body
  * @param options whether all creation fields, including bundle, are required
  * @returns normalized fields with bundle sha256 when a bundle is present

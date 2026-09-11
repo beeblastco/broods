@@ -23,7 +23,7 @@ import {
   type RouteParts,
 } from "./httpRoutes";
 
-export const handle = httpAction(async (ctx, req) => {
+export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {

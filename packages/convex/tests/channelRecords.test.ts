@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -7,7 +7,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const t = () => convexTest(schema, modules);
+const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 /** One account with one active record and one soft-deleted tombstone. */

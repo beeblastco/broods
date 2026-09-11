@@ -8,7 +8,6 @@ import type { NodeProps } from "@xyflow/react";
 import { Box } from "lucide-react";
 import { useMemo } from "react";
 
-/** Sandbox node displayed on the architecture canvas. */
 export function SandboxNode({ id, data }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const featureRows = useMemo(() => {

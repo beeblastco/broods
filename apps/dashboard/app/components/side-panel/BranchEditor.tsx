@@ -52,7 +52,7 @@ export function BranchEditor({
 
   const dirty = draft !== serialized;
 
-  async function handleSave() {
+  async function handleSave(): Promise<void> {
     let parsed: unknown;
     try {
       parsed = draft.trim().length === 0 ? undefined : JSON.parse(draft);

@@ -103,7 +103,6 @@ export const dispatch = internalAction({
   },
 });
 
-/** Marks a cron job run complete and stores the final model result. */
 export const completeRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -112,7 +111,7 @@ export const completeRun = internalMutation({
     result: v.any(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, result }) => {
+  handler: async (ctx, { accountId, cronId, runId, result }): Promise<null> => {
     const run = await ctx.db.get(runId);
     if (!run || run.accountId !== accountId || run.cronId !== cronId) {
       throw new Error(
@@ -182,7 +181,7 @@ export const createRun = internalMutation({
     conversationKey: v.string(),
   },
   returns: v.id("cronRuns"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"cronRuns">> => {
     const cron = await getOwned(ctx, args.accountId, args.cronId);
     if (!cron) {
       throw new Error("Cron job does not belong to the supplied accountId");
@@ -196,7 +195,6 @@ export const createRun = internalMutation({
   },
 });
 
-/** Marks a cron job run failed and stores the error. */
 export const failRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -205,7 +203,7 @@ export const failRun = internalMutation({
     error: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, cronId, runId, error }) => {
+  handler: async (ctx, { accountId, cronId, runId, error }): Promise<null> => {
     const run = await ctx.db.get(runId);
     if (!run || run.accountId !== accountId || run.cronId !== cronId) {
       throw new Error(
@@ -229,7 +227,8 @@ export const getById = internalQuery({
     cronId: v.id("crons"),
   },
   returns: v.union(cronDoc, v.null()),
-  handler: (ctx, { accountId, cronId }) => getOwned(ctx, accountId, cronId),
+  handler: (ctx, { accountId, cronId }): Promise<Doc<"crons"> | null> =>
+    getOwned(ctx, accountId, cronId),
 });
 
 /** Whether the job still exists, without shipping its stored events. */
@@ -239,7 +238,7 @@ export const isLive = internalQuery({
     cronId: v.id("crons"),
   },
   returns: v.boolean(),
-  handler: async (ctx, { accountId, cronId }) =>
+  handler: async (ctx, { accountId, cronId }): Promise<boolean> =>
     (await getOwned(ctx, accountId, cronId)) !== null,
 });
 
@@ -250,7 +249,7 @@ export const list = internalQuery({
     agentId: v.optional(v.id("agents")),
   },
   returns: v.array(cronDoc),
-  handler: (ctx, { accountId, agentId }) =>
+  handler: (ctx, { accountId, agentId }): Promise<Doc<"crons">[]> =>
     agentId
       ? ctx.db
           .query("crons")
@@ -280,7 +279,7 @@ export const list = internalQuery({
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(cronDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"crons">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -305,7 +304,10 @@ export const listRuns = internalQuery({
     limit: v.optional(v.number()),
   },
   returns: v.array(cronRunDoc),
-  handler: async (ctx, { accountId, cronId, limit }) => {
+  handler: async (
+    ctx,
+    { accountId, cronId, limit },
+  ): Promise<Doc<"cronRuns">[]> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return [];
 
@@ -363,7 +365,7 @@ export const recordInvocation = internalMutation({
   handler: async (
     ctx,
     { accountId, cronId, lastStatus, lastError, lastInvokedAt },
-  ) => {
+  ): Promise<null> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) {
       throw new Error("Cron job does not belong to the supplied accountId");
@@ -417,7 +419,7 @@ export const removeRunsCascade = internalMutation({
     cronId: v.id("crons"),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const deleted = await deleteRunsBatch(
       ctx,
       args.accountId,
@@ -497,7 +499,6 @@ export const update = internalMutation({
   },
 });
 
-/** Deletes up to `limit` run rows of one cron, returning how many went. */
 async function deleteRunsBatch(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

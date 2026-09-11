@@ -10,10 +10,7 @@ import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
-/**
- * Skills CRUD: list/create on the collection, get/replace/delete by name.
- * Mirrors core's former handleSkillRoute contract.
- */
+/** Mirrors core's former handleSkillRoute contract. */
 export async function handleSkillRoute(
   ctx: ActionCtx,
   req: Request,

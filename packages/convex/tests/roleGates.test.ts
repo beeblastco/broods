@@ -74,7 +74,7 @@ async function seed(t: T): Promise<{
       isDefault: false,
       updatedAt: now,
     });
-    const seedMember = async (authId: string, role: OrgRole) => {
+    const seedMember = async (authId: string, role: OrgRole): Promise<void> => {
       const userId = await ctx.db.insert("users", {
         authId: authId,
         email: `${authId}@example.com`,
@@ -314,7 +314,7 @@ describe("stage-scoped sync of account-wide resources", () => {
 describe("readCapped", () => {
   function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
     return new ReadableStream({
-      start: function (controller) {
+      start: function (controller): void {
         for (const chunk of chunks) controller.enqueue(chunk);
         controller.close();
       },

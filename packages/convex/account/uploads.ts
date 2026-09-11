@@ -6,7 +6,7 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
-import { grantUpload } from "../model/uploads";
+import { grantUpload, type UploadGrant } from "../model/uploads";
 
 const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_SCAN_PAGE = 100;
@@ -20,7 +20,7 @@ export const grant = internalMutation({
     v.object({ uploadUrl: v.string() }),
     v.object({ retryAt: v.number() }),
   ),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<UploadGrant> =>
     await grantUpload(ctx, args.accountId, args.kind),
 });
 
@@ -31,7 +31,7 @@ export const grant = internalMutation({
 export const pruneOrphans = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), isDone: v.boolean() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ deleted: number; isDone: boolean }> => {
     const cutoff = Date.now() - ORPHAN_MIN_AGE_MS;
     const page = await ctx.db.system
       .query("_storage")

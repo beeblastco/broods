@@ -1,15 +1,9 @@
-/**
- * Pricing tier definitions and metadata.
- * Single source of truth for plan display, defaults, and upgrade links.
- */
-
 /** Valid plan tier identifiers stored in the database. */
 export type PlanTier = "hobby" | "developer" | "pro" | "free";
 
 /** Plan tiers that have display configs (excludes "free" which maps to "hobby"). */
 export type ConfiguredPlanTier = "hobby" | "developer" | "pro";
 
-/** Metadata for a single pricing tier. */
 export interface PlanConfig {
   key: ConfiguredPlanTier;
   label: string;
@@ -19,17 +13,14 @@ export interface PlanConfig {
   badgeClass: string;
 }
 
-/** Default plan assigned to new users. */
 export const DEFAULT_PLAN: PlanTier = "hobby";
 
 /** Highest tier. Users on this plan see no upgrade button. */
 export const MAX_PLAN: PlanTier = "pro";
 
-/** External URL for plan upgrades or plan information. */
 export const UPGRADE_URL =
   process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/broods";
 
-/** Tier metadata keyed by plan identifier. */
 export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
   hobby: {
     key: "hobby",

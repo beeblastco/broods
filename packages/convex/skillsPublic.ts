@@ -39,7 +39,10 @@ export const createFromGithub = action({
     path: v.string(),
     description: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ name: string; path: string; description: string }> => {
     const { bearerToken, githubUrl } = args;
 
     // Check authenticated user
@@ -81,7 +84,10 @@ export const createFromJson = action({
     path: v.string(),
     description: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ name: string; path: string; description: string }> => {
     const { bearerToken, name, description, content } = args;
 
     // Check authenticated user
@@ -123,7 +129,15 @@ export const publishSkill = action({
     path: v.string(),
     sizeBytes: v.number(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    name: string;
+    description: string;
+    path: string;
+    sizeBytes: number;
+  }> => {
     const { projectId, nodeId, bearerToken } = args;
 
     // Check authenticated user
@@ -134,7 +148,6 @@ export const publishSkill = action({
 
     const account = await requireAccountForToken(ctx, bearerToken);
 
-    // Load the file list
     const files = await ctx.runQuery(api.workspace.files.list, {
       projectId: projectId,
       nodeId: nodeId,
@@ -150,7 +163,6 @@ export const publishSkill = action({
       throw new Error("SKILL.md is required at the root of the skill bundle.");
     }
 
-    // Download each file from Convex storage
     const skillFiles: Array<{ path: string; bytes: Uint8Array }> = [];
     let totalBytes = 0;
 

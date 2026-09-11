@@ -29,7 +29,6 @@ export interface SandboxAuditActor {
   name?: string;
 }
 
-/** Records one sandbox lifecycle audit event in Convex. */
 export async function recordSandboxAuditEvent(input: {
   accountId: string;
   sandboxConfigId?: string;

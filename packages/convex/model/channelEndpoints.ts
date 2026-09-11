@@ -32,7 +32,6 @@ interface DesiredEndpoint {
   webhookPath: string;
 }
 
-/** The decrypted bot token carried by one projection row. */
 export async function channelEndpointBotToken(
   row: Doc<"channelEndpoints">,
   secret: string,
@@ -131,7 +130,6 @@ export function webhookPath(
   return `/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
-/** Every (agent, channel, deployment) row this account should project. */
 async function desiredEndpoints(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

@@ -40,6 +40,14 @@ interface NetworkConnectorProperties {
   Arn: string;
 }
 
+// The `policy` entry shape sst.aws.Bucket takes, as denyUnlessProjectPrincipal builds it.
+interface BucketDenyStatement {
+  effect: "deny";
+  principals: "*";
+  actions: string[];
+  conditions: { test: string; variable: string; values: string[] }[];
+}
+
 function awsRegion(): string {
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
   if (region) {
@@ -134,7 +142,7 @@ function ecrRepositoryExists(name: string, region: string): boolean {
 // runtime user and the Convex config-plane role. $jsonStringify resolves Outputs.
 function permissionsPolicy(
   perms: { actions: string[]; resources: $util.Input<string>[] }[],
-) {
+): $util.Output<string> {
   return $jsonStringify({
     Version: "2012-10-17",
     Statement: perms.map((p) => ({
@@ -145,7 +153,10 @@ function permissionsPolicy(
   });
 }
 
-function denyUnlessProjectPrincipal(stage: string, region: string) {
+function denyUnlessProjectPrincipal(
+  stage: string,
+  region: string,
+): BucketDenyStatement {
   return {
     effect: "deny" as const,
     principals: "*" as const,
@@ -211,7 +222,6 @@ export default $config({
     const region = awsRegion();
     const isProduction = isProductionStage(stage);
     const enableMicrovmPrereqs = microvmPrereqsEnabled(region);
-    // Convex credentials are mandatory because every persistence domain lives there.
     const useConvexStorage = Boolean(CONVEX_URL && CONVEX_DEPLOY_KEY);
     if (!useConvexStorage) {
       throw new Error(

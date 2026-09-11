@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
+import type { Doc } from "../_generated/dataModel";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxSnapshotsFields } from "../schema";
 
@@ -24,7 +25,7 @@ const sandboxSnapshotDoc = v.object({
 export const listForActiveOrg = query({
   args: {},
   returns: v.array(sandboxSnapshotDoc),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"sandboxSnapshots">[]> => {
     const account = await getActiveAccountForUser(ctx);
     if (!account) return [];
 
@@ -56,7 +57,7 @@ export const upsert = internalMutation({
     status: v.optional(sandboxSnapshotsFields.status),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) =>

@@ -90,7 +90,6 @@ export function parseRunnerFrame(line: string): RunnerFrame | null {
   }
 }
 
-/** Convenience for callers that only need the bundle bucket name. */
 export function toolBundlesBucket(): string {
   return requireEnv("TOOL_BUNDLES_BUCKET_NAME");
 }

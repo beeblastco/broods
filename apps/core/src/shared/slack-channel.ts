@@ -1,7 +1,4 @@
-/**
- * Slack channel adapter.
- * Handle request verification, inbound normalization, and Slack Web API reply actions here.
- */
+/** Slack channel adapter. */
 
 import {
   cardToBlockKit,
@@ -102,24 +99,23 @@ export interface SlackSource {
 }
 
 /**
- * Converts the AI SDK full stream into Slack Chat SDK chunks. Text is buffered
- * and sent once at the end so partial answer text does not jump below the
- * progress card while reasoning and tool chunks are still updating.
+ * Converts the AI SDK full stream into Slack Chat SDK chunks.
  *
- * Only the final (stop) step's text becomes the reply. Some models repeat
- * their answer alongside tool calls in earlier steps; concatenating every
- * step's text posts the same answer twice. Interim text is kept as a fallback
- * for models that put the whole answer in a tool-call step.
+ * Text is buffered and sent once at the end so partial answer text does not jump
+ * below the progress card while reasoning and tool chunks are still updating.
+ * Only the final (stop) step's text becomes the reply: some models repeat their
+ * answer alongside tool calls in earlier steps, and concatenating every step
+ * posts the same answer twice. Interim text is kept as a fallback for models
+ * that put the whole answer in a tool-call step.
  *
  * Slack's chat.appendStream APPENDS every task_update's `details` to the task
- * card, it never replaces. Reasoning must therefore stream as new-suffix
- * deltas: sending the accumulated text re-appends each snapshot and renders
- * "TheThe user isThe user is asking…" (broods#115 follow-up).
+ * card, it never replaces, so reasoning streams as new-suffix deltas: sending
+ * the accumulated text re-appends each snapshot and renders "TheThe user isThe
+ * user is asking…" (broods#115 follow-up).
  *
- * Every yielded task_update costs one blocking Slack API round trip (the chunk
- * path in ChatStreamer flushes immediately), and this generator is the model
- * stream's only consumer, so per-delta reasoning yields throttle generation to
- * Slack's pace. Reasoning deltas are therefore coalesced and flushed at most
+ * Every yielded task_update costs one blocking Slack API round trip and this
+ * generator is the model stream's only consumer, so per-delta reasoning yields
+ * throttle generation to Slack's pace. Deltas are coalesced and flushed at most
  * once per REASONING_FLUSH_INTERVAL_MS.
  */
 export async function* toSlackStream(
@@ -991,10 +987,10 @@ function getSlackReplyThreadTs(
  * The files on a Slack message, as Chat SDK attachments.
  *
  * Slack never puts the bytes in the webhook, only a `url_private` that answers
- * nothing without the bot token, so each attachment carries a reader that adds
- * the bearer header. The Chat SDK builds the same thing, but only along its own
- * `handleWebhook` path, which this adapter does not take: it parses the raw
- * event so it can gate on channel, sender and mention before anything else runs.
+ * nothing without the bot token, so each attachment carries a reader that adds the
+ * bearer header. The Chat SDK builds the same thing, but only along its own
+ * `handleWebhook` path, which this adapter does not take: it parses the raw event
+ * to gate on channel, sender and mention before anything else runs.
  */
 function slackAttachments(
   files: NonNullable<SlackEvent["files"]>,
@@ -1045,12 +1041,11 @@ function slackFileMediaType(
 }
 
 /**
- * Downloads one Slack file with the bot token.
- *
- * The host is checked before the token is attached, and redirects are followed
- * by hand so the token is dropped the moment a hop leaves Slack. Slack also
- * answers an expired or unscoped token with 200 and an HTML login page rather
- * than a 401, so the content type is the only reliable failure signal.
+ * Downloads one Slack file with the bot token. The host is checked before the
+ * token is attached, and redirects are followed by hand so the token is dropped
+ * the moment a hop leaves Slack. Slack answers an expired or unscoped token with
+ * 200 and an HTML login page rather than a 401, so the content type is the only
+ * reliable failure signal.
  */
 async function fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
   let target = assertSlackFileUrl(url);

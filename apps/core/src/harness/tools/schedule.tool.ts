@@ -266,9 +266,9 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
         if (!existing || existing.agentId !== context.agentId) {
           return toolError(`No scheduled task ${cronId} belongs to this agent`);
         }
-        // Retiming and pausing are safe from anywhere, but instructions are
-        // content: rewriting them from elsewhere would put model-chosen text
-        // into a conversation this turn is not in, which schedule cannot do.
+        // Retiming and pausing are safe from anywhere, but rewriting the
+        // instructions would drop model-chosen text into a conversation this
+        // turn is not in.
         if (
           input.instructions !== undefined &&
           existing.conversationKey !== context.conversationKey

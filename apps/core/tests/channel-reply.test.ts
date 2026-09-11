@@ -1,10 +1,3 @@
-/**
- * Channel push-back tests.
- * Cover sendChannelReply rebuilding a channel sender from agent config + the
- * stored routing source, so a background job's result reaches the originating
- * chat outside the inbound webhook.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { sendChannelReply } from "../src/harness/integrations.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
@@ -81,7 +74,7 @@ describe("sendChannelReply", () => {
   });
 });
 
-function installFetchMock() {
+function installFetchMock(): { calls: FetchCall[]; responses: Response[] } {
   const calls: FetchCall[] = [];
   const responses: Response[] = [];
 

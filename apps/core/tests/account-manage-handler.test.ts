@@ -417,7 +417,15 @@ function createEvent(
   };
 }
 
-function fakeAccount() {
+function fakeAccount(): {
+  accountId: string;
+  username: string;
+  description: string;
+  secretHash: string;
+  status: "active";
+  createdAt: string;
+  updatedAt: string;
+} {
   return {
     accountId: "acct_test",
     username: "company-a",
@@ -429,7 +437,17 @@ function fakeAccount() {
   };
 }
 
-function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
+function fakeAgent(
+  overrides: Partial<{ status: "active" | "disabled" }> = {},
+): {
+  accountId: string;
+  agentId: string;
+  name: string;
+  status: "active" | "disabled";
+  config: {};
+  createdAt: string;
+  updatedAt: string;
+} {
   return {
     accountId: "acct_test",
     agentId: "agent_main",

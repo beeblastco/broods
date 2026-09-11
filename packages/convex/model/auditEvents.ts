@@ -58,7 +58,6 @@ export type ConfigAuditResource = {
 };
 
 /**
- * Resolve the provisioned account for a project, if one exists.
  * @param ctx Convex query or mutation context.
  * @param projectId project whose org owns the account.
  * @returns the account id, or null before account provisioning.
@@ -88,7 +87,6 @@ export function auditDetailsJson(details: Record<string, unknown>): string {
 }
 
 /**
- * Build dashboard actor metadata from an AuthKit user.
  * @param user AuthKit user metadata.
  * @returns audit actor fields for a dashboard mutation.
  */

@@ -2429,8 +2429,8 @@ test("terminal relay closes sockets that exceed the pending input buffer", () =>
     onclose: (() => void) | null = null;
     onerror: (() => void) | null = null;
     constructor(_url: string, _options?: unknown) {}
-    send(_chunk: unknown) {}
-    close() {
+    send(_chunk: unknown): void {}
+    close(): void {
       this.readyState = FakeWebSocket.CLOSED;
     }
   }
@@ -2480,8 +2480,8 @@ test("terminal upstream filters only the first session_init frame", () => {
     constructor(_url: string, _options?: unknown) {
       FakeWebSocket.instances.push(this);
     }
-    send(_chunk: unknown) {}
-    close() {
+    send(_chunk: unknown): void {}
+    close(): void {
       this.readyState = FakeWebSocket.CLOSED;
     }
   }
@@ -2663,7 +2663,9 @@ test("observability relay waits out span backpressure instead of shedding", asyn
   expect(sent).toEqual([{ type: "span", entry: span }]);
 });
 
-function gatewaySocket(sent: Array<Record<string, unknown>>) {
+function gatewaySocket(
+  sent: Array<Record<string, unknown>>,
+): Bun.ServerWebSocket<import("../src/agent.ts").AgentTestGatewayData> {
   return {
     data: {
       kind: "agent-test",
@@ -2803,7 +2805,12 @@ function observabilitySocket(): {
   return { socket: socket, sent: sent };
 }
 
-function gatewaySubagentFixture(childKind: "private" | "virtual") {
+function gatewaySubagentFixture(childKind: "private" | "virtual"): {
+  account: { accountId: string };
+  taskId: string;
+  childAgentId: string;
+  publicConversationKey: string;
+} {
   const account = { accountId: "acct_test" };
   const parentEventId = scopedDirectEventId(
     account.accountId,

@@ -1,9 +1,3 @@
-/**
- * Sandbox executor tests.
- * Cover provider selection + the single run() contract without invoking real
- * third-party services.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type {
   SandboxExecutorConfig,
@@ -914,7 +908,7 @@ describe("createSandboxExecutor", () => {
         outputLimitBytes: 4096,
       });
     };
-    const tokenCalls = () =>
+    const tokenCalls = (): number =>
       microvmSendMock.mock.calls.filter(
         (call) =>
           (call[0] as { _type?: string })?._type === "CreateMicrovmAuthToken",

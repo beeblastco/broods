@@ -3,12 +3,11 @@
  * Bun cannot load isolated-vm, so core spawns a Node runner
  * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../frames.ts.
  *
- * Two paths share this file. The default is a pool of long-lived hardened
- * workers keeping a tenant-keyed warm isolate cache (Convex-Funrun style).
- * Reuse the isolate within a tenant, fresh context per call, so cold starts and
- * per-call process spawns disappear. It grows on demand and reaps idle workers,
- * because core's pod budgets memory for one process, not a standing fleet.
- * ISOLATE_POOL=0 falls back to the one-shot spawner, a fresh runner per call.
+ * Two paths share this file. The default is a pool of long-lived workers each
+ * keeping a tenant-keyed warm isolate: reused within a tenant, fresh context per
+ * call. It grows on demand and reaps idle workers, because core's pod budgets
+ * memory for one process, not a standing fleet. ISOLATE_POOL=0 falls back to the
+ * one-shot spawner, a fresh runner per call.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -38,9 +37,8 @@ export async function* streamIsolatePayload(
   yield* streamViaOneShot(accountId, runPayload, options.abortSignal);
 }
 
-// Pooled by default. The one-shot path pays a Node spawn plus a cold isolate on
-// every call, which is most of what an isolate-tier tool costs; ISOLATE_POOL=0
-// is the way back to it.
+// The one-shot path pays a Node spawn plus a cold isolate on every call, which
+// is most of what an isolate-tier tool costs.
 function isolatePoolEnabled(): boolean {
   return optionalEnv("ISOLATE_POOL") !== "0";
 }
@@ -62,7 +60,7 @@ function forwardAbortSignal(
   abortSignal: AbortSignal | undefined,
 ): (() => void) | undefined {
   if (!abortSignal) return undefined;
-  const onAbort = () => {
+  const onAbort = (): void => {
     try {
       child.kill("SIGUSR2");
     } catch {}
@@ -321,7 +319,7 @@ class IsolateWorker {
     this.child.stdout.on("data", (chunk: string) => this.#onData(chunk));
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", () => {});
-    const die = (error: Error) => {
+    const die = (error: Error): void => {
       this.alive = false;
       this.#resolveReady();
       this.#sink?.fail(error);

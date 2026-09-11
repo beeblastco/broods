@@ -27,7 +27,6 @@ function parseReturnTo(value: string | null): string | null {
 }
 
 /**
- * Route handler that redirects to the WorkOS sign-in page.
  * @returns Redirect to WorkOS AuthKit sign-in with the PKCE verifier cookie attached
  */
 export async function GET(
@@ -40,11 +39,9 @@ export async function GET(
     redirectUri: redirectUri,
   });
 
-  // getSignInUrl sets the PKCE verifier cookie via next/headers (name prefix
-  // `wos-auth-verifier-`). NextResponse.redirect() returns a fresh response
-  // that does not always inherit those cookies, which makes the callback fail
-  // with "Auth cookie missing — cannot verify OAuth state". Read the cookies
-  // that were just set and forward the PKCE ones onto the redirect response.
+  // getSignInUrl sets the PKCE verifier cookie through next/headers, but
+  // NextResponse.redirect() builds a fresh response that does not always
+  // inherit it, and the callback then fails with "Auth cookie missing".
   const response = NextResponse.redirect(authorizationUrl);
   const cookieStore = await cookies();
   for (const cookie of cookieStore.getAll()) {

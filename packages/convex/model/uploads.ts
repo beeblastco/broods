@@ -38,7 +38,6 @@ export async function claimUploadedBlob(
   return blob;
 }
 
-/** Prune a batch of expired grants, then mint unless the account is at the cap. */
 export async function grantUpload(
   ctx: MutationCtx,
   accountId: Id<"accounts">,

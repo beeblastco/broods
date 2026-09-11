@@ -212,8 +212,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       ]);
       throw error;
     }
-    // Lost a concurrent create race: discard our duplicate and reconnect to the
-    // sandbox the winner recorded.
+    // Lost a concurrent create race: the winner's sandbox is the one to use.
     const winner = await getSandboxExternalId("e2b", ns);
     await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(
       () => {},

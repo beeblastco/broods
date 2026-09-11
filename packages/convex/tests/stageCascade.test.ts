@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { DataModel, Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -7,7 +7,8 @@ import { deleteStageContents } from "../stage";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const cascadeTest = () => convexTest(schema, modules);
+const cascadeTest = (): TestConvex<typeof schema> =>
+  convexTest(schema, modules);
 
 type T = ReturnType<typeof cascadeTest>;
 type StageScopedTable = Extract<
@@ -46,7 +47,11 @@ const STAGE_SCOPED_TABLES: StageScopedTable[] = [
   "cliExternalResources",
 ];
 
-async function seedFullStage(t: T) {
+async function seedFullStage(t: T): Promise<{
+  accountId: Id<"accounts">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}> {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {

@@ -828,7 +828,6 @@ export const takeNext = internalMutation({
   },
 });
 
-/** Extracts the account ID from an account-scoped runtime key. */
 function accountIdFromKey(value: string): string {
   const match = /^acct:([^:]+):/.exec(value);
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
@@ -1061,7 +1060,6 @@ async function expireStaleOwner(
   }
 }
 
-/** Loads the single coordinator row for a conversation. */
 async function getCoordinator(
   ctx: QueryCtx | MutationCtx,
   conversationKey: string,

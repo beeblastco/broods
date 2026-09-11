@@ -1,9 +1,3 @@
-/**
- * Telegram ask_questions rendering and button intake.
- * Cover the inline keyboard a prompt goes out with and how a click on one of
- * its buttons comes back as an answer rather than a chat message.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { ChannelActions, ChannelRequest } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";

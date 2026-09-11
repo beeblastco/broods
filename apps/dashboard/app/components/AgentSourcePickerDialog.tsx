@@ -9,7 +9,6 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 
-/** Dialog for selecting the source of a new agent configuration. */
 export function AgentSourcePickerDialog({
   open,
   onOpenChange,

@@ -69,7 +69,6 @@ export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
   return { roleId: roleId, ttlSeconds: value.ttlSeconds };
 }
 
-/** Validate a create-role request body. */
 export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const name = requireString(value.name, "name");
@@ -85,7 +84,6 @@ export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
   };
 }
 
-/** Validate an update-role request body. */
 export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const patch: UpdateRoleInput = {};

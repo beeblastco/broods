@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * Org switcher dropdown rendered in the header. Lists every org the user
- * belongs to, lets them switch active org, jump to org settings, or create
- * a new one via a dialog.
- */
-
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -59,7 +53,7 @@ export function OrgSwitcher(): React.JSX.Element {
 
   // Switching org invalidates whatever project the URL points at: send the user
   // to the gallery when the new org has none, so they can create their first.
-  async function handleSwitch(orgId: Id<"orgs">) {
+  async function handleSwitch(orgId: Id<"orgs">): Promise<void> {
     if (active?._id === orgId) return;
     try {
       await setActive({ orgId: orgId });
@@ -78,7 +72,7 @@ export function OrgSwitcher(): React.JSX.Element {
     }
   }
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     const name = newName.trim();
     if (!name) return;
     setCreating(true);

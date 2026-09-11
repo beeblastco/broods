@@ -1,7 +1,4 @@
 /**
- * Inbound audio transcription: which failure the agent is told to retry, which
- * one is handed back to it with the file, and which is the end of it.
- *
  * Driven with a stub model rather than a configured provider, because `harness.test.ts`
  * replaces the provider factories process-wide, so a test that needs the real
  * ones passes or fails on file order.

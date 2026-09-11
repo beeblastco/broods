@@ -18,6 +18,8 @@ import {
   listAccountSkills,
   validateSkillBundle,
   type SkillBundleFile,
+  type SkillMetadata,
+  type StoredSkill,
 } from "../model/skills";
 
 const skillMetadata = v.object({
@@ -47,7 +49,7 @@ export const createSkill = internalAction({
     expectedName: v.optional(v.string()),
   },
   returns: storedSkill,
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<StoredSkill> => {
     const files = await resolveSkillBundleFiles(args.input);
     const { metadata } = validateSkillBundle(files);
     if (
@@ -64,20 +66,18 @@ export const createSkill = internalAction({
 });
 
 /**
- * List an account's stored skills.
  * @param accountId account id owning the skills
  * @returns skill metadata entries
  */
 export const list = internalAction({
   args: { accountId: v.id("accounts") },
   returns: v.array(skillMetadata),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<SkillMetadata[]> => {
     return await listAccountSkills(args.accountId);
   },
 });
 
 /**
- * Load one stored skill's metadata and file manifest.
  * @param accountId account id owning the skill
  * @param skillName the skill name
  * @returns the stored skill, or null when it does not exist
@@ -85,13 +85,12 @@ export const list = internalAction({
 export const get = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.union(storedSkill, v.null()),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<StoredSkill | null> => {
     return await getSkill(args.accountId, args.skillName);
   },
 });
 
 /**
- * Delete one stored skill.
  * @param accountId account id owning the skill
  * @param skillName the skill name
  * @returns true when any objects were deleted
@@ -99,7 +98,7 @@ export const get = internalAction({
 export const remove = internalAction({
   args: { accountId: v.id("accounts"), skillName: v.string() },
   returns: v.boolean(),
-  handler: async (_ctx, args) => {
+  handler: async (_ctx, args): Promise<boolean> => {
     return (await deleteSkill(args.accountId, args.skillName)) > 0;
   },
 });

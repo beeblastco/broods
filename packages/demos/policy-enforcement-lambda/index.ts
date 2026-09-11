@@ -19,7 +19,7 @@ async function runDemo(
   label: string,
   agent: (typeof api.agents)[keyof typeof api.agents],
   conversationKeyPrefix: string,
-) {
+): Promise<void> {
   console.log(`\n=== ${label} ===\n`);
   for await (const chunk of client.stream(agent, {
     input: input,

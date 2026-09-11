@@ -130,7 +130,7 @@ export const createByAccount = internalMutation({
 });
 
 /** HTTP endpoint for `broods stage list` and `broods stage create`. */
-export const httpHandle = httpAction(async (ctx, req) => {
+export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {

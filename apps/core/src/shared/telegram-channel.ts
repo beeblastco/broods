@@ -1,7 +1,4 @@
-/**
- * Telegram channel adapter implementated as a ChannelAdapter.
- * Implements Telegram auth, message normalization, and reply actions through the Chat SDK Telegram adapter.
- */
+/** Telegram channel adapter. */
 
 import {
   TelegramAdapter,
@@ -388,16 +385,15 @@ function skippedStickerText(sticker: TelegramSticker | undefined): string {
 /**
  * The media on a Telegram message, as Chat SDK attachments.
  *
- * The SDK already extracts photos, video, audio, voice notes, documents and
- * video notes, each with a reader that resolves the file id and signs the
- * download with the bot token. That is what `parsed.attachments` holds. It has
- * no notion of a sticker, so that one is built here against the same reader:
- * `rehydrateAttachment` turns a file id back into a download, which is exactly
- * what a sticker needs and all it needs.
+ * `parsed.attachments` holds what the SDK extracts: photos, video, audio, voice
+ * notes, documents and video notes, each with a reader that resolves the file id
+ * and signs the download with the bot token. The SDK has no notion of a sticker,
+ * so that one is built here against the same reader, since `rehydrateAttachment`
+ * turns a file id back into a download.
  *
  * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
- * a model can read; `skippedStickerText` carries their emoji as the message
- * text instead, which says more than a failed download would.
+ * a model can read; `skippedStickerText` carries their emoji as the message text
+ * instead, which says more than a failed download would.
  */
 function telegramAttachments(
   transport: TelegramAdapter,

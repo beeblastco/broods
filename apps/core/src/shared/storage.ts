@@ -244,7 +244,6 @@ export interface Storage {
 
 let cached: Storage | null = null;
 
-/** Returns the process-wide Convex-backed storage boundary. */
 export function getStorage(): Storage {
   if (cached) return cached;
   const { convexStorage } = require("./convex/storage.ts");
@@ -253,12 +252,10 @@ export function getStorage(): Storage {
   return cached;
 }
 
-/** Resets the cached store. Tests only. */
 export function resetStorageForTests(): void {
   cached = null;
 }
 
-/** Injects a store for focused tests. */
 export function setStorageForTests(store: Storage | null): void {
   cached = store;
 }

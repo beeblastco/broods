@@ -7,7 +7,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.sandboxAgent, {
   input: [
     "Run this exact native mounted sandbox smoke test, covering env vars and outbound internet.",

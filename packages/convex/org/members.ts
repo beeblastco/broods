@@ -4,6 +4,7 @@
  */
 
 import { v } from "convex/values";
+import type { Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { getOrgMembership, requireOrgMember } from "../model/ownership/org";
@@ -94,7 +95,7 @@ export const add = mutation({
     role: v.optional(roleValidator),
   },
   returns: v.id("orgMembers"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"orgMembers">> => {
     const { orgId, email, role } = args;
 
     // Check authenticated user
@@ -151,7 +152,7 @@ export const updateRole = mutation({
     role: roleValidator,
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { membershipId, role } = args;
 
     // Check authenticated user
@@ -196,7 +197,7 @@ export const updateRole = mutation({
 export const remove = mutation({
   args: { membershipId: v.id("orgMembers") },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { membershipId } = args;
 
     // Check authenticated user

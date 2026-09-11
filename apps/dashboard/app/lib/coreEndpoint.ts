@@ -1,7 +1,5 @@
 "use client";
 
-/** Safe core service endpoint resolution for dashboard invoke/test URLs. */
-
 const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
 export type CoreEndpoint =

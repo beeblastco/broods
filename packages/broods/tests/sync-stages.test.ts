@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { BroodsSyncClient } from "../src/sync.ts";
 
-function clientWith(handler: (url: string, init: RequestInit) => Response) {
+function clientWith(handler: (url: string, init: RequestInit) => Response): {
+  client: BroodsSyncClient;
+  calls: Array<{ url: string; method: string; body?: string }>;
+} {
   const calls: Array<{ url: string; method: string; body?: string }> = [];
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",

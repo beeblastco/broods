@@ -116,7 +116,6 @@ export interface BenchComparison {
    * case slowed down more than the suite as a whole did. Null without a baseline.
    */
   deltaPct: number | null;
-  /** Whether this comparison should fail the run. */
   failing: boolean;
   note: string;
 }

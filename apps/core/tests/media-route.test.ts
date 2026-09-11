@@ -1,5 +1,4 @@
 /**
- * Public media route tests.
  * The sealed ticket is the only credential, so cover what it opens and what it refuses.
  */
 

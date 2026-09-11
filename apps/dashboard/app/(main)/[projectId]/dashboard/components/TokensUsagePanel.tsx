@@ -1,6 +1,5 @@
 "use client";
 
-/** Usage panel: live Convex usage rollups for tokens, activity, and compute, as charts and tables. */
 import { Section } from "@/app/components/Section";
 import {
   isRootSpanKind,
@@ -50,9 +49,6 @@ interface Props {
   apiKey?: string | undefined;
 }
 
-// In-progress totals taken straight off the live trace stream. Tokens, task/model
-// counts, and sandbox CPU are folded into the latest chart bin + headline tiles so
-// a run in flight grows live instead of showing nothing until it finalizes.
 interface LiveOverlay {
   inputTokens: number;
   outputTokens: number;
@@ -207,7 +203,10 @@ function formatUsd(value: number): string {
  * this counters that scale so labels stay aligned with the surrounding UI text. Uses
  * a callback ref so the observer attaches when the chart mounts (after data loads).
  */
-function useChartFontSize(viewBoxWidth: number, targetPx: number) {
+function useChartFontSize(
+  viewBoxWidth: number,
+  targetPx: number,
+): { ref: (el: HTMLDivElement | null) => void; fontSize: number } {
   const [fontSize, setFontSize] = useState(targetPx);
   const observerRef = useRef<ResizeObserver | null>(null);
 
@@ -335,8 +334,7 @@ function fillBucketsAcrossRange(
   return out;
 }
 
-/** Aggregate per-bucket rows into per-(provider, modelId) totals for the breakdown table. */
-function aggregateByModel(buckets: Bucket[]) {
+function aggregateByModel(buckets: Bucket[]): Bucket[] {
   const map = new Map<string, Bucket>();
   for (const b of buckets) {
     const key = `${b.modelProvider}::${b.modelId}`;
@@ -383,7 +381,7 @@ function ChartTooltip({
   xPct: number;
   yPct: number;
   children: React.ReactNode;
-}) {
+}): React.JSX.Element {
   return (
     <div
       className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
@@ -394,7 +392,6 @@ function ChartTooltip({
   );
 }
 
-/** Stacked-bar SVG chart over time, with per-bar hover breakdown. */
 function StackedBarChart({
   bins,
   binSeconds,
@@ -403,7 +400,7 @@ function StackedBarChart({
   formatValue = (n) => n.toLocaleString(),
   total,
   totalLabel = "Total",
-}: StackedBarChartProps) {
+}: StackedBarChartProps): React.JSX.Element {
   const width = 640;
   const height = 200;
   const padding = { top: 12, right: 12, bottom: 28, left: 44 };
@@ -513,7 +510,7 @@ function StackedBarChart({
           );
         })}
 
-        {/* X-axis labels, ~6 evenly spaced */}
+        {/* X-axis labels, at most 12 evenly spaced */}
         {bins.map((b, i) => {
           const stride = Math.max(1, Math.ceil(bins.length / 12));
           if (i % stride !== 0) return null;
@@ -577,8 +574,11 @@ interface InvocationsChartProps {
   binSeconds: number;
 }
 
-/** Twin-series bar chart for tasks (model.invocation.finished) and model calls (model.step.finished). */
-function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
+/** `invocations` counts model.invocation.finished spans, `modelCalls` counts model.step.finished. */
+function InvocationsChart({
+  bins,
+  binSeconds,
+}: InvocationsChartProps): React.JSX.Element {
   const width = 640;
   const height = 180;
   const padding = { top: 12, right: 12, bottom: 28, left: 44 };
@@ -736,7 +736,6 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
   );
 }
 
-/** Single labelled compute metric with a colour swatch. */
 function ComputeTile({
   label,
   value,
@@ -745,7 +744,7 @@ function ComputeTile({
   label: string;
   value: string;
   color: string;
-}) {
+}): React.JSX.Element {
   return (
     <div className="rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -778,9 +777,8 @@ export function TokensUsagePanel({
   const stats: UsageStats | null = data ?? null;
   const isFetching = data === undefined;
 
-  // Live trace overlay: Convex only records usage at task finalize, so without
-  // this a run in flight shows nothing until it ends. We fold the in-progress
-  // tokens into the latest bin + totals so the existing chart grows live.
+  // Convex only records usage at task finalize, so a run in flight needs the
+  // trace stream to show anything at all. See liveOverlayFromTraces.
   const { entries: liveSpans } = useObservabilityStream({
     stream: "traces",
     projectSlug: projectSlug,
@@ -794,8 +792,8 @@ export function TokensUsagePanel({
   );
   const isStreamingLive = liveOverlay.invocations > 0;
 
-  // Always span the window with zero-filled bins, even before the first query
-  // resolves, so the user sees a live, empty grid rather than a "no data" card.
+  // Zero-filled even before the first query resolves, so the first paint is an
+  // empty grid rather than a "no data" card.
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const bins = useMemo(() => {
     const merged = stats ? mergeByBucket(stats.buckets) : [];
@@ -862,7 +860,6 @@ export function TokensUsagePanel({
         title="Usage overview"
         description="Token consumption and model activity, metered live by the agent harness."
       >
-        {/* Range selector + live indicator */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-1 rounded-md border border-border bg-card p-1">
             {RANGE_OPTIONS.map((opt) => (

@@ -13,7 +13,14 @@ type T = ReturnType<typeof stageTest>;
 
 const AUTH_ID = "auth_owner";
 
-async function seedProject(t: T, projectName = "demo-app") {
+async function seedProject(
+  t: T,
+  projectName = "demo-app",
+): Promise<{
+  accountId: Id<"accounts">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",

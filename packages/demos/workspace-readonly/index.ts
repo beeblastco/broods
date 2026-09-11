@@ -4,14 +4,14 @@
  * resources.
  */
 
-import { BroodsClient } from "broods";
+import { type AgentReference, BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
 async function runAgent(
   label: string,
-  agentRef: any,
+  agentRef: AgentReference,
   input: string,
 ): Promise<void> {
   console.log(`\n[${label}]\n`);

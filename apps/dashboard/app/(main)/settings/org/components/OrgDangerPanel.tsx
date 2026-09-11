@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Org danger panel: typed-confirm delete that cascades to backend accounts
- * and all broods data owned by this org.
- */
-
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -16,7 +11,6 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 interface Props {
-  /** The org being deleted. */
   org: Doc<"orgs">;
 }
 
@@ -29,7 +23,7 @@ export function OrgDangerPanel({ org }: Props): React.JSX.Element {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  async function handleDelete() {
+  async function handleDelete(): Promise<void> {
     setDeleting(true);
     setDeleteError(null);
     try {

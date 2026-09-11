@@ -87,7 +87,14 @@ describe("parseLogStream", () => {
   // A guest holds the VM role and can name a stream after any tenant; without
   // core's signature the name is just an operator-visible id.
   it("refuses tenant labels for a stream core did not sign", () => {
-    const unlabeled = (sandboxId: string) => ({
+    const unlabeled = (
+      sandboxId: string,
+    ): {
+      accountId: undefined;
+      project: undefined;
+      stage: undefined;
+      sandboxId: string;
+    } => ({
       accountId: undefined,
       project: undefined,
       stage: undefined,

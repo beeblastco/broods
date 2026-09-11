@@ -88,7 +88,7 @@ if (import.meta.main) {
     port: Number(process.env.PORT ?? "3000"),
     hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: limits.idleTimeoutSeconds,
-    fetch: async function (request, server) {
+    fetch: async function (request, server): Promise<Response | undefined> {
       try {
         return await route(request, server);
       } catch (error) {
@@ -294,7 +294,7 @@ if (import.meta.main) {
       backpressureLimit: limits.backpressureBytes,
       closeOnBackpressureLimit: true,
       idleTimeout: limits.idleTimeoutSeconds,
-      open: function (socket) {
+      open: function (socket): void {
         activeSocketCount += 1;
         if (socket.data.kind === "observability")
           openObservabilitySocket(
@@ -305,7 +305,7 @@ if (import.meta.main) {
             socket as Bun.ServerWebSocket<TerminalGatewayData>,
           );
       },
-      message: async function (socket, rawMessage) {
+      message: async function (socket, rawMessage): Promise<void> {
         if (socket.data.kind === "terminal") {
           relayTerminalInput(
             socket as Bun.ServerWebSocket<TerminalGatewayData>,
@@ -332,7 +332,7 @@ if (import.meta.main) {
           getNatsConnection,
         );
       },
-      close: function (socket) {
+      close: function (socket): void {
         activeSocketCount = Math.max(0, activeSocketCount - 1);
         if (socket.data.kind === "terminal") {
           cleanupTerminalSocket(

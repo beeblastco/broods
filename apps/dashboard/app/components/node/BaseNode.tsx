@@ -28,7 +28,6 @@ export const statusConfig = {
   error: { color: "bg-red-500", text: "Error" },
 };
 
-/** Status display config for agent health states. */
 export const agentStatusConfig: Record<
   AgentHealthStatus,
   { color: string; text: string }
@@ -39,10 +38,9 @@ export const agentStatusConfig: Record<
   unhealthy: { color: "bg-red-500", text: "Unhealthy" },
 };
 
-const zoomSelector = (state: { transform: [number, number, number] }) =>
+const zoomSelector = (state: { transform: [number, number, number] }): number =>
   state.transform[2];
 
-/** Shared node shell with handles, label, and status indicator. */
 export function BaseNode({
   id,
   nodeType,

@@ -1,6 +1,6 @@
 /**
- * GitHub channel adapter.
- * Keep Broods-specific event filtering/source mapping here; delegate GitHub auth and API calls to Chat SDK.
+ * GitHub channel adapter. Event filtering and source mapping live here; auth and
+ * API calls go through the Chat SDK.
  */
 
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
@@ -369,7 +369,6 @@ async function buildReviewCommentMessage(options: {
         options.pullNumber,
         options.payload.sender,
       ),
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
@@ -380,7 +379,7 @@ async function createGitHubRestClient(options: {
   appId: string;
   privateKey: string;
   installationId: number;
-}) {
+}): Promise<{ get: <T>(path: string) => Promise<T> }> {
   const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(
     /\/+$/,
     "",
@@ -867,7 +866,6 @@ function parseIssuesEvent(
           },
         ],
         identity: githubIdentity(repoFullName, issueNumber, payload.sender),
-        // Spread so the typed source reaches a Record<string, unknown> field.
         source: { ...source },
       },
     };
@@ -912,7 +910,6 @@ function parseIssuesEvent(
         },
       ],
       identity: githubIdentity(repoFullName, issueNumber, payload.sender),
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
@@ -980,7 +977,6 @@ function parsePullRequestEvent(
           },
         ],
         identity: githubIdentity(repoFullName, pullNumber, payload.sender),
-        // Spread so the typed source reaches a Record<string, unknown> field.
         source: { ...source },
       },
     };
@@ -1025,7 +1021,6 @@ function parsePullRequestEvent(
         },
       ],
       identity: githubIdentity(repoFullName, pullNumber, payload.sender),
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };

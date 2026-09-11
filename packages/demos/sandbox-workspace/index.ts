@@ -10,7 +10,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.myAgent, {
   input: [
     "Run this workspace test. Use exactly one tool call per numbered step.",

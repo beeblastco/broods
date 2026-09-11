@@ -1,8 +1,3 @@
-/**
- * GitHub channel adapter tests.
- * Cover webhook auth, allow-list handling, and issue/comment normalization here.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
@@ -1020,7 +1015,16 @@ function testPrivateKey(): string {
   return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 }
 
-function createRequest(body: string, headers: Record<string, string>) {
+function createRequest(
+  body: string,
+  headers: Record<string, string>,
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: Record<string, string>;
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",
@@ -1030,7 +1034,11 @@ function createRequest(body: string, headers: Record<string, string>) {
   };
 }
 
-function createRepository() {
+function createRepository(): {
+  full_name: string;
+  name: string;
+  owner: { login: string };
+} {
   return {
     full_name: "owner/repo",
     name: "repo",

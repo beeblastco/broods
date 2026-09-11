@@ -1,8 +1,3 @@
-/**
- * Channel action tests.
- * Cover outbound Discord, Slack, and Pancake reply branches here with mocked fetch calls.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
@@ -1153,7 +1148,13 @@ describe("zalo channel actions", () => {
   });
 });
 
-function createMessage(source: Record<string, unknown>) {
+function createMessage(source: Record<string, unknown>): {
+  eventId: string;
+  conversationKey: string;
+  channelName: string;
+  content: never[];
+  source: Record<string, unknown>;
+} {
   return {
     eventId: "event-1",
     conversationKey: "conversation-1",
@@ -1163,7 +1164,7 @@ function createMessage(source: Record<string, unknown>) {
   };
 }
 
-function installFetchMock() {
+function installFetchMock(): { calls: FetchCall[]; responses: Response[] } {
   const calls: FetchCall[] = [];
   const responses: Response[] = [];
 
@@ -1192,7 +1193,7 @@ function toUrl(input: FetchInput): string {
   return input.url;
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status: status,
     headers: { "Content-Type": "application/json" },
@@ -1201,7 +1202,7 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
 
 // sendMediaGroup answers with one message per album entry, unlike the single
 // message every other send returns.
-function telegramMediaGroupResponse(count: number) {
+function telegramMediaGroupResponse(count: number): Response {
   return jsonResponse({
     ok: true,
     result: Array.from({ length: count }, (_unused, index) => ({
@@ -1230,7 +1231,7 @@ function telegramMediaGroup(body: RequestInit["body"]): {
   return { media: JSON.parse(String(body.get("media"))) };
 }
 
-function telegramMessageResponse(messageId: number, text: string) {
+function telegramMessageResponse(messageId: number, text: string): Response {
   return jsonResponse({
     ok: true,
     result: {

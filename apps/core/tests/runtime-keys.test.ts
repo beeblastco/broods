@@ -1,7 +1,3 @@
-/**
- * Runtime key helper tests.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   assertValidPublicEventId,

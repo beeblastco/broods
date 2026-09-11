@@ -1,6 +1,5 @@
 "use client";
 
-/** Dialog form for creating a new private agent configuration. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -64,7 +63,7 @@ export function CreateAgentConfigDialog({
   const [systemPrompt, setSystemPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  function resetForm() {
+  function resetForm(): void {
     setName("");
     setProvider("openai");
     setModelId("");
@@ -74,12 +73,12 @@ export function CreateAgentConfigDialog({
     setIsCreating(false);
   }
 
-  function handleClose() {
+  function handleClose(): void {
     resetForm();
     onOpenChange(false);
   }
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     if (!name.trim() || !modelId.trim() || !stageId) return;
 
     setIsCreating(true);

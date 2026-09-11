@@ -43,7 +43,7 @@ export function useEdgeFanOffset(
           type?: string;
         }>;
       }) => {
-        const sameKind = (edge: { type?: string }) =>
+        const sameKind = (edge: { type?: string }): boolean =>
           (edge.type ?? "default") === kind;
 
         // Centered index of `id` among same-kind edges attaching to (node, handle), counting
@@ -52,7 +52,7 @@ export function useEdgeFanOffset(
         const offsetAtHandle = (
           node: string,
           handle: string | null | undefined,
-        ) => {
+        ): number => {
           const norm = handle ?? null;
           const siblings = state.edges
             .filter(

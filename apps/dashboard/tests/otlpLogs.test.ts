@@ -32,7 +32,10 @@ function records(payload: { resourceLogs: unknown[] }): Record_[] {
   return resource.scopeLogs[0].logRecords;
 }
 
-function attribute(record: Record_, key: string) {
+function attribute(
+  record: Record_,
+  key: string,
+): Record<string, unknown> | undefined {
   return record.attributes.find((a) => a.key === key)?.value;
 }
 

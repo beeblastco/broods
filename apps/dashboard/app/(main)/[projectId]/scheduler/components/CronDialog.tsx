@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Create-or-edit dialog for a single cron job. Validates the schedule
- * expression client-side, then calls cronPublic.create or .update, which
- * write the crons row and its registered schedule in one transaction.
+ * The schedule expression is validated client-side, then cronPublic.create or
+ * .update writes the crons row and its registered schedule in one transaction.
  */
 
 import { Button } from "@/app/components/ui/button";
@@ -46,7 +45,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 type Mode = "create" | "edit";
 
-/** Extracts the editable text from a stored events list (first user text message). */
+/** The first user text message, which is the part the dialog lets you edit. */
 function eventsToText(events: Doc<"crons">["events"] | undefined): string {
   if (!Array.isArray(events)) return "";
   for (const message of events) {
@@ -66,13 +65,10 @@ function eventsToText(events: Doc<"crons">["events"] | undefined): string {
 }
 
 interface Props {
-  /** Whether this dialog creates a new job or edits an existing one. */
   mode: Mode;
-  /** Existing cron job (when mode === "edit"). */
+  /** Required when mode is "edit". */
   cron?: Doc<"crons">;
-  /** Agents available in the active org. */
   agents: Array<Doc<"agents">>;
-  /** Called when the dialog should close (after success or cancel). */
   onClose: () => void;
 }
 
@@ -114,7 +110,7 @@ export function CronDialog({
     scheduleValid &&
     !pending;
 
-  async function handleSubmit() {
+  async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
     // `pending` only blocks the next render, so two fast clicks can both
     // pass canSubmit and double-create the job. This ref closes in the

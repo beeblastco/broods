@@ -5,7 +5,7 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
 import {
   insertConfigAuditEvent,
@@ -47,7 +47,10 @@ export const pruneExpired = internalMutation({
     auditDeleted: v.number(),
     authFailuresDeleted: v.number(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ auditDeleted: number; authFailuresDeleted: number }> => {
     const now = args.now ?? Date.now();
     const batchSize = Math.min(
       Math.max(1, Math.floor(args.batchSize ?? DEFAULT_PRUNE_BATCH_SIZE)),
@@ -111,7 +114,7 @@ export const record = internalMutation({
     detailsJson: v.optional(v.string()),
   },
   returns: v.id("configAuditEvents"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"configAuditEvents">> => {
     return await insertConfigAuditEvent(ctx.db, {
       accountId: args.accountId,
       projectId: args.projectId,
@@ -141,7 +144,10 @@ export const recordAuthFailure = internalMutation({
     blocked: v.boolean(),
     retryAfterMs: v.optional(v.number()),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ blocked: boolean; retryAfterMs?: number }> => {
     const existing = await ctx.db
       .query("configHttpAuthFailures")
       .withIndex("by_key", (q) => q.eq("key", args.key))

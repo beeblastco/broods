@@ -6,6 +6,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { sha256Hex } from "./model/accountSecrets";
@@ -32,7 +33,10 @@ export const create = mutation({
     token: v.string(),
     keyHint: v.string(),
   }),
-  handler: async (ctx, { projectId, stageId, name }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, name },
+  ): Promise<{ _id: Id<"deployKeys">; token: string; keyHint: string }> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -81,7 +85,10 @@ export const create = mutation({
 export const list = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(deployKeyDoc),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Doc<"deployKeys">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -107,7 +114,7 @@ export const list = query({
 export const remove = mutation({
   args: { deployKeyId: v.id("deployKeys") },
   returns: v.id("deployKeys"),
-  handler: async (ctx, { deployKeyId }) => {
+  handler: async (ctx, { deployKeyId }): Promise<Id<"deployKeys">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -139,7 +146,6 @@ function deployKeyHint(token: string): string {
   return `${DEPLOY_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
-/** Generate a random `fp_deploy_<base64url>` token. */
 function generateDeployToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   let binary = "";

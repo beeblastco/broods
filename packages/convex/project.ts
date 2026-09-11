@@ -141,7 +141,7 @@ export const create = mutation({
     description: v.optional(v.string()),
   },
   returns: v.id("projects"),
-  handler: async (ctx, { name, description }) => {
+  handler: async (ctx, { name, description }): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
     const trimmedName = name.trim();
@@ -178,7 +178,7 @@ export const create = mutation({
 export const getById = query({
   args: { projectId: v.id("projects") },
   returns: v.union(v.null(), projectDoc),
-  handler: async (ctx, { projectId }) => {
+  handler: async (ctx, { projectId }): Promise<Doc<"projects"> | null> => {
     const authUser = await requireAuth(ctx);
 
     return getProjectForRole(ctx, authUser.id, projectId);
@@ -197,7 +197,7 @@ export const getById = query({
 export const getOrCreateDefault = mutation({
   args: {},
   returns: v.union(v.id("projects"), v.null()),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Id<"projects"> | null> => {
     const authUser = await requireAuth(ctx);
 
     // No org yet means no first project yet: onboarding creates the org first.
@@ -256,7 +256,7 @@ export const getOrCreateDefault = mutation({
 export const list = query({
   args: {},
   returns: v.array(projectDoc),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"projects">[]> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) return [];
 
@@ -267,7 +267,7 @@ export const list = query({
 export const remove = mutation({
   args: { projectId: v.id("projects") },
   returns: v.id("projects"),
-  handler: async (ctx, { projectId }) => {
+  handler: async (ctx, { projectId }): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
     const project = await getProjectForRole(
@@ -301,7 +301,13 @@ export const resolveTarget = query({
       stageId: v.union(v.null(), v.id("stages")),
     }),
   ),
-  handler: async (ctx, { project, stage }) => {
+  handler: async (
+    ctx,
+    { project, stage },
+  ): Promise<{
+    projectId: Id<"projects">;
+    stageId: Id<"stages"> | null;
+  } | null> => {
     const authUser = await requireAuth(ctx);
     const needle = project.trim().toLowerCase();
     const match = (await listProjects(ctx, authUser.id)).find(
@@ -334,7 +340,10 @@ export const update = mutation({
     description: v.optional(v.string()),
   },
   returns: v.id("projects"),
-  handler: async (ctx, { projectId, name, description }) => {
+  handler: async (
+    ctx,
+    { projectId, name, description },
+  ): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
     const project = await getProjectForRole(
@@ -423,7 +432,6 @@ async function listProjects(
   return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Generate a random adjective-noun project name, e.g. "amber-cove". */
 function randomProjectName(): string {
   const adj =
     RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];

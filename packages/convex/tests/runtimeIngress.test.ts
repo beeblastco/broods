@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -7,13 +7,13 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-/** Creates an isolated Convex test runtime. */
-function runtimeTest() {
+function runtimeTest(): TestConvex<typeof schema> {
   return convexTest(schema, modules);
 }
 
-/** Creates one active account for ingress tests. */
-async function createActiveAccount(t: ReturnType<typeof runtimeTest>) {
+async function createActiveAccount(
+  t: ReturnType<typeof runtimeTest>,
+): Promise<Id<"accounts">> {
   const now = Date.now();
 
   return await t.run(
@@ -29,12 +29,10 @@ async function createActiveAccount(t: ReturnType<typeof runtimeTest>) {
   );
 }
 
-/** Builds one fully scoped conversation key. */
 function conversationKeyFor(accountId: string): string {
   return `acct:${accountId}:agent:test-agent:api:test-conversation`;
 }
 
-/** Builds the common admission arguments for one candidate. */
 function admission(options: {
   activeOwnerOnly?: boolean;
   expectedOwnerTaskId?: string;

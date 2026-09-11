@@ -1,10 +1,8 @@
 "use client";
 
 /**
- * Renders the active org's sandbox snapshots/images with their unified build
- * status. Snapshots are captured from instances (see the instance detail sheet) or
- * registered by the image pipeline; this view is read-only. Clicking a row opens
- * the snapshot detail sheet.
+ * Read-only. A snapshot is captured from an instance, or registered by the
+ * image pipeline.
  */
 
 import type { Doc } from "@broods/convex/_generated/dataModel";
@@ -18,7 +16,6 @@ import {
 } from "./sandboxFormat";
 
 interface Props {
-  /** Snapshot rows from Convex. */
   snapshots: Array<Doc<"sandboxSnapshots">>;
 }
 

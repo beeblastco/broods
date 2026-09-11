@@ -151,15 +151,12 @@ function parseEnv(source: string): Record<string, string> {
 }
 
 function unquoteEnvValue(value: string): string {
-  // Double-quoted: strip the quotes and unescape \n and \".
   if (value.startsWith('"') && value.endsWith('"')) {
     return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
   }
-  // Single-quoted: strip the quotes, keep the contents literal.
   if (value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1);
   }
-  // Unquoted: drop a trailing ` # comment`, if present.
   const commentIndex = value.indexOf(" #");
 
   return commentIndex >= 0 ? value.slice(0, commentIndex).trimEnd() : value;

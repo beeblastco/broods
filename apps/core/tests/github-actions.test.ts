@@ -1,8 +1,3 @@
-/**
- * GitHub outbound action tests.
- * Cover installation auth and outbound REST routing here.
- */
-
 import {
   afterEach,
   beforeEach,
@@ -11,6 +6,7 @@ import {
   it,
   setSystemTime,
 } from "bun:test";
+import type { ChannelActions } from "../src/shared/channels.ts";
 import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 
@@ -227,7 +223,7 @@ function createSource(overrides: Partial<GitHubSource>): GitHubSource {
 function createGitHubActions(
   source: GitHubSource,
   privateKey = TEST_PRIVATE_KEY,
-) {
+): ChannelActions {
   return createGitHubChannel(
     "webhook-secret",
     "app-123",

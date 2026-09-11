@@ -11,7 +11,6 @@ import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
-/** Account-level environment variable CRUD; values remain write-only. */
 export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
   req: Request,
@@ -81,7 +80,6 @@ export async function handleAccountEnvVarRoute(
   return methodNotAllowed(["PUT", "DELETE"]);
 }
 
-/** Validate the stable uppercase name accepted by account env-var routes and references. */
 function validateAccountEnvVarName(name: string): void {
   if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
     throw new Error(

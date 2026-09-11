@@ -71,6 +71,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
         ownerGeneration: owner.ownerGeneration!,
         leaseTtlMs: LEASE_TTL_MS,
       });
+
       return [owner.outcome, next];
     },
   },

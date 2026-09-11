@@ -157,7 +157,6 @@ export async function handleEnvRoute(
   return json({ error: "Method not allowed" }, 405);
 }
 
-/** Log streaming moved to the gateway observability WebSocket; keep the 410. */
 export function handleLogsRoute(req: Request): Response {
   if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
@@ -171,7 +170,6 @@ export function handleLogsRoute(req: Request): Response {
   );
 }
 
-/** Manifest read on GET; full desired-state sync (with prune) on PUT. */
 export async function handleManifestRoute(
   ctx: ActionCtx,
   req: Request,
@@ -218,7 +216,6 @@ export async function handleMcpBundleUploadRoute(
   return json({ uploadUrl: grant.uploadUrl });
 }
 
-/** DELETE one manifest-managed resource by kind and name. */
 export async function handleResourceDeleteRoute(
   ctx: ActionCtx,
   req: Request,
@@ -242,7 +239,6 @@ export async function handleResourceDeleteRoute(
   return json({ deleted: true });
 }
 
-/** GET (minting when absent) the stage's runtime API key for reconnects. */
 export async function handleRuntimeKeyRoute(
   ctx: ActionCtx,
   req: Request,
@@ -274,7 +270,6 @@ export async function handleRuntimeKeyRoute(
     : json({ error: "Project or stage not found" }, 404);
 }
 
-/** Serialize a JSON response body with the given status. */
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status: status,
@@ -332,9 +327,6 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new Error("Cron job status must be active or paused");
 }
 
-/**
- * Delete a manifest-managed cron job by its configured name, if present.
- */
 async function deleteCronByName(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -595,10 +587,6 @@ function stringField(value: unknown, label: string): string {
   return value;
 }
 
-/**
- * Reconcile manifest cron resources against the account's cron jobs using the
- * transactional cron mutations in agent/crons.
- */
 async function syncCrons(
   ctx: ActionCtx,
   accountId: Id<"accounts">,

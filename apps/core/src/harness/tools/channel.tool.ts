@@ -69,11 +69,10 @@ interface SendUpdateInput {
   message: string;
 }
 
-// Documents, by the same sealed media link `send-images` hands pictures over as.
 // Two deliveries behind one tool: a provider with a document API gets the files
-// themselves, and one without gets their URLs as text. The model picks neither.
-// It names workspace paths and the channel decides, so a prompt written for one
-// channel keeps working on the next.
+// themselves, one without gets their sealed URLs as text. The model names
+// workspace paths and the channel decides, so a prompt written for one channel
+// keeps working on the next.
 export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
   // A workspace file can only leave as a media link, and sealing one needs the
@@ -81,8 +80,7 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
   if (workspaces.length === 0) {
-    // Without this line the drop is invisible in the trace. `sendImages` names
-    // what the same missing workspace did to the other half of the pair.
+    // Without this the drop is invisible in the trace.
     logWarn(
       "send-files not registered: sending files needs an attached workspace",
       {
@@ -97,6 +95,7 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
 
     return {};
   }
+
   return {
     "send-files": tool({
       description: sendFilesDescription(
@@ -129,23 +128,19 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   };
 }
 
-// Pictures, by the same sealed media link `send-files` hands documents over as.
-// A picture is a different message from a file. The recipient sees it without
+// A picture is a different message from a file: the recipient sees it without
 // opening anything, so it gets its own tool and its own provider endpoint. It
-// degrades rather than fails: a channel with no picture endpoint, or one that
-// rejects the batch, still delivers through `send-files`, because the recipient
-// would rather have the file than an apology.
+// degrades rather than fails, falling through to `send-files` when a channel has
+// no picture endpoint or rejects the batch.
 export function sendImagesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
-  // A channel with neither endpoint cannot deliver a picture as anything but a
-  // bare link, which is what `send-files` is already for. Offering a picture
-  // tool that never sends one would just mislead the model.
+  // With neither endpoint a picture can only go out as a bare link, which is
+  // what `send-files` is already for.
   if (!actions.sendImages && !actions.sendFiles) {
     return {};
   }
-  // A workspace file can only be handed over as a media link, which has to name
-  // its account; without one the tool stays URL-only rather than half-working.
-  // `sendFilesTool` already warns for that cause.
+  // Sealing a workspace file into a media link needs the owning account; without
+  // one the tool stays URL-only. `sendFilesTool` already warns for that cause.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 
@@ -177,9 +172,8 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
               `${images.length} image(s) sent to the current ${channelName} conversation.`,
             );
           } catch (error) {
-            // The provider took the batch and refused it. The reason belongs in
-            // the log, not the conversation; the recipient gets the pictures by
-            // the next route down rather than an error.
+            // The reason belongs in the log, not the conversation: the recipient
+            // gets the pictures by the next route down rather than an error.
             logWarn("Channel rejected an image batch, falling back to files", {
               channel: channelName,
               count: images.length,
@@ -334,9 +328,8 @@ export function sendUpdateTool(context: ChannelToolContext): ToolSet {
   };
 }
 
-// The last two rungs both tools share: hand the documents to the provider, and
-// if it has none, post the sealed links as text. The tool result names which
-// happened so the model does not send them a second time.
+// The last two rungs both tools share. The result names which one happened so
+// the model does not send the files a second time.
 async function deliverFiles(
   context: ChannelToolContext,
   files: ChannelFile[],
@@ -351,10 +344,9 @@ async function deliverFiles(
         `${files.length} file(s) sent to the current ${channelName} conversation.`,
       );
     } catch (error) {
-      // Uploading is the rung that can fail on the provider's terms rather than
-      // ours: Discord caps a free guild at 10 MB and Slack needs files:write on
-      // the token. The link below needs neither, so it is worth trying before
-      // giving the recipient nothing.
+      // Uploading fails on the provider's terms: Discord caps a free guild at
+      // 10 MB, Slack needs files:write on the token. The link below needs
+      // neither, so it is worth trying first.
       logWarn("Channel rejected a file upload, falling back to links", {
         channel: channelName,
         count: files.length,
@@ -381,9 +373,8 @@ async function resolveImages(
   filePaths: string[] | undefined,
   workspace: string | undefined,
 ): Promise<ChannelImage[]> {
-  // Two sources name two different sets of pictures. Picking one silently would
-  // send something the caller did not ask for, so refuse and let the model
-  // choose.
+  // Picking one of two given sources silently would send something the caller
+  // did not ask for, so refuse and let the model choose.
   if (filePaths?.length && urls?.length) {
     return toolError("Error: send-images takes file_paths or urls, not both");
   }
@@ -502,16 +493,13 @@ function sendImagesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
   };
 }
 
-// The same picture, offered as something to download instead of something to
-// look at. Only the delivery changes; the sealed link is the one already minted.
 function toChannelFile(image: ChannelImage): ChannelFile {
   return { ...image, type: "file" };
 }
 
-// One workspace file, addressed both ways a provider might want it: the sealed
-// link for the ones that fetch, and a reader for the ones that upload. The
-// reader stays uncalled unless a provider asks, which keeps the object off the
-// wire for Telegram and Zalo.
+// Addressed both ways a provider might want it: the sealed link for the ones
+// that fetch, a lazy reader for the ones that upload. The reader stays uncalled
+// unless asked, which keeps the bytes off the wire for Telegram and Zalo.
 async function workspaceAttachment<T extends "file" | "image">(
   type: T,
   ws: ResolvedWorkspace,

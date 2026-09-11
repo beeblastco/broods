@@ -1,11 +1,9 @@
 "use client";
 
 /**
- * Sandbox tab. Left side-nav (matching settings) switches between the active org's
- * live instances, their snapshots/images, and the read-only Security/Networking
- * policy posture. Instances are mirrored from broods's runtime into Convex;
- * suspend/resume/terminate/snapshot go through Convex actions that proxy to
- * broods's /v1/sandboxes endpoints.
+ * Instances are mirrored from broods's runtime into Convex; suspend, resume,
+ * terminate and snapshot go through Convex actions that proxy to broods's
+ * /v1/sandboxes endpoints.
  */
 
 import { Button } from "@/app/components/ui/button";
@@ -64,7 +62,6 @@ export default function SandboxPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
       <aside className="flex w-48 shrink-0 flex-col bg-transparent">
         <div className="px-6 pt-9.25 pb-3">
           <h2 className="text-xl font-semibold text-foreground">Sandboxes</h2>
@@ -89,7 +86,6 @@ export default function SandboxPage(): React.JSX.Element {
         </nav>
       </aside>
 
-      {/* Content area */}
       <div className="flex min-w-0 flex-1 flex-col overflow-auto">
         <div className="px-6 pt-9.25 pb-5 mx-auto w-full max-w-7xl shrink-0">
           <h2 className="text-xl font-semibold text-foreground">
@@ -133,8 +129,8 @@ export default function SandboxPage(): React.JSX.Element {
 /**
  * The instance sheet's Logs tab streams over the same gateway socket as the
  * Monitoring tab: the stage's slugs from its deployment plus a short-lived
- * stage session any member can mint. The permanent runtime key never has to
- * reach this page. Minting a key stays on the Monitoring tab.
+ * stage session any member can mint, so the permanent runtime key never has to
+ * reach this page.
  */
 function useObservabilityScope(
   projectId: Id<"projects">,

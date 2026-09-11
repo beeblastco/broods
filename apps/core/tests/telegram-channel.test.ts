@@ -1,11 +1,5 @@
-/**
- * Telegram channel adapter tests.
- * Cover webhook auth, allow-list filtering, mention gating, and inbound message
- * normalization here.
- */
-
 import { describe, expect, it } from "bun:test";
-import type { InboundMessage } from "../src/shared/channels.ts";
+import type { ChannelAdapter, InboundMessage } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 const GROUP_CHAT = { id: 123, type: "supergroup" };
@@ -690,7 +684,7 @@ async function parseTelegram(
   return parsed.message;
 }
 
-function createGatedAdapter(botUsername: string = "tracy_bot") {
+function createGatedAdapter(botUsername: string = "tracy_bot"): ChannelAdapter {
   return createTelegramChannel(
     "bot-token",
     "secret",
@@ -704,7 +698,11 @@ function createGatedAdapter(botUsername: string = "tracy_bot") {
 
 // Telegram tags each `@name` and `/command` in the text with an entity, and the
 // mention gate reads those rather than searching the text.
-function entityFor(text: string, token: string, type: string) {
+function entityFor(
+  text: string,
+  token: string,
+  type: string,
+): { type: string; offset: number; length: number }[] {
   return [{ type: type, offset: text.indexOf(token), length: token.length }];
 }
 
@@ -713,7 +711,13 @@ function createRequest(
   headers: Record<string, string> = {
     "x-telegram-bot-api-secret-token": "secret",
   },
-) {
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: Record<string, string>;
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",

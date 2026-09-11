@@ -87,8 +87,6 @@ Usage notes:
           if (spoken) {
             return spoken;
           }
-          // Read through the mount when one is available (sandbox-backed, or a
-          // read-only mount); otherwise read S3 objects directly (sandbox: null opt-out).
           const runner = ws.sandbox ?? ws.readMount;
           if (!runner) {
             return await s3ReadNumbered(ws, rel, offset, limit);

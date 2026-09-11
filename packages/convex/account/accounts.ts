@@ -5,6 +5,7 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
 import { accountsFields } from "../schema";
@@ -24,7 +25,7 @@ const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 export const getById = internalQuery({
   args: { accountId: v.string() },
   returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
 
     return accountId ? await ctx.db.get(accountId) : null;
@@ -34,7 +35,7 @@ export const getById = internalQuery({
 export const getBySecretHash = internalQuery({
   args: { secretHash: v.string() },
   returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
     return await ctx.db
       .query("accounts")
       .withIndex("by_secretHash", (q) => q.eq("secretHash", args.secretHash))
@@ -45,7 +46,7 @@ export const getBySecretHash = internalQuery({
 export const getByOrgId = internalQuery({
   args: { orgId: v.string() },
   returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
     return await ctx.db
       .query("accounts")
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
@@ -56,13 +57,12 @@ export const getByOrgId = internalQuery({
 export const list = internalQuery({
   args: {},
   returns: v.array(accountDoc),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"accounts">[]> => {
     return await ctx.db.query("accounts").collect();
   },
 });
 
 /**
- * Creates an account with a unique organization binding.
  * @returns the complete persisted account document
  */
 export const create = internalMutation({
@@ -74,7 +74,7 @@ export const create = internalMutation({
     status: v.optional(statusValidator),
   },
   returns: accountDoc,
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accounts">> => {
     const existing = await ctx.db
       .query("accounts")
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
@@ -103,7 +103,6 @@ export const create = internalMutation({
 });
 
 /**
- * Updates an existing account's mutable fields.
  * @returns the updated document, or null when the account does not exist
  */
 export const update = internalMutation({
@@ -115,7 +114,7 @@ export const update = internalMutation({
     secretHash: v.optional(v.string()),
   },
   returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
     const { accountId, ...patch } = args;
     const account = await ctx.db.get(accountId);
     if (!account) {
@@ -146,7 +145,7 @@ export const update = internalMutation({
 export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const complete = await deleteAccountContentsBatch(ctx, args.accountId);
     if (!complete) {
       await ctx.scheduler.runAfter(0, internal.account.accounts.remove, {
@@ -158,11 +157,10 @@ export const remove = internalMutation({
   },
 });
 
-/** Removes one bounded batch of an account's related rows. */
 export const removeBatch = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     return await deleteAccountContentsBatch(ctx, args.accountId);
   },
 });

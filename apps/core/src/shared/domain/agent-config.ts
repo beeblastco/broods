@@ -375,10 +375,10 @@ export type AgentLifecycleEventName =
   | "subagent.task.started"
   | "subagent.task.finished";
 
-// Channel points a code hook can intercept (inbound message / before-send).
-// The full set of events a user code hook can subscribe to. Re-exported from
-// its single home in convex so an event added there reaches this union without
-// a second edit here.
+// The full set of events a user code hook can subscribe to (agent lifecycle plus
+// the channel points: inbound message, before-send). Re-exported from its single
+// home in convex so an event added there reaches this union without a second
+// edit here.
 export type { AgentHookEventName };
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;

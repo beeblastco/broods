@@ -1,6 +1,5 @@
 "use client";
 
-/** Agent runtime policy list and JSON document editor. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -64,7 +63,7 @@ export function PoliciesPanel({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  function beginNew() {
+  function beginNew(): void {
     setEditing("new");
     setName("");
     setDescription("");
@@ -72,7 +71,7 @@ export function PoliciesPanel({
     setError(null);
   }
 
-  function beginEdit(policy: Doc<"agentPolicies">) {
+  function beginEdit(policy: Doc<"agentPolicies">): void {
     setEditing(policy);
     setName(policy.name);
     setDescription(policy.description ?? "");
@@ -80,7 +79,7 @@ export function PoliciesPanel({
     setError(null);
   }
 
-  async function savePolicy() {
+  async function savePolicy(): Promise<void> {
     if (!stageId || !name.trim()) return;
     let document: unknown;
     try {
@@ -117,7 +116,7 @@ export function PoliciesPanel({
     }
   }
 
-  async function deletePolicy() {
+  async function deletePolicy(): Promise<void> {
     if (!deletingPolicy) return;
     setIsDeleting(true);
     setDeleteError(null);

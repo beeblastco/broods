@@ -1,7 +1,4 @@
 /**
- * Agent lifecycle webhook emitter tests.
- * Cover event filtering, delivery, error handling, and value serialization.
- *
  * Delivery runs against a real TLS server on loopback rather than a stubbed
  * `fetch`, because `fireWebhook` connects through the pinned guard: it resolves
  * the name itself and opens the socket to the address it validated, so there is

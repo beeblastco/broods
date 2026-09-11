@@ -1,4 +1,3 @@
-/** Reusable settings section with a title, optional description, and danger styling. */
 import { cn } from "@/app/lib/utils";
 
 export function Section({

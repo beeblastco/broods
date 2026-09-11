@@ -47,7 +47,6 @@ const HARNESS_FEATURES = [
   { key: "memory", label: "Memory" },
 ] as const;
 
-/** Details editor for a workspaceConfig reference node. */
 export function WorkspaceResourceDetailsTab({
   data,
   editName,
@@ -92,13 +91,13 @@ export function WorkspaceResourceDetailsTab({
     return value.enabled === false;
   });
 
-  function setConfig(patch: Record<string, unknown>) {
+  function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: mergeDropping(config, patch) });
   }
 
   // Storage merges rather than replaces: a bring-your-own bucket lives here, and
   // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
-  function setStorage(patch: Record<string, unknown>) {
+  function setStorage(patch: Record<string, unknown>): void {
     setConfig({
       storage: mergeDropping({ ...storage, provider: "s3" }, patch),
     });
@@ -277,7 +276,6 @@ export function WorkspaceResourceDetailsTab({
   );
 }
 
-/** Details editor for a sandboxConfig reference node. */
 export function SandboxResourceDetailsTab({
   data,
   editName,
@@ -303,7 +301,7 @@ export function SandboxResourceDetailsTab({
     ? (config.network as { mode?: string })
     : {};
 
-  function setConfig(patch: Record<string, unknown>) {
+  function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
   }
 
@@ -397,7 +395,6 @@ export function SandboxResourceDetailsTab({
   );
 }
 
-/** Raw JSON editor for resource node config snapshots. */
 export function ResourceConfigTab({
   nodeType,
   data,
@@ -443,7 +440,7 @@ function ResourceNameFields({
   resourceIdLabel: string;
   resourceIdPlaceholder: string;
   onResourceIdChange: (resourceId: string | undefined) => void;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
@@ -496,7 +493,7 @@ function TextField({
   value: string;
   placeholder?: string;
   onCommit: (value: string) => void;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[11px] text-muted-foreground">{label}</label>
@@ -528,7 +525,7 @@ function SelectField({
   onValueChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
   disabled?: boolean;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs font-medium text-foreground">{label}</span>

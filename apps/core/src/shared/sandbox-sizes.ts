@@ -1,14 +1,14 @@
 /**
  * Predefined sandbox sizes, the canonical (vcpu, memoryMb, storageGb) catalog
  * shared by sandbox config validation, the workdir resource mapping, and the
- * Convex `sandboxInstances` mirror. Sizes are the user-facing knob (`config.size`)
- * that reconciles issue #78's tiers with each backend's real limits.
+ * Convex `sandboxInstances` mirror. `config.size` is the user-facing knob that
+ * reconciles issue #78's tiers with each backend's real limits.
  *
- * The specs are canonical/advisory: workdir applies them as create-time resources
- * (clamping vcpu to its allowed set); MicroVM bakes size into the image so the
- * specs are display-only there; daytona/e2b/vercel size natively. The control-plane
- * mirror type lives here too so the Convex writer and the executors share one shape
- * without importing across the _shared/harness boundary.
+ * The specs are advisory: workdir applies them as create-time resources (clamping
+ * vcpu to its allowed set), MicroVM bakes size into the image so they are
+ * display-only, daytona/e2b/vercel size natively. The control-plane mirror type
+ * lives here too so the Convex writer and the executors share one shape without
+ * importing across the shared/harness boundary.
  */
 
 import type {

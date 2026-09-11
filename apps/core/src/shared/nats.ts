@@ -1,34 +1,28 @@
 /**
  * NATS transport for the WebSocket gateway integration.
  *
- * One publish, two read paths. Each response chunk is published ONCE to a
- * conversation-scoped subject via core NATS; the durable `WS_RESPONSES`
- * JetStream stream is bound to that subject and captures the same message. So:
- *   - a connected client reads live via core `subscribe` (lowest latency), and
- *   - a client that dropped mid-stream reconnects and RESUMES the still-streaming
- *     turn from the JetStream consumer, then continues live.
- * Core publish stores nothing itself, and the stream is the only copy, so this is
- * NOT double storage. Switching read paths is the consuming app's choice; the
- * platform just provides both.
+ * Each response chunk is published ONCE to a conversation-scoped subject via
+ * core NATS; the durable `WS_RESPONSES` JetStream stream is bound to that
+ * subject and captures the same message. A connected client reads live via core
+ * `subscribe`; a client that dropped mid-stream resumes the still-streaming turn
+ * from the JetStream consumer, then continues live.
  *
  * Subject: `v1.<accountId>.<agentId>.ws.response.<token>` where
  * `<token> = base64url(publicConversationKey)` (the conversationKey is not a
  * safe NATS subject token on its own). Ordering cursor: the JetStream message
  * sequence (`JsMsg.seq`) for stream readers, or the envelope `sequence`/`eventId`
- * for core subscribers; dedup a core→stream switch by either.
+ * for core subscribers; dedup a core->stream switch by either.
  *
  * The stream is a short-lived RESUME buffer, not the source of truth. The
  * conversation/status database is. Output is retained until `max_age`; one event
  * never purges the conversation-scoped subject because later FIFO work may still
  * be publishing or attachable there.
  *
- * Transport is selected by the `NATS_URL` scheme via {@link connectNats}:
- *   - `wss://` / `ws://` -> WebSocket (`nats.ws`), for out-of-cluster callers
- *     like a locally run core server (the cluster exposes only a `wss://` ingress externally).
- *   - `nats://` / `tls://` -> core TCP (`nats`), for in-cluster callers on the
- *     internal network (lower latency; core 4222 isn't exposed externally).
- * Moving a service in-cluster is then just a `NATS_URL` change, not a code change.
- * Pass a token for token-auth servers.
+ * {@link connectNats} picks the transport from the `NATS_URL` scheme:
+ * `wss://`/`ws://` uses `nats.ws` for out-of-cluster callers (the cluster
+ * exposes only a `wss://` ingress externally), `nats://`/`tls://` uses the core
+ * TCP client for in-cluster callers (core 4222 is not exposed externally).
+ * Moving a service in-cluster is then a `NATS_URL` change, not a code change.
  */
 
 import { connect as connectTcp } from "nats";
@@ -71,8 +65,6 @@ export interface NatsStreamEvent {
 }
 
 // One stream covers every conversation; per-subject retention bounds growth.
-// These are the storage knobs. The stream is only a short replay buffer; durable
-// status and conversation history remain the source of truth.
 const RESPONSE_STREAM_NAME = "WS_RESPONSES";
 const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
 const RESPONSE_STREAM_STORAGE = StorageType.File; // Memory = faster/cheaper, lost on restart
@@ -84,12 +76,10 @@ const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 // Durable observability stream. Captures every logs/traces publish so the
-// dashboard sees recent activity on (re)connect with FULL fidelity, even for a
-// run that happened while no tab was watching. Unlike WS_RESPONSES this is not
-// purged on persist: it IS the recent-history buffer. Tempo/Loki remain the
-// long-term store for anything older than max_age. A span is published several
-// times (running -> ok); those are distinct messages, not duplicates, so there
-// is no Nats-Msg-Id / duplicate_window here.
+// dashboard sees recent activity on (re)connect at full fidelity, even for a run
+// that happened while no tab was watching. Tempo/Loki own anything older than
+// max_age. A span is published several times (running -> ok); those are distinct
+// messages, not duplicates, so there is no Nats-Msg-Id / duplicate_window here.
 const OBSERVABILITY_STREAM_NAME = "OBSERVABILITY";
 const OBSERVABILITY_SUBJECT_WILDCARDS = [
   "v1.*.*.*.logs.>",
@@ -105,14 +95,9 @@ const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 // Shared so token publishing does not allocate an encoder per chunk.
 const ENCODER = new TextEncoder();
 
-/**
- * Connect to NATS, picking the transport from the URL scheme: `wss://`/`ws://`
- * use the WebSocket client (out-of-cluster callers), anything else
- * (`nats://`/`tls://`) uses the core TCP client (in-cluster callers, lower
- * latency). Both ship the same base client + JetStream API, so the returned
- * connection is interchangeable for every helper here. Pass `token` for
- * token-auth servers.
- */
+// Both transports ship the same base client + JetStream API, so the returned
+// connection is interchangeable for every helper here. Pass `token` for
+// token-auth servers.
 export async function connectNats(options: {
   servers: string;
   token?: string;
@@ -356,11 +341,10 @@ export async function ensureObservabilityStream(
 
 /**
  * Gateway read path: a JetStream consumer over the observability stream filtered
- * to one project/stage scope. `startTime` (ISO) replays recent history from
- * that point; the ordered consumer then keeps delivering live messages, so this
- * single consumer both backfills the recent window (full fidelity, no Tempo
- * truncation) and tails live. Returns an async-iterable of JsMsg; decode
- * `msg.data` as an ObservabilityLogEntry (logs) or ObservabilitySpanRow (traces).
+ * to one project/stage scope. `startTime` (ISO) replays recent history from that
+ * point and the ordered consumer keeps delivering live, so one consumer both
+ * backfills and tails. Decode `msg.data` as an ObservabilityLogEntry (logs) or
+ * ObservabilitySpanRow (traces).
  */
 export async function readObservabilityStream(options: {
   connection: NatsConnection;
@@ -385,9 +369,8 @@ export async function readObservabilityStream(options: {
 
 /**
  * Flush the shared observability connection so fire-and-forget log/span publishes
- * reach the server (where the OBSERVABILITY stream stores them) before the
- * request returns or the process shuts down. Best-effort; a flush failure never
- * affects the run.
+ * reach the server before the request returns or the process shuts down.
+ * Best-effort; a flush failure never affects the run.
  */
 export async function flushObservabilityNats(): Promise<void> {
   if (!_obsNatsConn) return;
@@ -400,8 +383,7 @@ export async function flushObservabilityNats(): Promise<void> {
 
 /**
  * Live read path: a core subscription to a conversation's response subject.
- * Lowest latency, for a connected client. Returns an async-iterable of `Msg`;
- * decode `msg.data` as a {@link NatsStreamEvent}. There is no replay, so use
+ * Decode `msg.data` as a {@link NatsStreamEvent}. There is no replay, so use
  * {@link readConversationStream} to catch up after a disconnect.
  */
 export function subscribeConversationLive(options: {
@@ -422,9 +404,9 @@ export function subscribeConversationLive(options: {
 /**
  * Replay read path: a JetStream consumer over a conversation's stored stream.
  * `startSequence` resumes from a known `JsMsg.seq`; `startTime` resumes from an
- * ISO timestamp (useful when switching over from a core subscription, which
- * doesn't see `seq`); neither replays from the start. Returns an async-iterable
- * of JsMsg; decode `msg.data` as a {@link NatsStreamEvent}.
+ * ISO timestamp (for switching over from a core subscription, which doesn't see
+ * `seq`); neither replays from the start. Decode `msg.data` as a
+ * {@link NatsStreamEvent}.
  */
 export async function readConversationStream(options: {
   connection: NatsConnection;
@@ -450,9 +432,9 @@ export async function readConversationStream(options: {
 }
 
 /**
- * How many messages are currently buffered for a conversation. 0 means the
- * no replay output is retained for the subject. A reconnecting client should use
- * the durable terminal status/result instead of assuming token replay exists.
+ * How many messages are currently buffered for a conversation. 0 means no replay
+ * output is retained for the subject, so a reconnecting client must use the
+ * durable terminal status/result instead of assuming token replay exists.
  */
 export async function conversationBufferedCount(options: {
   connection: NatsConnection;
@@ -504,10 +486,10 @@ export async function conversationLastSequence(options: {
   }
 }
 
-// Every sequence here is scoped to the conversation's own subject: `state`
+// Every sequence here is scoped to the conversation's own subject; `state`
 // boundaries on the shared stream belong to whichever conversation published
 // them. There is no first sequence because the client API cannot resolve one
-// per subject. A filtered consumer given no start sequence replays from it.
+// per subject.
 export async function conversationReplaySnapshot(options: {
   connection: NatsConnection;
   accountId: string;

@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
-/** What a connection-holding process sees: a channel's bot token and the webhook to post to. */
 
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -19,7 +18,7 @@ type Scope = {
   stageId: Id<"stages">;
 };
 
-const t = () => convexTest(schema, modules);
+const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 beforeEach(() => {

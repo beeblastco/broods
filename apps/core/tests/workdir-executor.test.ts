@@ -1,5 +1,4 @@
 /**
- * workdir (`sandbox` provider) executor unit/contract tests.
  * Drive the REAL @mv37/workdir SDK with a mocked global fetch so the SDK's own
  * request serialization + response parsing are exercised against the documented
  * wire shapes (docs/API.md): create/exec/delete, network + S3-mount mapping,
@@ -8,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { WorkdirSandboxExecutor as WorkdirExecutor } from "../src/harness/sandbox/workdir-executor.ts";
 
 // Captured before any test mutates it, so we can restore the native fetch and
 // not leak the mock into other test files (e.g. the live integration test).
@@ -200,7 +200,9 @@ function createBody(): Record<string, unknown> {
   return (create?.body ?? {}) as Record<string, unknown>;
 }
 
-async function newExecutor(config: Record<string, unknown>) {
+async function newExecutor(
+  config: Record<string, unknown>,
+): Promise<WorkdirExecutor> {
   const { WorkdirSandboxExecutor } =
     await import("../src/harness/sandbox/workdir-executor.ts");
   const options =

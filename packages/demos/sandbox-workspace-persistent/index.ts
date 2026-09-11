@@ -13,7 +13,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.reservedAgent, {
   input: [
     "Run this reserved-sandbox test. Use exactly one bash call per numbered step.",

@@ -1,9 +1,3 @@
-/**
- * OAuth refresh-token grant for external MCP servers: token mint, caching and
- * margin-driven re-mint in harness/mcp/oauth.ts, plus mcpConnection's oauth
- * overlay and its refusal of an Authorization header next to oauth.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { mcpConnection } from "../src/harness/mcp/client.ts";
 import {

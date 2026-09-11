@@ -6,7 +6,6 @@
 
 import { isPlainObject } from "./objects";
 
-/** One channel row in the directory response: Slack channel id/name plus privacy and bot-membership flags. */
 export type SlackDirectoryEntry = {
   id: string;
   name: string;
@@ -24,7 +23,6 @@ export type SlackDirectoryResult =
       reason: "ratelimited" | "missing_scope" | "invalid_auth" | "slack_error";
     };
 
-/** One page outcome: either the parsed Slack payload or a terminal failure to relay. */
 type SlackDirectoryPage =
   | { data: Record<string, unknown> }
   | { failure: Extract<SlackDirectoryResult, { ok: false }> };
@@ -68,7 +66,6 @@ export async function fetchSlackChannelDirectory(
   return { ok: true, channels: channels, truncated: cursor !== undefined };
 }
 
-/** Collect well-formed channel entries from one page payload into `channels`. */
 function appendSlackDirectoryEntries(
   channels: SlackDirectoryEntry[],
   data: Record<string, unknown>,

@@ -154,7 +154,6 @@ export function useObservabilityStream(
     cacheEntries(connKey, entries);
   }, [connKey, entries]);
 
-  // Refs so the effect closure captures stable references.
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyedRef = useRef(false);

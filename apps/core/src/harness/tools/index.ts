@@ -2,12 +2,10 @@
  * Harness tool registry.
  * Keep static tool imports and agent-configured tool selection here.
  *
- * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
- * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
- * toolApproval in the harness.
- * Core ships no built-in external tools: a config.tools key names a
- * provider-defined tool resolved off the configured AI SDK provider (see
- * provider-tool.ts); remote tools come from config.mcp.
+ * Sandbox tools (bash/read/write/edit/glob/grep) come from a referenced sandbox
+ * + workspaces, with approval produced as AI SDK v7 toolApproval in the harness.
+ * Core ships no built-in external tools: config.tools names provider-defined
+ * tools (see provider-tool.ts), and remote tools come from config.mcp.
  */
 
 import type { ToolSet } from "ai";
@@ -121,13 +119,6 @@ export async function createTools(
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
 
-  // Sandbox tool surface. Tool availability is derived per workspace:
-  //  - bash: the agent's own sandbox (no workspace, or the standalone target),
-  //    or in any sandbox-backed workspace.
-  //  - read/glob: every workspace (sandbox-backed via the mount, read-only
-  //    workspaces straight from S3).
-  //  - write/edit/grep: sandbox-backed workspaces only.
-  // Per-call sandbox approval is handled by the harness-level v7 toolApproval.
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const agentSandbox = context.agentSandbox;
@@ -161,10 +152,9 @@ export async function createTools(
   const hasBackgroundWorkspace = workspaces.some((workspace) =>
     sandboxSupportsBackgroundJobs(workspace.sandbox),
   );
-  // eventId identifies the turn that spawned the job (stored as parentEventId on the
-  // async-tool-result record); conversationKey identifies which conversation to resume
-  // when the job completes in a future continuation worker. delivery carries the
-  // originating channel/WebSocket so the result is pushed back there, not just polled.
+  // eventId is stored as the async-tool-result parentEventId; conversationKey is
+  // what a future continuation worker resumes; delivery carries the originating
+  // channel/WebSocket so the result is pushed back there, not just polled.
   const backgroundContext =
     hasBackgroundWorkspace && context.session
       ? {
@@ -238,9 +228,8 @@ export async function createTools(
   if (context.channel) {
     Object.assign(
       tools,
-      // send-images and send-files both deliver a workspace file, so they take
-      // the same workspace list the sandbox tools read from, plus the account
-      // that seals the link.
+      // Both deliver a workspace file, so they take the same workspace list the
+      // sandbox tools read from, plus the account that seals the link.
       sendFilesTool({
         ...context.channel,
         workspaces: workspaces,
@@ -394,8 +383,6 @@ export async function createTools(
 
   await registerMcpTools(tools, agentConfig, context);
 
-  // Auto-add the background-job status tool when the agent has any async tool or
-  // a reserved sandbox that can launch background jobs.
   if (asyncToolNames.size > 0 || hasBackgroundWorkspace) {
     Object.assign(
       tools,
@@ -427,7 +414,6 @@ function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
   }
 }
 
-/** One resolved server: its row, connection, and the filtered remote tools. */
 interface ResolvedMcpServer {
   serverId: string;
   serverConfig: AgentMcpEntry;

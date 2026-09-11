@@ -4,6 +4,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
+import type { AsyncAgentResultRecord } from "../async-agent-result.ts";
 import {
   getOwnedSubagent,
   SUBAGENT_TOOL_PROPERTIES,
@@ -12,6 +13,11 @@ import {
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
+
+type SubagentStatusOutput = Pick<
+  AsyncAgentResultRecord,
+  "status" | "response" | "error"
+>;
 
 export default function getSubagentStatusTool(
   context: SubagentToolContext,
@@ -26,7 +32,7 @@ export default function getSubagentStatusTool(
         required: ["taskId", "agentId"],
         additionalProperties: false,
       }),
-      execute: async function (input) {
+      execute: async function (input): Promise<SubagentStatusOutput> {
         const record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));

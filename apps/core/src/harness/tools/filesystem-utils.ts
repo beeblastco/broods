@@ -4,9 +4,9 @@
  * path normalization, quoting, approval policy, and result formatting here.
  *
  * Each workspace carries its own effective sandbox (see ResolvedWorkspace): a
- * sandbox-backed workspace compiles tools to a bash `code` string run through
- * its provider; a sandbox-less workspace is read-only and served directly from
- * S3 (read/glob only, no mount, no Lambda cold start).
+ * sandbox-backed workspace compiles tools to a bash `code` string run through its
+ * provider; a sandbox-less workspace is read-only (read/glob only), served through
+ * its `readMount` or, when the ref opts out with `sandbox: null`, straight from S3.
  */
 
 import type { JSONSchema7 } from "ai";
@@ -201,7 +201,6 @@ export function resolveWorkspace(
 export function workspaceParamSchema(
   workspaces: ResolvedWorkspace[],
 ): JSONSchema7 | undefined {
-  // Only expose the selector when there is a genuine choice.
   if (workspaces.length <= 1) {
     return undefined;
   }
@@ -317,7 +316,6 @@ async function runSandboxOn(
 }
 
 /**
- * Launch a detached background job in a persistent sandbox and return its handle.
  * The work runs inside the sandbox (not the harness), so it survives the request.
  * The caller supplies the jobId (so the tracking row exists before the job can
  * finish) and an optional completion callback the job POSTs when it exits.
@@ -370,8 +368,7 @@ export function editNeedsApproval(
   try {
     const workspace = resolveWorkspace(workspaces, requested);
     // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
-    // call falls through to the tool's clean "workspace is read-only" rejection
-    // instead of prompting for an approval it can never satisfy.
+    // call falls through to the tool's clean "workspace is read-only" rejection.
     if (workspace && !workspace.sandbox) {
       return false;
     }
@@ -432,9 +429,9 @@ function permissionModeFor(
   return workspace?.sandbox?.permissionMode ?? "ask";
 }
 
-// S3-direct read-only path (workspaces with no sandbox). Reads/lists straight from
-// the workspace's storage bucket under the same prefix the mount uses, so it sees
-// exactly what a sandbox-backed run would. A bring-your-own bucket resolves its own
+// S3-direct read-only path (workspaces with neither a sandbox nor a readMount).
+// Reads/lists straight from the workspace's storage bucket under the same prefix the
+// mount uses, so it sees the same tree. A bring-your-own bucket resolves its own
 // bucket/prefix and short-lived assume-role credentials; the managed bucket reads on
 // the harness's own role (no per-read STS) under `<namespace>/`.
 const READ_DEFAULT_LIMIT = 2000;

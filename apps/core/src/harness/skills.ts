@@ -35,8 +35,7 @@ import {
 // source of truth, and each load copies a clean read/run checkout into the run path so
 // the agent can execute bundled scripts in the sandbox. The canonical copy lives under
 // `.claude/skills/<name>`; the same bundle is mirrored into SKILL_MIRROR_DIRS for tools
-// that expect those industry-standard locations. Staged files are refreshed by the next
-// load from the account-owned bundle.
+// that expect those locations.
 const SKILL_CANONICAL_DIR = ".claude/skills";
 const SKILL_MIRROR_DIRS = [".agents/skills"];
 
@@ -246,7 +245,6 @@ async function stageSkillBundleForSandbox(
     ...mirrorStagePrefixes(workspaceNamespace, parsed.skillName),
   ];
 
-  // Refresh every staged location from source: drop stale files, copy the bundle in.
   await Promise.all(
     prefixes.map((prefix) =>
       stageSkillFiles(workspaceBucket, prefix, sourceFiles, sourcePathSet),

@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Resolves the agent config wired to a non-agent canvas node so its side-panel
- * tabs can edit a slice of that agent's nested config (workspace, tools.X,
- * skills.X, workspace.sandbox, etc.).
- */
 import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
 import {
   fromNestedAgentConfig,
@@ -123,7 +118,7 @@ export function useConnectedAgentConfig(
         return writeChain.current;
       }
 
-      const run = async () => {
+      const run = async (): Promise<void> => {
         const base = latestConfig.current;
         if (!base) {
           return;

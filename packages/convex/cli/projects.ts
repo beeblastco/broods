@@ -46,7 +46,7 @@ const projectValidator = v.object({
 });
 
 /** HTTP endpoint for `broods project list` and `broods project delete`. */
-export const httpHandle = httpAction(async (ctx, req) => {
+export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {

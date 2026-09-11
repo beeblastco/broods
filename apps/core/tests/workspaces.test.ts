@@ -1,8 +1,3 @@
-/**
- * Workspace + sandbox runtime resolution tests.
- * Cover shared-namespace derivation, bindings, and reference resolution.
- */
-
 import { afterEach, describe, expect, it } from "bun:test";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {

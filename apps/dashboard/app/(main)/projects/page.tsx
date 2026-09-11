@@ -1,6 +1,5 @@
 "use client";
 
-/** Project gallery: lists every project in the active org and lets the user open or create one. */
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -12,7 +11,6 @@ import { Folder, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
-/** Full-page grid of the user's projects with create and empty states. */
 export default function ProjectsPage(): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const { isLoading, isAuthenticated } = useConvexAuth();

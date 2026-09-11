@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Slide-in detail for one sandbox instance. The Detail tab shows the instance's
- * runtime identity + size and hosts the snapshot + terminate actions; the Logs tab
- * tails the guest's own stdout/stderr for providers with a log stream (MicroVM);
- * the Terminal tab is a live in-guest PTY for workdir instances and a bounded
- * command runner for providers without a PTY endpoint.
- */
-
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -47,15 +39,13 @@ import {
 } from "./SandboxLogTail";
 
 interface Props {
-  /** The instance whose detail is shown. */
   instance: Doc<"sandboxInstances">;
-  /** Current project route id, used to build trace deep links. */
+  /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs for the Logs tab; null before the stage deploys. */
   observability: SandboxObservabilityScope | null;
   /** The parent table's clock, so both tick together off one timer. */
   now: number;
-  /** Close the sheet. */
   onClose: () => void;
 }
 
@@ -117,10 +107,9 @@ export function SandboxInstanceSheet({
   // providers keep the bounded command runner.
   const supportsLiveTerminal =
     instance.provider === "sandbox" || instance.provider === "lambda";
-  // Only the self-hosted workdir `sandbox` provider can capture a running instance
-  // into a reusable image. AWS MicroVM (`lambda`) and the third-party providers have
-  // no runtime snapshot-to-image API, so the capture action is hidden for them.
-  // Their state is still preserved across idle via suspend/resume.
+  // Only the workdir `sandbox` provider has a runtime snapshot-to-image API, so
+  // the capture action is hidden elsewhere. The others still keep state across
+  // idle through suspend/resume.
   const supportsSnapshot = instance.provider === "sandbox";
   // Only a provider with its own guest log stream can be tailed, and only a
   // deployment-scoped run has lines the gateway can find.
@@ -137,7 +126,7 @@ export function SandboxInstanceSheet({
     return `/${projectId}/dashboard?${next.toString()}`;
   }
 
-  async function handleSnapshot() {
+  async function handleSnapshot(): Promise<void> {
     if (!instance.sandboxConfigId || !snapName.trim()) return;
     setSnapPending(true);
     setSnapMessage(null);
@@ -156,7 +145,7 @@ export function SandboxInstanceSheet({
     }
   }
 
-  async function handleTerminate() {
+  async function handleTerminate(): Promise<void> {
     if (!instance.sandboxConfigId) return;
     setTerminating(true);
     try {
@@ -171,7 +160,7 @@ export function SandboxInstanceSheet({
     }
   }
 
-  async function handleRefresh() {
+  async function handleRefresh(): Promise<void> {
     if (!instance.sandboxConfigId) return;
     setRefreshing(true);
     setRefreshMessage(null);
@@ -188,7 +177,7 @@ export function SandboxInstanceSheet({
     }
   }
 
-  async function handleCommand() {
+  async function handleCommand(): Promise<void> {
     if (!instance.sandboxConfigId || !command.trim()) return;
     const code = command.trim();
     setCommandPending(true);
@@ -388,7 +377,7 @@ export function SandboxInstanceSheet({
   );
 }
 
-/** The instance's recent audit events, newest first. */
+/** Expects `events` newest first. */
 function ActivityList({
   events,
   now,
@@ -461,7 +450,6 @@ function auditDetail(event: SandboxAuditEvent): string {
   return "ok";
 }
 
-/** The bounded command runner for providers without a PTY endpoint. */
 function CommandRunner({
   canRun,
   command,
@@ -579,7 +567,6 @@ function CommandRunner({
   );
 }
 
-/** One label/value detail row. */
 function Field({
   label,
   value,
@@ -595,7 +582,6 @@ function Field({
   );
 }
 
-/** The identity, size, and timing rows of the Detail tab. */
 function InstanceDetailFields({
   instance,
   now,
@@ -682,7 +668,6 @@ function InstanceDetailFields({
   );
 }
 
-/** Inline link button that deep-links to a trace in the dashboard. */
 function TraceLink({
   traceId,
   href,

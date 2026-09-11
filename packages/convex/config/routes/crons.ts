@@ -16,10 +16,8 @@ import { toCronResponse, toCronRunResponse } from "../../model/responses";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
 /**
- * Cron CRUD: list/create on the collection, get/patch/delete by id, plus the
- * run history at /v1/crons/{id}/runs. Table writes and schedule registration
- * happen together in agent/crons; mirrors core's former handleCronRoute
- * contract.
+ * List/create on the collection, get/patch/delete by id. Mirrors core's former
+ * handleCronRoute contract.
  */
 export async function handleCronRoute(
   ctx: ActionCtx,
@@ -83,7 +81,6 @@ export async function handleCronRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/** Collection verbs: list crons on GET, create through agent/crons on POST. */
 async function handleCronCollectionRoute(
   ctx: ActionCtx,
   req: Request,
@@ -126,7 +123,6 @@ async function handleCronCollectionRoute(
   return methodNotAllowed(["GET", "POST"]);
 }
 
-/** GET the run history for one cron job, honoring the `limit` query param. */
 async function handleCronRunsRoute(
   ctx: ActionCtx,
   req: Request,
@@ -146,7 +142,6 @@ async function handleCronRunsRoute(
   return json({ runs: records.map((record) => toCronRunResponse(record)) });
 }
 
-/** PATCH one cron through agent/crons and audit the change. */
 async function patchCronRoute(
   ctx: ActionCtx,
   req: Request,

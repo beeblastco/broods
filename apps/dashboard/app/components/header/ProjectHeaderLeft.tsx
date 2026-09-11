@@ -1,6 +1,5 @@
 "use client";
 
-/** Project name switcher and (when on a project page) stage selector in the header. */
 import { StageSelector } from "@/app/components/StageSelector";
 import { ProjectSelector } from "@/app/components/ProjectSelector";
 import { useParams } from "next/navigation";

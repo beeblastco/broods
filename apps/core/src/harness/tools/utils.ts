@@ -42,14 +42,10 @@ export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
   },
 };
 
-/**
- * Return native text from execute so the AI SDK selects ToolResultOutput.text.
- */
+/** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
 
-/**
- * Throw native errors from execute so the AI SDK selects its error result path.
- */
+/** Throw native errors from execute so the AI SDK selects its error result path. */
 export const toolError = (value: string): never => {
   throw new Error(
     isFatalSandboxSetupError(value) ? `Sandbox setup failed: ${value}` : value,
@@ -129,6 +125,7 @@ export function prependTextToUserParts(
   parts: UserContentPart[],
 ): UserContentPart[] {
   const [first, ...rest] = parts;
+
   return first?.type === "text"
     ? [{ ...first, text: `${prefix}${first.text}` }, ...rest]
     : [{ type: "text", text: prefix }, ...parts];

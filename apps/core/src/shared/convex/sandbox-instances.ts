@@ -1,10 +1,9 @@
 /**
  * Storage mirror writes for sandbox instance lifecycle, plus the ownership read
  * those endpoints authorize against. The account-manage suspend/resume/terminate
- * endpoints call the writes after the provider lifecycle call succeeds so the
- * dashboard's live sandboxInstances query reflects the new state. Fire-and-forget
- * safe, wrapped so a mirror failure never fails the lifecycle request. See usage.ts
- * for the same pattern.
+ * endpoints write after the provider lifecycle call succeeds, so the dashboard's
+ * live sandboxInstances query reflects the new state. Wrapped so a mirror failure
+ * never fails the lifecycle request, the same pattern as usage.ts.
  */
 
 const internal: any = require("@broods/convex/_generated/api").internal;

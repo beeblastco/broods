@@ -1,6 +1,5 @@
 "use client";
 
-/** Settings page with sidebar navigation and panel-based content layout. */
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
@@ -39,9 +38,9 @@ export default function SettingsPage(): React.JSX.Element {
   const projectId = params.projectId as Id<"projects">;
   const { stageId } = useStage();
 
-  // Build a tab href that preserves the current params (e.g. ?stage=) so the link is shareable
-  // and can be opened in a new browser tab.
-  const tabHref = (tabId: SettingsTab) => {
+  // Carries the current params (e.g. ?stage=) so the link survives a share or a
+  // middle-click into a new browser tab.
+  const tabHref = (tabId: SettingsTab): string => {
     const next = new URLSearchParams(searchParams.toString());
     next.set("tab", tabId);
 
@@ -51,7 +50,6 @@ export default function SettingsPage(): React.JSX.Element {
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
-  // Resolve the stage to configure: the URL selection, else the default, else the first.
   const activeStage =
     stages?.find((stage) => stage._id === stageId) ??
     stages?.find((stage) => stage.isDefault) ??
@@ -63,7 +61,7 @@ export default function SettingsPage(): React.JSX.Element {
   const tab = TABS.find((t) => t.id === activeTab);
   const activeLabel = tab?.label ?? "Settings";
 
-  const renderPanel = () => {
+  const renderPanel = (): React.JSX.Element => {
     switch (activeTab) {
       case "general":
         return <ProjectGeneralPanel projectId={projectId} />;
@@ -91,13 +89,11 @@ export default function SettingsPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
       <aside className="flex w-56 shrink-0 flex-col bg-transparent">
         <div className="px-6 pt-9.25 pb-3">
           <h2 className="text-xl font-semibold text-foreground">Settings</h2>
         </div>
         <nav className="flex flex-col gap-4 px-3">
-          {/* Base settings group */}
           <div className="flex flex-col gap-0.5">
             {TABS.filter((t) => !t.danger).map((t) => (
               <Button
@@ -118,7 +114,6 @@ export default function SettingsPage(): React.JSX.Element {
             ))}
           </div>
 
-          {/* Danger zone group */}
           <div className="flex flex-col gap-0.5">
             {TABS.filter((t) => t.id === "danger").map((t) => (
               <Button
@@ -141,7 +136,7 @@ export default function SettingsPage(): React.JSX.Element {
         </nav>
       </aside>
 
-      {/* Content area: min-w-0 lets long values truncate instead of widening the column */}
+      {/* min-w-0 lets long values truncate instead of widening the column */}
       <div className="flex min-w-0 flex-1 flex-col overflow-auto">
         {/* Page title, aligned with sidebar header height */}
         <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">

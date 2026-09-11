@@ -351,8 +351,6 @@ function killGroup(child) {
   }
 }
 
-// Only the exact accountId + sha256 the child was spawned for, and never past
-// its call or idle bounds.
 function lineStartsWith(linePrefix, linePrefixLen, prefix) {
   return (
     linePrefixLen >= prefix.length &&

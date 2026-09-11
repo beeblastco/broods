@@ -34,7 +34,7 @@ export const listForActiveOrg = query({
     stageId: v.id("stages"),
   },
   returns: v.array(sandboxInstanceDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"sandboxInstances">[]> => {
     const account = await getActiveAccountForUser(ctx);
     if (!account) return [];
 
@@ -92,7 +92,7 @@ export const upsert = internalMutation({
     ephemeral: sandboxInstancesFields.ephemeral,
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
@@ -148,7 +148,7 @@ export const isControllable = internalQuery({
     reservationKey: v.string(),
   },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
@@ -175,7 +175,7 @@ export const isControllable = internalQuery({
 export const listForAccount = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(sandboxInstanceDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"sandboxInstances">[]> => {
     return await ctx.db
       .query("sandboxInstances")
       .withIndex("by_accountId_projectId_and_stageId", (q) =>
@@ -247,7 +247,10 @@ export const remove = internalMutation({
     externalId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, reservationKey, externalId }) => {
+  handler: async (
+    ctx,
+    { accountId, reservationKey, externalId },
+  ): Promise<null> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>

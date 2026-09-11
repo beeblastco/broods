@@ -1,6 +1,5 @@
 "use client";
 
-/** Deploy keys panel: scoped CLI tokens that deploy only to the active stage. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -13,13 +12,10 @@ import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
-  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active stage the keys are scoped to, or null while none is selected. */
   stageId: Id<"stages"> | null;
 }
 
-/** Lists, creates (with one-time reveal), and revokes deploy keys for the active stage. */
 export function DeployKeysPanel({
   projectId,
   stageId,
@@ -39,13 +35,12 @@ export function DeployKeysPanel({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Key pending delete confirmation.
   const [deletingKey, setDeletingKey] = useState<Doc<"deployKeys"> | null>(
     null,
   );
   const [isDeletingKey, setIsDeletingKey] = useState(false);
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     if (!name.trim() || busy || !stageId) return;
     setBusy(true);
     setError(null);
@@ -67,14 +62,14 @@ export function DeployKeysPanel({
     }
   }
 
-  function copyToken() {
+  function copyToken(): void {
     if (!revealed) return;
     navigator.clipboard.writeText(revealed);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
-  async function handleDeleteKey() {
+  async function handleDeleteKey(): Promise<void> {
     if (!deletingKey) return;
     setIsDeletingKey(true);
     try {

@@ -1,8 +1,3 @@
-/**
- * Bearer auth tests: admin secret, service-token path, deployment API keys,
- * role sessions, and account lookup.
- */
-
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";

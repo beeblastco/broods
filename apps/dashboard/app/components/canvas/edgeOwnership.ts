@@ -21,7 +21,6 @@ export function isCodeManagedOwner(managedBy: unknown): boolean {
   return managedBy === "cli" || managedBy === "api";
 }
 
-/** Return true when an edge is explicitly marked as code-managed. */
 export function isCodeManagedEdge(edge: {
   id: string;
   data?: unknown;

@@ -1,5 +1,4 @@
 /**
- * V8 isolate tier tests (hook user-code runner).
  * Real isolated-vm runner tests run when BROODS_TEST_ISOLATE_RUNNER_PATH points
  * at a runner.mjs whose directory has node_modules/isolated-vm installed.
  */

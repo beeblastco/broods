@@ -1,8 +1,3 @@
-/**
- * Account-management sandbox lifecycle tests plus route-removal assertions for
- * sandbox/workspace CRUD that moved to the Convex config plane.
- */
-
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { coreRequest, responseJson } from "./helpers/http.ts";
 import {
@@ -556,7 +551,14 @@ function fetchResponse(payload: unknown, status = 200): Response {
   } as unknown as Response;
 }
 
-function fakeAccount() {
+function fakeAccount(): {
+  accountId: string;
+  username: string;
+  secretHash: string;
+  status: "active";
+  createdAt: string;
+  updatedAt: string;
+} {
   return {
     accountId: ACCOUNT_ID,
     username: "company-a",

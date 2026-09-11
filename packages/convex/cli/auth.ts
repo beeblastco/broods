@@ -96,7 +96,10 @@ type OnboardingOrg = {
 export const createLoginCode = mutation({
   args: { codeChallenge: v.optional(v.string()) },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
-  handler: async (ctx, { codeChallenge }) => {
+  handler: async (
+    ctx,
+    { codeChallenge },
+  ): Promise<{ code: string; expiresAt: number }> => {
     if (
       codeChallenge !== undefined &&
       !PKCE_CHALLENGE_PATTERN.test(codeChallenge)
@@ -152,7 +155,10 @@ export const createOnboardingOrg = internalMutation({
     name: v.string(),
   },
   returns: v.union(v.null(), onboardingContextValidator),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof onboardingContextValidator> | null> => {
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
     if (!resolved) return null;
     const { token } = resolved;
@@ -197,7 +203,7 @@ export const createOnboardingOrg = internalMutation({
 });
 
 /** HTTP exchange endpoint: swap a one-time WorkOS-backed login code for a CLI token. */
-export const exchange = httpAction(async (ctx, req) => {
+export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (req.method !== "POST") {
     return json({ error: "Method not allowed" }, 405);
   }
@@ -326,7 +332,10 @@ export const exchangeLoginCode = internalMutation({
 export const getOnboardingContext = internalMutation({
   args: { tokenHash: v.string() },
   returns: v.union(v.null(), onboardingContextValidator),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof onboardingContextValidator> | null> => {
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
     if (!resolved) return null;
 
@@ -378,7 +387,10 @@ export const selectOnboardingOrg = internalMutation({
     orgId: v.id("orgs"),
   },
   returns: v.union(v.null(), onboardingContextValidator),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof onboardingContextValidator> | null> => {
     const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
     if (!resolved) return null;
     const { token } = resolved;

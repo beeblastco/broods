@@ -3,7 +3,7 @@
  * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
  */
 
-import type { TextStreamPart, ToolSet } from "ai";
+import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
@@ -628,7 +628,16 @@ export function normalizeHttpServiceUrl(value: string): string {
 function directRunBody(
   input: AgentRunInput & { agentId: string; agentName?: string },
   prefix: "cli" | "async",
-) {
+): {
+  agentId: string;
+  eventId: string;
+  conversationKey: string;
+  events: ModelMessage[];
+  mode?: AgentRunInput["mode"];
+  idempotencyKey?: string;
+  system?: AgentRunOverrides["system"];
+  model?: AgentRunOverrides["model"];
+} {
   const eventId = input.eventId ?? `${prefix}-${Date.now()}`;
 
   return {

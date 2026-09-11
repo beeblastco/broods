@@ -1,6 +1,5 @@
 "use client";
 
-/** Account panel: profile, avatar, account overview, and preferences. */
 import { Section } from "@/app/components/Section";
 import {
   Avatar,
@@ -29,7 +28,6 @@ import { useEffect, useRef, useState } from "react";
 
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
-/** User profile, avatar, account overview, and theme preferences. */
 export function AccountPanel(): React.JSX.Element {
   const { theme, setTheme } = useTheme();
   const { user: authUser } = useAuth();
@@ -107,7 +105,7 @@ export function AccountPanel(): React.JSX.Element {
   const planConfig = PLAN_CONFIGS[userPlan];
   const showUpgrade = !isMaxPlan(userPlan);
 
-  async function handleSaveProfile() {
+  async function handleSaveProfile(): Promise<void> {
     const trimmedName = name.trim();
     if (!trimmedName) {
       setSaveError("Display name is required.");

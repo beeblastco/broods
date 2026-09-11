@@ -16,10 +16,8 @@ const EMPTY_ANALYSIS: CanvasInfraAnalysis = {
 
 const InfraAnalysisContext = createContext<CanvasInfraAnalysis>(EMPTY_ANALYSIS);
 
-/** Provider wrapping the ReactFlow canvas with the latest infra analysis. */
 export const InfraAnalysisProvider = InfraAnalysisContext.Provider;
 
-/** Read the shared canvas infra analysis from within a node. */
 export function useInfraAnalysis(): CanvasInfraAnalysis {
   return useContext(InfraAnalysisContext);
 }

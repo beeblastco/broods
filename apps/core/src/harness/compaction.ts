@@ -17,7 +17,7 @@ import {
   stripReasoningFromMessages,
 } from "./pruning.ts";
 
-const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.
+const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000;
 const COMPACTION_MARKER = "<session-compaction-summary>";
 const COMPACTION_MARKER_END = "</session-compaction-summary>";
 
@@ -132,8 +132,7 @@ export function estimateContextLength(
   system: SystemModelMessage[],
   messages: ModelMessage[],
 ): number {
-  // This is a serialized character count, not a word/token count.
-  // It is a cheap provider-independent threshold for the MVP compaction trigger.
+  // A serialized character count, not tokens: cheap and provider-independent.
   return JSON.stringify({ system: system, messages: messages }).length;
 }
 

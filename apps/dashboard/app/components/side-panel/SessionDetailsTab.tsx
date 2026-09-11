@@ -61,7 +61,7 @@ export function SessionDetailsTab({
     session.compaction?.maxContextLength ?? DEFAULT_MAX_CONTEXT_LENGTH;
 
   /** Clamp + persist the compaction character budget, ignoring non-numeric input. */
-  function setMaxContextLength(raw: string) {
+  function setMaxContextLength(raw: string): void {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return;
     const clamped = Math.min(

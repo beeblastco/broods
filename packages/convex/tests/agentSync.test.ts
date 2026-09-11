@@ -21,7 +21,11 @@ async function seedOrg(
     email: string;
     onboardedAt?: number;
   },
-) {
+): Promise<{
+  orgId: Id<"orgs">;
+  userId: Id<"users">;
+  accountId: Id<"accounts">;
+}> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {

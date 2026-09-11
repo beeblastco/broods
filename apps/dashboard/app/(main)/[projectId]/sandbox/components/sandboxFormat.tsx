@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Shared formatting + status-badge helpers for the Sandbox tab (instances and
- * snapshots). Keeps the instance/snapshot tables visually consistent.
- */
-
 import { Badge } from "@/app/components/ui/badge";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
@@ -56,7 +51,7 @@ export function formatProvider(provider: string): string {
   return provider === "lambda" ? "managed-vm" : provider;
 }
 
-/** Renders an instance's vcpu/memory/disk footprint as "1 vCPU · 2 GB · 8 GB". */
+/** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". */
 export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   const memory =
     specs.memoryMb >= 1024
@@ -66,7 +61,6 @@ export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
 }
 
-/** Status badge for a live instance. */
 export function instanceStatusBadge(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
@@ -96,7 +90,6 @@ export function instanceStatusBadge(
   );
 }
 
-/** Status badge for a snapshot/image's unified build status. */
 export function snapshotStatusBadge(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {
@@ -126,7 +119,7 @@ export function snapshotStatusBadge(
   );
 }
 
-/** Badge for an instance's tool-approval policy; em dash when the row predates the mirror. */
+/** Em dash when the row predates the permission-mode mirror. */
 export function permissionModeBadge(
   mode: Doc<"sandboxInstances">["permissionMode"],
 ): React.JSX.Element {
@@ -152,7 +145,10 @@ export function permissionModeBadge(
   return <span className="text-xs text-muted-foreground">—</span>;
 }
 
-/** Badge for an instance's egress policy; deny-all is most locked-down, allow-all most open. */
+/**
+ * Badge variant tracks how open the policy is, from deny-all locked down to
+ * allow-all wide open.
+ */
 export function egressBadge(
   egress: Doc<"sandboxInstances">["egress"],
 ): React.JSX.Element {

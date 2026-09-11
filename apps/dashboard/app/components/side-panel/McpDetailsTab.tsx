@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * Details tab for MCP nodes: name, derived server name, transport, checksum,
- * enabled switch, and the wire to the connected agent's `mcp` config.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";

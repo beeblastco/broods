@@ -90,7 +90,10 @@ export const callTool = action({
 export const getByNode = query({
   args: scopeArgs,
   returns: v.union(v.null(), mcpDoc),
-  handler: async (ctx, { projectId, stageId, nodeId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, nodeId },
+  ): Promise<Doc<"mcp"> | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -131,7 +134,10 @@ export const nodeContext = internalQuery({
     accountId: v.id("accounts"),
     existing: v.union(v.null(), mcpDoc),
   }),
-  handler: async (ctx, { projectId, stageId, nodeId, requiredRole }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, nodeId, requiredRole },
+  ): Promise<NodeContext> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -247,7 +253,6 @@ export const saveForNode = action({
   },
 });
 
-/** The node's active server row, shared by the public query and the save path. */
 async function activeServerByNode(
   ctx: QueryCtx,
   stageId: Id<"stages">,
@@ -347,7 +352,6 @@ async function probeServer(
   return { verified: true, tools: tools };
 }
 
-/** The node's active server row, or a thrown error for the explorer verbs. */
 async function requireServer(
   ctx: ActionCtx,
   args: NodeScope,

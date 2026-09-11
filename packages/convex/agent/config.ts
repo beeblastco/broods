@@ -4,7 +4,7 @@
 
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import {
   ensureAgentsRowForConfig,
@@ -59,7 +59,7 @@ export const create = mutation({
     position: v.optional(v.object({ x: v.number(), y: v.number() })),
   },
   returns: v.id("agentConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const {
       projectId,
       stageId,
@@ -182,7 +182,7 @@ export const create = mutation({
 export const getById = query({
   args: { configId: v.id("agentConfigs") },
   returns: v.union(v.null(), agentConfigDoc),
-  handler: async (ctx, { configId }) => {
+  handler: async (ctx, { configId }): Promise<Doc<"agentConfigs"> | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -197,7 +197,7 @@ export const getById = query({
 export const remove = mutation({
   args: { configId: v.id("agentConfigs") },
   returns: v.id("agentConfigs"),
-  handler: async (ctx, { configId }) => {
+  handler: async (ctx, { configId }): Promise<Id<"agentConfigs">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -288,7 +288,7 @@ export const update = mutation({
     extraConfig: v.optional(v.any()),
   },
   returns: v.id("agentConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, ...updates } = args;
 
     // Check authenticated user
@@ -356,7 +356,7 @@ export const updateRuntimeRefs = mutation({
     workspaces: v.union(v.array(workspaceRefValidator), v.null()),
   },
   returns: v.id("agentConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, sandbox, workspaces } = args;
 
     // Check authenticated user
@@ -431,7 +431,7 @@ export const updateSubagentRefs = mutation({
     calleeConfigIds: v.array(v.id("agentConfigs")),
   },
   returns: v.id("agentConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
     const { configId, calleeConfigIds } = args;
 
     // Check authenticated user
@@ -472,7 +472,6 @@ export const updateSubagentRefs = mutation({
         ? { ...prevSubagent, enabled: true, allowed: allowed }
         : undefined;
 
-    // Skip the patch and encryption push entirely when the branch is unchanged.
     if (
       JSON.stringify(extraConfig.subagent ?? null) ===
       JSON.stringify(nextSubagent ?? null)
@@ -498,14 +497,13 @@ export const updateSubagentRefs = mutation({
   },
 });
 
-/** Coerces unknown JSON-ish values into a mutable record for patching. */
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
-/** Returns true when the caller may edit a project-scoped agent config. */
+/** Returns true when the caller may read a project-scoped agent config. */
 async function canAccessAgentConfig(
   ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,

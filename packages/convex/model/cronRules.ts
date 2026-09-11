@@ -67,7 +67,6 @@ export interface NormalizedCronUpdate {
 }
 
 /**
- * Validate and normalize a create-cron request body.
  * @param input the raw request body
  * @returns the normalized create payload
  * @throws when a field is missing, malformed, or out of bounds
@@ -102,7 +101,6 @@ export function normalizeCreateCronInput(input: unknown): NormalizedCronCreate {
 }
 
 /**
- * Validate and normalize an update-cron request body.
  * @param input the raw request body
  * @returns the normalized patch, with null marking fields to clear
  * @throws when the patch is empty or a field is malformed

@@ -1,5 +1,3 @@
-/** Shared model pricing resolution and token cost tests. */
-
 import { describe, expect, it } from "vitest";
 import {
   canonicalModelProvider,

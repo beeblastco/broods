@@ -1,7 +1,6 @@
 "use client";
 
 /**
- * URL-based stage selection hook.
  * Reads and writes the active stage ID via the ?stage= search param so the
  * selection is shareable, bookmarkable, and survives page refreshes.
  */
@@ -9,10 +8,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
-/**
- * Returns the current stage ID from the URL and a setter that updates the URL.
- * Setting null removes the stage param, causing StageSelector to auto-select the default.
- */
+/** Setting null removes the stage param, so StageSelector auto-selects the default. */
 export function useStage(): {
   stageId: Id<"stages"> | null;
   setStageId: (id: Id<"stages"> | null) => void;

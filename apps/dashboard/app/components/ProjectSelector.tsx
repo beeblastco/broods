@@ -22,7 +22,6 @@ import { ChevronDown, Folder, Plus } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-/** Dropdown to list, switch, and create projects. */
 export function ProjectSelector(): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const { isLoading, isAuthenticated } = useConvexAuth();
@@ -42,7 +41,7 @@ export function ProjectSelector(): React.JSX.Element {
   useEffect(() => {
     if (projects === undefined || projects.length === 0) return;
 
-    const warmTopProjects = () => {
+    const warmTopProjects = (): void => {
       for (const project of projects.slice(0, 3)) {
         prefetchProject(project._id);
       }

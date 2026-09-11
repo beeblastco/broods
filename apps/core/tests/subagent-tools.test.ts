@@ -1,7 +1,3 @@
-/**
- * Model-facing persistent subagent tool authorization and routing.
- */
-
 import { afterEach, expect, it, mock } from "bun:test";
 import type { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";

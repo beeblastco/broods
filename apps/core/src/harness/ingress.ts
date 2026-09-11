@@ -294,7 +294,6 @@ export function applySteering(options: {
   });
 }
 
-/** Reads the durable channel destination for an existing agent conversation. */
 export function getConversationDispatchTarget(options: {
   accountId: string;
   agentId: string;
@@ -336,7 +335,6 @@ export function takeNextIngress(options: {
   });
 }
 
-/** Produces one stable digest for duplicate-payload comparison. */
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",

@@ -1,8 +1,3 @@
-/**
- * Sandbox terminal ticket sealing/opening: round trip, expiry, tampering, and
- * wrong-secret rejection (the gateway tries each stage secret in turn).
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   openTerminalTicket,

@@ -1,11 +1,10 @@
 /**
  * Shared ConvexHttpClient wrapper. Reads CONVEX_URL + CONVEX_DEPLOY_KEY from env
- * and caches a singleton client in the process. It is loaded lazily when
- * storage access is first needed.
+ * and caches one client per process, built when storage access is first needed.
  *
- * Deploy-key auth: use `setAdminAuth`, not `setAuth`. `setAuth` is for
- * end-user JWTs; deploy keys (`prod:...|...` / `dev:...|...`) are admin
- * credentials and Convex parses them via a separate header.
+ * Deploy-key auth: use `setAdminAuth`, not `setAuth`. `setAuth` is for end-user
+ * JWTs; deploy keys (`prod:...|...` / `dev:...|...`) are admin credentials and
+ * Convex parses them via a separate header.
  *
  * TODO: the Convex package currently exposes only internalQuery /
  * internalMutation; HTTP client typings reject internal function refs.
@@ -47,7 +46,6 @@ export function getConvexClient(): ConvexHttpClient {
   return cached;
 }
 
-/** Reset the cached client. Tests only. */
 export function resetConvexClientForTests(): void {
   cached = null;
 }

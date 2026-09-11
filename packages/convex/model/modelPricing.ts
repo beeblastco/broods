@@ -90,7 +90,6 @@ export interface ModelTokenUsage {
   cacheWriteTokens: number;
 }
 
-/** Normalize SDK provider names to the pricing and metadata namespaces. */
 export function canonicalModelProvider(provider: string): string {
   const normalized = provider.toLowerCase();
   if (normalized.includes("bedrock")) return "bedrock";
@@ -130,7 +129,6 @@ export function estimateModelTokenCost(
   };
 }
 
-/** Resolve standard token rates for a configured provider/model pair. */
 export function resolveModelTokenRates(
   provider: string,
   modelId: string,

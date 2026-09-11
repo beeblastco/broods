@@ -13,7 +13,7 @@ export const stripeClient = new StripeSubscriptions(components.stripe);
 export const createCheckoutSession = action({
   args: { successUrl: v.string(), cancelUrl: v.string() },
   returns: v.object({ url: v.string() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ url: string }> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("Not authenticated");
 
@@ -78,7 +78,7 @@ export const getBillingInfo = query({
 export const syncPlanInternal = internalMutation({
   args: { authId: v.string(), status: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
@@ -96,7 +96,7 @@ export const syncPlanInternal = internalMutation({
   },
 });
 
-/** Returns the configured dashboard origin, with localhost fallback for dev. */
+/** The configured dashboard origin, or null when neither env var is set. */
 function allowedDashboardOrigin(): string | null {
   const explicit = process.env.DASHBOARD_ORIGIN?.trim();
   if (explicit) return new URL(explicit).origin;

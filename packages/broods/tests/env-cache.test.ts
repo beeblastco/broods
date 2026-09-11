@@ -19,7 +19,6 @@ test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env
     loadBroodsRuntimeConfig(cwd);
     expect(process.env.BROODS_TEST_VAR_A).toBe("value-a");
 
-    // Overwrite the variable in .env.local
     await writeFile(
       join(cwd, ".env.local"),
       "BROODS_TEST_VAR_A=value-b\n",
@@ -46,7 +45,6 @@ test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async
     loadBroodsRuntimeConfig(cwd);
     expect(process.env.BROODS_TEST_VAR_C).toBe("new");
 
-    // Change it again, forceReload should still overwrite
     await writeFile(
       join(cwd, ".env.local"),
       "BROODS_TEST_VAR_C=newer\n",
@@ -74,7 +72,6 @@ test("loadBroodsRuntimeConfig does not re-read unchanged .env.local", async () =
     loadBroodsRuntimeConfig(cwd);
     expect(process.env.BROODS_TEST_VAR_E).toBe("same");
 
-    // Re-write with same content, value stays the same
     await writeFile(
       join(cwd, ".env.local"),
       "BROODS_TEST_VAR_E=same\n",

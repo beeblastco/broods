@@ -21,9 +21,6 @@ const authProxy = authkitProxy({
   },
 });
 
-/**
- * WorkOS AuthKit middleware for session management.
- */
 export default function proxy(
   request: NextRequest,
   event: NextFetchEvent,
