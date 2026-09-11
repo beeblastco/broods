@@ -1,21 +1,15 @@
 "use client";
 
-/** Architecture page — renders the canvas for the current project. */
+/**
+ * Architecture page: the canvas for the current project. Imported with the
+ * page, not behind a second request. It used to be a lazy chunk so other
+ * routes never carried ReactFlow; the header prefetches every route whole
+ * now, so that saved nothing, and the extra request wave cost this page its
+ * first paint on a slow link.
+ */
+import { Canvas } from "@/app/components/canvas/Canvas";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import dynamic from "next/dynamic";
 import { use } from "react";
-
-// Defer the entire ReactFlow bundle until the user navigates to a project.
-const Canvas = dynamic(
-  () => import("@/app/components/canvas/Canvas").then((mod) => mod.Canvas),
-  {
-    loading: () => (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">Loading canvas...</p>
-      </div>
-    ),
-  },
-);
 
 export default function ArchitecturePage({
   params,

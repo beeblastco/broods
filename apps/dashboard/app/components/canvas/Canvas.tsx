@@ -81,7 +81,10 @@ import {
   useState,
 } from "react";
 
-// Defer interaction-only components to reduce initial bundle size.
+// Interaction-only components, loaded the first time they are wanted. They
+// must not render before that: a lazy child that is still loading holds the
+// transition that mounts the canvas, and the stage landing in the URL is
+// such a transition, so the first paint waited for dialog code nobody opened.
 const NodeSidePanel = dynamic(
   () =>
     import("@/app/components/NodeSidePanel").then((mod) => mod.NodeSidePanel),
@@ -1181,6 +1184,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
   // The provider spans the side panel too, so it reads the same traversal the
   // node cards do instead of walking the graph again for the selected node.
+  const sidePanelWanted = useEverTrue(selectedNode !== null);
+  const sourcePickerWanted = useEverTrue(sourcePickerOpen);
+  const configDialogWanted = useEverTrue(configDialogOpen);
+  const skillPickerWanted = useEverTrue(skillPickerOpen);
+
   return (
     <InfraAnalysisProvider value={infraAnalysis}>
       <div className="flex size-full overflow-hidden">
@@ -1241,39 +1249,59 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         <div
           className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
         >
-          <NodeSidePanel
-            node={selectedNode}
-            selectedAt={selectedAt}
-            deleteRequestToken={deleteRequestToken}
-            onClose={onPaneClick}
-            onRemoveNode={removeNode}
-            onUpdateNodeLabel={updateNodeLabel}
-            onUpdateNodeData={updateNodeData}
-          />
+          {sidePanelWanted && (
+            <NodeSidePanel
+              node={selectedNode}
+              selectedAt={selectedAt}
+              deleteRequestToken={deleteRequestToken}
+              onClose={onPaneClick}
+              onRemoveNode={removeNode}
+              onUpdateNodeLabel={updateNodeLabel}
+              onUpdateNodeData={updateNodeData}
+            />
+          )}
         </div>
 
-        <AgentSourcePickerDialog
-          open={sourcePickerOpen}
-          onOpenChange={setSourcePickerOpen}
-          onCreateNew={onCreateAgentFromPicker}
-        />
+        {sourcePickerWanted && (
+          <AgentSourcePickerDialog
+            open={sourcePickerOpen}
+            onOpenChange={setSourcePickerOpen}
+            onCreateNew={onCreateAgentFromPicker}
+          />
+        )}
 
-        <CreateAgentConfigDialog
-          projectId={projectId}
-          stageId={stageId}
-          open={configDialogOpen}
-          onOpenChange={onConfigDialogOpenChange}
-          initialCanvasPosition={agentCreatePosition}
-        />
+        {configDialogWanted && (
+          <CreateAgentConfigDialog
+            projectId={projectId}
+            stageId={stageId}
+            open={configDialogOpen}
+            onOpenChange={onConfigDialogOpenChange}
+            initialCanvasPosition={agentCreatePosition}
+          />
+        )}
 
-        <SkillSourcePickerDialog
-          open={skillPickerOpen}
-          onOpenChange={setSkillPickerOpen}
-          onSelect={onSkillSelect}
-        />
+        {skillPickerWanted && (
+          <SkillSourcePickerDialog
+            open={skillPickerOpen}
+            onOpenChange={setSkillPickerOpen}
+            onSelect={onSkillSelect}
+          />
+        )}
       </div>
     </InfraAnalysisProvider>
   );
+}
+
+/**
+ * True from the first render in which `flag` was true. Mounts a lazy
+ * component on first use and keeps it mounted, so its close animation and
+ * state survive without loading its chunk before it is wanted.
+ */
+function useEverTrue(flag: boolean): boolean {
+  const [seen, setSeen] = useState(flag);
+  if (flag && !seen) setSeen(true);
+
+  return seen || flag;
 }
 
 /** Main canvas wrapped with ReactFlowProvider. */
