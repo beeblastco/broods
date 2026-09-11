@@ -3,38 +3,16 @@
 /** Displays the top header bar with logo, project selector, stage selector, navigation links, and user menu. */
 import { BroodsLogo } from "@/app/components/BroodsLogo";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
-import { Skeleton } from "@/app/components/ui/skeleton";
+import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";
+import { ProjectHeaderRight } from "@/app/components/header/ProjectHeaderRight";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Lock } from "lucide-react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-// Split project-only controls into separate chunks.
-const ProjectHeaderLeft = dynamic(
-  () =>
-    import("@/app/components/header/ProjectHeaderLeft").then(
-      (mod) => mod.ProjectHeaderLeft,
-    ),
-  {
-    // Mirrors the divider + selector this chunk resolves to, so the left side
-    // of the header lands in one place instead of snapping wider.
-    loading: () => (
-      <div className="flex items-center gap-3 h-4">
-        <div className="h-4 w-px bg-border" />
-        <Skeleton className="h-4 w-24 bg-muted" />
-      </div>
-    ),
-  },
-);
-const ProjectHeaderRight = dynamic(
-  () =>
-    import("@/app/components/header/ProjectHeaderRight").then(
-      (mod) => mod.ProjectHeaderRight,
-    ),
-  { loading: () => <div className="flex items-center gap-1 h-4" /> },
-);
+// Shipped with the header, not behind a second request: the stage selector
+// lives here, and every page's first query waits on the stage it picks.
 
 export function Header(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
