@@ -1,13 +1,16 @@
 "use client";
 
-import { CanvasControls } from "@/app/components/canvas/CanvasControl";
+import {
+  CanvasControls,
+  FIT_VIEW_OPTIONS,
+} from "@/app/components/canvas/CanvasControl";
 import {
   CanvasSaveStatus,
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { Button } from "@/app/components/ui/button";
-import { ReactFlowProvider } from "@xyflow/react";
+import { ReactFlow, ReactFlowProvider, type Node } from "@xyflow/react";
 import { useState, useSyncExternalStore } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 
@@ -20,6 +23,21 @@ const LEVEL_OPTIONS = [
 ];
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
+
+/**
+ * Six cards in two rows, the shape a small stage lands in after a tidy. Sized
+ * explicitly so the bounds the canvas fits are the same on every machine, and
+ * chosen so the fit zoom lands between ReactFlow's 0.5 floor and our 1.5 cap.
+ */
+const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
+  [0, 260].map((y) => ({
+    id: `fit-${x}-${y}`,
+    position: { x: x, y: y },
+    width: 150,
+    height: 40,
+    data: { label: `${x},${y}` },
+  })),
+);
 
 const subscribeNever = (): (() => void) => () => {};
 
@@ -92,6 +110,21 @@ export function UiGallery(): React.JSX.Element {
               {state}
             </Button>
           ))}
+        </div>
+      </section>
+
+      <section data-fixture="canvas-fit" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Canvas fit on open</h2>
+        {/* The real ReactFlow, fitted the way the Architecture page fits on its
+            first paint, so a spec can measure what the frame actually shows. */}
+        <div className="h-80 w-[36rem] rounded-lg border border-border">
+          <ReactFlow
+            nodes={FIT_NODES}
+            edges={[]}
+            fitView
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            maxZoom={FIT_VIEW_OPTIONS.maxZoom}
+          />
         </div>
       </section>
 

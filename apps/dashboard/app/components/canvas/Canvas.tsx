@@ -1,7 +1,10 @@
 "use client";
 
 /** Main canvas component that renders nodes and edges from the database. */
-import { CanvasControls } from "@/app/components/canvas/CanvasControl";
+import {
+  CanvasControls,
+  FIT_VIEW_OPTIONS,
+} from "@/app/components/canvas/CanvasControl";
 import {
   CanvasSaveStatus,
   type CanvasSaveState,
@@ -131,7 +134,6 @@ const NODE_TEMPLATES = [
 ] as const;
 
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
-const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 /** Drags step along the background dots, the same pitch the tidy layout cells sit on. */
 const SNAP_GRID: [number, number] = [GRID, GRID];
