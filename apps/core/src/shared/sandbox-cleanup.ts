@@ -20,7 +20,6 @@ import type {
   SandboxConfig,
   SandboxProvider,
 } from "./domain/sandbox-config.ts";
-import { toErrorMessage } from "./errors.ts";
 import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
