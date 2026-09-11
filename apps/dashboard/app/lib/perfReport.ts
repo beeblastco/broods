@@ -15,8 +15,8 @@ const FLUSH_DELAY_MS = 10_000;
 
 /**
  * Every page has to be fully on screen within this, on a cold load and on a
- * client-side navigation alike. The probe (e2e/perf) fails a page over it;
- * the web-vital budgets below hold the field data to the same line.
+ * client-side navigation alike. The probe (e2e/perf) fails a page over it,
+ * and `first-load.canvas` below flags the same measurement in the field.
  *
  * Measured on the CI runner with the document served locally: every page's
  * cold load is about 950 ms (JavaScript, then one Convex round trip for
@@ -29,6 +29,13 @@ const FLUSH_DELAY_MS = 10_000;
 export const PAGE_RENDER_BUDGET_MS = 2000;
 
 /**
+ * What a real user's paint and navigation are held to. Tighter than the
+ * probe budget on purpose: that one carries runner noise, and loosening it
+ * must not loosen the `over_budget` flag Grafana alerts on.
+ */
+export const FIELD_RENDER_BUDGET_MS = 1000;
+
+/**
  * Budget per metric, in the metric's own unit. Every event carries
  * `over_budget`, so a Grafana alert is a filter rather than a threshold
  * duplicated in the query.
@@ -38,12 +45,12 @@ export const PERF_BUDGETS: Record<string, number> = {
   "first-load.canvas": PAGE_RENDER_BUDGET_MS,
   "long-task": 200,
   "optimistic-save": 1000,
-  "route.transition": PAGE_RENDER_BUDGET_MS,
+  "route.transition": FIELD_RENDER_BUDGET_MS,
   "side-panel.open": 300,
   "web-vital.CLS": 0.1,
-  "web-vital.FCP": PAGE_RENDER_BUDGET_MS,
+  "web-vital.FCP": FIELD_RENDER_BUDGET_MS,
   "web-vital.INP": 200,
-  "web-vital.LCP": PAGE_RENDER_BUDGET_MS,
+  "web-vital.LCP": FIELD_RENDER_BUDGET_MS,
   "web-vital.TTFB": 800,
 };
 

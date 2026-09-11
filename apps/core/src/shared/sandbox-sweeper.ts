@@ -58,17 +58,23 @@ export function stopSandboxSweeper(): void {
 }
 
 /**
- * One sweep pass, bounded to a page so a backlog drains over several runs.
+ * One sweep pass, bounded to a page so a backlog drains over several runs. Mirror
+ * rows no reservation names any more (a teardown that failed, or the old prune)
+ * ride the same pass: the id they still hold is all the teardown needs.
  * @returns the number of sandboxes released at their provider
  */
 export async function sweepExpiredSandboxes(): Promise<number> {
-  const expired = await runtime.query<SandboxReservationSummary[]>(
-    "listExpiredSandboxReservations",
-    { limit: SWEEP_PAGE_SIZE },
-  );
-  const adopted = await adoptOrphanedInstances();
+  const [expired, orphaned] = await Promise.all([
+    runtime.query<SandboxReservationSummary[]>(
+      "listExpiredSandboxReservations",
+      { limit: SWEEP_PAGE_SIZE },
+    ),
+    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
+      limit: SWEEP_PAGE_SIZE,
+    }),
+  ]);
   const byAccount = new Map<string, SandboxReservationSummary[]>();
-  for (const reservation of [...expired, ...adopted]) {
+  for (const reservation of [...expired, ...orphaned]) {
     const pending = byAccount.get(reservation.accountId) ?? [];
     pending.push(reservation);
     byAccount.set(reservation.accountId, pending);
@@ -82,46 +88,12 @@ export async function sweepExpiredSandboxes(): Promise<number> {
     logInfo("Sandbox sweep completed", {
       accounts: byAccount.size,
       expired: expired.length,
-      adopted: adopted.length,
+      orphaned: orphaned.length,
       released: released,
     });
   }
 
   return released;
-}
-
-/**
- * Mirror rows whose reservation the old prune deleted without telling the provider.
- * Re-claiming the reservation from the id the mirror still holds is what makes the
- * normal teardown reachable again; a refused claim means the sandbox is in use.
- */
-async function adoptOrphanedInstances(): Promise<SandboxReservationSummary[]> {
-  const orphans = await runtime.query<SandboxReservationSummary[]>(
-    "listOrphanedSandboxInstances",
-    { limit: SWEEP_PAGE_SIZE },
-  );
-  const adopted: SandboxReservationSummary[] = [];
-  for (const orphan of orphans) {
-    const claimed = await runtime
-      .mutate<boolean>("claimSandboxReservation", {
-        provider: orphan.provider,
-        reservationKey: orphan.reservationKey,
-        externalId: orphan.externalId,
-        accountId: orphan.accountId,
-      })
-      .catch((error: unknown) => {
-        logWarn("Orphaned sandbox adoption failed", {
-          accountId: orphan.accountId,
-          provider: orphan.provider,
-          error: toErrorMessage(error),
-        });
-
-        return false;
-      });
-    if (claimed) adopted.push(orphan);
-  }
-
-  return adopted;
 }
 
 async function deferAttempted(

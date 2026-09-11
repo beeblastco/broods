@@ -125,7 +125,7 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: benchmark-${{ github.run_id }}
           path: |
@@ -139,23 +139,20 @@ jobs:
       contents: read
     # The signed-in dashboard suites at the end of this job run the build it
     # just made against the dev Convex and WorkOS, so it reads that
-    # environment's secrets. The redirect stays on localhost: the build is
-    # served on the runner.
+    # environment's vars; the secrets are scoped to the two steps that use
+    # them. The redirect stays on localhost: the build is served on the runner.
     environment: development
     env:
       NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL || 'https://example.convex.cloud' }}
       NEXT_PUBLIC_WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
       NEXT_PUBLIC_BROODS_BASE_URL: https://gateway.broods.app
       WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
-      WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
-      WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
-      WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
-      E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
-      E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
-      E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # Nothing in this job pushes, so it needs no token left on disk.
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -189,6 +186,31 @@ jobs:
       - name: Test dashboard
         run: bun run --filter @broods/dashboard test
 
+      - name: Require the dashboard probe account
+        # Pull requests from this repo only: a fork gets no secrets. A silent
+        # skip would look like a passing suite, so missing setup fails here,
+        # before the build: an unset NEXT_PUBLIC_CONVEX_URL would bake the
+        # placeholder in and the signed-in suite would time out instead.
+        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+        shell: bash
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+          WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
+          WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
+          WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
+          E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
+        run: |
+          missing=()
+          for name in NEXT_PUBLIC_CONVEX_URL E2E_EMAIL E2E_PASSWORD WORKOS_API_KEY WORKOS_CLIENT_ID WORKOS_COOKIE_PASSWORD; do
+            [[ -n "${!name}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "Missing from the development environment: ${missing[*]} (NEXT_PUBLIC_CONVEX_URL is a variable; the E2E_* pair is the DASHBOARD_E2E_EMAIL / DASHBOARD_E2E_PASSWORD secrets)." >&2
+            echo "scripts/setup-dashboard-e2e.sh creates them; apps/dashboard/AGENTS.md, section Tests, explains each." >&2
+            exit 1
+          fi
+
       - name: Build dashboard
         run: bun run --filter @broods/dashboard build
 
@@ -206,22 +228,6 @@ jobs:
         # against the /ui-gallery fixture. No Convex or WorkOS involved.
         run: bun run --filter @broods/dashboard test:ui
 
-      - name: Require the dashboard probe account
-        # Pull requests from this repo only: a fork gets no secrets. A silent
-        # skip would look like a passing suite, so missing setup fails here.
-        if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
-        shell: bash
-        run: |
-          missing=()
-          for name in E2E_EMAIL E2E_PASSWORD WORKOS_API_KEY WORKOS_CLIENT_ID WORKOS_COOKIE_PASSWORD; do
-            [[ -n "${!name}" ]] || missing+=("$name")
-          done
-          if (( ${#missing[@]} )); then
-            echo "Missing from the development environment: ${missing[*]} (the E2E_* pair is DASHBOARD_E2E_EMAIL / DASHBOARD_E2E_PASSWORD)." >&2
-            echo "scripts/setup-dashboard-e2e.sh creates them; apps/dashboard/AGENTS.md, section Tests, explains each." >&2
-            exit 1
-          fi
-
       - name: Browser-test the signed-in dashboard
         # The build this job just made, served the way the image serves it
         # (the standalone server.js), against the dev Convex and WorkOS.
@@ -229,6 +235,12 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
         env:
           E2E_SERVER_COMMAND: bun .next/standalone/apps/dashboard/server.js
+          WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
+          WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
+          WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
+          E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
+          E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
         run: |
           cd apps/dashboard
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
@@ -237,7 +249,7 @@ jobs:
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dashboard-e2e-${{ github.run_id }}
           path: apps/dashboard/test-results

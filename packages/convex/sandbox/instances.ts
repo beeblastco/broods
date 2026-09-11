@@ -234,24 +234,31 @@ export const setStatus = internalMutation({
 
 /**
  * Drops an instance row when broods terminates the sandbox or releases the
- * reservation. No-op when the key is unknown or belongs to another account.
+ * reservation. No-op when the key is unknown, belongs to another account, or
+ * (when `externalId` is given) has since been repointed at another machine.
  * @param accountId the owning account.
  * @param reservationKey the broods reconnection key.
+ * @param externalId the provider id the caller tore down, when the row must still name it.
  */
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),
     reservationKey: v.string(),
+    externalId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, reservationKey }) => {
+  handler: async (ctx, { accountId, reservationKey, externalId }) => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
         q.eq("reservationKey", reservationKey),
       )
       .unique();
-    if (instance && instance.accountId === accountId) {
+    if (
+      instance &&
+      instance.accountId === accountId &&
+      (externalId === undefined || instance.externalId === externalId)
+    ) {
       await ctx.db.delete(instance._id);
     }
 

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import {
@@ -1914,6 +1914,194 @@ test("an unsubscribe cancels the traces backfill still streaming for it", async 
     process.env.TEMPO_URL = originalTempoUrl;
   }
 });
+test("a traces backfill that fails after an unsubscribe sends no error closer", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  let failSearch: ((reason: Error) => void) | undefined;
+  globalThis.fetch = (() =>
+    new Promise<Response>((_resolve, reject) => {
+      failSearch = reject;
+    })) as unknown as typeof fetch;
+  // The failure is logged before the superseded run decides to stay quiet.
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "traces", backfill: 100 }),
+      idleNats,
+    );
+    await waitForCondition(() => failSearch !== undefined);
+    // The search is still pending; the client walks away, then Tempo fails.
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "unsubscribe", stream: "traces" }),
+      idleNats,
+    );
+    failSearch?.(new Error("Tempo is down"));
+    await waitForCondition(() => logged.mock.calls.length > 0);
+
+    expect(sent.filter((message) => message.type === "backfill")).toEqual([]);
+  } finally {
+    logged.mockRestore();
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+test("two traces subscribes in a row keep only the newer one", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  globalThis.fetch = tempoFetch(tempoSearchHits(3));
+  const { nats, opened, stopped } = countingNats();
+  const subscribe = JSON.stringify({
+    type: "subscribe",
+    stream: "traces",
+    backfill: 10,
+  });
+
+  openObservabilitySocket(socket);
+  try {
+    // Both land before either NATS consumer opens.
+    await Promise.all([
+      handleObservabilityMessage(socket, subscribe, nats),
+      handleObservabilityMessage(socket, subscribe, nats),
+    ]);
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+
+    expect(opened()).toBe(2);
+    expect(stopped).toEqual([1]);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+    expect(
+      sent.filter(
+        (message) => message.type === "backfill" && message.more !== true,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+test("two logs subscribes in a row keep only the newer one", async () => {
+  const { socket, sent } = observabilitySocket();
+  const { nats, opened, stopped } = countingNats();
+  const subscribe = JSON.stringify({ type: "subscribe", stream: "logs" });
+
+  openObservabilitySocket(socket);
+  try {
+    // Both land before either NATS consumer opens.
+    await Promise.all([
+      handleObservabilityMessage(socket, subscribe, nats),
+      handleObservabilityMessage(socket, subscribe, nats),
+    ]);
+
+    expect(opened()).toBe(2);
+    expect(stopped).toEqual([1]);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+  } finally {
+    cleanupObservabilitySocket(socket);
+  }
+});
+test("a sandbox tail replaced while its backfill is pending sends nothing from it", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const answers: Array<(response: Response) => void> = [];
+  globalThis.fetch = (() =>
+    new Promise<Response>((resolve) => {
+      answers.push(resolve);
+    })) as unknown as typeof fetch;
+  const subscribe = (sandboxId: string): string =>
+    JSON.stringify({
+      type: "subscribe",
+      stream: "logs",
+      sandboxId: sandboxId,
+      backfill: 10,
+    });
+  const noNats = async (): Promise<never> => {
+    throw new Error("a sandbox tail never touches NATS");
+  };
+  const lokiRows = (text: string): Response =>
+    json({
+      data: {
+        result: [
+          {
+            stream: {},
+            values: [[String(BigInt(Date.now()) * 1_000_000n), text]],
+          },
+        ],
+      },
+    });
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      subscribe("0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
+      noNats,
+    );
+    await handleObservabilityMessage(
+      socket,
+      subscribe("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"),
+      noNats,
+    );
+    await waitForCondition(() => answers.length === 2);
+    // The old tail's Loki answer lands after it was replaced.
+    answers[0]?.(lokiRows("old"));
+    answers[1]?.(lokiRows("new"));
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+
+    const backfills = sent.filter((message) => message.type === "backfill");
+    expect(backfills).toHaveLength(1);
+    expect(
+      (backfills[0]!.entries as Array<{ message: string }>).map(
+        (e) => e.message,
+      ),
+    ).toEqual(["new"]);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+test("a traces subscribe whose transport fails after it was replaced stays silent", async () => {
+  const { socket, sent } = observabilitySocket();
+  let failFirst: ((reason: Error) => void) | undefined;
+  let calls = 0;
+  const nats = async (): Promise<NatsConnection> => {
+    calls += 1;
+    if (calls === 1) {
+      return new Promise<NatsConnection>((_resolve, reject) => {
+        failFirst = reject;
+      });
+    }
+
+    return idleNats();
+  };
+  const subscribe = JSON.stringify({ type: "subscribe", stream: "traces" });
+
+  openObservabilitySocket(socket);
+  try {
+    const first = handleObservabilityMessage(socket, subscribe, nats);
+    await handleObservabilityMessage(socket, subscribe, nats);
+    failFirst?.(new Error("NATS is down"));
+    await first;
+
+    expect(sent).toEqual([{ type: "ready" }]);
+  } finally {
+    cleanupObservabilitySocket(socket);
+  }
+});
 test("a traces backfill stops asking Tempo once the socket is gone", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
@@ -2546,6 +2734,51 @@ const idleNats = async (): Promise<NatsConnection> =>
     close: async () => {},
     stop: () => {},
   })) as unknown as NatsConnection;
+
+/**
+ * Like idleNats, but numbers each consumer it opens and records which ones were
+ * stopped, for tests about one subscribe superseding another.
+ */
+function countingNats(): {
+  nats: () => Promise<NatsConnection>;
+  opened: () => number;
+  stopped: number[];
+} {
+  let opened = 0;
+  const stopped: number[] = [];
+  const nats = async (): Promise<NatsConnection> =>
+    zeroBufferConnection(async () => {
+      opened += 1;
+      const consumer = opened;
+
+      return {
+        [Symbol.asyncIterator]: async function* () {},
+        close: async () => {},
+        stop: () => {
+          stopped.push(consumer);
+        },
+      };
+    }) as unknown as NatsConnection;
+
+  return { nats: nats, opened: (): number => opened, stopped: stopped };
+}
+
+/** Tempo answering a search with `hits`, then every by-id lookup with one root span. */
+function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search")) return json({ traces: hits });
+
+    return json({
+      batches: [
+        tempoBatch({
+          traceId: url.slice(url.lastIndexOf("/") + 1),
+          spanId: "root",
+        }),
+      ],
+    });
+  }) as unknown as typeof fetch;
+}
 
 /** An open observability socket for stage shop/dev of acct-1, capturing what the gateway sends. */
 function observabilitySocket(): {

@@ -40,8 +40,11 @@ function NavLinksInner() {
               // on. The default prefetch stops at loading.tsx and expires at
               // once, so a click still fetched the tree, then its chunks,
               // then data: three trips in a row. A hover upgrade cannot
-              // finish inside one trip.
-              prefetch={!isActive}
+              // finish inside one trip. Off until the stage param lands:
+              // the selector rewrites every href with `?stage=` on mount,
+              // and Next prefetches again under the new key, so the first
+              // wave would be thrown away.
+              prefetch={!isActive && Boolean(stageParam)}
               className={cn(
                 "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                 isActive

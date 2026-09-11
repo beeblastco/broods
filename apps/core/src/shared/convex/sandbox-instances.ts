@@ -144,15 +144,20 @@ export async function sandboxInstanceIsControllable(
   return controllable === true;
 }
 
-/** Removes a terminated instance's row. No-op when no row matches the key. */
+/**
+ * Removes a terminated instance's row. No-op when no row matches the key, or when
+ * `externalId` is given and the row has since been repointed at another machine.
+ */
 export async function removeSandboxInstance(
   accountId: string,
   reservationKey: string,
+  externalId?: string,
 ): Promise<void> {
   try {
     await getConvexClient().mutation(internal.sandbox.instances.remove, {
       accountId: accountId as any,
       reservationKey: reservationKey,
+      externalId: externalId,
     });
   } catch (err) {
     logError("Sandbox instance remove mirror failed (convex)", {

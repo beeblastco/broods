@@ -99,7 +99,7 @@ no Daytona runner), the same run is handed to the fallback once, and the switch 
 It must differ from `provider` and is rejected beside `persistent: true`: a reserved
 sandbox belongs to one provider. The fallback runs the same `network`, limits, and
 `envVars`, so it must be able to enforce them too (an `e2b` fallback needs `allow-all`);
-`options` are the primary's and do not carry over.
+`options` and `snapshot` are the primary's and do not carry over.
 
 `onCreate` / `onResume` command hooks are also available, but only on persistent
 configs — see [Hooks](hook.md) and [Best Practice → Reserved
