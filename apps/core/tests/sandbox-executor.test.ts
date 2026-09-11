@@ -5,6 +5,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type {
+  SandboxExecutorConfig,
+  SandboxRunRequest,
+} from "../src/harness/sandbox/types.ts";
 
 const e2bDisconnectMock = mock(async () => {});
 const e2bRunMock = mock(
@@ -73,18 +77,12 @@ function vercelSandbox(name = "vercel-sandbox") {
     delete: vercelDeleteMock,
   };
 }
-const vercelCreateMock = mock(async (_options: Record<string, unknown>) =>
-  vercelSandbox("ephemeral"),
+const vercelCreateMock = mock(async (options: Record<string, unknown>) =>
+  vercelSandbox(String(options.name ?? "ephemeral")),
 );
 const vercelGetMock = mock(async (options: Record<string, unknown>) => {
   const sandbox = vercelSandbox(String(options.name ?? "stored"));
   if (typeof options.onResume === "function") await options.onResume(sandbox);
-
-  return sandbox;
-});
-const vercelGetOrCreateMock = mock(async (options: Record<string, unknown>) => {
-  const sandbox = vercelSandbox(String(options.name ?? "created"));
-  if (typeof options.onCreate === "function") await options.onCreate(sandbox);
 
   return sandbox;
 });
@@ -280,7 +278,6 @@ mock.module("@vercel/sandbox", () => ({
   Sandbox: {
     create: vercelCreateMock,
     get: vercelGetMock,
-    getOrCreate: vercelGetOrCreateMock,
   },
 }));
 
@@ -355,7 +352,6 @@ beforeEach(() => {
   vercelDeleteMock.mockClear();
   vercelCreateMock.mockClear();
   vercelGetMock.mockClear();
-  vercelGetOrCreateMock.mockClear();
   storedSandboxExternalId = null;
   getSandboxExternalIdMock.mockClear();
   getSandboxReservationRecordMock.mockClear();
@@ -388,6 +384,25 @@ afterEach(() => {
 
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const CHILD_NS = `${NS}/issues/fs-76543210fedcba9876543210fedcba9876543210`;
+
+function persistentVercelConfig(): SandboxExecutorConfig {
+  return {
+    provider: "vercel",
+    persistent: true,
+    network: { mode: "allow-all" },
+    options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+  };
+}
+
+function persistentVercelRun(): SandboxRunRequest {
+  return {
+    code: "echo hi",
+    namespace: NS,
+    workspaceRoot: "/mnt/workspaces",
+    timeoutSeconds: 30,
+    outputLimitBytes: 4096,
+  };
+}
 
 // The MicroVM endpoint and auth-token caches are process-wide by design (an executor
 // is constructed per request, so an instance field would never hit), which makes the
@@ -1767,7 +1782,7 @@ describe("createSandboxExecutor", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    expect(vercelGetOrCreateMock).toHaveBeenCalled();
+    expect(vercelCreateMock).toHaveBeenCalled();
     expect(vercelCommandIncludes("echo create > hook.txt")).toBe(true);
 
     vercelRunCommandMock.mockClear();
@@ -1780,6 +1795,61 @@ describe("createSandboxExecutor", () => {
     });
     expect(vercelGetMock).toHaveBeenCalled();
     expect(vercelCommandIncludes("echo resume >> hook.txt")).toBe(true);
+  });
+
+  // The sweeper takes the reservation row before it deletes the machine. A run
+  // acquiring in that window must not be handed the machine being torn down, and
+  // the only thing standing between the two is a name the key cannot derive.
+  it("names each reserved sandbox with a generation the reservation key cannot derive", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const { sandboxNamePrefix } =
+      await import("../src/harness/sandbox/utils.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+
+    await executor.run(persistentVercelRun());
+    const first = String(vercelCreateMock.mock.calls.at(-1)?.[0]?.name);
+
+    storedSandboxExternalId = null;
+    await executor.run(persistentVercelRun());
+    const second = String(vercelCreateMock.mock.calls.at(-1)?.[0]?.name);
+
+    expect(first).toStartWith(`${sandboxNamePrefix(NS)}-`);
+    expect(first).not.toBe(sandboxNamePrefix(NS));
+    expect(second).not.toBe(first);
+  });
+
+  it("drops its own sandbox and takes the winner's when the claim is refused", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    claimSandboxInstanceMock.mockImplementationOnce(async () => {
+      storedSandboxExternalId = "fp-p-winner";
+
+      return false;
+    });
+
+    await executor.run(persistentVercelRun());
+
+    const created = String(vercelCreateMock.mock.calls.at(-1)?.[0]?.name);
+    expect(created).not.toBe("fp-p-winner");
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
+    expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
+  });
+
+  it("releases a reserved sandbox without resuming it", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    storedSandboxExternalId = "fp-p-stored-abc123";
+
+    await executor.release({ namespace: NS });
+
+    expect(vercelGetMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      name: "fp-p-stored-abc123",
+      resume: false,
+    });
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2053,6 +2123,11 @@ describe("persistent acquire teardown", () => {
       destroy: daytonaDeleteMock,
       options: { organizationId: "org-id", workspaceRoot: "/mnt/workspaces" },
     },
+    {
+      provider: "vercel",
+      destroy: vercelDeleteMock,
+      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
+    },
   ];
 
   for (const { provider, destroy, options } of cases) {
@@ -2082,37 +2157,6 @@ describe("persistent acquire teardown", () => {
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);
     });
   }
-
-  // Vercel derives the sandbox name from the reservation key alone and reaches
-  // it with `getOrCreate`, so every caller for a key shares one sandbox and a
-  // loser returns it rather than making its own. Deleting it on a failed claim
-  // would take it away from whoever still holds it, and it cannot be orphaned:
-  // the next acquire resolves the same name.
-  it("releases the vercel reservation but leaves the shared sandbox alone", async () => {
-    upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-      throw new Error("post-claim persistence failed");
-    });
-    const {
-      createSandboxExecutor,
-    } = require("../src/harness/sandbox/index.ts");
-    const executor = createSandboxExecutor({
-      provider: "vercel",
-      persistent: true,
-      options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
-    });
-
-    await expect(
-      executor.run({
-        code: "echo ok",
-        namespace: NS,
-        timeoutSeconds: 30,
-        outputLimitBytes: 4096,
-      }),
-    ).rejects.toThrow("post-claim persistence failed");
-
-    expect(vercelDeleteMock).not.toHaveBeenCalled();
-    expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe("vercel");
-  });
 });
 
 describe("conditional release", () => {
