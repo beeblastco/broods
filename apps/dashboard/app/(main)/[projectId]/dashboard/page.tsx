@@ -36,7 +36,13 @@ export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
-  const project = useQuery(api.project.getById, { projectId: projectId });
+  // The header already holds the project list, so this answers from the
+  // client cache on a navigation instead of waiting one round trip.
+  const projects = useQuery(api.project.list, {});
+  const project =
+    projects === undefined
+      ? undefined
+      : (projects.find((candidate) => candidate._id === projectId) ?? null);
   const { stageId } = useStage();
   const stages = useQuery(api.stage.list, {
     projectId: projectId,
