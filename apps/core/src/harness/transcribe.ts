@@ -24,7 +24,7 @@ import { resolveTranscriptionModel } from "./provider.ts";
  * How patient each caller can afford to be.
  *
  * Ingest runs before the agent has said anything, so a provider having a bad
- * minute must not hold the first reply for the length of a backoff — it fails
+ * minute must not hold the first reply for the length of a backoff. It fails
  * fast and the note tells the agent to read the file, which is the same call
  * made later and off the critical path. By then the agent is waiting on a tool
  * result and a couple of retries are cheaper than another round trip.
@@ -46,10 +46,10 @@ export type TranscriptOutcome =
 
 /**
  * Why it failed, in the only terms that change what happens next.
- * `retry` — the provider was busy or broken, and the same call may work later.
- * `unsupported` — the model refused the file itself, so only the agent, which
+ * `retry`. The provider was busy or broken, and the same call may work later.
+ * `unsupported`. The model refused the file itself, so only the agent, which
  * has it in the workspace, can get any further.
- * `unavailable` — this account has no working speech-to-text, and nothing the
+ * `unavailable`. This account has no working speech-to-text, and nothing the
  * agent does will change that.
  */
 export type TranscriptRecovery = "retry" | "unsupported" | "unavailable";

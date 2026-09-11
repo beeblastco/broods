@@ -1,8 +1,8 @@
 # Vercel
 
 The `vercel` provider runs commands through [`@vercel/sandbox`](https://vercel.com/docs/sandbox).
-The SDK is loaded lazily by the harness, and persistent sandboxes are named by the same
-reservation key used by the other providers (`reservationKey ?? namespace`).
+The harness loads the SDK lazily, and persistent sandboxes are named by the same
+reservation key the other providers use (`reservationKey ?? namespace`).
 
 ## Config
 
@@ -41,11 +41,11 @@ Vercel Sandbox 3 uses Ubuntu-based managed images instead of the legacy Amazon L
 runtimes. `options.image` accepts Vercel's managed images or an OCI image pushed to the
 project's Vercel Container Registry. The managed choices are:
 
-- `vercel/sandbox/universal:latest` — Node.js 24, Bun, Python 3.14, coding agents, and
-  common development tools; this is the default.
-- `vercel/sandbox/node:22`, `:24`, or `:26` — a smaller Node.js image.
-- `vercel/sandbox/python:3.14` — Python with pip, venv, and uv.
-- `vercel/sandbox/ubuntu:latest` or `vercel/sandbox/arch:latest` — general-purpose base
+- `vercel/sandbox/universal:latest`: Node.js 24, Bun, Python 3.14, coding agents, and
+  common development tools. This is the default.
+- `vercel/sandbox/node:22`, `:24`, or `:26`: a smaller Node.js image.
+- `vercel/sandbox/python:3.14`: Python with pip, venv, and uv.
+- `vercel/sandbox/ubuntu:latest` or `vercel/sandbox/arch:latest`: general-purpose base
   images.
 
 Custom images can use a repository, tag, digest, or fully qualified VCR URL, for example
@@ -63,7 +63,7 @@ Two semantic differences from the other persistent providers:
   reconnect from a resume), so write hooks that are idempotent either way.
 - **Idle timeout**: Vercel's `timeout` counts from sandbox start, not from last activity.
   The executor maps `lifecycle.idleTimeoutSeconds` onto it, so a persistent Vercel sandbox
-  stops that many seconds after each wake — even mid-activity — and resumes on the next
+  stops that many seconds after each wake, even mid-activity, and resumes on the next
   call. `lifecycle.maxLifetimeSeconds` is not enforced on Vercel.
 
 ```mermaid
@@ -85,7 +85,7 @@ Vercel enforces all three normalized modes natively:
 | `deny-all`   | `networkPolicy: "deny-all"`                                                   |
 | `restricted` | `networkPolicy.allow` for domains and `networkPolicy.subnets.allow` for CIDRs |
 
-## Workspace Storage Caveat
+## Workspace storage caveat
 
 Vercel persistent sandboxes have provider-native filesystem state, but they are not wired
 to the shared S3 workspace bucket. Attaching an S3 workspace to a Vercel sandbox is
@@ -101,7 +101,7 @@ Without a workspace, the Vercel provider works for `bash` (create → run → st
 or named persistent sandbox when `persistent: true`). Workspace-backed file tools are
 unavailable.
 
-## Background Jobs
+## Background jobs
 
 Persistent Vercel sandboxes support `bash` background jobs and `async_status` using the
 harness job-control scripts also used by Daytona and the `sandbox` provider. Auto-delivery still needs egress to the gateway/core URL from `PUBLIC_BASE_URL`; with `deny-all` the job runs, but completion must be fetched by polling.

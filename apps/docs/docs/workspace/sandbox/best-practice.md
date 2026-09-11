@@ -1,18 +1,17 @@
-# Best Practice
+# Best practice
 
-Operational guidance for getting the most out of sandboxes: when to reserve a persistent
-box, how to run long work without blocking the turn, and how idle scale-down and clean
-teardown behave.
+Operational guidance for sandboxes: when to reserve a persistent box, how to run long
+work without blocking the turn, and how idle scale-down and teardown behave.
 
 ## Ephemeral vs reserved
 
 By default every provider is **ephemeral per call** (create → run → destroy); only workspace
-_files_ persist (via the S3 mount). That is the right default for stateless tasks — it is
+_files_ persist (via the S3 mount). That is the right default for stateless tasks. It is
 cheap and there is nothing to leak.
 
-**Prefer `persistent: false` unless you actually need the state.** Each persistent config
+**Prefer `persistent: false` unless you need the state.** Each persistent config
 reserves **one long-lived instance per workspace**, and on `lambda` a MicroVM counts against
-the account's _allocated memory_ quota while it is **running or suspended** — a suspended VM
+the account's _allocated memory_ quota while it is **running or suspended**. A suspended VM
 still holds its full allocation until `suspendedDurationSeconds` (or a dashboard Terminate)
 releases it. A handful of persistent agents/workspaces can exhaust the quota and every new
 launch then fails with `ServiceQuotaExceededException` ("maximum allocated memory limit").
@@ -21,16 +20,16 @@ config a `fallbackProvider` so a full primary hands the run to a second provider
 of failing the tool call.
 
 Reserve a persistent sandbox (`persistent: true`) when **installed packages, code, or
-running processes need to survive across calls** — a cloud dev box where `pip`/`npm`/`uv`
+running processes need to survive across calls**: a cloud dev box where `pip`/`npm`/`uv`
 installs and background jobs stay alive, scaling down on idle like Fargate. Reach for it for
 iterative coding sessions, long-running work, and when you want the live dashboard terminal;
 avoid it for one-shot tasks. When a reservation is done, **Terminate it from the dashboard**
-(Sandbox → Instances) — that tears down the provider instance and frees its quota
+(Sandbox → Instances). That tears down the provider instance and frees its quota
 immediately instead of waiting out the suspended grace period.
 
 ## Reserved (persistent) sandboxes
 
-Set `persistent: true` to **reserve a long-lived sandbox per workspace** — or, for a sandbox
+Set `persistent: true` to **reserve a long-lived sandbox per workspace**, or, for a sandbox
 an agent reaches with no workspace attached, one per agent. For `lambda` this reserves a
 snapshot-resumable MicroVM (suspend/resume on idle, 8 h max lifetime).
 
@@ -67,14 +66,14 @@ pause/standby (auto-resumes on the next exec); **lambda** uses Firecracker snaps
 MicroVM is suspended to disk on idle and resumed on the next call, up to an 8-hour maximum
 lifetime); **daytona** uses native `autoStopInterval` (filesystem persists); **e2b** uses
 native `lifecycle.onTimeout: "pause"` (filesystem + memory snapshot persist); **vercel**
-uses named persistent sandboxes and native `onCreate`/`onResume` callbacks. A reserved
-sandbox is reconnected by id on the next call (`sandbox`/workdir reserves a deterministic
-sandbox per workspace namespace; lambda/daytona/e2b/vercel store the id/name in a
-`persistentSandboxInstance` table). Reservation rows carry a 7-day idle TTL refreshed on
-every use, and a concurrent first-create race is resolved by a conditional claim — the loser
+uses named persistent sandboxes and native `onCreate`/`onResume` callbacks. The harness
+reconnects a reserved sandbox by id on the next call (`sandbox`/workdir reserves a
+deterministic sandbox per workspace namespace; lambda/daytona/e2b/vercel store the id/name
+in a `persistentSandboxInstance` table). Reservation rows carry a 7-day idle TTL refreshed
+on every use, and a conditional claim resolves a concurrent first-create race. The loser
 discards its duplicate sandbox and reconnects to the winner's.
 
-Setup commands (`onCreate`/`onResume`) only run on persistent configs — see
+Setup commands (`onCreate`/`onResume`) only run on persistent configs. See
 [Hooks → Setup commands](hook.md#setup-commands-oncreate--onresume).
 
 **Clean delete (no leaks).** Deleting a workspace or account releases its reserved
@@ -121,8 +120,8 @@ flowchart LR
 ```
 
 **Auto-delivery.** When the job finishes it POSTs its result to the harness
-`/sandbox-jobs/<resultId>/complete` endpoint, authenticated by a per-job token (not the
-account key — no account secret ever enters the sandbox). The harness settles the row and
+`/sandbox-jobs/<resultId>/complete` endpoint, authenticated by a per-job token, not the
+account key. No account secret ever enters the sandbox. The harness settles the row and
 **resumes the conversation** with the result injected, so the model does not have to poll.
 The follow-up is then delivered back to wherever the turn came from:
 
@@ -147,8 +146,8 @@ and a job that is killed when the sandbox is recreated/scaled-to-0 reports as `f
 stamps the launching boot id, so a stale `.running` marker is never read as "running
 forever"). The idle scale-down never pauses a sandbox while a job is still running.
 
-> **Network note:** auto-delivery requires the sandbox to reach the gateway/core URL from `PUBLIC_BASE_URL` —
-> see [Networking → auto-delivery](networking.md#egress-and-background-job-auto-delivery).
+> **Network note:** auto-delivery requires the sandbox to reach the gateway/core URL from `PUBLIC_BASE_URL`.
+> See [Networking → auto-delivery](networking.md#egress-and-background-job-auto-delivery).
 > Without egress the job still runs and `async_status` polling still works; only the
 > automatic push-back is skipped.
 
@@ -156,16 +155,16 @@ forever"). The idle scale-down never pauses a sandbox while a job is still runni
 
 Two ways to get **real terminal behaviour** out of a sandbox:
 
-**Agent side — `bash` with `pty: true`.** The bash tool accepts a `pty` flag that attaches
+**Agent side: `bash` with `pty: true`.** The bash tool accepts a `pty` flag that attaches
 the command to a real pseudo-terminal inside the guest (util-linux `script`). Programs see
 `isatty() = true` and a normal terminal line discipline, so TTY-gated CLIs, prompts, and
 terminal UIs behave as they would in a real shell. It works on every provider (it is a
 guest-side wrapper); note that stderr merges into stdout and lines end with CRLF, so keep
 `pty` off for output you want byte-exact.
 
-**Operator side — the dashboard Terminal tab.** For `sandbox` (workdir) and `lambda`
+**Operator side: the dashboard Terminal tab.** For `sandbox` (workdir) and `lambda`
 (AWS MicroVM) instances the dashboard's Sandbox → Instances detail panel has a live
-interactive terminal — a real in-guest TTY streamed over WebSocket, not a command runner.
+interactive terminal, a real in-guest TTY streamed over WebSocket, not a command runner.
 Connecting resumes a suspended instance. The third-party providers keep the bounded
 command runner (30 s / 64 KiB per command).
 
@@ -200,7 +199,7 @@ in `X-aws-proxy-auth`, dialing the VM endpoint's native shell (`wss://<endpoint>
 
 ## Keep prompts portable
 
-Tell the model to **use relative paths** (`analysis.json`, `src/index.ts`) — the harness
+Tell the model to **use relative paths** (`analysis.json`, `src/index.ts`). The harness
 starts each `bash` command in the selected workspace directory and the file tools take
 workspace-relative paths, so the model should not need provider-specific mount paths. Put
 those implementation paths in docs and logs, not ordinary task prompts. See

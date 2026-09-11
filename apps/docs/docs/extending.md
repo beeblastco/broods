@@ -1,16 +1,16 @@
 # Extending
 
-Use this page as a routing guide for extension work. Keep detailed implementation steps in the focused docs so the same instructions do not drift.
+This page only points at the doc that owns each extension path. The steps live there so they do not drift.
 
-## Add an External Tool
+## Add an external tool
 
 Use [External Tools](tools.md) for Tavily-style, Google Search-style, or other agent-configured integrations that call outside services from the model loop.
 
-## Add a Channel
+## Add a channel
 
 Use [Channels](channels/index.md) for Telegram, GitHub, Slack, Discord, or any new communication channel that receives provider webhooks and sends provider replies.
 
-## Add a Command
+## Add a command
 
 1. Add a new entry to the `commands` array in [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts).
 2. Include aliases, description, and an execute function.

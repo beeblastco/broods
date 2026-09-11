@@ -1,7 +1,7 @@
 /**
  * Channel record CRUD scoped to an account. Mirrors sandboxConfigs.ts: the doc
  * _id is the public channelRecordId and every mutation revalidates the doc's
- * accountId. `getByExternalId` is the inbound-webhook lookup — it answers
+ * accountId. `getByExternalId` is the inbound-webhook lookup. It answers
  * "which record owns this Slack channel?" before an agent is chosen.
  * The config blob is plaintext: bindings and policy ids, never credentials.
  */

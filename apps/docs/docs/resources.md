@@ -5,9 +5,9 @@ title: Resource Configuration
 
 # Resource Configuration
 
-Broods uses a **code-first** configuration model. You define agents, workspaces, sandboxes, skills, MCP servers, cron jobs, and channels as typed TypeScript resources inside a `broods/` folder. The CLI compiles these into a manifest, syncs them to the cloud, and generates typed runtime references.
+Broods uses a code-first configuration model. You define agents, workspaces, sandboxes, skills, MCP servers, cron jobs, and channels as typed TypeScript resources inside a `broods/` folder. The CLI compiles these into a manifest, syncs them to the cloud, and generates typed runtime references.
 
-## Project Layout
+## Project layout
 
 ```text
 my-project/
@@ -23,9 +23,9 @@ my-project/
   .env.local           # Local secrets (never commit)
 ```
 
-## `env` — Deferred Secrets
+## Deferred secrets with `env`
 
-Never bake secrets into your resource files. Use `env("NAME")` to create a **deferred reference** that resolves on the server at runtime:
+Never bake secrets into your resource files. Use `env("NAME")` to create a deferred reference that resolves on the server at runtime:
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -50,7 +50,7 @@ Set the value with the CLI:
 broods env set OPENAI_API_KEY
 ```
 
-Or let `broods dev` auto-push it from your local `.env.local`. `broods env sync` does the same push on demand, for any stage — that is how a secret you rotated locally reaches a stage `dev` is not watching.
+Or let `broods dev` auto-push it from your local `.env.local`. `broods env sync` does the same push on demand, for any stage. That is how a secret you rotated locally reaches a stage `dev` is not watching.
 
 Every reference has to resolve. `broods dev` and `broods deploy` reject a manifest whose `env("NAME")` has no value stored for the stage, and name the variables you still owe:
 
@@ -62,7 +62,7 @@ in .env.local and run `broods dev`), then sync again.
 
 Nothing is written when that happens, so a misspelled or forgotten name fails the sync instead of reaching the runtime as a literal `${NAME}`. The rule holds in reverse too: `broods env rm` refuses while a synced agent or sandbox still reads the variable.
 
-> `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
+> `env` is not `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
 
 ## Agents
 
@@ -90,7 +90,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-### Supported Providers
+### Supported providers
 
 Every Vercel AI SDK provider that ships language models is supported, plus any
 OpenAI-compatible endpoint. Each needs an `apiKey`; anything else you set is
@@ -122,7 +122,7 @@ documentation is the reference for its settings.
 | OpenAI-compatible custom endpoint | `custom`     |
 
 `bedrock` also accepts `region` / `accessKeyId` / `secretAccessKey`, `vertex`
-accepts `project` / `location`, and `custom` additionally requires `base_url` —
+accepts `project` / `location`, and `custom` also requires `base_url`,
 all of them straight from the AI SDK.
 
 Because an `apiKey` is always required, `vertex` authenticates in
@@ -144,11 +144,11 @@ model: {
 },
 ```
 
-The base URL key is `base_url` (or the AI-SDK spelling `baseURL`) — both are
-accepted. The camel-case `baseUrl` is **not**: `broods dev`/`deploy` throw a
+The base URL key is `base_url`, or the AI-SDK spelling `baseURL`; both are
+accepted. The camel-case `baseUrl` is not: `broods dev`/`deploy` throw a
 clear error before syncing, so the typo never reaches a run. Settings broods
 does not read itself are forwarded to the provider untouched and are not
-checked here — the provider decides what it accepts.
+checked here. The provider decides what it accepts.
 
 The `custom` path also normalizes two vLLM-style endpoint quirks automatically:
 multiple system messages are folded into one before the request is sent, and
@@ -267,9 +267,9 @@ session according to the adapter's lifecycle capability, and persists the
 bounded checkpoint. Mid-turn time slicing with `suspendTurn()` and
 `continueStream()` is not currently enabled.
 
-### Reasoning / Thinking Tokens
+### Reasoning / thinking tokens
 
-Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is
+Prefer the AI SDK v7 unified `reasoning` level in `config.model`. It is
 provider-agnostic and survives switching `config.model.provider`:
 
 ```ts
@@ -281,7 +281,7 @@ model: {
 ```
 
 Provider-specific thinking settings are still accepted through `providerOptions`
-and **take precedence** over `reasoning` when both are set — remove overlapping
+and take precedence over `reasoning` when both are set, so remove overlapping
 `providerOptions` entries when you migrate. If a model coerces or does not
 support the requested level, the SDK reports a call warning; the harness logs it
 (`model.step.warnings` events in Loki).
@@ -293,7 +293,7 @@ support the requested level, the SDK reports a call warning; the harness logs it
 | Google    | `providerOptions.google.thinkingConfig`                     |
 | MiniMax   | `providerOptions.anthropic.thinking` (Anthropic-compatible) |
 
-### Structured Output
+### Structured output
 
 ```ts
 model: {
@@ -323,13 +323,13 @@ Import provider-defined tools from their AI SDK provider package:
 import { google } from "@ai-sdk/google";
 
 tools: {
-  // executed by the provider — any tool on its AI SDK `tools` namespace
+  // executed by the provider: any tool on its AI SDK `tools` namespace
   googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
   urlContext: google.tools.urlContext({}),
 },
 ```
 
-Everything the provider does not execute itself comes from an MCP server — see
+Everything the provider does not execute itself comes from an MCP server. See
 [MCP Servers](#mcp-servers) below and [External Tools](tools.md).
 
 ### Channels
@@ -548,7 +548,7 @@ Supported providers: `sandbox`, `lambda`, `e2b`, `daytona`, `vercel`.
 
 `persistent: true` reserves a long-lived machine: one per workspace where a workspace is
 attached, and one per agent where none is. `options.reservationKey` pins that identity
-yourself — two sandboxes carrying the same key share one machine. Keys are scoped to
+yourself. Two sandboxes carrying the same key share one machine. Keys are scoped to
 your account; the same string on another account names a different machine.
 
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
@@ -577,7 +577,7 @@ export const supportFlow = defineSkill({
 
 The `path` is relative to `broods/` and must contain a `SKILL.md` file.
 
-## MCP Servers
+## MCP servers
 
 ```ts
 import { defineMcp, env } from "broods";
@@ -620,7 +620,7 @@ export const agent = defineAgent({
 });
 ```
 
-Pass `handler` instead of `url` to host the server on the platform — the whole server lives in one file. The server package is the project's own dependency (`bun add @modelcontextprotocol/server`); the CLI bundles it from there:
+Pass `handler` instead of `url` to host the server on the platform. The whole server then lives in one file. The server package is the project's own dependency (`bun add @modelcontextprotocol/server`); the CLI bundles it from there:
 
 ```ts
 import { defineMcp } from "broods";
@@ -638,7 +638,7 @@ export const greeter = defineMcp({
 
 The CLI bundles the defining module into a self-contained ESM module and uploads it. Enable a server on an agent with `mcp: { [search.name]: { enabled: true } }`. `defineTool` (uploaded custom tools) is retired; hosted MCP servers replace it. See [External Tools](tools.md#connected-mcp-servers) for the full model.
 
-## Cron Jobs
+## Cron jobs
 
 ```ts
 import { defineCron } from "broods";
@@ -679,7 +679,7 @@ import {
 
 A channel definition must be attached to **exactly one** agent. An agent may have multiple channels, but not multiple of the same type.
 
-## Project Config
+## Project config
 
 Optionally export a `defineBroods` config to set project defaults:
 
@@ -698,7 +698,7 @@ export default defineBroods({
 
 These values can be overridden by CLI flags (`--project`, `--stage`) or `.env.local`.
 
-`dashboardUrl` is only where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the broods API base URL discovered during login (`baseUrl` in stored auth), overridable via `baseUrl` here, `BROODS_BASE_URL`, or `--base-url`. The same `BROODS_BASE_URL` also drives runtime SDK clients -- one public endpoint serves both planes.
+`dashboardUrl` is only where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the broods API base URL discovered during login (`baseUrl` in stored auth), overridable via `baseUrl` here, `BROODS_BASE_URL`, or `--base-url`. The same `BROODS_BASE_URL` also drives runtime SDK clients; one public endpoint serves both planes.
 
 `login` and `dev` record that base URL in `.env.local` as `BROODS_BASE_URL`, so runtime clients (`broods run`, `broods logs`, and any SDK code in the project) reach the same deployment the CLI is signed in to rather than the packaged default. A runtime API key is only valid on the deployment that issued it, so pointing a client at a different one fails with a 401.
 
@@ -715,9 +715,9 @@ The CLI validates resource configs at compile time:
 - Workspace storage provider must be `s3`.
 - Sandbox mounts must support S3 workspace access.
 
-These checks run during `broods dev` and `broods deploy`, so you get fast feedback without deploying broken config.
+These checks run during `broods dev` and `broods deploy`, so a broken config fails before it reaches a stage.
 
-## Generated References
+## Generated references
 
 After `broods dev` or `broods deploy`, the CLI writes `_generated/api.ts` with typed references:
 
@@ -740,6 +740,6 @@ const client = new BroodsClient();
 await client.run(api.agents.myAgent, { input: "Hello!" });
 ```
 
-## Raw API Fallback
+## Raw API fallback
 
 The code-first layer compiles to the same manifest the raw account API accepts. If you ever need to call the REST API directly, the shapes are identical. See the [API Reference](/api-reference) for the full OpenAPI spec.

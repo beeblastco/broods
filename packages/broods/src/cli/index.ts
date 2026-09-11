@@ -153,7 +153,7 @@ ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
 Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
-BROODS_STAGE by design — pass --stage to deploy anywhere else.
+BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
@@ -1075,8 +1075,8 @@ async function dev(args: string[]): Promise<void> {
   );
 
   // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort — if no runtime API
-  // key is configured yet, it prints a hint and skips without breaking the sync.
+  // the developer sees activity while editing. Best-effort: with no runtime API
+  // key configured yet, it prints a hint and skips without breaking the sync.
   const logController = new AbortController();
   void streamDevLogs(args, logController.signal);
 
@@ -1099,7 +1099,7 @@ async function streamDevLogs(
     creds = resolveObservabilityCredentials();
   } catch {
     console.log(
-      "· live logs off — no runtime key found for this stage yet. Run `broods dev --once` after login to create or reconnect it.",
+      "· live logs off. No runtime key for this stage yet. Run `broods dev --once` after login to create or reconnect it.",
     );
 
     return;
@@ -1391,7 +1391,7 @@ async function syncRuntimeKeyForScope(
     printWarning(
       `⚠ Could not read the runtime key for ${scope.project}/${scope.stage} ` +
         `(${error instanceof Error ? error.message : String(error)}). ` +
-        "BROODS_API_KEY still points at the previous scope — run `broods whoami` to check it.",
+        "BROODS_API_KEY still points at the previous scope. Run `broods whoami` to check it.",
     );
 
     return;
@@ -1454,7 +1454,7 @@ function formatProject(project: CliProject, current: string): string {
   const contents = project.empty ? "empty" : describeContents(project);
 
   return formatChoiceRow(
-    `${project.name} — ${contents}`,
+    `${project.name}: ${contents}`,
     project.name === current || project.slug === current,
   );
 }
@@ -1469,7 +1469,7 @@ function formatStage(stage: CliStage, current: string): string {
 function formatStageDetail(stage: CliStage): string {
   const region = stage.deploymentRegion ? `, ${stage.deploymentRegion}` : "";
 
-  return `${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
+  return `${stage.name} (${stage.kind}${region}): ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
 }
 
 /** Stage names match the way the backend matches them: trimmed, case-insensitive. */
@@ -1613,7 +1613,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
  * Syncs the dev stage once. Creates/updates are pushed first so they apply
  * immediately; deletions (resources removed from code) are then confirmed
  * interactively before pruning, so an edit-in-progress never silently destroys
- * an agent's history or a workspace's files — and a slow answer never blocks the
+ * an agent's history or a workspace's files, and a slow answer never blocks the
  * non-destructive sync. Declined deletes are remembered (across watch child
  * processes via `BROODS_DECLINED_FILE`) so they are not re-prompted.
  */
@@ -1696,7 +1696,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
       .map((entry) => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
-      `⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`,
+      `⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
     );
   }
 
@@ -1825,14 +1825,14 @@ function printEnvDriftWarning(refs: EnvRef[], target: string): void {
   const unverified = namesInState(refs, "unverified");
   if (drifted.length > 0) {
     printWarning(
-      `⚠ .env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")} — ` +
-        "run `broods env sync` to push the local values.",
+      `⚠ .env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")}. ` +
+        "Run `broods env sync` to push the local values.",
     );
   }
   if (unverified.length > 0) {
     printWarning(
       `⚠ ${target} stored ${unverified.length} variable(s) before value digests, so nothing can compare ` +
-        `them: ${unverified.join(", ")} — run \`broods env sync\` to bring them in step.`,
+        `them: ${unverified.join(", ")}. Run \`broods env sync\` to bring them in step.`,
     );
   }
 }
@@ -1994,7 +1994,7 @@ async function envCommand(args: string[]): Promise<void> {
 }
 
 /**
- * `broods env sync` — pushes every `env("NAME")` the project references from
+ * `broods env sync` pushes every `env("NAME")` the project references from
  * `.env.local`, then says what moved and what it left alone.
  */
 async function syncEnvFromLocal(
@@ -2034,7 +2034,7 @@ async function syncEnvFromLocal(
   if (unresolved.length > 0) {
     printWarning(
       `⚠ ${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
-        `${unresolved.join(", ")} — put them in .env.local, or run \`broods env set <NAME>\`.`,
+        `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME>\`.`,
     );
   }
 }
@@ -2123,7 +2123,7 @@ async function resolveObservabilityTarget(
     scope.stageSlug !== configured.stage
   ) {
     console.log(
-      `· reading ${scope.projectSlug}/${scope.stageSlug} — the runtime key is scoped there, not to ${configured.project}/${configured.stage}.`,
+      `· reading ${scope.projectSlug}/${scope.stageSlug}. The runtime key is scoped there, not to ${configured.project}/${configured.stage}.`,
     );
   }
 
@@ -2148,8 +2148,8 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   return `${time} ${level} ${entry.eventType} ${message}`;
 }
 
-// `broods stream` — live tail of the whole project/stage log stream
-// until Ctrl-C, no backfill. Flags are documented in HELP.
+// `broods stream` live-tails the whole project/stage log stream until Ctrl-C,
+// with no backfill. Flags are documented in HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
   const { project, stage } = await resolveObservabilityTarget(args, {
@@ -2165,7 +2165,7 @@ async function streamLogs(args: string[]): Promise<void> {
   console.log(
     `Streaming live logs for ${project}/${stage} [${minLevel}+]` +
       levelHint(minLevel) +
-      " — Ctrl+C to stop",
+      ", Ctrl+C to stop",
   );
 
   try {
@@ -2185,7 +2185,7 @@ async function streamLogs(args: string[]): Promise<void> {
   }
 }
 
-// `broods logs` — backfill recent lines (Loki) then switch to a live tail
+// `broods logs` backfills recent lines (Loki) then switches to a live tail
 // until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
@@ -2216,7 +2216,7 @@ async function logs(args: string[]): Promise<void> {
       (sandboxId ? ` sandbox ${sandboxId}` : "") +
       ` [${minLevel}+]` +
       levelHint(minLevel) +
-      ` (backfill ${limit}) — Ctrl+C to stop`,
+      ` (backfill ${limit}), Ctrl+C to stop`,
   );
 
   try {
@@ -2248,7 +2248,7 @@ async function logs(args: string[]): Promise<void> {
 /**
  * `agent` subcommands: `list` (overview of the scope's agents) and
  * `get <name>` (one agent's resolved resources). Both read the locally compiled
- * manifest — which already has the full nested config — and annotate it with the
+ * manifest, which already has the full nested config, and annotate it with the
  * remote deploy ids, so no extra backend endpoint is needed.
  */
 async function agentCommand(args: string[]): Promise<void> {
@@ -2369,16 +2369,18 @@ async function agentGet(
     `  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`,
   );
   console.log(`  Model:        ${agentModelLabel(config)}`);
-  console.log(`  Sandbox:      ${sandbox ?? "—"}`);
+  console.log(`  Sandbox:      ${sandbox ?? "none"}`);
   console.log(
-    `  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "—"}`,
-  );
-  console.log(`  Tools:        ${tools.length > 0 ? tools.join(", ") : "—"}`);
-  console.log(
-    `  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "—"}`,
+    `  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "none"}`,
   );
   console.log(
-    `  Channels:     ${channels.length > 0 ? channels.join(", ") : "—"}`,
+    `  Tools:        ${tools.length > 0 ? tools.join(", ") : "none"}`,
+  );
+  console.log(
+    `  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "none"}`,
+  );
+  console.log(
+    `  Channels:     ${channels.length > 0 ? channels.join(", ") : "none"}`,
   );
   if (webhooks.length > 0) {
     console.log(`  Webhooks:`);
@@ -2389,7 +2391,7 @@ async function agentGet(
           : "all events";
       const state = webhook.enabled === false ? "disabled" : "enabled";
       console.log(
-        `    [${index}] ${state} → ${webhook.url ?? "—"} (${events})`,
+        `    [${index}] ${state} → ${webhook.url ?? "none"} (${events})`,
       );
     });
   }
@@ -2518,7 +2520,7 @@ async function writeStarter(
   }
 }
 
-/** Ensure the project directory has a .gitignore that ignores generated files. */
+/** Adds any missing generated-file lines to the project directory's .gitignore. */
 async function ensureGitIgnore(): Promise<void> {
   const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
   const existing = await readTextIfExists(path);
@@ -2713,8 +2715,8 @@ function starterAgent(): string {
     `  },\n` +
     `  sandbox: lambdaSandbox,\n` +
     `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
-    `  // \`broods run\` can reach this agent. Off by default — secured: a\n` +
-    `  // private agent is only reachable via internal endpoints or channel webhooks.\n` +
+    `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
+    `  // only reachable via internal endpoints or channel webhooks.\n` +
     `  publicAccess: true,\n` +
     `});\n`
   );

@@ -1,6 +1,6 @@
 # Zalo
 
-Zalo integration allows your agent to answer text messages in private chats and groups through the official Zalo Bot API.
+The Zalo channel answers text messages in private chats and groups through the official Zalo Bot API.
 
 ## Configuration
 
@@ -25,7 +25,7 @@ export const myAgent = defineAgent({
 - `channels` (Optional): `["*"]` to answer in every chat instead of only the declared ones. A bot that takes direct messages needs this, because a person's chat id does not exist until they write.
 - `allowedUserIds` (Optional): Zalo user IDs allowed to trigger the agent. Everyone, when omitted. Applies to private chats and groups alike.
 
-## Group Chats
+## Group chats
 
 Group support is an [internal Zalo Bot Platform experiment](https://bot.zapps.me/docs/build-bot-interaction-with-group/) and may not be available for every bot. Verify that the Bot Creator shows **Invite Bot to Group** before debugging the Broods configuration.
 
@@ -75,7 +75,7 @@ curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
   }'
 ```
 
-A stage other than production is registered through its own endpoint id, so two
+A stage other than production registers through its own endpoint id, so two
 stages sharing one bot never receive each other's messages:
 
 ```text
@@ -85,7 +85,7 @@ stages sharing one bot never receive each other's messages:
 Zalo stores one webhook URL per bot, so registering a stage URL moves that bot's
 traffic to that stage. Give each developer their own bot to run both at once.
 
-## Supported Behavior
+## Supported behavior
 
 ```mermaid
 flowchart TD
@@ -97,12 +97,12 @@ flowchart TD
   Reply --> Zalo
 ```
 
-- Text messages in private chats and groups are supported.
-- Inbound pictures (`message.image.received`), stickers (`message.sticker.received`), and voice notes (`message.voice.received`) reach the agent as attachments. Zalo hosts each one as a URL, so the agent receives the link, not the bytes — the picture and the sticker as an image, the voice note as an audio file. An image caption arrives as the text of the same message.
+- Text messages work in private chats and groups.
+- Inbound pictures (`message.image.received`), stickers (`message.sticker.received`), and voice notes (`message.voice.received`) reach the agent as attachments. Zalo hosts each one as a URL, so the agent receives the link, not the bytes. The picture and the sticker arrive as an image, the voice note as an audio file. An image caption arrives as the text of the same message.
 - The configured model must accept that input: send a picture to a text-only model and the run fails on the provider's error. `.aac` is the only audio format the Zalo Bot API deals in, so a voice note whose URL is anything else is passed along as a plain link instead of an audio attachment, and the turn survives.
 - Zalo has no inbound document or video event. Anything else the user sends arrives as `message.unsupported.received` and is ignored, along with bot-originated messages, chats that were never declared, and senders outside `allowedUserIds` when configured.
-- Outbound replies are split into 2000-character chunks for the Zalo Bot API text limit.
+- Broods splits outbound replies into 2000-character chunks for the Zalo Bot API text limit.
 - Typing indicators use `sendChatAction`.
-- Outbound images use `sendPhoto`. Zalo fetches the picture itself, so the image must be an absolute `http(s)` URL that Zalo can reach — a local path, a `data:` URL, or a private link is rejected. An optional caption is truncated to 2000 characters.
+- Outbound images use `sendPhoto`. Zalo fetches the picture itself, so the image must be an absolute `http(s)` URL that Zalo can reach. A local path, a `data:` URL, or a private link is rejected, and a caption is truncated to 2000 characters.
 - Outbound stickers use `sendSticker` with a Zalo sticker ID or name.
-- Reactions are not supported by the official Zalo Bot API adapter.
+- The official Zalo Bot API adapter has no reactions.

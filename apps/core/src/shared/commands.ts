@@ -220,7 +220,7 @@ export const commands: CommandHandler[] = [
         if (cmd.showInHelp === false) {
           continue;
         }
-        lines.push(`${cmd.aliases.join(", ")} — ${cmd.description}`);
+        lines.push(`${cmd.aliases.join(", ")}: ${cmd.description}`);
       }
 
       return lines.join("\n");

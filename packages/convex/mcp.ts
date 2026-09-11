@@ -189,8 +189,8 @@ export const removeForNode = action({
 
 /**
  * Save a canvas-authored MCP server: a `url` makes an external row, a
- * `bundle` a hosted one. An action, not a mutation — the bundle reaches S3
- * and passes core's tools/list probe before the row is written. A
+ * `bundle` a hosted one. An action, not a mutation, because the bundle reaches
+ * S3 and passes core's tools/list probe before the row is written. A
  * metadata-only edit (the enabled toggle, a description) skips the probe, so
  * an unreachable server can still be disabled.
  */

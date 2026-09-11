@@ -27,7 +27,7 @@ test("a stable release beats the prerelease of the same version", () => {
   expect(isNewerVersion("v0.16.0-rc.1", "0.15.1")).toBe(true);
 });
 
-// The suite runs from a checkout, so this copy reads as a project dependency —
+// The suite runs from a checkout, so this copy reads as a project dependency,
 // the case where `-g` would install a second copy somewhere else entirely.
 test("a copy inside the project upgrades the dependency, not a global", () => {
   const target = updateTarget();

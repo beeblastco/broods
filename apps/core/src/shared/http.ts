@@ -119,7 +119,7 @@ export function normalizePath(path: string): string {
 /**
  * Validate a user-configured outbound URL: https only, and the hostname must
  * not be a loopback/private/link-local address or an internal-looking name.
- * This is a config-time string check — it cannot catch DNS rebinding — so
+ * This is a config-time string check and cannot catch DNS rebinding, so
  * callers performing the fetch should also pass `redirect: "error"`.
  */
 export function assertPublicHttpsUrl(value: string, label: string): URL {

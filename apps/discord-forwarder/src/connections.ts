@@ -7,7 +7,7 @@
  * and a new bot token reconciles the moment it is written.
  *
  * `packages/convex/channel/connections.ts` does the decryption, so this process
- * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — only one deploy key per plane,
+ * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`, only one deploy key per plane,
  * the same credential core authenticates storage reads with. That query is not
  * Discord-specific; this is the caller that asks it for `discord`.
  */
@@ -82,7 +82,7 @@ export function planeConnections(
  * its own, and until a plane answers again its last snapshot keeps contributing,
  * so a blip cannot look like "every token here was deleted" and close its
  * sockets. A plane that has never answered contributes nothing, which is what
- * lets this process serve a deployment whose backend is not live yet — and
+ * lets this process serve a deployment whose backend is not live yet, and
  * `onChange` never fires before at least one plane has answered, so total
  * silence never reconciles at all.
  */

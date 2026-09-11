@@ -75,8 +75,8 @@ export const backfillUsageRollupGrains = internalMutation({
  * Cut per-account cron scheduling over from EventBridge Scheduler to the
  * Convex crons component: register every live cron row through the component
  * (one-time at(...) jobs go to the Convex scheduler) and unset the dead
- * EventBridge identifiers. Idempotent — rows already registered are skipped —
- * and paginated with a self-reschedule, like the other backfills. The
+ * EventBridge identifiers. Idempotent, skipping rows already registered, and
+ * paginated with a self-reschedule, like the other backfills. The
  * EventBridge schedules themselves die with the schedule group when the
  * updated sst.config.ts deploys; run this right after the Convex deploy so
  * no schedule window is missed.

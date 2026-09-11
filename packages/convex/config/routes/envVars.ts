@@ -49,7 +49,7 @@ export async function handleAccountEnvVarRoute(
       name: name,
       value: body.value,
     });
-    // Values never reach the audit log — only the name of what changed.
+    // Values never reach the audit log, only the name of what changed.
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,

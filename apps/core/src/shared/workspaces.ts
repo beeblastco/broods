@@ -54,7 +54,7 @@ export interface ResolvedWorkspace {
   // Read-only read runner. Set when the workspace has no effective sandbox AND the
   // ref did not explicitly opt out with `sandbox: null`. read/glob use it to read
   // through the mount so they see committed writes immediately; undefined => read S3
-  // directly (the `sandbox: null` opt-out — no Lambda/VPC, but lags mount writes).
+  // directly (the `sandbox: null` opt-out, which skips Lambda/VPC but lags mount writes).
   readMount?: SandboxConfig;
 }
 

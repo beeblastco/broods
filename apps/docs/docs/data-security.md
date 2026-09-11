@@ -2,7 +2,7 @@
 
 This is an experiment product, so the security model is simple by design. It avoids storing provider secrets as plain JSON in Convex, but it is not a final production-grade secrets system.
 
-## What Is Stored
+## What is stored
 
 ```mermaid
 flowchart TD
@@ -31,7 +31,7 @@ Provider credentials and account-specific runtime options must be usable at runt
 
 Workspace files, skill bundles, and uploaded hook and hosted MCP server bundles are stored as account-scoped S3 objects (workspace, skills, and tool-bundles buckets). The buckets block public access and use a deny-by-default bucket policy that allows only the project runtime roles, the scoped sandbox mount-s3 role, the MicroVM build/execution roles, and deployment roles for the active stage.
 
-## How Config Encryption Works
+## How config encryption works
 
 ```mermaid
 sequenceDiagram
@@ -54,7 +54,7 @@ Current implementation:
 - Convex stores encrypted config, not readable provider credentials.
 - The core runtime decrypts config only when it needs selected agent runtime settings.
 
-## API Responses
+## API responses
 
 Normal account responses redact secret-like fields:
 
@@ -64,14 +64,14 @@ Normal account responses redact secret-like fields:
 
 If a client sends `********` back in a patch, the existing real secret is preserved.
 
-## Who Can See What
+## Who can see what
 
 Dashboard access follows the org membership row, never who created a project.
 A member who is removed or demoted loses access on their next request, and a
 `broods login` token stops resolving the moment its user is no longer an org
 owner or admin.
 
-Two roles, one rule: **a member reads, an admin writes.** Every dashboard
+Two roles, one rule: a member reads, an admin writes. Every dashboard
 mutation, every sandbox control and every direct MCP tool call requires the
 admin or owner role; members see the same screens read-only and get an
 explicit "org admin" error if they try to change anything. Finer roles come
@@ -89,8 +89,8 @@ later.
 | Exec, open a terminal in, snapshot, suspend or terminate a sandbox      | no     | yes           |
 | Call an MCP tool from the explorer; create or revoke deploy keys; roles | no     | yes           |
 
-Members stream logs and drive the test chat with a **stage session ticket**
-(`fp_dts_…`): a fifteen-minute credential the config plane signs for the stage, which
+Members stream logs and drive the test chat with a stage session ticket
+(`fp_dts_…`), a fifteen-minute credential the config plane signs for the stage and
 core accepts exactly like the runtime key until it expires. The runtime key
 itself never reaches a member's browser. Webhook signing secrets are write-only:
 the dashboard reports whether one is set and never returns the value.
@@ -107,17 +107,17 @@ back: `broods env get` needs a `broods login` token or the org secret.
 `broods login` binds the one-time code to the CLI process with PKCE (S256), so
 a code caught by another local listener cannot be exchanged.
 
-## Untrusted Hosted MCP Server Execution
+## Untrusted hosted MCP server execution
 
-Account-uploaded hosted MCP server bundles are untrusted code and never run in the core process. They execute on the platform tool-runner Lambda — a plain Node.js function that runs each bundle in a child process with a scrubbed environment and a fresh per-invocation `TMPDIR`. The child is a containment layer, not a trust boundary: it runs as the same OS user as the function, so server code can read the function's own environment. The protections that do hold are that this function's execution role grants nothing but CloudWatch Logs, that the bundle is imported from memory and never written to disk, and that a child is only ever handed calls for the one `accountId + sha256` it was spawned for — a different tenant or a changed bundle always gets a fresh process, and the retiring child is reaped as a process group so nothing it spawned survives it. Treat anything the function can reach as reachable by tenant code. The function runs outside a VPC, so egress is open internet; the bundle arrives via a short-lived pre-signed URL, so the function holds no S3 or data-plane access.
+Account-uploaded hosted MCP server bundles are untrusted code and never run in the core process. They execute on the platform tool-runner Lambda, a plain Node.js function that runs each bundle in a child process with a scrubbed environment and a fresh per-invocation `TMPDIR`. The child is a containment layer, not a trust boundary: it runs as the same OS user as the function, so server code can read the function's own environment. The protections that do hold are that this function's execution role grants nothing but CloudWatch Logs, that the bundle is imported from memory and never written to disk, and that a child is only ever handed calls for the one `accountId + sha256` it was spawned for. A different tenant or a changed bundle always gets a fresh process, and the retiring child is reaped as a process group so nothing it spawned survives it. Treat anything the function can reach as reachable by tenant code. The function runs outside a VPC, so egress is open internet; the bundle arrives via a short-lived pre-signed URL, so the function holds no S3 or data-plane access.
 
-The child is kept warm for repeat calls of the same account's same bundle, which cuts repeat-call latency to a floor independent of bundle size. Reuse is bounded (a max-invocation count and an idle TTL) and a timeout, a rejected payload, or an unhandled rejection retires the child immediately; a request whose handler throws fails only that request. What reuse deliberately gives up is a clean process per call _within one tenant's bundle_: module-level state the bundle hoists (memoized clients, counters, pools) persists across its own calls — matching how any long-lived MCP server behaves — while `HOME`/`TMPDIR` are re-pointed at a fresh scratch dir on every invocation. One invocation carries a batch of that tenant's parallel calls, which run concurrently in the child and share that scratch dir.
+The child is kept warm for repeat calls of the same account's same bundle, which cuts repeat-call latency to a floor independent of bundle size. Reuse is bounded (a max-invocation count and an idle TTL) and a timeout, a rejected payload, or an unhandled rejection retires the child immediately; a request whose handler throws fails only that request. What reuse deliberately gives up is a clean process per call _within one tenant's bundle_: module-level state the bundle hoists (memoized clients, counters, pools) persists across its own calls, the way any long-lived MCP server behaves, while `HOME`/`TMPDIR` get re-pointed at a fresh scratch dir on every invocation. One invocation carries a batch of that tenant's parallel calls, which run concurrently in the child and share that scratch dir.
 
 Bundles are size-capped (50 MB; 10 MB when inlined in the request body) and time-bounded, and their sha256 is checked on every invoke.
 
 Inline [code hooks](hooks.md) are the other untrusted-code tier: a V8 `isolated-vm` isolate in a Node child of the core. No filesystem, no npm/native imports, and network only through an SSRF-guarded `fetch` (private and metadata ranges blocked, resolved addresses pinned against DNS rebinding).
 
-## Why Keep It This Way
+## Why keep it this way
 
 This keeps the product easy to run and change:
 
@@ -133,4 +133,4 @@ This keeps the product easy to run and change:
 - Any runtime with the encryption secret and table access can decrypt config.
 - Key rotation needs a migration.
 - This protects against accidental table-read exposure, not compromised application code.
-- Third-party sandbox providers such as E2B, Daytona, and Vercel run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them. Daytona S3 mounts receive short-lived credentials from the dedicated `sandbox-s3mount` IAM role, scoped to the workspace's own key prefix — never the harness runtime's credentials.
+- Third-party sandbox providers such as E2B, Daytona, and Vercel run outside the AWS Lambda sandbox boundary. Configure them with isolated mounts, minimal environment variables, provider-side egress controls, and no account/provider secrets unless a workload explicitly needs them. Daytona S3 mounts receive short-lived credentials from the dedicated `sandbox-s3mount` IAM role, scoped to the workspace's own key prefix, never the harness runtime's credentials.

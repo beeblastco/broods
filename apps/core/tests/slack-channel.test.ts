@@ -573,7 +573,7 @@ describe("slack channel adapter", () => {
   it("coalesces rapid reasoning deltas into one append without duplication", async () => {
     // Every task_update costs a blocking Slack API round trip, so deltas that
     // arrive within the flush interval must merge into a single append. Each
-    // suffix is still sent exactly once — chat.appendStream appends details,
+    // suffix is still sent exactly once, because chat.appendStream appends details,
     // so re-sending accumulated text would render "TheThe user is…".
     const chunks = await collect(
       toSlackStream(
@@ -729,7 +729,7 @@ describe("slack channel adapter", () => {
   });
 
   // Threading a group reply is the default, so `inline` is the value that has
-  // to change something — without it the record field decides nothing.
+  // to change something. Without it the record field decides nothing.
   it("posts to the channel under inline, and opens a thread under always-thread", async () => {
     const adapter = createTestSlackChannel(null);
 

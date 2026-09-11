@@ -36,7 +36,7 @@ npm install broods ai
 A hosted MCP server (`defineMcp` with a `handler`) needs
 `@modelcontextprotocol/server` in the project the same way.
 
-## Invoke an Agent
+## Invoke an agent
 
 ```ts
 import { BroodsClient } from "broods";
@@ -65,17 +65,16 @@ configs_: the CLI syncs them to your project on deploy and codegen gives you
 typed references. Use this when the set of agents is fixed and versioned with
 your code.
 
-**Dynamic config at runtime (`BroodsAccountClient`).** When your app needs to
-create or mutate config while it runs — for example a multi-tenant product that
-provisions one agent per customer — use the account config client with your
-account secret. It is the complete typed client for the account config plane:
-agents, sandboxes (config + suspend/resume/terminate/snapshot/terminal),
-workspaces (config + file upload/rename/delete/download), tools, policies,
-skills, crons (+ run history), and the account itself (metadata, secret
-rotation, deletion). It is a separate, dependency-free entry point
-(`broods/account`) built on plain `fetch`, so it also works in edge runtimes
-such as Convex actions and Cloudflare Workers where the main SDK entry (which
-reads `.env` files from disk) cannot load:
+**Dynamic config at runtime (`BroodsAccountClient`).** A multi-tenant product
+that provisions one agent per customer creates and mutates config while it runs.
+For that, use the account config client with your account secret. It is the
+complete typed client for the account config plane: agents, sandboxes (config +
+suspend/resume/terminate/snapshot/terminal), workspaces (config + file
+upload/rename/delete/download), tools, policies, skills, crons (+ run history),
+and the account itself (metadata, secret rotation, deletion). It is a separate,
+dependency-free entry point (`broods/account`) built on plain `fetch`, so it
+also works in edge runtimes such as Convex actions and Cloudflare Workers where
+the main SDK entry (which reads `.env` files from disk) cannot load:
 
 ```ts
 import { BroodsAccountClient, envPlaceholder } from "broods/account";

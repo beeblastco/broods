@@ -1,6 +1,6 @@
 "use client";
 
-/** Reusable dialog for creating a new project with a random name pre-filled. */
+/** Dialog for creating a project, with a random name pre-filled. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -39,7 +39,7 @@ export async function randomProjectName(): Promise<string> {
 export function CreateProjectDialog({
   open,
   onOpenChange,
-  description = "Give your new project a name to get started.",
+  description = "Name your new project.",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -96,7 +96,7 @@ export function CreateProjectDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>Create Project</DialogTitle>
+          <DialogTitle>Create project</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <form

@@ -1,5 +1,5 @@
 /**
- * Builds the self-hosted core server binary — the same entry the container runs
+ * Builds the self-hosted core server binary, the same entry the container runs
  * (apps/core/Dockerfile). Compiles at the host's default target; the Docker
  * build compiles at the amd64 cluster target.
  */

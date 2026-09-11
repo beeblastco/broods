@@ -1,7 +1,7 @@
 /**
  * Resolves which account-plane objects belong to a project.
  *
- * `agents` rows are account-scoped and carry no projectId — the only link
+ * `agents` rows are account-scoped and carry no projectId. The only link
  * between the account plane and the project plane is `agentConfigs.projectId`,
  * written by the canvas or by the API back-sync. Crons and conversations have
  * no projectId either; they point at an agent, so their project is whatever

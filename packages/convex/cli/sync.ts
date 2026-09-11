@@ -343,8 +343,8 @@ export const syncManifestBySecretHash = internalMutation({
 });
 
 /**
- * Ensure the synced stage has a runtime API key (`fp_agent_…`) so the CLI
- * can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
+ * Creates the synced stage's runtime API key (`fp_agent_…`) when it has none,
+ * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
 export const ensureRuntimeKeyBySecretHash = internalMutation({
@@ -741,7 +741,7 @@ export const setEnvBySecretHash = internalMutation({
 
 /**
  * Names, update times and value digests for the CLI `env list` / `env sync`.
- * Values are never returned — encrypted at rest and write-only by design.
+ * Values are never returned, since they are encrypted at rest and write-only.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {

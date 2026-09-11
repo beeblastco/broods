@@ -414,7 +414,7 @@ export function SandboxInstancesTable({
       {filtered.length > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
           <span>
-            {safePage * PAGE_SIZE + 1}–
+            {safePage * PAGE_SIZE + 1}-
             {Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{" "}
             {filtered.length}
           </span>

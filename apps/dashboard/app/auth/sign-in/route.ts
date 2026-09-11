@@ -6,7 +6,7 @@ import { redirectUri } from "@/app/lib/authConfig";
 /**
  * Accept only a same-origin path. Parsing against a fixed base catches every
  * open-redirect encoding ("//evil.com", "/\evil.com", tab/newline tricks) that
- * a prefix check misses — the URL parser normalizes backslashes to forward
+ * a prefix check misses. The URL parser normalizes backslashes to forward
  * slashes and strips tabs/newlines exactly like browsers do, so anything that
  * would escape the origin fails the origin check below.
  */

@@ -2,7 +2,7 @@
 
 /**
  * Client-side performance beacon. Buffers marks and posts them to
- * `/api/telemetry`, which forwards to the OTLP collector — the collector's
+ * `/api/telemetry`, which forwards to the OTLP collector. The collector's
  * credentials stay server-side and never reach the browser.
  */
 
@@ -90,7 +90,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
 /**
- * Queue one measurement. Safe to call from anywhere in the client — it no-ops
+ * Queue one measurement. Safe to call from anywhere in the client. It no-ops
  * during SSR and never throws into the caller's path.
  */
 export function reportPerf(

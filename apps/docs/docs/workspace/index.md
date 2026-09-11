@@ -1,15 +1,15 @@
-# Workspace & Sandbox
+# Workspace & sandbox
 
 **Sandbox** (compute) and **workspace** (persistent files) are account-scoped resources. You define each once in code with `defineSandbox` and `defineWorkspace`, then reference them from any agent.
 
 - A **sandbox** is the compute backend plus a collection of bash and filesystem tools
   (`bash`, `read`, `write`, `edit`, `glob`, `grep`) and a `permissionMode`.
-- A **workspace** is the persistent S3-backed filesystem that gets mounted into a sandbox.
+- A **workspace** is the persistent S3-backed filesystem mounted into a sandbox.
   Agents that reference the **same** `workspaceId` read and write the **same files** unless
   the workspace opts into hierarchical alias partitioning.
 
 A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
-(`workspaces[].sandbox`). A workspace's **effective sandbox** follows a simple cascade:
+(`workspaces[].sandbox`). A workspace's **effective sandbox** follows this cascade:
 
 ```text
 workspaces[].sandbox === null   → read-only, S3-direct reads (opt out of compute entirely)
@@ -22,9 +22,9 @@ This is what lets one agent give different workspaces different sandboxes and
 sandboxes, and lets a single workspace be **read-only**. A read-only workspace reads through
 a service-managed read-only mount by default (so it sees committed writes immediately);
 `sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
-reads lag mount writes — see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
+reads lag mount writes, see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
 stateless `bash` when there is no workspace at all, and stays directly reachable when
-every attached workspace borrows a different sandbox — see
+every attached workspace borrows a different sandbox. See
 [Whose sandbox is it?](#whose-sandbox-is-it) below.
 
 ```mermaid
@@ -47,7 +47,7 @@ flowchart LR
   WS -. shared files .- B
 ```
 
-## Code-First Configuration
+## Code-first configuration
 
 Define sandbox and workspace resources in `broods/`, then pass them to an agent:
 
@@ -101,27 +101,27 @@ export const myAgent = defineAgent({
 });
 ```
 
-The CLI compiles these into a manifest, resolves references, and syncs them. You can also create records via the raw account API — see the [API Reference](/api-reference) for `POST /v1/sandboxes` and `POST /v1/workspaces`.
+The CLI compiles these into a manifest, resolves references, and syncs them. You can also create records through the raw account API. See the [API Reference](/api-reference) for `POST /v1/sandboxes` and `POST /v1/workspaces`.
 
 ## Tool surface
 
-Tool availability is decided **per workspace**, from that workspace's _effective_ sandbox
+Tool availability is per workspace, from that workspace's _effective_ sandbox
 (`workspaces[].sandbox` → else `config.sandbox` → else none). The agent's tool set is the
 union across its workspaces:
 
 | Workspace's effective sandbox | Tools for that workspace                                                                    |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
 | present (mounted)             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save` (+ workspace/memory harness) |
-| **none** (read-only, default) | `read`, `glob` — via a read-only mount (fresh reads)                                        |
-| **none**, `sandbox: null`     | `read`, `glob` — straight from S3 (no mount/cold start, lagged)                             |
+| **none** (read-only, default) | `read` and `glob` through a read-only mount (fresh reads)                                   |
+| **none**, `sandbox: null`     | `read` and `glob` straight from S3 (no mount/cold start, lagged)                            |
 
 Plus the agent-level cases:
 
-| Agent references                                         | Tools exposed                                                                 |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| sandbox, **no** workspace                                | `bash` only — a fresh container each call, unless the sandbox is `persistent` |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)           |
-| neither sandbox nor workspace                            | none                                                                          |
+| Agent references                                         | Tools exposed                                                                |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| sandbox, **no** workspace                                | `bash` only. A fresh container each call, unless the sandbox is `persistent` |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)          |
+| neither sandbox nor workspace                            | none                                                                         |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -133,24 +133,24 @@ implementation details for logs and debugging.
 > Every file tool lists **all** workspaces (so an omitted `workspace` always resolves to
 > the configured default, never a silent substitute). Selecting a read-only workspace for
 > `write`/`edit`/`grep` returns a clean "workspace is read-only" error, and `bash` reports
-> "no sandbox available for this command" — in both cases with **no approval prompt**,
-> because a workspace with no sandbox has no `permissionMode` to ask against.
+> "no sandbox available for this command". Neither prompts for approval, because a
+> workspace with no sandbox has no `permissionMode` to ask against.
 
 ## Whose sandbox is it?
 
-Two agents can reach the same workspace through very different arrangements, and the
+Two agents can reach the same workspace through different arrangements, and the
 difference decides how much of the machine the agent gets. What matters is whether the
 workspace's effective sandbox **is the one the agent itself references**:
 
-| Arrangement                                                 | What the agent gets                                                                                                                                                             |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.              |
-| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                 |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace is mounted there, so nothing reaches durable storage. |
+| Arrangement                                                 | What the agent gets                                                                                                                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.             |
+| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true`. No workspace is mounted there, so nothing reaches durable storage. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
 resolves both to the same record, so both land in the first row. An agent that references
-the very sandbox its workspace runs on lands there too — identity is the sandbox record, so
+the very sandbox its workspace runs on lands there too. Identity is the sandbox record, so
 `config.sandbox: sb_b` + workspace on `sb_b` is the agent's own machine, not a borrowed one.
 Row two is only reached when the agent references **no** sandbox of its own.
 
@@ -159,7 +159,7 @@ own machine". `workspace` keeps defaulting to the **default workspace**, so rela
 keep landing in durable storage unless the model deliberately passes `sandbox: true`.
 
 "Nothing reaches durable storage" is about the **mount**, not about the machine. A
-`sandbox: true` run gets a fresh container each call — unless that sandbox is `persistent`,
+`sandbox: true` run gets a fresh container each call, unless that sandbox is `persistent`,
 in which case its filesystem survives between calls until the reservation ends. A run with
 no workspace has no filesystem namespace to key that reservation on, so the harness derives
 one from `accountId:agentId:sandboxId`: each agent gets its own reserved machine, and
@@ -355,17 +355,17 @@ unbounded storage growth.
 | --------------------------------------- | -------------------------- | ---------------- |
 | GitHub issue                            | issue `closed`             | yes              |
 | GitHub pull request                     | PR `closed`                | yes              |
-| Slack, Discord, Telegram, Pancake, Zalo | none — a thread never ends | **no**           |
+| Slack, Discord, Telegram, Pancake, Zalo | none, a thread never ends  | **no**           |
 
 Only `by: "conversation"` folders are reclaimed; a `by: "shared"` scope mounts the
-workspace root, which is never deleted automatically. Reclaim is fire-and-forget after the
-webhook is acknowledged, so a closed issue's folder disappears shortly after, not
+workspace root, which is never deleted automatically. Reclaim is fire-and-forget after
+core acknowledges the webhook, so a closed issue's folder disappears shortly after, not
 synchronously.
 
 The chat platforms have no equivalent of "closed", so a `conversation`-scoped folder there
 accumulates one prefix per thread for as long as the workspace exists. If you scope a chat
-channel per conversation, plan to prune it yourself — through the workspace Files view or
-the workspace-files API — or scope it at `by: "shared"` instead.
+channel per conversation, plan to prune it yourself through the workspace Files view or
+the workspace-files API, or scope it at `by: "shared"` instead.
 
 The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`

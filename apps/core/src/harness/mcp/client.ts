@@ -1,6 +1,6 @@
 /**
  * Stateless MCP client for registered servers (#331). Wraps the official v2
- * SDK pinned to spec 2026-07-28 — the issue's scope is that revision only, no
+ * SDK pinned to spec 2026-07-28. The issue's scope is that revision only, no
  * older versions, so a 2025-era server is refused at negotiation. One client
  * per operation, no session state. An "http" row dials its url; a "hosted"
  * row runs the same transport with every request routed through the Lambda

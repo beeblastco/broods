@@ -4,8 +4,8 @@
  * zero runtime deps. Kept separate from the agent-test websocket-contracts.
  */
 
-// DEBUG never rides the live NATS relay — core writes it to stdout/OTLP only —
-// so it reaches a client through Loki backfill and nowhere else.
+// DEBUG never rides the live NATS relay. Core writes it to stdout/OTLP only, so
+// it reaches a client through Loki backfill and nowhere else.
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export const MAX_OBSERVABILITY_BACKFILL = 500;
 // The per-launch UUID core puts last in a MicroVM's CloudWatch log stream name.
@@ -35,7 +35,7 @@ export type ObservabilityLogEntry = {
 // scheduler started that invocation instead of a person, or "subtask" for a
 // subagent's root span. A subtask is its OWN top-level trace (its own traceId),
 // linked back to the parent via the parent.trace_id / parent.task_id attributes
-// rather than nested under the parent span — the dashboard renders it as a sibling
+// rather than nested under the parent span. The dashboard renders it as a sibling
 // task row with a jump-to-parent link. Children ("model.step", "tool.call", and
 // "phase" timeline spans like cold start, context prepare, and compaction) share
 // the traceId of the root they belong to.

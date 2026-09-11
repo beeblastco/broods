@@ -30,7 +30,7 @@ if (import.meta.main) {
       const status = ready ? "ok" : "starting";
       // Only readiness carries the socket detail. The other two are what the
       // kubelet polls, they need one field, and none of these paths is
-      // authenticated — so the bot hints stay off the ones nothing reads.
+      // authenticated, so the bot hints stay off the ones nothing reads.
       if (path !== "/readyz") return Response.json({ status: status });
 
       return Response.json(

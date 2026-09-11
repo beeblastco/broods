@@ -174,7 +174,7 @@ export function analyzeCanvasInfra(
 
     // No mount edge. A CLI-resolved `readOnly` flag (e.g. a `sandbox: null` ref
     // with no other writer) forces read-only even when a directly-wired agent has
-    // a default sandbox — the pure-canvas graph can't express that intent.
+    // a default sandbox. The pure-canvas graph can't express that intent.
     if (node.data.readOnly === true) {
       workspaceStates[node.id] = { kind: "readonly" };
 

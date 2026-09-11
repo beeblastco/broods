@@ -1,8 +1,8 @@
 /**
  * Outbound webhook views and editing for the dashboard. The harness delivers
- * events from each agent's `config.hooks.webhooks` array; this module surfaces
+ * events from each agent's `config.hooks.webhooks` array; this module lists
  * those per-agent hooks for a stage and lets the settings tab add, toggle,
- * and remove them. There is no separate webhook store — the agent config is the
+ * and remove them. There is no separate webhook store. The agent config is the
  * source of truth.
  */
 

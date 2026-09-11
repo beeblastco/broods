@@ -1,5 +1,5 @@
 /**
- * Bash tool — runs a shell command in the sandbox (real bash + python3 + node).
+ * Bash tool. Runs a shell command in the sandbox (real bash + python3 + node).
  * Stateless when no workspace is attached (ephemeral container per call);
  * workspace-backed when one is, with files persisting on the mount. Each
  * workspace runs on its own effective sandbox and inherits its permissionMode.
@@ -169,7 +169,7 @@ function writeGuardNote(context: SandboxToolContext): string {
 }
 
 // Scenario note: a reserved sandbox the agent only borrows. Its filesystem does
-// survive between calls — the durability bullet above is about what outlives the
+// survive between calls, but the durability bullet above is about what outlives the
 // reservation, and saying nothing here would read as "this resets every call".
 function reservedNote(context: SandboxToolContext): string {
   const names = context.workspaces

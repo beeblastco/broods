@@ -31,8 +31,8 @@ key in `.env.local` to `BROODS_STAGE`.
 
 A variable exported in your shell wins over `.env.local` for every command. The
 CLI still rewrites the file when you switch scope, and warns when an export is
-shadowing what it just wrote — `unset BROODS_API_KEY` (or `BROODS_STAGE`) to let
-the file take effect.
+shadowing what it just wrote. Run `unset BROODS_API_KEY` (or `BROODS_STAGE`) to
+let the file take effect.
 
 The dashboard tracks its own active organization, separate from the CLI's. After
 `broods org use`, switch the dashboard organization too, otherwise a
@@ -41,7 +41,7 @@ still on.
 
 ## Help
 
-`broods` on its own lists the commands, grouped by what they act on. Each command carries its own page, reached with `--help` — or, for the commands that take a subcommand, by typing the command alone:
+`broods` on its own lists the commands, grouped by what they act on. Each command carries its own page, reached with `--help`, or for the commands that take a subcommand, by typing the command alone:
 
 ```bash
 broods            # the command list
@@ -49,7 +49,7 @@ broods org        # org's subcommands and flags
 broods deploy -h  # deploy's flags
 ```
 
-`org`, `stage`, `env` and `agent` print their page instead of guessing a default, so `broods org` no longer lists organizations — that is `broods org list`. An unrecognized subcommand prints the same page alongside the error.
+`org`, `stage`, `env` and `agent` print their page instead of guessing a default, so `broods org` no longer lists organizations. That is `broods org list`. An unrecognized subcommand prints the same page alongside the error.
 
 ## whoami
 
@@ -79,7 +79,7 @@ organization needs a provisioned API account.
 and rewrite `BROODS_API_KEY` for the current project and stage in the new
 organization. When that project does not exist in the new organization, or the
 key lookup fails, the CLI warns and leaves the old key alone rather than writing
-a wrong one — the organization switch itself still stands, so run `broods dev` to
+a wrong one. The organization switch itself still stands, so run `broods dev` to
 create the project there and mint its key.
 
 ## project
@@ -97,8 +97,8 @@ holds, empty ones last:
 
 ```text
 Projects:
-  tracy — 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
-  abandoned-e2e — empty
+  tracy: 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
+  abandoned-e2e: empty
 ```
 
 A project is empty when it has no stage, agent, environment variable,
@@ -170,7 +170,7 @@ Tool names mirror the SDK's methods in kebab-case, so `listAgents` is
 `list-agents` and `createCron` is `create-cron`. Every resource the config
 plane serves gets the verbs it supports: agents, crons, sandboxes, workspaces,
 policies, roles, channels, skills and MCP servers (`list-mcp`, `create-mcp`,
-...). Around those sit the calls that do not fit that shape —
+...). Around those sit the calls that do not fit that shape:
 `list-cron-runs`, `upload-skill` (a full PUT replace), the sandbox lifecycle
 (`suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox`,
 `open-sandbox-terminal`), env (`list-env-vars`, `set-env-var`,
@@ -178,7 +178,7 @@ policies, roles, channels, skills and MCP servers (`list-mcp`, `create-mcp`,
 `rotate-secret`, `assume-role`).
 
 MCP servers live in one stage, so listing or creating those also takes
-`project` and `stage` — defaulted from `BROODS_PROJECT` / `BROODS_STAGE` when
+`project` and `stage`, defaulted from `BROODS_PROJECT` / `BROODS_STAGE` when
 the server starts inside a configured project directory.
 
 Three guards are built in rather than left to the agent: a delete needs
@@ -190,9 +190,9 @@ call with no scope.
 `BROODS_MCP_ALLOW_DESTRUCTIVE=1` is exported in the shell that starts the
 server. A value in `.env` or `.env.local` is ignored: those files are
 writable by the very agent the gate fences. `confirm` is asserted by the
-calling agent itself, and no role policy bounds either call — rotating
+calling agent itself, and no role policy bounds either call. Rotating
 breaks every deployment holding the old secret, and a project delete
-cascades through everything under it — so exposing them is an operator's
+cascades through everything under it, so exposing them is an operator's
 decision, not the agent's.
 
 ### Org, project and stage
@@ -238,7 +238,7 @@ broods update
 ```
 
 Installs the newest published release over the copy you are running, with the
-package manager that installed it — `bun add -g` for a global bun install,
+package manager that installed it: `bun add -g` for a global bun install,
 `npm install -g` for a global npm one. Inside a project it upgrades the
 dependency instead of installing a second copy on your PATH.
 

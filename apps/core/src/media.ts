@@ -1,5 +1,5 @@
 /**
- * Public media route — serves one workspace file per sealed ticket.
+ * Public media route. Serves one workspace file per sealed ticket.
  *
  * Chat providers store the URL we hand them and fetch it lazily, so this is the
  * durable alternative to a presigned S3 link: storage stays private, the ticket

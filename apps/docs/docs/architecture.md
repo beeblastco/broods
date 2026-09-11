@@ -2,7 +2,7 @@
 
 The deployed system is a multi-account serverless agent harness. The Bun core container serves account-management, harness, webhook, async, and cron execution routes behind the gateway.
 
-## Monorepo Layout
+## Monorepo layout
 
 The repository is a Bun-workspaces monorepo. The core SST app is self-contained under `apps/core/` so it can later be swapped for a Rust/cloud-native runtime without touching the other workspaces.
 
@@ -27,7 +27,7 @@ flowchart LR
 
 All file paths below are relative to `apps/core/`.
 
-## Runtime Layer
+## Runtime layer
 
 The core runtime is one Bun container (`src/server.ts`). It turns each HTTP request into a transport-neutral `CoreRequest`, routes by path to the account or harness handler, and streams the Web `Response` back through the gateway.
 
@@ -46,7 +46,7 @@ Runtime boundary:
 - Handlers receive `CoreRequest` and return Web `Response` objects.
 - `ctx.waitUntil(...)` lets channel webhooks acknowledge quickly, then continue work after the HTTP response.
 
-## High-Level Architecture
+## High-level architecture
 
 ```mermaid
 flowchart TD
@@ -94,7 +94,7 @@ flowchart TD
   AsyncTools --> Session
 ```
 
-## Account Routing
+## Account routing
 
 Every runtime request resolves an account and an account-owned agent before agent work begins.
 
@@ -121,7 +121,7 @@ A third auth path exists for trusted platform services: when `SERVICE_AUTH_SECRE
 
 Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId` and the channel name. They never name an agent: the credentials that verify the request pick the receiving agent, and a [channel record](channels/channel-records.md) binds each place to the agent that answers there.
 
-## Account Management
+## Account management
 
 ```mermaid
 sequenceDiagram
@@ -154,7 +154,7 @@ Provider secrets are not returned in normal account responses. Secret-like field
 
 Deleting an account runs account-scoped cleanup before removing the account record. The cleanup deletes runtime rows whose keys are prefixed with `acct:{accountId}:` and removes the current account filesystem namespaces from S3.
 
-## Direct and Async API
+## Direct and async API
 
 ```mermaid
 flowchart TD
@@ -197,7 +197,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response — one POST to an external server, or one tool-runner Lambda invoke for a hosted server.
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one tool-runner Lambda invoke for a hosted server.
 
 ```mermaid
 flowchart TD
@@ -211,11 +211,11 @@ flowchart TD
   Inject --> Continue["continue parent agent"]
 ```
 
-Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false` — set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /sandbox-jobs/{resultId}/complete`.
+Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false`. Set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /sandbox-jobs/{resultId}/complete`.
 
-## Cron Jobs
+## Cron jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway): the account-scoped `crons` row and its schedule — a Convex crons component registration for recurring jobs, a Convex scheduler run for one-time `at(...)` jobs — are written in the same transaction, so neither can orphan the other. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway). One transaction writes the account-scoped `crons` row and its schedule, so neither can orphan the other. A recurring job gets a Convex crons component registration, a one-time `at(...)` job gets a Convex scheduler run. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
@@ -230,7 +230,7 @@ flowchart TD
 
 Developers who need custom chaining, cleanup, polling, or external workflow behavior can deploy their own scheduled worker and call the existing direct or async API.
 
-## Channel Webhooks
+## Channel webhooks
 
 ```mermaid
 flowchart TD
@@ -252,13 +252,13 @@ Customers talk to the provider bot/app owned by the account. They never receive 
 
 ## WebSocket Gateway (durable NATS JetStream)
 
-Streaming responses are published to a **durable, conversation-scoped JetStream
-stream**. The platform owns the durable stream and a documented replay contract;
-the gateway that relays to a browser is the **caller's application** (this is a
-PaaS — we provide the connection, not the client). Because the stream is keyed by
-conversation (not connection), a client that drops can reconnect with a fresh
-socket and **replay** events it missed — including a background job's result that
-landed after the original connection closed.
+Core publishes streaming responses to a durable, conversation-scoped JetStream
+stream. Broods owns that stream and a documented replay contract; the gateway
+that relays to a browser is the caller's application. Broods gives you the
+connection, you write the client. Because the stream is keyed by conversation and
+not by connection, a client that drops can reconnect on a fresh socket and replay
+events it missed, including a background job's result that landed after the
+original connection closed.
 
 ```mermaid
 flowchart TD
@@ -269,8 +269,8 @@ flowchart TD
   Convex["Convex ingress status<br/>7-day source of truth"] --> Gateway
 ```
 
-The gateway (the **caller's** service) owns client auth, the subscription, and
-the `nats-worker` request. The worker does **one core publish** per chunk;
+The gateway (the caller's service) owns client auth, the subscription, and
+the `nats-worker` request. The worker does one core publish per chunk;
 the bound `WS_RESPONSES` stream captures that same message for replay.
 
 NATS subject patterns:
@@ -279,45 +279,44 @@ NATS subject patterns:
 | -------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------- |
 | `v1.{accountId}.{agentId}.ws.response.{convToken}` | Core → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
 
-`convToken = base64url(publicConversationKey)` — a single NATS-safe token.
+`convToken = base64url(publicConversationKey)`, a single NATS-safe token.
 
 **Best-effort token replay, durable status.** Core publishes each frame once to
 JetStream, the only token-output buffer, and the gateway uses one ordered
-consumer for both replay and the live tail — so replay hands off to the live tail
+consumer for both replay and the live tail, so replay hands off to the live tail
 without a seam _for frames that were stored_. Publishing is fire-and-forget (no
 per-token PubAck), so a transient NATS failure can drop a frame before JetStream
-retains it; token replay is therefore best-effort, not lossless. Retention is
-bounded by `max_age` and `max_msgs_per_subject`. A reconnect attaches with its
-last fully processed opaque cursor and receives retained output after it. When
-the needed output was never stored or has aged out, the client falls back to the
-durable Convex status/result — the source of truth — rather than reconstructing
-individual token frames.
+retains it; token replay is therefore best-effort, not lossless. `max_age` and
+`max_msgs_per_subject` bound retention. A reconnect attaches with its last fully
+processed opaque cursor and receives retained output after it. When the needed
+output was never stored or has aged out, the client falls back to the durable
+Convex status/result, the source of truth, rather than reconstructing individual
+token frames.
 
 Notes:
 
-- **Speed:** core publish is fire-and-forget (no per-token PubAck round-trip), a
-  shared `TextEncoder`, and the subject precomputed once per publisher — so token
-  publishing stays on the fast path.
-- **Transport (by URL scheme):** `connectNats` in `nats.ts` selects the client
+- **Speed.** Core publish is fire-and-forget (no per-token PubAck round-trip),
+  the `TextEncoder` is shared, and the subject is precomputed once per publisher.
+- **Transport by URL scheme.** `connectNats` in `nats.ts` selects the client
   from `NATS_URL`: `wss://`/`ws://` → WebSocket (`nats.ws`) for out-of-cluster
   callers (the cluster exposes only a `wss://` ingress externally);
   `nats://`/`tls://` → core TCP (`nats`) for in-cluster callers on the internal
   network (lower latency; core `4222` is not exposed externally). Moving a service
   in-cluster is then a `NATS_URL` change, not a code change. `NATS_TOKEN` carries
   the token-auth credential (omit for an unauthenticated server).
-- **No duplicates:** a single read path never sees a message twice; each publish
+- **No duplicates.** A single read path never sees a message twice; each publish
   also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
   `duplicate_window` (~2 min) collapses any publish retry.
-- **Storage (kept minimal):** the stream is an **in-flight resume buffer**, not
-  the source of truth. There is no manual per-event or per-conversation purge:
-  sequential FIFO events share one subject, so one completion must not erase
+- **Storage stays minimal.** The stream is an in-flight resume buffer, not the
+  source of truth. There is no manual per-event or per-conversation purge.
+  Sequential FIFO events share one subject, so one completion must not erase
   another event's replay range. Output expires through `max_age` (~3 min) and
   `max_msgs_per_subject` (2,000); durable status/idempotency remains in Convex.
   - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
     is faster/cheaper but lost on restart) and `max_msgs_per_subject`. The
     retention knobs are mutable, so `ensureResponseStream` syncs them onto the
     existing stream on update. HA `replicas: 3` multiplies storage by 3.
-- `connectionId` is now only a routing/label field on event headers — it no
+- `connectionId` is now only a routing/label field on event headers. It no
   longer scopes the subject, so overlapping turns on one conversation share a
   stream (group per turn with `headers.eventId`).
 - Background jobs launched over a WebSocket turn publish their result to the same
@@ -326,19 +325,19 @@ Notes:
   invocations (plus `NATS_TOKEN` for a token-auth server). When WebSocket is
   disabled, the direct API stays SSE-only and NATS config is ignored.
 
-> **Infra (lives in the infra repo, applied via CI/CD):** the cluster NATS runs
-> JetStream with a **WebSocket listener + Traefik ingress** at `wss://nats.beeblast.co`
-> (token auth via the `nats-auth` secret) and a file-backed JetStream PVC — so the
-> Out-of-cluster callers connect over `wss://` today. For production durability, enable JetStream
-> **clustering** (`replicas: 3`, which multiplies storage by 3). Core `4222` stays
+> **Infra lives in the infra repo and is applied via CI/CD.** The cluster NATS runs
+> JetStream with a WebSocket listener and Traefik ingress at `wss://nats.beeblast.co`
+> (token auth via the `nats-auth` secret) and a file-backed JetStream PVC, so
+> out-of-cluster callers connect over `wss://` today. For production durability, enable
+> JetStream clustering (`replicas: 3`, which multiplies storage by 3). Core `4222` stays
 > cluster-internal for future in-cluster callers (see the Transport note above).
 
 ## Deferred delivery & resume (background jobs)
 
-A detached sandbox job can outlive the request or worker that launched it, so its result has to
-be delivered in a _later_ continuation and routed back to wherever the turn came
-from. The mechanism is a small **delivery descriptor carried on the Session and
-persisted with the job**, so no live connection state needs to survive — only an
+A detached sandbox job can outlive the request or worker that launched it, so a _later_
+continuation has to deliver its result and route it back to wherever the turn came
+from. The mechanism is a small delivery descriptor carried on the Session and
+persisted with the job. No live connection state has to survive, only an
 identifier the next invocation can rebuild from.
 
 ```mermaid
@@ -354,7 +353,7 @@ flowchart TD
 ```
 
 - **What's saved, and why it's safe.** `Session.delivery` (an `AsyncToolDelivery`)
-  describes the origin: a chat channel (`{channelName, source}` — the routing
+  describes the origin: a chat channel (`{channelName, source}`, the routing
   payload only, _never_ credentials), a WebSocket conversation, or plain async.
   `bash background:true` copies it onto the `AsyncToolResult` row in Convex
   alongside the per-job `completionToken`. No account secret is stored or enters
@@ -363,8 +362,8 @@ flowchart TD
 - **Reinvoke & continue.** When the job POSTs its completion (authenticated by the
   per-job token), the harness settles the row and reuses the existing async-tool
   continuation path: it rebuilds the turn from `parentEventId`/`conversationKey`,
-  injects the job result, and runs the agent loop so it **continues where it left
-  off**. This is the same settle→continue pipeline used by detached uploaded async
+  injects the job result, and runs the agent loop so it continues where it left
+  off. This is the same settle→continue pipeline used by detached uploaded async
   tools; background jobs add only the `delivery` routing on top.
 - **Deliver to origin.** After the loop, the follow-up is pushed to the recorded
   origin: a channel `sendText`, a durable JetStream publish (replayed on
@@ -372,7 +371,7 @@ flowchart TD
   (`continueAfterAsyncToolSettlement`, `pushReplyToChannel`), and `integrations.ts`
   (`sendChannelReply`).
 
-## Sandbox & Workspace Boundaries
+## Sandbox and workspace boundaries
 
 **Sandbox** (compute) and **workspace** (persistent S3 files) are independent,
 account-scoped records, referenced from agent config by id (`sandbox`, `workspaces`). The
@@ -388,7 +387,7 @@ Every sandbox-backed tool compiles to a single `run` against the provider (`sand
 `e2b`/`daytona`/`vercel`). The lambda provider runs each session in an AWS Lambda MicroVM
 (the old four-function grid is gone) and mounts the workspace inside the VM. A workspace's namespace is
 derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
-files — including across the sandbox-backed and read-only S3 paths. A workspace with no
+files, including across the sandbox-backed and read-only S3 paths. A workspace with no
 sandbox still serves `memory/MEMORY.md` via the S3 API. The harness is per-feature:
 `workspace.harness.workspace.enabled=false` suppresses the workspace guidance prompt,
 `workspace.harness.memory.enabled=false` disables structured memory.
@@ -403,16 +402,16 @@ flowchart LR
 
 See [Workspace & Sandbox](workspace/index.md) for the full model.
 
-## Model and Tool Configuration
+## Model and tool configuration
 
 Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` exposes the sandbox tools from a referenced `sandbox` (+ `workspaces`), subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
-## Storage Boundaries
+## Storage boundaries
 
 - `AccountConfig`: account metadata and account secret hash.
 - `AgentConfig`: account-owned encrypted runtime config payloads.
 - `SandboxConfig` / `WorkspaceConfig`: account-scoped sandbox and workspace records referenced from agent config by id.
-- `Mcp`: registered MCP server records — external endpoints and hosted rows (hosted bundles live in the ToolBundles S3 bucket under the `account-mcp/` prefix).
+- `Mcp`: registered MCP server records, both external endpoints and hosted rows (hosted bundles live in the ToolBundles S3 bucket under the `account-mcp/` prefix).
 - `Crons`: scheduled agent runs managed by the Convex config plane.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.

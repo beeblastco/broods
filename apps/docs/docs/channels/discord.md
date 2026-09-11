@@ -1,6 +1,6 @@
 # Discord
 
-Discord integration allows your agent to interact with users via Discord bots.
+A Discord bot is how the agent reaches a guild. Slash commands arrive on the interactions webhook; regular messages arrive over a Gateway socket.
 
 Broods uses [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) for Discord API calls, signature verification, message formatting, command parsing, typing indicators, and reactions. See Chat SDK [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands) for the adapter capabilities.
 
@@ -38,20 +38,20 @@ export const myAgent = defineAgent({
 
 - `botToken`: Discord Bot Token.
 - `publicKey`: Discord Application Public Key.
-- `botUserId` (optional, recommended): the bot's own Discord user id. Set it to answer only when the agent is mentioned — see below.
+- `botUserId` (optional, recommended): the bot's own Discord user id. Set it to answer only when the agent is mentioned. See below.
 - `mentionRoleIds` (optional): role ids that also count as addressing the agent, e.g. an on-call role.
 - `channels` (optional): `["*"]` to answer in every channel instead of only the declared ones.
 - `allowedUserIds` (optional): Discord user ids allowed to trigger the agent. Everyone, when omitted.
 - `apiUrl` (optional): Discord API base URL. This maps to `DiscordAdapterConfig["apiUrl"]`.
 
-Discord interaction webhooks are verified through the Chat SDK Discord adapter. Slash command interactions route `/new`, `/clear`, `/compact`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input — see [Mentions and the gateway forwarder](#mentions-and-the-gateway-forwarder) for what puts them there.
+The Chat SDK Discord adapter verifies interaction webhooks. Slash command interactions route `/new`, `/clear`, `/compact`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input. See [Mentions and the gateway forwarder](#mentions-and-the-gateway-forwarder) for what puts them there.
 
-Discord replies are delivered through `@chat-adapter/discord` final-message methods.
+Replies go out through `@chat-adapter/discord` final-message methods.
 
 ## Mentions and the gateway forwarder
 
-Discord POSTs interactions — slash commands, buttons — to your app's
-interactions endpoint as ordinary HTTPS requests. Regular messages never reach an
+Discord POSTs slash commands and button presses to your app's interactions
+endpoint as ordinary HTTPS requests. Regular messages never reach an
 interactions endpoint; they arrive only over a Gateway WebSocket. That is a
 Discord routing rule, not something configuration changes.
 
@@ -66,7 +66,7 @@ events as
 ```
 
 with the bot token in an `x-discord-gateway-token` header. Nothing to configure
-per agent — declaring a `botToken` is what enrolls the connection.
+per agent. Declaring a `botToken` is what enrolls the connection.
 
 Two things the bot itself needs, both in the Discord developer portal:
 
@@ -77,7 +77,7 @@ Two things the bot itself needs, both in the Discord developer portal:
 
 Self-hosting without the forwarder deployment works the same way: post the
 payload above to the webhook URL `broods deploy` printed. Send Discord's
-`MESSAGE_CREATE` unmodified — `author.bot` is absent for human authors and
+`MESSAGE_CREATE` unmodified. `author.bot` is absent for human authors, and
 Broods reads an absent flag as human. The one field to add is `thread`
 (`{ "id": ..., "parent_id": ... }`) when the message is inside a thread, since
 Discord sets `channel_id` to the thread and says nothing about its parent. See
@@ -85,20 +85,20 @@ Discord sets `channel_id` to the thread and says nothing about its parent. See
 
 ## Being tagged
 
-With `botUserId` set, the agent answers only messages that mention it — by user
-id, or by a role listed in `mentionRoleIds`. Every other message in an allowed
-guild is stored as channel context and costs nothing: a later mention still sees
-what the channel said. This matches Slack, where only `app_mention` runs the
+With `botUserId` set, the agent answers only messages that mention it, either by
+user id or by a role listed in `mentionRoleIds`. Every other message in an
+allowed guild is stored as channel context and never runs the agent: a later
+mention still sees what the channel said. This matches Slack, where only `app_mention` runs the
 agent.
 
-Without `botUserId` a mention cannot be recognised, so the agent keeps answering
-every message rather than going silent. Set it as soon as the bot shares a
+Without `botUserId` Broods cannot recognise a mention, so the agent keeps
+answering every message rather than going silent. Set it as soon as the bot shares a
 channel with people who are not talking to it.
 
 Messages reach the model prefixed with the sender (`ada: ship the fix`) so the
-agent knows who is talking. The bot's own mention is stripped, other members'
-mentions become readable names, and a command keeps its bare text so `@bot /new`
-still parses.
+agent knows who is talking. Broods strips the bot's own mention, turns other
+members' mentions into readable names, and leaves a command's bare text alone so
+`@bot /new` still parses.
 
 ## Threads
 
@@ -114,6 +114,6 @@ Slash commands resolve the same way, so `/new` typed inside a thread clears that
 thread and not the channel around it.
 
 A forwarded event is keyed off its `thread` object, so a forwarder that omits it
-puts the conversation under the thread id as if it were a channel — which
+puts the conversation under the thread id as if it were a channel. That
 disagrees with `/new` typed in that same thread, and fails an allow list that
 names the parent channel.

@@ -54,7 +54,7 @@ export async function channelEndpointBotToken(
  * Recomputes every projection row for one account from the source tables and
  * diffs it against what is stored: unchanged rows are left untouched (a digest
  * comparison, because re-encrypting a token mints a fresh IV and would dirty
- * the row — and the forwarder's subscription — on every refresh), changed rows
+ * the row, and the forwarder's subscription, on every refresh), changed rows
  * are replaced, and rows no longer derivable are deleted. Safe to call from
  * any mutation seam; a refresh that derives nothing clears the account.
  */

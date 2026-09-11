@@ -169,7 +169,7 @@ export async function relayNatsMessages(
           sendObs(socket, { type: "log", entry: entry });
         } else {
           // Replay outruns the tab's drain rate; shedding would drop the newest
-          // rows — the terminal spans that mark recent tasks finished. Logs skip
+          // rows, the terminal spans that mark recent tasks finished. Logs skip
           // the wait: they are small and Loki backfill restores a shed line.
           await waitForObsDrain(socket);
           sendObs(socket, {

@@ -2,7 +2,7 @@
  * Shared config-object helpers for the Convex config plane: deep patch-merge
  * and secret redaction, ported from core's former
  * storage/agent-config.ts so PATCH semantics and public projections stay
- * byte-identical. Pure module — safe for the default Convex runtime.
+ * byte-identical. Pure module, safe for the default Convex runtime.
  */
 
 import { isPlainObject } from "./objects";

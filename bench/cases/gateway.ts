@@ -38,7 +38,7 @@ const WEBSOCKET_MIX: readonly string[] = [
 ];
 
 // Wide enough that the steady-state path is "existing window, still under the
-// limit" — the branch a healthy production request actually takes.
+// limit", the branch a healthy production request takes.
 const RATE_LIMIT_KEYS: readonly string[] = Array.from(
   { length: 64 },
   (_unused, index) => `203.0.113.${index}:agt_7f3c9d21`,

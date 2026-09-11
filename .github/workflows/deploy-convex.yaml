@@ -1,6 +1,6 @@
 # Deploys the shared Convex backend (schema + functions) on its own, so a
-# backend change reaches Convex without waiting on — or being blocked by — the
-# dashboard image build. The dashboard image still rebuilds separately to pick
+# backend change reaches Convex without waiting on the dashboard image build
+# or being blocked by it. The dashboard image still rebuilds separately to pick
 # up generated type changes; it no longer runs `convex deploy` itself.
 
 name: Deploy Convex

@@ -72,7 +72,7 @@ export function MountEdge({
   });
 
   // Code-managed edges can't be deleted here, so they never show the red
-  // delete-hover or the trash button — only a passive lock affordance.
+  // delete-hover or the trash button, only a lock badge.
   const locked =
     isCodeManagedEdgeId(id) ||
     (isCodeManagedOwner(sourceManagedBy) &&

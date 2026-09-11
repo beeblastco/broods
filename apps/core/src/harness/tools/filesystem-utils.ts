@@ -6,7 +6,7 @@
  * Each workspace carries its own effective sandbox (see ResolvedWorkspace): a
  * sandbox-backed workspace compiles tools to a bash `code` string run through
  * its provider; a sandbox-less workspace is read-only and served directly from
- * S3 (read/glob only — no mount, no Lambda cold start).
+ * S3 (read/glob only, no mount, no Lambda cold start).
  */
 
 import type { JSONSchema7 } from "ai";
@@ -83,11 +83,11 @@ export interface BashTarget {
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
 // may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
 // backs `bash` outright when no workspace is attached, and stays separately
-// reachable when workspaces are — see hasStandaloneSandbox.
+// reachable when workspaces are. See hasStandaloneSandbox.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
   // Present when the tool needs the account's model settings rather than the
-  // workspace alone — `read` transcribes audio with them.
+  // workspace alone. `read` transcribes audio with them.
   agentConfig?: AgentConfig;
   agentSandbox?: SandboxExecutorConfig;
   agentSandboxPermissionMode?: SandboxPermissionMode;
@@ -132,7 +132,7 @@ function statelessReservationKeyFor(
 /**
  * Whether the agent's own sandbox needs a way in of its own. It does not when there
  * are no workspaces (bash already runs there), nor when a workspace mounts that same
- * sandbox — the workspace IS the way in, and reaches the same machine with storage.
+ * sandbox. The workspace IS the way in, and reaches the same machine with storage.
  */
 export function hasStandaloneSandbox(
   workspaces: ResolvedWorkspace[],
@@ -558,8 +558,8 @@ export async function workspaceMediaUrl(
 }
 
 // The same workspace file as bytes, for the providers that upload instead of
-// fetching. Slack and Discord ignore an outbound URL entirely — both take a
-// multipart upload and nothing else — so the media link the other channels are
+// fetching. Slack and Discord ignore an outbound URL entirely. Both take a
+// multipart upload and nothing else, so the media link the other channels are
 // handed is worthless to them and the object has to be read here. Reading S3
 // directly rather than fetching our own /media route keeps it to one hop and
 // off the 25 MB the public route caps at.
@@ -629,7 +629,7 @@ export function disallowedRuntimeCommand(
 
 // The workspace mount is the only storage that outlives the sandbox; the rest of the
 // filesystem dies with the VM, or with the reservation when there is one. So writes
-// are what this guard is about — reading a sandbox's own system files risks nothing
+// are what this guard is about. Reading a sandbox's own system files risks nothing
 // and is often how a task gets done.
 export function outsideWorkspaceCommand(
   command: string,
@@ -638,7 +638,7 @@ export function outsideWorkspaceCommand(
   const scanned = unescapeShellChars(stripHereDocBodies(command));
   // Traversal is a containment concern, not a durability one: read/write/edit reject
   // `..`, and bash should not be the trivial way around them. This only sees the
-  // literal text — bash expands `$'\x2e\x2e'`, `$(printf ..)` and variables after
+  // literal text. Bash expands `$'\x2e\x2e'`, `$(printf ..)` and variables after
   // this runs, so it is a guardrail, not a boundary. The boundary is the VM plus the
   // prefix-scoped mount credentials, which no amount of traversal escapes.
   if (PARENT_TRAVERSAL.test(scanned)) {
@@ -726,7 +726,7 @@ export function boundedInteger(
 
 // The first absolute path the command would write to, ignoring roots that are
 // ephemeral by convention. Shell semantics are not parseable with a regex, so this
-// covers the constructs that actually lose an agent's work — redirections and the
+// covers the constructs that actually lose an agent's work: redirections and the
 // common file-producing commands. Three classes are knowingly out of reach and are
 // left to the durability rule in the bash tool description: interpreter writes
 // (`python -c "open(...)"`), a write through a symlink, and the open-ended tail of
@@ -767,7 +767,7 @@ function invokesCommand(command: string, names: string[]): boolean {
 }
 
 // Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
-// matched — otherwise the two dots are never adjacent and no pattern can see them.
+// matched. Otherwise the two dots are never adjacent and no pattern can see them.
 function unescapeShellChars(command: string): string {
   return command.replace(/\\(.)/g, "$1");
 }

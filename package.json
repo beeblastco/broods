@@ -1,7 +1,7 @@
 {
   "name": "broods",
   "private": true,
-  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind Broods.",
+  "description": "Multi-account AI agent harness built on Bun. The open-source engine behind Broods.",
   "workspaces": [
     "apps/*",
     "packages/*"

@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 /** Backoff before re-running the signup sync after a failed attempt. */
 const SYNC_RETRY_MS = 5_000;
 
-// Shown once, on the first login of an account's life — it has no business
+// Shown once, on the first login of an account's life. It has no business
 // riding along in the layout chunk every other session loads.
 const OnboardingDialog = dynamic(() =>
   import("@/app/components/OnboardingDialog").then(

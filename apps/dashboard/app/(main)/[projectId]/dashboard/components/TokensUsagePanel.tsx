@@ -1,6 +1,6 @@
 "use client";
 
-/** Usage panel: live Convex usage rollups — tokens, activity, and compute — as charts and tables. */
+/** Usage panel: live Convex usage rollups for tokens, activity, and compute, as charts and tables. */
 import { Section } from "@/app/components/Section";
 import {
   isRootSpanKind,
@@ -92,7 +92,7 @@ const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
  * only written when a task finalizes, so a long run would otherwise show nothing
  * until it ends. Each model step is scoped to its own root span (a task, a cron
  * run, or a subagent subtask, which share the parent's traceId) so a finished
- * subtask stops counting the moment its usage row lands in Convex — no double
+ * subtask stops counting the moment its usage row lands in Convex, with no double
  * counting. Sandbox CPU is read off the running roots, which the harness
  * re-publishes with live role-split CPU on each step.
  */
@@ -513,7 +513,7 @@ function StackedBarChart({
           );
         })}
 
-        {/* X-axis labels — show ~6 evenly spaced */}
+        {/* X-axis labels, ~6 evenly spaced */}
         {bins.map((b, i) => {
           const stride = Math.max(1, Math.ceil(bins.length / 12));
           if (i % stride !== 0) return null;
@@ -794,8 +794,8 @@ export function TokensUsagePanel({
   );
   const isStreamingLive = liveOverlay.invocations > 0;
 
-  // Always span the window with zero-filled bins — even before the first query
-  // resolves — so the user sees a live, empty grid rather than a "no data" card.
+  // Always span the window with zero-filled bins, even before the first query
+  // resolves, so the user sees a live, empty grid rather than a "no data" card.
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const bins = useMemo(() => {
     const merged = stats ? mergeByBucket(stats.buckets) : [];
@@ -859,7 +859,7 @@ export function TokensUsagePanel({
   return (
     <div className="grid gap-8">
       <Section
-        title="Usage Overview"
+        title="Usage overview"
         description="Token consumption and model activity, metered live by the agent harness."
       >
         {/* Range selector + live indicator */}
@@ -882,7 +882,7 @@ export function TokensUsagePanel({
             ))}
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {/* Spin only while connecting — a live stream stays open indefinitely
+            {/* Spin only while connecting. A live stream stays open indefinitely
                 and a spinning icon for its whole lifetime repaints continuously. */}
             <RefreshCw
               className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}

@@ -93,8 +93,8 @@ export function stripTrailingSlash(value: string): string {
 
 /**
  * Guesses the API origin for a dashboard origin, but only for hosts we own and
- * therefore know the naming convention of. Any other host — a self-hosted or
- * custom domain — returns undefined so the caller waits for the base URL that
+ * therefore know the naming convention of. Any other host, self-hosted or on a
+ * custom domain, returns undefined so the caller waits for the base URL that
  * login advertises instead of inventing one that would not resolve.
  */
 export function gatewayUrlForDashboard(

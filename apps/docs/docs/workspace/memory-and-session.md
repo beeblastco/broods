@@ -1,4 +1,4 @@
-# Memory and Session
+# Memory and session
 
 Session history and workspace memory are related but separate:
 
@@ -26,13 +26,13 @@ Keep replies to a few sentences unless asked for detail.
 in, so agents that share a workspace across channels can tell where a memory came
 from. A `<memory>` system block ships with the workspace harness: it states today's
 date (time awareness), the current conversation's scope, and the save/recall rules
-(the index holds one-line summaries — read the linked file before relying on it;
-current instructions always outrank memory). Set `harness.memory.enabled: false` on
+(the index holds one-line summaries, so read the linked file before relying on
+it; current instructions always outrank memory). Set `harness.memory.enabled: false` on
 the workspace to keep the plain file tools but drop the memory tool and guidance;
 `TASKS.md` and other files remain an ordinary developer convention managed through
 the file tools.
 
-## Mental Model
+## Mental model
 
 ```mermaid
 flowchart TD
@@ -59,7 +59,7 @@ flowchart TD
   Bash --> Files
 ```
 
-## Workspace Sharing
+## Workspace sharing
 
 Workspaces are account-scoped records. Any agent or conversation that references the same
 `workspaceId` sees the same files:
@@ -134,7 +134,7 @@ flowchart LR
   C1 --> Docs["docs workspace<br/>read-only S3 direct"]
 ```
 
-## Runtime Behavior
+## Runtime behavior
 
 [`Session`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/session.ts) owns the runtime path:
 
@@ -151,17 +151,17 @@ flowchart LR
 
 The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/runtime-keys.ts). The config interface and validation live in [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts).
 
-## Configure It
+## Configure it
 
-The harness is a set of named features, each on by default and toggled independently — there is no top-level `enabled` flag:
+The harness is a set of named features, each on by default and toggled independently. There is no top-level `enabled` flag:
 
-- `harness.workspace` — the `<workspace>` prompt (file-tool + TASKS guidance).
-- `harness.memory` — structured memory: the `memory_save` tool, `memory/MEMORY.md` index loading, and the `<memory>` prompt.
+- `harness.workspace` is the `<workspace>` prompt (file-tool + TASKS guidance).
+- `harness.memory` is structured memory: the `memory_save` tool, `memory/MEMORY.md` index loading, and the `<memory>` prompt.
 
 ```ts
 import { defineWorkspace } from "broods";
 
-// Everything on — the default. There is nothing to set: an explicit
+// Everything on, the default. There is nothing to set: an explicit
 // `enabled: true` is redundant and normalizes away to this same form.
 export const notes = defineWorkspace({
   name: "notes",
@@ -202,9 +202,9 @@ Remove a workspace reference from the agent config to disable that workspace's m
 tools and prompt-time memory loading. Set `workspaces[].sandbox: null` when the agent
 should keep read-only `read`/`glob` access through S3 but must not mount or mutate files.
 
-## Session Context Management
+## Session context management
 
-Session history is managed before each model turn:
+Core manages session history before each model turn:
 
 - Pruning is enabled by default unless `session.pruning.enabled` is false. It removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
 - Compaction is disabled by default unless `session.compaction.enabled` is true. When enabled, it uses the selected agent model to summarize older history once the serialized context exceeds `session.compaction.maxContextLength`.

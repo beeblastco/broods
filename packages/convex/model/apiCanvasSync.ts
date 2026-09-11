@@ -1,5 +1,5 @@
 /**
- * Mirrors API-managed agents' runtime wiring onto the dashboard canvas — the
+ * Mirrors API-managed agents' runtime wiring onto the dashboard canvas, the
  * account-API counterpart of cliSync's `syncCanvasLayoutForManifest`.
  *
  * An agent created or updated through the public account API carries its
@@ -13,8 +13,8 @@
  * without ever fighting its owner.
  *
  * Referenced workspace/sandbox rows created through the API are account-scoped
- * (no project/stage). They are adopted into the canvas stage here
- * — without adoption `materializeRuntimeNodes` rejects them on the next
+ * (no project/stage). They are adopted into the canvas stage here.
+ * Without adoption `materializeRuntimeNodes` rejects them on the next
  * dashboard save ("belongs to a different project or stage").
  */
 
@@ -158,7 +158,7 @@ function addMountEdge(
  * Adopt an API-created (account-scoped) row into this stage so canvas
  * saves accept it; rows owned by another account or living in another
  * stage cannot be drawn here and are skipped. Dashboard-owned rows in
- * this stage keep their owner — an API agent may reference a
+ * this stage keep their owner, so an API agent may reference a
  * dashboard-created resource without stealing it.
  */
 async function adoptResourceRow(
@@ -258,7 +258,7 @@ function reconcileApiWiring(sync: ApiWiringSync): {
       edgeEndpointIds.has(node.id),
   );
 
-  // Invariant: every persisted edge has two persisted endpoints — a pruned or
+  // Invariant: every persisted edge has two persisted endpoints. A pruned or
   // externally deleted node must take its edges with it.
   const nextNodeIds = new Set(nextNodes.map((node) => node.id));
   const nextEdges = keptEdges.filter(

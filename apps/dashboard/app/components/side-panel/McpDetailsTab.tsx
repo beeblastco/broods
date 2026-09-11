@@ -110,7 +110,7 @@ export function McpDetailsTab({
 
       <div className="flex flex-col gap-1.5">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Server Name (prefixes every tool as name__tool)
+          Server name (prefixes every tool as name__tool)
         </span>
         <code className="text-xs text-foreground">
           {server?.name ?? "generated_on_save"}

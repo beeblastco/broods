@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Renders the live instances' non-secret policy posture for the Security and
+ * Renders the live instances' non-secret policy state for the Security and
  * Networking views. The policy (tool-approval mode / egress mode) is configured on
  * the sandbox config and mirrored onto each instance row by broods; this view is
- * read-only — edit the policy on the sandbox config (architecture canvas / CLI).
+ * read-only. Edit the policy on the sandbox config (architecture canvas or CLI).
  */
 
 import type { Doc } from "@broods/convex/_generated/dataModel";

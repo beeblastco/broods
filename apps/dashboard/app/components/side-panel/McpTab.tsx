@@ -189,7 +189,7 @@ export function McpTab({
       {activeTransport === "hosted" ? (
         <>
           <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            Server Code (Node · @modelcontextprotocol/server + zod)
+            Server code (Node · @modelcontextprotocol/server + zod)
           </span>
           <p className="text-xs text-muted-foreground">
             Save bundles the code, runs it in the sandbox, and lists its tools;

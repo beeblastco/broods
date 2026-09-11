@@ -8,7 +8,7 @@
  *
  * It reconnects itself, RESUMEs from the last sequence number when Discord still
  * accepts the session, and refuses to dial at all on a close code that cannot
- * start succeeding without a config change — retrying those is what spends the
+ * start succeeding without a config change. Retrying those is what spends the
  * per-token IDENTIFY allowance towards a token reset.
  */
 
@@ -30,7 +30,7 @@ import type { IdentifyBudget } from "./identify-budget.ts";
 import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 
 // Discord sends HELLO within about a second of the socket opening. Well past
-// that and the connection is not going to start working on its own — see the
+// that and the connection is not going to start working on its own. See the
 // watchdog in `dial`.
 const CONNECT_DEADLINE_MS = 30_000;
 
@@ -104,11 +104,10 @@ export class GatewaySocket {
   private dial(): void {
     if (this.state === "stopped") return;
     // `resumeUrl` only ever holds a value this same function already rebuilt, so
-    // at runtime this second pass cannot change it. It is here for the sink: the
-    // URL decides where the RESUME frame's bot token goes, and sanitizing at the
-    // point of use keeps that provable locally, by eye and to the taint analyzer,
-    // instead of resting on the field's every assignment staying clean. Do not
-    // "simplify" it away — it costs one regex per dial.
+    // this second pass cannot change it at runtime. It stays because the URL
+    // decides where the RESUME frame's bot token goes, and one regex per dial
+    // proves that at the point of use, by eye and to the taint analyzer, instead
+    // of resting on every assignment to the field staying clean.
     //
     // A session whose URL does not survive the rebuild is no session, which is
     // what makes one nullable value enough to decide both whether to reserve an
@@ -146,8 +145,8 @@ export class GatewaySocket {
 
     // Every other timer in this class is armed by an event that has to arrive
     // first: the heartbeat by HELLO, the reconnect by a close. So a socket that
-    // opens and then goes silent — no HELLO, or a READY this code cannot read —
-    // holds no timer at all and stays half-open for the life of the process,
+    // opens and then goes silent, with no HELLO or a READY this code cannot
+    // read, holds no timer at all and stays half-open for the life of the process,
     // with that bot quietly answering nothing. This is the one timer that does
     // not wait to be invited.
     this.connectTimer = setTimeout((): void => {

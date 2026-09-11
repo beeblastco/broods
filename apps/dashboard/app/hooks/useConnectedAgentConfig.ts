@@ -36,7 +36,7 @@ export interface ConnectedAgentConfig {
 
 /**
  * Walks edges from `nodeId` (BFS) and returns the first reachable agent
- * node's `agentConfigId`. `via` restricts intermediate node types — e.g. a
+ * node's `agentConfigId`. `via` restricts intermediate node types, e.g. a
  * sandbox can only reach an agent through a workspace.
  */
 function findReachableAgentConfigId(
@@ -130,7 +130,7 @@ export function useConnectedAgentConfig(
         }
 
         // Clone before editing: toNestedAgentConfig returns branches by
-        // reference, and `base` is the Convex-cached query document — writing
+        // reference, and `base` is the Convex-cached query document. Writing
         // through it would corrupt the client cache and survive rollbacks.
         const nested = structuredClone(toNestedAgentConfig(base));
         let cursor: Record<string, unknown> = nested as Record<string, unknown>;

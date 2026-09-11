@@ -678,7 +678,6 @@ export function useAgentChat({
       const trimmed = text.trim();
       if (!trimmed) return;
 
-      // Append user message
       const userMessage: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
@@ -688,7 +687,6 @@ export function useAgentChat({
       setStatus("streaming");
       setError(null);
 
-      // Abort any in-flight request
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -784,7 +782,7 @@ export function useAgentChat({
                   const tracked = Object.keys(subagentMessageIdsRef.current);
                   // Target the task the wire names; without one (older
                   // servers) fall back to every tracked panel, but attach the
-                  // output only when a single panel is tracked — copying one
+                  // output only when a single panel is tracked. Copying one
                   // subagent's result into another's panel misattributes it.
                   const taskIds =
                     resultTaskId && tracked.includes(resultTaskId)

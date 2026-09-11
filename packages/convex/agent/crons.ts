@@ -75,7 +75,7 @@ export const dispatch = internalAction({
     });
     if (!live) {
       // The row is gone (a cascade that could not reach the registration, or
-      // a crash between the two) — retire the schedule instead of firing it
+      // a crash between the two). Retire the schedule instead of firing it
       // at a deleted job forever.
       await deleteRegistrationIfExists(ctx, args.cronId);
 
@@ -133,7 +133,7 @@ export const completeRun = internalMutation({
 /**
  * Create a cron job: validate the input, insert the crons row, and register
  * its schedule with the crons component (or the Convex scheduler for a
- * one-time at(...) job) in the same transaction — the row and the schedule
+ * one-time at(...) job) in the same transaction. The row and the schedule
  * are one write, so neither can orphan the other.
  * @param accountId account id owning the cron job
  * @param input the create-cron request body
@@ -270,10 +270,10 @@ export const list = internalQuery({
  * Lists the cron jobs whose agent belongs to `projectId`, for that project's
  * scheduler page.
  *
- * A cron has no projectId of its own — it points at an agent, and the agent's
+ * A cron has no projectId of its own. It points at an agent, and the agent's
  * project comes from `agentConfigs`. Deriving it rather than storing a copy is
  * what keeps a cron from ever claiming a different project than the agent it
- * actually runs. Crons whose agent has no config row belong to no project and
+ * runs. Crons whose agent has no config row belong to no project and
  * are absent here.
  * @param projectId the project to list cron jobs for
  */

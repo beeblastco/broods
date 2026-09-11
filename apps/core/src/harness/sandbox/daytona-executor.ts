@@ -373,8 +373,8 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         );
         throw new SandboxCapacityError(
           `Daytona has no available runner for ${snapshot ? `snapshot '${snapshot}'` : "the request"} in the ` +
-            `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity — ` +
-            `rebuild it as a general snapshot or retry.`,
+            `selected region. The snapshot may be non-general (pinned to one runner) or the runner is at capacity. ` +
+            `Rebuild it as a general snapshot or retry.`,
         );
       }
       throw err;
@@ -517,7 +517,7 @@ function daytonaNetworkOptions(
 // shared resolver hands back short-lived, prefix-scoped assume-role creds (the
 // developer's bring-your-own-bucket role, or the platform role); a store with no
 // role falls back to whatever static keys the account itself supplied. The harness's
-// own broad runtime creds must never land here — agent code can read the env.
+// own broad runtime creds must never land here, since agent code can read the env.
 async function daytonaEnvVars(
   config: SandboxExecutorConfig,
   request: { namespace?: string },

@@ -24,7 +24,7 @@ mounts are wired into the workspace contract.
 ```
 
 E2B cannot enforce egress restrictions, so validation requires `network.mode` to be
-`allow-all` explicitly — `deny-all` (the default when omitted) and `restricted` are
+`allow-all` explicitly. `deny-all` (the default when omitted) and `restricted` are
 rejected. `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runtime.
 `templateId` is an alias for `template`.
 
@@ -32,8 +32,8 @@ rejected. `apiKey` can be omitted when `E2B_API_KEY` is set on the harness runti
 
 Set `persistent: true` to reserve one long-lived sandbox per workspace. The executor maps
 `lifecycle.idleTimeoutSeconds` to the E2B sandbox timeout with `onTimeout: "pause"`, so an
-idle sandbox snapshots and resumes (files, installs, and processes survive). Reserved
-sandboxes are tracked in the instance store and reconnected on later calls.
+idle sandbox snapshots and resumes (files, installs, and processes survive). The harness
+tracks reserved sandboxes in the instance store and reconnects on later calls.
 
 E2B background execution uses the native E2B command API (`commands.run` with
 `background: true`) and disconnects from the returned command handle after launch. It does
@@ -46,8 +46,8 @@ E2B template or run explicit setup commands in a persistent sandbox.
 
 E2B also documents native Volumes and cloud bucket mounts through custom templates and
 runtime commands such as `s3fs`. Those are provider capabilities, not part of this harness
-integration yet. If E2B workspace sharing is added later, prefer E2B's native SDK/storage
-primitives first and avoid introducing a second custom workspace path.
+integration yet. If E2B workspace sharing is added later, prefer E2B's native SDK and storage
+APIs first and avoid introducing a second custom workspace path.
 
 ## Requirements
 
@@ -56,13 +56,13 @@ wraps a background bash job with its completion callback. Workspace-backed
 `read`/`write`/`edit`/`glob`/`grep`/`bash` fail fast because E2B does not currently
 mount the shared S3 workspace in this harness.
 
-## Execution Notes
+## Execution notes
 
 See [E2B runtime documentation](https://e2b.dev/docs) for supported runtimes and
 environment setup. The executor runs the tool's bash command as-is inside the sandbox.
 
-`sandbox.envVars` is forwarded as the command's `envs`, so configured variables are
-visible to executed files.
+The executor forwards `sandbox.envVars` as the command's `envs`, so configured variables
+are visible to executed files.
 
 ## What the model sees
 

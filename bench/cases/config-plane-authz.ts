@@ -1,7 +1,7 @@
 /**
  * The config-plane authorization decision. Every fp_sts_ request through the
  * gateway resolves to a role and runs `authorize` before anything else, and a
- * default-deny walks the entire rule list — so the miss, not the hit, is the
+ * default-deny walks the entire rule list, so the miss, not the hit, is the
  * case worth holding a baseline on.
  */
 

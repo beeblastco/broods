@@ -17,7 +17,7 @@ const LONG_TASK_FLOOR_MS = 100;
 /** Derived from the hook rather than Next's internal compiled path. */
 type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
 
-// Hoisted so the callback identity never changes — a new function would make
+// Hoisted so the callback identity never changes. A new function would make
 // useReportWebVitals replay every metric collected so far.
 function reportWebVital(metric: WebVitalsMetric) {
   reportPerf(`web-vital.${metric.name}`, metric.value, {

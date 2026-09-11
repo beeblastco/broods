@@ -142,7 +142,7 @@ test("stage use warns and keeps the old key when the stage has no runtime key", 
 
 // Regression: a transport failure used to escape `syncRuntimeKeyForScope`, so
 // the command exited 1 with a raw HTTP error even though BROODS_STAGE had
-// already been switched — the user saw a failure that had partly succeeded.
+// already been switched. The user saw a failure that had partly succeeded.
 test("stage use survives a runtime-key lookup failure", async () => {
   const cwd = await projectDir();
   const baseUrl = serveBackend(

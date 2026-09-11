@@ -415,7 +415,7 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
 
 export type ModelAttempt = { startedAt: number; error?: string };
 
-// One entry per doStream call — the SDK's retry loop re-invokes doStream, so
+// One entry per doStream call. The SDK's retry loop re-invokes doStream, so
 // the recorded attempts split retry waste from server wait on the step span.
 export function attemptRecordingMiddleware(
   record: (attempt: ModelAttempt) => void,
@@ -445,7 +445,7 @@ export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
 // Stored-item references are the provider's own state, so they can go stale for
 // reasons no amount of care on our side prevents: the 30-day window closes, or
 // the agent's model changes and the old reasoning can no longer be decrypted.
-// Retry once with that state dropped — the turn then costs a full re-upload of
+// Retry once with that state dropped. The turn then costs a full re-upload of
 // its history and nothing else, instead of failing in the user's chat.
 export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
@@ -657,7 +657,7 @@ function requireProviderSettings(
   if (providerName === "custom" && !customProviderBaseURL(providerConfig)) {
     const hint =
       (providerConfig as Record<string, unknown>).baseUrl !== undefined
-        ? ` (found "baseUrl" — use "base_url" or "baseURL")`
+        ? ` (found "baseUrl", use "base_url" or "baseURL")`
         : "";
     throw new Error(`config.provider.custom.base_url is required${hint}`);
   }
@@ -714,7 +714,7 @@ function createModelOutput(
 // Everything the request says about items the provider is holding: the ids an
 // assistant part is replayed by, the reasoning parts they must be paired with,
 // and any response chain the account pinned through `providerOptions`. They go
-// together — a surviving `previousResponseId` makes the provider skip the very
+// together. A surviving `previousResponseId` makes the provider skip the very
 // history this retry exists to send in full.
 function withoutStoredItemState(
   params: LanguageModelV4CallOptions,

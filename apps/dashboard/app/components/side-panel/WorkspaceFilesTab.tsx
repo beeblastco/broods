@@ -392,7 +392,7 @@ function TreeRow({
             </span>
           )}
 
-        {/* action buttons — visible on hover or when selected */}
+        {/* action buttons, visible on hover or when selected */}
         {!isRenaming && (
           <span
             className={cn(
@@ -751,7 +751,7 @@ export function WorkspaceFilesTab({
         }
 
         // Failures are caught per entry: one bad file (too large, rejected)
-        // must not abort the loop — that would strand the remaining paths in
+        // must not abort the loop. That would strand the remaining paths in
         // `uploading` as permanent spinner rows and silently skip them.
         let entryError: string | null = null;
         for (const { file, path } of entries) {
@@ -1018,7 +1018,7 @@ export function WorkspaceFilesTab({
         ref={folderInputRef}
         type="file"
         multiple
-        /* @ts-expect-error — webkitdirectory is not in React's typedefs */
+        /* @ts-expect-error webkitdirectory is not in React's typedefs */
         webkitdirectory=""
         className="hidden"
         onChange={handleFileInputChange}

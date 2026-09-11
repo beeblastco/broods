@@ -97,7 +97,7 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
 // the row in one transaction; assert it is registered at the expected path.
 it("registers agent/crons.remove as an internal mutation", () => {
   // agent/crons reaches ../auth, which constructs AuthKit and validates these
-  // at import time. Dummy values only — nothing here authenticates.
+  // at import time. Dummy values only, nothing here authenticates.
   process.env.WORKOS_CLIENT_ID ||= "client_test";
   process.env.WORKOS_API_KEY ||= "sk_test";
   process.env.WORKOS_WEBHOOK_SECRET ||= "whsec_test";

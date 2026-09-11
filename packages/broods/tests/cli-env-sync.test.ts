@@ -1,7 +1,7 @@
 // `broods env sync` and the drift warning `diff` prints. A stage that holds a
-// stale secret looks identical to a healthy one on every other surface — the
-// value digest the backend returns beside each name is the only thing that
-// separates them, so the states it produces are what these tests pin down.
+// stale secret looks identical to a healthy one everywhere else. The value
+// digest the backend returns beside each name is the only thing that separates
+// them, so the states it produces are what these tests pin down.
 
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -43,7 +43,7 @@ test("env sync pushes the drifted and unset vars and leaves the matching one", a
   );
 });
 
-// A referenced name the stage holds and `.env.local` does not is normal — a
+// A referenced name the stage holds and `.env.local` does not is normal, a
 // secret set straight on the stage. Naming it is what separates it from the ones
 // `.env.local` does control; pushing it would be wrong.
 test("env sync names the referenced vars .env.local does not control", async () => {

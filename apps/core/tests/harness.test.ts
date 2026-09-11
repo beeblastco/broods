@@ -2502,8 +2502,8 @@ describe("system prompt trace attributes", () => {
       { role: "system", content: "<skills>\nload_skill first.\n</skills>" },
     ];
 
-    // Traces must show every injected block, not just the agent's own prompt —
-    // the joined text is exactly what the provider receives as instructions.
+    // Traces must show every injected block, not just the agent's own prompt.
+    // The joined text is exactly what the provider receives as instructions.
     expect(systemTraceAttributes(system, (value) => String(value))).toEqual({
       "model.system":
         "You are a helpful agent.\n\n<skills>\nload_skill first.\n</skills>",

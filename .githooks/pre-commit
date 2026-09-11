@@ -1,6 +1,6 @@
 #!/bin/sh
 # Lint + format gate on staged files. Wired by the root `prepare` script
-# (`git config core.hooksPath .githooks`). Typecheck stays in CI — too slow here.
+# (`git config core.hooksPath .githooks`). Typecheck stays in CI, too slow here.
 set -e
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)

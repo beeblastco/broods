@@ -15,7 +15,6 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.
@@ -24,7 +23,7 @@ for await (const chunk of client.stream(api.agents.overrideAgent, {
     "Exercise the three workspace bindings:",
     "1. In the `scratch` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', execute it and then read it back.",
     "2. In the `secure` workspace, write a Python script that makes an outbound request and outputs the file 'output.txt', try to execute it and then read it back.",
-    "3. In the `reference` workspace, try to write c.txt — report the read-only error verbatim — then glob **/* there.",
+    "3. In the `reference` workspace, try to write c.txt, report the read-only error verbatim, then glob **/* there.",
     "4. Summarize which workspaces accepted writes and which rejected them. Dont use urlopen, if have problem, should timeout, or else it will hang indeffinetely",
   ].join("\n"),
 })) {

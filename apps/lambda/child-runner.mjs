@@ -23,8 +23,8 @@ const BUNDLE_FD = 3;
 // this is the cooperative in-process bound that trips the request signals first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
-// The identity the bundle is imported under. Nothing is ever written here — the
-// loader hook answers it from memory — but it has to be a file URL: bundlers
+// The identity the bundle is imported under. Nothing is ever written here, the
+// loader hook answers it from memory, but it has to be a file URL: bundlers
 // emit `createRequire(import.meta.url)`, which rejects a data: URL outright and
 // throws before a line of the server's own code runs.
 const BUNDLE_URL = pathToFileURL(
@@ -32,7 +32,7 @@ const BUNDLE_URL = pathToFileURL(
 ).href;
 
 // The batch and the timeout race to write the terminal frame; first one wins.
-// `true` also means idle — nothing in flight before or between batches.
+// `true` also means idle, with nothing in flight before or between batches.
 let settled = true;
 
 // The emitted frame carried an exit code: the process exits once it flushes,

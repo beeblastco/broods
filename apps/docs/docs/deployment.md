@@ -2,14 +2,14 @@
 
 You have two deployment paths:
 
-1. **Managed service** (recommended) — the platform at `gateway.broods.app` handles all infrastructure. You only run `broods deploy`.
-2. **Self-hosted** — deploy the full serverless stack to your own AWS account with SST.
+1. **Managed service** (recommended). The platform at `gateway.broods.app` handles all infrastructure, you only run `broods deploy`.
+2. **Self-hosted.** Deploy the full serverless stack to your own AWS account with SST.
 
 Both paths use the same CLI and SDK workflow.
 
 ---
 
-## Managed Service
+## Managed service
 
 The fastest path. No infrastructure to manage.
 
@@ -24,9 +24,9 @@ The CLI handles everything: compiling resources, bundling tools, uploading skill
 
 ---
 
-## Self-Hosted
+## Self-hosted
 
-Deploy the full serverless infrastructure to your own AWS account for complete control.
+Deploy the full serverless stack to your own AWS account.
 
 `sst.config.ts` is the source of truth for infra names, tags, region, the AWS data plane, MicroVM sandbox integration, S3 buckets, and SST secrets. `packages/convex/schema.ts` is the source of truth for persistent tables.
 
@@ -40,7 +40,7 @@ Issue #32 removes the runtime's legacy DynamoDB tables and adapters. Deployment 
 - An AWS account with CLI access configured
 - [SST](https://sst.dev/) (installed by `bun install` as a project dependency; commands use `bunx sst`)
 
-### Local Setup
+### Local setup
 
 ```bash
 bun install
@@ -51,7 +51,7 @@ Keep `.env` for local SST inputs only:
 
 - `AWS_PROFILE`
 - `SST_STAGE`
-- `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` (required — no in-source defaults)
+- `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` (required, no in-source defaults)
 - `ENABLE_DIRECT_API` (deploys as `false` unless set to `true`)
 - `ENABLE_WEBSOCKET`
 - `NATS_URL` (transport by scheme: `wss://` WebSocket / `nats://` core TCP)
@@ -66,13 +66,13 @@ bunx sst secret set AccountConfigEncryptionSecret <long-random-value>
 bunx sst secret set DaytonaApiKey <daytona-api-key>
 ```
 
-`DaytonaApiKey` has no fallback — `sst deploy` fails without it.
+`DaytonaApiKey` has no fallback. `sst deploy` fails without it.
 
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 
 Agent policies use the Broods structured document shape and are evaluated by OPA at `/v1/data/broods/authz/decision`. The runtime defaults to `http://127.0.0.1:8181` for a colocated sidecar, or uses `OPA_BASE_URL` when an external/shared OPA service is configured. OPA errors fail closed in `enforce` mode and are logged without blocking in `audit` mode.
 
-### Build and Deploy
+### Build and deploy
 
 ```bash
 bun run check
@@ -86,7 +86,7 @@ Deploy outputs include:
 
 - `filesystemBucketName`, `skillsBucketName`, `toolBundlesBucketName`
 
-### Using the CLI with Self-Hosted
+### Using the CLI with self-hosted
 
 After self-hosted deploy, use the same CLI workflow but point it at your deployment:
 
@@ -98,7 +98,7 @@ broods dev
 broods deploy
 ```
 
-### Account Setup (Self-Hosted)
+### Account setup (self-hosted)
 
 Create an account through the gateway with the admin secret:
 
@@ -137,9 +137,9 @@ provider moves traffic to that stage instead of contending for the account.
 
 Reference the [API Reference](/api-reference) for the complete agent config shape.
 
-## Live Probes
+## Live probes
 
-Each demo script reads its environment from its own folder — copy the matching `.env.example` and fill in `BROODS_BASE_URL` plus your model/tool keys.
+Each demo script reads its environment from its own folder. Copy the matching `.env.example` and fill in `BROODS_BASE_URL` plus your model/tool keys.
 
 ```bash
 curl "$BROODS_BASE_URL"

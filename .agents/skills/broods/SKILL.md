@@ -5,7 +5,7 @@ description: Work on a broods account alongside a developer from Claude Code or 
 
 # Broods
 
-The `broods` CLI does the interaction: sign-in, project sync, env, logs, running agents. The docs at https://docs.broods.app are the information: read the relevant page before guessing a config shape or an API route. In this repo the same files live at `apps/docs/docs/`. The `broods` npm package is the SDK: it integrates a deployed agent into existing application code.
+The `broods` CLI does the interaction: sign-in, project sync, env, logs, running agents. The docs at https://docs.broods.app are the information. Read the relevant page before guessing a config shape or an API route. In this repo the same files live at `apps/docs/docs/`. The `broods` npm package is the SDK. It integrates a deployed agent into existing application code.
 
 ## Onboard
 

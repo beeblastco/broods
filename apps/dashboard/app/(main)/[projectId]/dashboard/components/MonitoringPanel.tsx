@@ -101,7 +101,7 @@ function shortFunctionName(name: string): string {
 
 // Both themes per level: the 400 shades only clear WCAG AA on the dark card,
 // the 700 shades only on the light one.
-/** Text color per log level — INFO is now distinctly colored, not muted. */
+/** Text color per log level. INFO gets its own color rather than the muted one. */
 function levelColor(level: ObservabilityLogEntry["level"]): string {
   if (level === "ERROR") return "text-red-700 dark:text-red-400";
   if (level === "WARN") return "text-amber-700 dark:text-amber-400";
@@ -297,7 +297,7 @@ export function MonitoringPanel({
   }, [entries, filter, level, fromMs, toMs]);
 
   // Reset paging whenever the filters change so "Load more" always starts from
-  // the top of the current view — render-time adjustment, not an effect.
+  // the top of the current view. Render-time adjustment, not an effect.
   const filterSignature = `${filter}|${level}|${fromMs}|${toMs}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);

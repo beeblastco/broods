@@ -77,7 +77,7 @@ type EnsureResult = {
   rawApiKey: string;
 };
 
-/** Ensure the stage has a recoverable runtime key, creating one on first call. */
+/** Returns the stage's recoverable runtime key, creating one on first call. */
 export const ensureForStage = mutation({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: ensureReturn,
@@ -117,7 +117,7 @@ export const ensureForStage = mutation({
 /**
  * Find the stage's active deployment, creating one (with a fresh key) when
  * absent. When `rotate` is true an existing key is regenerated. Returns the raw
- * key whenever it can — minted now, or decrypted from the at-rest blob.
+ * key whenever it can, either minted now or decrypted from the at-rest blob.
  */
 export async function ensureStageDeployment(
   ctx: MutationCtx,

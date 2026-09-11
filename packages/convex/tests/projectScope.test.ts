@@ -96,7 +96,7 @@ async function seed(tt: T) {
     const stranded = await mkAgent("pre-adoption-agent");
 
     // An agent on a different account entirely, pointed at by a config row
-    // in this project — agentConfigs.agentId is a loose string, so a stale
+    // in this project. agentConfigs.agentId is a loose string, so a stale
     // or hand-edited row can name anything that resolves.
     const foreignAccountId = await ctx.db.insert("accounts", {
       orgId: "org-other",

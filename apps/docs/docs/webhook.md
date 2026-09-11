@@ -1,6 +1,6 @@
 # Lifecycle Webhooks
 
-Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{channel}`, and different again from [sandbox hooks](workspace/sandbox/hook.md): a lifecycle webhook is **declarative HTTPS delivery of event JSON to an external service**, whereas sandbox `onCreate`/`onResume` commands run _inside the sandbox_. Neither uploads or executes user hook code today — per-invocation user code hooks are tracked under [#63](https://github.com/beeblastco/broods/issues/63).
+Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{channel}`, and different again from [sandbox hooks](workspace/sandbox/hook.md): a lifecycle webhook posts event JSON to an external HTTPS service, whereas sandbox `onCreate`/`onResume` commands run _inside the sandbox_. Neither uploads or executes user hook code today. Per-invocation user code hooks are tracked under [#63](https://github.com/beeblastco/broods/issues/63).
 
 ```mermaid
 flowchart LR
@@ -12,9 +12,9 @@ flowchart LR
 
 Check out the [webhook example](https://github.com/beeblastco/broods/tree/dev/packages/demos/webhook) for setup and usage. Lifecycle webhooks remain declarative HTTPS delivery; they do not upload or execute user hook code.
 
-## Code-First Configuration
+## Code-first configuration
 
-Configure lifecycle webhooks inside `defineAgent`. An agent can register **several** webhooks — `hooks.webhooks` is an array, so events can fan out to multiple services:
+Configure lifecycle webhooks inside `defineAgent`. An agent can register several webhooks. `hooks.webhooks` is an array, so events fan out to multiple services:
 
 ```ts title="broods/index.ts"
 import { defineAgent, env } from "broods";
@@ -57,9 +57,9 @@ export const myAgent = defineAgent({
 | `secret`  | string   | HMAC signing secret                                     |
 | `events`  | string[] | Optional allow-list; omitted means all lifecycle events |
 
-Each entry is delivered independently: every enabled webhook whose `events` allow-list matches (or is omitted) receives the event. The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
+Each entry is delivered independently: every enabled webhook whose `events` allow-list matches (or is omitted) receives the event. The `url` must be a public HTTPS endpoint. Loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
 
-Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`secret` as `env("NAME")` references) or in the dashboard, they are surfaced in the dashboard **Settings → Webhooks** tab. There you can add a webhook, toggle each one **active/inactive**, or remove it; the panel writes straight to `config.hooks.webhooks` (the config the harness delivers from) rather than a separate store. Changing webhooks is an org admin operation, and the signing secret is write-only: the panel shows that one is set but never returns the value. The CLI shows them via `broods agent get <name>`.
+Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`secret` as `env("NAME")` references) or in the dashboard, they all show in the dashboard Settings → Webhooks tab. There you can add a webhook, toggle one active or inactive, or remove it; the panel writes straight to `config.hooks.webhooks` (the config the harness delivers from) rather than a separate store. Changing webhooks is an org admin operation, and the signing secret is write-only: the panel shows that one is set but never returns the value. The CLI shows them via `broods agent get <name>`.
 
 ## Events
 

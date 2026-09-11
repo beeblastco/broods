@@ -21,7 +21,7 @@ export type AuthContext =
   | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean }
   | {
       // Project + stage scoped runtime key. It does not bind to a single
-      // agent — the agent is chosen per request by id and loaded against this
+      // agent. The agent is chosen per request by id and loaded against this
       // account, so any deployed agent in the stage is reachable.
       kind: "deployment";
       account: AccountRecord;

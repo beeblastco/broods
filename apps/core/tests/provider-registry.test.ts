@@ -79,7 +79,7 @@ describe("transcription model resolution", () => {
 
 // The transcription id rides in config.model but is not a language-model
 // setting, so it must not reach the call options the agent's own model is run
-// with — an unknown key there is the provider's error, not ours.
+// with. An unknown key there is the provider's error, not ours.
 describe("modelSettingsFromModelConfig", () => {
   it("leaves the transcription model out of the language model's settings", () => {
     expect(

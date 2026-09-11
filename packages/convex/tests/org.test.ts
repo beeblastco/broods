@@ -137,7 +137,7 @@ describe("adoptExternalAccount", () => {
 
   test("leaves the owner's existing org and its account intact", async () => {
     const t = orgTest();
-    // The owner already has a workspace org with its own account — the exact
+    // The owner already has a workspace org with its own account, the exact
     // collision that makes re-pointing onto an existing org unsafe.
     const existingOrgId = await t.run(
       async (ctx) =>

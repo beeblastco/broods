@@ -114,8 +114,8 @@ export default {};
 // Server bounds: 1 MB for isolate-run hooks, 50 MB for hosted MCP bundles
 // (#190); past the inline threshold a bundle travels through an upload URL
 // instead of the manifest body (sync.ts). The MCP values mirror
-// packages/convex/model/mcp.ts (the published CLI cannot import the backend)
-// — change both or the CLI accepts what the config plane rejects.
+// packages/convex/model/mcp.ts (the published CLI cannot import the backend).
+// Change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
@@ -206,7 +206,7 @@ export async function compileProject(
  * Collects the distinct account/environment variable names referenced via
  * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
  * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
- * from the local environment to the cloud — never unrelated `.env.local` keys.
+ * from the local environment to the cloud, never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
@@ -297,8 +297,8 @@ let typeScriptLoaderRegistered = false;
  *
  * Node erases type syntax and nothing else, so an `enum`, a decorator or a
  * parameter property in `broods/` throws there while loading fine under Bun.
- * Handing the source to esbuild — already a dependency, for bundling custom
- * tools — makes both runtimes compile the same file, which is what lets
+ * Handing the source to esbuild, already a dependency for bundling custom
+ * tools, makes both runtimes compile the same file, which is what lets
  * `broods` run on plain `node`. A load hook keeps each module's own URL, so a
  * resource that reads a file relative to `import.meta.url` still resolves
  * against its source directory. No-op under Bun, which loads TypeScript
@@ -362,7 +362,7 @@ async function findConfig(
 }
 
 /**
- * Top-level agent config keys the code-first surface accepts. Mirrors
+ * Top-level agent config keys the code-first input accepts. Mirrors
  * `AgentDefinitionConfig` in resources.ts; keep both in sync when core gains a
  * new agent field.
  */
@@ -404,10 +404,10 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
 
 /**
  * Rejects unknown top-level keys on a resource config so a typo such as
- * `workspace:` (instead of `workspaces:`) fails loudly at compile time — the way
- * a Convex validator rejects unknown fields — instead of being silently dropped
- * by the sync pipeline. Runs during `dev`/`deploy`, so it surfaces in the watch
- * loop even though the CLI transpiles resource files without typechecking
+ * `workspace:` (instead of `workspaces:`) fails loudly at compile time, the way
+ * a Convex validator rejects unknown fields, instead of the sync pipeline
+ * dropping it without a word. Runs during `dev`/`deploy`, so it shows up in the
+ * watch loop even though the CLI transpiles resource files without typechecking
  * them.
  * @throws when an agent config carries a key outside the known set
  */
@@ -1077,9 +1077,9 @@ const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
 /**
  * Suggest the canonical key for a common misspelling, else "". A setting the SDK
- * has never heard of is fine — it reaches the provider's Vercel AI SDK factory
- * untouched — but a casing slip on one of the few keys broods reads itself
- * (`apiKey`, `base_url`) would silently do nothing, so those still throw.
+ * has never heard of is fine, since it reaches the provider's Vercel AI SDK
+ * factory untouched. But a casing slip on one of the few keys broods reads
+ * itself (`apiKey`, `base_url`) would do nothing at all, so those still throw.
  */
 function suggestProviderKey(key: string): string {
   if (CANONICAL_PROVIDER_KEYS.has(key)) {
@@ -1094,8 +1094,8 @@ function suggestProviderKey(key: string): string {
 
 /**
  * Validates each agent's `config.provider` at compile time so a misspelled
- * option — most commonly the camel `baseUrl` instead of `base_url`/`baseURL` —
- * throws inside the `broods dev` watcher (and `deploy`) instead of surfacing as
+ * option, most commonly the camel `baseUrl` instead of `base_url`/`baseURL`,
+ * throws inside the `broods dev` watcher (and `deploy`) instead of arriving as
  * a 400 at run time. Values may be `env("NAME")` refs, so only keys are checked.
  */
 export function validateProviderConfig(
@@ -1128,7 +1128,7 @@ export function validateProviderConfig(
       const suggestion = suggestProviderKey(key);
       if (suggestion) {
         throw new Error(
-          `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}" — did you mean ${suggestion}?`,
+          `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}". Did you mean ${suggestion}?`,
         );
       }
     }
@@ -1579,7 +1579,7 @@ async function buildBundleModule(options: {
     plugins: options.plugins ?? [],
   }).catch((error: unknown) => {
     // esbuild throws BuildFailure for source errors, but a plain Error for
-    // install/platform problems — surface that cause instead of masking it.
+    // install/platform problems, so report that cause instead of masking it.
     const details = isBuildFailure(error)
       ? error.errors
           .map((entry) => entry.text)
@@ -1625,8 +1625,8 @@ async function normalizeSkillConfig(
 
 /**
  * An mcp resource with `url` syncs as-is (external server); one with `handler`
- * bundles the module that declared it — the handler stays inline next to the
- * `defineMcp` call, one file per server — and the row becomes
+ * bundles the module that declared it, so the handler stays inline next to the
+ * `defineMcp` call, one file per server, and the row becomes
  * `transport: "hosted"` on the backend (#331 phase 2).
  */
 async function normalizeMcpConfig(

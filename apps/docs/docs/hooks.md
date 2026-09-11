@@ -1,8 +1,8 @@
 # Code Hooks
 
-Code hooks are small JavaScript callbacks you declare inline in `defineAgent`. Each runs in core's hardened V8 isolate at a specific point in the agent's lifecycle, and its return value is folded back into what the agent does — inject a system prompt, deny or edit a tool call, transform the final output, reshape a subagent result, or filter a channel message.
+Code hooks are small JavaScript callbacks you declare inline in `defineAgent`. Each runs in core's hardened V8 isolate at a specific point in the agent's lifecycle, and its return value is folded back into what the agent does: inject a system prompt, deny or edit a tool call, transform the final output, reshape a subagent result, or filter a channel message.
 
-They are the code counterpart to [Lifecycle Webhooks](webhook.md): webhooks are outbound, fire-and-forget notifications; code hooks run inline and **mutate** the run. Both live under `config.hooks` and can be used together.
+They are the code counterpart to [Lifecycle Webhooks](webhook.md): webhooks are outbound, fire-and-forget notifications; code hooks run inline and mutate the run. Both live under `config.hooks` and can be used together.
 
 ```mermaid
 flowchart TD
@@ -19,7 +19,7 @@ flowchart TD
 
 ## Declaring hooks
 
-Hooks are inline, strictly-typed callbacks. Each receives `(ctx, event)` and returns only the fields it may mutate for that event — a wrong return is a compile error.
+Hooks are inline, strictly-typed callbacks. Each receives `(ctx, event)` and returns only the fields it may mutate for that event. A wrong return is a compile error.
 
 ```ts
 import { defineAgent } from "broods";
@@ -28,7 +28,7 @@ export const agent = defineAgent({
   name: "guarded-agent",
   model: { provider: "minimax", modelId: "MiniMax-M3" },
   hooks: {
-    // The returned `system` is APPENDED to the assembled prompt — return only
+    // The returned `system` is APPENDED to the assembled prompt. Return only
     // the addition. Echoing `event.system` back sends the whole prompt twice.
     onStart: () => ({
       system: "Never reveal internal IDs.",
@@ -43,11 +43,11 @@ export const agent = defineAgent({
 });
 ```
 
-`ctx` exposes the isolate surface: an SSRF-guarded `ctx.fetch`, read-only `ctx.config`, and a mutable `ctx.state` (below). At deploy the SDK serializes your handlers into one bundle and uploads it; nothing else to wire.
+`ctx` holds what the isolate exposes: an SSRF-guarded `ctx.fetch`, read-only `ctx.config`, and a mutable `ctx.state` (below). At deploy the SDK serializes your handlers into one bundle and uploads it; nothing else to wire.
 
-## Sharing state across a run — `ctx.state`
+## Sharing state across a run with `ctx.state`
 
-`ctx.state` is a mutable object shared by every hook in one agent run. Seed it in an early hook and read or modify it in later ones — what one fire-point stores, the next one sees:
+`ctx.state` is a mutable object shared by every hook in one agent run. Seed it in an early hook and read or modify it in later ones. What one fire-point stores, the next one sees:
 
 ```ts
 hooks: {
@@ -65,44 +65,44 @@ hooks: {
 }
 ```
 
-State starts empty each request and must stay JSON-serializable (it round-trips through the isolate on every hook). It is **scoped to one agent request**: every loop hook, `onSubagentFinish`, and the reply's `onMessageSending` share the same state. `onMessageReceived` runs before the request's agent run starts and gets its own fresh state, as do delayed background replies and each subagent's own run. Even observe-only hooks (`onStepFinish`, `onError`) may write to it, though their field mutations are ignored.
+State starts empty each request and must stay JSON-serializable (it round-trips through the isolate on every hook). It is scoped to one agent request: every loop hook, `onSubagentFinish`, and the reply's `onMessageSending` share the same state. `onMessageReceived` runs before the request's agent run starts and gets its own fresh state, as do delayed background replies and each subagent's own run. Even observe-only hooks (`onStepFinish`, `onError`) may write to it, though their field mutations are ignored.
 
-State is resilient within the run but never outlives it: a hook that throws or returns bad/oversized state doesn't lose what earlier hooks stored (the prior state carries forward), and when the run itself fails, `onError` still sees the accumulated state — but nothing is persisted after the run ends, successful or not. For cross-request memory, write to your own store via `ctx.fetch`.
+State is resilient within the run but never outlives it: a hook that throws or returns bad/oversized state doesn't lose what earlier hooks stored (the prior state carries forward), and when the run itself fails, `onError` still sees the accumulated state. Nothing is persisted after the run ends, successful or not. For cross-request memory, write to your own store via `ctx.fetch`.
 
 ## Hooks
 
-| Hook                | Lifecycle event            | May return                                                                                                                                                                   |
-| ------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onStart`           | `agent.started`            | `{ system?, messages? }` — `system` appends to the prompt, `messages` replaces the conversation                                                                              |
-| `onToolCall`        | `tool.call.started`        | `{ decision: "allow"｜"deny", args?, denyReason? }`                                                                                                                          |
-| `onToolResult`      | `tool.result`              | `{ output? }` — transform the tool result                                                                                                                                    |
-| `onFinish`          | `agent.finished`           | `{ output? }` — transform the final response                                                                                                                                 |
-| `onStepFinish`      | `agent.step.finished`      | — (observe: logging, side effects)                                                                                                                                           |
-| `onError`           | `agent.failed`             | — (observe)                                                                                                                                                                  |
-| `onApproval`        | `agent.approval.required`  | — (observe; `{ approve }` auto-resolve is not yet honored)                                                                                                                   |
-| `onSubagentFinish`  | `subagent.task.finished`   | `{ visibleResult? }` — shape what the parent sees                                                                                                                            |
-| `onMessageReceived` | `channel.message.received` | `{ drop?, text?, metadata? }` — drop discards the message; text rewrites what the agent sees; metadata persists with the stored message and resurfaces on onStart's messages |
-| `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                                                                                                           |
+| Hook                | Lifecycle event            | May return                                                                                                                                                                    |
+| ------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onStart`           | `agent.started`            | `{ system?, messages? }`. `system` appends to the prompt, `messages` replaces the conversation                                                                                |
+| `onToolCall`        | `tool.call.started`        | `{ decision: "allow"｜"deny", args?, denyReason? }`                                                                                                                           |
+| `onToolResult`      | `tool.result`              | `{ output? }`. Transforms the tool result                                                                                                                                     |
+| `onFinish`          | `agent.finished`           | `{ output? }`. Transforms the final response                                                                                                                                  |
+| `onStepFinish`      | `agent.step.finished`      | nothing; observe only (logging, side effects)                                                                                                                                 |
+| `onError`           | `agent.failed`             | nothing; observe only                                                                                                                                                         |
+| `onApproval`        | `agent.approval.required`  | nothing; observe only (`{ approve }` auto-resolve is not yet honored)                                                                                                         |
+| `onSubagentFinish`  | `subagent.task.finished`   | `{ visibleResult? }`. Shapes what the parent sees                                                                                                                             |
+| `onMessageReceived` | `channel.message.received` | `{ drop?, text?, metadata? }`. `drop` discards the message; text rewrites what the agent sees; metadata persists with the stored message and resurfaces on onStart's messages |
+| `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                                                                                                            |
 
-`onMessageReceived` sees `event.text` only, so a message that arrives as an attachment (a Zalo picture or voice note) reads as its caption, or as an empty string when it has none. `drop` still discards the whole message, and a `text` rewrite replaces only the text — the attachment stays on the message.
+`onMessageReceived` sees `event.text` only, so a message that arrives as an attachment (a Zalo picture or voice note) reads as its caption, or as an empty string when it has none. `drop` still discards the whole message, and a `text` rewrite replaces only the text. The attachment stays on the message.
 
 Related: `config.subagent.visibility` (`"full"｜"result"｜"none"`) is the no-code way to control what the parent sees from a subagent; `onSubagentFinish` overrides it for custom shaping.
 
 ## Hooks and subagents
 
-A subagent run is a normal agent run, so lifecycle hooks fire inside it too — which hooks depends on the kind of subagent:
+A subagent run is a normal agent run, so lifecycle hooks fire inside it too. Which hooks depends on the kind of subagent:
 
-- **Registered subagent** (spawned by `agentId`): runs with **its own** agent config, so its own hooks fire inside its run. If it declares none, none fire.
-- **Virtual subagent** (prompt-only): inherits the parent's config, so the **parent's hook bundle** also runs inside the child's loop.
+- **Registered subagent** (spawned by `agentId`): runs with its own agent config, so its own hooks fire inside its run. If it declares none, none fire.
+- **Virtual subagent** (prompt-only): inherits the parent's config, so the parent's hook bundle also runs inside the child's loop.
 
-Either way, the child's `ctx.state` is fresh and dies with the child — parent and subagent never share state. The parent's window into a subagent is `onSubagentFinish`, which fires on the **parent's** dispatcher with the parent's `ctx.state`, so it's the place to carry a summary of the child's result into the parent's state.
+Either way, the child's `ctx.state` is fresh and dies with the child. Parent and subagent never share state. The parent's window into a subagent is `onSubagentFinish`, which fires on the parent's dispatcher with the parent's `ctx.state`, so it's the place to carry a summary of the child's result into the parent's state.
 
 Channel hooks (`onMessageReceived` / `onMessageSending`) never fire for subagents; those fire-points exist only on the channel inbound/outbound paths.
 
 ## Rules
 
-- **Isolate-only & self-contained.** Handlers run in a fresh V8 isolate with only `ctx`, `event`, and JS built-ins — no imports, `require`, `node:` modules, or closure variables. Bundles that need those are rejected at upload.
+- **Isolate-only & self-contained.** Handlers run in a fresh V8 isolate with only `ctx`, `event`, and JS built-ins. No imports, `require`, `node:` modules, or closure variables. Bundles that need those are rejected at upload.
 - **Non-fatal.** A hook that throws or times out is logged and skipped; the agent run continues with unmutated state. Hooks are wall-clock bounded.
 - **Streaming caveat.** `onFinish` output transforms change the delivered/stored final result; tokens already streamed over SSE cannot be recalled.
 - **Return is field-scoped.** Only the fields listed for an event are honored; anything else is dropped, and the return is size-capped.
-- **`console` is wired to the log pipeline.** `console.log`/`info` land at INFO, `warn` and `error` at their own levels, and `debug` at DEBUG. They carry the run's tenant context, so they appear in the dashboard Monitoring tab alongside harness logs, tagged `source: "user-code"`, and in `broods logs` / `broods stream` once you ask for their level (the terminal tails WARN+ by default). DEBUG is the exception: like every DEBUG line it goes to stdout and OTLP, never to the live stream, so it shows up only in durable history: the dashboard's Monitoring tab and the `broods logs --all` backfill, never a live tail.
+- **`console` is wired to the log pipeline.** `console.log`/`info` land at INFO, `warn` and `error` at their own levels, and `debug` at DEBUG. They carry the run's tenant context, so they appear in the dashboard Monitoring tab alongside harness logs, tagged `source: "user-code"`, and in `broods logs` / `broods stream` once you ask for their level (the terminal tails WARN+ by default). DEBUG is the exception. Like every DEBUG line it goes to stdout and OTLP, never to the live stream, so it shows up only in durable history: the dashboard's Monitoring tab and the `broods logs --all` backfill, never a live tail.

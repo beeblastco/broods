@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Skill Config tab — raw JSON editor for the connected agent's `skills` branch,
- * matching the Agent and Workspace cards' Config tabs so power users can edit
- * the whole slice (enabled · allowed) directly.
+ * Raw JSON editor for the connected agent's `skills` branch, matching the Agent
+ * and Workspace cards' Config tabs so the whole slice (enabled, allowed) can be
+ * edited in one place.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";

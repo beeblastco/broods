@@ -708,7 +708,7 @@ export const settle = internalMutation({
     const coordinator = await requireOwner(ctx, args);
     const now = Date.now();
     // A failed settle that was preceded by /stop for this generation is a
-    // deliberate stop, not a fault — mark it so pollers can tell them apart.
+    // deliberate stop, not a fault, so mark it and pollers can tell them apart.
     const stoppedByUser =
       args.status === "failed" &&
       coordinator.stopRequestedGeneration === args.ownerGeneration;
@@ -1202,7 +1202,7 @@ async function promoteQueuedGroup(
   const active = rows.filter((row) => row.expiresAt > now);
   const first = active[0];
   if (!first) return null;
-  // Collect batches by design; steer batches too — every queued steer aimed at
+  // Collect batches by design; steer batches too. Every queued steer aimed at
   // the same dead run, so a contiguous prefix runs as one merged follow-up.
   const batchable =
     first.requestedMode === "collect" || first.requestedMode === "steer";

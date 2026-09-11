@@ -1,19 +1,19 @@
 /**
- * async_status — model-facing tool to check, tail, or stop a background job /
+ * async_status. The model-facing tool to check, tail, or stop a background job /
  * async tool call by its statusId.
  *
  * Auto-registered (see tools/index.ts) when the agent has any async tool or a
  * persistent sandbox. Reads the AsyncToolResult row, and for a detached sandbox
  * job rebuilds the workspace's executor to poll status / tail logs / stop it,
  * settling the row when the job finishes. Background jobs also deliver themselves
- * automatically (sandbox callback), so polling is optional — it just lets the
+ * automatically (sandbox callback), so polling is optional. It just lets the
  * model see progress or a result sooner.
  *
  * The model-facing id is called `statusId`; it carries the same value as the
  * internal AsyncToolResult `resultId` (the table's partition key), renamed only
  * at this boundary to read clearly against the action verbs. The `logs`/`stop`
- * actions exist ONLY when the agent can launch background (bash) jobs — async
- * tool calls have no live process to tail or kill — so the description and the
+ * actions exist ONLY when the agent can launch background (bash) jobs. An async
+ * tool call has no live process to tail or kill, so the description and the
  * action enum are built from `supportsJobs` to keep the prompt from drifting.
  */
 
@@ -52,8 +52,7 @@ export interface AsyncStatusContext {
   workspaces?: ResolvedWorkspace[];
   // True only when the agent can launch background (bash) jobs. It gates the
   // `logs`/`stop` actions, which have no meaning for async tool calls (there is
-  // no live process to tail or kill — those are delivered automatically).
-  // This flag to handle the dynamic tool descripton for the async_status tool, which includes the job-specific actions only when relevant.
+  // no live process to tail or kill, and those are delivered automatically).
   supportsJobs: boolean;
 }
 

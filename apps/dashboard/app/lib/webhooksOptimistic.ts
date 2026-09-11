@@ -14,7 +14,7 @@ export function applyWebhookEnabledToggle(
   },
 ): void {
   // The panel's query args carry the stage, which this mutation never
-  // sees — patch whichever listing the panel currently holds.
+  // sees, so patch whichever listing the panel currently holds.
   for (const { args: queryArgs, value } of localStore.getAllQueries(
     api.webhooks.listAgentWebhooks,
   )) {

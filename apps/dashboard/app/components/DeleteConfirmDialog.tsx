@@ -1,6 +1,5 @@
 "use client";
 
-/** Reusable typed-confirm delete dialog. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,

@@ -252,7 +252,7 @@ export function AccountPanel(): React.JSX.Element {
       <Separator />
 
       <Section
-        title="Account Overview"
+        title="Account overview"
         description="Read-only account details."
       >
         <div className="rounded-lg border border-border bg-card">

@@ -98,7 +98,7 @@ describe("backSyncCanvasFromAgentRow", () => {
     await tt.run(async (ctx) => {
       const project = await ctx.db.get(config!.projectId);
       // The project is created on demand, so an org that never went
-      // through dashboard onboarding still gets one — and it is named
+      // through dashboard onboarding still gets one, and it is named
       // for the account rather than a random adjective-noun pair.
       expect(project?.name).toBe("beeblast-sale-agent-dev");
       expect(project?.orgId).toBe(orgId);
@@ -324,7 +324,7 @@ describe("syncApiAgentCanvasWiring", () => {
 
     const workspaceNode = nodes.find((n) => n.type === "workspace")!;
     expect(workspaceNode.data.resourceId).toBe(workspaceId);
-    // The agent's ref name, not the row name — a canvas round-trip must
+    // The agent's ref name, not the row name. A canvas round-trip must
     // derive the same mount the runtime uses.
     expect(workspaceNode.data.mountName).toBe("memory");
     expect(workspaceNode.data.managedBy).toBe("api");

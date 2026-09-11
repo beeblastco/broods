@@ -1,6 +1,6 @@
 /**
  * Types for `pinned-fetch.mjs`, which stays plain JS because the runner ships
- * it into isolates. This file is the one home of the helper's contract — TS
+ * it into isolates. This file is the one home of the helper's contract. TS
  * cannot check it against the implementation, so a change to either file means
  * changing both.
  */

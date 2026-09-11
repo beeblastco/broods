@@ -164,8 +164,8 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
 
   return connPromise
     .then(async (conn) => {
-      // Ensure the durable stream exists so even the first span of a cold
-      // container is captured for replay; memoized, so this is ~free after the
+      // Create the durable stream up front so even the first span of a cold
+      // container lands for replay; memoized, so this is ~free after the
       // first call. If it fails the live publish still reaches subscribers.
       await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
@@ -199,9 +199,10 @@ export interface AgentReplyHooks {
 }
 
 // Link back to the parent task for a subagent run. The subagent is its OWN
-// top-level trace (so it gets a correctly scaled waterfall and streams live like
-// the main agent); it records the parent's trace/task id as a "subtask" link, not
-// as a nested child, since a subagent usually runs longer than the parent turn.
+// top-level trace (so its waterfall scales to its own duration and it streams
+// live like the main agent); it records the parent's trace/task id as a
+// "subtask" link, not as a nested child, since a subagent usually runs longer
+// than the parent turn.
 export interface SubagentParentContext {
   parentTraceId: string;
   parentTaskId: string;
@@ -258,7 +259,7 @@ export async function runAgentLoop(
     options.hooks ??
     (await createAgentHookDispatcher(session.accountId, agentConfig));
 
-  // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
+  // Task-scoped usage accumulators, written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
   // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
@@ -312,7 +313,7 @@ export async function runAgentLoop(
   };
 
   // Start the durable root span (agent.task) up front so the same trace id is
-  // stamped on every log line and NATS span row AND exported to Tempo — that shared
+  // stamped on every log line and NATS span row AND exported to Tempo. That shared
   // id links logs<->traces in Grafana. When OTel is not initialised the tracer is a
   // noop and its context is all-zero, so fall back to freshly minted ids for the
   // live/NATS path. project/stage come from the auth scope on the session's
@@ -423,7 +424,7 @@ export async function runAgentLoop(
   // Emit a closed child phase span under the root task. Used for the timeline
   // phases that wrap the model loop (cold start, context prepare, compaction) so
   // a slow turn can be attributed to non-model work. Best-effort: telemetry must
-  // never break the run, and a noop tracer/unscoped run simply emits nothing.
+  // never break the run, and a noop tracer/unscoped run emits nothing.
   const emitPhaseSpan = (
     phaseName: string,
     label: string,
@@ -652,7 +653,7 @@ export async function runAgentLoop(
     };
   };
 
-  // Log context
+  // Per-step timing state, read when each step's span closes.
   const stepStartedAt = new Map<number, number>();
   // Time-to-first-token per step. onChunk has no step number, so the first chunk
   // after each step start is attributed to the active step. A step decomposes into
@@ -851,7 +852,7 @@ export async function runAgentLoop(
     }
 
     // Live publish via NATS. Awaited below before the flush so the terminal span's
-    // bytes are queued and drained to the durable stream — otherwise a fresh
+    // bytes are queued and drained to the durable stream. Otherwise a fresh
     // dashboard load can keep a stale "running" copy of an already-finished task.
     const rootPublished = publishSpan(rootSpanRow);
 
@@ -883,10 +884,10 @@ export async function runAgentLoop(
         stepCount: stepCount,
         toolCallCount: toolCallCount,
       });
-      // Ensure the terminal span's publish has been issued, then flush the OTLP
+      // Wait for the terminal span's publish to be issued, then flush the OTLP
       // exporters (Tempo/Loki) AND the live NATS connection so the durable
-      // OBSERVABILITY stream captures every span/log before the container freezes —
-      // otherwise a publish still in flight at return is lost.
+      // OBSERVABILITY stream captures every span/log before the container
+      // freezes. A publish still in flight at return is lost.
       await rootPublished;
       await Promise.allSettled([forceFlushOtel(), flushObservabilityNats()]);
     } finally {
@@ -1049,9 +1050,9 @@ export async function runAgentLoop(
     onChunk: ({ chunk }) => {
       // First generated chunk of the active step marks the model's time-to-first-token.
       // Synchronous and cheap; onChunk pauses the stream until it returns.
-      // v7 routes EVERY stream part through onChunk — including boundary and
+      // v7 routes EVERY stream part through onChunk, including boundary and
       // lifecycle parts (start-step, finish-step, finish, …) and post-execution
-      // tool results — so gate on generated-content parts only; anything else
+      // tool results, so gate on generated-content parts only; anything else
       // would skew the time-to-first/last-token windows.
       if (!MODEL_CONTENT_CHUNK_TYPES.has(chunk.type)) return;
       const step = activeStepNumber;
@@ -1499,7 +1500,7 @@ export async function runAgentLoop(
       // until a sandbox exec actually reports CPU (keeps NATS traffic minimal).
       const liveRoleCpu = sandboxCpuRoleAttributes();
       if (Object.keys(liveRoleCpu).length > 0) {
-        // A running span has no known end — keep end == start (like the initial
+        // A running span has no known end, so keep end == start (like the initial
         // running publish) so a stale fresh-load copy never shows a fake duration.
         publishSpan({
           traceId: traceId,
@@ -1889,9 +1890,9 @@ export async function runAgentLoop(
 
   // Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
   // skips onEnd when a run errors before any step completes (e.g. a usage-limit
-  // error on the first model call) — only onError fires — so a caller that drains
-  // the stream directly would never finalize and the task
-  // span would spin "running" forever. Idempotent via usageFinalized.
+  // error on the first model call) and only onError fires, so a caller that
+  // drains the stream directly would never finalize and the task span would
+  // spin "running" forever. Idempotent via usageFinalized.
   const ensureFinalized = async (): Promise<void> => {
     await finalizeHarnessStream();
     if (usageFinalized) return;

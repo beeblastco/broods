@@ -80,7 +80,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
     <>
       <div className="grid gap-6">
         <Section
-          title="Delete Stage"
+          title="Delete stage"
           description="Permanently delete the selected stage and all of its data. This cannot be undone."
           danger
         >
@@ -106,7 +106,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                   setStageDialogOpen(true);
                 }}
               >
-                Delete Stage
+                Delete stage
               </Button>
             )}
           </div>
@@ -116,7 +116,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
         </Section>
 
         <Section
-          title="Delete Project"
+          title="Delete project"
           description="Permanently delete this project and all its data. This cannot be undone."
           danger
         >
@@ -140,7 +140,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                   setProjectDialogOpen(true);
                 }}
               >
-                Delete Project
+                Delete project
               </Button>
             )}
           </div>

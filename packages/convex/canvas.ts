@@ -66,7 +66,7 @@ type MaterializeNodeOptions = {
 /**
  * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
  * kind. The side panel uses this to warn when a dashboard-created agent /
- * workspace / sandbox is named the same as a code-managed one — the next
+ * workspace / sandbox is named the same as a code-managed one. The next
  * `broods deploy` would adopt and overwrite that resource with the code
  * definition (the CLI resolves by `(stageId, name)`).
  */
@@ -168,8 +168,9 @@ export const getByProject = query({
 /**
  * Authoritative ownership for a stage's workspace/sandbox resources,
  * keyed by row `_id` (the canvas node's `resourceId`). The side panel reads this
- * — not the cached `managedBy` on canvas node data — so the "managed by code"
- * lock/warning reflects the real row even if the node JSON is stale or missing it.
+ * rather than the cached `managedBy` on canvas node data, so the "managed by
+ * code" lock/warning reflects the real row even if the node JSON is stale or
+ * missing it.
  */
 export const resourceOwnership = query({
   args: {
@@ -208,7 +209,7 @@ export const resourceOwnership = query({
     const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
     for (const row of [...workspaces, ...sandboxes]) {
       if (row.accountId !== account._id) continue;
-      // Preserve both code-owner markers — collapsing "api" into "dashboard"
+      // Preserve both code-owner markers. Collapsing "api" into "dashboard"
       // would unlock API-managed resources in the side panel.
       ownership[row._id] =
         row.managedBy === "cli" || row.managedBy === "api"
@@ -362,12 +363,12 @@ async function encryptSandboxConfigFields(
 }
 
 /**
- * Ensure canvas workspace/sandbox nodes point at real, stage-scoped core
+ * Points canvas workspace/sandbox nodes at real, stage-scoped core
  * resource rows. Creates a `managedBy: "dashboard"` row for new nodes and patches
  * existing dashboard-owned rows from the node's edited config, so dashboard adds
  * and edits become real (the runtime resolves these rows by `_id`). Rows owned by
- * a `broods/` project (`managedBy: "cli"`) are left untouched — code is their
- * source of truth and the side panel surfaces them as locked.
+ * a `broods/` project (`managedBy: "cli"`) are left untouched. Code is their
+ * source of truth and the side panel shows them as locked.
  */
 async function materializeRuntimeNodes(
   ctx: MutationCtx,
@@ -535,7 +536,7 @@ async function materializeWorkspaceNode(
     );
   }
   // Fall back to (stage, name) so a node named like an existing row
-  // binds to it instead of inserting a duplicate — duplicates would later
+  // binds to it instead of inserting a duplicate. Duplicates would later
   // break the CLI's by-name `.unique()` lookup on deploy.
   const existing =
     byId && byId.accountId === account._id
@@ -590,7 +591,7 @@ async function materializeWorkspaceNode(
 /**
  * Delete dashboard-owned workspace/sandbox rows in this stage that no
  * canvas node references anymore, making node deletion a real resource delete.
- * CLI-owned (`managedBy: "cli"`) rows are never touched — code owns their
+ * CLI-owned (`managedBy: "cli"`) rows are never touched. Code owns their
  * lifecycle and prune removes them via the CLI instead.
  */
 async function pruneOrphanedDashboardRows(
@@ -659,7 +660,7 @@ function rowBelongsToStage(
 /**
  * Canvas layouts are UI state, not a secret store. Sandbox config may include
  * provider credentials/env vars, so persist only display metadata + resource
- * id — but keep the fields the node actually renders, or the globe and the
+ * id. Keep the fields the node renders, though, or the globe and the
  * `persistent` badge go dark on the first save after a deploy.
  *
  * `displayConfig` is the authoritative side: a code-managed row ignores the

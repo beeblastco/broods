@@ -1,7 +1,7 @@
 # Dependabot version updates.
 #
 # Known limitation (npm ecosystem): Dependabot does not regenerate `bun.lock`
-# in a workspaces repo — https://github.com/dependabot/dependabot-core/issues/14223.
+# in a workspaces repo. See https://github.com/dependabot/dependabot-core/issues/14223.
 # CI installs with `--frozen-lockfile`, so every npm PR arrives RED with
 # "lockfile had changes, but lockfile is frozen". Treat those PRs as "a release
 # exists": apply the bumps on a branch, run `bun install`, commit the lockfile,

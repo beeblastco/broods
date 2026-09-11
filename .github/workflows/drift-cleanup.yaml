@@ -13,7 +13,7 @@
 #     this repo is already approval-gated (see deploy.yaml), so prod
 #     reconciliation runs are no more dangerous than a regular prod deploy.
 #   - `sst deploy` auto-confirms in CI (no TTY). Drift is bounded because
-#     the only diff is between sst.config.ts and the live stack — never
+#     the only diff is between sst.config.ts and the live stack, never
 #     against an out-of-tree change.
 #
 # Trigger:
@@ -42,16 +42,16 @@ jobs:
     name: Reconcile ${{ matrix.stage }}
     runs-on: ubuntu-24.04
     strategy:
-      # Each stage must finish (or fail) independently — one stage failing
-      # should not block another's cleanup pass.
+      # Each stage must finish (or fail) independently. One stage failing
+      # must not block another's cleanup pass.
       fail-fast: false
       # `ref` pins each stage to the branch that actually feeds it, mirroring
       # deploy.yaml's source-of-truth: the `dev` stage tracks `dev`, and every
       # `production-*` stage tracks `main` (the promoted code). Without this the
       # workflow would check out its own trigger ref (`dev`) for ALL stages and
-      # the nightly cron would silently deploy dev's HEAD to production every
-      # night — bypassing the one-click promote-dev-to-main gate. Production
-      # must only ever be reconciled to what has been promoted to `main`.
+      # the nightly cron would deploy dev's HEAD to production every night,
+      # bypassing the one-click promote-dev-to-main gate. Reconcile production
+      # only to what has been promoted to `main`.
       matrix:
         include:
           - stage: dev
@@ -64,7 +64,7 @@ jobs:
     # Mirror deploy.yaml's environment mapping so prod reconciles route through
     # the `production` GitHub environment. NOTE: this only adds a human gate if
     # the `production` environment has required reviewers configured in repo
-    # settings — it currently does NOT, so the gate is advisory until that is
+    # settings. It currently does NOT, so the gate is advisory until that is
     # added. The `ref: main` pinning above is the load-bearing safety control
     # (prod can only ever reconcile to promoted code); the environment gate is
     # defense-in-depth on top of it. Add required reviewers to `production` to
@@ -83,7 +83,7 @@ jobs:
       # Same as deploy.yaml: without it the plan omits the sandbox log forwarder
       # and drift would delete the deployed one.
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
-      # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup — drift should
+      # Do NOT pass SANDBOX_IMAGE_READY_* for drift cleanup. Drift should
       # only reconcile state, not bootstrap sandbox images. The deploy
       # workflow owns that mirror step.
 
@@ -124,13 +124,13 @@ jobs:
           LOG_DIR="/tmp/drift-${TARGET_STAGE}"
           mkdir -p "$LOG_DIR"
 
-          echo "::group::sst refresh — pull real cloud state into Pulumi state"
+          echo "::group::sst refresh: pull real cloud state into Pulumi state"
           AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
             bunx sst refresh --stage "$TARGET_STAGE" \
             2>&1 | tee "$LOG_DIR/refresh.log"
           echo "::endgroup::"
 
-          echo "::group::sst diff — compute desired-vs-actual plan"
+          echo "::group::sst diff: compute desired-vs-actual plan"
           # sst diff returns non-zero on errors, zero with content for diffs
           # and zero without content when the stack already matches.
           set +e
@@ -142,7 +142,7 @@ jobs:
           echo "::endgroup::"
 
           if [ "$DIFF_RC" -ne 0 ]; then
-            echo "::warning::sst diff exited $DIFF_RC — treating as 'drift detected, do not apply' so a human can review"
+            echo "::warning::sst diff exited $DIFF_RC, treating as 'drift detected, do not apply' so a human can review"
             echo "diff_rc=$DIFF_RC" >> "$GITHUB_OUTPUT"
             echo "drift_detected=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -203,7 +203,7 @@ jobs:
         run: |
           set -uo pipefail
 
-          echo "::group::sst deploy — apply reconciliation for $TARGET_STAGE"
+          echo "::group::sst deploy: apply reconciliation for $TARGET_STAGE"
           AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
             SST_STAGE="$TARGET_STAGE" \
             bunx sst deploy --stage "$TARGET_STAGE" --print-logs

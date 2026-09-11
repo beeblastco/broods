@@ -1,5 +1,5 @@
 /**
- * Workspace S3 mount resolution — shared by the runtime-mount providers (workdir,
+ * Workspace S3 mount resolution, shared by the runtime-mount providers (workdir,
  * and later daytona). Turns a workspace's storage config (bucket / region /
  * endpoint / prefix / auth) plus the managed defaults into a concrete mount
  * target with credentials. Three credential sources, in precedence:
@@ -7,7 +7,7 @@
  *     role, scoped to their bucket/prefix. Keyless; pair with an ExternalId.
  *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
  *     scoped to the namespace prefix of the managed bucket.
- *   - managed + no role: no harness-resolved credentials — the provider supplies
+ *   - managed + no role: no harness-resolved credentials. The provider supplies
  *     them another way (workdir's declarative org secrets / sandbox envVars).
  *
  * Credentials are always short-lived and scoped to the mount's own prefix, so the
@@ -65,7 +65,7 @@ export function mountRoleArn(
     : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
 }
 
-// Resolve the mount identity (bucket / prefix / region / endpoint) — no STS call.
+// Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
 // A bring-your-own bucket uses its own layout under a required prefix; the shared
 // managed bucket is partitioned by namespace.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
@@ -117,7 +117,7 @@ function joinPrefix(
 
 // Where a harness-side read of a workspace lands: the bucket + key prefix, plus the
 // S3 access for a bring-your-own bucket (undefined => default client / managed bucket).
-// `credentialsExpireAt` is set only for an assumed session — a presigned URL cannot
+// `credentialsExpireAt` is set only for an assumed session. A presigned URL cannot
 // outlive the credentials that signed it, so a caller minting one must clamp to it.
 export interface S3ReadTarget {
   bucket: string;

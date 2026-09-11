@@ -1,7 +1,7 @@
 /**
  * Skill bundle validation and S3 storage for the Convex config plane. The
  * validation rules mirror core's `src/shared/skills.ts` so bundles written
- * here are readable by core's harness skill loader. Node-runtime only —
+ * here are readable by core's harness skill loader. Node-runtime only,
  * import exclusively from `"use node"` actions.
  */
 

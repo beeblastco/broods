@@ -50,7 +50,7 @@ export function useNow(): number {
 
 /**
  * Display name for a sandbox provider. The `lambda` value is an internal
- * implementation detail — users see the managed VM tier, not what backs it.
+ * implementation detail. Users see the managed VM tier, not what backs it.
  */
 export function formatProvider(provider: string): string {
   return provider === "lambda" ? "managed-vm" : provider;

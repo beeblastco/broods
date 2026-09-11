@@ -52,8 +52,8 @@ interface PancakeConversation {
 
 /**
  * One item in a Pancake message's `attachments` array. A photo names its URL
- * directly; a video hides it one level down in `video_data`. Anything else —
- * a share card, a fallback link preview — has no file behind it.
+ * directly; a video hides it one level down in `video_data`. Anything else,
+ * a share card or a fallback link preview, has no file behind it.
  */
 interface PancakeAttachment {
   id?: string;
@@ -210,7 +210,7 @@ async function sendPancakeMessage(
  *
  * Every file goes up to `upload_contents` first and comes back as a content id,
  * and the message then references those ids. Pancake accepts one content id per
- * message, so a batch becomes a batch of messages — the caption rides the first,
+ * message, so a batch becomes a batch of messages. The caption rides the first,
  * because repeating it once per file reads as the same message sent over again.
  */
 async function sendPancakeAttachments(
@@ -353,7 +353,7 @@ function hashEventContent(
  * The photos and videos on a Pancake message, as Chat SDK attachments.
  *
  * Pancake hosts every upload itself and names it by URL, so there is no token to
- * attach and nothing to resolve first — the link in the webhook is the file. A
+ * attach and nothing to resolve first. The link in the webhook is the file. A
  * share card or link preview arrives in the same array with no file behind it,
  * and is dropped rather than turned into a broken download.
  */

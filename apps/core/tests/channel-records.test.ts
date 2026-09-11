@@ -24,7 +24,7 @@ import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 // The invoke gate reads assigned policy documents; without a stub the routing
-// tests would reach the real Convex client. Scoped to this file — bun shares the
+// tests would reach the real Convex client. Scoped to this file, because bun shares the
 // module registry across test files, so a module-scope override would leak.
 beforeAll(() => {
   setStorageForTests({
@@ -79,7 +79,7 @@ const SUPPORT_AGENT: AgentRecord = {
 
 // Sales configures telegram but with a different secret, so only Support's
 // credentials verify the incoming request. That is the real shape: one provider
-// app has one credential set, and the record — not the credentials — decides
+// app has one credential set, and the record, not the credentials, decides
 // which agent answers in a given place.
 const SALES_AGENT: AgentRecord = {
   ...SUPPORT_AGENT,
@@ -197,7 +197,7 @@ describe("channel record resolution", () => {
     });
 
     // Running the receiving agent here would skip a record's policies and
-    // denyTools — an escalation. The channel path already needs Convex to admit
+    // denyTools, which is an escalation. The channel path already needs Convex to admit
     // ingress, so failing closed costs no availability that is not already lost.
     expect(response.statusCode).toBe(200);
     expect(runs).toHaveLength(0);
@@ -210,7 +210,7 @@ describe("channel record resolution", () => {
       runs: runs,
       path: "/webhooks/acct_test/telegram",
       // A partial storage stub makes `storage.channelRecords` undefined, so the
-      // default loader throws before a promise exists — `.catch` would miss it
+      // default loader throws before a promise exists, so `.catch` would miss it
       // and the webhook would 500 instead of refusing cleanly.
       channelRecordLoader: (() => {
         throw new TypeError("undefined is not an object");
@@ -223,7 +223,7 @@ describe("channel record resolution", () => {
 
   it("refuses without a 500 when storage has no channelRecords at all", async () => {
     // The module-scope stub above provides only `agentPolicies`, so the default
-    // loader reads `undefined.getByExternalId` — the shape that broke CI.
+    // loader reads `undefined.getByExternalId`, the shape that broke CI.
     const runs: ChannelInboundEvent[] = [];
     const waited: Promise<unknown>[] = [];
     const router = createIncomingEventRouter({
@@ -274,7 +274,7 @@ describe("channel record resolution", () => {
     });
 
     // Agents do configure telegram here, so this is a credential failure and
-    // must say so — 404 would send the operator hunting a routing bug.
+    // must say so. A 404 would send the operator hunting a routing bug.
     expect(response.statusCode).toBe(401);
   });
 
@@ -472,7 +472,7 @@ describe("channel record layering", () => {
 
   // A workspace is what materialises the sandbox file tools, so a record naming
   // one the agent does not attach would hand out filesystem access the agent
-  // never had — reading the agent must still tell you its ceiling.
+  // never had. Reading the agent must still tell you its ceiling.
   it("ignores a record workspace the agent does not attach", () => {
     const merged = applyChannelRecord(
       base,
@@ -541,7 +541,7 @@ describe("channel record layering", () => {
       "slack",
     );
 
-    // config.tools only ever names provider or account tools — writing "bash"
+    // config.tools only ever names provider or account tools. Writing "bash"
     // into it throws "not a supported tool" and kills the whole run, so the
     // deny list stays separate and is applied to the built tool set instead.
     expect(merged.denyTools).toEqual(["bash", "tavilySearch"]);
@@ -787,7 +787,7 @@ async function route(options: {
   agents?: AgentRecord[];
   /** Overrides the Telegram update these tests otherwise post. */
   body?: Record<string, unknown>;
-  /** Outbound chat.postMessage bodies only — reactions carry no placement. */
+  /** Outbound chat.postMessage bodies only. Reactions carry no placement. */
   posts?: Array<Record<string, unknown>>;
   channelRecordLoader?: (
     accountId: string,
@@ -825,8 +825,8 @@ async function route(options: {
     const url = String(input instanceof Request ? input.url : input);
     if (new URL(url).hostname === "slack.com") {
       const body = init?.body;
-      // chat.postMessage is form-encoded, and an omitted thread_ts is simply
-      // an absent key — which is the whole assertion for `inline`.
+      // chat.postMessage is form-encoded, so an omitted thread_ts is an absent
+      // key, which is the whole assertion for `inline`.
       if (new URL(url).pathname.endsWith("/chat.postMessage")) {
         slackPosts.push(
           Object.fromEntries(new URLSearchParams(String(body)).entries()),

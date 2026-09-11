@@ -4,7 +4,7 @@
  *
  * The payload is Discord's, unchanged, apart from the `thread` object Discord
  * omits (see `threads.ts`). In particular `author.bot` is left as Discord sent
- * it — absent for human authors — because core's `isGatewayMessage` accepts that
+ * it, absent for human authors, because core's `isGatewayMessage` accepts that
  * shape. Normalizing it here would put the same rule in two places and leave
  * every other forwarder still broken.
  */

@@ -57,7 +57,7 @@ export async function resolveActiveAccountForAuthId(
 }
 
 /**
- * Ensures `agentConfigs[configId].agentId` references a live `agents` row.
+ * Points `agentConfigs[configId].agentId` at a live `agents` row.
  * Idempotent: if `agentId` is already set and the row it names belongs to the
  * owning account, this returns it unchanged.
  *
@@ -286,8 +286,8 @@ async function ensureCanvasTarget(
  * Reverse sync: when an `agents` row is inserted via the API path (not via
  * the canvas), provision a matching `agentConfigs` row + canvas node on the
  * account's project/stage so the agent appears on the canvas
- * immediately. This is what puts an API-created agent under a project at all
- * — `agentConfigs.projectId` is the only link between the account plane and
+ * immediately. This is what puts an API-created agent under a project at all.
+ * `agentConfigs.projectId` is the only link between the account plane and
  * the project plane. Silently no-ops when:
  *   - no org/owner can be found for the account
  *   - an agentConfigs row already references this agent
@@ -338,10 +338,10 @@ export async function backSyncCanvasFromAgentRow(
   );
 
   // Decrypt the API-supplied config blob (if any) so canvas fields mirror
-  // what the API caller actually configured (provider, modelId, system
+  // what the API caller configured (provider, modelId, system
   // prompt, workspace, tools, …). Secrets in the blob are already resolved
-  // — they go into extraConfig.provider/tools verbatim, which the Config
-  // tab surfaces but Variables does not (we'd need the original ${KEY}
+  // and go into extraConfig.provider/tools verbatim, which the Config
+  // tab shows but Variables does not (we'd need the original ${KEY}
   // placeholders + variables to populate runtimeVariables, and those are
   // not transmitted on the API path).
   const flat = await decryptAgentFlatPatch(agent);
@@ -368,7 +368,7 @@ export async function backSyncCanvasFromAgentRow(
 
   // The origin is a placeholder: the tidy pass assigns the real spot from the
   // graph, so an API-created agent never lands on top of an existing card. The
-  // first-node case needs no pass — a lone agent belongs at the origin.
+  // first-node case needs no pass, since a lone agent belongs at the origin.
   const nextNode = {
     id: String(now),
     type: "agent" as const,
@@ -426,7 +426,7 @@ export async function mirrorAgentRowOntoConfig(
   if (!linkedConfig) return;
 
   const flat = await decryptAgentFlatPatch(agent);
-  // The public API just wrote this agent, so the API owns it from here on —
+  // The public API just wrote this agent, so the API owns it from here on,
   // except CLI-managed configs, whose ownership the next `broods deploy`
   // re-asserts anyway.
   const ownership =
@@ -478,8 +478,8 @@ export async function mirrorAgentRowOntoConfig(
 
 /**
  * Mirrors name/description edits from `agentConfigs` onto the linked
- * `agents` row when one exists. Silently no-ops if the row is missing —
- * the next `ensureAgentsRowForConfig` call will provision it.
+ * `agents` row when one exists. Silently no-ops if the row is missing. The
+ * next `ensureAgentsRowForConfig` call provisions it.
  */
 export async function syncAgentRowFields(
   ctx: MutationCtx,

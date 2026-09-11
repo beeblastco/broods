@@ -28,7 +28,7 @@ export interface DeploymentTarget {
 
 /**
  * One row of a picker or listing, marked with `*` and highlighted when it is the
- * entry already in use — the one an empty answer keeps.
+ * entry already in use, the one an empty answer keeps.
  */
 export function formatChoiceRow(
   text: string,

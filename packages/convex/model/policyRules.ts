@@ -284,7 +284,7 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
         `policy rules[${index}].conditions[${conditionIndex}].value is invalid`,
       );
     }
-    // A scalar here matches no rego branch, so the condition never fires — which
+    // A scalar here matches no rego branch, so the condition never fires, which
     // on notIn means the deny silently never applies. Refuse it instead.
     if (
       (record.operator === "in" || record.operator === "notIn") &&

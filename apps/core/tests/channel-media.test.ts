@@ -1,7 +1,7 @@
 /**
  * Inbound channel media tests.
- * Cover what reaches the model, what is stored, and what a failed read costs —
- * an attachment nobody can read must still leave the message legible.
+ * Cover what reaches the model, what is stored, and what a failed read costs.
+ * An attachment nobody can read must still leave the message legible.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
@@ -611,7 +611,7 @@ function workspace(): ResolvedWorkspace {
 // Every test past the first runs against a real server on the loopback: the
 // transport seam maps the public names to 127.0.0.1 and exempts only that
 // address from the denylist, so the sockets, redirects, and TLS handshake are
-// the ones production opens — not an injected connection. The guard's own
+// the ones production opens, not an injected connection. The guard's own
 // behavior is covered in isolate-pinned-fetch.test.ts; these tests prove the
 // attachment path threads it correctly.
 describe("readAttachmentBytes URL guard", () => {
@@ -653,7 +653,7 @@ describe("readAttachmentBytes URL guard", () => {
 
   it("speaks TLS to the pinned address under the original name", async (): Promise<void> => {
     // Connecting to an IP while verifying the certificate for `public.test`
-    // only works if the hostname still rides along as the SNI servername —
+    // only works if the hostname still rides along as the SNI servername,
     // the half of pinning that is easy to break without noticing.
     const server = createHttpsServer(
       { cert: TLS_CERT, key: TLS_KEY },

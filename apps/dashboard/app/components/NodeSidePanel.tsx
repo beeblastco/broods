@@ -201,7 +201,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const nodeId = node?.id;
   const canQueryMcpStatus = isMcp && !!projectId && !!stageId && !!nodeId;
 
-  // Time from the canvas click to this panel being on screen — mostly its own
+  // Time from the canvas click to this panel being on screen, mostly its own
   // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
   const measuredSelection = useRef(0);
   useEffect((): void => {
@@ -324,8 +324,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     deploymentApiKey ?? stageSession ?? undefined;
 
   // Jump to the settings tab and open the confirm dialog when the parent bumps
-  // the delete-request token. The dialog state lives here, not in SettingsTab —
-  // the tab panel mounts lazily, so the request usually lands before the tab
+  // the delete-request token. The dialog state lives here, not in SettingsTab.
+  // The tab panel mounts lazily, so the request usually lands before the tab
   // has ever rendered and child-local state would miss it. Render-time
   // adjustment, not an effect; the locked gate below closes it when delete is
   // blocked (ownership pending or code-owned).
@@ -738,7 +738,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   );
 
   // Reasoning config. Maps the budget/effort knobs to the selected provider's
-  // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*) — the only
+  // Vercel AI SDK providerOptions (model.providerOptions.<provider>.*), the only
   // reasoning shape the core accepts. See applyModelReasoning in the config codec.
   const handleUpdateModelReasoning = useCallback(
     async (next: { budgetTokens?: number; effort?: string }) => {
@@ -990,7 +990,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             )}
           </TabsContent>
 
-          {/* Files tab — workspace nodes */}
+          {/* Files tab for workspace nodes */}
           {isWorkspace && node && (
             <TabsContent
               value="files"
@@ -1004,7 +1004,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Files tab — skill nodes */}
+          {/* Files tab for skill nodes */}
           {isSkill && node && (
             <TabsContent
               value="files"
@@ -1022,7 +1022,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Config tab — agent and tool */}
+          {/* Config tab for agent and tool */}
           {isAgent && (
             <TabsContent
               value="config"
@@ -1090,7 +1090,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Settings tab — all node types, admins only */}
+          {/* Settings tab, all node types, admins only */}
           {canWrite && (
             <TabsContent
               value="settings"

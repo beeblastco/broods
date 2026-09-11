@@ -367,7 +367,7 @@ export const remove = internalMutation({
             .map((n) => n.id),
         );
         if (removedIds.size > 0) {
-          // A deleted node takes its incident edges with it — a dangling edge
+          // A deleted node takes its incident edges with it. A dangling edge
           // would survive every later reconciliation pass.
           const edges = layout.edges as Array<{
             source: string;

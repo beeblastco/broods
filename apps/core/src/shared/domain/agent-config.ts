@@ -136,7 +136,7 @@ export interface AgentConfig {
   /**
    * Tool names withheld for this run, applied after the tool set is built.
    * Set by a channel record; a channel can take a tool away, never add one.
-   * Names that are not present are simply ignored.
+   * Names that are not present are ignored.
    */
   denyTools?: string[];
   skills?: AgentSkillsConfig;
@@ -299,7 +299,7 @@ export interface AgentProviderSettings {
 }
 
 export interface AgentWorkspaceRef {
-  // Agent-facing mount label — the `workspace` argument the model selects. Unique per agent.
+  // Agent-facing mount label, the `workspace` argument the model selects. Unique per agent.
   name: string;
   // Account-scoped workspaceConfig record id. Agents that reference the same
   // workspaceId read and write the SAME files (shared workspace).
@@ -438,8 +438,8 @@ const RETIRED_PARTITION_KEYS = [
 ] as const;
 
 // Every provider used to name its own reach list. They are one pair now, so a
-// stale key has to fail loudly here rather than sit in config doing nothing —
-// the index signature on the channel configs means nothing else catches it.
+// stale key has to fail loudly here rather than sit in config doing nothing.
+// The index signature on the channel configs means nothing else catches it.
 const RETIRED_REACH_KEYS = [
   ["allowedChatIds", "allowedChannelIds"],
   ["allowedGroupIds", "allowedChannelIds"],
@@ -1069,7 +1069,7 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
  */
 function baseUrlTypoHint(config: Record<string, unknown>): string {
   return config.baseUrl !== undefined
-    ? ` (found "baseUrl" — use "base_url" or "baseURL")`
+    ? ` (found "baseUrl", use "base_url" or "baseURL")`
     : "";
 }
 

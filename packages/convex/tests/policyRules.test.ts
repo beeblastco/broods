@@ -27,7 +27,7 @@ const policyWith = (operator: string, value: unknown) => ({
 
 // model/policyRules.ts is the single home of document validation (core
 // re-exports its types). A scalar value satisfies no rego in/notIn branch, so
-// the condition never fires and a deny silently does nothing — refuse it at
+// the condition never fires and a deny silently does nothing. Refuse it at
 // write time.
 describe("normalizeCreatePolicyInput", () => {
   it("rejects a scalar value for in and notIn", () => {

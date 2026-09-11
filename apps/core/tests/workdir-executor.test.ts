@@ -2,8 +2,8 @@
  * workdir (`sandbox` provider) executor unit/contract tests.
  * Drive the REAL @mv37/workdir SDK with a mocked global fetch so the SDK's own
  * request serialization + response parsing are exercised against the documented
- * wire shapes (docs/API.md) — create/exec/delete, network + S3-mount mapping,
- * persistent reserve/reconnect, background jobs, snapshot/suspend/resume — with
+ * wire shapes (docs/API.md): create/exec/delete, network + S3-mount mapping,
+ * persistent reserve/reconnect, background jobs, snapshot/suspend/resume, all with
  * no real workdir host. A separate *.integration.test.ts hits a live server.
  */
 
@@ -154,7 +154,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 // mock.module replaces the whole module, so every export the executor's own imports
-// reach for has to be here — the sandbox index pulls the microvm executor in too, and
+// reach for has to be here. The sandbox index pulls the microvm executor in too, and
 // a missing name is a SyntaxError at import time, not an undefined at call time.
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
@@ -682,7 +682,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     const executor = await newExecutor({
       provider: "sandbox",
       options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
-      // Storage identity drives the mount — no SANDBOX_MOUNT_ROLE_ARN, no option flag.
+      // Storage identity drives the mount, no SANDBOX_MOUNT_ROLE_ARN, no option flag.
       storage: {
         provider: "s3",
         bucket: "acme-bucket",

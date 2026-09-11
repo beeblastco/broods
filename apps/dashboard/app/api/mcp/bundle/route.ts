@@ -2,7 +2,7 @@
  * Bundles dashboard-authored MCP server source with the same esbuild flags
  * the CLI uses at deploy; validation, upload and the sandboxed probe live in
  * the Convex mcp service. AuthKit's proxy gates this path. Source imports are
- * limited to the packages the editor promises plus node builtins — default
+ * limited to the packages the editor promises plus node builtins. Default
  * resolution would otherwise inline any file the server process can read.
  */
 import type { BuildFailure, Plugin } from "esbuild";

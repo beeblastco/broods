@@ -777,7 +777,7 @@ export const claimSandboxReservation = internalMutation({
   returns: v.boolean(),
   handler: async (ctx, args) => {
     // The reservation key is a hashed workspace namespace, so the owning account
-    // can't be parsed from it — core passes accountId explicitly.
+    // can't be parsed from it. Core passes accountId explicitly.
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
@@ -1150,8 +1150,8 @@ export const deleteAccountRuntimeData = internalMutation({
 /**
  * Deletes expired operational rows in bounded batches and schedules
  * continuation when needed. This maintenance path intentionally bypasses the
- * active-account guard. `sandboxReservations` is deliberately absent — core's sandbox
- * sweeper expires that table instead, provider first and row second.
+ * active-account guard. `sandboxReservations` is deliberately absent. Core's
+ * sandbox sweeper expires that table instead, provider first and row second.
  * @returns the number of rows deleted in this batch
  */
 export const pruneExpired = internalMutation({

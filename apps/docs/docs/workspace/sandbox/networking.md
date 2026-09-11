@@ -36,7 +36,7 @@ finer-grained rule, the harness logs a warning rather than silently pretending i
 | `e2b`     | allowed                             | rejected by validation             | rejected by validation                                                                                                    |
 
 E2B cannot enforce egress restrictions, so its config validation requires
-`network.mode: "allow-all"` explicitly — `deny-all` and `restricted` are rejected rather
+`network.mode: "allow-all"` explicitly. `deny-all` and `restricted` are rejected rather
 than accepted-but-ignored.
 
 ## Egress and background-job auto-delivery
@@ -47,8 +47,8 @@ That push-back needs outbound egress:
 
 > Auto-delivery requires the sandbox to reach the gateway/core URL. Set
 > `network.mode: "allow-all"` or include that URL in a provider-supported
-> allowlist. Without egress the job still runs and `async_status` polling still works —
-> only the automatic push-back is skipped.
+> allowlist. Without egress the job still runs and `async_status` polling still works.
+> Only the automatic push-back is skipped.
 
 WebSocket delivery additionally requires the cluster's NATS to expose a WebSocket
 listener/gateway (infra repo, applied via CI/CD); the durable stream persists regardless,

@@ -2,17 +2,17 @@ openapi: 3.1.0
 info:
   title: Broods API Reference
   description: |
-    Complete API reference for Broods. Two surfaces:
+    API reference for Broods. Two APIs:
 
-    - **Direct API** — account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
-    - **Account Management** — tenant configuration (accounts, agents, skills, secrets)
+    - **Direct API.** Account-authenticated agent runtime endpoint (sync SSE, async jobs, status polling, external tool completion)
+    - **Account Management.** Tenant configuration (accounts, agents, skills, secrets)
 
-    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) automatically via `broods dev` and `broods deploy`. You do not need to call these account-management endpoints manually. This reference is for:
+    > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) through `broods dev` and `broods deploy`. You do not need to call these account-management endpoints yourself. This reference is for:
     > - Runtime invocation (`/`, `/async`, `/status/{eventId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles are served by the config plane and have no admin path variants. Account roles (`fp_role_...` ids under `/v1/roles*`) are exchanged at `/v1/account/assume-role` for short-lived `fp_sts_...` session tokens that authenticate like the account secret but are limited to the role's policy.
+    The config plane serves account metadata and secret rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`fp_role_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `fp_sts_...` session token. A session token authenticates like the account secret but is limited to the role's policy.
   version: 0.1.0
 
 servers:
@@ -59,7 +59,7 @@ paths:
       tags:
         - Direct API
       summary: Health probe
-      description: Unauthenticated lightweight probe for the deployed harness-processing Function URL.
+      description: Unauthenticated probe for the deployed harness-processing Function URL.
       security: []
       responses:
         "200":
@@ -86,7 +86,7 @@ paths:
         - Direct API
       summary: Sync direct API (SSE)
       description: |
-        Run a synchronous direct agent turn. An idle request owns an SSE stream. When a conversation is busy, `reject` returns 409; an explicitly queued `followup`, `collect`, or `steer` request returns 202 JSON and is observed through its status URL. Steered output remains on the active stream.
+        Run a synchronous direct agent turn. An idle request owns an SSE stream. When a conversation is busy, `reject` returns 409. An explicitly queued `followup`, `collect`, or `steer` request returns 202 JSON, and you follow it through its status URL. Steered output remains on the active stream.
 
         The SSE stream uses the [Vercel AI SDK wire protocol](https://sdk.vercel.ai/docs/ai-sdk-core/streaming#data-stream-protocol). Common event types include `step-start`, `text`, `tool-call`, `tool-result`, `tool-approval-request`, `step-finish`, and `finish`. When `model.output` is configured, a final `structured-output` event carries the parsed JSON value.
       requestBody:
@@ -404,7 +404,7 @@ paths:
       tags:
         - Direct API
       summary: Workspace media link
-      description: Serves one workspace file to a chat provider that fetches media by URL rather than accepting an upload. `send-image` mints the link; the sealed ticket in the path names the workspace and file and is the only credential, so the route is unauthenticated and carries no account parameter. The link does not expire — it stays good while the file exists, because providers such as Zalo store the URL and re-fetch it every time a viewer opens the picture. Rotating the service secret revokes every issued link. A bad ticket, a deleted workspace and a missing file all answer 404 alike.
+      description: Serves one workspace file to a chat provider that fetches media by URL rather than accepting an upload. `send-image` mints the link. The sealed ticket in the path names the workspace and file, and it is the only credential, so the route is unauthenticated and carries no account parameter. The link does not expire. It stays good while the file exists, because providers such as Zalo store the URL and re-fetch it every time a viewer opens the picture. Rotating the service secret revokes every issued link. A bad ticket, a deleted workspace and a missing file all answer 404 alike.
       parameters:
         - name: ticket
           in: path
@@ -424,7 +424,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage — every agent of the account is a candidate, so only `/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -482,7 +482,7 @@ paths:
       tags:
         - Accounts
       summary: Create account
-      description: Admin-only endpoint to create a new account. Store `secret` securely — it is not recoverable.
+      description: Admin-only endpoint to create a new account. Store `secret` securely. It is not recoverable.
       security:
         - AdminAuth: []
       requestBody:
@@ -813,7 +813,7 @@ paths:
       description: >-
         Exchange a role for a short-lived `fp_sts_...` session token. Accepted
         callers are the account secret (`fp_acct_...`), a CLI login token
-        (`fp_cli_...`), and a stage runtime key (`fp_agent_...`) — a runtime
+        (`fp_cli_...`), and a stage runtime key (`fp_agent_...`). A runtime
         key may only assume roles scoped to its own project/stage. Session
         tokens cannot chain into new sessions. Default TTL 3600 seconds,
         maximum 43200.
@@ -858,7 +858,7 @@ paths:
       tags:
         - Environment Variables
       summary: List account environment variables
-      description: Lists variable names and update timestamps for the authenticated account. Secret values are never returned.
+      description: Lists variable names and update timestamps for the authenticated account. The API never returns secret values.
       security:
         - BearerAuth: []
       responses:
@@ -934,7 +934,7 @@ paths:
       tags:
         - Agents
       summary: Create agent
-      description: Create a new agent under the authenticated account. Agent CRUD is served by the config plane and config is encrypted at rest. The `agentId` in the response is required for all runtime requests.
+      description: Create a new agent under the authenticated account. The config plane serves agent CRUD and encrypts config at rest. Every runtime request needs the `agentId` this response returns.
       security:
         - BearerAuth: []
       requestBody:
@@ -1024,7 +1024,7 @@ paths:
       tags:
         - Agents
       summary: List agents
-      description: List config-plane agents for the authenticated account. Returned configs are decrypted server-side and redacted before response.
+      description: List config-plane agents for the authenticated account. The server decrypts each config and redacts its secret-like fields before returning it.
       security:
         - BearerAuth: []
       responses:
@@ -1045,7 +1045,7 @@ paths:
       tags:
         - Agents
       summary: Get agent
-      description: Get one config-plane agent. Returned config is decrypted server-side and redacted before response.
+      description: Get one config-plane agent. The server decrypts the config and redacts its secret-like fields before returning it.
       security:
         - BearerAuth: []
       parameters:
@@ -1616,7 +1616,7 @@ paths:
     get:
       tags: [Workspaces]
       summary: List workspace files or create a download URL
-      description: Lists the authoritative S3 namespace mounted by the workspace. When `path` is supplied, returns a short-lived download URL for that file.
+      description: Lists the authoritative S3 namespace mounted by the workspace. When you supply `path`, returns a short-lived download URL for that file.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -1632,7 +1632,7 @@ paths:
     post:
       tags: [Workspaces]
       summary: Upload a workspace file
-      description: Uploads or replaces one file. Dashboard-proxied uploads are limited to 512 KiB so the base64 request remains within Convex action limits.
+      description: Uploads or replaces one file. A dashboard-proxied upload may not exceed 512 KiB, so the base64 request stays within Convex action limits.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -1706,12 +1706,12 @@ paths:
       summary: Create a shareable download link for a workspace file
       description: |
         Mints a capability token for one file and returns the path to redeem it.
-        Prefer this over the presigned URL from `GET .../files?path=`: that URL is
+        Prefer this over the presigned URL from `GET .../files?path=`. That URL is
         ~1.4 KB, expires in five minutes, and carries AWS signature material whose
         `+` characters many chat clients corrupt. A download link is short, URL-safe
         and lives as long as you ask for.
 
-        Join `downloadPath` to the same base URL you called here — the service sits
+        Join `downloadPath` to the same base URL you called here. The service sits
         behind the gateway, which strips Host, so it cannot know its public origin.
       security: [{ BearerAuth: [] }]
       parameters:
@@ -1755,10 +1755,10 @@ paths:
       tags: [Workspaces]
       summary: Redeem a download link
       description: |
-        Redirects to a freshly minted presigned S3 URL. Unauthenticated by design —
-        the token is the whole credential — so treat the link as a secret. Unknown,
-        expired and revoked tokens all answer 404 so the route cannot be used to
-        probe for files.
+        Redirects to a freshly minted presigned S3 URL. The route is
+        unauthenticated by design, because the token is the whole credential.
+        Treat the link as a secret. Unknown, expired and revoked tokens all
+        answer 404, so the route gives nothing away to anyone probing for files.
       security: []
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
@@ -1776,8 +1776,8 @@ paths:
         server's tools as `<name>__<tool>`. A server belongs to one project
         stage; the name is unique per stage because it namespaces the tools.
         Credential-bearing headers (Authorization, X-Api-Key, ...) must
-        reference an account env var like `Bearer ${NAME}`; inline secrets and
-        URL userinfo are rejected.
+        reference an account env var like `Bearer ${NAME}`. Core rejects inline
+        secrets and URL userinfo.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
@@ -1830,8 +1830,8 @@ paths:
         the bundled module source there with content type
         `application/javascript`; the response's `storageId` then registers
         the server as `bundleStorageId` (with its `sha256`) via `POST
-        /v1/mcp` or `PATCH /v1/mcp/{serverId}`. The declared sha256 is
-        verified against the uploaded bytes before anything is stored.
+        /v1/mcp` or `PATCH /v1/mcp/{serverId}`. The server verifies the
+        declared sha256 against the uploaded bytes before storing anything.
         Each account may hold 20 open upload URLs per hour; the 21st mint
         answers 429 with the time the oldest one expires.
       security: [{ BearerAuth: [] }]
@@ -1902,7 +1902,7 @@ paths:
     post:
       tags: [Policies]
       summary: Create agent policy
-      description: Create a reusable structured policy for runtime authorization decisions.
+      description: Create a reusable policy document for runtime authorization decisions. Attach the returned `policyId` to an agent (`config.policies`) or to a channel record. The document carries its own `enforce`/`audit` mode, so attachment is only the id.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
@@ -1983,10 +1983,9 @@ paths:
       summary: Create role
       description: >-
         Create a scoped API role. The policy uses the API action namespace
-        (`agents:read`, `crons:write`, ...); `projectId` and `stageId` must be
-        provided together and bound which stage runtime keys may assume the
-        role. Role management accepts only the account secret — never a
-        session token.
+        (`agents:read`, `crons:write`, ...). Provide `projectId` and `stageId`
+        together; they bind which stage runtime keys may assume the role. Role
+        management accepts only the account secret, never a session token.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
@@ -2070,8 +2069,8 @@ paths:
       tags: [Channels]
       summary: Create channel record
       description: >-
-        Bind one real chat channel — a Slack channel, a Discord channel, a
-        repository — to an agent. One active record per `(platform, externalId)`.
+        Bind one real chat channel to an agent: a Slack channel, a Discord
+        channel, a repository. One active record per `(platform, externalId)`.
       security: [{ BearerAuth: [] }]
       requestBody:
         required: true
@@ -2350,7 +2349,7 @@ paths:
       tags:
         - Cron Jobs
       summary: Create cron job
-      description: Create a scheduled agent run.
+      description: Create a scheduled agent run. `scheduleExpression` accepts `cron(...)`, `rate(...)`, or `at(...)`. Each invocation delivers `input` or `events` to `agentId` on `conversationKey`, which defaults to `cron:{cronId}`.
       security:
         - BearerAuth: []
       requestBody:
@@ -2607,7 +2606,7 @@ components:
         role:
           type: string
           enum: [user, system, tool]
-          description: "System events must use `persist: false` and are only supported on the direct API path"
+          description: "System events must use `persist: false`, and only the direct API path accepts them"
         content:
           oneOf:
             - type: string
@@ -3037,7 +3036,7 @@ components:
           enum: [active, disabled]
         config:
           $ref: "#/components/schemas/AgentConfig"
-          description: Redacted — secret-like fields are returned as `********`
+          description: Redacted. The API returns secret-like fields as `********`
         createdAt:
           type: string
           format: date-time
@@ -3257,7 +3256,7 @@ components:
             own mode, so attachment is only the list.
         publicAccess:
           type: boolean
-          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
+          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default, so the endpoint stays closed until you set it. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
@@ -3392,9 +3391,9 @@ components:
               ]
             description: >-
               Two namespaces on one shape. The dotted actions are agent runtime
-              actions: agent.invoke gates the turn itself before any tool runs —
-              "may this person address the agent here?" — and the rest gate one
-              action inside an admitted turn; agent policies accept only these.
+              actions: agent.invoke gates the turn itself before any tool runs,
+              asking "may this person address the agent here?", and the rest gate
+              one action inside an admitted turn. Agent policies accept only these.
               The `<resource>:read`/`<resource>:write` actions are the config-plane
               API namespace; account-role policies accept only those.
         resources:
@@ -3487,16 +3486,17 @@ components:
           type: array
           items: { type: string }
           description: >-
-            Tool names withheld in this channel, applied after the tool set is
-            built — so it also covers sandbox tools (bash, read, …) that
-            config.tools cannot name. Narrowing only; unknown names are ignored.
+            Tool names withheld in this channel. The runtime applies the list
+            after it builds the tool set, so it also covers sandbox tools
+            (bash, read, …) that config.tools cannot name. Narrowing only;
+            unknown names are ignored.
         replyIn:
           type: string
           enum: [thread, source]
           description: >-
             Where the reply lands. thread opens a thread on the message; source
             answers wherever the message came from, and only threads when the
-            message itself arrived in one. Slack only — no other provider gives
+            message itself arrived in one. Slack only. No other provider gives
             the runtime a choice of place. Defaults to thread in a channel and
             source in a DM.
         partition:
@@ -3535,7 +3535,7 @@ components:
           description: Adapter name, e.g. slack, discord, telegram, github, pancake, zalo.
         externalId:
           type: string
-          description: Provider id of the place — a Slack channel id, or an owner/repo.
+          description: Provider id of the place, such as a Slack channel id or an owner/repo.
         workspaceRef:
           type: string
           description: Team or guild the place sits in, when the provider has one.

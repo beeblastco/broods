@@ -4,8 +4,8 @@
  * checkouts get isolated stacks on disjoint port blocks. State (secrets,
  * ports, pids, logs, perf) lives under ~/.broods-local/<instance>/.
  *
- * A warm `up` is idempotent: the container restarts in place and
- * `convex deploy` is skipped while packages/convex is unchanged.
+ * A warm `up` is idempotent: the container restarts in place and the script
+ * skips `convex deploy` while packages/convex is unchanged.
  *
  * Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]
  */
@@ -228,8 +228,8 @@ async function up(fresh: boolean): Promise<void> {
       waitForHttp(`${gatewayUrl}/healthz`, "gateway"),
       waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
     ]);
-    // /healthz is answered by the gateway itself; any status from /v1/agents
-    // (401 expected) proves the proxied gateway -> convex chain.
+    // The gateway answers /healthz itself; any status from /v1/agents (401
+    // expected) proves the proxied gateway -> convex chain.
     await waitForHttp(
       `${gatewayUrl}/v1/agents`,
       "config plane via gateway",
@@ -253,13 +253,13 @@ async function up(fresh: boolean): Promise<void> {
 /**
  * End-to-end smoke: mint an account with the admin secret, create an agent,
  * fire an async run through the gateway, poll its status. Without a model key
- * the run fails at the provider call — reaching that failure still proves
+ * the run fails at the provider call. Reaching that failure still proves
  * routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
 async function verify(): Promise<void> {
   const state = loadState(currentInstanceId());
   if (!state) {
-    console.error("no local stack for this worktree — run `up` first");
+    console.error("no local stack for this worktree. Run `up` first");
     process.exit(1);
   }
 

@@ -193,7 +193,7 @@ function ToolRow({
           </pre>
 
           <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            Try It (JSON arguments)
+            Try it (JSON arguments)
           </span>
           <Textarea
             value={inputJson}

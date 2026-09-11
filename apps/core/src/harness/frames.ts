@@ -1,7 +1,7 @@
 /**
- * The NDJSON frame protocol every runner of uploaded account code shares —
- * the isolate pool (hooks), the hook S3 loader, and the hosted-MCP Lambda —
- * plus the ToolBundles bucket name they all read from. Depends only on
+ * The NDJSON frame protocol every runner of uploaded account code shares, plus
+ * the ToolBundles bucket name they all read from. The runners are the isolate
+ * pool (hooks), the hook S3 loader, and the hosted-MCP Lambda. Depends only on
  * shared/, never on tools/ or a specific runner.
  */
 

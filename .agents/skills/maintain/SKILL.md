@@ -51,7 +51,7 @@ Patches are deep merges. `"********"` keeps a stored secret and `null` deletes a
 
 Suspend a sandbox when you finish with it. Terminate only one you created in this conversation, and never one holding state you did not put there.
 
-If a channel record lists `sandboxImages`, treat it as the only images you may use. Nothing enforces this yet: the field is stored and validated, and no runtime code reads it. Until that lands, if you cannot see an allow-list you provision nothing new and work with the sandbox you were given.
+If a channel record lists `sandboxImages`, treat it as the only images you may use. Nothing enforces this yet. The field is stored and validated, and no runtime code reads it. Until that lands, if you cannot see an allow-list you provision nothing new and work with the sandbox you were given.
 
 ## Dreaming
 
@@ -60,5 +60,5 @@ When a cron fires you with dreaming instructions, follow `references/dreaming.md
 ## Rules that keep you out of trouble
 
 - Touch `$BROODS_AGENT_ID` and nothing else. Do not list agents to see who else is there. If another agent needs a change, say so and let a human make it.
-- Never patch `policies`, `denyTools`, `scheduler`, or anything that names a credential or a role. Nothing in the platform stops you: an `agents:write` role covers every field of your own config, including the ones that bound you. Your behavior, instructions, skills, and schedules are yours to change. The fields that constrain you are not.
+- Never patch `policies`, `denyTools`, `scheduler`, or anything that names a credential or a role. Nothing in the platform stops you. An `agents:write` role covers every field of your own config, including the ones that bound you. Your behavior, instructions, skills, and schedules are yours to change. The fields that constrain you are not.
 - A cron-fired run touches no schedules, by tools or by API.

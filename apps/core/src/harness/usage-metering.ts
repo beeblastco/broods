@@ -79,7 +79,6 @@ export function extractCacheWriteTokens(
         const val = usageMeta[field];
         if (typeof val === "number" && val > 0) return val;
       }
-      // Also try directly on the google block.
       const direct = googleBlock[field];
       if (typeof direct === "number" && direct > 0) return direct;
     }

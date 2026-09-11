@@ -21,7 +21,6 @@ import type {
   ObservabilitySpanRow,
 } from "../../../../packages/broods/src/observability-contracts";
 
-// Re-export for consumers.
 export { isRootSpanKind, isTraceId };
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
@@ -71,7 +70,7 @@ interface UseObservabilityStreamResult<T> {
   /**
    * Pull one trace by id from Tempo, for a trace older than the backfill
    * window ("traces" stream only). Its spans merge into `entries`; a miss
-   * lands in `error`. Returns whether the request was actually sent — false
+   * lands in `error`. Returns whether the request was sent. False
    * when the socket is not live, so the caller does not record a request that
    * never went out.
    */
@@ -86,12 +85,12 @@ const MAX_ENTRIES = 2_000;
 // Module-level cache keyed by the connection key (stream + scope). Switching
 // dashboard tabs unmounts the panel; on remount we seed from this cache so the
 // last entries paint instantly while the socket reconnects and refreshes in the
-// background — no re-spinner and no waiting on the slow durable backfill.
+// background, with no re-spinner and no wait on the slow durable backfill.
 const STREAM_CACHE = new Map<
   string,
   (ObservabilityLogEntry | ObservabilitySpanRow)[]
 >();
-// Bounds the cache across scopes — without it every stream/stage/key combo
+// Bounds the cache across scopes. Without it every stream/stage/key combo
 // visited in a session pins up to MAX_ENTRIES rows for the page's lifetime.
 const STREAM_CACHE_MAX_KEYS = 8;
 
@@ -141,7 +140,7 @@ export function useObservabilityStream(
 
   // Seed from cache when the connection target changes (e.g. switching
   // stage) so one stage's entries never bleed into the next while still
-  // painting instantly if we've seen this scope before — React's render-time
+  // painting instantly if we've seen this scope before. React's render-time
   // "adjust state when a prop changes" pattern, not an effect.
   const [prevConnKey, setPrevConnKey] = useState(connKey);
   if (connKey !== prevConnKey) {
@@ -203,7 +202,7 @@ export function useObservabilityStream(
       return;
     }
     if (!projectSlug || !stageSlug || !apiKey) {
-      // Not enough info yet — stay idle; will reconnect when props settle.
+      // Not enough info yet. Stay idle; reconnects when props settle.
       setStatus("idle");
 
       return;
@@ -279,7 +278,7 @@ export function useObservabilityStream(
             (candidate) => entryKey(candidate) === key,
           );
           // A replacement keeps its slot (the dedup key pins the timestamp),
-          // and live entries almost always arrive in order — so the full
+          // and live entries almost always arrive in order, so the full
           // re-sort runs only for a genuinely out-of-order arrival instead of
           // on every message.
           if (existingIndex !== -1) {
@@ -317,13 +316,13 @@ export function useObservabilityStream(
       socketRef.current = null;
 
       if (event.code === 1000) {
-        // Normal close — do not reconnect.
+        // Normal close. Do not reconnect.
         setStatus("idle");
 
         return;
       }
 
-      // Unexpected close — show the failure while waiting, then reconnect after
+      // Unexpected close. Show the failure while waiting, then reconnect after
       // a delay without clearing existing entries.
       setStatus("error");
       setError(
@@ -440,7 +439,7 @@ function entryTime(
 // from two sources (full-fidelity JetStream replay vs a Tempo backfill that
 // truncates large attributes). Keep the better copy so a reload never downgrades a
 // span: a terminal status beats "running", and among equals the richer payload
-// wins. Logs have no such progression — the incoming copy wins.
+// wins. Logs have no such progression, so the incoming copy wins.
 function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   existing: T,
   incoming: T,

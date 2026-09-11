@@ -192,7 +192,7 @@ const CHANNELS: ChannelKind[] = [
       { key: "botToken", label: "Bot token", type: "secret", required: true },
       {
         key: "webhookSecret",
-        label: "Webhook secret (8–256 chars)",
+        label: "Webhook secret (8-256 chars)",
         type: "secret",
         required: true,
       },
@@ -297,7 +297,7 @@ function SecretField({
   );
 }
 
-/** Agent channels editor — lists configured channels and lets the user add the remaining kinds. */
+/** Agent channels editor. Lists configured channels and lets the user add the remaining kinds. */
 export function ChannelsSection({
   agentConfig,
   onUpdateChannel,

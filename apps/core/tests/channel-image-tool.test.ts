@@ -352,8 +352,8 @@ describe("sendFilesTool", () => {
       },
     });
 
-    // Uploading fails on the provider's terms — Discord caps a free guild at
-    // 10 MB — and the link needs no upload, so it is worth trying before the
+    // Uploading fails on the provider's terms, since Discord caps a free guild at
+    // 10 MB, and the link needs no upload, so it is worth trying before the
     // recipient gets nothing.
     const result = await execute(tools["send-files"], {
       file_paths: ["docs/declaration.pdf"],

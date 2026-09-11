@@ -1,10 +1,10 @@
 # External Tools
 
-This guide covers agent-configured external tools: provider-defined tools and MCP servers. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
+This guide covers agent-configured external tools: provider-defined tools and MCP servers. It does not cover the sandbox tools `bash`, `read`, `write`, `edit`, `glob` and `grep` (see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
 
-Core ships **no built-in external tools**. Every `config.tools` key is a **provider-defined tool** — a tool the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
+Core ships no built-in external tools. Every `config.tools` key is a provider-defined tool, one the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
 
-Everything else comes from **MCP servers** (`config.mcp`, see [MCP Servers](#connected-mcp-servers) below): core resolves a registered server's tools at registration time and offers each as `<server>__<tool>`. Anything the provider does not execute itself belongs in an MCP server — connect one the service already runs (`defineMcp` with `url`), or write the handler yourself and let the platform host it (`defineMcp` with an inline `handler`).
+Everything else comes from MCP servers (`config.mcp`, see [MCP Servers](#connected-mcp-servers) below): core resolves a registered server's tools at registration time and offers each as `<server>__<tool>`. Anything the provider does not execute itself belongs in an MCP server. Connect one the service already runs (`defineMcp` with `url`), or write the handler yourself and let the platform host it (`defineMcp` with an inline `handler`).
 
 Account-uploaded custom tools are retired; see [Custom Tools (Retired)](#custom-tools-retired) below.
 
@@ -19,24 +19,24 @@ flowchart LR
   Call --> Hosted["hosted MCP server<br/>tool-runner Lambda"]
 ```
 
-## Current Tools
+## Current tools
 
 | Tool                  | File                                                                                                                                         | External dependency                                                         | Config key                    |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------- |
 | Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)           | The configured AI SDK provider's own `tools` namespace                      | `config.tools.<providerTool>` |
-| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts)   | — (auto-registered, see below)                                              | —                             |
-| `ask_questions`       | [`src/harness/tools/ask-questions.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/ask-questions.tool.ts) | — (auto-registered, see below)                                              | —                             |
+| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts)   | none (auto-registered, see below)                                           | none                          |
+| `ask_questions`       | [`src/harness/tools/ask-questions.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/ask-questions.tool.ts) | none (auto-registered, see below)                                           | none                          |
 | MCP server tool       | [`src/harness/mcp/mcp.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/mcp/mcp.tool.ts)                         | The registered MCP server; the tool-runner Lambda for `transport: "hosted"` | `config.mcp.<serverId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
-`async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true`, a workspace has a persistent sandbox, or `ask_questions` is available. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
+`async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true`, a workspace has a persistent sandbox, or `ask_questions` is available. The model polls it for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
 `ask_questions` is registered on every run that has somewhere to put a question and somewhere to resume: a channel turn, or a WebSocket/direct turn. Subagents never get it (the parent asks on their behalf) and neither does a cron-fired run. It is also the only question tool under an AI SDK Harness: the adapter's native `askUserQuestions` builtin is switched off. See [Asking the user](#asking-the-user).
 
-Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
+Sandbox tools come from a referenced `sandbox` (+ `workspaces`); see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
 
-## Runtime Behavior
+## Runtime behavior
 
 `src/harness/harness.ts` resolves the configured model and calls `createTools()` from [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 
@@ -84,13 +84,13 @@ The injected result is `{ status: "answered", answers: { <id>: [labels] }, answe
 
 The outbound message hook sees the numbered text; button labels go out as the model wrote them.
 
-Slack and Discord render the numbered text today. Native buttons for them, and picking several options at once, are a follow-up on the same `ChannelActions.sendQuestions` seam Telegram uses.
+Slack and Discord render the numbered text today. Native buttons for them, and picking several options at once, are a follow-up on the same `ChannelActions.sendQuestions` interface Telegram uses.
 
 For sync direct API callers, approval requests are streamed as SSE and persisted in the conversation. The caller resumes the turn by sending a direct API `tool-approval-response`. Channel webhooks cannot complete approval; the handler denies channel approval requests with a channel-visible error.
 
 > TODO: Add channel webhook support for completing tool approval requests when channel-safe approval UX is available.
 
-## Code-First Configuration
+## Code-first configuration
 
 Import the tool from its AI SDK provider package and pass it straight into
 `config.tools`, keyed by the name the provider exposes:
@@ -113,7 +113,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-A provider tool built by the AI SDK serializes to a plain descriptor —
+A provider tool built by the AI SDK serializes to a plain descriptor,
 `{ type: "provider", id: "google.google_search", args: {...} }`. Its lazy input
 and output schemas do not survive JSON, so core rebuilds the tool by calling the
 same provider factory with the descriptor's `args`, which keeps those schemas
@@ -121,15 +121,15 @@ intact. `enabled`, `needsApproval`, and `async` are Broods flags, not tool
 arguments; the dashboard writes the equivalent flat shape
 (`googleSearch: { enabled: true, searchTypes: {...} }`), which core accepts too.
 
-Switching `config.model.provider` changes which tool names are available —
+Switching `config.model.provider` changes which tool names are available:
 `openai` exposes `webSearch`, `codeInterpreter`, and `fileSearch`; `anthropic`
 exposes `computerUse`, `bash`, `textEditor`, and `webSearch`. Core does not
 maintain that list; it reads the provider's own `tools` namespace.
 
-Tools the provider does not execute itself — an HTTP-backed API such as Tavily,
-whose AI SDK package returns a client-executed `Tool` with a JavaScript
-`execute` — cannot travel through config at all, because a function does not
-serialize. Expose those through an MCP server instead: connect one the service
+Tools the provider does not execute itself cannot travel through config at all,
+because a function does not serialize. An HTTP-backed API such as Tavily is the
+usual case: its AI SDK package returns a client-executed `Tool` with a JavaScript
+`execute`. Expose those through an MCP server instead: connect one the service
 already runs (`defineMcp` with `url`), or write the handler yourself and host it
 on the platform (`defineMcp` with an inline `handler`). See [MCP Servers](#connected-mcp-servers).
 
@@ -137,11 +137,11 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
-## Custom Tools (Retired)
+## Custom tools (retired)
 
-Account-uploaded custom tools (`defineTool`, `POST /v1/tools`) are retired in favor of MCP servers. The replacement for an uploaded bundle is a **hosted MCP server**: write the same handler code as an MCP server, pass it to `defineMcp` as an inline `handler`, and the platform runs the bundle on the same tool-runner Lambda that ran custom tools. When the service already runs its own MCP endpoint, connect it with `defineMcp` and a `url`. See [MCP Servers](#connected-mcp-servers) below, [Resource Configuration](resources.md#mcp-servers) for the resource shape, and [`packages/demos/mcp-connect`](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect) for a runnable example.
+Account-uploaded custom tools (`defineTool`, `POST /v1/tools`) are retired in favor of MCP servers. The replacement for an uploaded bundle is a hosted MCP server: write the same handler code as an MCP server, pass it to `defineMcp` as an inline `handler`, and the platform runs the bundle on the same tool-runner Lambda that ran custom tools. When the service already runs its own MCP endpoint, connect it with `defineMcp` and a `url`. See [MCP Servers](#connected-mcp-servers) below, [Resource Configuration](resources.md#mcp-servers) for the resource shape, and [`packages/demos/mcp-connect`](https://github.com/beeblastco/broods/tree/dev/packages/demos/mcp-connect) for a runnable example.
 
-## Add a Built-In Tool
+## Add a built-in tool
 
 1. Create `apps/core/src/harness/tools/<name>.tool.ts`.
 2. Add the standard file header docstring.
@@ -199,7 +199,7 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 }
 ```
 
-## Design Rules
+## Design rules
 
 - Keep external tool logic in `apps/core/src/harness/tools/<name>.tool.ts`.
 - Do not add a new Lambda, queue, or worker for ordinary external-service tools; expose them through an MCP server instead.
@@ -212,9 +212,9 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 - Return structured data from `execute` instead of pre-formatting prose for the model, use the `ToolSet` interface from vercel-ai sdk.
 - Add approval support through `needsApproval`, not by asking inside the tool implementation. [Implement from vercel=ai sdk](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval)
 
-## Connected MCP Servers
+## Connected MCP servers
 
-An external [MCP](https://modelcontextprotocol.io) server (spec **2026-07-28**, stateless Streamable HTTP only) can be registered per project stage and enabled per agent. Core is the MCP client: at agent registration it connects, lists the server's tools (cached per the listing's own `ttlMs`), and offers each as `<server>__<tool>` alongside every other tool kind. `tools/call` is request/response — one POST per call, no session.
+An external [MCP](https://modelcontextprotocol.io) server (spec 2026-07-28, stateless Streamable HTTP only) can be registered per project stage and enabled per agent. Core is the MCP client: at agent registration it connects, lists the server's tools (cached per the listing's own `ttlMs`), and offers each as `<server>__<tool>` alongside every other tool kind. `tools/call` is request/response: one POST per call, no session.
 
 Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcp` synced by `broods deploy`, or `account.createMcp`), then enable it on an agent:
 
@@ -254,4 +254,8 @@ Rules that follow from the transport and the policy layer:
 
 ### Hosted MCP servers
 
-A server can also be uploaded instead of connected: give `defineMcp` an inline `handler` — `handler: createMcpHandler(() => new McpServer(...))` from `@modelcontextprotocol/server` (installed in the project; the CLI bundles it from there), right in the defining file (the factory must build a fresh server on every call: the stateless transport connects one per request, and the parallel calls of a model step run concurrently in one process, where a shared instance has every in-flight handler aborted when one request's transport closes) — or `POST /v1/mcp` a `bundle` whose module default-exports that fetch-style handler. The CLI bundles the defining module, so the whole server is one file; `broods deploy` imports the built bundle and fails the deploy if the handler is missing or not fetch-style, so a broken server never uploads. The row becomes `transport: "hosted"`, the bundle (capped at 50 MB — over 10 MB the CLI uploads it through a storage upload URL instead of the request body, and direct API callers do the same via `POST /v1/mcp/uploads`) lands under the `account-mcp/` S3 prefix, and the tool-runner Lambda hosts it: one invoke per batch of requests, run in a child process with a scrubbed environment, a sha256 integrity check on the bundle, and CPU metered as tool compute (`tool.compute.type: "mcp-sandbox"`, billed into the account's tool-sandbox CPU usage). The parallel tool calls of one model step reach core together, so core holds a call for a few milliseconds (`MCP_BATCH_WINDOW_MS`, default 10) and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX` (default 8, 1 disables batching) per batch; the child runs them concurrently and answers each on its own frame. The batch shares one 30s deadline and one 16 MB output cap, and its CPU is split evenly across the calls it carried. Repeat invocations of the same account's bundle reuse a warm child, so only the first pays the bundle fetch, parse, and spawn; the reuse is bounded, and a timed-out or crashed invocation retires the child (a request whose handler throws fails only itself). Because the 2026-07-28 transport is stateless, per-invoke hosting is a complete implementation, not an approximation — agents use hosted and external servers identically. See [data security](./data-security.md) for the containment model.
+A server can also be uploaded instead of connected. Give `defineMcp` an inline `handler` right in the defining file: `handler: createMcpHandler(() => new McpServer(...))` from `@modelcontextprotocol/server`, which the project installs and the CLI bundles from there. The factory must build a fresh server on every call, because the stateless transport connects one per request, and the parallel calls of a model step run concurrently in one process, where a shared instance has every in-flight handler aborted when one request's transport closes. The other way in is to `POST /v1/mcp` a `bundle` whose module default-exports that same fetch-style handler.
+
+The CLI bundles the defining module, so the whole server is one file; `broods deploy` imports the built bundle and fails the deploy if the handler is missing or not fetch-style, so a broken server never uploads. The row becomes `transport: "hosted"` and the bundle lands under the `account-mcp/` S3 prefix. It is capped at 50 MB, and over 10 MB the CLI uploads it through a storage upload URL instead of the request body, as direct API callers do via `POST /v1/mcp/uploads`. The tool-runner Lambda hosts it: one invoke per batch of requests, run in a child process with a scrubbed environment, a sha256 integrity check on the bundle, and CPU metered as tool compute (`tool.compute.type: "mcp-sandbox"`, billed into the account's tool-sandbox CPU usage).
+
+The parallel tool calls of one model step reach core together, so core holds a call for a few milliseconds (`MCP_BATCH_WINDOW_MS`, default 10) and sends every call for the same account and bundle that arrived in that window as one invoke, up to `MCP_BATCH_MAX` (default 8, 1 disables batching) per batch; the child runs them concurrently and answers each on its own frame. The batch shares one 30s deadline and one 16 MB output cap, and its CPU is split evenly across the calls it carried. Repeat invocations of the same account's bundle reuse a warm child, so only the first pays the bundle fetch, parse, and spawn; the reuse is bounded, and a timed-out or crashed invocation retires the child (a request whose handler throws fails only itself). Because the 2026-07-28 transport is stateless, per-invoke hosting is a complete implementation rather than an approximation, and agents use hosted and external servers identically. See [data security](./data-security.md) for the containment model.

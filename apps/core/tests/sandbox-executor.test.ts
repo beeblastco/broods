@@ -1265,7 +1265,7 @@ describe("createSandboxExecutor", () => {
     expect(handle.jobId).toBe("job_test");
     // The launch script is POSTed to the VM /exec as a detached setsid session; the
     // marker files live beside the workspace mount (not under the S3 mount). It is
-    // not necessarily the first POST — a reconnect pushes mount credentials first.
+    // not necessarily the first POST. A reconnect pushes mount credentials first.
     const launched = execBodies().find((code) => code.includes("setsid bash"))!;
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
@@ -1909,7 +1909,7 @@ describe("background job scripts", () => {
       },
     );
     // The wrapper (and its callback) is base64-encoded so user code passes the
-    // shell untouched — decode it to assert the callback is wired in.
+    // shell untouched, so decode it to assert the callback is wired in.
     const encoded = launch.match(/printf %s '([A-Za-z0-9+/=]+)'/)?.[1];
     expect(encoded).toBeTruthy();
     const wrapper = Buffer.from(encoded!, "base64").toString("utf8");

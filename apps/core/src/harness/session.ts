@@ -495,7 +495,7 @@ export class Session {
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
     // Runtime resolution and history load hit Convex independently, so overlap
-    // them — the first token should not wait on two sequential round-trips.
+    // them. The first token should not wait on two sequential round-trips.
     const [, entries] = await Promise.all([
       this.ensureResolvedRuntime(),
       this.loadConversationEntries(),
@@ -923,7 +923,7 @@ export class Session {
       content: string;
     }> = [];
     for (const workspace of this.resolvedWorkspaces()) {
-      // harness.memory.enabled: false is a full opt-out — the index is not
+      // harness.memory.enabled: false is a full opt-out. The index is not
       // loaded into the model context either.
       if (!workspaceMemoryHarnessEnabled(workspace.config)) {
         continue;
@@ -1003,7 +1003,7 @@ export class Session {
 
 /**
  * A channel message's events after attachment ingestion, split by durability.
- * `events` carries only sealed links and text — safe for admission to queue or
+ * `events` carries only sealed links and text, safe for admission to queue or
  * persist. `turnEvents` adds the byte-backed parts an agent with no workspace
  * gets for the current turn; those must never reach a stored record.
  */
@@ -1018,10 +1018,10 @@ export interface IngestedChannelEvents {
  * Standalone rather than a Session method because the channel path must run it
  * before admission: a turn that arrives while another owns the conversation is
  * queued as its events alone, and the drain loop replays exactly what was
- * queued — parts added after admission would never reach a queued turn. It runs
+ * queued, so parts added after admission would never reach a queued turn. It runs
  * here rather than in the adapter because the workspace the bytes land in is
  * only known once the runtime resolves, and because parsing happens before the
- * webhook is acknowledged — downloading there would hold the provider's
+ * webhook is acknowledged. Downloading there would hold the provider's
  * connection open for the length of a video. The events come back unchanged
  * when there is nothing attached, so every caller can route through it.
  */
@@ -1124,7 +1124,9 @@ export function createStoredEventFromModelMessage(
   }
 }
 
-// Compaction resume support.
+// After compaction, the messages that must survive into the resumed turn: a
+// trailing user message, or a tool-approval response plus the assistant message
+// carrying the tool call it answers.
 export function selectPostCompactionPendingMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
@@ -1180,7 +1182,7 @@ export function stripEnvelopeFieldsFromMessages(
 }
 
 /**
- * Puts the stored media on the message it arrived with — the newest user event.
+ * Puts the stored media on the message it arrived with, the newest user event.
  * Earlier events are the context a channel batched ahead of it, and attaching a
  * picture to one of those would date it to the wrong turn. A string content is
  * widened to parts, since that is the only shape that holds a picture.
@@ -1561,7 +1563,7 @@ function sanitizeToolMessage(
  * Text and media named by URL keep their part: a sealed media link is a short
  * string that still resolves on every later turn, which is the whole reason
  * inbound attachments are stored and linked rather than inlined. Media carrying
- * its own bytes is dropped — a base64 picture is megabytes of row per turn, and
+ * its own bytes is dropped. A base64 picture is megabytes of row per turn, and
  * the model already saw it in the turn it arrived.
  *
  * A message left with nothing keeps a note rather than becoming null: dropping
@@ -1637,7 +1639,7 @@ function toStoredConversationEvent<
 /**
  * Drops what only the producing model can replay: its reasoning, and the ids
  * the provider would otherwise resolve that reasoning through. Applied to every
- * assistant message the current model did not write — another model cannot
+ * assistant message the current model did not write. Another model cannot
  * decrypt that reasoning, and a row stored before we recorded a producer has no
  * reasoning to pair its ids with in the first place. The message still replays,
  * as plain content.

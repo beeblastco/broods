@@ -2,7 +2,7 @@
  * Resource definition helpers for the code-first `broods/` project folder.
  *
  * Layout: markers, then types (env refs, project config, resource primitives,
- * per-kind config surfaces, per-kind resource aliases), then the env runtime
+ * per-kind config inputs, per-kind resource aliases), then the env runtime
  * value, the resource constructors, and the type guards. Every runtime function
  * here is synchronous.
  */
@@ -114,7 +114,7 @@ export type SandboxDefinitionOptions = Record<string, unknown> & {
 };
 
 /**
- * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
+ * Code-first sandbox config input. Mirrors core's `SandboxConfig` but lets
  * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
  * at sync time, exactly like provider `apiKey`). Add overrides here if more
  * sandbox fields should accept env refs.
@@ -151,15 +151,15 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
 
 /**
  * Fetch-style MCP handler for a hosted server: what
- * `createMcpHandler(...)` from @modelcontextprotocol/server returns —
- * either the request function itself or an object exposing it as `fetch`.
+ * `createMcpHandler(...)` from @modelcontextprotocol/server returns: either
+ * the request function itself or an object exposing it as `fetch`.
  */
 export type McpHandler =
   | ((request: Request) => Response | Promise<Response>)
   | { fetch(request: Request): Response | Promise<Response> };
 
 /**
- * MCP server registration (#331) — external (`url`) or hosted (`handler`).
+ * MCP server registration (#331), either external (`url`) or hosted (`handler`).
  * Either way the server's tools are offered as `<name>__<tool>`; an external
  * row is dialed over the stateless HTTP transport (spec 2026-07-28) at agent
  * registration time. The name namespaces those tools, so it must be 1-32
@@ -169,7 +169,7 @@ export interface McpDefinitionConfig {
   /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
   /**
-   * Hosted alternative to `url`: declare the server inline —
+   * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
    * and the tool-runner Lambda hosts it, one invoke per batch of requests.
@@ -177,8 +177,8 @@ export interface McpDefinitionConfig {
   handler?: McpHandler;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
-   * X-Api-Key, ...) must reference an account env var — e.g.
-   * `Bearer ${env("TOKEN")}` — never carry an inline secret.
+   * X-Api-Key, ...) must reference an account env var, e.g.
+   * `Bearer ${env("TOKEN")}`. Never carry an inline secret.
    */
   headers?: Record<string, string>;
   /**
@@ -346,8 +346,8 @@ export type AnyConnectionDefinition =
 
 /**
  * One real place a team talks: a Slack channel, a Discord channel, a repo. It
- * narrows and adds — instructions append, policies union, tools and workspaces
- * only narrow — and never grants what a bound agent lacks. It names the
+ * narrows and adds, and never grants what a bound agent lacks: instructions
+ * append, policies union, tools and workspaces only narrow. It names the
  * connection it belongs to, so `platform` is never written by hand.
  */
 export type ChannelDefinitionConfig = {
@@ -460,8 +460,8 @@ export interface HookContext {
   config: Record<string, unknown>;
   /**
    * Mutable per-request scratchpad shared across this agent request's hooks.
-   * Seed it in an early hook (e.g. `onStart`) and read or modify it later —
-   * every loop hook, `onSubagentFinish`, and the reply's `onMessageSending`
+   * Seed it in an early hook (e.g. `onStart`) and read or modify it later.
+   * Every loop hook, `onSubagentFinish`, and the reply's `onMessageSending`
    * see the same state. Keep it JSON-serializable. `onMessageReceived`,
    * delayed background replies, and each subagent's own run get fresh state.
    */
@@ -506,7 +506,7 @@ export type ChannelMessageReceived =
  * preferred so the serialized source is valid as an object-literal value.
  *
  * Subagent runs fire hooks too: a registered subagent runs its own hooks, a
- * prompt-only (virtual) subagent inherits this bundle — always with fresh
+ * prompt-only (virtual) subagent inherits this bundle, always with fresh
  * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
  */
 export interface AgentHooks {
@@ -543,7 +543,8 @@ export interface AgentHooks {
     { visibleResult?: unknown }
   >;
   // Returned `metadata` (opaque JSON) persists with the stored message and
-  // resurfaces on onStart's messages — the receive→run channel ctx.state lacks.
+  // resurfaces on onStart's messages. It is the receive→run channel ctx.state
+  // lacks.
   onMessageReceived?: Handler<
     ChannelMessageReceived,
     { drop?: boolean; text?: string; metadata?: unknown }
@@ -555,9 +556,9 @@ export interface AgentHooks {
 }
 
 /**
- * Code-first agent config surface. Built from an explicit `Pick` of `AgentConfig`
+ * Code-first agent config input. Built from an explicit `Pick` of `AgentConfig`
  * (not `Omit`) so the SDK input type does NOT inherit `AgentConfig`'s
- * `[key: string]: unknown` index signature — which would otherwise disable
+ * `[key: string]: unknown` index signature, which would otherwise disable
  * TypeScript's excess-property checks and silently accept typos like
  * `workspace:` instead of `workspaces:`. Add a key here when core's `AgentConfig`
  * gains a new top-level field that should be code-definable.
@@ -601,8 +602,8 @@ export type AgentDefinitionConfig = EnvRefString<
   policies?: readonly (PolicyResource | string)[];
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * stage runtime key). Off by default — secured: when unset the public
-   * endpoint refuses requests for this agent. Reach a private agent through an
+   * stage runtime key). Off by default: when unset the public endpoint
+   * refuses requests for this agent. Reach a private agent through an
    * internal endpoint or a channel webhook. See issue #65.
    */
   publicAccess?: boolean;
@@ -619,8 +620,8 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
 >;
 /**
  * Code-first workspace config. Says `partitioned` where storage says
- * `isolation`: the flag permits a split, it does not perform one — a channel's
- * `partition` decides which folder a run actually mounts.
+ * `isolation`: the flag permits a split, it does not perform one. A channel's
+ * `partition` decides which folder a run mounts.
  */
 export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
   /** Allow this workspace to be split into per-conversation folders. */
@@ -672,8 +673,8 @@ export type AnyResource =
   | ChannelResource;
 
 /**
- * References an account/environment variable resolved on the SERVER at runtime —
- * set it with `broods env set <NAME>` or in the dashboard (the Convex-style
+ * References an account/environment variable resolved on the SERVER at runtime.
+ * Set it with `broods env set <NAME>` or in the dashboard (the Convex-style
  * `convex env set` model). It is a deferred reference, never read from your local
  * environment and never baked into the deployed config:
  *

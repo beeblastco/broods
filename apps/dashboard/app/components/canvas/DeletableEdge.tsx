@@ -105,7 +105,7 @@ export function DeletableEdge({
       {/* Inline marker matching the mount/subagent arrowhead geometry, so every edge kind
           shares one arrow style and the color can follow the per-edge hover state. Sized in
           user space (6 × the 1.5 base stroke) so the hover strokeWidth bump to 2 doesn't
-          scale the arrow up — markers default to strokeWidth units. */}
+          scale the arrow up. Markers default to strokeWidth units. */}
       <defs>
         <marker
           id={arrowId}

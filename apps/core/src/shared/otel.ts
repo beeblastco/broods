@@ -51,8 +51,8 @@ const _obsStore = new AsyncLocalStorage<ObservabilityCell>();
 let _obsCtxGlobal: ObservabilityContext | null = null;
 
 // Runs fn with a fresh, request-private observability cell. Nested scopes
-// (subagents, save/restore call sites) share the cell, which is correct — it is
-// the same logical request. Concurrent requests each get their own cell.
+// (subagents, save/restore call sites) share the cell, which is correct because
+// it is the same logical request. Concurrent requests each get their own cell.
 export function runWithObservabilityScope<T>(fn: () => T): T {
   return _obsStore.run({ current: null }, fn);
 }

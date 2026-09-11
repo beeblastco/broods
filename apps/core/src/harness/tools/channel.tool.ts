@@ -27,8 +27,8 @@ import {
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
-// Every provider that takes a batch has its own ceiling — Telegram ten per
-// album, Discord ten files a message — and when a provider uploads, the bytes of
+// Every provider that takes a batch has its own ceiling, Telegram ten per
+// album and Discord ten files a message. When a provider uploads, the bytes of
 // every file in one call are resident at once. So the cap is a memory ceiling as
 // much as a protocol one.
 const MAX_ATTACHMENTS_PER_CALL = 10;
@@ -71,8 +71,8 @@ interface SendUpdateInput {
 
 // Documents, by the same sealed media link `send-images` hands pictures over as.
 // Two deliveries behind one tool: a provider with a document API gets the files
-// themselves, and one without gets their URLs as text. The model picks neither —
-// it names workspace paths and the channel decides, so a prompt written for one
+// themselves, and one without gets their URLs as text. The model picks neither.
+// It names workspace paths and the channel decides, so a prompt written for one
 // channel keeps working on the next.
 export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
@@ -130,8 +130,8 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
 }
 
 // Pictures, by the same sealed media link `send-files` hands documents over as.
-// A picture is a different message from a file — the recipient sees it without
-// opening anything — so it gets its own tool and its own provider endpoint. It
+// A picture is a different message from a file. The recipient sees it without
+// opening anything, so it gets its own tool and its own provider endpoint. It
 // degrades rather than fails: a channel with no picture endpoint, or one that
 // rejects the batch, still delivers through `send-files`, because the recipient
 // would rather have the file than an apology.
@@ -373,7 +373,7 @@ async function deliverFiles(
 }
 
 // A workspace file has no address of its own, so it is handed over as a durable
-// media link — every provider fetches the picture itself rather than accepting
+// media link. Every provider fetches the picture itself rather than accepting
 // an upload, and Zalo re-fetches it long after the message was sent.
 async function resolveImages(
   source: { workspaces: ResolvedWorkspace[]; accountId?: string },

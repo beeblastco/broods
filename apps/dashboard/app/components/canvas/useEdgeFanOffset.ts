@@ -9,7 +9,7 @@ const FAN_SPACING = 20;
 /**
  * Spreads edges that attach to the same handle so they don't stack on one point.
  * Each endpoint is fanned independently within the set of same-kind edges touching
- * that exact (node, handle) — via either end — ordered by id so an antiparallel
+ * that exact (node, handle), via either end, ordered by id so an antiparallel
  * pair (A→B and B→A on the same handles) keeps a consistent slot and stays parallel.
  * Only fans within a `kind` since each kind has a fixed flow axis. Returns offsets
  * to apply perpendicular to flow: X for vertical (default) edges, Y for horizontal
@@ -46,7 +46,7 @@ export function useEdgeFanOffset(
         const sameKind = (edge: { type?: string }) =>
           (edge.type ?? "default") === kind;
 
-        // Centered index of `id` among same-kind edges attaching to (node, handle) — counting
+        // Centered index of `id` among same-kind edges attaching to (node, handle), counting
         // an edge whether the handle is its source or target end, so antiparallel links share
         // one slot pool and never collide.
         const offsetAtHandle = (

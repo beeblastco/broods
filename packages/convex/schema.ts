@@ -89,7 +89,7 @@ export const agentConfigsFields = {
    * Ownership marker. `"cli"` means a `broods/` project is the source of
    * truth: the dashboard may still edit it, but those edits are overwritten on
    * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
-   * means the account REST API owns it — its config is re-mirrored onto the
+   * means the account REST API owns it. Its config is re-mirrored onto the
    * canvas on every API write and dashboard edits are locked. Unset (or
    * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
    */
@@ -348,7 +348,7 @@ export const roleSessionsFields = {
 };
 
 /**
- * One row per real place a team talks — a Slack channel, a Discord channel, a
+ * One row per real place a team talks: a Slack channel, a Discord channel, a
  * repository. Binds that place to an agent and carries the instructions,
  * workspaces, policies and roles scoped to it. `config.channels` on an agent
  * still holds the adapter credentials; this row decides who answers where.
@@ -365,7 +365,7 @@ export const channelRecordsFields = {
   workspaceRef: v.optional(v.string()),
   name: v.string(),
   description: v.optional(v.string()),
-  /** Plaintext: bindings, instructions, policy and workspace ids — no secrets. */
+  /** Plaintext: bindings, instructions, policy and workspace ids, no secrets. */
   config: v.any(),
   status: v.union(v.literal("active"), v.literal("deleted")),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
@@ -434,7 +434,7 @@ export const agentsFields = {
 /**
  * Account-scoped sandbox config (compute backend + permission mode), referenced
  * by agents via the encrypted agent config. Stored encrypted at rest like agents
- * because `envVars`/`options` may carry provider secrets — broods (the
+ * because `envVars`/`options` may carry provider secrets. Broods (the
  * source of truth for this shared SaaS table) encrypts before writing, so
  * the dashboard only ever persists the opaque blob.
  */
@@ -444,8 +444,8 @@ export const sandboxConfigsFields = {
    * Stage scope. Optional for backward compatibility: legacy rows and
    * rows created through the account-management REST API are account-scoped
    * (stage unset) and shared, while CLI- and dashboard-managed rows are scoped
-   * to one `(projectId, stageId)` so the same name can repeat — and stay
-   * isolated — across stages. The runtime resolves sandboxes by `_id`, so a
+   * to one `(projectId, stageId)` so the same name can repeat across stages
+   * and stay isolated. The runtime resolves sandboxes by `_id`, so a
    * per-stage row already yields a per-stage resource.
    */
   projectId: v.optional(v.id("projects")),
@@ -459,7 +459,7 @@ export const sandboxConfigsFields = {
    * Unresolved config blob retaining `${ENV_NAME}` placeholders (the form
    * before env vars are substituted into `encryptedConfig`). Kept so a later
    * `environmentVariables.set` can re-resolve and re-push `encryptedConfig`
-   * without a CLI re-sync — the sandbox equivalent of how `agentConfigs` keeps
+   * without a CLI re-sync, the sandbox equivalent of how `agentConfigs` keeps
    * its flat columns as the placeholder source. Absent on legacy rows.
    */
   encryptedSourceConfig: v.optional(v.string()),
@@ -491,7 +491,7 @@ export const sandboxProviderValidator = v.union(
 /**
  * Live persistent-sandbox registry, mirrored from broods so the dashboard can
  * show running/suspended instances and drive suspend/resume/terminate through
- * Convex live queries. broods (the runtime) is authoritative — it owns the
+ * Convex live queries. broods (the runtime) is authoritative. It owns the
  * provider lifecycle and writes each transition here. Reservation reconnects
  * use the authoritative `sandboxReservations` table.
  * One row per reserved sandbox, keyed by `reservationKey` (the broods
@@ -564,8 +564,8 @@ export const sandboxInstancesFields = {
   /**
    * Set for a create-and-destroy instance that only exists for the length of one
    * call (its `reservationKey` is the provider id, not a reconnect key). It is shown
-   * so live compute is visible, but nothing can suspend/resume/terminate it — broods
-   * drops the row itself when the call ends.
+   * so live compute is visible, but nothing can suspend/resume/terminate it,
+   * since broods drops the row itself when the call ends.
    */
   ephemeral: v.optional(v.boolean()),
 };
@@ -1081,7 +1081,7 @@ export const cronRunsFields = {
  * Per-finished-task usage row. Written once per agent task at completion, giving
  * the dashboard a line-item token/compute cost per task. Indexes allow scoping to
  * a specific deployment (`endpointId`) or to the whole account. Pricing is
- * computed at render from a hardcoded shared pricing table — only raw counts are
+ * computed at render from a hardcoded shared pricing table. Only raw counts are
  * stored here.
  */
 export const taskUsageFields = {
@@ -1099,7 +1099,7 @@ export const taskUsageFields = {
   /** Wall-clock duration of the task in ms. */
   durationMs: v.number(),
   status: v.union(v.literal("completed"), v.literal("failed")),
-  // Token counts — raw only; price computed in the UI.
+  // Token counts, raw only. The UI computes price.
   inputTokens: v.number(),
   outputTokens: v.number(),
   reasoningTokens: v.number(),

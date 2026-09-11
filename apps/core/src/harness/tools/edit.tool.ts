@@ -1,5 +1,5 @@
 /**
- * Edit tool — exact string replacement in a workspace file (Claude-Code-style:
+ * Edit tool. Exact string replacement in a workspace file (Claude-Code-style:
  * old_string must be unique unless replace_all). Implemented with a Node
  * heredoc; path/strings are base64-passed so no content can break quoting.
  * Only registered for sandbox-backed workspaces (read-only workspaces cannot edit).

@@ -7,7 +7,7 @@
  *   - a connected client reads live via core `subscribe` (lowest latency), and
  *   - a client that dropped mid-stream reconnects and RESUMES the still-streaming
  *     turn from the JetStream consumer, then continues live.
- * Core publish stores nothing itself — the stream is the only copy — so this is
+ * Core publish stores nothing itself, and the stream is the only copy, so this is
  * NOT double storage. Switching read paths is the consuming app's choice; the
  * platform just provides both.
  *
@@ -17,7 +17,7 @@
  * sequence (`JsMsg.seq`) for stream readers, or the envelope `sequence`/`eventId`
  * for core subscribers; dedup a core→stream switch by either.
  *
- * The stream is a short-lived RESUME buffer, not the source of truth — the
+ * The stream is a short-lived RESUME buffer, not the source of truth. The
  * conversation/status database is. Output is retained until `max_age`; one event
  * never purges the conversation-scoped subject because later FIFO work may still
  * be publishing or attachable there.
@@ -83,7 +83,7 @@ const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 // Dedup window for Nats-Msg-Id-tagged publishes (retries within it collapse).
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
-// Durable observability stream — captures every logs/traces publish so the
+// Durable observability stream. Captures every logs/traces publish so the
 // dashboard sees recent activity on (re)connect with FULL fidelity, even for a
 // run that happened while no tab was watching. Unlike WS_RESPONSES this is not
 // purged on persist: it IS the recent-history buffer. Tempo/Loki remain the
@@ -259,7 +259,7 @@ export async function ensureResponseStream(
       const jsm = await connection.jetstreamManager();
       // retention/storage/name are immutable after creation; the retention knobs
       // (max_age, max_msgs_per_subject, duplicate_window) are mutable, so apply
-      // them on update too — that's how a shortened buffer reaches an existing
+      // them on update too. That's how a shortened buffer reaches an existing
       // stream without a destructive recreate.
       const config = {
         name: RESPONSE_STREAM_NAME,
@@ -399,9 +399,9 @@ export async function flushObservabilityNats(): Promise<void> {
 }
 
 /**
- * Live read path: a core subscription to a conversation's response subject —
- * lowest latency, for a connected client. Returns an async-iterable of `Msg`;
- * decode `msg.data` as a {@link NatsStreamEvent}. No replay — use
+ * Live read path: a core subscription to a conversation's response subject.
+ * Lowest latency, for a connected client. Returns an async-iterable of `Msg`;
+ * decode `msg.data` as a {@link NatsStreamEvent}. There is no replay, so use
  * {@link readConversationStream} to catch up after a disconnect.
  */
 export function subscribeConversationLive(options: {
@@ -507,7 +507,7 @@ export async function conversationLastSequence(options: {
 // Every sequence here is scoped to the conversation's own subject: `state`
 // boundaries on the shared stream belong to whichever conversation published
 // them. There is no first sequence because the client API cannot resolve one
-// per subject — a filtered consumer given no start sequence replays from it.
+// per subject. A filtered consumer given no start sequence replays from it.
 export async function conversationReplaySnapshot(options: {
   connection: NatsConnection;
   accountId: string;
@@ -576,7 +576,7 @@ export async function retainedMessageSubject(
 // JsMsg.seq seen), by time (when a core subscriber dropped), or from the start.
 // From-start returns no policy on purpose: an ordered consumer already defaults
 // to all-from-start, and passing an explicit `deliver_policy: All` stalls it
-// (delivers nothing) — only the explicit start cursors are safe to set.
+// (delivers nothing). Only the explicit start cursors are safe to set.
 export function consumerStartPolicy(
   startSequence?: number,
   startTime?: string,

@@ -1,7 +1,7 @@
 /**
  * AWS access for the Convex config plane. Convex owns the
  * skills/tool-bundle/workspace S3 objects directly instead of proxying to
- * core. Node-runtime only — import exclusively from `"use node"` actions.
+ * core. Node-runtime only, import exclusively from `"use node"` actions.
  *
  * Auth: a minimal bootstrap user's static key (Convex deployment env
  * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) assumes ConvexAwsRole

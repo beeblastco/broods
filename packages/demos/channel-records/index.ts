@@ -103,5 +103,5 @@ for (const channel of [eng, sales]) {
 }
 
 console.log(
-  "\nPoint the Slack app at /webhooks/{accountId}/slack — the record picks the agent.",
+  "\nPoint the Slack app at /webhooks/{accountId}/slack. The record picks the agent.",
 );

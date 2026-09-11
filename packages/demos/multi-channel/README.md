@@ -1,4 +1,4 @@
-# Multi-Channel (Slack + Telegram + GitHub)
+# Multi-channel (Slack + Telegram + GitHub)
 
 1. Run `bun install` and `bun run dev` to sync channels.
 2. Run `bun run register` to auto-register webhook URLs for all configured channels.
@@ -28,6 +28,6 @@ The sandbox also uses the same GitHub App credentials for git operations. Instal
 
 Grant Workflows read/write too if the agent should edit files under `.github/workflows/`. The persistent sandbox `onCreate` and `onResume` hooks write a GitHub App credential helper for normal HTTPS git commands and a `broods-github-token owner/repo` helper for direct GitHub API calls such as opening pull requests. The hook does not clone a fixed repository or select a branch; the agent chooses the repository from the GitHub issue/PR context or the user's request, and GitHub provides the default branch during clone. The helpers mint short-lived installation tokens on demand, so no long-lived PAT is stored in the workspace.
 
-## Workspace Memory
+## Workspace memory
 
 The demo uses a persistent Lambda MicroVM sandbox attached to an S3-backed workspace. Durable files such as `MEMORY.md` and `TASKS.md` should be written with the workspace file tools; shell state and installed packages are kept while the reserved MicroVM is alive.

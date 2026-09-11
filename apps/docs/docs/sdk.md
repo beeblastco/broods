@@ -16,7 +16,7 @@ bun add broods
 ```
 
 `ai` is a peer dependency that npm and bun pull in automatically. On a package
-manager that does not auto-install peers, add it yourself — the SDK types import
+manager that does not auto-install peers, add it yourself. The SDK types import
 from it, so without it a valid agent config fails to compile.
 
 ## Authentication
@@ -52,9 +52,9 @@ const client = new BroodsClient({
 });
 ```
 
-## Invoke an Agent
+## Invoke an agent
 
-### Sync Run (accumulate text)
+### Sync run (accumulate text)
 
 Pass the generated `api.agents.<name>` reference separately from the model input. The
 reference carries the deployed endpoint, project, and stage routing metadata.
@@ -87,7 +87,7 @@ curl -X POST "https://gateway.broods.app" \
   }'
 ```
 
-### Streaming Run (yield parts as they arrive)
+### Streaming run (yield parts as they arrive)
 
 ```ts
 for await (const part of client.stream(api.agents.myAgent, {
@@ -124,7 +124,7 @@ curl -X POST "https://gateway.broods.app" \
 
 The SSE stream emits Vercel AI SDK `TextStreamPart` events: `text-delta`, `tool-call`, `tool-result`, `finish`, `error`, etc.
 
-### Async Run (long-running tasks)
+### Async run (long-running tasks)
 
 ```ts
 const job = await client.runAsync(api.agents.myAgent, {
@@ -253,7 +253,7 @@ try {
 }
 ```
 
-### Full-Fidelity Events
+### Full-fidelity events
 
 For multimodal input, tool responses, or ephemeral system instructions, use the `events` array instead of the `input` shorthand:
 
@@ -272,7 +272,7 @@ const result = await client.run(api.agents.myAgent, {
 });
 ```
 
-### Per-Run Overrides
+### Per-run overrides
 
 Override model settings for a single invocation without touching the deployed config:
 
@@ -291,7 +291,7 @@ const result = await client.run(api.agents.myAgent, {
 
 Reserved keys (`provider`, `modelId`, `output`, `apiKey`) are rejected so a request cannot swap the model or credentials.
 
-## Cron Jobs at Runtime
+## Cron jobs at runtime
 
 Create, list, update, and delete cron jobs programmatically:
 
@@ -321,15 +321,14 @@ await client.updateCron(cron.cronId, { status: "paused" });
 await client.deleteCron(cron.cronId);
 ```
 
-## Account Config Client (dynamic configuration)
+## Account config client (dynamic configuration)
 
-`broods dev` and `broods deploy` sync **predefined configs**: the resources you
+`broods dev` and `broods deploy` sync predefined configs: the resources you
 declare in your `broods/` folder are versioned with your code and pushed as a
-unit. If you instead need **dynamic config at runtime** — creating or mutating config
-while your app runs, e.g. provisioning one agent per customer in a multi-tenant
-product — use `BroodsAccountClient` from the separate `broods/account` entry
-point with your **account secret** (not the runtime API key). It is the complete
-typed client for the account config plane: agents, sandboxes (config +
+unit. To create or mutate config while your app runs, such as provisioning one
+agent per customer in a multi-tenant product, use `BroodsAccountClient` from the
+separate `broods/account` entry point with your account secret, not the runtime
+API key. It is the complete typed client for the account config plane: agents, sandboxes (config +
 suspend/resume/terminate/snapshot/terminal), workspaces (config + file
 upload/rename/delete/download), tools, policies, roles (+ `assumeRole()`
 session minting), skills, crons (+ run history), and the account itself
@@ -337,7 +336,7 @@ session minting), skills, crons (+ run history), and the account itself
 
 The entry point is dependency-free and built on plain `fetch`, so it works in
 edge runtimes (Convex actions, Cloudflare Workers) where the main `broods`
-entry cannot load — the main entry reads `.env` files from disk.
+entry cannot load, because that entry reads `.env` files from disk.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";
@@ -405,7 +404,7 @@ values delete keys. Secrets inside configs are encrypted at rest and come back
 redacted (`********`) on reads. Errors other than 404 throw
 `BroodsAccountApiError` with the HTTP status code.
 
-## Python (Coming Soon)
+## Python (coming soon)
 
 A Python SDK is on the roadmap. Until then, use the HTTP endpoints directly:
 
@@ -435,7 +434,7 @@ for line in response.iter_lines():
         print(part)
 ```
 
-## WebSocket (Real-time Streaming)
+## WebSocket (real-time streaming)
 
 For browser or persistent-connection clients, use the WebSocket gateway instead of SSE.
 The client sends the credential as a `Sec-WebSocket-Protocol` entry
@@ -528,7 +527,7 @@ Wait until the socket is open before calling `sendControl`; `onMeta` is a useful
 signal for this. See the runnable
 [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
 
-`onMessage` always receives stream parts directly — the SDK unwraps the durable
+`onMessage` always receives stream parts directly. The SDK unwraps the durable
 `output` envelopes the gateway sends. To track replay cursors for
 `attach`-based resume after a disconnect, add an `onOutput` handler; it receives
 the raw envelope (`{ cursor, replay, data }`) alongside the unwrapped
@@ -552,13 +551,13 @@ they do not hard-cancel remote tools or already-running subagents. An idle
 `/steer` starts a normal turn.
 
 Durable ingress statuses include `requestedMode`, `appliedMode`, and
-`appliedToEventId`. Async status can additionally be `awaiting_approval` with an
+`appliedToEventId`. Async status can also be `awaiting_approval` with an
 `approvals` array. `requestedMode` may be absent for independently running
 subagent result records that did not enter through the public ingress FIFO.
 
 See [Architecture](architecture.md) for the WebSocket protocol details.
 
-## CLI Runtime Commands
+## CLI runtime commands
 
 The CLI includes runtime helpers that do not require writing code:
 

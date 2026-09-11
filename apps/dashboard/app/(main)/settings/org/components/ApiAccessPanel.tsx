@@ -86,7 +86,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   if (account === undefined) {
     return (
       <Section
-        title="API Access"
+        title="API access"
         description="Broods service credentials for this org."
       >
         <p className="text-sm text-muted-foreground">Loading...</p>
@@ -97,7 +97,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   if (account === null) {
     return (
       <Section
-        title="API Access"
+        title="API access"
         description="Broods service credentials for this org."
       >
         <div className="rounded-lg border border-border bg-card px-4 py-6">
@@ -136,7 +136,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
 
   return (
     <Section
-      title="API Access"
+      title="API access"
       description="Broods service credentials for this org."
     >
       <div className="grid gap-4">

@@ -12,9 +12,9 @@ Deploys run on push to two branches, plus manual `workflow_dispatch` with a stag
 A separate workflow (`deploy-docs.yaml`) builds the Docusaurus site on `main` pushes touching docs and syncs it to S3 + CloudFront (vars `DOCS_S3_BUCKET`, `DOCS_DOMAIN`).
 
 A daily `drift-cleanup.yaml` runs `sst refresh` + `sst diff` for every active
-stage (`dev`, `production-*`). When drift is detected, it deploys to reconcile —
-deleting resources whose code was removed (orphan NAT Gateways, unused log
-groups, fck-nat-era Lambdas, etc.) so billable resources cannot pile up.
+stage (`dev`, `production-*`). On drift it deploys to reconcile, deleting
+resources whose code was removed (orphan NAT Gateways, unused log groups,
+fck-nat-era Lambdas, etc.) so billable resources cannot pile up.
 Production reconciliation respects the same `production` GitHub environment
 approval gate as a regular prod deploy. See [Operations → Drift Cleanup](operations.md#drift-cleanup)
 for the full workflow diagram and artifact retention policy.
@@ -24,7 +24,7 @@ The npm package workflow is split in two:
 - `check-broods-sdk.yaml` runs automatically on pull requests and non-`main` pushes that touch `packages/broods/**`, root package metadata, `bun.lock`, or the SDK npm workflows. It typechecks, tests, builds, and dry-run packs the package so source files, tests, and local env files cannot slip into the tarball.
 - `publish-npm.yaml` runs only on `main` pushes that touch the SDK package, root package metadata, `bun.lock`, or the npm publish workflow, and as the final bot-dispatched step of the `Promote dev to main` production workflow. It publishes `packages/broods` to npm through npm Trusted Publishing (OIDC) only when the package version is not already present in the registry. Non-`main` pushes and user-dispatched publish runs do not publish to npm.
 
-## Required Secrets and Variables
+## Required secrets and variables
 
 The deploy step hard-fails without these repository secrets:
 
@@ -41,6 +41,6 @@ the production rollout is reviewed and explicitly promoted.
 
 The npm publish workflow must be configured as a Trusted Publisher for the npm package `broods`. Use GitHub Actions with organization/user `beeblastco`, repository `broods`, workflow filename `publish-npm.yaml`, and allowed action `npm publish`. Do not commit `.npmrc` files or npm tokens; Trusted Publishing does not require `NPM_TOKEN`.
 
-## Channel Setup
+## Channel setup
 
-Infrastructure deploys no longer create demo accounts or register provider webhooks. Channel agents are declared with the CLI SDK and synchronized independently through `broods dev` or `broods deploy`. See the runnable `packages/demos/channel-*` packages for provider-specific setup and optional registration commands.
+Infrastructure deploys no longer create demo accounts or register provider webhooks. You declare channel agents with the CLI SDK and sync them through `broods dev` or `broods deploy`. See the runnable `packages/demos/channel-*` packages for provider-specific setup and optional registration commands.

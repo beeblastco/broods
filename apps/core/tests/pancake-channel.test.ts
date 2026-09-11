@@ -271,8 +271,8 @@ describe("pancake channel adapter", () => {
   });
 
   it("gives two captionless photos different event ids", async () => {
-    // The message id repeats across edits, so the event id folds in the content
-    // — without the attachments in it the second photo dedupes away as a replay.
+    // The message id repeats across edits, so the event id folds in the content.
+    // Without the attachments in it the second photo dedupes away as a replay.
     const first = await parsePancakeMedia({
       message: "",
       attachments: [

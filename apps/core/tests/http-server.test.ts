@@ -1,8 +1,8 @@
 /**
  * Core server helper tests.
  * server.ts is a flat Bun.serve script; its logic lives in exported pure
- * helpers — CoreRequest synthesis, path routing, and waitUntil draining —
- * which are covered here without starting a server.
+ * helpers: CoreRequest synthesis, path routing, and waitUntil draining. These
+ * tests cover them without starting a server.
  */
 
 import { describe, expect, it } from "bun:test";

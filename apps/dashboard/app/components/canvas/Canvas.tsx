@@ -152,7 +152,7 @@ function hydrateEncodedHandleEdge(
   if (!edge.id.startsWith(prefix)) return edge;
   const payload = edge.id.slice(prefix.length);
   const parts = payload.split("-");
-  // parts: [source, sourceHandle, target, targetHandle] — works for numeric
+  // parts: [source, sourceHandle, target, targetHandle]. Works for numeric
   // dashboard node ids that contain no hyphens.
   if (parts.length === 4) {
     const [source, sourceHandle, target, targetHandle] = parts;
@@ -277,7 +277,7 @@ function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
   );
 }
 
-/** Whether a connection uses a side handle (left/right) — i.e. a mount or subagent link. */
+/** Whether a connection uses a side handle (left/right), i.e. a mount or subagent link. */
 function isSideConnection(c: {
   sourceHandle?: string | null;
   targetHandle?: string | null;
@@ -291,7 +291,7 @@ function isSideConnection(c: {
 }
 
 /**
- * Whether an agent already has a direct (non-mount) sandbox edge — its single default sandbox
+ * Whether an agent already has a direct (non-mount) sandbox edge, its single default sandbox
  * (config.sandbox). `exceptSandboxId` ignores one sandbox so a re-check of the same pair passes.
  */
 function agentHasDirectSandbox(
@@ -333,7 +333,7 @@ function dedupeEdges(edges: Edge[]): Edge[] {
 
 /**
  * Serialize a layout to the exact shape we persist, for change detection. Lets the DB-sync
- * effect skip the echo of our own save — resetting state to raw DB objects drops measured
+ * effect skip the echo of our own save. Resetting state to raw DB objects drops measured
  * sizes and selection, which re-measures every node and flickers the whole canvas.
  */
 function layoutSignature(nodes: Node[], edges: Edge[]): string {
@@ -345,7 +345,7 @@ function layoutSignature(nodes: Node[], edges: Edge[]): string {
 
 /**
  * Focus-mode dim caches, keyed by source object identity. Reusing the dimmed clone keeps
- * unchanged elements referentially stable across drag frames — fresh clones each frame
+ * unchanged elements referentially stable across drag frames. Fresh clones each frame
  * would re-render every dimmed node/edge at 60fps. WeakMap entries follow their keys' GC.
  */
 const dimmedNodeCache = new WeakMap<Node, Node>();
@@ -450,13 +450,13 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLocalChanges = useRef(false);
   // Bumped on every edit. A save that resolves against an older generation must
-  // not clear the dirty flag — the sync effect would then overwrite the newer
+  // not clear the dirty flag. The sync effect would then overwrite the newer
   // local state with the snapshot that write was built from.
   const editGeneration = useRef(0);
   const lastRuntimeRefs = useRef(new Map<string, string>());
   const lastSubagentRefs = useRef(new Map<string, string>());
 
-  /** Debounced save — writes current local state to the database after 500ms of inactivity. */
+  /** Debounced save. Writes current local state to the database after 500ms of inactivity. */
   const scheduleSave = useCallback(() => {
     hasLocalChanges.current = true;
     editGeneration.current += 1;
@@ -508,7 +508,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         .then(async (savedLayout) => {
           // The mutation may materialize runtime resources (assign fresh resourceIds), so
           // merge only changed node `data` back. Replacing whole node objects would drop
-          // measured sizes and any drag started since the snapshot — the post-save flicker.
+          // measured sizes and any drag started since the snapshot, the post-save flicker.
           const persistedNodes = savedLayout.nodes as Node[];
           const persistedById = new Map(persistedNodes.map((n) => [n.id, n]));
           setNodes((current) => {
@@ -592,20 +592,19 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     updateSubagentRefs,
   ]);
 
-  // Cleanup debounce timer on unmount
   useEffect(() => {
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, []);
 
-  // Sync nodes/edges from the database — skip when local changes are pending or a drag is in
+  // Sync nodes/edges from the database. Skip when local changes are pending or a drag is in
   // progress, and skip updates that already match local state (the echo of our own save).
   useEffect(() => {
     if (hasLocalChanges.current || isDraggingNode.current) return;
 
     if (canvasLayout) {
-      // Strip persisted `animated: true` (legacy layouts) — animated edges run a
+      // Strip persisted `animated: true` (legacy layouts). Animated edges run a
       // continuous dash keyframe. Normalized before the signature so the echo
       // check still matches local state; the next save persists the flag off.
       const persistedEdges = (canvasLayout.edges as Edge[]).map((edge) =>
@@ -636,7 +635,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       }
 
       // The `fitView` prop only fires on mount, when nodes are still empty (the layout loads
-      // async) — so center the whole architecture once the first real layout arrives.
+      // async), so center the whole architecture once the first real layout arrives.
       if (!didInitialFit.current) {
         didInitialFit.current = true;
         if (canvasLayout.nodes.length > 0) fitView(FIT_VIEW_OPTIONS);
@@ -698,7 +697,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, [selectedNode, setCenter, getZoom]);
 
   /**
-   * Global connection validator — controls which connections ReactFlow highlights
+   * Global connection validator. Controls which connections ReactFlow highlights
    * and allows visually. Called before onConnect fires.
    */
   const isValidConnection = useCallback((connection: Connection | Edge) => {
@@ -722,7 +721,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     if (duplicate) return false;
 
     // Side handles serve mounts (workspace↔sandbox) and subagent links (agent↔agent) only;
-    // those pairs must use the sides on BOTH ends, never the top/bottom handles — a half-side
+    // those pairs must use the sides on BOTH ends, never the top/bottom handles. A half-side
     // edge would encode a null handle into its id and fail to hydrate after a reload.
     if (isSideConnection(connection)) {
       const sourceIsSide =
@@ -736,7 +735,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     }
     if (isMountPair || isAgentPair) return false;
 
-    // D — an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
+    // D: an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
     const agentNode =
       srcNode?.type === "agent"
         ? srcNode
@@ -768,7 +767,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const onConnect: OnConnect = useCallback(
     (params) => {
       // isValidConnection already enforced every rule; build the edge and add it. Side-handle
-      // info is encoded in the id (mount/subagent) so it survives the DB round-trip — the
+      // info is encoded in the id (mount/subagent) so it survives the DB round-trip. The
       // saved layout only keeps id/source/target/animated.
       let edge: Edge | Connection = params;
       if (isSideConnection(params)) {
@@ -848,7 +847,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       };
       setNodes((nds) => [...nds, newNode]);
 
-      // Auto-connect to nearest agent — unless it would wire a 2nd default sandbox.
+      // Auto-connect to nearest agent, unless it would wire a 2nd default sandbox.
       const nearest = findNearestAgentNode(nodesRef.current, position);
       const wouldDoubleSandbox =
         type === "sandbox" && nearest
@@ -874,7 +873,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
   /**
    * Re-lay the whole graph: agent clusters of typed columns, shared services in
-   * a lane below. Cards you dragged yourself move too — that is the point.
+   * a lane below. Cards you dragged yourself move too. That is the point.
    */
   const tidyLayout = useCallback(() => {
     setNodes((nds) => applyTidyLayout(nds, edgesRef.current));
@@ -923,7 +922,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, [scheduleSave]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-    // Stamped here so the panel can report how long it took to appear — most of
+    // Stamped here so the panel can report how long it took to appear. Most of
     // that window is its own dynamic import, not React.
     setSelectedAt(performance.now());
     setSelectedNode(node);
@@ -1059,8 +1058,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // Keyed on the structural signature: a drag must not produce a sample.
   }, [infraKey]);
 
-  // C — focus mode: selecting any node dims everything it does not connect TO. We follow edges
-  // "outward" only — default/subagent edges by direction (source→target), so a resource never
+  // C. Focus mode: selecting any node dims everything it does not connect TO. We follow edges
+  // "outward" only. Default/subagent edges go by direction (source→target), so a resource never
   // lights up the agent wired INTO it; mount edges (workspace↔sandbox) flow both ways. Traversal
   // stops at any agent other than the selected one, so a subagent callee is highlighted but its
   // own resources (which belong to the callee) are not. A node wired to nothing highlights alone.
@@ -1099,7 +1098,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     }
 
     return reachable;
-    // BFS reads only node ids/types and edge endpoints — all captured by infraKey — so skip
+    // BFS reads only node ids/types and edge endpoints, all captured by infraKey, so skip
     // the per-drag-frame recompute that `nodes` position churn would otherwise cause.
   }, [selectedNode, infraKey]);
 

@@ -1,5 +1,5 @@
 /**
- * Channel records: an account-scoped row per real place a team talks — one Slack
+ * Channel records: an account-scoped row per real place a team talks. One Slack
  * channel, one Discord channel, one repository. It binds that place to an agent
  * and adds instructions, workspaces, policies and roles scoped to it.
  * Distinct from `config.channels`, which holds one adapter's credentials.
@@ -47,7 +47,7 @@ export interface ChannelRecordConfig {
   workspaces?: AgentWorkspaceRef[];
   /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: string[];
-  /** Tools to withhold here. Narrowing only — a channel cannot add a tool. */
+  /** Tools to withhold here. Narrowing only, a channel cannot add a tool. */
   denyTools?: string[];
   /**
    * Where the reply lands. `source` answers wherever the message came from, and
@@ -152,7 +152,7 @@ export function applyChannelRecord(
     ...(policies.length > 0 ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
     // The scope entry is written even when the bound agent carries no config for
-    // this channel — with an account-scoped webhook the credentials live on the
+    // this channel. With an account-scoped webhook the credentials live on the
     // receiving agent, and an isolated workspace throws without a scope.
     ...(channelConfig.partition
       ? {
@@ -186,7 +186,7 @@ function appendSystemInstructions(
 
 // A workspace is capability, not configuration: attaching one is what materialises
 // the sandbox file tools. So a record may only name a workspace the agent already
-// attaches — anything else would hand out filesystem access the agent lacks.
+// attaches. Anything else would hand out filesystem access the agent lacks.
 function mergeWorkspaceRefs(
   agentRefs: AgentWorkspaceRef[] | undefined,
   channelRefs: AgentWorkspaceRef[] | undefined,

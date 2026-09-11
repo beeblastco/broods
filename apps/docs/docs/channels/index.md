@@ -1,4 +1,4 @@
-# Channels Reference
+# Channels reference
 
 Channels are communication integrations such as Telegram, GitHub, Slack, Discord, Pancake, and Zalo. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
@@ -17,7 +17,7 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 {BROODS_BASE_URL}/webhooks/{accountId}/{channel}
 ```
 
-## Agent Channel Tools
+## Agent channel tools
 
 Channel tools are automatic; do not add them to `config.tools`.
 
@@ -53,13 +53,13 @@ Providers disagree on more than grouping: some fetch a URL you hand them, others
 | Zalo     | fetches the URL                   | none                             | one per message             |
 | GitHub   | none                              | none                             | text links only             |
 
-Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
+Where a provider has no document endpoint at all, `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice. Zalo is one such provider: `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else.
 
-`send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead — as documents where the provider has them, as download links where it does not. The reason for the rejection is logged, not shown to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
+`send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead, as documents where the provider has them, as download links where it does not. Core logs the reason for the rejection and does not show it to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 
 Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
 
-## Inbound Attachments
+## Inbound attachments
 
 Media arriving on a channel is the mirror of the same path. A picture, document,
 voice note, video or sticker sent to the agent is read once while the turn runs,
@@ -68,12 +68,13 @@ as the same durable `/media/{ticket}` link the outbound tools mint. Nothing is
 inlined as base64: the conversation is persisted as JSON, so a link is what
 still resolves when the turn is replayed months later.
 
-Parsing never downloads. The webhook is acknowledged first, and only then is the
-provider read — a download during parse would hold the provider's connection
-open for the length of a video. Each provider's own authentication is used:
-Telegram resolves a file id through `getFile` and signs the download with the
-bot token, and Slack sends a bearer header, with the host checked before the
-token is attached and the auth stripped if a redirect leaves Slack.
+Parsing never downloads. Core acknowledges the webhook first, and only then
+reads the provider. A download during parse would hold the provider's
+connection open for the length of a video. Each adapter uses the provider's own
+authentication. Telegram resolves a file id through `getFile` and signs the
+download with the bot token. Slack sends a bearer header, and the adapter
+checks the host before attaching the token, then strips the auth if a redirect
+leaves Slack.
 
 | Channel  | Inbound media                                                              |
 | -------- | -------------------------------------------------------------------------- |
@@ -82,13 +83,13 @@ token is attached and the auth stripped if a redirect leaves Slack.
 | Discord  | uploads, voice messages, stickers                                          |
 | Pancake  | photos and videos                                                          |
 | Zalo     | photos, stickers, voice notes                                              |
-| GitHub   | none — an image pasted into a comment stays a markdown URL in its text     |
+| GitHub   | none. An image pasted into a comment stays a markdown URL in its text      |
 
 What reaches the model depends on what the provider will read. Pictures always
-go over as pictures. Anything else — a PDF, a voice note, a video — goes over as
-a native part only where the configured model provider accepts that exact media
-type, and otherwise arrives as a saved workspace file the agent opens with
-`read` or `bash`. Every message carrying attachments also gets one short note
+go over as pictures. A PDF, a voice note or a video goes over as a native part
+only where the configured model provider accepts that exact media type, and
+otherwise arrives as a saved workspace file the agent opens with `read` or
+`bash`. Every message carrying attachments also gets one short note
 listing what arrived and where it was stored.
 
 Audio the model cannot hear for itself is transcribed on the way in, and the
@@ -111,22 +112,22 @@ same provider and credentials as `config.model.modelId`, so an account that only
 ever sees wav or mp3 can name a cheaper model such as
 `gpt-4o-mini-transcribe`, which is faster but refuses ogg.
 
-A transcription that fails is only ever a missing transcript — the message
-still arrives, and the note says which kind of failure it was, because they do
-not have the same answer. A provider that was busy is worth reading the file
-for, and ingest does not wait on it: it fails fast rather than holding the
-first reply through a backoff, and `read` on the stored file is the patient
-attempt. A file the model refused is handed to the agent with the provider's
-own message, which names the formats it would have taken. An account with no
+A transcription that fails is only ever a missing transcript. The message still
+arrives, and the note says which kind of failure it was, because they do not
+have the same answer. A provider that was busy is worth reading the file for,
+and ingest does not wait on it. It fails fast rather than holding the first
+reply through a backoff, and `read` on the stored file is the patient attempt.
+A file the model refused reaches the agent with the provider's own message,
+which names the formats it would have taken. An account with no
 speech-to-text says so, so the agent asks rather than spending a turn finding
 out.
 
-Limits are enforced twice, on the declared size and again on the bytes actually
-read: 6 MB for a picture and 25 MB for anything else, the same ceiling the media
-route serves at, and at most ten attachments per message. The media type comes
-from the bytes rather than the provider's claim — Telegram calls every photo a
-JPEG, and Discord labels a voice message `application/ogg` — except where the
-sniff only identifies a container, since a `.docx` really is a zip. An
+Core enforces limits twice, on the declared size and again on the bytes read:
+6 MB for a picture and 25 MB for anything else, the same ceiling the media route
+serves at, and at most ten attachments per message. The media type comes from
+the bytes rather than the provider's claim. Telegram calls every photo a JPEG,
+and Discord labels a voice message `application/ogg`. The exception is a sniff
+that only identifies a container, since a `.docx` really is a zip. An
 attachment that cannot be read becomes a line of text saying so, so one failed
 download costs a picture rather than the message.
 
@@ -134,25 +135,25 @@ An agent with no workspace attached stores nothing, and still handles media.
 The bytes reach the model on the turn they arrive, and the message keeps a
 reference to the copy the channel itself holds, so a later turn reads the file
 again through that channel with its own credentials. Nothing is written to
-storage and no bucket appears behind the owner's back — the trade is that how
-long media keeps working is the channel's answer: a Telegram file id lasts
+storage and no bucket appears behind the owner's back. The trade is that the
+channel decides how long media keeps working: a Telegram file id lasts
 indefinitely, a Discord link expires within a day. A file the channel no longer
 serves becomes a line of text saying so, in the message where the picture was.
 
 Attach a workspace when media has to outlive the channel's own retention, or
-when the agent needs to open the file rather than look at it: only a stored file
-can be read with `read` or `bash`, which is what lets an agent transcribe a
+when the agent needs to open the file rather than look at it. Only a stored
+file answers to `read` or `bash`, which is what lets an agent transcribe a
 voice note a second time or compute over a spreadsheet.
 
 The URL names no agent. Whichever of the account's agents holds credentials
-that verify the request receives it — that agent's adapter parses the request
+that verify the request receives it. That agent's adapter parses the request
 and sends the reply, because the reply must come from the app the provider
-called. A [channel record](channel-records.md) then binds one real place — a
-Slack channel, a Discord channel, a repository — to the agent that should
+called. A [channel record](channel-records.md) then binds one real place, a
+Slack channel or a Discord channel or a repository, to the agent that should
 answer there, so one provider app can drive a different agent per channel. With
 no record, the agent whose credentials verified the request answers.
 
-## Runtime Flow
+## Runtime flow
 
 ```mermaid
 flowchart TD
@@ -176,7 +177,7 @@ flowchart TD
   Actions --> Provider
 ```
 
-Webhook handling is split deliberately:
+Webhook handling splits across four files:
 
 - [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts) owns routing, account/agent lookup, adapter selection, provider ACKs, and normalized channel events.
 - [`src/harness/handler.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/handler.ts) owns session setup, command dispatch, agent execution, and final reply handling.
@@ -185,7 +186,7 @@ Webhook handling is split deliberately:
 
 ---
 
-## Supported Channels
+## Supported channels
 
 | Channel    | Runtime adapter                                                                                                            | Chat SDK package                                                                 | Required config                                                                        | Documentation                   |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------- |
@@ -198,7 +199,7 @@ Webhook handling is split deliberately:
 
 ---
 
-## Code-First Configuration
+## Code-first configuration
 
 The CLI SDK exposes one constructor per provider. Attach the resulting definitions to one agent; an agent may receive from multiple channel types, while one channel definition cannot be shared by multiple agents.
 
@@ -249,23 +250,23 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 ---
 
-## Shared Channel Behavior
+## Shared channel behavior
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands** — command-capable channels (Slack, Discord, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, `/compact [instructions]` summarizes it into a compact summary, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
-- **Typing + reaction** — an accepted message immediately triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
-- **Tool approval auto-deny** — tools configured with `needsApproval` are automatically denied on channel turns with the reason `Tool approval is only supported through the direct API.`
-- **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
-- **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
-- **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
-- **Trace links** — channel replies omit the dashboard trace link by default. Set `trace: "enabled"` on a channel definition to include links, without affecting trace collection.
-- **Channel records** — a run may be re-targeted to the agent a [channel record](channel-records.md) binds, with that record's instructions, workspaces and policies layered on.
-- **Tag gating** — when a policy denies `agent.invoke`, the refusal is posted in-channel and the turn never starts.
+- **Bot commands.** Command-capable channels (Slack, Discord, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, `/compact [instructions]` summarizes it into a compact summary, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
+- **Typing + reaction.** An accepted message triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
+- **Tool approval auto-deny.** Core denies tools configured with `needsApproval` on channel turns, with the reason `Tool approval is only supported through the direct API.`
+- **Error replies.** If processing fails, the channel receives `Error: <message>` as the reply.
+- **Per-channel config scoping.** A webhook run only sees its own channel's config; core strips other channels' credentials from the runtime agent config.
+- **Deferred replies.** When a turn finishes in the background (detached async tools or sandbox jobs), core pushes the final result back into the originating chat once it settles.
+- **Trace links.** Channel replies omit the dashboard trace link by default. Set `trace: "enabled"` on a channel definition to include links, without affecting trace collection.
+- **Channel records.** A [channel record](channel-records.md) re-targets a run to the agent it binds, with that record's instructions, workspaces and policies layered on.
+- **Tag gating.** When a policy denies `agent.invoke`, core posts the refusal in-channel and the turn never starts.
 
 ---
 
-## Reply Streaming
+## Reply streaming
 
 Channel replies use Chat SDK adapter streaming by default when the channel adapter exposes `stream()`. Slack uses Chat SDK's native Slack streaming API, Telegram private chats use Chat SDK rich draft previews before persisting the final response, and GitHub uses Chat SDK's buffered Markdown comment streaming. Discord uses Chat SDK's final-message adapter methods because its adapter does not expose native streaming yet. Channels without SDK streaming support send one final `sendText` reply.
 
@@ -278,11 +279,11 @@ flowchart LR
 
 The provider adapter owns the streaming method and fallback behavior.
 
-Channel markdown formatting is delegated to the Chat SDK adapters for Slack, Telegram, Discord, and GitHub, including Slack response-url text conversion and Telegram MarkdownV2 rendering. See Chat SDK [Markdown](https://chat-sdk.dev/docs/api/markdown) for the cross-platform formatting model. Pancake and Zalo keep their provider-specific text handling because Chat SDK does not cover those providers.
+Slack, Telegram, Discord, and GitHub delegate channel markdown formatting to their Chat SDK adapters, including Slack response-url text conversion and Telegram MarkdownV2 rendering. See Chat SDK [Markdown](https://chat-sdk.dev/docs/api/markdown) for the cross-platform formatting model. Pancake and Zalo keep their provider-specific text handling because Chat SDK does not cover those providers.
 
 ---
 
-## Channel Contract
+## Channel contract
 
 Each channel implements `ChannelAdapter` from [`src/shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/channels.ts):
 
@@ -308,14 +309,14 @@ The normalized `InboundMessage` contains:
 - `conversationKey`: provider thread/chat/channel key used for persisted conversation state
 - `channelName`: adapter name
 - `content`: Vercel AI SDK `UserContent`
-- `identity`: provider-neutral `ChannelIdentity` — `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`. This is the part channel lookup and policy read.
+- `identity`: provider-neutral `ChannelIdentity` holding `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`. This is the part channel lookup and policy read.
 - `source`: provider metadata needed for commands, replies, or diagnostics. Stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
 ---
 
-## Add a Channel
+## Add a channel
 
 1. Add config types to [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts).
 2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
@@ -331,7 +332,7 @@ Do not hardcode channel-specific behavior in commands, shared handlers, or the c
 
 ---
 
-## Adapter Skeleton
+## Adapter skeleton
 
 ```ts
 /**
@@ -405,12 +406,12 @@ export function createExampleChannel(
 
 ---
 
-## Channel Rules
+## Channel rules
 
 - Verify provider signatures or webhook secrets before parsing user-controlled payloads deeply.
 - Return a provider ACK quickly; long-running model work should happen in `afterResponse`.
 - Use stable provider IDs for `eventId` so duplicate deliveries are deduped.
 - Use thread/chat/channel IDs for `conversationKey` so follow-up messages preserve context.
 - Put provider-specific Markdown or HTML formatting in the channel module.
-- Keep `ChannelActions` methods resilient; failed typing or reaction calls should not fail the whole turn.
+- A failed typing or reaction call must not fail the whole turn.
 - Keep approval-dependent tools off channel-only agents unless a direct API client will resume the approval flow.

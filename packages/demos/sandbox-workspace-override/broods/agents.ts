@@ -51,7 +51,7 @@ export const overrideAgent = defineAgent({
       "You have three workspaces with different sandbox bindings.",
       "scratch: full read/write via the default sandbox.",
       "secure: full read/write via a deny-all network sandbox.",
-      "reference: read-only (read/glob only) — write/edit are not available there.",
+      "reference: read-only (read/glob only), write/edit are not available there.",
       "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
     ].join("\n"),
   },

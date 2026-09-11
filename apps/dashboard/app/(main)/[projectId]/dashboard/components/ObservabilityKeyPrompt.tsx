@@ -1,6 +1,5 @@
 "use client";
 
-/** Empty-state prompt that mints a runtime viewing key so logs/traces can stream without the CLI. */
 import { Button } from "@/app/components/ui/button";
 import { KeyRound, Loader2 } from "lucide-react";
 
@@ -24,8 +23,8 @@ export function ObservabilityKeyPrompt({
       <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">Generate a viewing key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          Streaming logs and traces needs this stage&apos;s runtime API key.
-          Generate one here to view them. No CLI required.
+          Logs and traces stream with this stage&apos;s runtime API key.
+          Generate one to view them.
         </p>
       </div>
 

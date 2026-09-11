@@ -36,7 +36,7 @@ interface PolicyListing {
 
 // Assert on matchedRuleIds, not just `allow`: with no allow rule present the
 // decision is false either way, so `allow` cannot tell a deny that fired from
-// one that silently did nothing — which is the failure these cases exist for.
+// one that silently did nothing, which is the failure these cases exist for.
 const CASES: DecisionCase[] = [
   ...denyCases("scalar", "oncall"),
   ...denyCases("array", ["oncall"]),
@@ -301,7 +301,7 @@ function channelInput(
 }
 
 // A notIn deny must fire when the actor lacks the role and stay silent when
-// they hold it — the shape that read the same either way before the fix.
+// they hold it, the shape that read the same either way before the fix.
 function denyCases(label: string, value: unknown): DecisionCase[] {
   return [
     {

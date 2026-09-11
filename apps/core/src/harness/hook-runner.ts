@@ -79,7 +79,7 @@ export async function runCodeHook(
   const incomingState = params.state;
   try {
     const payload = await createHookRunnerPayload(params);
-    // Hook mode always yields { result, state } — the runner reads ctx.state
+    // Hook mode always yields { result, state }. The runner reads ctx.state
     // back out so the host can thread it into the next fire-point.
     const raw = (await runForResult(accountId, payload)) as
       | { result?: unknown; state?: unknown }

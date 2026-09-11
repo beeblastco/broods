@@ -1,5 +1,5 @@
 /**
- * Write tool — writes a file to the workspace (creating parent dirs), overwriting
+ * Write tool. Writes a file to the workspace (creating parent dirs), overwriting
  * if it exists. Content is base64-piped to avoid any quoting hazards. Only
  * registered for sandbox-backed workspaces (read-only workspaces cannot write).
  */

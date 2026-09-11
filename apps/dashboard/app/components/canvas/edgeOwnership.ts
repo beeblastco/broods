@@ -13,7 +13,7 @@ export function isCodeManagedEdgeId(id: string): boolean {
 }
 
 /**
- * True for an ownership marker whose resource is managed by code — a
+ * True for an ownership marker whose resource is managed by code, either a
  * `broods/` project (`"cli"`) or the account REST API (`"api"`). Both are
  * re-synced from their source of truth, so the dashboard locks them.
  */
