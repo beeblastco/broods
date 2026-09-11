@@ -1,9 +1,10 @@
 /**
- * The sweeper's release path. Executors built from a stored config carry no
- * control-plane account, so the reservation row is dropped here, conditional on
- * the id the sweeper read, and only after the provider confirmed the teardown.
- * Module mocks mirror the executor suite's shapes, because bun's mock.module is
- * process-wide; storage goes through its own test seam instead.
+ * The sweeper's release path. The reservation row is taken first, conditional on
+ * the id and deadline the sweeper read, so a run that reconnected in between keeps
+ * its machine; only then is the provider teardown attempted, and the mirror row
+ * dropped for that same id. Module mocks mirror the executor suite's shapes,
+ * because bun's mock.module is process-wide; storage goes through its own test
+ * seam instead.
  */
 
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
@@ -19,7 +20,15 @@ const deleteSandboxInstanceMock = mock(
   ) => {},
 );
 const removeSandboxInstanceMock = mock(
-  async (_accountId: string, _key: string) => {},
+  async (_accountId: string, _key: string, _externalId?: string) => {},
+);
+const takeExpiredSandboxInstanceMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+    _accountId: string,
+    _externalId: string,
+  ): Promise<boolean> => true,
 );
 
 mock.module("e2b", () => ({
@@ -35,6 +44,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: mock(async () => true),
   saveSandboxInstance: mock(async () => {}),
   deleteSandboxInstance: deleteSandboxInstanceMock,
+  takeExpiredSandboxInstance: takeExpiredSandboxInstanceMock,
 }));
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   removeSandboxInstance: removeSandboxInstanceMock,
@@ -58,9 +68,10 @@ beforeEach(() => {
   e2bKillMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   removeSandboxInstanceMock.mockClear();
+  takeExpiredSandboxInstanceMock.mockClear();
 });
 
-it("drops the row for the id it read, only once the provider tore the machine down", async () => {
+it("takes the row for the id it read before the teardown, and drops the mirror only once the provider confirmed", async () => {
   e2bKillMock.mockImplementationOnce(async () => {
     throw new Error("connection reset");
   });
@@ -70,10 +81,25 @@ it("drops the row for the id it read, only once the provider tore the machine do
   ]);
 
   expect(released.map((r) => r.reservationKey)).toEqual(["key-b"]);
+  expect(takeExpiredSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "acct-1", "sbx-a"],
+    ["e2b", "key-b", "acct-1", "sbx-b"],
+  ]);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a", "sbx-b"]);
-  // The executor's own delete has no account and is a no-op; the sweeper's carries it.
-  expect(
-    deleteSandboxInstanceMock.mock.calls.filter((c) => c[2] !== undefined),
-  ).toEqual([["e2b", "key-b", "acct-1", "sbx-b"]]);
-  expect(removeSandboxInstanceMock.mock.calls).toEqual([["acct-1", "key-b"]]);
+  // The mirror row is what keeps a failed teardown reachable for the next sweep,
+  // so only the confirmed one goes, and only while it still names that machine.
+  expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-b", "sbx-b"],
+  ]);
+});
+
+it("leaves a machine alone when a run refreshed its reservation since the listing", async () => {
+  takeExpiredSandboxInstanceMock.mockImplementationOnce(async () => false);
+  const released = await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(released).toEqual([]);
+  expect(e2bKillMock).not.toHaveBeenCalled();
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 });

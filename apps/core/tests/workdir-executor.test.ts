@@ -152,6 +152,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
+  takeExpiredSandboxInstance: mock(async (): Promise<boolean> => true),
 }));
 // mock.module replaces the whole module, so every export the executor's own imports
 // reach for has to be here — the sandbox index pulls the microvm executor in too, and

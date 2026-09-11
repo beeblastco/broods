@@ -56,6 +56,21 @@ export async function deleteSandboxInstance(
     accountId: accountId,
   });
 }
+// The sweeper's claim on an expired machine, taken before the provider teardown.
+// False when a run refreshed or replaced the reservation first.
+export function takeExpiredSandboxInstance(
+  provider: SandboxProvider,
+  reservationKey: string,
+  accountId: string,
+  expectedExternalId: string,
+): Promise<boolean> {
+  return runtime.mutate("takeExpiredSandboxReservation", {
+    provider: provider,
+    reservationKey: reservationKey,
+    expectedExternalId: expectedExternalId,
+    accountId: accountId,
+  });
+}
 // Refreshes the idle deadline of the reservation that still names `externalId`.
 // Never creates or repoints a row: the acquire path owns that through the claim.
 export async function saveSandboxInstance(

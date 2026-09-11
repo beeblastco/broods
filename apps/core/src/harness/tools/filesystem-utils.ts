@@ -243,9 +243,15 @@ export async function runSandbox(
   try {
     result = await runSandboxOn(config, namespace, code, options?.metadata);
   } catch (error) {
-    // `options` are the primary provider's (its URL, key, template); the
-    // fallback runs on the platform's own defaults for that provider.
-    const { fallbackProvider, options: _options, ...primary } = config;
+    // `options` (URL, key, template) and `snapshot` (workdir image name vs
+    // MicroVM image ARN) are the primary provider's; the fallback runs on the
+    // platform's own defaults for that provider.
+    const {
+      fallbackProvider,
+      options: _options,
+      snapshot: _snapshot,
+      ...primary
+    } = config;
     if (!fallbackProvider || !(error instanceof SandboxCapacityError)) {
       throw error;
     }

@@ -5,8 +5,8 @@
  */
 
 import { afterEach, beforeEach, expect, it, mock } from "bun:test";
+import type { ReservedSandbox } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
-import type { SandboxReservationRef } from "../src/shared/sandbox-cleanup.ts";
 
 // Returns what it released, so the sweeper can tell the released rows from the
 // ones it still has to defer. Everything handed in is released by default; a test
@@ -14,8 +14,8 @@ import type { SandboxReservationRef } from "../src/shared/sandbox-cleanup.ts";
 const releaseMock = mock(
   async (
     _accountId: string,
-    reservations: SandboxReservationRef[],
-  ): Promise<SandboxReservationRef[]> => reservations,
+    reservations: ReservedSandbox[],
+  ): Promise<ReservedSandbox[]> => reservations,
 );
 
 // mock.module replaces the whole module, so every export its importers need is here.
@@ -36,15 +36,11 @@ interface MutateCall {
   args: Record<string, unknown>;
 }
 
-type ExpiredReservation = SandboxReservationRef & {
-  accountId: string;
-  externalId: string;
-};
+type ExpiredReservation = ReservedSandbox & { accountId: string };
 
 let expired: ExpiredReservation[] = [];
 let orphans: ExpiredReservation[] = [];
 let mutateCalls: MutateCall[] = [];
-let adoptResult = true;
 let leaseResult: (accountId: string) => boolean = () => true;
 
 function accountsOf(name: string): unknown[] {
@@ -69,7 +65,6 @@ beforeEach(() => {
   expired = [];
   orphans = [];
   mutateCalls = [];
-  adoptResult = true;
   leaseResult = () => true;
   releaseMock.mockClear();
   runtime.query = (async (name: string) =>
@@ -77,7 +72,6 @@ beforeEach(() => {
   runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
     mutateCalls.push({ name: name, args: args });
     if (name === "claimEvent") return leaseResult(String(args.accountId));
-    if (name === "claimSandboxReservation") return adoptResult;
 
     return 0;
   }) as never;
@@ -118,8 +112,8 @@ it("defers only what it could not release", async () => {
   releaseMock.mockImplementationOnce(
     async (
       _accountId: string,
-      reservations: SandboxReservationRef[],
-    ): Promise<SandboxReservationRef[]> =>
+      reservations: ReservedSandbox[],
+    ): Promise<ReservedSandbox[]> =>
       reservations.filter((one) => one.reservationKey === "ns-gone"),
   );
 
@@ -159,24 +153,13 @@ it("leaves an account another replica already holds to that replica", async () =
   expect(accountsOf("releaseClaim")).toEqual([]);
 });
 
-it("adopts an orphaned mirror row so the normal teardown can reach it", async () => {
+it("hands an orphaned mirror row to the same teardown, by the id it still holds", async () => {
   orphans = [reservation("acct-a", "ns-orphan")];
 
   expect(await sweepExpiredSandboxes()).toBe(1);
-  expect(
-    mutateCalls
-      .filter((call) => call.name === "claimSandboxReservation")
-      .map((call) => call.args.externalId),
-  ).toEqual(["sbx-ns-orphan"]);
   expect(releaseMock.mock.calls[0]?.[1]).toEqual([
     reservation("acct-a", "ns-orphan"),
   ]);
-});
-
-it("skips an orphan whose reservation reappeared", async () => {
-  orphans = [reservation("acct-a", "ns-orphan")];
-  adoptResult = false;
-
-  expect(await sweepExpiredSandboxes()).toBe(0);
-  expect(releaseMock).not.toHaveBeenCalled();
+  // No reservation is written back first: the release path's take is the guard.
+  expect(accountsOf("claimSandboxReservation")).toEqual([]);
 });

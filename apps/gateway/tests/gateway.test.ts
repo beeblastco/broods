@@ -1914,6 +1914,108 @@ test("an unsubscribe cancels the traces backfill still streaming for it", async 
     process.env.TEMPO_URL = originalTempoUrl;
   }
 });
+test("a traces backfill that fails after an unsubscribe sends no error closer", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  let failSearch: ((reason: Error) => void) | undefined;
+  globalThis.fetch = (() =>
+    new Promise<Response>((_resolve, reject) => {
+      failSearch = reject;
+    })) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "traces", backfill: 100 }),
+      idleNats,
+    );
+    await waitForCondition(() => failSearch !== undefined);
+    // The search is still pending; the client walks away, then Tempo fails.
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "unsubscribe", stream: "traces" }),
+      idleNats,
+    );
+    failSearch?.(new Error("Tempo is down"));
+    await Bun.sleep(20);
+
+    expect(sent.filter((message) => message.type === "backfill")).toEqual([]);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+test("two traces subscribes in a row keep only the newer one", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search"))
+      return json({ traces: tempoSearchHits(3) });
+
+    return json({
+      batches: [
+        tempoBatch({
+          traceId: url.slice(url.lastIndexOf("/") + 1),
+          spanId: "root",
+        }),
+      ],
+    });
+  }) as unknown as typeof fetch;
+  let opened = 0;
+  const stopped: number[] = [];
+  const nats = async (): Promise<NatsConnection> =>
+    zeroBufferConnection(async () => {
+      opened += 1;
+      const consumer = opened;
+
+      return {
+        [Symbol.asyncIterator]: async function* () {},
+        close: async () => {},
+        stop: () => {
+          stopped.push(consumer);
+        },
+      };
+    }) as unknown as NatsConnection;
+  const subscribe = JSON.stringify({
+    type: "subscribe",
+    stream: "traces",
+    backfill: 10,
+  });
+
+  openObservabilitySocket(socket);
+  try {
+    // Both land before either NATS consumer opens.
+    await Promise.all([
+      handleObservabilityMessage(socket, subscribe, nats),
+      handleObservabilityMessage(socket, subscribe, nats),
+    ]);
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+    await Bun.sleep(50);
+
+    expect(opened).toBe(2);
+    expect(stopped).toEqual([1]);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+    expect(
+      sent.filter(
+        (message) => message.type === "backfill" && message.more !== true,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
 test("a traces backfill stops asking Tempo once the socket is gone", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;

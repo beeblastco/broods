@@ -6,7 +6,10 @@
 
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
-import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
+import {
+  deleteSandboxInstance,
+  takeExpiredSandboxInstance,
+} from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
@@ -17,6 +20,7 @@ import type {
   SandboxConfig,
   SandboxProvider,
 } from "./domain/sandbox-config.ts";
+import { toErrorMessage } from "./errors.ts";
 import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
@@ -29,18 +33,14 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "vercel",
 ];
 
-/** The pair that names one reserved machine at its provider. */
-export interface SandboxReservationRef {
-  provider: SandboxProvider;
-  reservationKey: string;
-}
-
 /**
- * Release the reservations the sweeper found expired. Unlike the namespace-deletion
- * path it never drops a row the provider teardown did not confirm: that row holds the
- * only copy of `externalId`, so deleting it early strands the sandbox. The row goes
- * here, conditional on that id, because the executors built from a stored config
- * carry no control-plane account and so cannot drop it themselves.
+ * Release the reservations the sweeper found expired. The row goes first, as a
+ * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
+ * to the machine since the listing refreshed the deadline, and tearing it down
+ * under that run would lose its sandbox. Only once the row is taken is the machine
+ * torn down, by the id the sweeper holds. A teardown that then fails is not
+ * re-inserted: the mirror row still names the machine, and the next sweep picks
+ * up a mirror row without a reservation.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
@@ -54,6 +54,21 @@ export async function releaseExpiredSandboxes(
   const released: ReservedSandbox[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
+    const taken = await takeExpiredSandboxInstance(
+      reservation.provider,
+      key,
+      accountId,
+      reservation.externalId,
+    ).catch((error: unknown) => {
+      logWarn("Expired sandbox reservation take failed", {
+        provider: reservation.provider,
+        namespace: key,
+        error: toErrorMessage(error),
+      });
+
+      return false;
+    });
+    if (!taken) continue;
     const done = await releaseFromConfigs(
       reservation.provider,
       configs,
@@ -62,13 +77,7 @@ export async function releaseExpiredSandboxes(
     );
     if (!done) continue;
     released.push(reservation);
-    await deleteSandboxInstance(
-      reservation.provider,
-      key,
-      accountId,
-      reservation.externalId,
-    ).catch(() => {});
-    await removeSandboxInstance(accountId, key);
+    await removeSandboxInstance(accountId, key, reservation.externalId);
   }
 
   return released;
@@ -176,7 +185,7 @@ async function releaseFromConfigs(
       logWarn("Reserved sandbox release failed", {
         provider: provider,
         namespace: namespace,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       });
     }
   }

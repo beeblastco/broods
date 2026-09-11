@@ -27,13 +27,14 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     colorScheme: "dark",
-    trace: "retain-on-failure",
   },
   projects: [
     {
       name: "ui",
       testMatch: /ui\/.*\.spec\.ts/,
-      use: { baseURL: DEV_URL },
+      // Traces only here: the signed-in projects must not record one, it
+      // carries the session cookie and the sign-in POST into CI artifacts.
+      use: { baseURL: DEV_URL, trace: "retain-on-failure" },
     },
     {
       name: "setup",

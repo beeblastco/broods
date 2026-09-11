@@ -87,6 +87,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: mock(async (): Promise<boolean> => true),
   saveSandboxInstance: mock(async (): Promise<void> => {}),
   deleteSandboxInstance: mock(async (): Promise<void> => {}),
+  takeExpiredSandboxInstance: mock(async (): Promise<boolean> => true),
 }));
 
 // Read-only (S3-direct) path stubs for sandbox-less workspaces.

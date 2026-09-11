@@ -984,6 +984,86 @@ describe("sandbox reservation expiry", () => {
     ).toBe(0);
   });
 
+  test("take deletes an expired reservation that still names the sweeper's id", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const now = Math.floor(Date.now() / 1000);
+    const lookup = { provider: "sandbox" as const, reservationKey: "idle" };
+    await t.run(async (ctx) => {
+      await ctx.db.insert("sandboxReservations", {
+        accountId: accountId,
+        ...lookup,
+        externalId: "sbx-idle",
+        expiresAt: now - 60,
+      });
+    });
+
+    expect(
+      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+        ...lookup,
+        expectedExternalId: "sbx-idle",
+        accountId: accountId,
+      }),
+    ).toBe(true);
+    expect(await t.query(internal.runtime.getSandboxReservation, lookup)).toBe(
+      null,
+    );
+    // Nothing names the key any more, so the machine is the sweeper's to tear down.
+    expect(
+      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+        ...lookup,
+        expectedExternalId: "sbx-idle",
+        accountId: accountId,
+      }),
+    ).toBe(true);
+  });
+
+  test("take refuses a reservation a run refreshed or replaced since the listing", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const now = Math.floor(Date.now() / 1000);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("sandboxReservations", {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: "refreshed",
+        externalId: "sbx-refreshed",
+        expiresAt: now + 60,
+      });
+      await ctx.db.insert("sandboxReservations", {
+        accountId: accountId,
+        provider: "sandbox",
+        reservationKey: "replaced",
+        externalId: "sbx-replaced-2",
+        expiresAt: now - 60,
+      });
+    });
+
+    expect(
+      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+        provider: "sandbox",
+        reservationKey: "refreshed",
+        expectedExternalId: "sbx-refreshed",
+        accountId: accountId,
+      }),
+    ).toBe(false);
+    expect(
+      await t.mutation(internal.runtime.takeExpiredSandboxReservation, {
+        provider: "sandbox",
+        reservationKey: "replaced",
+        expectedExternalId: "sbx-replaced-1",
+        accountId: accountId,
+      }),
+    ).toBe(false);
+    expect(
+      await t.run(async (ctx) =>
+        (await ctx.db.query("sandboxReservations").collect()).map(
+          (row) => row.reservationKey,
+        ),
+      ),
+    ).toEqual(["refreshed", "replaced"]);
+  });
+
   test("reports only idle mirror rows whose reservation is gone", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

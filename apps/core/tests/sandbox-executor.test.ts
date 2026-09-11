@@ -290,6 +290,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
+  takeExpiredSandboxInstance: mock(async (): Promise<boolean> => true),
 }));
 
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
@@ -1975,6 +1976,35 @@ describe("MicroVM capacity refusal", () => {
         outputLimitBytes: 4096,
       }),
     ).rejects.not.toBeInstanceOf(SandboxCapacityError);
+  });
+
+  it("moves a capacity-refused run to the fallback on that provider's own defaults", async () => {
+    const { runSandbox } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    daytonaCreateMock.mockImplementationOnce(async () => {
+      throw new Error("No available runners");
+    });
+
+    const result = await runSandbox(
+      {
+        provider: "daytona",
+        fallbackProvider: "lambda",
+        snapshot: "daytona-snapshot",
+        options: {
+          apiKey: "daytona-key",
+          imageIdentifier: "arn:aws:lambda:us-east-1:1:microvm-image:alias",
+        },
+      },
+      undefined,
+      "echo ok",
+    );
+
+    expect(result.provider).toBe("lambda");
+    // Neither the primary's `snapshot` (a Daytona snapshot name, not an image
+    // ARN) nor its `options` reach the MicroVM: it boots the harness default.
+    expect(microvmRunInput().imageIdentifier).toBe(
+      process.env.MICROVM_IMAGE_IDENTIFIER,
+    );
   });
 });
 

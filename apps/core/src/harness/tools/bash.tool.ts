@@ -7,6 +7,7 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { getHarnessPublicUrl } from "../../shared/env.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -311,7 +312,7 @@ async function dispatchBackground(
     }).catch((error: unknown) => {
       logWarn("Background job left unfenced: sandbox binding failed", {
         resultId: resultId,
-        error: error instanceof Error ? error.message : String(error),
+        error: toErrorMessage(error),
       });
     });
   } catch (cause) {

@@ -154,7 +154,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     );
   }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
-  assertOptionalEnum(
+  const fallbackProvider = assertOptionalEnum(
     config.fallbackProvider,
     "config.fallbackProvider",
     SANDBOX_PROVIDERS,
@@ -170,10 +170,10 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   const provider =
     (config.provider as SandboxProvider | undefined) ?? "sandbox";
-  if (config.fallbackProvider === provider) {
+  if (fallbackProvider === provider) {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }
-  if (config.fallbackProvider !== undefined && config.persistent === true) {
+  if (fallbackProvider !== undefined && config.persistent === true) {
     throw new Error(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
@@ -182,8 +182,9 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
   // The fallback runs this same config, so it has to be able to enforce it too.
-  for (const runsOn of [provider, config.fallbackProvider as SandboxProvider]) {
-    if (!runsOn) continue;
+  for (const runsOn of fallbackProvider
+    ? [provider, fallbackProvider]
+    : [provider]) {
     assertNetworkEnforceable(runsOn, network);
     assertResourceLimits(config, runsOn);
   }
@@ -192,6 +193,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   return buildNormalizedConfig(
     config,
     provider,
+    fallbackProvider,
     network,
     snapshot,
     persistentFields,
@@ -261,7 +263,7 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
-// Validates the envVars record and provider-specific options blob.
+// Refuses a network policy the provider cannot enforce.
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
@@ -282,6 +284,7 @@ function assertNetworkEnforceable(
   }
 }
 
+// Validates the envVars record and provider-specific options blob.
 function assertEnvVarsAndOptions(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -307,13 +310,13 @@ function assertOptionalEnum<T extends string>(
   value: unknown,
   name: string,
   allowed: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
+
+  return value as T;
 }
 
 function assertOptionalPositiveInteger(
@@ -375,15 +378,14 @@ function assertRuntimes(value: unknown): void {
 function buildNormalizedConfig(
   config: Record<string, unknown>,
   provider: SandboxProvider,
+  fallbackProvider: SandboxProvider | undefined,
   network: SandboxNetworkConfig,
   snapshot: string | undefined,
   persistentFields: Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume">,
 ): SandboxConfig {
   return {
     provider: provider,
-    ...(config.fallbackProvider !== undefined
-      ? { fallbackProvider: config.fallbackProvider as SandboxProvider }
-      : {}),
+    ...(fallbackProvider ? { fallbackProvider: fallbackProvider } : {}),
     network: network,
     permissionMode:
       (config.permissionMode as PermissionMode | undefined) ?? "ask",

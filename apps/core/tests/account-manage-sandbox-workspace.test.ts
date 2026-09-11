@@ -104,6 +104,7 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
+  takeExpiredSandboxInstance: mock(async (): Promise<boolean> => true),
 }));
 
 // The Convex instance registry is what authorizes every lifecycle request: on means the

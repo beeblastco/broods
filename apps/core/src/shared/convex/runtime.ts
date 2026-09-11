@@ -40,6 +40,7 @@ export const runtimeMutations = {
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   saveHarnessSession: internal.runtime.saveHarnessSession,
   sealAsyncToolGroup: internal.runtime.sealAsyncToolGroup,
+  takeExpiredSandboxReservation: internal.runtime.takeExpiredSandboxReservation,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
   acceptIngress: internal.runtimeIngress.accept,

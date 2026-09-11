@@ -88,11 +88,13 @@ confirm() {
   [[ "$reply" =~ ^[Yy] ]]
 }
 
-# _existing KEY — current value of KEY in ENV_FILE, if any.
+# _existing KEY — current value of KEY in ENV_FILE, if any, without the
+# double quotes write_env puts around it.
 _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
   local line; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
-  printf '%s' "${line#*=}"
+  line="${line#*=}"; line="${line#\"}"; line="${line%\"}"
+  printf '%s' "$line"
 }
 
 # ask KEY "Prompt" — read a value into $KEY. Offers the existing .env value as
@@ -110,29 +112,37 @@ ask() {
   printf -v "$key" '%s' "$input"
 }
 
-# ask_secret KEY "Prompt" — like ask, but input is hidden.
+# ask_secret KEY "Prompt" — like ask, but input is hidden. Re-prompts on a
+# value with `"` or `\`: write_env quotes the value, and Node expands both
+# inside the quotes when it loads ENV_FILE.
 ask_secret() {
   local key="$1" prompt="$2" current input
   current=$(_existing "$key" || true)
-  if [[ -n "$current" ]]; then
-    printf '  %s%s%s %s[Enter keeps current]%s ' "$BOLD" "$prompt" "$RESET" "$DIM" "$RESET"
-  else
-    printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
-  fi
-  read -rs input || true
-  printf '\n'
-  [[ -z "$input" && -n "$current" ]] && input="$current"
+  while :; do
+    if [[ -n "$current" ]]; then
+      printf '  %s%s%s %s[Enter keeps current]%s ' "$BOLD" "$prompt" "$RESET" "$DIM" "$RESET"
+    else
+      printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
+    fi
+    read -rs input || true
+    printf '\n'
+    [[ -z "$input" && -n "$current" ]] && input="$current"
+    [[ "$input" == *[\"\\]* ]] || break
+    warn 'a value with " or \ cannot be stored in the env file; pick one without'
+  done
   printf -v "$key" '%s' "$input"
 }
 
-# write_env KEY VALUE — upsert KEY=VALUE into ENV_FILE (creates it; replaces
-# any existing line). Idempotent.
+# write_env KEY VALUE — upsert KEY="VALUE" into ENV_FILE (creates it; replaces
+# any existing line). Idempotent. Quoted because Node's loadEnvFile cuts an
+# unquoted value at `#` and trims its spaces, which breaks a password with
+# either.
 write_env() {
   local key="$1" value="$2" tmp
   touch "$ENV_FILE"
   tmp=$(mktemp)
   grep -vE "^${key}=" "$ENV_FILE" > "$tmp" || true
-  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  printf '%s="%s"\n' "$key" "$value" >> "$tmp"
   mv "$tmp" "$ENV_FILE"
   WRITTEN_ENV+=("$key")
   printf '  %s✓ wrote%s %s → %s\n' "$GREEN" "$RESET" "$key" "$ENV_FILE"

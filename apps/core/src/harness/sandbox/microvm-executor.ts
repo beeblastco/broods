@@ -98,6 +98,8 @@ const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 // fast at first (a resumed VM is usually ready in well under a second) then backing
 // off — a flat delay put its whole value on the floor of every single call.
 const WARMUP_BUDGET_MS = 30_000;
+const WARMUP_RETRY_MIN_DELAY_MS = 150;
+const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -105,8 +107,6 @@ const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "ThrottlingException",
   "TooManyRequestsException",
 ]);
-const WARMUP_RETRY_MIN_DELAY_MS = 150;
-const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // A cached endpoint is a guess, so it gets a short warm-up before the call falls back
 // to the authoritative reservation instead of spending the full budget on a dead VM. A
 // warm VM answers in well under this; anything slower is a restore the authoritative
@@ -489,12 +489,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.expectedExternalId ?? (await getSandboxExternalId(PROVIDER, key));
     reservedEndpoints.delete(key);
     mountCredentialRefreshes.delete(key);
-    if (microvmId) await this.#terminate(microvmId);
+    if (!microvmId) return;
+    await this.#terminate(microvmId);
     await deleteSandboxInstance(
       PROVIDER,
       key,
       this.#config.controlPlane?.accountId,
-      microvmId ?? undefined,
+      microvmId,
     ).catch(() => {});
   }
 
