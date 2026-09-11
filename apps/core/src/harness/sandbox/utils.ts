@@ -8,6 +8,10 @@ import { isPlainObject } from "../../shared/object.ts";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+// Keeps a prefixed name within the length a whole name used to take, so adding a
+// per-machine suffix cannot run into a provider's undocumented name limit.
+const PREFIX_SLUG_LENGTH = 31;
+
 // Keys a per-call `request.envVars` may never set; account `config.envVars` is not filtered.
 export const RESERVED_SANDBOX_ENV_KEYS: ReadonlySet<string> = new Set([
   "BASH_ENV",
@@ -124,12 +128,13 @@ function isPrivate172(host: string): boolean {
   return Number.isInteger(octet) && octet >= 16 && octet <= 31;
 }
 
-// Deterministic name for a reserved sandbox: the same reservation key always
-// maps to the same sandbox, so any later request reconnects to it. The hash
-// keeps names unique after the slug is truncated. workdir and vercel both
-// rely on this exact format to find their existing persistent sandboxes.
-export function persistentSandboxName(reservationKey: string): string {
-  return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
+// The readable half of a reserved sandbox's name: a slug and hash of the
+// reservation key, so a machine is recognisable at its provider. This is a
+// prefix, not a name. The caller appends a per-machine suffix, because a name
+// derived from the key alone would let a compare-and-swap on that name match a
+// machine the caller never created. The slug budget leaves room for the suffix.
+export function sandboxNamePrefix(reservationKey: string): string {
+  return `fp-p-${slugFor(reservationKey, undefined, PREFIX_SLUG_LENGTH)}-${shortHash(reservationKey)}`;
 }
 
 // Scanned instead of `replace(/\/+$/, "")`: the backtracking form is quadratic on
@@ -141,17 +146,20 @@ export function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+// Trimmed after the truncation, not before: a cut that lands on a separator
+// would otherwise leave one dangling for a caller that appends to the result.
 export function slugFor(
   value: string | undefined,
   fallback = "sandbox",
+  maxLength = 40,
 ): string {
   return (
     (value ?? "")
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 40) || fallback
+      .slice(0, maxLength)
+      .replace(/^-|-$/g, "") || fallback
   );
 }
 

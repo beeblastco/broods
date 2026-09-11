@@ -4,6 +4,7 @@
  * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
  */
 
+import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
   NetworkPolicy,
@@ -46,13 +47,15 @@ import {
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
-  persistentSandboxName,
+  sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
   stringRecord,
   truncateText,
   workspacePath,
 } from "./utils.ts";
+
+const GENERATION_LENGTH = 8;
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 type VercelCreateOptions = NonNullable<
@@ -141,7 +144,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       );
     }
 
-    return { jobId: jobId, externalId: persistentSandboxName(ns) };
+    return { jobId: jobId, externalId: sandbox.name };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
@@ -186,8 +189,14 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
+      // A reservation expires long after the session idled out, so this machine is
+      // stopped. The SDK sends no `resume` of its own, leaving the choice to the
+      // API; say it here instead, because nothing in a teardown needs a running VM,
+      // and booting one to delete it costs compute and widens the window a
+      // concurrent acquire can slip into.
       const sandbox = await Sandbox.get({
         name: name,
+        resume: false,
         ...vercelAuthOptions(this.#config),
       });
       await sandbox.delete();
@@ -292,8 +301,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       }
     }
 
-    const name = persistentSandboxName(key);
-    const sandbox = await Sandbox.getOrCreate({
+    // A fresh generation, so this machine is ours alone. `getOrCreate` on a name
+    // derived from the key would hand back whatever machine already answers to
+    // it, including one a sweeper has taken the row for and is about to delete.
+    const name = vercelSandboxName(key);
+    const sandbox = await Sandbox.create({
       ...vercelCreateOptions(this.#config, request, true),
       name: name,
     });
@@ -317,23 +329,34 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects, so
-      // release the reservation; passing the name keeps a concurrent winner's
-      // row intact. The sandbox itself stays: `getOrCreate` derives its name
-      // from the key alone, so every caller for this key shares this one and
-      // deleting it here would pull it out from under whoever else holds it.
-      // Nothing is orphaned either, since the next acquire reaches the same
-      // name again.
+      // The claim may already have committed even when its caller rejects, and
+      // the mirror write runs after it did. Drop the row while it still names
+      // this machine, then the machine itself: the generation makes the name
+      // unguessable, so a row or a sandbox left behind is one nothing reaches.
+      // Passing the name keeps a concurrent winner's row and machine intact.
       await deleteSandboxInstance(
         "vercel",
         key,
         this.#config.controlPlane?.accountId,
         name,
       ).catch(() => {});
+      await sandbox.delete().catch(() => {});
       throw error;
     }
+
     const winner = await getSandboxExternalId("vercel", key);
-    if (!winner || winner === name) {
+    if (!winner) {
+      // The row went away between the refused claim and this read. Nothing maps
+      // the key to this machine, so record it in the mirror and let the sweeper's
+      // orphan adoption be what reaches it again.
+      await upsertSandboxInstance(
+        this.#config.controlPlane,
+        "vercel",
+        key,
+        name,
+        request.metadata,
+      );
+
       return sandbox;
     }
     await sandbox.delete().catch(() => {});
@@ -494,6 +517,14 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
       ? { subnets: { allow: network.allowCidrs } }
       : {}),
   };
+}
+
+// The name of one reserved machine: a prefix that reads back to the reservation
+// key, plus a generation nothing can derive from that key. The generation is what
+// makes `externalId` identify a machine, so the conditional writes that guard a
+// reservation refuse a machine some other caller created under the same key.
+function vercelSandboxName(reservationKey: string): string {
+  return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
 }
 
 async function commandError(
