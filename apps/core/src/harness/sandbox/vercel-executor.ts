@@ -190,9 +190,10 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     try {
       const Sandbox = await this.#Sandbox();
       // A reservation expires long after the session idled out, so this machine is
-      // stopped. `resume` is the API's own default when we send none, so say it:
-      // nothing here needs a running VM, and booting one to delete it both costs
-      // compute and widens the window a concurrent acquire can slip into.
+      // stopped. The SDK sends no `resume` of its own, leaving the choice to the
+      // API; say it here instead, because nothing in a teardown needs a running VM,
+      // and booting one to delete it costs compute and widens the window a
+      // concurrent acquire can slip into.
       const sandbox = await Sandbox.get({
         name: name,
         resume: false,
