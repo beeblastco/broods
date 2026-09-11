@@ -93,7 +93,10 @@ confirm() {
 _existing() {
   [[ -f "$ENV_FILE" ]] || return 1
   local line; line=$(grep -E "^${1}=" "$ENV_FILE" | tail -n1) || return 1
-  line="${line#*=}"; line="${line#\"}"; line="${line%\"}"
+  line="${line#*=}"
+  if [[ ${#line} -ge 2 && ${line:0:1} == '"' && ${line: -1} == '"' ]]; then
+    line="${line:1:${#line}-2}"
+  fi
   printf '%s' "$line"
 }
 
@@ -124,7 +127,7 @@ ask_secret() {
     else
       printf '  %s%s%s ' "$BOLD" "$prompt" "$RESET"
     fi
-    read -rs input || true
+    IFS= read -rs input || true
     printf '\n'
     [[ -z "$input" && -n "$current" ]] && input="$current"
     [[ "$input" == *[\"\\]* ]] || break

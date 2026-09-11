@@ -44,7 +44,7 @@ function NavLinksInner() {
               // the selector rewrites every href with `?stage=` on mount,
               // and Next prefetches again under the new key, so the first
               // wave would be thrown away.
-              prefetch={!isActive && stageParam !== null}
+              prefetch={!isActive && Boolean(stageParam)}
               className={cn(
                 "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                 isActive

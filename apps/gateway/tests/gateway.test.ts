@@ -2016,6 +2016,40 @@ test("two traces subscribes in a row keep only the newer one", async () => {
     process.env.TEMPO_URL = originalTempoUrl;
   }
 });
+test("two logs subscribes in a row leave one consumer relaying", async () => {
+  const { socket, sent } = observabilitySocket();
+  let opened = 0;
+  const stopped: number[] = [];
+  const nats = async (): Promise<NatsConnection> =>
+    zeroBufferConnection(async () => {
+      opened += 1;
+      const consumer = opened;
+
+      return {
+        [Symbol.asyncIterator]: async function* () {},
+        close: async () => {},
+        stop: () => {
+          stopped.push(consumer);
+        },
+      };
+    }) as unknown as NatsConnection;
+  const subscribe = JSON.stringify({ type: "subscribe", stream: "logs" });
+
+  openObservabilitySocket(socket);
+  try {
+    // Both land before either NATS consumer opens.
+    await Promise.all([
+      handleObservabilityMessage(socket, subscribe, nats),
+      handleObservabilityMessage(socket, subscribe, nats),
+    ]);
+
+    expect(opened).toBe(2);
+    expect(stopped).toHaveLength(1);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(2);
+  } finally {
+    cleanupObservabilitySocket(socket);
+  }
+});
 test("a traces backfill stops asking Tempo once the socket is gone", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;

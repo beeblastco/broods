@@ -257,7 +257,7 @@ export const remove = internalMutation({
     if (
       instance &&
       instance.accountId === accountId &&
-      (!externalId || instance.externalId === externalId)
+      (externalId === undefined || instance.externalId === externalId)
     ) {
       await ctx.db.delete(instance._id);
     }

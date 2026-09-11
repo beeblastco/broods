@@ -464,6 +464,9 @@ async function handleObservabilitySubscribe(
     return;
   }
   if (stream === "logs") {
+    // A second logs subscribe that landed while this consumer opened has
+    // already assigned its own; stop it so only one relays.
+    state.logsSub?.unsubscribe();
     state.logsSub = live;
   } else if (state.tracesBackfillRun !== run) {
     // Superseded while the consumer opened: the newer subscribe owns the
