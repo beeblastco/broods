@@ -1,6 +1,6 @@
 "use client";
 
-/** Skill node — Enabled when its label is in the connected agent's `skills.allowed[]`. */
+/** Skill node. Enabled when its label is in the connected agent's `skills.allowed[]`. */
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import {

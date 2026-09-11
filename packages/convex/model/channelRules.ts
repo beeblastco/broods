@@ -1,5 +1,5 @@
 /**
- * Channel record validation for the config plane — the single home of the
+ * Channel record validation for the config plane, the single home of the
  * normalizers core's `shared/domain/channel-record.ts` re-exports. Kept free
  * of Convex imports so the rules stay unit-testable; the public projection
  * lives in ./responses.ts.

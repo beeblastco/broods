@@ -630,8 +630,8 @@ describe("telegram channel adapter", () => {
   });
 
   it("carries the emoji as the text of a caption-less animated sticker", async () => {
-    // With no attachment and no caption, the emoji is all the message has —
-    // without it the turn would arrive entirely empty.
+    // With no attachment and no caption, the emoji is all the message has.
+    // Without it the turn would arrive entirely empty.
     const parsed = await parseTelegram({
       update_id: 36,
       message: {

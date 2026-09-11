@@ -393,12 +393,12 @@ export const updateRuntimeRefs = mutation({
     // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
     delete extraConfig.workspace;
 
-    // Provisioning stays unconditional — a canvas save is where an agent whose
+    // Provisioning stays unconditional. A canvas save is where an agent whose
     // org gained an account after the config was made first gets its row.
     const agentRowId = await ensureAgentsRowForConfig(ctx, configId, user.id);
     const provisionedNow = !existing.agentId && !!agentRowId;
 
-    // Skip the patch and encryption push when nothing changed — every canvas
+    // Skip the patch and encryption push when nothing changed. Every canvas
     // save derives refs for all agents, so most calls land here. A row created
     // just above still needs the push, or it stays empty until the next edit.
     if (

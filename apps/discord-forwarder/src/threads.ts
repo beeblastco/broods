@@ -2,10 +2,10 @@
  * Resolves the `thread` object Discord's `MESSAGE_CREATE` leaves out.
  *
  * Inside a thread, Discord sets `channel_id` to the thread and says nothing
- * about the channel it hangs under. Core needs both — `toDiscordGatewayThread`
+ * about the channel it hangs under. Core needs both. `toDiscordGatewayThread`
  * keys a threaded conversation as `discord:{guild}:{parent}:{thread}` and gates
  * the allow list on the parent, which is also how the slash-command path
- * resolves — so a forwarded event without it disagrees with `/new` typed in the
+ * resolves, so a forwarded event without it disagrees with `/new` typed in the
  * same thread and trips channel allow lists that name the parent.
  *
  * This is restating a fact Discord omitted, not choosing where a reply lands.

@@ -29,7 +29,7 @@ export interface AgentDeploymentScope {
 }
 
 /**
- * Raw counts for one finished agent task. No dollar amounts — pricing is
+ * Raw counts for one finished agent task. No dollar amounts, because pricing is
  * computed at render time from a shared hardcoded table (plan §6d, §10a).
  *
  * endpointId is optional for account-key traffic that is not associated with
@@ -41,7 +41,7 @@ export interface TaskUsageInput {
   endpointId?: string;
   agentId: string;
   conversationKey: string;
-  /** Equals session.eventId — unique per finished task. */
+  /** Equals session.eventId, unique per finished task. */
   taskId: string;
   modelProvider: string;
   modelId: string;

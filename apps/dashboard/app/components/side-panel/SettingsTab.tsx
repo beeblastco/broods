@@ -1,6 +1,5 @@
 "use client";
 
-/** Settings tab with danger zone for node deletion. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useState } from "react";

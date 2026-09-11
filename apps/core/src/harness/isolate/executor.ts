@@ -4,8 +4,8 @@
  * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../frames.ts.
  *
  * Two paths share this file. The default is a pool of long-lived hardened
- * workers keeping a tenant-keyed warm isolate cache (Convex-Funrun style) —
- * reuse the isolate within a tenant, fresh context per call, so cold starts and
+ * workers keeping a tenant-keyed warm isolate cache (Convex-Funrun style).
+ * Reuse the isolate within a tenant, fresh context per call, so cold starts and
  * per-call process spawns disappear. It grows on demand and reaps idle workers,
  * because core's pod budgets memory for one process, not a standing fleet.
  * ISOLATE_POOL=0 falls back to the one-shot spawner, a fresh runner per call.
@@ -208,7 +208,7 @@ async function* streamViaOneShot(
 }
 
 // Called while iterating a run's frames, so the line inherits that run's
-// observability context — which is what routes it to NATS and `broods logs`.
+// observability context, which is what routes it to NATS and `broods logs`.
 export function emitIsolateLog(
   accountId: string | undefined,
   toolName: unknown,

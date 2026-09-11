@@ -1,7 +1,7 @@
 /**
  * Cron-job input normalization for the Convex config plane. Ports core's
  * former src/shared/domain/cron.ts normalizer so the public /v1/crons
- * contract is unchanged. Pure module — safe for the default Convex runtime;
+ * contract is unchanged. Pure module, safe for the default Convex runtime;
  * schedule registration lives in agent/crons.ts and the public projections
  * in ./responses.ts.
  */
@@ -159,8 +159,8 @@ export function normalizeUpdateCronInput(input: unknown): NormalizedCronUpdate {
 }
 
 /**
- * Translate a stored schedule expression — the public contract keeps the
- * `cron(...)` / `rate(...)` / `at(...)` forms — into what the Convex crons
+ * Translate a stored schedule expression, in the `cron(...)` / `rate(...)` /
+ * `at(...)` forms the public contract keeps, into what the Convex crons
  * component registers: a unix cronspec with an IANA `tz`, an interval in
  * milliseconds, or the epoch instant of a one-time job.
  * @param expression a normalized schedule expression
@@ -205,7 +205,7 @@ export function translateScheduleExpression(
 }
 
 /**
- * Whether a schedule fires exactly once. Single home for this rule — core
+ * Whether a schedule fires exactly once. Single home for this rule. Core
  * re-exports it from apps/core/src/shared/domain/cron.ts.
  * @param expression a normalized schedule expression
  * @returns true for an at(...) schedule
@@ -331,8 +331,8 @@ function optionalString(
 }
 
 /**
- * Convert the six-field cron form — minute hour day-of-month month day-of-week
- * year — to the five-field unix cronspec the crons component parses. `?` maps
+ * Convert the six-field cron form, minute hour day-of-month month day-of-week
+ * year, to the five-field unix cronspec the crons component parses. `?` maps
  * to `*`, and day-of-week numbers shift from 1-7 (1 = Sunday) to 0-6.
  * @throws for the calendar forms unix cron has no equivalent for (`L`, `W`,
  * `#`, or a constrained year)
@@ -353,7 +353,7 @@ function cronExpressionToCronspec(fields: string): string {
     year = "",
   ] = parts;
   if (year !== "*") {
-    throw new Error("cron(...) year field must be * — years cannot be pinned");
+    throw new Error("cron(...) year field must be *. Years cannot be pinned");
   }
   for (const field of [minute, hour, dayOfMonth, month, dayOfWeek]) {
     if (/[LW#]/i.test(field)) {
@@ -406,7 +406,7 @@ function requireDayOfWeekNumber(token: string): number {
 
 /**
  * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
- * wall-clock time is read in `timezone` when given, UTC otherwise — the same
+ * wall-clock time is read in `timezone` when given, UTC otherwise, the same
  * semantics EventBridge Scheduler applied.
  */
 function atExpressionToTimestamp(

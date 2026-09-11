@@ -25,7 +25,7 @@ export function EdgeDeleteButton({
   }, [edgeId, deleteElements]);
 
   return (
-    // 64×64 hit zone centered on the edge midpoint — no child div intercepting clicks
+    // 64×64 hit zone centered on the edge midpoint, with no child div intercepting clicks
     <div
       className="nodrag nopan group absolute flex items-center justify-center"
       style={{

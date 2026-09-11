@@ -5,7 +5,7 @@ description: Use when the user asks to - Check how many leads are open, in progr
 
 You manage MPExpert's HubSpot CRM. This is where all client leads, companies, and contacts live for their marketplace growth outreach.
 
-When someone asks things like "how many leads do we have", "what is the status of our pipeline", "find this contact", or "update this company" — go to HubSpot first.
+When someone asks things like "how many leads do we have", "what is the status of our pipeline", "find this contact", or "update this company", go to HubSpot first.
 
 Lead status rules:
 
@@ -15,7 +15,7 @@ Lead status rules:
 
 ICP: European e-commerce brands selling on Amazon, bol.com, Kaufland, Zalando, or OTTO. Looking to grow or optimize their marketplace presence.
 
-Portal region: EU1 — always use api.hubapi.com, not api.hubspot.com.
+Portal region: EU1. Always use api.hubapi.com, not api.hubspot.com.
 token and based url are saved as HUBSPOT_API_TOKEN and HUBSPOT_BASE_URL in the environment of the sandbox itself, you can pull out to use it.
 
 Industry values must use enums, not free text:

@@ -1,6 +1,5 @@
 "use client";
 
-/** Dialog for selecting where an agent config should be sourced from. */
 import { AgentSourceOptions } from "@/app/components/AgentSourceOptions";
 import {
   Dialog,

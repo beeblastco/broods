@@ -345,7 +345,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
     });
     await crons.markFailed(job.accountId, job.cronId, error);
     // The schedule is spent whether or not the run started, so retire the job
-    // here too — the settle path never reached it.
+    // here too. The settle path never reached it.
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
@@ -998,7 +998,7 @@ async function handleAsyncWorkerRequest(
       err instanceof Error ? err.message : "Async request failed",
     );
     // A throw after the run already settled must not overwrite its recorded
-    // outcome — and for a one-time job the run row is gone with the cron.
+    // outcome, and for a one-time job the run row is gone with the cron.
     if (!didSettle) {
       await settleCronRun(event.accountId, event.cronRun, {
         error: err instanceof Error ? err.message : "Async request failed",
@@ -1560,8 +1560,8 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     return;
   }
 
-  // Context is stored, never run, so only the durable parts matter here —
-  // persistence would drop byte-backed parts anyway.
+  // Context is stored, never run, so only the durable parts matter here.
+  // Persistence would drop byte-backed parts anyway.
   await session.appendIngressEvents(
     (
       await ingestChannelAttachments(event.events, event.attachments, {
@@ -2134,7 +2134,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
 }
 
 /**
- * Dispatch a worker payload as fire-and-forget in-process background work — the
+ * Dispatch a worker payload as fire-and-forget in-process background work. The
  * async fan-out runs in this process, not via a Lambda self-invoke.
  */
 async function invokeHarnessWorker(
@@ -2292,7 +2292,7 @@ async function startScheduledAgentRun(
 
 /**
  * When the schedule was meant to fire, falling back to now when the payload
- * carries no usable instant — including the unsubstituted template literal.
+ * carries no usable instant, including the unsubstituted template literal.
  */
 function scheduledFireTime(scheduledTime: string | undefined): Date {
   const parsed = scheduledTime ? new Date(scheduledTime) : null;
@@ -2427,7 +2427,7 @@ function settledToolResultsToParentMessages(
 ): DirectInboundEvent["events"] {
   return (
     results
-      // Skip results the model already pulled via async_status — re-injecting them
+      // Skip results the model already pulled via async_status. Re-injecting them
       // would make the model answer the same completion twice.
       .filter(
         (result) =>
@@ -2734,7 +2734,7 @@ async function runParentContinuationLoop(options: {
     if (stream.didFail()) {
       // A failed parent pass may have already dispatched subagents in an earlier
       // step that are still running in the background. Wait for them to settle
-      // before returning so each child finalizes — publishing AND flushing its
+      // before returning so each child finalizes, publishing AND flushing its
       // terminal span. Otherwise the abandoned children spin "running" forever in
       // the dashboard: their running span was stored durably, but the request or
       // worker returned before the terminal one was ever flushed. Bounded by the

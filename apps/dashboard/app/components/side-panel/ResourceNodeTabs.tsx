@@ -82,7 +82,7 @@ export function WorkspaceResourceDetailsTab({
     setOwnBucket(savedOwnBucket);
   }
   // Guidance and memory are part of what the default harness IS, so they are on and
-  // stay on — there is no switch here. The opt-out is a code-only escape hatch; the
+  // stay on. There is no switch here. The opt-out is a code-only escape hatch; the
   // dashboard only reports it, so an agent configured in code never looks untouched.
   const disabledFeatures = HARNESS_FEATURES.filter((feature) => {
     const value = isPlainObject(harness[feature.key])
@@ -158,7 +158,7 @@ export function WorkspaceResourceDetailsTab({
           onCheckedChange={(own) => {
             setOwnBucket(own);
             // Only switching off writes: it clears the bucket back to managed.
-            // Switching on just reveals the fields — each one saves as it is typed.
+            // Switching on just reveals the fields. Each one saves as it is typed.
             if (!own) {
               setConfig({ storage: { provider: "s3" } });
             }
@@ -298,7 +298,7 @@ export function SandboxResourceDetailsTab({
     ? data.config
     : SANDBOX_DEFAULT_CONFIG;
   // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
-  // which is what code-synced sandboxes carry — not a flat `internet` boolean.
+  // which is what code-synced sandboxes carry, not a flat `internet` boolean.
   const network: { mode?: string } = isPlainObject(config.network)
     ? (config.network as { mode?: string })
     : {};

@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Billing & Plan panel — displays the user's current subscription and
- * provides Stripe Checkout / Customer Portal flows for upgrades.
+ * Billing and plan panel. Shows the current subscription and opens the Stripe
+ * Checkout and Customer Portal flows for upgrades.
  */
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
@@ -99,7 +99,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     <div className="grid gap-8">
       {/* Current plan */}
       <Section
-        title="Current Plan"
+        title="Current plan"
         description="Your active subscription and included resources."
       >
         <div className="rounded-lg border border-border bg-card">
@@ -172,7 +172,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
       {/* Plan limits */}
       <Section
-        title="Plan Limits"
+        title="Plan limits"
         description="Resource limits for your current plan tier."
       >
         <div className="grid gap-3">
@@ -194,7 +194,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       {!onMaxPlan && (
         <Section
           title="Upgrade to Pro"
-          description="Unlock higher limits and priority support."
+          description="Higher limits and priority support."
         >
           <div className="rounded-lg border border-border bg-card p-4">
             <div className="grid gap-2 mb-4">

@@ -256,7 +256,7 @@ export async function unauthorizedResponse(
 /**
  * Write one audit event through the internal mutation exposed for HTTP actions.
  * The config write has already committed by the time this runs, so audit
- * failures are logged and swallowed — they must not turn a committed change
+ * failures are logged and swallowed. They must not turn a committed change
  * into a 500 (a client retry of a POST would then duplicate the resource).
  * @param ctx Convex action context
  * @param event sanitized event metadata

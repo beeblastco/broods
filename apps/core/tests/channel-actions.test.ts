@@ -323,7 +323,7 @@ describe("discord channel actions", () => {
     );
 
     // Discord has no URL attachment at all, so the bytes have to go up as
-    // multipart; a link in the payload would simply never render.
+    // multipart; a link in the payload would never render.
     const body = fetchMock.calls[0]!.init?.body;
     expect(body).toBeInstanceOf(FormData);
     const form = body as FormData;

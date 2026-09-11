@@ -25,11 +25,11 @@ afterEach(() => {
 });
 
 describe("account-management deployment key auth", () => {
-  it("no longer serves skill, tool, or cron routes for deployment keys — they are Convex config-plane routes", async () => {
+  it("no longer serves skill, tool, or cron routes for deployment keys", async () => {
     setStorageForTests(deploymentStorage());
     const { handler } = await import("../src/accounts/handler.ts");
 
-    // Skills, tools, and cron CRUD moved to the Convex config plane — the
+    // Skills, tools, and cron CRUD moved to the Convex config plane. The
     // account handler no longer serves them for any principal.
     const skillsResponse = await handler(event("GET", "/v1/skills"));
     const toolsResponse = await handler(event("GET", "/v1/tools"));

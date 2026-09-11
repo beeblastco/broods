@@ -449,7 +449,7 @@ describe("loadConfiguredSkillPrompt", () => {
         "fs-0123456789abcdef0123456789abcdef01234567/.agents/skills/script-skill/scripts/analyze.py",
       options: { contentType: "text/plain; charset=utf-8", executable: true },
     });
-    // Staging no longer writes a manifest — every load re-stages from source.
+    // Staging no longer writes a manifest. Every load re-stages from source.
     expect(
       s3Writes.filter((write) => write.key.endsWith(".stage.json")),
     ).toHaveLength(0);

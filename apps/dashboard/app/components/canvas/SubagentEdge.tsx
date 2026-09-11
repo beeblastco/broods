@@ -45,7 +45,7 @@ export function SubagentEdge({
   );
 
   // Bezier (not orthogonal) so dense agent↔agent webs spread as smooth curves between fanned
-  // endpoints — no shared-center jog to collide the way blocky routing does.
+  // endpoints, with no shared-center jog to collide the way blocky routing does.
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX: sourceX,
     sourceY: sourceY + sourceFan,

@@ -1,8 +1,8 @@
 /**
  * Static scan that keeps uploaded bundles off a tier that cannot run them.
  * The isolate (apps/core/src/harness/isolate/) exposes only the web-globals
- * set — no node: builtins, no require(), no npm deps, no Web Streams — so a
- * bundle that reaches for any of those must be rejected at upload time
+ * set, with no node: builtins, no require(), no npm deps and no Web Streams, so
+ * a bundle that reaches for any of those must be rejected at upload time
  * instead of dying with a ReferenceError at run time. Hooks are the one
  * remaining isolate tenant (#331 phase 3 sunset custom tools).
  */
@@ -16,7 +16,7 @@ const NODE_BUILTIN_IMPORT_PATTERN =
 const NODE_GLOBAL_MEMBER_PATTERN =
   /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
 // Web Streams are outside what isolate/runner/web-globals.mjs installs, so a
-// bundle touching one — every bundle importing `ai` does — cannot run there.
+// bundle touching one cannot run there, and every bundle importing `ai` does.
 const WEB_STREAMS_PATTERN =
   /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 

@@ -2,7 +2,7 @@
  * S3 primitives for the Convex config plane. A faithful port of apps/core
  * `src/shared/s3.ts` so objects written here are byte- and
  * metadata-compatible with what core's FUSE mount and skill loader read.
- * Uses the assumed-role client from model/aws.ts. Node-runtime only — import
+ * Uses the assumed-role client from model/aws.ts. Node-runtime only, import
  * exclusively from `"use node"` actions.
  */
 
@@ -101,7 +101,7 @@ export async function deleteS3Prefix(
 }
 
 /**
- * Ensure S3 directory marker objects exist for every parent directory of a key.
+ * Writes an S3 directory marker object for every parent directory of a key.
  * @param bucket target bucket
  * @param key file key whose parent directories should exist
  * @param access optional overrides for a bring-your-own bucket

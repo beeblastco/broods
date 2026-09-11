@@ -217,7 +217,7 @@ function renderReport(packages: WatchedPackage[]): string {
       lines.push(
         `| \`${entry.name}\` | ${install.workspace} | ` +
           `${install.version ?? "not installed"} | ${entry.latest} | ` +
-          `${entry.pinnedAi ?? "—"} |`,
+          `${entry.pinnedAi ?? "none"} |`,
       );
     }
   }

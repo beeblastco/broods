@@ -44,7 +44,7 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      # NOTE: no `npm install -g npm@latest` here — overwriting the bundled npm
+      # NOTE: no `npm install -g npm@latest` here. Overwriting the bundled npm
       # in the hosted toolcache left it half-installed once ("Cannot find
       # module 'sigstore'" during the provenance publish).
       # The version is derived here rather than committed to dev beforehand. A

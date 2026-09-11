@@ -2,7 +2,7 @@
  * Core's per-request bearer auth. `extractBearerToken` runs on every request
  * that carries a header; `timingSafeStringEqual` runs twice more on every
  * request whose token is not prefix-routed, which is every account-secret and
- * runtime-key call — two SHA-256 digests each, by design.
+ * runtime-key call, two SHA-256 digests each, by design.
  */
 
 import {

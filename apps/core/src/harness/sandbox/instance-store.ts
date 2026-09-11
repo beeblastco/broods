@@ -23,7 +23,7 @@ export function getSandboxReservationRecord(
   });
 }
 // The reservation key is a hashed namespace, so the owning account can't be
-// derived from it — callers pass accountId from the sandbox control plane. When
+// derived from it. Callers pass accountId from the sandbox control plane. When
 // it is absent (synthetic/stateless config) the reservation write is skipped so
 // the run degrades to non-persistent instead of failing the tool call.
 export function claimSandboxInstance(

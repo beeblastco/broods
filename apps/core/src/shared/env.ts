@@ -31,7 +31,7 @@ export function isDeployedRuntime(): boolean {
   return Boolean(process.env.BROODS_CONTAINER_RUNTIME);
 }
 
-// The harness's own public base URL — the gateway front door. Background-job
+// The harness's own public base URL, the gateway front door. Background-job
 // callbacks and async status URLs need an absolute URL to reach this service.
 // Undefined when PUBLIC_BASE_URL is unset, so callers can degrade to poll-only
 // delivery.

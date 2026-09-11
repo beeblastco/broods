@@ -37,7 +37,7 @@ interface DialogProps {
   justCreated?: boolean;
 }
 
-/** Default SSE streaming example — plain HTTP, works everywhere. */
+/** Default SSE streaming example. Plain HTTP, works everywhere. */
 const SSE_SNIPPET = [
   `import { BroodsClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
@@ -53,7 +53,7 @@ const SSE_SNIPPET = [
   `}`,
 ].join("\n");
 
-/** WebSocket streaming example — opt-in upgrade for the lowest-latency, bidirectional experience. */
+/** WebSocket streaming example. Opt-in upgrade for lower latency and bidirectional messages. */
 const WS_SNIPPET = [
   `import { WebsocketClient } from "broods";`,
   `import { api } from "./broods/_generated/api";`,
@@ -163,7 +163,7 @@ function CodeBlock({
   );
 }
 
-/** Rotate control with an inline confirm step — rotating invalidates the current key. */
+/** Rotate control with an inline confirm step. Rotating invalidates the current key. */
 function RotateButton({ onRotate }: { onRotate: () => Promise<void> }) {
   const [confirming, setConfirming] = useState(false);
   const [rotating, setRotating] = useState(false);
@@ -316,7 +316,7 @@ export function RuntimeKeyView({
         <CodeBlock code={envDisplay} copyText={envReal} lang="bash" />
       </section>
 
-      {/* Stream the response — SSE by default, WebSocket as an opt-in upgrade */}
+      {/* Stream the response: SSE by default, WebSocket as an opt-in upgrade */}
       <section className="grid gap-2">
         <Label className="text-sm font-medium text-foreground">
           Stream the response

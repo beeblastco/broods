@@ -3,7 +3,7 @@
  * those endpoints authorize against. The account-manage suspend/resume/terminate
  * endpoints call the writes after the provider lifecycle call succeeds so the
  * dashboard's live sandboxInstances query reflects the new state. Fire-and-forget
- * safe — wrapped so a mirror failure never fails the lifecycle request. See usage.ts
+ * safe, wrapped so a mirror failure never fails the lifecycle request. See usage.ts
  * for the same pattern.
  */
 
@@ -26,7 +26,7 @@ export type SandboxInstanceStatus =
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
  * it live. No-op when the config carries no control-plane identity
- * (synthetic/stateless configs). Idempotent — safe on reconnect.
+ * (synthetic/stateless configs). Idempotent, so it is safe on reconnect.
  *
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
  * it is flagged uncontrollable for the dashboard and skips the audit event a real
@@ -125,7 +125,7 @@ export async function setSandboxInstanceStatus(
 
 /**
  * The reservation's ownership record: does it still bind to this account + sandbox config.
- * Not fire-and-forget like the writes — a failure must surface, never deny the request.
+ * Not fire-and-forget like the writes. A failure must surface, never deny the request.
  */
 export async function sandboxInstanceIsControllable(
   accountId: string,

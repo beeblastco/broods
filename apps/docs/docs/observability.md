@@ -1,9 +1,10 @@
 # Observability
 
-Every log line and trace span the platform emits flows through **one redaction
-chokepoint** and fans out to three sinks. This page describes that pipeline and how
-**sandbox** activity (tool output on the trace, MicroVM guest output, and the workdir
-host) joins it so the dashboard, Loki, and Tempo all see one correlated view per tenant.
+Every log line and trace span the platform emits passes through one redaction
+chokepoint, then fans out to three sinks. This page describes that pipeline, and how
+sandbox activity joins it in three forms: tool output on the trace, MicroVM guest
+output, and the workdir host. The dashboard, Loki, and Tempo all end up with one
+correlated view per tenant.
 
 ## The three sinks
 
@@ -25,15 +26,15 @@ flowchart LR
   Tempo -.->|"backfill on reload"| Gateway
 ```
 
-- **stdout** — always, unmodified; the CloudWatch fallback and the source for metric
-  filters (see [Runtime Telemetry](operations.md#runtime-telemetry)).
-- **OTLP** — best-effort to `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/logs`, `/v1/traces`),
-  landing in **Loki** and **Tempo** as the long-term store. SDK-native gen-ai spans
+- **stdout.** Always, unmodified. This is the CloudWatch fallback and the source for
+  metric filters (see [Runtime Telemetry](operations.md#runtime-telemetry)).
+- **OTLP.** Best-effort to `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/logs`, `/v1/traces`),
+  landing in Loki and Tempo as the long-term store. SDK-native gen-ai spans
   come from the AI SDK v7 `@ai-sdk/otel` integration, registered against the same
   tracer at init (`registerTelemetry(new OpenTelemetry({ tracer }))`); inputs/outputs
   are not recorded on those spans because the harness's own span rows already carry
   the redacted payloads.
-- **NATS** — INFO/WARN/ERROR only, and only when an _observability context_ is set
+- **NATS.** INFO/WARN/ERROR only, and only when an _observability context_ is set
   (project + stage + endpoint id). This is the live path the dashboard tails.
 
 A failure in any one sink never blocks the others, and never throws into the agent path.
@@ -62,8 +63,8 @@ v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
 The durable **`OBSERVABILITY`** JetStream stream binds `v1.*.*.*.logs.>` and
-`v1.*.*.*.traces.>`. Unlike the `WS_RESPONSES` resume buffer, it is **not** purged on
-persist — it is the recent-history buffer (file-backed, ~2 h window) the gateway
+`v1.*.*.*.traces.>`. Unlike the `WS_RESPONSES` resume buffer, it is not purged on
+persist. It is the recent-history buffer (file-backed, ~2 h window) the gateway
 replays on connect before tailing live. Loki/Tempo own everything older. See
 [WebSocket Gateway](architecture.md#websocket-gateway-durable-nats-jetstream) for the
 stream mechanics.
@@ -106,7 +107,7 @@ flowchart TD
   Coll --> Ops["operator view (Grafana only)"]
 ```
 
-**1 — Tool output on the trace (already live, every provider).** When the agent runs a
+**1. Tool output on the trace (already live, every provider).** When the agent runs a
 tool inside a sandbox, the harness does not log the output. It puts the redacted result
 on the `tool.call` span as `tool.output`, capped at 32k characters, so it lands in Tempo
 and the dashboard Tracing tab under the model step that triggered it. Lifecycle actions
@@ -117,9 +118,9 @@ emits one INFO line when a background job starts, `microvm-executor.ts` and
 nothing. Output the guest writes on its own, with no tool call in front of it, is not
 captured by this path on any provider.
 
-**2 — MicroVM guest output (CloudWatch → Loki, built).** What the guest itself writes
-to stdout/stderr — the `/run` hook, detached background jobs, servers the agent started —
-goes to CloudWatch at `/broods/<stage>/microvms`. Core names the stream at launch as
+**2. MicroVM guest output (CloudWatch → Loki, built).** What the guest itself writes
+to stdout/stderr, from the `/run` hook, detached background jobs, and servers the agent
+started, goes to CloudWatch at `/broods/<stage>/microvms`. Core names the stream at launch as
 `<accountId>/<project>/<stage>/<uuid>/<mac>`; a `-` segment marks a run with no
 deployment scope (channel, cron), so that output still ships for operators but never
 indexes as a tenant. The last segment is an HMAC over the first four, keyed by the
@@ -128,7 +129,7 @@ VM role from the metadata endpoint and create any stream in the group, so only a
 core signed earns tenant labels, and a forged or unsigned one ships unlabeled. A
 CloudWatch subscription filter invokes `apps/lambda/sandbox-log-forwarder.mjs`, which
 verifies and splits the stream name into the `account_id` / `project` / `stage` resource
-attributes, redacts, and posts one OTLP/HTTP request to the cluster collector — the only
+attributes, redacts, and posts one OTLP/HTTP request to the cluster collector, the only
 external write path into Loki. The collector's per-tenant grouping and Loki's index
 labels then apply unchanged; the per-VM id rides as `sandbox_id` structured metadata
 under service `broods-sandbox`, so an ephemeral VM never becomes a new Loki stream.
@@ -144,17 +145,17 @@ backfill excludes the bridge's service, so what the Monitoring tab shows matches
 live NATS relay. The backfill looks back one day, not the deployment stream's 30: the
 sandbox filter is structured metadata, so Loki scans every chunk of the tenant in the
 window, and a month took 8 s against 0.2 s for a day. Measured end to end, a line reaches the
-screen 1–2 s after the collector accepts it; CloudWatch delivery adds a few seconds
+screen 1-2 s after the collector accepts it; CloudWatch delivery adds a few seconds
 in front of that. The forwarder and its filter are SST resources that deploy only when
 `OTEL_EXPORTER_OTLP_HEADERS` is set for the stage: the same `Authorization=Basic …`
 client line core ships with, so one credential serves both and rotates once.
 
-**3 — workdir host (not built).** workdir has no guest log stream: `sandboxd` logs to
+**3. workdir host (not built).** workdir has no guest log stream: `sandboxd` logs to
 journald and each VM keeps a Firecracker log under its jail path, and neither carries a
 tenant. When the production host lands (#89), an otel-collector-contrib on the host
 (`journald` + `filelog` receivers, OTLP out to the same collector) ships those as
-operator-only logs — `host`, `unit`, `sandbox_id`, no `account_id` — so they reach
-Grafana and never a customer dashboard. Tool output on workdir still reaches the
+operator-only logs carrying `host`, `unit` and `sandbox_id` but no `account_id`, so they
+reach Grafana and never a customer dashboard. Tool output on workdir still reaches the
 Tracing tab via path 1; there is no Logs tab source for workdir until then.
 
 ## Security
@@ -164,8 +165,8 @@ Tracing tab via path 1; there is no Logs tab source for workdir until then.
   any sink sees it. The same redaction applies to all three sinks.
 - **Scoped credentials never enter a log.** The short-lived STS mount creds delivered
   to a sandbox are not logged by the harness. The MicroVM forwarder (path 2) applies the
-  pattern half of that redaction — `Bearer`/`Basic` values, query-string secrets,
-  `fp_agent_*`, `fp_sts_*` — but it cannot know a run's own secret values, so a guest
+  pattern half of that redaction to `Bearer`/`Basic` values, query-string secrets,
+  `fp_agent_*` and `fp_sts_*`, but it cannot know a run's own secret values, so a guest
   that echoes an injected secret prints it, to the owning account's view and to
   operators. Sandbox stdout is untrusted; treat it that way.
 - The NATS sink skips any task without a deployment-scoped context (channel/cron paths),

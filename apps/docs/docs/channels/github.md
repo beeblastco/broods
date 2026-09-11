@@ -1,6 +1,6 @@
 # GitHub
 
-GitHub integration allows your agent to react to GitHub events.
+A GitHub App is how the agent reaches issues, pull requests, and their comment threads.
 
 Broods uses [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github) for GitHub webhook verification, installation authentication, comment posting, reactions, thread IDs, Markdown formatting, and buffered response streaming. See Chat SDK [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), and [Streaming](https://chat-sdk.dev/docs/streaming) for the adapter capabilities.
 
@@ -46,7 +46,7 @@ export const myAgent = defineAgent({
 - `triggerOnIssueOpen` (optional): When `false`, the bot does not auto-trigger on new issues (`opened`, `edited`, `reopened`). Defaults to `true`. Set to `false` if you only want the bot to respond to comments (e.g. `@mention` gating via `botUserName`).
 - `triggerOnPROpen` (optional): When `false`, the bot does not auto-trigger on new pull requests (`opened`, `edited`, `reopened`). Defaults to `true`. Set to `false` if you only want the bot to respond to comments.
 
-## Runtime Behavior
+## Runtime behavior
 
 The GitHub channel accepts these webhook events:
 
@@ -55,7 +55,7 @@ The GitHub channel accepts these webhook events:
 - `issue_comment`: `created`, including pull request conversation comments
 - `pull_request_review_comment`: `created`
 
-The `triggerOnIssueOpen` and `triggerOnPROpen` options only control `opened`, `edited`, and `reopened` actions. The `assigned` action works independently — when you assign the bot to an issue or PR, it always triggers regardless of those flags. This lets you set `triggerOnIssueOpen: false` and `triggerOnPROpen: false` while still being able to manually engage the bot by assigning it.
+The `triggerOnIssueOpen` and `triggerOnPROpen` options only control `opened`, `edited`, and `reopened` actions. The `assigned` action works independently. Assign the bot to an issue or PR and it triggers regardless of those flags, so you can set `triggerOnIssueOpen: false` and `triggerOnPROpen: false` and still engage the bot by assigning it.
 
 When a comment triggers the agent, Broods fetches the issue or pull request title, body, and prior comments from GitHub and adds them as one-turn context before the model answers. This lets an agent tagged midway through an issue understand the conversation above the tag, while the model still sees the triggering comment as the user message.
 

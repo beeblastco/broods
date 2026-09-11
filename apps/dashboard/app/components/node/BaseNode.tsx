@@ -71,7 +71,7 @@ export function BaseNode({
   const zoom = useStore(zoomSelector);
   const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 
-  // Side handles must stay mounted at all times — existing mount/subagent edges attach to
+  // Side handles must stay mounted at all times. Existing mount/subagent edges attach to
   // them, and ReactFlow drops any edge whose handle disappears (edges used to vanish
   // mid-drag). Instead we gate `isConnectableEnd` so mid-drag only the sides matching the
   // drag's intent accept the drop: workspace/sandbox sides serve mounts; agent sides serve
@@ -102,7 +102,7 @@ export function BaseNode({
       : 0;
 
   // The header content is counter-scaled to stay legible when zoomed out, but CSS
-  // transforms don't reserve layout space — so we measure its unscaled height and
+  // transforms don't reserve layout space, so we measure its unscaled height and
   // reserve `height * scale` on a wrapper, keeping it clear of the status pill.
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number | null>(null);
@@ -162,7 +162,7 @@ export function BaseNode({
     >
       {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
                 handle to the node's FIRST handle (sources before targets) for the snap preview,
-                which is the left side handle — the line would visually snap to the side even
+                which is the left side handle. The line would visually snap to the side even
                 though the connection itself lands here on top. */}
       <Handle
         id="top"
@@ -173,7 +173,7 @@ export function BaseNode({
       />
 
       {/* Agents source downward edges to services. Declared before the side handles so this
-                no-id handle is the first source bound — xyflow resolves a handle-less edge to the
+                no-id handle is the first source bound. xyflow resolves a handle-less edge to the
                 first source handle, so plain agent→service edges land here, not on a side. */}
       {nodeType === "agent" && (
         <Handle
@@ -206,7 +206,7 @@ export function BaseNode({
       {(nodeType === "agent" || nodeType === "sandbox") &&
         (() => {
           // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-          // when network egress is allowed — core models this as `network.mode`
+          // when network egress is allowed. Core models this as `network.mode`
           // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
           // fall back to a muted, slashed globe when off.
           const networkMode = (
@@ -281,7 +281,7 @@ export function BaseNode({
             </div>
           )}
 
-          {/* B — workspace effective-sandbox state from the cascade */}
+          {/* B: workspace effective-sandbox state from the cascade */}
           {workspaceState && (
             <div className="mt-1.5 flex items-center gap-1.5 text-[11px] min-w-0">
               {workspaceState.kind === "readonly" ? (
@@ -319,7 +319,7 @@ export function BaseNode({
             </div>
           )}
 
-          {/* F — shared across multiple agents */}
+          {/* F: shared across multiple agents */}
           {sharedAgentCount >= 2 && (
             <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
               <Users className="size-3 shrink-0" />

@@ -1,5 +1,5 @@
 /**
- * Memory tool — saves one durable fact as a markdown file in the workspace's
+ * Memory tool. Saves one durable fact as a markdown file in the workspace's
  * memory/ folder and keeps memory/MEMORY.md as the index of every memory.
  * Entries carry YAML frontmatter (name, description, metadata) where
  * metadata.originSessionId records the conversation scope the fact was learned
@@ -118,7 +118,7 @@ Usage notes:
           // is REPLACED (matched by its anchored defining line), so re-saving a
           // title updates the summary future turns see instead of keeping the
           // stale line. The workspace is a mountpoint-s3 FUSE mount, which rejects
-          // O_APPEND and rename() with EPERM — every file op here must be a whole
+          // O_APPEND and rename() with EPERM, so every file op here must be a whole
           // read or a single create/truncate write stream: the surviving index
           // lines are captured into a shell variable, then the index is rewritten
           // in one `>` pass. No `>>`, no `mv`, no temp files.
@@ -151,7 +151,7 @@ Usage notes:
 
 // kebab-case file slug from the title (diacritics folded), capped so index lines
 // and paths stay short. A capped or empty slug is no longer unique per title, so
-// those get a stable hash suffix — distinct titles must never share a file.
+// those get a stable hash suffix. Distinct titles must never share a file.
 export function memorySlug(title: string): string {
   const kebab = title
     .normalize("NFKD")

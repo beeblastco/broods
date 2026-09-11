@@ -54,7 +54,7 @@ function AccountDangerPanel() {
   return (
     <>
       <Section
-        title="Delete Account"
+        title="Delete account"
         description="Permanently delete your account and all associated data. This schedules deletion after 7 days."
         danger
       >

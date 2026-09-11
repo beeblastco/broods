@@ -496,8 +496,9 @@ function extractSearchToolFields(
 /**
  * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
  * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
- * so options kept in separate stores — reasoning in `extraConfig.model` vs other
- * provider options in the flat column — don't clobber each other. `overlay` wins
+ * so options kept in separate stores, reasoning in `extraConfig.model` versus
+ * other provider options in the flat column, don't clobber each other. `overlay`
+ * wins
  * on direct key conflicts.
  */
 function mergeProviderOptions(

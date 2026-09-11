@@ -36,7 +36,7 @@ export function CommandMenu(): React.JSX.Element {
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => setOpen(false)}>
             <Search />
-            <span>Find Node</span>
+            <span>Find node</span>
           </CommandItem>
         </CommandGroup>
       </CommandList>

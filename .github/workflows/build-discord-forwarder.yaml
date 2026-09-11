@@ -73,7 +73,7 @@ jobs:
 
   # One release, not one per stage: it serves every config plane, so there is no
   # `-dev` variant to choose between. Rolled from `dev` alone because `main` only
-  # ever fast-forwards from it — a `main` build is never newer than the `dev` one
+  # ever fast-forwards from it. A `main` build is never newer than the `dev` one
   # that already shipped, so rolling on both would reinstall older code on
   # promote.
   rollout:

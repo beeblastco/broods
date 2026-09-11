@@ -2,7 +2,7 @@
 
 Broods is a serverless AI agent platform. You define agents, workspaces, sandboxes, skills, and channels as typed TypeScript resources, sync them to the cloud with a CLI, and invoke them over a typed SDK or raw HTTP.
 
-This guide uses the **managed service** at `gateway.broods.app`. If you prefer to self-host, see [Deployment](deployment.md) first, then return here — the CLI and SDK workflow is identical.
+This guide uses the **managed service** at `gateway.broods.app`. If you prefer to self-host, see [Deployment](deployment.md) first, then return here. The CLI and SDK workflow is identical.
 
 ---
 
@@ -11,9 +11,9 @@ This guide uses the **managed service** at `gateway.broods.app`. If you prefer t
 - [Bun](https://bun.sh/) 1.2+ or [Node](https://nodejs.org/) 22.15+ (the CLI runs on either)
 - A free [Broods dashboard](https://dashboard.broods.app) account
 
-When you create your account or log in for the first time, Broods automatically provisions your API access. A one-time banner displays your account API secret (`fp_acct_...`) — copy it immediately, as it is shown only once. You can rotate it later under **Org Settings → API Access**.
+Creating an account or logging in for the first time provisions your API access. A one-time banner shows your account API secret (`fp_acct_...`). Copy it right then, it is never shown again. You can rotate it later under Org Settings, API Access.
 
-## 1. Install the CLI & SDK
+## 1. Install the CLI and SDK
 
 ```bash
 bun add -g broods
@@ -35,7 +35,7 @@ bun add broods ai
 
 `ai` is the AI SDK the `broods` types build on; a global CLI install does not need it, a project that imports `defineAgent` does.
 
-## 2. Set Your Model Secret
+## 2. Set your model secret
 
 Create `.env.local` with your model provider key so the CLI can auto-sync it on the first run:
 
@@ -43,21 +43,21 @@ Create `.env.local` with your model provider key so the CLI can auto-sync it on 
 echo 'OPENAI_API_KEY="sk-..."' >> .env.local
 ```
 
-## 3. Start Developing
+## 3. Start developing
 
 ```bash
 broods dev
 ```
 
-On the first run this does everything for you:
+The first run does five things:
 
-1. **Creates** a `broods/` project shell with a starter agent (same as `broods init`)
-2. **Opens your browser** to log in via WorkOS if you haven't authenticated yet (same as `broods login`)
-3. **Auto-pushes** `OPENAI_API_KEY` from `.env.local` to the cloud
-4. **Compiles and syncs** your resources to the `development` stage
-5. **Watches** `broods/` for changes and **live-tails** agent logs
+1. Creates a `broods/` project shell with a starter agent (same as `broods init`)
+2. Opens your browser to log in via WorkOS if you haven't authenticated yet (same as `broods login`)
+3. Pushes `OPENAI_API_KEY` from `.env.local` to the cloud
+4. Compiles and syncs your resources to the `development` stage
+5. Watches `broods/` for changes and live-tails agent logs
 
-If your repo works with a coding agent (it has a `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agent/`, or `.agents/`), `dev` and `init` also install the broods skill at `.agents/skills/broods/`, where any agent harness can pick it up — instructions that teach the agent the CLI, docs, and SDK workflow, like Convex's AI rules files. It is written once and your edits to it are preserved; only `broods init --force` rewrites it along with the other starter files.
+If your repo works with a coding agent (it has a `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.agent/`, or `.agents/`), `dev` and `init` also install the broods skill at `.agents/skills/broods/`, where any agent harness reads it. The skill teaches the agent the CLI, the docs, and the SDK workflow, like Convex's AI rules files. It is written once and your edits to it survive; only `broods init --force` rewrites it, along with the other starter files.
 
 ```text
 Created starter broods/
@@ -66,7 +66,6 @@ Deploy target: my-agent-project/development
   create  sandbox lambda-sandbox
 Synced 2 resources to my-agent-project/development
 Wrote BROODS_API_KEY (fp_env_...) to .env.local
-· live logs — Ctrl+C to stop
 ```
 
 The starter agent created in `broods/index.ts`:
@@ -101,7 +100,7 @@ export const myAgent = defineAgent({
 
 > `broods init` and `broods login` are also available as standalone commands if you prefer to run them separately.
 
-## 4. Run Your Agent
+## 4. Run your agent
 
 ```bash
 broods run my-agent "Hello, who are you?"
@@ -110,7 +109,7 @@ broods run my-agent "Hello, who are you?"
 This opens a terminal UI chat session and sends your prompt as the first turn.
 Reasoning streams as it arrives, tool calls render as cards with their input and
 output, and tools that need approval stop for a `y`/`n` answer. The session stays
-open for follow-ups — press Esc or Ctrl+C to leave.
+open for follow-ups. Press Esc or Ctrl+C to leave.
 
 Leave the prompt off to start an empty session:
 
@@ -125,7 +124,7 @@ stay scriptable:
 broods run my-agent "Hello, who are you?" > answer.txt
 ```
 
-## 5. Programmatic Calls
+## 5. Programmatic calls
 
 Import the generated API references and the SDK client in your application code. `broods/_generated/` is empty until a sync runs, so `broods dev` (or `broods dev --once`) has to have completed at least once before `api` resolves:
 
@@ -158,7 +157,7 @@ const status = await job.wait();
 console.log(status.response);
 ```
 
-## 6. Deploy to Production
+## 6. Deploy to production
 
 ```bash
 broods deploy
@@ -166,7 +165,7 @@ broods deploy
 
 This syncs to your `production` stage and writes the production runtime key to `.env.local`.
 
-## 7. Check Where You Are Pointed
+## 7. Check where you are pointed
 
 A sync lands in an organization, a project, and a stage. The organization lives on
 your CLI login token and is shared by every project directory on the machine, so
@@ -192,16 +191,16 @@ Switch organizations with `broods org use <name>`, and work on a copy of an
 existing stage with `broods stage create staging --from development`. See the
 [CLI reference](cli.md) for the full picture.
 
-## Next Steps
+## Next steps
 
-- [CLI](cli.md) — Command reference, organizations, and stages
-- [Resource Configuration](resources.md) — Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, MCP servers, and cron jobs
-- [SDK & Runtime API](sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
-- [Workspace & Sandbox](workspace/index.md) — Persistent files, compute, and permission modes
-- [External Tools](tools.md) — Provider-defined tools and MCP servers
-- [Skills](skills.md) — Instruction bundles and the skill panel
-- [Channels](channels/index.md) — Telegram, Discord, Slack, GitHub, Pancake, and Zalo
-- [Sub Agents](sub-agents.md) — Parallel child agents
-- [Cron Jobs](crons.md) — Scheduled agent runs
-- [Architecture](architecture.md) — How the platform works under the hood
-- [API Reference](/api-reference) — Interactive OpenAPI docs
+- [CLI](cli.md). Command reference, organizations, and stages.
+- [Resource Configuration](resources.md). Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, MCP servers, and cron jobs.
+- [SDK & Runtime API](sdk.md). Typed SDK usage, curl equivalents, and WebSocket streaming.
+- [Workspace & Sandbox](workspace/index.md). Persistent files, compute, and permission modes.
+- [External Tools](tools.md). Provider-defined tools and MCP servers.
+- [Skills](skills.md). Instruction bundles and the skill panel.
+- [Channels](channels/index.md). Telegram, Discord, Slack, GitHub, Pancake, and Zalo.
+- [Sub Agents](sub-agents.md). Parallel child agents.
+- [Cron Jobs](crons.md). Scheduled agent runs.
+- [Architecture](architecture.md). The request path from gateway to sandbox, and where each record is stored.
+- [API Reference](/api-reference). Interactive OpenAPI docs.

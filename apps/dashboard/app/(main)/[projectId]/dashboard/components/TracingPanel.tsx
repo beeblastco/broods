@@ -45,7 +45,7 @@ const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
 ];
 
 // Collapsible payload sections. Labels spell out the direction so it is clear
-// what the model produced vs. what it was shown — the raw attribute keys
+// what the model produced vs. what it was shown. The raw attribute keys
 // (model.tool_results vs tool.output) read as duplicates otherwise. The per-tool
 // `tool.output` on each child span is the authoritative "what the model saw", so
 // the step-level model.tool_results is intentionally omitted as a confusing dupe.
@@ -71,7 +71,7 @@ interface KindTheme {
 }
 
 // One hue per span kind, checked for colorblind (protan/deutan) separation on
-// both surfaces — including against the error-bar red that can replace a root
+// both surfaces, including against the error-bar red that can replace a root
 // bar. Badge text keeps the 700-on-light / 300-on-dark convention; bars step
 // deeper where a hue would wash out on one surface (task keeps violet-500 on
 // dark: violet-400 collapses into model.step's blue-400 under deuteranopia).
@@ -163,8 +163,8 @@ function spanKey(span: ObservabilitySpanRow): string {
 }
 
 // A root task/subtask still "running" past this likely never reported its
-// terminal span (crash/freeze or a lost publish), so we treat it as finished —
-// otherwise the spinner spins forever.
+// terminal span (crash/freeze or a lost publish), so we treat it as finished.
+// Otherwise the spinner spins forever.
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
 /** Whether a root task/subtask is genuinely still running (bounded by freshness). */
@@ -182,7 +182,7 @@ function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
 
 // The hue carries meaning here, so each tone needs both themes: the 300/400
 // shades only clear WCAG AA on the dark card, the 700 shades only on the light.
-/** Text color per span status — shared cue with the logs panel. */
+/** Text color per span status. Same cue as the logs panel. */
 function statusColor(status: ObservabilitySpanRow["status"]): string {
   if (status === "running") return "text-sky-700 dark:text-sky-400";
   if (status === "error") return "text-red-700 dark:text-red-400";
@@ -272,7 +272,7 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 
 // Only a running span gets an icon (the spinner). Finished/errored/stale state is
 // already carried by the Status column, so a static tick/cross would just be
-// redundant chrome — keep the tree minimal.
+// redundant chrome. Keep the tree minimal.
 function SpanStatusIcon({
   span,
   taskRunning,
@@ -481,7 +481,7 @@ function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
       {span.kind === "model.step" && ttftMs !== undefined && (
         <div className="grid gap-1.5 text-[11px] font-mono text-muted-foreground">
           {/* Step time, split so a slow step shows where it went. "Streaming" is
-              ONLY model token generation — tool execution is the separate "tool
+              ONLY model token generation. Tool execution is the separate "tool
               wait" (and the child tool spans), never folded into streaming. */}
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <TimingChip label="time to first token" ms={ttftMs} />
@@ -524,7 +524,7 @@ function SpanDetails({ span }: { span: ObservabilitySpanRow }) {
         </div>
       )}
       {/* Flat sections: a clickable header row over a soft-tinted payload surface.
-          No bordered card around each one — that nested box-in-box otherwise. */}
+          No bordered card around each one, which would nest a box in a box. */}
       {details.length > 0 && (
         <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
           {details.map(({ key, label, value }) => (
@@ -714,7 +714,7 @@ function SpanRow({
  * `enclosingRootLive` is whether the nearest enclosing root run is live. A subagent
  * subtask is itself a root: it runs independently (the parent task pass can finalize
  * while the subagent is still working), so it is judged by its own freshness, and its
- * descendants inherit the subtask's liveness — not the parent task's.
+ * descendants inherit the subtask's liveness, not the parent task's.
  */
 function renderSpanRows(
   span: ObservabilitySpanRow,
@@ -866,13 +866,13 @@ export function TracingPanel({
     return null;
   }, [groups, selectedKey]);
 
-  // New tasks (including running ones) arrive collapsed — the row already shows
+  // New tasks (including running ones) arrive collapsed. The row already shows
   // live status and a pulsing bar, and a tree that pops open on every new task is
   // noisy. The user opens a task to watch its steps. (The log "View trace"
   // click-through below still expands its one target on demand.)
 
-  // Reset paging when the filters change so "Load more" starts from the top —
-  // render-time adjustment, not an effect.
+  // Reset paging when the filters change so "Load more" starts from the top.
+  // Render-time adjustment, not an effect.
   const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
   const [prevFilterSignature, setPrevFilterSignature] =
     useState(filterSignature);

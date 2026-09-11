@@ -25,7 +25,7 @@ export const agent = defineAgent({
   },
   // Human-handoff filter: drop inbound messages on conversations a staff member
   // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
-  // the old baked-in `ignoreTagIds` channel option — the same behavior, now
+  // the old baked-in `ignoreTagIds` channel option, the same behavior, now
   // owned by you. Handlers run in an isolate and must be self-contained, so the
   // handoff tag ids are inlined rather than read from env or a closure.
   hooks: {

@@ -112,13 +112,13 @@ export interface SlackSource {
  * for models that put the whole answer in a tool-call step.
  *
  * Slack's chat.appendStream APPENDS every task_update's `details` to the task
- * card — it never replaces. Reasoning must therefore stream as new-suffix
+ * card, it never replaces. Reasoning must therefore stream as new-suffix
  * deltas: sending the accumulated text re-appends each snapshot and renders
  * "TheThe user isThe user is asking…" (broods#115 follow-up).
  *
  * Every yielded task_update costs one blocking Slack API round trip (the chunk
  * path in ChatStreamer flushes immediately), and this generator is the model
- * stream's only consumer — so per-delta reasoning yields throttle generation to
+ * stream's only consumer, so per-delta reasoning yields throttle generation to
  * Slack's pace. Reasoning deltas are therefore coalesced and flushed at most
  * once per REASONING_FLUSH_INTERVAL_MS.
  */
@@ -167,7 +167,7 @@ export async function* toSlackStream(
 
   // Adapters reuse the same reasoning id (e.g. `reasoning-0`) on every step,
   // which would merge all thinking segments into one task pinned wherever the
-  // first was created — the card then shows all thinking first and every tool
+  // first was created. The card then shows all thinking first and every tool
   // after, instead of the real execution order. A per-segment task id keeps
   // each thinking burst interleaved with the tool tasks.
   const reasoningTaskId = (rawId: unknown, fresh: boolean): string => {
@@ -366,7 +366,7 @@ export async function* toSlackStream(
   }
 
   // Trailing stepText covers streams that end without a finish-step event.
-  // When no kept step produced visible text — whitespace-only counts as none —
+  // When no kept step produced visible text, and whitespace-only counts as none,
   // fall back to the last interim text so a model that answered only inside a
   // tool-call step still gets a reply out.
   const trailingText = stepText.trim()
@@ -990,8 +990,8 @@ function getSlackReplyThreadTs(
 /**
  * The files on a Slack message, as Chat SDK attachments.
  *
- * Slack never puts the bytes in the webhook — only a `url_private` that answers
- * nothing without the bot token — so each attachment carries a reader that adds
+ * Slack never puts the bytes in the webhook, only a `url_private` that answers
+ * nothing without the bot token, so each attachment carries a reader that adds
  * the bearer header. The Chat SDK builds the same thing, but only along its own
  * `handleWebhook` path, which this adapter does not take: it parses the raw
  * event so it can gate on channel, sender and mention before anything else runs.
@@ -1070,7 +1070,7 @@ async function fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
     }
     if ((response.headers.get("content-type") ?? "").includes("text/html")) {
       throw new Error(
-        "Slack returned its login page instead of the file — the app needs the files:read scope",
+        "Slack returned its login page instead of the file. The app needs the files:read scope",
       );
     }
 
@@ -1138,8 +1138,8 @@ function isSupportedSlackEvent(event: SlackEvent): boolean {
   if (event.bot_id) {
     return false;
   }
-  // Every subtype but one is a message about a message — a join, a pin, an edit
-  // — and answering those is noise. `file_share` is the exception: it is how
+  // Every subtype but one is a message about a message, a join, a pin, an edit,
+  // and answering those is noise. `file_share` is the exception: it is how
   // Slack delivers an ordinary message that happens to carry an upload, so
   // rejecting it dropped every file anyone ever sent the agent.
   if (event.subtype && event.subtype !== SLACK_FILE_SHARE_SUBTYPE) {

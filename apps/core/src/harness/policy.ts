@@ -355,7 +355,7 @@ export function policyInputForTool(
       ? (input as Record<string, unknown>)
       : {};
   // A bash call that runs on the standalone sandbox touches no workspace, so it must
-  // not be described to the policy as if it did — a workspace-scoped rule would then
+  // not be described to the policy as if it did. A workspace-scoped rule would then
   // authorize a run that never lands there. Resolve the same target execution will.
   const onAgentSandbox =
     toolName === "bash" &&

@@ -1,6 +1,6 @@
-# Channel Records
+# Channel records
 
-A channel record is one account-scoped row per real place a team talks — a Slack
+A channel record is one account-scoped row per real place a team talks: a Slack
 channel, a Discord channel, a repository. It binds that place to an agent and
 carries the instructions, workspaces, policies and roles scoped to it.
 
@@ -25,7 +25,7 @@ request and sends the reply, because the reply must come from the app that
 received it. The record then decides who runs.
 
 If two agents share one provider app, both verify, and the lower agent id
-receives the request — the order is fixed so it cannot vary between requests,
+receives the request. The order is fixed so it cannot vary between requests,
 and the run is logged. That tie is what a channel record is for; do not rely on
 which agent wins it.
 
@@ -47,8 +47,8 @@ flowchart TD
 A lookup that finds nothing falls back to the credential holder, so an
 unregistered channel behaves exactly as it did before records existed.
 
-A lookup that **fails** is different: the turn is refused rather than run,
-because executing without a record's policies and `denyTools` would be an
+A lookup that **fails** is different: core refuses the turn rather than running
+it, because executing without a record's policies and `denyTools` would be an
 escalation. The channel path already needs the control plane to admit ingress,
 so this costs no availability that is not already lost.
 
@@ -57,38 +57,37 @@ so this costs no availability that is not already lost.
 A record **narrows and adds**. It never grants capability the agent lacks, so
 reading an agent still tells you its ceiling.
 
-| Field           | Effect                                                           |
-| --------------- | ---------------------------------------------------------------- |
-| `instructions`  | Appended after the agent's own system prompt                     |
-| `workspaces`    | Selects from the agent's own; one it does not attach is ignored  |
-| `policies`      | Unioned with the agent's; each policy carries its own mode       |
-| `denyTools`     | Withholds tools here, after the set is built — covers `bash` too |
-| `partition`     | Splits the workspace folder (`shared` or `conversation`)         |
-| `replyIn`       | Where the reply lands — `thread` or `source` (Slack only)        |
-| `sandboxImages` | Images the agent may stand a sandbox up from for a thread here   |
-| `tagRoles`      | Named groups of people, readable from policy as `userRoles`      |
+| Field           | Effect                                                          |
+| --------------- | --------------------------------------------------------------- |
+| `instructions`  | Appended after the agent's own system prompt                    |
+| `workspaces`    | Selects from the agent's own; one it does not attach is ignored |
+| `policies`      | Unioned with the agent's; each policy carries its own mode      |
+| `denyTools`     | Withholds tools here, after the set is built. Covers `bash` too |
+| `partition`     | Splits the workspace folder (`shared` or `conversation`)        |
+| `replyIn`       | Where the reply lands: `thread` or `source` (Slack only)        |
+| `sandboxImages` | Images the agent may stand a sandbox up from for a thread here  |
+| `tagRoles`      | Named groups of people, readable from policy as `userRoles`     |
 
 Provider, model and credentials stay on the agent and are never touched.
 
-A workspace is capability, not configuration: attaching one is what materialises
-the sandbox file tools. So a record may only name a workspace the agent already
-attaches — it can mount that workspace under a channel-specific name, but a
-`workspaceId` the agent does not carry is dropped and logged.
+A workspace is capability, not configuration: attaching one is what creates the
+sandbox file tools. So a record may only name a workspace the agent already
+attaches. It can mount that workspace under a channel-specific name, but core
+drops and logs a `workspaceId` the agent does not carry.
 
 `replyIn` decides where the answer appears. `thread` opens a thread
 on the message that tagged the agent, so the whole exchange stays out of the
 channel; `source` answers wherever the message came from, and threads only when
-the message itself arrived in a thread. It applies to Slack alone — every other provider
-delivers the reply to the one place the message came from, so there is no
-choice to express. Unset, a Slack reply threads in a channel and answers at the
+the message itself arrived in a thread. It applies to Slack alone. Every other
+provider delivers the reply to the one place the message came from, so there is
+no choice to express. Unset, a Slack reply threads in a channel and answers at the
 source in a DM.
 
-`denyTools` is applied to the finished tool set rather than to `config.tools`,
-so it reaches every tool the agent ended up with: built-ins, [custom
+`denyTools` applies to the finished tool set rather than to `config.tools`, so
+it reaches every tool the agent ended up with: built-ins, [custom
 tools](../tools.md) by their model-facing name, and sandbox tools such as `bash`
-and `read` — the last of which are derived from the attached workspaces and
-never appear in `config.tools` at all. Naming a tool the agent does not have is
-ignored.
+and `read`. Those last two come from the attached workspaces and never appear in
+`config.tools` at all. Naming a tool the agent does not have is ignored.
 
 ## Creating a record
 
@@ -123,7 +122,7 @@ export const productEng = defineSlackChannel({
 
 Every agent in `agents` runs when a message arrives. `reply: false` runs one with a silenced channel, so it can work without speaking in the room. Omit `agents` entirely and the connection's own agent answers.
 
-Nothing points back at a channel — the connection does not list its channels, and the agent does not either. That is what lets a channel name its own app's agent without a circular reference.
+Nothing points back at a channel. The connection does not list its channels, and the agent does not either. That is what lets a channel name its own app's agent without a circular reference.
 
 The per-platform id field is named for what the provider calls it: `channelId` for Slack and Discord, `repo` for GitHub, `chatId` for Telegram and Zalo, `conversationId` for Pancake. All of them are stored as `externalId`.
 
@@ -184,20 +183,20 @@ place is rejected so the webhook lookup stays unambiguous.
 
 Reach and policy are two different gates, and they are not interchangeable.
 
-**Where the agent listens** is the rooms declared as channels. That list is
-matched while the webhook is parsed, before any record read or policy call, and
-an undeclared room is dropped silently. It is the outer boundary: a policy runs
+**Where the agent listens** is the rooms declared as channels. The adapter
+matches that list while parsing the webhook, before any record read or policy
+call, and drops an undeclared room silently. It is the outer boundary: a policy runs
 inside it and can only narrow it further, never widen it. To widen, declare
 another channel or set `allowedChannelIds: ["*"]` on the connection.
 
 **Who may tag the agent here.** `agent.invoke` is evaluated before the turn
 starts, and a refusal reads like a sentence in the channel rather than a stack
-trace. It is not free: the record has been read, the agent's deployment may have
-been loaded, every referenced policy document is fetched, and the decision is an
-HTTP call to the policy engine. It also answers back, which is right for "you
-may not ask me that" and wrong for "this room is not mine" — that is what the
-declared channels are for. In `audit` mode the same decision is logged and the
-turn still runs, which is how a rule is rolled out on a live channel.
+trace. It is not free: core reads the record, may load the agent's deployment,
+fetches every referenced policy document, and makes an HTTP call to the policy
+engine for the decision. It also answers back, which is right for "you may not
+ask me that" and wrong for "this room is not mine", which is what the declared
+channels are for. In `audit` mode core logs the same decision and the turn still
+runs, which is how you roll a rule out on a live channel.
 
 **What it may reach here.** `tagRoles` become `userRoles` on the policy input,
 alongside `channelId`, `threadId`, `userId` and `userName`. A rule can then

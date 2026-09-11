@@ -1,12 +1,12 @@
 /**
- * Example: one shared workspace, three agents — a writer (sandbox) plus two read-only
- * readers that differ only in HOW they read via declarative broods resources.
+ * Example: one shared workspace, three agents. A writer (sandbox) plus two
+ * read-only readers that differ only in HOW they read via declarative broods
+ * resources.
  */
 
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
 async function runAgent(

@@ -218,7 +218,7 @@ describe("createTools", () => {
       denyTools: ["bash", "neverRegistered"],
     });
 
-    // bash comes from the sandbox, not config.tools — naming it there throws
+    // bash comes from the sandbox, not config.tools. Naming it there throws
     // "not a supported tool", so the deny list has to apply to the built set.
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
@@ -242,7 +242,7 @@ describe("createTools", () => {
     }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    // Shape produced by JSON.stringify(google.tools.googleSearch({...})) — the
+    // Shape produced by JSON.stringify(google.tools.googleSearch({...})). The
     // lazy schemas drop out, so only `args` is meaningful.
     const tools = await createTools(createToolContext(googleSearchMock), {
       tools: {
@@ -421,7 +421,7 @@ describe("createTools", () => {
     ]);
     // write preserves the real default workspace (ro) instead of silently selecting the
     // later writable one. Because ro is read-only there is no sandbox to approve against,
-    // so omitting workspace does NOT prompt — it falls straight through to a clean
+    // so omitting workspace does NOT prompt. It falls straight through to a clean
     // read-only error.
     expect(await needsApproval(tools.write)).toBe(false);
     await expect(

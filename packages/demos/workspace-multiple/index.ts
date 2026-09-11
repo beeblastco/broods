@@ -5,7 +5,6 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
 async function runAgent(label: string, input: string): Promise<void> {

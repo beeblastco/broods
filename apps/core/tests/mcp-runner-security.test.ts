@@ -63,8 +63,8 @@ async function invokeHandler(
   // Read the response slowly against a small buffer to force the handler's
   // backpressure path, where a paused stdout can outlive the child's exit.
   throttleMs = 0,
-  // Address the bundle the way core does in production — a presigned GET the
-  // handler resolves — instead of inlining the bytes in the invoke event.
+  // Address the bundle the way core does in production, a presigned GET the
+  // handler resolves, instead of inlining the bytes in the invoke event.
   bundleAddress?: "served" | { url: string },
 ): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
@@ -255,7 +255,7 @@ describe("mcp-runner bundle addressing", () => {
 describe("mcp-runner response delivery", () => {
   it("loses nothing when the reader is slower than the response", async () => {
     // Backpressure pauses child stdout, and a paused pipe still holds data when
-    // the child exits — so finalizing on "exit" silently truncates the run.
+    // the child exits, so finalizing on "exit" silently truncates the run.
     const bundle = [
       `export default () => new Response(JSON.stringify({`,
       `  pad: "x".repeat(600_000),`,

@@ -1,5 +1,5 @@
 /**
- * Glob tool — fast file pattern matching in the workspace (supports `**`),
+ * Glob tool. Fast file pattern matching in the workspace (supports `**`),
  * returning paths sorted by modification time (newest first), Claude-Code-style.
  * Sandbox-backed workspaces match through the mount; a read-only workspace lists
  * through a service-managed read-only mount by default (readMount), or directly

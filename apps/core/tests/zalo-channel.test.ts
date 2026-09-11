@@ -334,7 +334,7 @@ describe("zalo channel adapter", () => {
     });
 
     // Zalo only ever sends .aac, so a different extension means we do not know
-    // what the file is — the link goes over as text and nothing is downloaded.
+    // what the file is. The link goes over as text and nothing is downloaded.
     expect(await parsedContent(adapter, mp3)).toBe(
       "Voice message: https://zalo.example/note.mp3",
     );

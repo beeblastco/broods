@@ -27,7 +27,7 @@ export const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
 /**
  * Redeem a capability link: mint a presigned S3 URL and redirect to it. The
- * signed URL never touches a chat client, which is the whole point — an unknown,
+ * signed URL never touches a chat client, which is the whole point. An unknown,
  * expired or revoked token is a flat 404 so the route cannot be used as an oracle.
  */
 export async function handleDownloadRedeemRoute(
@@ -77,7 +77,7 @@ export async function handleDownloadRedeemRoute(
 
 /**
  * Mint a capability link for one workspace file. Returns the token and the path
- * to join to the base URL the caller reached us on — the config plane sits behind
+ * to join to the base URL the caller reached us on. The config plane sits behind
  * the gateway, which strips Host, so it cannot know its own public origin.
  */
 export async function handleWorkspaceDownloadLinkRoute(

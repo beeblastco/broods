@@ -10,7 +10,7 @@ const modules = import.meta.glob("../**/*.ts");
 
 const ENDPOINT_ID = "ep-usage-test";
 
-// 2026-01-15T13:07:30Z — misaligned with every grain so the three floors differ.
+// 2026-01-15T13:07:30Z, misaligned with every grain so the three floors differ.
 const FINISHED_AT = Date.UTC(2026, 0, 15, 13, 7, 30);
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;

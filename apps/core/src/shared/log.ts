@@ -1,6 +1,6 @@
 /**
- * Shared logging helpers. Every line is redacted here — the single chokepoint —
- * then emitted in order: stdout (CloudWatch fallback, all levels), OTLP
+ * Shared logging helpers. This module redacts every line at the single chokepoint,
+ * then emits it in order: stdout (CloudWatch fallback, all levels), OTLP
  * (best-effort, all levels), and NATS (INFO/WARN/ERROR only, requires an
  * observability context from setObservabilityContext()).
  */
@@ -295,13 +295,13 @@ function emit(
       : {}),
   };
 
-  // 1. stdout — always, unmodified entry
+  // 1. stdout: always, unmodified entry
   process.stdout.write(JSON.stringify(entry) + "\n");
 
-  // 2. OTLP — best-effort; emitOtelLog never throws
+  // 2. OTLP: best-effort; emitOtelLog never throws
   emitOtelLog(level, entry);
 
-  // 3. NATS — INFO/WARN/ERROR only, context must be set
+  // 3. NATS: INFO/WARN/ERROR only, context must be set
   if (level !== "DEBUG" && ctx) {
     const obsEntry: ObservabilityLogEntry = {
       ts: ts,

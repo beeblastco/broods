@@ -1,9 +1,9 @@
 /**
  * S3-backed workspace filesystem operations for the Convex config plane.
  * Shared by the dashboard actions (workspaceFilesPublic)
- * and the public config HTTP surface (awsWorkspaceFiles). Buckets, namespaces
- * and limits match core's workdir mount exactly — including a workspace that
- * brings its own bucket. Node-runtime only — import exclusively from
+ * and the public config HTTP routes (awsWorkspaceFiles). Buckets, namespaces
+ * and limits match core's workdir mount exactly, including a workspace that
+ * brings its own bucket. Node-runtime only, import exclusively from
  * `"use node"` actions.
  */
 
@@ -290,7 +290,7 @@ export function filesystemBucketName(): string {
  * `resolveS3MountIdentity` / `resolveS3ReadTarget`: the managed bucket is
  * partitioned by hashed namespace and read on the config plane's own role, while
  * a bring-your-own bucket uses its own prefix and a scoped session on its role.
- * The runtime per-conversation isolation suffix is deliberately not applied — the
+ * This does not apply the runtime per-conversation isolation suffix. The
  * dashboard shows the workspace's base namespace, as it always has.
  * @param ref the workspace to resolve
  * @returns the bucket, key prefix and access to reach it

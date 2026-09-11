@@ -91,7 +91,6 @@ jobs:
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
       INPUT_STAGE: ${{ inputs.stage }}
-      # Switches behavior between local development and CI environments
       CI: "true"
       ACCOUNT_MODEL_PROVIDER: ${{ vars.ACCOUNT_MODEL_PROVIDER || 'google' }}
       ACCOUNT_MODEL_ID: ${{ vars.ACCOUNT_MODEL_ID || 'gemma-4-31b-it' }}

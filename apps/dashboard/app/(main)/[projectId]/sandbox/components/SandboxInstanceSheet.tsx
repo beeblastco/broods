@@ -119,8 +119,8 @@ export function SandboxInstanceSheet({
     instance.provider === "sandbox" || instance.provider === "lambda";
   // Only the self-hosted workdir `sandbox` provider can capture a running instance
   // into a reusable image. AWS MicroVM (`lambda`) and the third-party providers have
-  // no runtime snapshot-to-image API, so the capture action is hidden for them —
-  // their state is still preserved across idle via suspend/resume.
+  // no runtime snapshot-to-image API, so the capture action is hidden for them.
+  // Their state is still preserved across idle via suspend/resume.
   const supportsSnapshot = instance.provider === "sandbox";
   // Only a provider with its own guest log stream can be tailed, and only a
   // deployment-scoped run has lines the gateway can find.

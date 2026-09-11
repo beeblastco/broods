@@ -1,6 +1,6 @@
 "use client";
 
-/** Displays the top header bar with logo, project selector, stage selector, navigation links, and user menu. */
+/** Top header bar, rendered once by the signed-in layout. */
 import { BroodsLogo } from "@/app/components/BroodsLogo";
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { ProjectHeaderLeft } from "@/app/components/header/ProjectHeaderLeft";

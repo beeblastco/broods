@@ -400,7 +400,7 @@ export function DetailsTab({
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
-      {/* Editable name — auto-saves on blur / Enter */}
+      {/* Editable name, auto-saves on blur or Enter */}
       <div className="flex flex-col gap-1.5">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Name
@@ -490,7 +490,7 @@ export function DetailsTab({
             )}
           </div>
 
-          {/* Reasoning — budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),
+          {/* Reasoning: budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),
                         written to model.providerOptions.<provider> for the selected provider. */}
           {onUpdateModelReasoning && (
             <div className="flex flex-col gap-2">
@@ -951,7 +951,7 @@ export function DetailsTab({
         </>
       )}
 
-      {/* Channels — inbound webhook integrations on the agent's `channels` branch */}
+      {/* Channels: inbound webhook integrations on the agent's `channels` branch */}
       {agentConfig && onUpdateChannelConfig && (
         <>
           <Separator />
@@ -993,7 +993,7 @@ export function DetailsTab({
                 setRotateError(null);
                 try {
                   // Close only on a confirmed rotation. A rejected mutation or
-                  // an unconfigured stage must not read as success — the
+                  // an unconfigured stage must not read as success. The
                   // user would redeploy against a key that never changed.
                   const rotated = await onRotateKey?.();
                   if (rotated === false) {

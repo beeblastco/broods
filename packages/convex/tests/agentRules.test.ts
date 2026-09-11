@@ -163,7 +163,7 @@ describe("agent rules", () => {
         provider: { custom: { baseUrl: "https://api.example.com" } },
       }),
     ).toThrow(
-      `config.provider.custom.base_url is required (found "baseUrl" — use "base_url" or "baseURL")`,
+      `config.provider.custom.base_url is required (found "baseUrl", use "base_url" or "baseURL")`,
     );
     expect(() =>
       normalizeAgentConfig({

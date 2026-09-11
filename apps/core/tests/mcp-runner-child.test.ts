@@ -1,6 +1,6 @@
 /**
  * Hosted-MCP child runner (child-runner.mjs) tests.
- * Spawn the runner under real Node — no AWS, no native addons — and assert the
+ * Spawn the runner under real Node, with no AWS and no native addons, and assert the
  * NDJSON frames for the mcp-mode contract: fetch-handler exports (plain
  * function and { fetch } object), the serialized request/response mapping,
  * the batch protocol (#397: tagged frames per request, `end` per batch), and

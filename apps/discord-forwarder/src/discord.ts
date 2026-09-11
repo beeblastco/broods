@@ -31,8 +31,8 @@ export const FATAL_CLOSE_CODES: ReadonlyMap<number, string> = new Map([
 
 // Bun puts no deadline on `fetch`, so every outbound call here sets one. Without
 // it a peer that accepts and never answers leaves a promise pending for the life
-// of the process, and the logging on that path never runs — the message is lost
-// silently, which is the one failure mode worse than a logged failure.
+// of the process, and the logging on that path never runs, so the message is
+// lost silently, which is the one failure mode worse than a logged failure.
 export const FETCH_TIMEOUT_MS = 10_000;
 
 // Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
@@ -130,8 +130,8 @@ export function heartbeatIntervalMs(value: unknown): number {
  * `wss://gateway-us-east1-b.discord.gg`), and following that name anywhere would
  * hand the token to whoever chose it. So the host is not used as given: only its
  * leading DNS label survives, and the result is rebuilt onto a literal Discord
- * suffix. Anything else — another domain, a path, a port, a non-wss scheme —
- * answers null.
+ * suffix. Anything else answers null: another domain, a path, a port, a
+ * non-wss scheme.
  */
 export function resumeGatewayUrl(value: string): string | null {
   let url: URL;

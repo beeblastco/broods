@@ -9,7 +9,6 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.

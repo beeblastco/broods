@@ -127,7 +127,7 @@ export interface InboundMessage {
   content: UserContent;
   /**
    * Pictures, documents, voice notes and videos that arrived with the message,
-   * in the Chat SDK's own attachment shape — the same one the outbound aliases
+   * in the Chat SDK's own attachment shape, the same one the outbound aliases
    * above narrow, kept wide here because inbound is whatever the provider sent.
    *
    * Adapters name the attachment and leave the bytes alone. Parsing runs before
@@ -260,7 +260,7 @@ export function extractText(content: UserContent): string {
 
 /**
  * Builds the set a reach gate reads. No list stays null, which the gate reads
- * as open — an empty `Set` would mean the opposite, so the distinction cannot
+ * as open. An empty `Set` would mean the opposite, so the distinction cannot
  * be dropped at the call site.
  */
 export function reachSet(ids: string[] | undefined): Set<string> | null {
@@ -300,18 +300,15 @@ function simplifyErrorText(raw: string): string {
       message,
     )
   ) {
-    return "Usage limit reached — add credits or upgrade your plan, then try again.";
+    return "Usage limit reached. Add credits or upgrade your plan, then try again.";
   }
   if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
-    return "The model is busy right now — please try again in a moment.";
+    return "The model is busy right now. Try again in a moment.";
   }
   if (/timed? ?out|etimedout|econnreset|network/i.test(message)) {
-    return "The request timed out — please try again.";
+    return "The request timed out. Try again.";
   }
   message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
 
-  return (
-    message ||
-    "Something went wrong while generating a reply — please try again."
-  );
+  return message || "Something went wrong while generating a reply. Try again.";
 }

@@ -1,6 +1,6 @@
 # Pancake
 
-Pancake is an omni-channel customer service and inbox management platform. The Pancake channel adapter allows your agent to handle messages (`INBOX`) and post/page comments (`COMMENT`) directly from Pancake.
+Pancake is an omni-channel customer service and inbox platform. The channel adapter handles Pancake messages (`INBOX`) and post/page comments (`COMMENT`).
 
 ## Configuration
 
@@ -22,14 +22,14 @@ export const myAgent = defineAgent({
 });
 ```
 
-### Configuration Fields
+### Configuration fields
 
 - `pageId` (Required): The unique ID of the Pancake page.
 - `pageAccessToken` (Required): The access token generated within Pancake to authorize API calls.
-- `webhookSecret` (Required): A random value you generate. Pancake does not sign its webhooks, so the secret rides on the webhook URL instead and every request is checked against it.
-- `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, responses sent by the agent will appear as sent by this user.
+- `webhookSecret` (Required): A random value you generate. Pancake does not sign its webhooks, so the secret rides on the webhook URL instead and core checks every request against it.
+- `senderId` (Optional): The ID of the staff/user in Pancake who sends the replies. If set, the agent's replies appear as sent by this user.
 
-Register the webhook URL in Pancake with the secret as a query parameter — requests without a matching `secret` are rejected with `401`:
+Register the webhook URL in Pancake with the secret as a query parameter. A request without a matching `secret` gets a `401`:
 
 ```text
 https://<agent-service-url>/webhooks/<accountId>/pancake?secret=<webhookSecret>
@@ -37,9 +37,9 @@ https://<agent-service-url>/webhooks/<accountId>/pancake?secret=<webhookSecret>
 
 ---
 
-## Human Handoff (skipping tagged conversations)
+## Human handoff (skipping tagged conversations)
 
-The channel adapter stays generic: it does not decide which conversations to skip. Instead, every inbound message carries the conversation's Pancake tag IDs on `event.source.tagIds`, and you filter in a [`onMessageReceived` code hook](../hooks.md) — so the policy is yours to own and change.
+The channel adapter stays generic: it does not decide which conversations to skip. Instead, every inbound message carries the conversation's Pancake tag IDs on `event.source.tagIds`, and you filter in a [`onMessageReceived` code hook](../hooks.md), so the policy is yours to own and change.
 
 When staff take over a conversation in Pancake, add a tag; the hook drops the message and the agent stays quiet:
 

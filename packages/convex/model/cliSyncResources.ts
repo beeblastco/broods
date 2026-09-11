@@ -1,6 +1,6 @@
 /**
  * CLI manifest sync passes for the stage-scoped resource families: workspaces,
- * sandboxes, policies, and agents — plus the prune and single-delete paths.
+ * sandboxes, policies, and agents, plus the prune and single-delete paths.
  * Rename detection matches an unclaimed CLI-managed row whose content snapshot
  * is identical to the desired resource.
  */

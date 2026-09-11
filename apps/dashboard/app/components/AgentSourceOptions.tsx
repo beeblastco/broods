@@ -11,7 +11,6 @@ const SOURCE_OPTIONS = [
   { key: "create", label: "Create new config file", icon: FilePlus },
 ] as const;
 
-/** Renders the list of agent config source buttons. */
 export function AgentSourceOptions({
   onCreateNew,
 }: {

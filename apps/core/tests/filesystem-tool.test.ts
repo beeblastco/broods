@@ -175,7 +175,7 @@ function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-// The workspace is mounted in the agent's OWN sandbox — same record, whether the ref
+// The workspace is mounted in the agent's OWN sandbox, the same record, whether the ref
 // named it or inherited it. The agent has the run of that machine.
 function ownSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
   const sandbox = {
@@ -568,7 +568,7 @@ describe("sandbox tool set", () => {
       command: "echo report > /srv/report.txt",
     });
     expect(result).toBeString();
-    // Containment is a separate concern from durability, so `..` stays blocked —
+    // Containment is a separate concern from durability, so `..` stays blocked,
     // including embedded, where relaxing the write guard would otherwise expose it.
     await expect(
       bash.execute({ command: "cat sub/../../../etc/shadow" }),
@@ -587,8 +587,8 @@ describe("sandbox tool set", () => {
   });
 
   it("bash guards a workspace that borrows someone else's sandbox", async () => {
-    // The sandbox is the workspace's execution layer, not the agent's machine —
-    // reserved or not, the workspace is all the agent gets to keep.
+    // The sandbox is the workspace's execution layer, not the agent's machine.
+    // Reserved or not, the workspace is all the agent gets to keep.
     const bash = await tool("bash", borrowedSandboxCtx());
     await expect(
       bash.execute({ command: "echo report > /srv/report.txt" }),
@@ -674,7 +674,7 @@ describe("sandbox tool set", () => {
     );
 
     // Borrowed: the filesystem does survive between calls, and the description has
-    // to say so — the durability bullet is about outliving the reservation.
+    // to say so. The durability bullet is about outliving the reservation.
     const borrowed = await tool(
       "bash",
       borrowedSandboxCtx({ persistent: true }),
@@ -873,7 +873,7 @@ describe("read-only mount workspace (default)", () => {
 });
 
 describe("write/edit approval policy", () => {
-  it("a read-only workspace never prompts — it falls through to the clean error", async () => {
+  it("a read-only workspace falls through to the clean error instead of prompting", async () => {
     // No sandbox => nothing to approve. Without this, permissionMode defaults to
     // "ask" and the write would prompt for an approval it can never satisfy.
     await expect(
@@ -1032,7 +1032,7 @@ describe("memory tool", () => {
     );
     expect(payload.code).toContain("sync ");
     // The workspace is a mountpoint-s3 FUSE mount: O_APPEND and rename() fail
-    // with EPERM, so the index must be rebuilt in one `>` write — never `>>`,
+    // with EPERM, so the index must be rebuilt in one `>` write, never `>>`,
     // `mv`, or a temp file.
     expect(payload.code).toContain("printf '%s\\n%s\\n' \"$index_body\"");
     expect(payload.code).not.toContain(">>");

@@ -1,5 +1,5 @@
 /**
- * Predefined sandbox sizes — the canonical (vcpu, memoryMb, storageGb) catalog
+ * Predefined sandbox sizes, the canonical (vcpu, memoryMb, storageGb) catalog
  * shared by sandbox config validation, the workdir resource mapping, and the
  * Convex `sandboxInstances` mirror. Sizes are the user-facing knob (`config.size`)
  * that reconciles issue #78's tiers with each backend's real limits.

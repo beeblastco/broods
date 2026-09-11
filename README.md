@@ -6,21 +6,21 @@
 
 A serverless, multi-account AI agent harness built on Bun and AWS data-plane services. Configure agents, connect them to Telegram, Discord, Slack, GitHub, and more, and run them with your own model keys.
 
-This is the open-source engine behind [Broods](https://github.com/beeblastco). The entire stack is self-hostable — you own your data, your AWS account, and your API keys.
+This is the open-source engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
 ---
 
-## What It Is
+## What it is
 
-- **Container agent runtime** — One Bun container handles account management, streaming agent execution, webhooks, async work, and cron runs behind the gateway.
-- **Multi-tenant** — Each account has its own encrypted config, hashed API secret, and isolated data.
-- **Bring your own model** — Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
-- **Multi-channel** — Telegram, Discord, Slack, GitHub, Facebook Messenger (Pancake), and Zalo webhooks are built in.
-- **Extensible** — Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
+- **Container agent runtime.** One Bun container handles account management, streaming agent execution, webhooks, async work, and cron runs behind the gateway.
+- **Multi-tenant.** Each account has its own encrypted config, hashed API secret, and isolated data.
+- **Bring your own model.** Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
+- **Multi-channel.** Telegram, Discord, Slack, GitHub, Facebook Messenger (Pancake), and Zalo webhooks are built in.
+- **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
 
 ---
 
-## Quick Start
+## Quick start
 
 The fastest way to get running is the managed service via the Broods CLI and SDK:
 
@@ -75,12 +75,12 @@ See `packages/demos/README.md` for the full list of demos and setup steps.
 
 ## Documentation
 
-- [Getting Started](apps/docs/docs/getting-started.md) — Install the CLI, define your first agent, and run it in 5 minutes
-- [Resource Configuration](apps/docs/docs/resources.md) — Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs
-- [SDK & Runtime API](apps/docs/docs/sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
-- [Architecture](apps/docs/docs/architecture.md) — How the platform works
-- [Deployment](apps/docs/docs/deployment.md) — SST, secrets, and CI/CD
-- [API Reference](apps/docs/docs/api-reference/openapi.yaml) — OpenAPI spec
+- [Getting Started](apps/docs/docs/getting-started.md). Install the CLI, define your first agent, and run it in 5 minutes.
+- [Resource Configuration](apps/docs/docs/resources.md). Full reference for `defineAgent`, `defineSandbox`, channels, skills, tools, and cron jobs.
+- [SDK & Runtime API](apps/docs/docs/sdk.md). Typed SDK usage, curl equivalents, and WebSocket streaming.
+- [Architecture](apps/docs/docs/architecture.md). How the platform works.
+- [Deployment](apps/docs/docs/deployment.md). SST, secrets, and CI/CD.
+- [API Reference](apps/docs/docs/api-reference/openapi.yaml). OpenAPI spec.
 
 Preview the docs locally:
 
@@ -95,7 +95,7 @@ bun run docs
 Contributions are welcome. Open an issue first to align on the approach, then send a PR.
 CI and the container images pin Bun to the version in `.bun-version`. `bun upgrade`
 installs the latest stable release, which is usually that version but may run ahead
-of it. If `bun --revision` shows a canary build, use `bun upgrade --stable` — plain
+of it. If `bun --revision` shows a canary build, use `bun upgrade --stable`. Plain
 `bun upgrade` keeps a canary install on the canary channel.
 
 ```bash
@@ -111,8 +111,8 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## Community
 
-- [Discord](https://discord.gg/beeblast) — Chat with contributors
-- [GitHub Issues](https://github.com/beeblastco/broods/issues) — Bugs and feature requests
+- Chat with contributors on [Discord](https://discord.gg/beeblast).
+- File bugs and feature requests in [GitHub Issues](https://github.com/beeblastco/broods/issues).
 
 ---
 

@@ -94,7 +94,7 @@ export async function pruneChannelRecordResources(
  * Channel records name agents, workspaces and policies by resource name, so this
  * runs after those are synced and their ids are known. A record is unique per
  * `(account, platform, externalId)` because the inbound webhook looks it up that
- * way — so two stages cannot both claim one Slack channel, and trying is
+ * way, so two stages cannot both claim one Slack channel, and trying is
  * an error rather than a silent last-writer-wins.
  */
 export async function syncChannelRecordResources(

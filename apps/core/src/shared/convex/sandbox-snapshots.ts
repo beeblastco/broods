@@ -1,7 +1,7 @@
 /**
  * Storage mirror writes for sandbox snapshot/image build state. The account-manage
  * snapshot endpoint calls this after the provider captures a snapshot so the
- * dashboard's live sandboxSnapshots query reflects it. Fire-and-forget safe — wrapped
+ * dashboard's live sandboxSnapshots query reflects it. Fire-and-forget safe, wrapped
  * so a mirror failure never fails the request. See usage.ts for the same pattern.
  */
 

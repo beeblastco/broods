@@ -642,7 +642,7 @@ async function deleteAccountResponse(
   }
 
   // Cron rows and their registered schedules go with the Convex account
-  // cascade (deleteAccountContents) — nothing to sweep from core anymore.
+  // cascade (deleteAccountContents). Nothing to sweep from core anymore.
   const [
     runtime,
     agentsDeleted,

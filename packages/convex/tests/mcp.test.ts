@@ -22,7 +22,7 @@ type Scope = {
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** An org, account, project and one stage — the scope a server hangs off. */
+/** An org, account, project and one stage, the scope a server hangs off. */
 async function seedScope(tt: T, stage = "Development"): Promise<Scope> {
   return await tt.run(async (ctx) => {
     const now = Date.now();

@@ -1,5 +1,5 @@
 /**
- * Inbound channel media — the mirror of the outbound `send-files` / `send-images` path.
+ * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
  *
  * A picture, document, voice note or video that arrives on a channel is read
  * once, stored in the agent's workspace, and handed to the model as a sealed
@@ -7,7 +7,7 @@
  * outbound tools mint: storage stays private, the ticket is the only credential,
  * and it never expires, so the turn still resolves when the conversation is
  * replayed months later. A presigned S3 URL cannot do that, and inlining base64
- * cannot either — the conversation is persisted as JSON.
+ * cannot either, since the conversation is stored as JSON.
  *
  * Whatever the model cannot read natively still arrives. It becomes a saved
  * workspace file the agent can open with `read` or `bash`, so a voice note is a
@@ -16,7 +16,7 @@
  * An agent with no workspace stores nothing and keeps the media anyway: the
  * message row holds a reference to the file the channel still hosts, and the
  * bytes are read from the channel again whenever a later turn replays that
- * message. How long that keeps working is the channel's answer, not ours —
+ * message. How long that keeps working is the channel's answer, not ours.
  * Telegram serves a file id forever, a Discord link dies within a day.
  */
 
@@ -83,7 +83,7 @@ const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 const ATTACHMENT_FETCH_TIMEOUT_MS = 30_000;
 
 // A sniff that only proves "this is a zip" must not overrule a provider that
-// already said which zip it is — .docx and .xlsx are both zip containers.
+// already said which zip it is, since .docx and .xlsx are both zip containers.
 const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
   "application/octet-stream",
   "application/x-zip-compressed",
@@ -96,7 +96,7 @@ const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
  *
  * A floor, not a ceiling: a media type missing here is not rejected, it is
  * delivered as a workspace file instead of as a part the provider would refuse.
- * Guessing upward is the expensive direction — an unsupported part fails the
+ * Guessing upward is the expensive direction. An unsupported part fails the
  * whole turn, while an under-claimed one costs the agent one `read` call.
  *
  * The model's own `supportedUrls` is not this question. It says which URLs the
@@ -213,7 +213,7 @@ export function acceptsNativeMedia(
  * Reads each attachment once and returns the parts to append to the message.
  *
  * Never throws: an attachment that cannot be read becomes a line of text saying
- * so. A provider outage should cost the agent one picture, not the turn — and a
+ * so. A provider outage should cost the agent one picture, not the turn. A
  * silent drop would leave the model answering a message it cannot see the half
  * of.
  */
@@ -319,7 +319,7 @@ export async function rehydrateStoredMedia(
 
 /**
  * The media type to trust for these bytes.
- * The bytes win over the provider's claim — Telegram calls every photo a JPEG
+ * The bytes win over the provider's claim. Telegram calls every photo a JPEG
  * whatever was uploaded, and Discord labels a voice note `application/ogg`
  * without saying whether it is audio or video. The exception is a sniff that
  * only identifies the container: a .docx really is a zip, and "zip" is a worse
@@ -380,7 +380,7 @@ function cacheMedia(reference: string, bytes: Buffer): void {
 
 // The line the agent reads: what arrived, where it landed, and what to do with
 // the parts the model cannot see for itself. The "read it yourself" wording is
-// deliberate — told only that a file exists, models ask the sender to paste it.
+// deliberate. Told only that a file exists, models ask the sender to paste it.
 function attachmentNote(
   ingested: IngestedAttachment[],
   overflow: number,
@@ -448,7 +448,7 @@ function transcriptLine(item: StoredAttachment): string {
  * trusted input: `zalo-channel` and `pancake-channel` both take it straight out
  * of the inbound webhook body, so whoever posts to the webhook picks the host.
  * Protocol alone is not the boundary, because a public name can resolve to a
- * private address — and a name that resolves publicly once can resolve privately
+ * private address, and a name that resolves publicly once can resolve privately
  * a moment later. `guardedFetch` closes both: it refuses private and metadata
  * addresses on the original URL and on every redirect hop, and it opens the
  * socket to the exact address it validated, so a DNS answer that changes
@@ -492,9 +492,9 @@ function limitForMediaType(mediaType: string | undefined): number {
     : MAX_ATTACHMENT_BYTES;
 }
 
-// A name to store the file under. A provider that sends none — Telegram photos
-// and voice notes both arrive nameless — would otherwise land extensionless,
-// and every client, and the media route, would treat it as a raw download.
+// A name to store the file under. Telegram photos and voice notes both arrive
+// nameless, and a file with no name lands extensionless, so every client, and
+// the media route, would treat it as a raw download.
 function mediaFileName(
   attachment: Attachment,
   mediaType: string,
@@ -539,8 +539,8 @@ function mediaReferenceOf(part: UserContentPart): MediaReference | null {
 }
 
 // How to ask this channel for these bytes again. The chat SDK already names
-// what each provider needs in `fetchMetadata` — a Telegram file id, a Slack
-// private URL — so that map is carried verbatim rather than re-derived, and a
+// what each provider needs in `fetchMetadata`, a Telegram file id or a Slack
+// private URL, so that map is carried verbatim rather than re-derived, and a
 // provider that names nothing but a URL falls back to it.
 function mediaReferenceUrl(
   attachment: Attachment,
@@ -608,7 +608,7 @@ function nativePart(
   };
 }
 
-// The reference a stored part points at, or null for anything else — bytes, a
+// The reference a stored part points at, or null for anything else: bytes, a
 // sealed workspace link, an ordinary URL the model provider reads for itself.
 function parseMediaReference(value: unknown): MediaReference | null {
   if (

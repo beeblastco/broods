@@ -2,10 +2,10 @@
 
 Shared Convex backend for the broods monorepo, used by two workspaces:
 
-- **`apps/dashboard`** — deploys this package as its Convex project (the
+- **`apps/dashboard`** deploys this package as its Convex project (the
   dashboard Docker image build runs `convex deploy` from this directory) and
   calls the public functions through the generated `api`.
-- **`apps/core`** — does NOT deploy these functions; its Convex adapter at
+- **`apps/core`** does NOT deploy these functions; its Convex adapter at
   `apps/core/src/shared/convex/` imports the generated
   `internal` types and calls the functions remotely via `ConvexHttpClient`
   with a Convex deploy key. Convex is the sole runtime and configuration
@@ -32,7 +32,7 @@ metadata; it does not store the native harness conversation as one JSON
 document or limit the model's context window.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
-blobs — core encrypts before writing; the dashboard never reads the plaintext.
+blobs. Core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
 by the stage owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table. Config
@@ -54,13 +54,13 @@ Naming follows the CRUD rule: `create`, `update`, `list`, `remove`, `getById`,
 ## Tenant isolation (defence in depth)
 
 Every mutation validates the `accountId` argument against the row being
-touched. A leaked Convex deploy key cannot trivially cross-tenant.
+touched. A leaked Convex deploy key cannot trivially cross tenants.
 
 ## AWS config plane (epic #85 phase 9)
 
 Convex owns the account config plane's AWS resources directly (no core proxy):
 skill bundles, hook and MCP bundles, and workspace files in S3. Account cron
-schedules live entirely in Convex (the crons component — see
+schedules live entirely in Convex (the crons component, see
 `agent/crons.ts`), with no AWS side at all. `model/aws.ts` assumes `ConvexAwsRole`
 (created by `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose
 only permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and
@@ -69,14 +69,14 @@ the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
 `workspace/filesPublic.ts`).
 
 `config/http.ts` serves the public config API on this deployment's
-`.convex.site` host — account metadata and rotation (`GET/PATCH /v1/account`,
+`.convex.site` host, replacing core's former routes. The gateway forwards those
+paths here (`BROODS_CONFIG_URL`). It covers account metadata and rotation (`GET/PATCH /v1/account`,
 `POST /v1/account/rotate-secret`, `GET /accounts`,
 `GET/PATCH /accounts/{accountId}`, and
 `POST /accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
 `/v1/mcp*`, `/v1/hooks*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
-`/v1/policies*` — replacing core's former routes; the gateway forwards those
-paths here (`BROODS_CONFIG_URL`). Admin-gated account creation
+`/v1/policies*`. Admin-gated account creation
 (`POST /accounts`) and account delete (`DELETE /v1/account`,
 `DELETE /accounts/{accountId}`) stay in core.
 Cron execution stays in core: schedules invoke the configured target with
@@ -87,20 +87,20 @@ terminate reserved sandbox instances before deleting a sandbox config.
 
 Deployment environment variables:
 
-- `AWS_REGION` — data-plane region (matches the core stage).
-- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` — the bootstrap user's static
+- `AWS_REGION`: data-plane region (matches the core stage).
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: the bootstrap user's static
   key, minted out of band (`aws iam create-access-key`), never in git or
   Pulumi state.
-- `CONVEX_AWS_ROLE_ARN` — the `ConvexAwsRole` ARN (sst output
+- `CONVEX_AWS_ROLE_ARN`: the `ConvexAwsRole` ARN (sst output
   `convexAwsRoleArn`).
-- `CONVEX_AWS_EXTERNAL_ID` — assume-role external id (default
+- `CONVEX_AWS_EXTERNAL_ID`: assume-role external id (default
   `broods-convex`).
-- `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME` —
+- `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME`:
   the stage's S3 buckets (sst outputs).
-- `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for agent and sandbox config CRUD.
-- `ADMIN_ACCOUNT_SECRET` — admin bearer secret accepted by account admin HTTP
+- `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: AES-GCM secret for agent and sandbox config CRUD.
+- `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.
-- `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
+- `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET`: core
   account-manage URL and shared bearer secret, used for sandbox delete cleanup
   and to POST fired cron runs to the gateway `/v1/cron-runs` leaf.
 
@@ -108,7 +108,7 @@ Deployment environment variables:
 
 1. Change schema or functions here.
 2. Run `bun run --filter @broods/convex codegen` (or `bunx convex codegen`
-   from this directory) and commit the `_generated/` diff — it is committed on
+   from this directory) and commit the `_generated/` diff. It is committed on
    purpose so core and the dashboard typecheck without codegen.
 3. Deploys happen through the dashboard image build (`convex deploy`); this
    package is never deployed standalone.

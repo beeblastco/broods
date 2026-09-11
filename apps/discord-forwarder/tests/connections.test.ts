@@ -77,7 +77,7 @@ describe("combining what the planes answered", () => {
     expect(() => combinePlaneAnswers([], [])).toThrow(/No config plane/);
   });
 
-  // A plane that answers with no rows is healthy and simply has no Discord
+  // A plane that answers with no rows is healthy and has no Discord
   // agents. That has to stay distinct from silence, or an empty deployment would
   // read as an outage.
   it("treats an empty answer as an answer", () => {

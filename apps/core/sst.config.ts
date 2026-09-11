@@ -3,7 +3,7 @@
 // SST provisions the AWS data plane and the container runtime IAM user.
 // The runtime itself is the Bun container deployed from the infra repo.
 // AWS account + project identity for resource names, IAM role ARNs, and tags.
-// No in-source defaults — provided via repo vars / local env (see .env.example).
+// No in-source defaults. Repo vars or local env provide them (see .env.example).
 // CI injects them into the validate + deploy jobs; forks must set them to run
 // `sst install` / deploy.
 const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
@@ -13,7 +13,7 @@ const AWS_PROFILE = process.env.CI
   ? undefined
   : (process.env.AWS_PROFILE ?? "default");
 // Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
-// sandbox Lambdas this used to gate are gone — the "lambda" provider is now an AWS Lambda
+// sandbox Lambdas this used to gate are gone. The "lambda" provider is now an AWS Lambda
 // MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
 // The ECR repo is retained transitionally (the lambda-sanbdox container image still publishes
 // there); its teardown belongs to the Phase 4 infra cleanup. See docs/workspace/sandbox/lambda.md.
@@ -159,10 +159,10 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("sandbox-s3mount", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-build", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("microvm-execution", stage, region)}`,
-          // Self-hosted container runtime user (epic #85 phase 9a) — without
+          // Self-hosted container runtime user (epic #85 phase 9a). Without
           // this entry every pod S3 call gets an explicit deny.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("core-runtime", stage, region)}`,
-          // Convex config-plane role (epic #85 phase 9) — Convex node actions own
+          // Convex config-plane role (epic #85 phase 9). Convex node actions own
           // the skills/tool-bundle/workspace S3 objects directly after assuming it.
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/${resourceName("convex-aws", stage, region)}`,
           `arn:aws:iam::${AWS_ACCOUNT_ID}:role/github-actions-ecr-push`,
@@ -470,7 +470,7 @@ export default $config({
 
     // Sandbox egress network, used only by the MicroVM `deny-all` / `restricted` modes.
     // `allow-all` never reaches it: that mode runs on the service default INTERNET_EGRESS
-    // with no connector at all. Deliberately NAT-less — the only outbound a restricted
+    // with no connector at all. Deliberately NAT-less. The only outbound a restricted
     // sandbox still needs is the workspace S3 mount, which the free S3 Gateway VPC Endpoint
     // below serves off the private route tables. A NAT would cost ~$35/mo per AZ (the old
     // Vpc.v1 billed ~$130/mo per stage for exactly this) and hand back the internet access
@@ -505,7 +505,7 @@ export default $config({
     }
 
     // The connector's only egress rule. `deny-all` therefore means "no internet, workspace
-    // S3 only" — an empty rule set would break the mount-s3 workspace every sandbox needs.
+    // S3 only". An empty rule set would break the mount-s3 workspace every sandbox needs.
     const sandboxEgressSecurityGroup = sandboxNetwork
       ? new aws.ec2.SecurityGroup("SandboxEgressSecurityGroup", {
           name: resourceName("microvm-egress-sg", stage, region),
@@ -631,7 +631,7 @@ export default $config({
         : null;
 
     // No Pulumi/Terraform resource exists for lambda-core network connectors, but the
-    // CloudFormation type does — Cloud Control gives real create/update/delete plus the
+    // CloudFormation type does. Cloud Control gives real create/update/delete plus the
     // PENDING → ACTIVE wait (ENI provisioning takes up to ~10 min on the first deploy).
     const sandboxEgressConnector =
       sandboxNetwork &&
@@ -739,7 +739,7 @@ export default $config({
     });
 
     // This app owns the sandbox image ECR repo (moved out of the infra Terraform repo) so
-    // the repo lifecycle stays in sync with the functions that consume it — no cross-repo
+    // the repo lifecycle stays in sync with the functions that consume it, with no cross-repo
     // coordination. Lambda pulls only from PRIVATE ECR in its own region (public.ecr.aws is
     // rejected), so the repo is region-scoped: each deploy region gets its own. The arm64
     // image is pushed by the lambda-just-bash-rust CI; for a brand-new region that push must
@@ -764,7 +764,7 @@ export default $config({
         retainOnDelete: isProduction,
         // The repo name is intentionally not PROJECT_NAME-scoped (the external lambda-sanbdox
         // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
-        // the deploy workflow has already ensured the regional repo exists, so import it
+        // the deploy workflow has already made the regional repo, so import it
         // even if the local describe probe cannot run from inside SST config evaluation.
         ...(sandboxImageRepoShouldImport
           ? { import: sandboxImageRepoName }
@@ -796,7 +796,7 @@ export default $config({
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
     // TOOL_RUNNER_FUNCTION_NAME. The "ToolRunner" logical id and the
-    // tool-runner physical name predate the MCP role — renaming either
+    // tool-runner physical name predate the MCP role. Renaming either
     // replaces the deployed function, so they stay.
     const toolRunnerFn = new sst.aws.Function("ToolRunner", {
       handler: "../lambda/handler.handler",
@@ -804,8 +804,8 @@ export default $config({
       architecture: "arm64",
       timeout: "35 seconds",
       // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
-      // of a core, and this function's cost is almost all CPU — Node startup in
-      // the child plus parsing a bundle — so a smaller size bills roughly the
+      // of a core, and this function's cost is almost all CPU, Node startup in
+      // the child plus parsing a bundle, so a smaller size bills roughly the
       // same GB-ms while taking several times longer.
       memory: "1769 MB",
       copyFiles: [
@@ -970,7 +970,7 @@ export default $config({
     // one pod runs both handlers, so the user gets the union of the harness and
     // account permission sets, generated from the same arrays so it cannot drift.
     // The access key is minted out of band (`aws iam create-access-key`) and
-    // delivered to the cluster as a k8s Secret — never in Pulumi state or git.
+    // delivered to the cluster as a k8s Secret, never in Pulumi state or git.
     // Two managed policies instead of one inline: IAM caps inline user policies
     // at 2048 chars total, which these documents exceed.
     const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
@@ -999,7 +999,7 @@ export default $config({
       policyArn: coreRuntimeAccountPolicy.arn,
     });
 
-    // AWS access for the Convex config plane (epic #85 phase 9 — state plane owns
+    // AWS access for the Convex config plane (epic #85 phase 9, state plane owns
     // AWS directly, no core proxy). Convex node actions assume ConvexAwsRole with a
     // minimal bootstrap user's static key (minted out of band, stored in the Convex
     // deployment env as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY + CONVEX_AWS_ROLE_ARN)

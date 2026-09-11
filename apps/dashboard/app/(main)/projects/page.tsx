@@ -69,7 +69,7 @@ export default function ProjectsPage(): React.JSX.Element {
                 No projects yet
               </p>
               <p className="max-w-sm text-sm text-muted-foreground">
-                Create a project to start building and deploying AI agents.
+                A project holds your agents, stages, and deploy keys.
               </p>
             </div>
             {canWrite && (

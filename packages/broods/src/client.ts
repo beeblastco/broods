@@ -24,7 +24,7 @@ export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
 /**
  * Input for a single agent run. The core direct API is event-based (a list of
- * Vercel AI SDK model messages), so `events` is the full-fidelity form — use it
+ * Vercel AI SDK model messages), so `events` is the full-fidelity form. Use it
  * for multimodal content (images/files), ephemeral system messages, or
  * tool-approval responses. `input` is a shorthand for a single user text message
  * and is wrapped into one user event. Provide exactly one of the two.
@@ -159,8 +159,8 @@ export class BroodsClient {
 
   /**
    * Return the provider webhook URL for an account's channel. The URL names no
-   * agent — every channel of one type in an account shares it — so this is what
-   * to paste into the provider when several agents sit behind the same app.
+   * agent, since every channel of one type in an account shares it, so this is
+   * what to paste into the provider when several agents sit behind the same app.
    */
   accountWebhookUrl(
     accountId: string,

@@ -39,7 +39,7 @@ if (runnerPath) {
   process.env.ISOLATE_RUNNER_PATH = runnerPath;
   // Stub only the S3 byte fetch; everything else (isolate exec, sanitize, wrap)
   // is real. mock.module is process-global in bun test, so keep it behind the
-  // runner gate — when the suite is skipped the override must not leak into
+  // runner gate. When the suite is skipped the override must not leak into
   // other test files that mock the same module.
   mock.module("../src/shared/s3.ts", () => ({
     ...realS3,
@@ -296,7 +296,7 @@ describe("channel.message.received rewrite reaches the session", () => {
   );
 
   // The session persists and builds the turn from the ingress events, not from
-  // `content` — a rewrite that only lands in `content` never reaches the model.
+  // `content`. A rewrite that only lands in `content` never reaches the model.
   it("rewrites the newest user ingress event", async () => {
     const { rewriteLatestUserIngressText } =
       await import("../src/harness/integrations.ts");

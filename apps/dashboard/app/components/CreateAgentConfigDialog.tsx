@@ -114,7 +114,7 @@ export function CreateAgentConfigDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create Agent Config</DialogTitle>
+          <DialogTitle>Create agent config</DialogTitle>
           <DialogDescription>
             Configure a new AI agent for your project.
           </DialogDescription>

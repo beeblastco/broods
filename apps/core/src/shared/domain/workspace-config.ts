@@ -21,7 +21,7 @@ export type {
 // and each defaulting to on. There is deliberately no top-level enabled flag:
 // new capabilities get their own key here for independent control.
 //   - workspace: the injected <workspace> prompt (file-tool + TASKS guidance).
-//   - memory: structured memory — the memory_save tool, memory/MEMORY.md index
+//   - memory: structured memory, the memory_save tool, memory/MEMORY.md index
 //     loading, and the <memory> prompt.
 export interface WorkspaceHarnessConfig {
   workspace?: { enabled?: boolean };

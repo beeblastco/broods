@@ -1,5 +1,5 @@
 /**
- * Sandbox terminal ticket sealing/opening — round trip, expiry, tampering, and
+ * Sandbox terminal ticket sealing/opening: round trip, expiry, tampering, and
  * wrong-secret rejection (the gateway tries each stage secret in turn).
  */
 

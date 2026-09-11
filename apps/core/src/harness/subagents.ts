@@ -485,7 +485,6 @@ export class SubagentCoordinator {
       : task.persistent
         ? await this.admitChildConversation(task, promptMessage)
         : undefined;
-    // Initialize an isolated child session using the generated conversation key.
     // Inherit the parent's deployment scope (endpoint/project/stage) so the
     // child's spans and logs publish to the same live dashboard subscription and
     // its usage rows are counted in the right stage. The trigger is inherited
@@ -838,7 +837,7 @@ export class SubagentCoordinator {
     let inject = true;
     if (completion.status === "completed") {
       // The durable result is already written, so a hook that cannot load or
-      // that throws only loses its override — it never fails the child.
+      // that throws only loses its override. It never fails the child.
       const hookVisible = await this.runSubagentFinishHook(completion).catch(
         (error) => {
           logError("Subagent finish hook failed", {
@@ -983,7 +982,7 @@ export function createEphemeralChildSession(
     // subtask span and to build the live NATS subject. Omitting them (the prior
     // bug) left subagent spans with only account_id, so publishSpan early-returned
     // (no live span) AND the dashboard's project+stage-scoped Tempo backfill
-    // never matched them — subagents were invisible in tracing and a reload didn't
+    // never matched them. Subagents were invisible in tracing and a reload didn't
     // bring them back.
     endpointId: childSession.endpointId,
     projectSlug: childSession.projectSlug,

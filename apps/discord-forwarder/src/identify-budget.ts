@@ -8,7 +8,7 @@
  * loudly rather than dialling into a reset.
  *
  * The counter is in-process, so a pod restart forgets it. That is why the
- * backoff ceiling — not this class — is the primary defence: at a 300s ceiling a
+ * backoff ceiling, not this class, is the primary defence: at a 300s ceiling a
  * permanently failing socket spends under 300 IDENTIFYs a day even if it never
  * gets to remember anything. This is the belt to that pair of braces.
  */

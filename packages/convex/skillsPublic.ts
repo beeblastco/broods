@@ -189,7 +189,7 @@ export const publishSkill = action({
   },
 });
 
-/** SHA-256 hex of the raw token — matches what the accounts table stores. */
+/** SHA-256 hex of the raw token, matching what the accounts table stores. */
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }

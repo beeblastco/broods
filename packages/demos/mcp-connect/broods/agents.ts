@@ -1,6 +1,6 @@
 /**
  * Example: connect an external MCP server (#331). The server's tools register
- * on the agent as `<server>__<tool>` — here `search__query` etc. Set
+ * on the agent as `<server>__<tool>`, here `search__query` and so on. Set
  * MCP_SERVER_URL (and SEARCH_TOKEN when the server needs auth) with
  * `broods env set` before deploying.
  */

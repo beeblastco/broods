@@ -1,12 +1,12 @@
 # Dependency watch.
-# Reports upstream releases for the dependencies whose types the repo builds on
-# — the AI SDK family plus esbuild — into one rolling issue.
+# Reports upstream releases into one rolling issue, for the dependencies whose
+# types the repo builds on: the AI SDK family plus esbuild.
 #
 # Why this is not Dependabot/Renovate:
 #   The AI SDK packages pin `ai` at an exact version inside their own manifests
 #   (`@ai-sdk/otel` depends on `ai@7.0.41`, `@ai-sdk/policy-opa` peers on it).
 #   A per-package bot opens one PR per package, and each of those installs a
-#   second copy of `ai` on its own — which breaks type identity and stops core
+#   second copy of `ai` on its own, which breaks type identity and stops core
 #   typechecking. scripts/dependency-watch.ts reports the family as a single
 #   coherent upgrade instead, and refuses to name a target when the pins
 #   disagree.

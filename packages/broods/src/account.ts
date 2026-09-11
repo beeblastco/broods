@@ -4,18 +4,18 @@
  * This is the DYNAMIC counterpart to the config-first `broods dev` / `broods
  * deploy` flow: `broods dev` syncs the predefined resources declared in your
  * `broods/` folder, while `BroodsAccountClient` creates and mutates the full
- * account config plane at runtime — agents, sandboxes (config + lifecycle),
+ * account config plane at runtime: agents, sandboxes (config + lifecycle),
  * workspaces (config + files), tools, policies, skills, crons, and the account
- * itself — e.g. a multi-tenant app provisioning one agent per customer from its
- * own backend.
+ * itself. One caller is a multi-tenant app provisioning one agent per customer
+ * from its own backend.
  *
  * Kept intentionally standalone (import from `broods/account`): pure fetch,
- * no Node built-ins, no `.env` file loading — so it runs in edge/worker
+ * no Node built-ins, no `.env` file loading, so it runs in edge/worker
  * runtimes such as Convex actions, Cloudflare Workers, and the browser-less
  * server runtimes, as well as Node and Bun.
  *
  * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...` — or a short-lived `fp_sts_` role session token from
+ * `{baseUrl}/v1/...`, or a short-lived `fp_sts_` role session token from
  * `assumeRole()`, limited to what the role's policy allows. Secrets inside
  * agent configs are encrypted at rest by the platform and come back redacted
  * (`********`) on reads.
@@ -35,8 +35,8 @@ import type { Cron, CronRun, Skill } from "./types.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
- * `DEFAULT_CORE_BASE_URL` in `client.ts` (not imported from there — that module
- * pulls in Node-only .env loading and this one must stay edge-safe).
+ * `DEFAULT_CORE_BASE_URL` in `client.ts`. Not imported from there, because that
+ * module pulls in Node-only .env loading and this one must stay edge-safe.
  */
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
 
@@ -177,8 +177,8 @@ export interface AssumeRoleResult {
 }
 
 /**
- * One real place a team talks — a Slack channel, a Discord channel, a repo —
- * bound to an agent. The runtime reads it on the inbound webhook to decide who
+ * One real place a team talks, bound to an agent: a Slack channel, a Discord
+ * channel, a repo. The runtime reads it on the inbound webhook to decide who
  * answers there and with what instructions, workspaces and policies.
  */
 export interface AccountChannel {
@@ -204,14 +204,14 @@ export interface ChannelRecordConfig {
   /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: string[];
   /**
-   * Tool names withheld in this channel, applied after the tool set is built —
+   * Tool names withheld in this channel, applied after the tool set is built,
    * so it also covers sandbox tools (`bash`, `read`, …) that `config.tools`
    * cannot name. Narrowing only; unknown names are ignored.
    */
   denyTools?: string[];
   /**
    * Where the reply lands. `source` answers wherever the message came from, and
-   * threads only when the message already did. Slack only — no other provider
+   * threads only when the message already did. Slack only. No other provider
    * gives the runtime a second place to reply.
    */
   replyIn?: ChannelReplyIn;

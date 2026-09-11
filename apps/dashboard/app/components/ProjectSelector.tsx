@@ -1,6 +1,5 @@
 "use client";
 
-/** Dropdown selector for switching between user projects with an option to create new ones. */
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -72,7 +71,7 @@ export function ProjectSelector(): React.JSX.Element {
   const selectedProject = projects.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
-  // The trigger states what is true right now — never another project's name.
+  // The trigger states what is true right now, never another project's name.
   const displayName = selectedProject?.name ?? "Select project";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";

@@ -462,7 +462,7 @@ function zaloHttpUrl(raw: unknown): string | null {
  * What a Zalo update carries: its text, and the media beside it.
  *
  * Zalo hosts every attachment as a plain URL with no token on it, so an
- * attachment here is just that link — the harness reads it once, stores it in
+ * attachment here is just that link. The harness reads it once, stores it in
  * the workspace and hands the model a durable one. Passing Zalo's own URL
  * through instead would work for exactly one turn: it is dropped when the
  * message is persisted, and Zalo's links do not stay good forever either.

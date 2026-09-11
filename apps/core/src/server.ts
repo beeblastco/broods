@@ -1,10 +1,10 @@
 /**
- * The self-hosted core server (epic #85) — the single entry point.
+ * The self-hosted core server (epic #85), the single entry point.
  *
  * One Bun.serve process fronts the whole runtime: it builds a transport-neutral
  * CoreRequest from each HTTP request and routes by path to the account or harness
  * handler, streaming their Web Response back (SSE included). Routing is by path,
- * never Host — the gateway strips Host on proxy. There is no Lambda runtime.
+ * never Host, because the gateway strips Host on proxy. There is no Lambda runtime.
  */
 
 import type { CoreRequest, RequestContext } from "./shared/http.ts";

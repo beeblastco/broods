@@ -3,7 +3,7 @@
  *
  * Every case here is CPU-only: no network, no filesystem, no model call, no
  * clock the case itself does not control. That is what makes a CI number worth
- * gating on — the only thing left that moves it is the code under test and the
+ * gating on. The only thing left that moves it is the code under test and the
  * speed of the machine.
  */
 
@@ -87,7 +87,7 @@ export interface BenchPolicy {
 
 export interface BenchMeasurement {
   name: string;
-  /** Median across samples. The gated number: robust to a single slow sample. */
+  /** Median across samples. The gated number, since one slow sample cannot move it. */
   nsPerOp: number;
   minNsPerOp: number;
   p95NsPerOp: number;
@@ -419,7 +419,7 @@ function consume(value: unknown): void {
 
 /**
  * Heap growth per op, measured over its own pass with GC forced on both sides.
- * Coarse by construction — reported, never gated.
+ * Coarse by construction, so it is reported and never gated.
  */
 async function measureBytesPerOp(benchCase: BenchCase): Promise<number> {
   // A case slow enough to set its own sample count is a spawn or a socket;

@@ -4,7 +4,7 @@
  * folds the calls that arrive inside one window into one invoke, and every
  * call is rebuilt from the frame tagged with its id. The full chain against a
  * real child-runner + createMcpHandler bundle runs in the local-stack E2E,
- * not here — no SDK fixture bundles in the repo.
+ * not here, because the repo has no SDK fixture bundles.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

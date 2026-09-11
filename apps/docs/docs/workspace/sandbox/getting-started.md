@@ -1,4 +1,4 @@
-# Getting Started
+# Getting started
 
 This walks through defining a sandbox, attaching it to an agent, and running real
 code in it. For the concepts behind each knob, see [Core design](index.md).
@@ -12,7 +12,7 @@ bun add broods
 ## 2. Define a sandbox
 
 Sandboxes are declared in `broods/index.ts` and referenced from agents. The smallest
-useful sandbox is a stateless, bash-only box — a fresh ephemeral container per call:
+useful sandbox is a stateless, bash-only box, a fresh ephemeral container per call:
 
 ```ts title="broods/index.ts"
 import { defineSandbox, defineAgent, env } from "broods";
@@ -62,7 +62,7 @@ The agent's `bash`/`read`/`write`/`edit`/`glob`/`grep` tools each compile to a s
 
 ## 4. Add a workspace (persistent files)
 
-A bare sandbox is ephemeral — only `bash` is available and each call is a fresh
+A bare sandbox is ephemeral. Only `bash` is available, and each call is a fresh
 container. Attach a [workspace](../index.md) to get a persistent project checkout (an S3
 mount the file tools operate on) shared across `sandbox`, `lambda`, and `daytona`:
 
@@ -89,9 +89,9 @@ export const projectWorkspace = defineWorkspace({
 
 ## Next steps
 
-- [Snapshot](snapshot.md) — pin a prebuilt image and pick a compute size.
-- [Networking](networking.md) — control outbound egress per sandbox.
-- [Security](security.md) — the isolation and credential model.
-- [Hook](hook.md) — `onCreate`/`onResume` setup commands and runtime lifecycle hooks.
-- [Best practice](best-practice.md) — persistent sandboxes, background jobs, and idle tuning.
-- [Integration](lambda.md) — provider-specific behavior (Lambda, Daytona, E2B, Vercel).
+- [Snapshot](snapshot.md): pin a prebuilt image and pick a compute size.
+- [Networking](networking.md): control outbound egress per sandbox.
+- [Security](security.md): the isolation and credential model.
+- [Hook](hook.md): `onCreate`/`onResume` setup commands and runtime lifecycle hooks.
+- [Best practice](best-practice.md): persistent sandboxes, background jobs, and idle tuning.
+- [Integration](lambda.md): provider-specific behavior (Lambda, Daytona, E2B, Vercel).

@@ -90,7 +90,7 @@ function classify(commits: string[]): Bump {
     BREAKING.test(subject) || subject.includes("BREAKING CHANGE");
 
   if (commits.length === 0) return "none";
-  // Pre-1.0 has no stable surface to break, so `!` lands as a minor.
+  // Pre-1.0 has no stable API to break, so `!` lands as a minor.
   if (commits.some(breaks)) return major === 0 ? "minor" : "major";
   if (commits.some((subject) => FEATURE.test(subject))) return "minor";
 

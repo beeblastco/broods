@@ -38,7 +38,7 @@ type PreparedAccountAgentConfig = {
 };
 
 // Skills are account-scoped, so bare names canonicalize to <accountId>/<name>
-// in place — callers must run this BEFORE the config is encrypted to persist.
+// in place. Callers must run this BEFORE the config is encrypted to persist.
 export function canonicalizeAgentSkillPaths(
   accountId: Id<"accounts">,
   config: AgentConfig | undefined,
@@ -52,7 +52,7 @@ export function canonicalizeAgentSkillPaths(
 
 /**
  * Lists the live channel directory (id, name, privacy, bot membership) for an
- * agent's configured messaging channel — Slack only for now. The decrypted
+ * agent's configured messaging channel, Slack only for now. The decrypted
  * stored credential is used server-side and never included in the response, so
  * dashboards can offer a pick-a-channel UX without re-collecting tokens.
  */
@@ -82,7 +82,7 @@ export async function handleAgentChannelDirectoryRoute(
     );
   }
   // The resolved config (env placeholders substituted), not the public-read
-  // source config — this is the same view the runtime uses to post messages.
+  // source config. This is the same view the runtime uses to post messages.
   const config = await decryptAgentConfig(record);
   const channels = isPlainObject(config.channels) ? config.channels : undefined;
   const slack =

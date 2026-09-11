@@ -186,7 +186,7 @@ export default function DashboardPage(): React.JSX.Element {
         : "max-w-7xl";
 
   // While the reveal query is still resolving, hold a quiet loader instead of
-  // flashing the "generate a key" prompt — the prompt is only the true-absence state.
+  // flashing the "generate a key" prompt. That prompt is only the true-absence state.
   const keyResolving =
     Boolean(activeStageId) &&
     stageSession === undefined &&
@@ -288,7 +288,7 @@ export default function DashboardPage(): React.JSX.Element {
         </nav>
       </aside>
 
-      {/* Content area — observability tabs own their internal scroll and fill
+      {/* Content area: observability tabs own their internal scroll and fill
           the height; other tabs scroll the whole column. */}
       <div
         className={cn(
@@ -296,7 +296,7 @@ export default function DashboardPage(): React.JSX.Element {
           isObservabilityTab ? "overflow-hidden" : "overflow-auto",
         )}
       >
-        {/* Page title — aligned with sidebar header height */}
+        {/* Page title, aligned with sidebar header height */}
         <div
           className={cn(
             "px-6 pt-9.25 pb-5 mx-auto w-full shrink-0",

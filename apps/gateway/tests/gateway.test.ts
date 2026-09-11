@@ -2632,7 +2632,7 @@ test("observability relay sheds droppable frames when the socket buffer is backe
 test("observability relay waits out span backpressure instead of shedding", async () => {
   const encoder = new TextEncoder();
   const sent: unknown[] = [];
-  // Backed up for the first few polls, drained afterwards — the relay must
+  // Backed up for the first few polls, drained afterwards. The relay must
   // deliver the span once the buffer drops rather than shedding it.
   let drainChecks = 0;
   const socket = {

@@ -544,7 +544,7 @@ function normalizeProviderSettings(
   if (providerName === "custom" && !baseURL) {
     const hint =
       config.baseUrl !== undefined
-        ? ` (found "baseUrl" — use "base_url" or "baseURL")`
+        ? ` (found "baseUrl", use "base_url" or "baseURL")`
         : "";
     throw new Error(`config.provider.custom.base_url is required${hint}`);
   }

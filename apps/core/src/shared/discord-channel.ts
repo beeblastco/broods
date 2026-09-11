@@ -28,7 +28,7 @@ const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 const DISCORD_FETCH_TIMEOUT_MS = 30_000;
 
 // Discord sticker format ids, and the CDN extension each is served under.
-// Format 3 is Lottie — a JSON animation with no raster form — so it is absent.
+// Format 3 is Lottie, a JSON animation with no raster form, so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
   1: "png",
   2: "png",
@@ -426,16 +426,16 @@ function createDiscordActions(
   };
 
   return {
-    // Discord ignores an outbound URL attachment entirely — the API takes a
-    // multipart upload and nothing else — so both deliveries read the bytes and
+    // Discord ignores an outbound URL attachment entirely. The API takes a
+    // multipart upload and nothing else, so both deliveries read the bytes and
     // hand them over as one message. One body serves both because Discord
     // decides which to render inline from the file itself; they stay separate
     // keys so a channel can still advertise one without the other.
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
 
-    // Discord sends a sticker by id and by nothing else — there is no URL form
-    // and no upload — so the model names one the bot can reach: a sticker from
+    // Discord sends a sticker by id and by nothing else. There is no URL form
+    // and no upload, so the model names one the bot can reach: a sticker from
     // a guild the bot is in, or a standard pack. The Chat SDK's postMessage has
     // no field for it, which is why this is the one send that goes direct.
     sendSticker: async function (sticker): Promise<void> {
@@ -445,7 +445,7 @@ function createDiscordActions(
       }
       // `threadId` on the source is the SDK's encoded composite, not an id
       // Discord's REST API would accept, so it is decoded back to the channel
-      // the message actually lives in — a thread posts to the thread.
+      // the message actually lives in. A thread posts to the thread.
       const decoded = discord.decodeThreadId(threadId);
       const target = decoded.threadId ?? decoded.channelId;
       if (!target) {
@@ -520,7 +520,7 @@ async function discordUploads(
  * The uploads and stickers on a Discord message, as Chat SDK attachments.
  *
  * Discord's CDN URLs are signed and expire, so each attachment is read while
- * the turn runs rather than linked and fetched later — that is what the reader
+ * the turn runs rather than linked and fetched later. That is what the reader
  * on every attachment is for. Nothing here is authenticated: a Discord upload
  * URL is a bearer credential in itself, which is also why it is never persisted.
  */
@@ -587,7 +587,7 @@ function discordMediaType(attachment: DiscordAttachment): string | undefined {
 
 // Discord serves a sticker from a well-known CDN path keyed by its id. Lottie
 // stickers (format 3) are a JSON animation, not a picture, so only the raster
-// formats are worth fetching — the sticker's name carries the rest.
+// formats are worth fetching. The sticker's name carries the rest.
 function discordStickers(
   stickers: NonNullable<DiscordGatewayMessageData["sticker_items"]>,
 ): Attachment[] {

@@ -46,7 +46,7 @@ test("loadBroodsRuntimeConfig with BROODS_RELOAD_ENV=1 always overwrites", async
     loadBroodsRuntimeConfig(cwd);
     expect(process.env.BROODS_TEST_VAR_C).toBe("new");
 
-    // Change it again — forceReload should still overwrite
+    // Change it again, forceReload should still overwrite
     await writeFile(
       join(cwd, ".env.local"),
       "BROODS_TEST_VAR_C=newer\n",
@@ -74,7 +74,7 @@ test("loadBroodsRuntimeConfig does not re-read unchanged .env.local", async () =
     loadBroodsRuntimeConfig(cwd);
     expect(process.env.BROODS_TEST_VAR_E).toBe("same");
 
-    // Re-write with same content — value stays the same
+    // Re-write with same content, value stays the same
     await writeFile(
       join(cwd, ".env.local"),
       "BROODS_TEST_VAR_E=same\n",
@@ -117,7 +117,7 @@ test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async 
 // `stage use` / `org use` rewrite `.env.local`, but a shell export wins over the
 // file on the next command, so the CLI has to tell the two apart and warn.
 // Bun loads `.env.local` into process.env before user code runs, so this cannot
-// be answered from a startup snapshot — only by reading the file back.
+// be answered from a startup snapshot, only by reading the file back.
 test("isShellOwnedEnv separates a shell export from a .env.local value", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-owner-"));
   const saved = {
@@ -170,7 +170,7 @@ test("loadBroodsRuntimeConfig cleans up cache entry when file is deleted", async
 
     await rm(join(cwd, ".env.local"));
 
-    // Next call should not error — the deleted file's cache entry is removed
+    // Next call should not error, the deleted file's cache entry is gone
     loadBroodsRuntimeConfig(cwd);
   } finally {
     delete process.env.BROODS_TEST_VAR_G;

@@ -1,6 +1,6 @@
 # Telegram
 
-Telegram integration allows your agent to interact with users via Telegram bots.
+A Telegram bot is how the agent reaches private chats, groups, and forum topics.
 
 Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) for Telegram message parsing, MarkdownV2 formatting, streaming, typing indicators, reactions, and Bot API calls. See Chat SDK [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), and [Streaming](https://chat-sdk.dev/docs/streaming) for the adapter capabilities.
 
@@ -53,7 +53,7 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 
 - `botToken`: Provided by BotFather.
 - `webhookSecret`: A secret string to verify incoming webhooks.
-- `botUsername` (optional, recommended): the bot's own @username. Set it to answer only when the agent is addressed — see below.
+- `botUsername` (optional, recommended): the bot's own @username. Set it to answer only when the agent is addressed. See below.
 - `channels` (optional): `["*"]` to answer in every chat instead of only the declared ones.
 - `allowedUserIds` (optional): Telegram user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Emoji to use for reactions, defaults to "👀".
@@ -64,7 +64,8 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 With `botUsername` set, a group message runs the agent only when it addresses
 the agent: an `@name` mention, a slash command, or a reply to one of the agent's
 own messages. Every other message in an allowed chat is stored as channel
-context and costs nothing, so a later mention still sees what the chat said.
+context and never runs the agent, so a later mention still sees what the chat
+said.
 This matches Discord, where `botUserId` does the same job, and Slack, where only
 `app_mention` runs the agent.
 
@@ -74,14 +75,14 @@ address, so no tag is needed.
 Another bot never triggers a run, whether or not it tags the agent. Two bots
 sharing a group therefore cannot mention each other into a loop.
 
-Without `botUsername` a mention cannot be recognised, so the agent keeps
+Without `botUsername` Broods cannot recognise a mention, so the agent keeps
 answering every message rather than going silent. Set it as soon as the bot
 shares a group with people who are not talking to it.
 
 A bare `/command` counts as addressing the agent, because Telegram only appends
 `@name` to a command when a group holds more than one bot. In a group with
 several bots, use `/command@name` so only the intended one answers. Either
-shape runs the command itself, not the agent: the token is read from the
+shape runs the command itself, not the agent. Broods reads the token from the
 `bot_command` entity Telegram tags, so the `@name` suffix a client appends and
 the frame around a command sent as a reply both stay out of its way.
 
@@ -106,6 +107,6 @@ member could type by hand to forge one. Quoted text longer than 500 characters
 is cut short, and a reply to a message with no text of its own (a bare photo, a
 sticker) arrives unframed.
 
-Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
+Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. Chat SDK does the MarkdownV2 formatting.
 
 Channel tools support images and Telegram sticker IDs or URLs. They preserve the current forum topic.

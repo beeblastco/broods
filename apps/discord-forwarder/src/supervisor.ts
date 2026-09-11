@@ -130,7 +130,7 @@ export class Forwarder {
     const thread = await threads.resolve(data.channel_id);
     // Read after the lookup, not before. `resolve` can wait on Discord, and
     // `reconcile` replaces the array outright, so a set read on the way in is
-    // already stale by here — which is the whole reason this goes through the map
+    // already stale by here, which is the whole reason this goes through the map
     // instead of closing over the array.
     const targets = this.managed.get(botToken)?.targets;
     if (!targets?.length) return;
@@ -171,7 +171,7 @@ export class Forwarder {
 /**
  * One socket per bot token, fanned out to every webhook that token serves.
  * Two agents sharing a token is unusual but legal, and it must not become two
- * sockets — Discord would then deliver every event twice. The connections may
+ * sockets. Discord would then deliver every event twice. The connections may
  * come from different config planes, so the same token deployed to both is one
  * socket here rather than one per plane.
  */

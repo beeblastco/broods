@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Skill card Details tab — source picker (Files / GitHub / JSON) on first open,
+ * Skill card Details tab. A source picker (Files / GitHub / JSON) on first open,
  * then source-specific configuration. Agent skills config (enabled + allowed) is
  * always shown at the bottom once a source is chosen.
  */
@@ -324,7 +324,6 @@ function JsonForm({
   );
 }
 
-/** Skill card Details tab — source picker then source-specific configuration. */
 export function SkillDetailsTab({
   nodeId,
   nodeConfig,
@@ -355,8 +354,8 @@ export function SkillDetailsTab({
   const skillSource = nodeConfig?.skillSource as SkillSource | undefined;
   const disabled = !agentConfig;
   const path = editName.trim();
-  // This skill is "active" only when the agent's skills master is on AND this path is allowed —
-  // the exact condition the canvas node badge renders, so the toggle and node stay in lockstep.
+  // This skill is "active" only when the agent's skills master is on AND this path is allowed.
+  // That is the condition the canvas node badge renders, so the toggle and node stay in step.
   const isActive =
     skills.enabled === true &&
     path.length > 0 &&
@@ -406,7 +405,7 @@ export function SkillDetailsTab({
     onUpdateSkillPath(returnedPath);
   }
 
-  // Source picker — shown when no source is set yet
+  // Source picker, shown when no source is set yet
   if (!skillSource) {
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -547,7 +546,7 @@ export function SkillDetailsTab({
 
       <Separator />
 
-      {/* Agent skills config — common to all sources */}
+      {/* Agent skills config, common to all sources */}
       {disabled && (
         <p className="text-xs text-muted-foreground">
           Wire this skill to an agent to configure it.

@@ -1,5 +1,5 @@
 /**
- * Usage metering — fire-and-forget write via the active storage boundary.
+ * Usage metering. Fire-and-forget write via the active storage boundary.
  *
  * The event path (Convex hot table telemetryEvents) has been removed; log
  * lines and spans now flow to NATS + OTLP via _shared/log.ts and otel.ts.

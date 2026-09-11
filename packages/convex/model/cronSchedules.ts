@@ -32,7 +32,7 @@ export interface RegisterScheduleOptions {
 
 /**
  * Deletes the component registration under `name` when one exists; a missing
- * registration is done. The existence probe is load-bearing — the component's
+ * registration is done. The existence probe is load-bearing. The component's
  * delete throws on an unknown name.
  */
 export async function deleteRegistrationIfExists(

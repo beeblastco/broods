@@ -473,7 +473,7 @@ async function handleManifestSync(
     },
   );
 
-  // Ensure the stage has a recoverable runtime API key so the CLI
+  // Mint or reuse the stage's recoverable runtime API key so the CLI
   // can write BROODS_API_KEY locally on first or later deploys.
   const deployment = await ctx.runMutation(
     internal.cli.sync.ensureRuntimeKeyBySecretHash,

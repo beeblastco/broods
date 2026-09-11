@@ -1,5 +1,5 @@
 /**
- * Grep tool — content search across the workspace, backed by ripgrep (`rg`).
+ * Grep tool. Content search across the workspace, backed by ripgrep (`rg`).
  * Mirrors a useful subset of grep. Only registered for
  * sandbox-backed workspaces (read-only workspaces expose read/glob only).
  */

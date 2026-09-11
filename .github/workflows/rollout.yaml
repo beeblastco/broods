@@ -84,7 +84,7 @@ jobs:
             done
 
             # Still in_progress at the deadline leaves conclusion null, which
-            # lands here as "none" and fails — a stuck prerequisite is not a
+            # lands here as "none" and fails. A stuck prerequisite is not a
             # reason to roll.
             CONCLUSION=$(gh api "$RUNS" --jq '.workflow_runs[0].conclusion // "none"')
             if [[ "$CONCLUSION" != "success" ]]; then
@@ -121,8 +121,8 @@ jobs:
           gh workflow run "$WORKFLOW" --repo "$INFRA_REPO" --ref main -f tag="$TAG"
 
           # An infra run reports infra's own head_sha and the API hides dispatch
-          # inputs, so the tag is matched out of display_title instead — infra's
-          # run-name puts it there precisely so a caller can find its own run.
+          # inputs, so this job matches the tag out of display_title instead.
+          # Infra's run-name puts it there so a caller can find its own run.
           for _ in $(seq 1 60); do
             RUN_ID=$(gh api "$RUNS_URL&per_page=20" \
               --jq "[.workflow_runs[]

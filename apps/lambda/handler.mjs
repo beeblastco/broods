@@ -4,7 +4,7 @@
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
  * frames to core. The child stays warm keyed by accountId + sha256 (#189),
  * bounded and retired on any batch-level failure. It is a containment layer,
- * not a trust boundary — same-UID, so keep the execution role empty.
+ * not a trust boundary. Same-UID, so keep the execution role empty.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */

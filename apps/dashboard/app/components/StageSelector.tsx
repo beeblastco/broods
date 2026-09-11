@@ -116,7 +116,7 @@ export function StageSelector(): React.JSX.Element | null {
   );
   const productionStage = stages?.find((stage) => stage.kind === "production");
 
-  // Ensure default Development stage exists when project loads.
+  // Create the default Development stage on load when the project has none.
   useEffect(() => {
     if (!projectId || stages === undefined) return;
     const defaultStage = stages.find((stage) => stage.isDefault);
@@ -295,7 +295,7 @@ export function StageSelector(): React.JSX.Element | null {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>New Stage</DialogTitle>
+            <DialogTitle>New stage</DialogTitle>
             <DialogDescription>
               Name your stage and choose how to initialize it.
             </DialogDescription>

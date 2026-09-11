@@ -2,7 +2,7 @@
  * Workspace-config validation for the Convex config plane. Ports core's
  * former storage/workspace-config.ts normalizer so the public /v1/workspaces
  * contract is unchanged. Workspace config holds no secrets (a roleArn is not
- * a secret), so it is stored and returned in plaintext. Pure module — safe
+ * a secret), so it is stored and returned in plaintext. Pure module, safe
  * for the default Convex runtime. The public projection lives in
  * ./responses.ts.
  */

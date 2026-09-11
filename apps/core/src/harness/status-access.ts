@@ -119,7 +119,7 @@ async function subagentDenial(
   }
 
   // The parent must be an active public agent, on this deployment, with a live
-  // ingress row — the same gate the parent's own status read passes.
+  // ingress row, the same gate the parent's own status read passes.
   const [parentAgent, parentDeployment, parentStatus] = await Promise.all([
     context.agentLoader(request.accountId, parentScope.agentId),
     context.deploymentLoader(request.accountId, parentScope.agentId),

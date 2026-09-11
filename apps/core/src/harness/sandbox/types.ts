@@ -4,8 +4,8 @@
  * The sandbox is a single uniform Linux compute backend (real bash + python3 +
  * node on PATH). All providers expose ONE `run` method that executes a piece of
  * code in an optionally named sandbox. The harness tools
- * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string —
- * per-runtime routing no longer exists.
+ * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string.
+ * Per-runtime routing no longer exists.
  */
 
 import type { Readable } from "node:stream";
@@ -71,7 +71,7 @@ export interface SandboxExecutorConfig {
   // The workspace's storage identity (bucket / region / endpoint / prefix / auth),
   // attached per-workspace by the runtime resolver. Drives the S3 mount target and
   // credentials. Absent for stateless (no-workspace) runs. Storage is a property of
-  // the workspace, not the sandbox compute — see shared/domain/workspace-config.
+  // the workspace, not the sandbox compute. See shared/domain/workspace-config.
   storage?: WorkspaceStorageConfig;
   // Account + sandbox identity attached by the runtime resolver so a freshly
   // reserved persistent instance mirrors itself into the Convex registry. Absent
@@ -141,7 +141,7 @@ export interface SandboxRunResult {
 }
 
 // The hosted-MCP runner Lambda is its own compute type, not one of the agent
-// sandbox providers — metering it as "lambda" would file it under the agent's
+// sandbox providers. Metering it as "lambda" would file it under the agent's
 // sandbox. (Retired custom-tool rows stored "custom-tool-sandbox" here.)
 export type ToolComputeProvider = "mcp-sandbox";
 
@@ -240,8 +240,8 @@ export interface SandboxExecutor {
     reservationKey?: string;
   }): Promise<void>;
   // Low-level exec in the reserved pod with optional stdin streaming. Unlike
-  // `run` it does not cd into a workspace or wrap output — used to talk to the
-  // resident in-pod tool worker. Persistent-only; absent for non-pod providers.
+  // `run` it does not cd into a workspace or wrap output. Callers use it to talk
+  // to the resident in-pod tool worker. Persistent-only; absent for non-pod providers.
   execInReservedPod?(
     request: { namespace?: string; reservationKey?: string },
     command: string[],

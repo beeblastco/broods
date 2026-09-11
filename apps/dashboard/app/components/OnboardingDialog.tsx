@@ -24,7 +24,7 @@ interface Props {
 const CLI_COMMAND =
   "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
 
-/** Flat-top hexagon cell — the brood-comb shape used by the step indicator. */
+/** Flat-top hexagon clip path, the brood-comb shape used by the step indicator. */
 const HEX_CLIP =
   "polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%)";
 
@@ -54,7 +54,7 @@ function useCopy() {
   return { copied: copied, copy: copy };
 }
 
-/** Honeycomb progress: one hex cell per step — filled for the current, dimmed for the done, hollow for the rest. */
+/** Honeycomb progress: one hex cell per step, filled for the current, dimmed for the done, hollow for the rest. */
 function HexSteps({ step, count }: { step: number; count: number }) {
   return (
     <div
@@ -107,7 +107,6 @@ function CommandBlock({ command }: { command: string }) {
   );
 }
 
-/** Small external docs link with a trailing arrow. */
 function DocsLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <a
@@ -139,7 +138,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
     "Start your first project",
   ];
   const descriptions = [
-    "Your serverless agent cloud is ready.",
+    "Your account is ready.",
     "It's shown only once and can't be recovered. Store it somewhere safe now.",
     "One command scaffolds a project and syncs it to your account.",
   ];
@@ -211,9 +210,8 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
                 </Button>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                This secret is how you manage your account and resources through
-                the API, provisioning agents, crons, and workspaces straight
-                from your own code.
+                This secret authenticates the API, so you can create agents,
+                crons, and workspaces from your own code.
               </p>
               <div className="flex items-center gap-4">
                 <DocsLink href="https://docs.broods.app/sdk">

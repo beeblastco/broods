@@ -213,7 +213,7 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(response)).toEqual({ error: "Not found" });
   });
 
-  it("no longer serves cron CRUD — those routes live in the Convex config plane", async () => {
+  it("leaves cron CRUD to the Convex config plane", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage({}));

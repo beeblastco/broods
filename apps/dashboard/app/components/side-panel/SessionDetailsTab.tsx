@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Session (database) node Details tab — the agent's conversation persists automatically;
- * this surfaces the only tunable knobs: context pruning and compaction.
+ * Session (database) node Details tab. The agent's conversation persists on its
+ * own, so the only settings here are context pruning and compaction.
  */
 import {
   ExpandBlock,
@@ -28,7 +28,6 @@ type SessionSlice = {
   compaction?: { enabled?: boolean; maxContextLength?: number };
 };
 
-/** Session node Details tab — persistent-memory explainer plus pruning/compaction controls. */
 export function SessionDetailsTab({
   nodeId,
   editName,

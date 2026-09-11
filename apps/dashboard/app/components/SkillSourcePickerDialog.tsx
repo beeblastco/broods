@@ -1,6 +1,5 @@
 "use client";
 
-/** Dialog for selecting how a new skill should be added. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,

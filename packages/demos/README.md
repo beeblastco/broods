@@ -13,7 +13,7 @@ bun run start
 
 Each demo depends on `broods` as `file:../../broods`, whose entrypoint is
 `dist/`. Installing before that build produces a linked package with no
-entrypoint and `Cannot find package 'broods'` at runtime — build first, and
+entrypoint and `Cannot find package 'broods'` at runtime. Build first, and
 re-run `bun install` in the demo if you built afterwards.
 
 Use `.env.local` for local runtime settings. SDK clients automatically read the
@@ -24,7 +24,7 @@ HTTP clients. The hosted SDK default is `gateway.broods.app`.
 
 ## Run against a local core
 
-The core now runs as a single container (`apps/core`, off Lambda) — you can run
+The core now runs as a single container (`apps/core`, off Lambda). You can run
 it on your machine against the **real** Convex backend (the database
 doesn't change), then aim the demos at it:
 
@@ -41,7 +41,7 @@ cd packages/demos/basic-stream && bun run start
 ```
 
 The SDK resolves its target from `BROODS_BASE_URL` / `BROODS_HOST` (falling back
-to `gateway.broods.app`), so this swaps only the base URL — see
+to `gateway.broods.app`), so this swaps only the base URL. See
 `packages/demos/.env.example`.
 
 - `basic-stream`: stream an agent over SSE.
@@ -54,8 +54,8 @@ to `gateway.broods.app`), so this swaps only the base URL — see
 
 Sandbox examples (one `defineSandbox` per provider/mode):
 
-- `sandbox`: stateless, bash-only self-hosted `sandbox` (workdir) — code exec, config env var, internet egress.
-- `sandbox-workspace`: workspace-backed `sandbox` — file tools on the shared S3 workspace mount.
+- `sandbox`: stateless, bash-only self-hosted `sandbox` (workdir). Code exec, config env var, internet egress.
+- `sandbox-workspace`: workspace-backed `sandbox`. File tools on the shared S3 workspace mount.
 - `sandbox-workspace-persistent`: reserved (persistent) `sandbox` with package persistence + a background job via `async_status`.
 - `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.

@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Agent Config tab — single JSON editor for the full nested AgentConfig
- * (`agent`, `model`, `provider` branches merged into one object).
+ * Single JSON editor for the full nested AgentConfig, with the `agent`, `model`
+ * and `provider` branches merged into one object.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {

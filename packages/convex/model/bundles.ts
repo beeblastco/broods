@@ -1,8 +1,8 @@
 /**
  * Bundle bytes reach S3 through Convex file storage instead of riding along as
- * an action argument. A "use node" action caps arguments at 5 MiB — that is
- * Lambda's invoke-payload quota showing through — which would cap an uploaded
- * bundle well below what the runtime can actually execute. The stored blob
+ * an action argument. A "use node" action caps arguments at 5 MiB, Lambda's
+ * invoke-payload quota showing through, which would cap an uploaded bundle
+ * well below what the runtime can execute. The stored blob
  * is only a courier: whoever stores it deletes it, pass or fail.
  */
 
@@ -68,7 +68,7 @@ export async function storeMcpBundle(
 }
 
 // Couriers the bytes through Convex storage, runs the S3 writer action, and
-// always deletes the blob — pass or fail.
+// always deletes the blob, pass or fail.
 async function putBundle(
   ctx: ActionCtx,
   action: PutBundleAction,

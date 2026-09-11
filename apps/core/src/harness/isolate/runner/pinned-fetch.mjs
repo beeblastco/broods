@@ -3,7 +3,7 @@
  * connect to the address that was validated. Backs the isolate
  * fetch bridge and inbound attachment fetches in `channel-media.ts`.
  *
- * Error messages are neutral — every caller shows them to a different
+ * Error messages are neutral. Every caller shows them to a different
  * audience, so the isolate bridge adds its own "ctx.fetch" label at its
  * boundary in `runner.mjs`. Types live in the sibling `pinned-fetch.d.mts`;
  * keep the two in sync.
@@ -31,7 +31,7 @@ export const DENY_CIDRS = [
 // production callers should leave those unset so Node opens the socket directly
 // to the validated address and verifies TLS against the system roots.
 // `allowAddresses` exempts exact addresses (the test loopback) from the
-// denylist — deliberately not a replacement for the check itself.
+// denylist and cannot replace the check itself.
 // `binary: true` returns the body as bytes in `bodyBytes` instead of decoded
 // text in `bodyText`, and skips the body of a non-2xx answer entirely;
 // `bodyLimitBytes` overrides the default body cap. `redirectLimit: 0` refuses
@@ -161,7 +161,7 @@ function requestPinned(parsed, pinned, init, state) {
           // A redirect's body is never surfaced, and a binary caller keeps
           // only bytes it can use: skip the download instead of buffering up
           // to the cap just to throw it away. Text callers still read error
-          // bodies — ctx.fetch hands those back to the tool.
+          // bodies, which ctx.fetch hands back to the tool.
           const skipBody =
             isRedirect(status) ||
             (state.binary && (status < 200 || status >= 300));
@@ -274,8 +274,8 @@ function isIpv6LinkLocal(normalized) {
 export function isDeniedAddress(address) {
   if (address.includes(":")) {
     const normalized = address.toLowerCase();
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d) tunnels a v4 address past the v6 checks —
-    // evaluate the embedded v4 against the CIDR denylist instead.
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d) tunnels a v4 address past the v6 checks,
+    // so evaluate the embedded v4 against the CIDR denylist instead.
     const mapped = normalized.match(
       /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
     );

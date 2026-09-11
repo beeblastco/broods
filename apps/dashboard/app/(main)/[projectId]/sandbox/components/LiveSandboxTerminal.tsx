@@ -49,8 +49,8 @@ export function LiveSandboxTerminal({
   const [error, setError] = useState<string | null>(null);
 
   // Tear down the socket + terminal when the sheet unmounts. The disposed flag
-  // also aborts a handleConnect still awaiting the ticket or the xterm import —
-  // without it that continuation would open a live PTY socket (which resumes a
+  // also aborts a handleConnect still awaiting the ticket or the xterm import.
+  // Without it that continuation would open a live PTY socket (which resumes a
   // suspended instance) on an unmounted component, leaking it.
   const disposedRef = useRef(false);
   useEffect(() => {

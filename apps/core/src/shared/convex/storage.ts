@@ -44,8 +44,8 @@ import { taskUsage } from "./usage.ts";
 // refs; the backend package exposes internalQuery / internalMutation, so we
 // cast at the boundary. Deploy-key auth permits calling these at runtime.
 // require() (not import) keeps the backend's generated types out of this
-// package's typecheck program — its sources are checked by their own
-// tsconfig — while Bun still resolves and bundles the module statically.
+// package's typecheck program, since its own tsconfig checks those sources,
+// while Bun still resolves and bundles the module statically.
 const internal: any = require("@broods/convex/_generated/api").internal;
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;

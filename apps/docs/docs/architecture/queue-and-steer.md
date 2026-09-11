@@ -1,4 +1,4 @@
-# Queue and Steer Ingress (v1)
+# Queue and steer ingress (v1)
 
 Status: **Accepted and implemented** for [issue #71](https://github.com/beeblastco/broods/issues/71).
 
@@ -11,10 +11,10 @@ If you only want to _use_ queue and steer, this section is enough; the rest of
 the page is the architecture record behind it.
 
 **The one thing to know:** when you send a message to an agent that is already
-working, it does not error and it does not silently wait — by default it
+working, it does not error and it does not silently wait. By default it
 **steers**. Your message joins the run in progress at its next natural pause (a
 "step boundary," between the model finishing one chunk of work and starting the
-next), so the agent keeps everything it has done so far and simply takes your new
+next), so the agent keeps everything it has done so far and takes your new
 instruction into account. If the run has no pause left before it ends, your
 message automatically becomes the next turn instead. You never lose a message.
 
@@ -27,8 +27,8 @@ message automatically becomes the next turn instead. You never lose a message.
 - Channels (Slack, Discord, …): just type. A message sent mid-run steers the run.
 
 **Pile up several messages while it is busy.** Fire off three quick corrections
-and they merge into _one_ coherent update rather than three separate turns —
-that is the built-in batching of steer (and of `collect`). Order is preserved.
+and they merge into _one_ coherent update rather than three separate turns.
+That is the built-in batching of steer (and of `collect`). Order is preserved.
 
 **Queue a message as its own separate turn** instead of joining the live run:
 
@@ -37,11 +37,11 @@ that is the built-in batching of steer (and of `collect`). Order is preserved.
 
 **Stop the run.** Two flavors, pick by how urgent you are:
 
-- Graceful — `/stop` (or `/cancel`) in a channel, or `mode: "followup"`/status
+- Graceful: `/stop` (or `/cancel`) in a channel, or `mode: "followup"`/status
   polling patterns in code. The run halts at its next boundary, finishes the
   in-flight step, settles as stopped, and anything queued behind it starts next.
   A running remote tool is _not_ force-killed.
-- Immediate — over WebSocket, send a `cancel` frame (the SDK does this when your
+- Immediate: over WebSocket, send a `cancel` frame (the SDK does this when your
   `AbortSignal` fires, or when you close the socket). This drops the stream now;
   the in-flight step's output is discarded.
 
@@ -61,11 +61,11 @@ SSE request is rejected with `409`; an async request can be accepted and later
 fail as busy. Channel messages use a transactional pending buffer and are
 collected into the next turn. The WebSocket gateway permits one active execute
 message per socket, and its `cancel` frame only stops gateway-side fetch/read
-work—it does not abort the core run.
+work. It does not abort the core run.
 
 The v1 goal is to make those concurrency choices explicit and consistent while
-the project is still under development. This decision intentionally replaces the
-old transport-specific defaults with `steer` everywhere; there is no transition
+the project is still under development. This decision replaces the old
+transport-specific defaults with `steer` everywhere; there is no transition
 mode. It does not add distributed cancellation.
 
 ## Decision
@@ -163,8 +163,8 @@ interface IngressApplication {
 selection or the resolved `steer` default.
 
 The stored record also carries server-derived `accountId` and `agentId`; clients
-cannot select or override them. One canonical idempotency identity is used on
-every transport:
+cannot select or override them. Every transport uses one canonical idempotency
+identity:
 
 ```text
 (accountId, agentId, scopedConversationKey, idempotencyKey)
@@ -188,8 +188,8 @@ stored as delivery metadata.
 
 ### Durable FIFO, bounds, and recovery
 
-Accepted busy ingress is stored as individual FIFO envelopes, not an untyped
-array on the lease row. Ordering is by a transactionally assigned conversation
+The coordinator stores accepted busy ingress as individual FIFO envelopes, not an
+untyped array on the lease row. Ordering is by a transactionally assigned conversation
 sequence, with `(createdAt, eventId)` only as a diagnostic tie-breaker.
 
 `collect` never replaces its source envelopes. At the atomic drain cutoff, the
@@ -235,13 +235,13 @@ provider's idempotency metadata when that surface supports it.
 After a process crash, maintenance marks elapsed work `expired`. When a new
 event arrives on a conversation whose owner lease expired with work still
 queued, admission first promotes the oldest queued group to the new owner
-generation and schedules it, and the new arrival queues behind it — recovery
+generation and schedules it, and the new arrival queues behind it. Recovery
 preserves FIFO order rather than letting the newcomer jump the queue. Stale
 workers cannot apply an envelope or commit outputs after recovery.
 
-Each envelope durably carries its own request execution context — the resolved
+Each envelope durably carries its own request execution context: the resolved
 agent config (including per-run `model` overrides) and one-turn `system`
-messages — and its payload digest covers them. A queued request therefore runs
+messages. Its payload digest covers them. A queued request therefore runs
 with exactly its own overrides when it later reaches a boundary, and never
 inherits the previous owner's. A failed owner releases or times out its lease without
 leaving accepted work permanently `accepted`, `queued`, `applied`, or

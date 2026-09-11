@@ -21,7 +21,7 @@ let runDeadlineAt = 0;
 
 // A timer sleep resolving after the isolate is disposed (timeout/final) rejects
 // when it tries to re-enter the dead isolate. All real outcomes are already on
-// stdout as frames by then — never let that teardown noise crash the runner.
+// stdout as frames by then, so that teardown noise must never crash the runner.
 process.on("unhandledRejection", () => {});
 
 // Cross-process tool cancellation: the core host forwards the AI SDK abortSignal
@@ -376,9 +376,9 @@ async function runIsolateJob(
           { ignored: true },
         ),
         // sync, like __emitChunk: an `ignored` callback is dispatched on a later
-        // host turn, so the log frame could be written AFTER this call's terminal
-        // frame — by which time the host has detached the sink (line lost) or
-        // handed the worker to the next call (line emitted under that tenant's
+        // host turn, so the log frame could land AFTER this call's terminal
+        // frame. By then the host has detached the sink (line lost) or handed
+        // the worker to the next call (line emitted under that tenant's
         // observability context). Ordering is the correctness property here.
         new ivm.Callback((level, line) => emitLog(level, line), { sync: true }),
         // Mutable per-run scratchpad for hooks (ctx.state); read back out after a
@@ -650,7 +650,7 @@ function writeFrame(frame) {
 
 // A tool logging in a tight loop would otherwise walk straight into the host's
 // 1 MiB stdout cap, which kills the worker and fails the call. Spend a per-call
-// budget on console lines, then say so once and stay quiet — the tool still runs.
+// budget on console lines, then say so once and stay quiet. The tool still runs.
 // The budget lives in here, not at module scope: the entry dispatch at the top of
 // this file is a top-level await, so a module-level const below it is still in
 // its temporal dead zone while a run is emitting, and reading one would throw a

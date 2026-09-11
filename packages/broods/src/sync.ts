@@ -699,7 +699,7 @@ function assertRouteMounted(
  * Turns a failed response into an error carrying the server's own reason. The
  * config plane answers with `{ error, detail? }`, and `detail` is where manifest
  * validation failures (an unset `env()` ref, an unsupported mount) explain
- * themselves — printing the raw JSON instead buries them.
+ * themselves. Printing the raw JSON instead buries them.
  */
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;

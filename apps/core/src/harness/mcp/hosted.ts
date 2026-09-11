@@ -170,7 +170,7 @@ export function hostedMcpFetch(
         : new Request(String(input), init);
     // The standalone GET SSE stream is a legacy-era long-poll; a per-request
     // Lambda invoke would hold it open until timeout. Hosted rows are pinned
-    // modern, which never opens it — refuse it outright as the spec allows.
+    // modern, which never opens it, so refuse it outright as the spec allows.
     if (request.method === "GET") {
       return new Response(null, { status: 405, headers: { allow: "POST" } });
     }

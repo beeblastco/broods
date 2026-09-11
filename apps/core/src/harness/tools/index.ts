@@ -410,8 +410,8 @@ export async function createTools(
     );
   }
 
-  // Withhold last, so a channel's deny list covers sandbox and MCP tools too
-  // — those are derived from workspaces and server rows, never from config.tools.
+  // Withhold last, so a channel's deny list covers sandbox and MCP tools too.
+  // Those are derived from workspaces and server rows, never from config.tools.
   withholdTools(tools, agentConfig.denyTools);
 
   return context.dispatchAsyncTools

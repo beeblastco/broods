@@ -1,5 +1,5 @@
 /**
- * workdir-backed sandbox executor — the vanilla `sandbox` provider.
+ * workdir-backed sandbox executor, the vanilla `sandbox` provider.
  * Thin adapter over the published `@mv37/workdir` SDK (a self-hosted
  * Rust/Firecracker control plane) reached at a configurable base URL, so the
  * same code targets a local node while testing and a dedicated host in
@@ -11,7 +11,7 @@
  * S3 workspace mount (see #s3MountStrategy): the mount target + credentials come
  * from the workspace's storage config (resolveS3Mount). `exec` strategy mounts via
  * mount-s3 with short-lived assume-role credentials (a bring-your-own-bucket role,
- * or the platform role — the default when SANDBOX_MOUNT_ROLE_ARN is set);
+ * or the platform role, the default when SANDBOX_MOUNT_ROLE_ARN is set);
  * `declarative` strategy declares a boot mount that reads static keys from named
  * org secrets (no role configured). Both honor an S3-compatible endpoint (R2/MinIO).
  */
@@ -373,9 +373,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return isPlainObject(this.#config.options) ? this.#config.options : {};
   }
 
-  // workdir has no native hard expiry — `auto_stop_seconds` only stops the machine,
-  // it never deletes it — so `lifecycle.maxLifetimeSeconds` is enforced here, at
-  // acquire time. Checking between turns rather than on a timer means an expiry can
+  // workdir has no native hard expiry. `auto_stop_seconds` only stops the machine
+  // and never deletes it, so this executor enforces `lifecycle.maxLifetimeSeconds`
+  // at acquire time. Checking between turns rather than on a timer means an expiry can
   // never interrupt a running exec: the next call retires the old sandbox and boots
   // a fresh one, which costs a cold create instead of a resume. Local disk is lost;
   // the S3 workspace mount is not, so the agent's files come back with it. Unset
@@ -429,8 +429,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   //  - `none`:        not a workspace run (no namespace) and mounting not forced.
   //  - `exec`:        a role is configured (bring-your-own assumeRole, or the
   //                   platform SANDBOX_MOUNT_ROLE_ARN) -> mount via exec with the
-  //                   short-lived credentials (#ensureS3Mount). Preferred —
-  //                   workdir's org-global secret store can't safely hold
+  //                   short-lived credentials (#ensureS3Mount). Preferred,
+  //                   since workdir's org-global secret store can't safely hold
   //                   per-namespace scoped creds, but a per-call exec env can.
   //  - `declarative`: no role -> declare a boot mount that reads static keys from
   //                   named org secrets (#s3Mounts), for stores without a role.
@@ -479,7 +479,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return `${root}/${request.namespace}`;
   }
 
-  // Declarative boot mount (top-level `mounts[]`) — `declarative` strategy only.
+  // Declarative boot mount (top-level `mounts[]`), `declarative` strategy only.
   // workdir runs mount-s3 at boot and reads creds from the guest secret env, which
   // it injects from the named org secrets (s3SecretNames). The role path mounts via
   // exec instead (#ensureS3Mount).
@@ -760,11 +760,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
   // `exec` strategy: mount the bucket via mount-s3 inside the guest, handing it
   // short-lived credentials (incl. the session token) scoped to the mount prefix as
-  // per-call exec env — never the harness's own broad creds, which any code the
+  // per-call exec env, never the harness's own broad creds, which any code the
   // agent runs could read (the daytona model).
   //
   // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
-  // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry —
+  // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry.
   // mount-s3 only reads them at startup, so rotating means replacing the daemon.
   // Age comes from a stamp written with the harness's clock, not the guest's, which a
   // Firecracker pause freezes. The stamp lives on agent-writable disk, so it is treated

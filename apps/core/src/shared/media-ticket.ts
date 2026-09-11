@@ -1,8 +1,8 @@
 /**
  * Durable workspace media links. A channel tool seals one when it hands a
  * workspace file to a chat provider; the media route opens it to learn which
- * file to stream. Providers store the URL and fetch it lazily — Zalo re-fetches
- * every time a viewer opens the photo — so the ticket carries no expiry.
+ * file to stream. Providers store the URL and fetch it lazily, and Zalo re-fetches
+ * every time a viewer opens the photo, so the ticket carries no expiry.
  * Rotating the service secret is what revokes every issued link.
  */
 

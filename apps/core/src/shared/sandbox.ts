@@ -13,8 +13,8 @@ const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 // Per-call ceilings differ by provider. The lambda provider runs an AWS Lambda
 // MicroVM: a single blocking (synchronous) exec is bounded by the harness request
 // budget (harness-processing timeout, ~10 min), and memory is the MicroVM size,
-// capped at the 8 GB largest size. Detached background jobs are not bounded here —
-// they run inside the long-lived VM (up to its 8 h max lifetime). The other
+// capped at the 8 GB largest size. Detached background jobs are not bounded here.
+// They run inside the long-lived VM (up to its 8 h max lifetime). The other
 // persistent providers (sandbox/e2b/daytona) are operator-sized (no memory max here).
 const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 const LAMBDA_MAX_MEMORY_LIMIT_MB = 8192;
@@ -36,7 +36,7 @@ export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;
 
 /**
- * The managed workspace bucket key prefix for a namespace — the single source of
+ * The managed workspace bucket key prefix for a namespace, the single source of
  * truth for the on-bucket layout, shared by the harness-side S3 reads/writes and the
  * sandbox's own mount so they always see the same files. A namespace's files live
  * directly under `<namespace>/` (the namespace is itself the tenant-isolation
@@ -82,7 +82,7 @@ export interface WorkspaceSandboxLimits {
 /**
  * Per-call sandbox limits for a provider. Defaults and output caps are universal
  * (they protect the harness runtime); the timeout/memory *maxima* are provider-aware
- * because lambda (MicroVM) caps memory at the 8 GB largest size — the other
+ * because lambda (MicroVM) caps memory at the 8 GB largest size, while the other
  * persistent providers are operator-sized. Output truncation always applies (output
  * is read back into the harness regardless of provider).
  */

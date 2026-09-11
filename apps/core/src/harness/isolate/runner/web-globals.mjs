@@ -2,8 +2,8 @@
  * Web globals a bare V8 isolate lacks but ordinary bundles assume: text codecs,
  * base64, URL/URLSearchParams and crypto. Exported as source because it has to
  * be evaluated inside the isolate; runner.mjs installs it before the tool module
- * evaluates. Web Streams are deliberately absent — a bundle that needs them is
- * classified onto the sandbox tier instead of getting a half-built one here.
+ * evaluates. Web Streams are deliberately absent. A bundle that needs them
+ * runs on the sandbox tier instead of getting a half-built one here.
  */
 
 // $0 parses/mutates a URL on the host so the isolate inherits Node's WHATWG

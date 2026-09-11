@@ -1,8 +1,8 @@
 /**
- * `bun run bench` — measure the suite and print it.
- * `bun run bench:check` — measure, grade against bench/baselines.json, exit 1
- *   on a blocking regression. This is what CI runs.
- * `bun run bench:record` — overwrite the baselines from a fresh measurement,
+ * `bun run bench` measures the suite and prints it.
+ * `bun run bench:check` measures, grades against bench/baselines.json, and exits
+ *   1 on a blocking regression. This is what CI runs.
+ * `bun run bench:record` overwrites the baselines from a fresh measurement,
  *   or from a result file with `--from <bench-result.json>`. Never called by
  *   CI to commit anything: a baseline moves only through a reviewed commit.
  */

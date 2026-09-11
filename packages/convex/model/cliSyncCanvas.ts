@@ -178,7 +178,7 @@ function addAgentSkillEdges(
 /**
  * Subagent (agent→agent) edges from `subagent.allowed`. The dashboard
  * reconstructs handles + type from the `subagent:` id prefix on load, so the
- * CLI only persists id/source/target — the same way mount edges work.
+ * CLI only persists id/source/target, the same way mount edges work.
  */
 function addAgentSubagentEdges(
   agentConfig: Record<string, unknown>,

@@ -25,7 +25,7 @@ export function pruneSessionMessages(
     messages: modelMessages,
     // Never `before-last-message` here. Half-stripping leaves older assistant
     // messages referencing stored items whose reasoning is gone, which is the
-    // same rejection this retention exists to avoid — only deferred a turn.
+    // same rejection this retention exists to avoid, only deferred a turn.
     reasoning: "none",
     // A final approval response needs the preceding assistant tool-call preserved
     // so the AI SDK can match approvalId -> toolCallId on the next model run.

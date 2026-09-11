@@ -157,7 +157,7 @@ export function PoliciesPanel({
               onClick={beginNew}
             >
               <Plus className="mr-1 size-3.5" />
-              New Policy
+              New policy
             </Button>
           )}
         </div>

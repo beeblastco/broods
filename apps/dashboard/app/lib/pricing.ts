@@ -22,7 +22,7 @@ export interface PlanConfig {
 /** Default plan assigned to new users. */
 export const DEFAULT_PLAN: PlanTier = "hobby";
 
-/** Highest tier — users on this plan see no upgrade button. */
+/** Highest tier. Users on this plan see no upgrade button. */
 export const MAX_PLAN: PlanTier = "pro";
 
 /** External URL for plan upgrades or plan information. */

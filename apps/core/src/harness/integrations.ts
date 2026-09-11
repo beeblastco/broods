@@ -505,7 +505,7 @@ async function handleHttpRequest(
 
     return errorResponse(
       404,
-      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} for a production stage, or /webhooks/{accountId}/dev/{endpointId}/{channel} for any other stage — the agent is chosen by credentials and channel records, never named in the URL.",
+      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} for a production stage, or /webhooks/{accountId}/dev/{endpointId}/{channel} for any other stage. The agent is chosen by credentials and channel records, never named in the URL.",
       { code: "unknown_webhook_url" },
     );
   }
@@ -578,7 +578,7 @@ async function handleHttpRequest(
       });
 
       // "configured" means an agent declares the channel but its adapter would
-      // not take this request — a different message from nobody declaring it.
+      // not take this request, a different message from nobody declaring it.
       return integrationNotConfigured(
         holder.configured ? `Webhook ${channelName}` : channelName,
       );
@@ -820,7 +820,7 @@ async function findChannelCredentialHolder(
   if (endpointId && listed.length === 0) {
     return { kind: "unknown-stage" };
   }
-  // Cap the agents that actually configure this channel, not the raw list — an
+  // Cap the agents that actually configure this channel, not the raw list. An
   // account whose 30th agent owns the Slack app must still be reachable. Sort
   // first: the cap is applied while scanning, so ordering it afterwards would
   // still leave *which* agents were considered up to the lister.
@@ -857,8 +857,8 @@ async function findChannelCredentialHolder(
 
   // Sort before authenticating. With no agent in the URL this scan is the only
   // thing choosing a receiver, so two agents sharing one provider app must not
-  // resolve differently between requests — pick the same one every time and say
-  // so, since a channel record is what disambiguates them properly.
+  // resolve differently between requests. Pick the same one every time and say
+  // so, since the channel record is what disambiguates them.
   candidates.sort((left, right) =>
     left.agent.agentId.localeCompare(right.agent.agentId),
   );
@@ -1031,7 +1031,7 @@ async function refuseChannelInvoke(
 /**
  * Reply routing for this turn. A record's `replyIn` decides between a thread
  * and wherever the message came from, so it applies only where the provider
- * gives the runtime that choice — everywhere else there is one place to reply.
+ * gives the runtime that choice. Everywhere else there is one place to reply.
  */
 function channelReplySource(
   adapter: ChannelAdapter,
@@ -1116,8 +1116,6 @@ async function handleChannelWebhook(
       return unauthorizedResponse();
     }
 
-    // Parse event and check if it should be ignored
-    // This is based on the channel integration
     const parsed = await adapter.parse(request);
     logDebug("Channel webhook parsed", {
       channel: adapter.name,
@@ -1133,7 +1131,6 @@ async function handleChannelWebhook(
         : {}),
     });
 
-    // Global event check for webhook event.
     // Provider needs a direct HTTP response, but no agent run.
     // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
@@ -1293,7 +1290,7 @@ async function handleChannelWebhook(
           .actions(message)
           .sendText(
             formatChannelErrorText(
-              "I can't reach my channel configuration right now — try again in a moment.",
+              "I can't reach my channel configuration right now. Try again in a moment.",
             ),
           )
           .catch(() => {}),
@@ -1304,8 +1301,8 @@ async function handleChannelWebhook(
     // The rewritten source is what every later reply routes on, so a background
     // job's delayed answer lands in the same place this turn's did.
     const source = channelReplySource(adapter, message, target.record);
-    // Replies go out through the adapter that received the webhook — the same
-    // provider app — even when the channel record hands the run to another agent.
+    // Replies go out through the adapter that received the webhook, the same
+    // provider app, even when the channel record hands the run to another agent.
     const channel = adapter.actions({ ...message, source: source });
     const targetDeployment =
       target.agent.agentId === agent.agentId
@@ -1553,7 +1550,7 @@ async function processChannelMessage(
         channel: event.channelName,
         text: extractText(event.content),
         // Channel-specific routing data (e.g. Pancake `tagIds`) so a hook can
-        // key on it — the replacement for the old baked-in tag skip.
+        // key on it. This replaced the old baked-in tag skip.
         source: toLifecycleValue(event.source),
       });
       if (mutation?.drop === true) {
@@ -1568,7 +1565,7 @@ async function processChannelMessage(
       if (typeof mutation?.text === "string") {
         content = rewriteUserContentText(content, mutation.text);
         // The turn is persisted and built from the ingress events, not from
-        // `content` (handler.ts appendIngressEvents) — a rewrite that only
+        // `content` (handler.ts appendIngressEvents). A rewrite that only
         // touches `content` is computed and then dropped.
         events = rewriteLatestUserIngressText(events, mutation.text);
       }
@@ -1677,7 +1674,7 @@ export function rewriteLatestUserIngressText(
 }
 
 // A hook rewrites text only, so any image or file the channel delivered stays on
-// the message — otherwise redacting the caption drops the attachment with it.
+// the message. Otherwise redacting the caption drops the attachment with it.
 function rewriteUserContentText(
   content: UserContent,
   text: string,
@@ -1794,8 +1791,9 @@ export function channelActionsFromConfig(
 }
 
 /**
- * Push a single message into a chat channel outside the inbound webhook — used
- * to deliver a background job's result back to the conversation it came from.
+ * Push a single message into a chat channel outside the inbound webhook. Callers
+ * use it to deliver a background job's result back to the conversation it came
+ * from.
  * Rebuilds the channel sender from the agent's encrypted config + the stored
  * routing `source`, reusing the same adapter the webhook path uses. Each channel
  * decides how to deliver a delayed message inside its own module (e.g. Discord
@@ -2194,7 +2192,7 @@ function isObservabilityScopePath(rawPath: string): boolean {
 }
 
 // A malformed escape makes `decodeURIComponent` throw, which would surface as a
-// 500 on a path the router should simply decline.
+// 500 on a path the router should decline.
 function decodePathSegments(segments: string[]): string[] | null {
   try {
     return segments.map((segment) => decodeURIComponent(segment));

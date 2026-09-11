@@ -195,7 +195,7 @@ if (slackRef) {
       }
     } else if (configToken) {
       console.warn(
-        "SLACK_CONFIG_REFRESH_TOKEN is not set — cannot rotate. Add it to .env.local to avoid token_expired errors.",
+        "SLACK_CONFIG_REFRESH_TOKEN is not set, so the token cannot rotate. Add it to .env.local to avoid token_expired errors.",
       );
     }
 
@@ -290,7 +290,7 @@ if (slackRef) {
     }
   }
 } else {
-  console.log("No Slack channel defined — skipping Slack registration.");
+  console.log("No Slack channel defined, skipping Slack registration.");
 }
 
 // ── Telegram ───────────────────────────────────────────────────────
@@ -326,7 +326,7 @@ if (telegramRef) {
     );
   }
 } else {
-  console.log("No Telegram channel defined — skipping Telegram registration.");
+  console.log("No Telegram channel defined, skipping Telegram registration.");
 }
 
 // ── GitHub ─────────────────────────────────────────────────────────
@@ -361,5 +361,5 @@ if (githubRef) {
     );
   }
 } else {
-  console.log("No GitHub channel defined — skipping GitHub registration.");
+  console.log("No GitHub channel defined, skipping GitHub registration.");
 }

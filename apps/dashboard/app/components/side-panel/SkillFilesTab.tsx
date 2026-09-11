@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Skill file explorer — wraps WorkspaceFilesTab with broods skill format
+ * Skill file explorer. Wraps WorkspaceFilesTab with broods skill format
  * constraints: SKILL.md at root required, text files only, 5 MB per file /
  * 30 MB total. Publish action pushes the files to the broods account.
  */
@@ -421,7 +421,7 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Core file tree — reuses WorkspaceFilesTab */}
+      {/* Core file tree, reuses WorkspaceFilesTab */}
       <div
         id={`skill-files-${nodeId}`}
         className="flex min-h-0 flex-1 flex-col overflow-hidden"

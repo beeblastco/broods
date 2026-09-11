@@ -17,7 +17,7 @@ export const webhookAgent = defineAgent({
       "You are a helpful assistant. You can call tools and provide information to the user.",
   },
   hooks: {
-    // An agent can register several outbound webhooks — add more entries to fan
+    // An agent can register several outbound webhooks. Add more entries to fan
     // events out to multiple of your services.
     webhooks: [
       {

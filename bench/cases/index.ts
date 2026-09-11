@@ -1,7 +1,7 @@
 /**
  * Every case the suite runs, in report order. A case belongs here only if it is
  * on a path that executes per request, per turn, or per streamed line, or is
- * something a developer waits on every time they use the CLI — the suite is a
+ * something a developer waits on every time they use the CLI. The suite is a
  * regression gate, not a catalogue.
  */
 

@@ -2,7 +2,7 @@
 
 /**
  * Node-runtime S3 bundle writers for Convex config-plane resources. Bundles
- * arrive by storage id, never as an argument — see model/bundles.ts for why.
+ * arrive by storage id, never as an argument. See model/bundles.ts for why.
  * The MCP writer also verifies client-uploaded bundles (sha256 and size cap)
  * here, where the bytes are read anyway.
  */
@@ -39,7 +39,7 @@ export const putHookBundle = internalAction({
 /**
  * Store a hosted MCP server bundle under the account-mcp/ prefix (#331 phase
  * 2). The bundle may be a direct client upload (#190), so the declared sha256
- * and the size cap are verified against the raw bytes first — failing here
+ * and the size cap are verified against the raw bytes first. Failing here
  * turns a corrupt upload into an upload error instead of a broken server.
  */
 export const putMcpBundle = internalAction({

@@ -390,7 +390,7 @@ function skippedStickerText(sticker: TelegramSticker | undefined): string {
  *
  * The SDK already extracts photos, video, audio, voice notes, documents and
  * video notes, each with a reader that resolves the file id and signs the
- * download with the bot token — that is what `parsed.attachments` holds. It has
+ * download with the bot token. That is what `parsed.attachments` holds. It has
  * no notion of a sticker, so that one is built here against the same reader:
  * `rehydrateAttachment` turns a file id back into a download, which is exactly
  * what a sticker needs and all it needs.
@@ -481,7 +481,7 @@ function telegramEnvelope(
 }
 
 // Entities are indexed against whichever of the two text fields carries the
-// message, so the pair must be read together — otherwise an @-mention in a photo
+// message, so the pair must be read together. Otherwise an @-mention in a photo
 // caption is matched against the offsets of a `text` that is not there.
 function telegramEntities(
   message: TelegramMessage,

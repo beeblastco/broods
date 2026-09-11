@@ -1,4 +1,4 @@
-# Snapshots, Images & Sizes
+# Snapshots, images & sizes
 
 A sandbox boots from a **base image** at a chosen **compute size**. Both are optional:
 omit them and the provider uses its default base image and create-time footprint. Pin
@@ -92,11 +92,11 @@ so the Snapshots/Images view reads the same regardless of provider:
 
 Capturing a _running_ sandbox into a new reusable image is provider-specific:
 
-| Provider                     | Runtime "Create snapshot" | How a new image is produced                                                                                                                                                                                                                                                                |
-| ---------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sandbox` (workdir)          | ✅ yes                    | dashboard **Create snapshot** captures the running sandbox into a workdir image you can pin via `config.snapshot`                                                                                                                                                                          |
-| `lambda` (MicroVM)           | ❌ no                     | **AWS MicroVM has no runtime image-capture API** — images are built ahead of time as versioned MicroVM image builds (see [Lambda → Image & build](lambda.md#image--build)). A running VM's state is preserved across idle via **suspend/resume**, not by snapshotting it into a new image. |
-| `daytona` / `e2b` / `vercel` | ❌ no (in this harness)   | use the provider's own snapshot/template tooling and reference it through `options`                                                                                                                                                                                                        |
+| Provider                     | Runtime "Create snapshot" | How a new image is produced                                                                                                                                                                                                                                                               |
+| ---------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sandbox` (workdir)          | yes                       | dashboard **Create snapshot** captures the running sandbox into a workdir image you can pin via `config.snapshot`                                                                                                                                                                         |
+| `lambda` (MicroVM)           | no                        | **AWS MicroVM has no runtime image-capture API.** Images are built ahead of time as versioned MicroVM image builds (see [Lambda → Image & build](lambda.md#image--build)). A running VM's state is preserved across idle via **suspend/resume**, not by snapshotting it into a new image. |
+| `daytona` / `e2b` / `vercel` | no (in this harness)      | use the provider's own snapshot/template tooling and reference it through `options`                                                                                                                                                                                                       |
 
 So the dashboard's **Create snapshot** action is shown only for `sandbox` instances; for
 the other providers the Snapshots view lists images but does not offer runtime capture. A

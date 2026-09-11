@@ -2,15 +2,15 @@
 
 The sandbox is a uniform Linux compute backend (real `bash` + `python3` + `node` on
 PATH). It backs the Claude-Code-style tool set (`bash`, `read`, `write`, `edit`, `glob`,
-`grep`). Every tool compiles down to a single `run` against the selected provider — there
-is no per-runtime routing anymore.
+`grep`). Every tool compiles down to a single `run` against the selected provider.
+There is no per-runtime routing anymore.
 
 This page is the conceptual overview. For task-focused guides see [Getting
 Started](getting-started.md), [Snapshots & Sizes](snapshot.md),
 [Networking](networking.md), [Security](security.md), [Hooks](hook.md), [Best
 Practice](best-practice.md), and the per-provider [Integration](lambda.md) pages.
 
-## Code-First Definition
+## Code-first definition
 
 Define sandboxes in `broods/index.ts` and reference them from agents:
 
@@ -80,7 +80,7 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
     "permissionMode": "ask", // edit | ask | bypass
     "runtimes": ["bash", "python", "node"], // advisory allow-list (best-effort)
     "timeout": 120, // per-call seconds (default 30; max 600)
-    "memoryLimit": 512, // MB; validated (≤8192 for lambda MicroVM size) but informational — executors do not resize
+    "memoryLimit": 512, // MB; validated (≤8192 for lambda MicroVM size) but informational, executors do not resize
     "outputLimitBytes": 65536,
     "envVars": { "FOO": "bar" }, // injected into every run (encrypted at rest)
     "options": { "docker": true }, // sandbox provider only: docker-in-sandbox at create time
@@ -102,17 +102,18 @@ sandbox belongs to one provider. The fallback runs the same `network`, limits, a
 `options` and `snapshot` are the primary's and do not carry over.
 
 `onCreate` / `onResume` command hooks are also available, but only on persistent
-configs — see [Hooks](hook.md) and [Best Practice → Reserved
+configs. See [Hooks](hook.md) and [Best Practice → Reserved
 sandboxes](best-practice.md#reserved-persistent-sandboxes).
 
-`size` and `snapshot` control the compute footprint and base image — see [Snapshots &
-Sizes](snapshot.md). `network` controls egress — see [Networking](networking.md).
+`size` and `snapshot` control the compute footprint and base image, covered in
+[Snapshots & Sizes](snapshot.md). `network` controls egress, covered in
+[Networking](networking.md).
 
 > **Per-call limits are provider-aware.** A single blocking (synchronous) call is capped at
 > the harness request budget (600 s) for every provider. Memory is operator-sized for the
 > persistent providers (`sandbox`/`e2b`/`daytona`/`vercel`); for `lambda` it is the MicroVM
 > size (capped at the 8 GB largest size). Detached background jobs are not bounded by the call
-> timeout — they run inside the long-lived VM. Output is always truncated harness-side.
+> timeout, they run inside the long-lived VM. Output is always truncated harness-side.
 
 Provider-specific behavior lives in the [Integration](lambda.md) pages:
 
@@ -137,13 +138,13 @@ are not yet wired into the shared workspace contract.
 | `e2b`     | yes            | not wired; S3 workspaces are rejected                                        | yes, native sandbox pause/resume         | yes, native launch + callback delivery; no harness live logs/stop | E2B plan/template limit outside sandbox config     |
 | `vercel`  | yes            | not wired; S3 workspaces are rejected                                        | yes, named persistent sandbox filesystem | yes, with live status/logs/stop                                   | Vercel sandbox/drive limits outside sandbox config |
 
-The shared S3 workspace mount is intentionally the cross-provider workspace model for
-`sandbox`, `lambda`, and `daytona`. `e2b` and `vercel` provider-native storage is not
+The shared S3 workspace mount is the cross-provider workspace model for `sandbox`,
+`lambda`, and `daytona`. `e2b` and `vercel` provider-native storage is not
 wired into Workspace yet, so attaching an S3 workspace to those providers is rejected.
 
 ## Model-facing workspace contract
 
-All workspace-backed sandbox providers should feel like a normal Linux project checkout:
+A workspace-backed sandbox behaves like a normal Linux project checkout:
 
 ```bash
 pwd                 # current workspace directory
@@ -183,7 +184,7 @@ bash   python3 notes/run.py # run programs directly
 ```
 
 `bash` also accepts `pty: true` to attach the command to a real in-guest TTY for programs
-that refuse to run without a terminal — see
+that refuse to run without a terminal. See
 [Best Practice → Live terminal & real TTY runs](best-practice.md#live-terminal--real-tty-runs).
 
 With no workspace, only `bash` is available and each call is a fresh container, so

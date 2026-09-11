@@ -2,7 +2,7 @@
  * Display-safe projection of a sandbox config for the canvas layout.
  *
  * Layouts are UI state the dashboard reads back verbatim, so they must never
- * carry `envVars` or provider `options` — those hold credentials. These keys
+ * carry `envVars` or provider `options`, which hold credentials. These keys
  * are exactly what the sandbox node and its side panel render: the globe reads
  * `network.mode`, the feature row reads `persistent`, and the config tab shows
  * `provider` and `permissionMode`.

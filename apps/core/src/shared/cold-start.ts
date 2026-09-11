@@ -10,7 +10,7 @@ const PROCESS_START_MS = Date.now() - Math.round(process.uptime() * 1000);
 
 // Upper bound on a real init window. A larger gap means the container initialized,
 // then idled before its first request. That idle is not this request's latency,
-// so clamp it — otherwise the cold-start span balloons the whole trace.
+// so clamp it. Otherwise the cold-start span balloons the whole trace.
 const MAX_COLD_START_MS = 60_000;
 
 let coldStartWindow: { startMs: number; endMs: number } | undefined;
@@ -42,7 +42,7 @@ export function consumeColdStart(
 
   // A run that begins well after process start did not pay the init cost as part
   // of its own latency. Attributing it here would anchor the span minutes before
-  // the request and balloon the whole trace window — drop it instead.
+  // the request and balloon the whole trace window, so drop it instead.
   if (runStartedMs - PROCESS_START_MS > MAX_COLD_START_MS) {
     return null;
   }

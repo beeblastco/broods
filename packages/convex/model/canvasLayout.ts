@@ -64,7 +64,7 @@ type CanvasGraph = {
   agents: LayoutNode[];
   /** Services exactly one agent reaches, keyed by that agent's id. */
   exclusiveServices: Map<string, LayoutNode[]>;
-  /** Services no agent reaches — the cards the canvas renders as unconnected. */
+  /** Services no agent reaches, the cards the canvas renders as unconnected. */
   orphanServices: LayoutNode[];
   /** Sub-agent parent, keyed by the child agent's id. */
   parentAgentId: Map<string, string>;

@@ -458,7 +458,7 @@ describe("the console injected into the isolate", () => {
   // declared below that dispatch is still in its temporal dead zone for the
   // whole run. A budget constant hoisted to module scope therefore throws
   // ReferenceError out of the console callback and into the tool the first time
-  // a bundle logs — which reads to the account as their own tool crashing.
+  // a bundle logs, which reads to the account as their own tool crashing.
   it("keeps the log budget out of the module-scope dead zone", () => {
     const body = source.slice(source.indexOf("function makeLogEmitter("));
 

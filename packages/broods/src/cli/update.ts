@@ -52,7 +52,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
 /**
  * Newest published version, cached in `~/.broods` for a day so the check on
  * every `broods dev` costs nothing. Null when the registry cannot be reached
- * and nothing was cached — a version check must never fail a command.
+ * and nothing was cached. A version check must never fail a command.
  */
 export async function latestPublishedVersion(
   options: { maxAgeMs?: number } = {},
@@ -70,7 +70,7 @@ export async function latestPublishedVersion(
 /**
  * Reads the install site off this module's own path. The `node_modules` this
  * copy sits in names its project root, and the install belongs to that project
- * only when the caller is inside that root — so a workspace running the
+ * only when the caller is inside that root, so a workspace running the
  * root-installed CLI from `apps/foo` upgrades the dependency instead of
  * installing a second copy on the PATH. A checkout with no `node_modules` in
  * the path falls back to whether the caller is inside the checkout.

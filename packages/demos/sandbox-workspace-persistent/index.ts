@@ -1,8 +1,9 @@
 /**
  * Example: a reserved (persistent) self-hosted coding sandbox via declarative broods resources.
  *
- * Demonstrates the `persistent: true` lifecycle on the `sandbox` (workdir) provider — a
- * long-lived sandbox per workspace (installed packages + code survive idle), native
+ * Demonstrates the `persistent: true` lifecycle on the `sandbox` (workdir)
+ * provider: a long-lived sandbox per workspace (installed packages + code
+ * survive idle), native
  * pause/standby idle scale-down, and a detached background job observed with the
  * auto-registered `async_status` tool.
  */
@@ -10,7 +11,6 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-// Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.

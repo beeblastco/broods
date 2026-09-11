@@ -19,8 +19,8 @@ import {
 import { orgsFields } from "../schema";
 
 /**
- * Accounts provisioned straight against the account API — the per-stack service
- * accounts, not dashboard signups — carry a synthetic `external:<name>` binding
+ * Accounts provisioned straight against the account API, the per-stack service
+ * accounts rather than dashboard signups, carry a synthetic `external:<name>` binding
  * instead of an `orgs` id. `accounts.orgId` is a plain string, so that is legal
  * and nothing rejects it, but the consequence is that such an account is
  * unreachable from the dashboard: `orgMembers.orgId` is an `Id<"orgs">`, so no
@@ -51,14 +51,14 @@ interface ActiveAccount {
  * can be operated like any other account.
  *
  * Internal + un-gated by design: the whole point is that these accounts have no
- * org, so there is no admin to authorize against — the dashboard's
+ * org, so there is no admin to authorize against, and the dashboard's
  * `requireOrgMember` path cannot express this operation. Run it deliberately
  * (`npx convex run`), not from the UI.
  *
  * Always mints a NEW org rather than moving the account into the owner's
  * existing one: `accounts.getByOrgId` resolves with `.unique()`, so a second
  * account bound to an org that already has one makes that query throw for every
- * caller — taking down the org the owner already depends on.
+ * caller, taking down the org the owner already depends on.
  */
 export const adoptExternalAccount = internalMutation({
   args: {

@@ -1,7 +1,7 @@
 /**
  * TaskUsageStore implementation. Calls internal.usage.recordTaskUsage via the
- * deploy-key ConvexHttpClient. Fire-and-forget safe — errors are caught and
- * logged; they never propagate into the agent execution path.
+ * deploy-key ConvexHttpClient. Fire-and-forget safe: this module catches and
+ * logs errors, and they never propagate into the agent execution path.
  *
  * endpointId is the only deployment scope on the row; it already identifies one
  * project/stage pair, so neither slug is sent.

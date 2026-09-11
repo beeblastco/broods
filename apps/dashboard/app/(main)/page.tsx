@@ -1,6 +1,5 @@
 "use client";
 
-/** Home route that ensures the caller has an org, then opens their default project (auto-created on first login). */
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
@@ -18,7 +17,7 @@ export default function HomePage(): React.JSX.Element {
   const bootstrapped = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Ensure the caller has an org, then open the requested or default project.
+  // Get or create the caller's org, then open the requested or default project.
   useEffect(() => {
     if (!currentUser || bootstrapped.current) return;
 
@@ -29,7 +28,7 @@ export default function HomePage(): React.JSX.Element {
 
         // On first login (brand-new org with no backend account), auto-provision
         // and hand the one-time secret to the onboarding dialog, then land on the
-        // (empty) projects page — onboarding ends with `broods dev`, which
+        // (empty) projects page. Onboarding ends with `broods dev`, which
         // creates the first project. `provision` throws if an account already
         // exists, which we treat as already-provisioned.
         const account = await convex.query(api.org.orgs.getActiveAccount, {});
@@ -84,7 +83,7 @@ export default function HomePage(): React.JSX.Element {
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to open workspace. Please refresh.",
+            : "Failed to open workspace. Refresh to retry.",
         );
         bootstrapped.current = false;
       }

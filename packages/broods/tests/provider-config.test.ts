@@ -39,7 +39,7 @@ test("rejects the camel `baseUrl` typo with a did-you-mean hint", () => {
       custom: { apiKey: "k", baseUrl: "https://llm.example/v1" },
     }),
   ).toThrow(
-    `Agent "sale" config.provider.custom has unknown option "baseUrl" — did you mean "base_url" or "baseURL"?`,
+    `Agent "sale" config.provider.custom has unknown option "baseUrl". Did you mean "base_url" or "baseURL"?`,
   );
 });
 
@@ -54,7 +54,7 @@ test("passes provider-owned settings through and still catches apiKey typos", ()
     validateProviderConfig("a", {
       custom: { api_key: "k", baseURL: "https://x/v1" },
     }),
-  ).toThrow(`did you mean "apiKey"?`);
+  ).toThrow(`Did you mean "apiKey"?`);
 });
 
 test("supports every provider on the shared list, deepseek included", () => {

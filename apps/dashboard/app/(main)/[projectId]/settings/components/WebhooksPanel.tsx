@@ -73,7 +73,7 @@ export function WebhooksPanel({
   async function handleDeleteWebhook() {
     if (!deletingWebhook) return;
     // The mutation addresses webhooks by index only, so re-resolve the index
-    // against the live list at confirm time — another session may have
+    // against the live list at confirm time. Another session may have
     // reordered it since the dialog opened, and a stale index deletes the
     // wrong webhook. URL is the only identity the list carries.
     const liveWebhooks = agents?.find(
@@ -128,7 +128,7 @@ export function WebhooksPanel({
         )}
 
         {/* The pill flips optimistically, so a rejected toggle snaps back on
-            its own — this says why it moved. */}
+            its own. This says why it moved. */}
         {toggleError && (
           <p className="text-sm text-destructive">{toggleError}</p>
         )}

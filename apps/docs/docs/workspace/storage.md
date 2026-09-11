@@ -4,7 +4,7 @@ Storage is the filesystem backing for Workspace. By default a workspace uses the
 broods-managed S3 bucket (`{ "storage": { "provider": "s3" } }`), partitioned per
 workspace under `<namespace>/`. Optional workspace partitioning adds more folders below
 that namespace, never another bucket. A workspace can also point at a
-**bring-your-own bucket** with its own credentials — see
+**bring-your-own bucket** with its own credentials. See
 [Bring-your-own bucket](#bring-your-own-bucket). Provider-native storage values such
 as `vercel` are rejected until they are wired into the same workspace mount/read
 contract.
@@ -14,15 +14,15 @@ contract.
 - `MEMORY.md`, `TASKS.md`, and other developer-defined markdown files
 - files read and written by the `bash` sandbox tool
 - staged skill bundles under `.claude/skills/<skill-name>` and `.agents/skills/<skill-name>`
-- mounted workspace paths used by the Lambda (MicroVM), `sandbox`/workdir, and Daytona sandbox providers — all via `mount-s3`
+- mounted workspace paths used by the Lambda (MicroVM), `sandbox`/workdir, and Daytona sandbox providers, all via `mount-s3`
 
-## Current Architecture
+## Current architecture
 
-> **The workspace key layout is single-sourced — keep reads and mounts aligned.**
+> **The workspace key layout is single-sourced. Keep reads and mounts aligned.**
 > A namespace's files live directly under `<namespace>/` in the managed bucket. The
 > harness-side S3 reads/writes and the sandbox's own `mount-s3` mount must use the same
 > layout, so both go through `workspaceNamespacePrefix()` in
-> `src/shared/sandbox.ts` — change the layout there and both move together. The
+> `src/shared/sandbox.ts`. Change the layout there and both move together. The
 > `<namespace>/` segment is also the tenant-isolation boundary the per-mount IAM session
 > policy is scoped to.
 
@@ -52,7 +52,7 @@ the authenticated Convex config-plane API. Uploads, renames, and deletes therefo
 operate on the files the agent mounts; Convex file storage is used only for editable
 skill-node bundles.
 
-The panel uses a reactive, server-reconciled UX:
+The panel keeps a cached file tree and reconciles it against S3:
 
 - the last confirmed file tree is cached in memory and browser `sessionStorage`, so
   reopening the workspace or reloading the page paints cached metadata immediately
@@ -64,8 +64,8 @@ The panel uses a reactive, server-reconciled UX:
 - returning focus to the window, restoring a hidden tab, or pressing **Refresh** triggers another listing
 - overlapping list requests are deduplicated and older responses cannot overwrite newer optimistic changes
 
-This polling detects direct S3 changes and files exported by an agent without requiring
-the panel or page to be reopened. It cannot display an agent write before S3 Files has
+This polling detects direct S3 changes and files exported by an agent without
+reopening the panel or the page. It cannot display an agent write before S3 Files has
 exported that mount change to S3. Dashboard uploads are currently limited to 512 KiB
 per file because their base64 payload crosses a Convex action; agents can create larger
 files directly through the mounted workspace.
@@ -101,7 +101,7 @@ curl -X POST "$BROODS_BASE_URL/v1/workspaces/$WORKSPACE_ID/download-links" \
 The response carries a `downloadPath` such as `/v1/downloads/K3n8…`. Join it to the
 same base URL you called, and the result is short, URL-safe and valid for as long as
 you asked (default 24 hours, maximum 30 days). Following it redirects to a presigned
-URL minted at that moment — the browser receives the signature directly, so no chat
+URL minted at that moment. The browser receives the signature directly, so no chat
 client ever sees it.
 
 The token is the entire credential: anyone holding the link can download that one
@@ -122,26 +122,26 @@ Skills are staged from the account skill bucket into `<namespace>/.claude/skills
 There are two ways to reach the same workspace bytes, and they are **not** interchangeable because the mount syncs to the bucket asymmetrically:
 
 - **bucket → mount** (a file the harness wrote with S3 `PutObject`/`CopyObject`): S3 Files detects and imports the object without remounting; allow for propagation delay.
-- **mount → bucket** (a file the agent wrote through `bash`/NFS): visible through the mount immediately, but the S3 API does **not** list/return it for **~1–2 minutes** (AWS S3 Files writes back to the bucket asynchronously — measured: not visible at +0s/+45s, visible at +120s).
+- **mount → bucket** (a file the agent wrote through `bash`/NFS): visible through the mount immediately, but the S3 API does **not** list/return it for **~1-2 minutes** (AWS S3 Files writes back to the bucket asynchronously. Measured: not visible at +0s/+45s, visible at +120s).
 
-So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing" — each read site is wired to the correct door:
+So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing". Each read site is wired to the correct door:
 
-| Reading…                                                                                                                  | Last writer                | Read via                                           | Rationale                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Agent-written workspace files (agent-created files, agent-edited `MEMORY.md`)                                             | sandbox, through the mount | **Sandbox mount** — `bash`, `read`, `glob`, `grep` | the S3 API is stale for up to ~2 min, so it can miss very recent sandbox writes              |
-| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3            | **S3 API** (`src/shared/s3.ts`)                    | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
-| Account skill bucket (the skill "origin")                                                                                 | harness, via S3            | **S3 API**                                         | a separate bucket, never mounted                                                             |
+| Reading…                                                                                                                  | Last writer                | Read via                                          | Rationale                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Agent-written workspace files (agent-created files, agent-edited `MEMORY.md`)                                             | sandbox, through the mount | **Sandbox mount**: `bash`, `read`, `glob`, `grep` | the S3 API is stale for up to ~2 min, so it can miss recent sandbox writes                   |
+| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3            | **S3 API** (`src/shared/s3.ts`)                   | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
+| Account skill bucket (the skill "origin")                                                                                 | harness, via S3            | **S3 API**                                        | a separate bucket, never mounted                                                             |
 
 The agent always reads through the mount (its `bash` tool _is_ the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.
 
-Concretely, the model-facing workspace tools read sandbox-backed workspaces through the mounted sandbox path. Read-only workspaces read through a service-managed read-only mount by default (same fresh-read semantics); the `sandbox: null` opt-out instead reads directly from S3 under the same prefix (cheaper, but lagged — see [Lambda](sandbox/lambda.md)). Harness-side S3 reads (`MEMORY.md`, the read-only `read`/`glob` path) resolve the workspace's `storage`: the managed bucket is read directly on the harness role, and a [bring-your-own bucket](#bring-your-own-bucket) is read with the same prefix-scoped assume-role credentials the mount uses.
+The model-facing workspace tools read sandbox-backed workspaces through the mounted sandbox path. Read-only workspaces read through a service-managed read-only mount by default (same fresh-read semantics); the `sandbox: null` opt-out instead reads directly from S3 under the same prefix. That is cheaper but lagged, see [Lambda](sandbox/lambda.md). Harness-side S3 reads (`MEMORY.md`, the read-only `read`/`glob` path) resolve the workspace's `storage`: core reads the managed bucket directly on the harness role, and reads a [bring-your-own bucket](#bring-your-own-bucket) with the same prefix-scoped assume-role credentials the mount uses.
 
 > **Known exception:** `Session.loadMemoryFile` reads `MEMORY.md` through the **S3 API** at the start of each turn. If the agent edited `MEMORY.md` less than ~2 min earlier in the same session, that read can be stale. This is accepted today because memory converges across turns and a sandbox round-trip on every turn is costly; route prompt-time memory reads through a sandbox-backed `read` call if freshness ever becomes a hard requirement.
 
 ## Bring-your-own bucket
 
 By default a workspace lives in the broods-managed bucket. A workspace can instead
-point `storage` at a bucket you own — any S3-compatible store (AWS S3, Cloudflare R2,
+point `storage` at a bucket you own: any S3-compatible store (AWS S3, Cloudflare R2,
 MinIO, Wasabi, Backblaze B2) selected with an `endpoint`:
 
 ```ts
@@ -159,12 +159,12 @@ storage: {
 }
 ```
 
-`endpoint` selects _where_ the S3 API lives — every S3-compatible vendor stays
+`endpoint` selects _where_ the S3 API lives. Every S3-compatible vendor stays
 `provider: "s3"` and only changes the host. `provider` is reserved for a different
 protocol (e.g. native Azure Blob / GCS), not a different S3 vendor.
 
-Authentication (`storage.auth`) is **keyless** — no access keys are stored in the
-workspace config (it is plaintext):
+Authentication (`storage.auth`) is **keyless**. No access keys are stored in the
+workspace config, which is plaintext:
 
 | `auth.type`         | Credentials                                  | Use                              |
 | ------------------- | -------------------------------------------- | -------------------------------- |
@@ -173,7 +173,7 @@ workspace config (it is plaintext):
 
 For `assumeRole` the harness calls STS `AssumeRole` and narrows the session with a
 policy scoped to `bucket/prefix*`, so the short-lived credentials can only touch the
-workspace's own prefix — never the harness's broad credentials, which any code the
+workspace's own prefix, never the harness's broad credentials, which any code the
 agent runs could read. Provide an `externalId` when the role trusts broods
 cross-account.
 
@@ -194,10 +194,10 @@ mounts via `mount-s3` with the assumed credentials passed per-exec; Daytona inje
 them into the run's environment. The Lambda MicroVM provider mounts the same way from
 its `/run` lifecycle hook, fed the scoped credentials via the MicroVM `runHookPayload`.
 
-> Static access keys for non-AWS stores (R2/MinIO tokens) are not stored yet — use
+> Static access keys for non-AWS stores (R2/MinIO tokens) are not stored yet. Use
 > `assumeRole` (AWS) or the managed bucket for now.
 
-## Code-First Configuration
+## Code-first configuration
 
 ```ts
 import { defineWorkspace } from "broods";
@@ -212,7 +212,7 @@ export const notes = defineWorkspace({
 If `storage` is omitted, workspace config normalization fills in `{ "provider": "s3" }`.
 Omit `partitioned` for a shared root workspace.
 
-## Future External Storage
+## Future external storage
 
 S3-compatible object stores (Cloudflare R2, MinIO, Wasabi, B2) are already reachable through [bring-your-own bucket](#bring-your-own-bucket) by setting an `endpoint`. Additional work can add non-S3 providers such as Google Drive, native Google Cloud Storage, or Azure Blob behind a new `storage.provider`. Those providers should still connect through the sandbox mount model:
 
@@ -220,5 +220,3 @@ S3-compatible object stores (Cloudflare R2, MinIO, Wasabi, B2) are already reach
 - mount or sync that namespace into `options.workspaceRoot`
 - keep files visible to the sandbox runtime
 - avoid provider-specific logic inside `session.ts` or the core agent loop
-
-This keeps Workspace behavior consistent while allowing different storage backends underneath the sandbox mount.

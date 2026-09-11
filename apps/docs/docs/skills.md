@@ -20,7 +20,7 @@ flowchart LR
   Workspace --> Sandbox["sandbox runtime"]
 ```
 
-## Skill Panel
+## Skill panel
 
 When skills are enabled, the model sees a compact skill panel in system context. The panel lists only configured skill metadata and tells the model to load the detailed instructions before using them:
 
@@ -36,7 +36,7 @@ When a workspace is attached, `load_skill` stages a fresh read/run copy into the
 
 This makes `.sh`, `.py`, `.js`, `.ts`, and other uploaded text resources available to the sandbox without mounting the skills bucket into the Lambda sandbox. Script files (`.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs`, `.ts`) are staged with executable POSIX metadata so scripts with shebangs can run directly; other text resources are staged as regular, non-executable files. Agents can also invoke scripts explicitly with `bash`, `python3`, or `node`.
 
-## Editing Skill Bundles
+## Editing skill bundles
 
 Skill editing is handled through the normal workspace feature, not through `load_skill`. If a user wants the agent to modify a skill bundle, attach the skill bundle as a workspace that the agent is allowed to edit. The agent then uses the regular workspace tools (`read`, `write`, `edit`, `glob`, `grep`, and `bash`) against that workspace.
 
@@ -52,11 +52,11 @@ flowchart LR
 
 Workspace-backed skill edits have the same S3 Files consistency caveat as other sandbox writes. Files written through the sandbox mount are visible immediately inside that sandbox, but harness-side S3 API reads, S3 listing, or another sandbox may not see the changes for about 1-2 minutes. See [Workspace storage](workspace/storage.md#reading-workspace-files-s3-api-vs-the-sandbox-mount) for the read/write path details.
 
-## Create Skills
+## Create skills
 
 Broods skill bundles follow the open [Agent Skills format](https://agentskills.io/home): a skill is a folder with a required `SKILL.md` file, metadata for discovery, and optional supporting resources. For authoring guidance, start with the external [Agent Skills quickstart](https://agentskills.io/skill-creation/quickstart) and check the [Agent Skills specification](https://agentskills.io/specification) before uploading a bundle.
 
-### Bundle Shape
+### Bundle shape
 
 Every skill bundle must include a root `SKILL.md` file with YAML frontmatter:
 
@@ -155,7 +155,7 @@ GitHub imports download a skill directory from a public GitHub tree URL. Use thi
 
 :::
 
-## Enable Skills For An Agent
+## Enable skills for an agent
 
 Creating a skill only stores the bundle. Add the generated skill paths to the agent config before the runtime exposes them:
 
@@ -178,7 +178,7 @@ Runtime behavior:
 
 Use [`packages/demos/skill-loads.ts`](https://github.com/beeblastco/broods/blob/dev/packages/demos/skill-loads.ts) for an end-to-end streaming request that creates a temporary skill, attaches it to an agent, and asks the agent to load it.
 
-## Design Rules
+## Design rules
 
 - Keep skill CRUD in the Convex config plane (`packages/convex/config/http.ts` and `packages/convex/model/skills.ts`).
 - Keep shared runtime validation and S3 path rules in `apps/core/src/shared/skills.ts`.
