@@ -1,5 +1,4 @@
 /**
- * NATS subject-scheme + resume-cursor tests.
  * Cover the pure helpers; the core-publish / stream-capture / consume path needs
  * a live JetStream server and is exercised by examples/nats-stream.ts.
  */

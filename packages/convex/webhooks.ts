@@ -185,10 +185,7 @@ async function recordWebhookAudit(
   });
 }
 
-/**
- * Append a new outbound webhook to an agent.
- * @returns null
- */
+/** @returns null */
 export const addAgentWebhook = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
@@ -198,7 +195,10 @@ export const addAgentWebhook = mutation({
     enabled: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { agentConfigId, url, secret, events, enabled }) => {
+  handler: async (
+    ctx,
+    { agentConfigId, url, secret, events, enabled },
+  ): Promise<null> => {
     const user = await requireUser(ctx);
     await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
       ...webhooks,
@@ -225,10 +225,7 @@ export const addAgentWebhook = mutation({
   },
 });
 
-/**
- * Enable or disable a single webhook on an agent by its index.
- * @returns null
- */
+/** @returns null */
 export const setAgentWebhookEnabled = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
@@ -236,7 +233,7 @@ export const setAgentWebhookEnabled = mutation({
     enabled: v.boolean(),
   },
   returns: v.null(),
-  handler: async (ctx, { agentConfigId, index, enabled }) => {
+  handler: async (ctx, { agentConfigId, index, enabled }): Promise<null> => {
     const user = await requireUser(ctx);
     await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
       webhooks.map((webhook, i) =>
@@ -259,17 +256,14 @@ export const setAgentWebhookEnabled = mutation({
   },
 });
 
-/**
- * Remove a webhook from an agent by its index.
- * @returns null
- */
+/** @returns null */
 export const removeAgentWebhook = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
     index: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, { agentConfigId, index }) => {
+  handler: async (ctx, { agentConfigId, index }): Promise<null> => {
     const user = await requireUser(ctx);
     await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
       webhooks.filter((_, i) => i !== index),

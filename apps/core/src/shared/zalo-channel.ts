@@ -1,7 +1,4 @@
-/**
- * Zalo channel adapter.
- * Keep official Zalo Bot API webhook normalization and outbound API calls here.
- */
+/** Zalo channel adapter, on the official Zalo Bot API. */
 
 import type { Attachment } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
@@ -461,14 +458,13 @@ function zaloHttpUrl(raw: unknown): string | null {
 /**
  * What a Zalo update carries: its text, and the media beside it.
  *
- * Zalo hosts every attachment as a plain URL with no token on it, so an
- * attachment here is just that link. The harness reads it once, stores it in
- * the workspace and hands the model a durable one. Passing Zalo's own URL
- * through instead would work for exactly one turn: it is dropped when the
- * message is persisted, and Zalo's links do not stay good forever either.
+ * Zalo hosts every attachment as a plain URL with no token on it, so an attachment
+ * here is just that link. The harness reads it once, stores it in the workspace and
+ * hands the model a durable one. Zalo's own URL would work for exactly one turn: it
+ * is dropped when the message is persisted, and Zalo's links expire anyway.
  *
- * Returns null when the event named media the payload did not actually carry,
- * which is what the caller reports as the event's missing-content reason.
+ * Returns null when the event named media the payload did not carry, which the
+ * caller reports as the event's missing-content reason.
  */
 function zaloMessageMedia(
   eventName: string,

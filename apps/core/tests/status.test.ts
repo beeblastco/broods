@@ -1,5 +1,3 @@
-/** Convex-backed async agent/tool wrapper contract tests. */
-
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {

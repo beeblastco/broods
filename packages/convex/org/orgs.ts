@@ -3,7 +3,7 @@
  * own multiple orgs; membership is tracked in the `orgMembers` join table.
  */
 import { v } from "convex/values";
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { internalMutation, mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
@@ -71,7 +71,14 @@ export const adoptExternalAccount = internalMutation({
     slug: v.string(),
     membershipId: v.id("orgMembers"),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    orgId: Id<"orgs">;
+    slug: string;
+    membershipId: Id<"orgMembers">;
+  }> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error("Account not found");
@@ -152,7 +159,7 @@ export const create = mutation({
     ),
   },
   returns: v.id("orgs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"orgs">> => {
     const { name, plan } = args;
 
     // Check authenticated user
@@ -199,7 +206,7 @@ export const create = mutation({
 export const getActive = query({
   args: {},
   returns: v.union(orgDoc, v.null()),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"orgs"> | null> => {
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -237,7 +244,14 @@ export const getActiveAccount = query({
     }),
     v.null(),
   ),
-  handler: async (ctx, { requiredRole }) => {
+  handler: async (
+    ctx,
+    { requiredRole },
+  ): Promise<{
+    accountId: Id<"accounts">;
+    status: "active" | "disabled";
+    role: OrgRole;
+  } | null> => {
     const active = await activeAccountForCaller(ctx, requiredRole);
     if (!active) return null;
 
@@ -301,7 +315,7 @@ export async function resolveActiveAccount(
 export const getByIdForAdmin = query({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
     const { orgId } = args;
 
     // Check authenticated user
@@ -333,7 +347,7 @@ export const getByIdForAdmin = query({
 export const getOrCreate = mutation({
   args: {},
   returns: v.id("orgs"),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Id<"orgs">> => {
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -381,7 +395,7 @@ export const getOrCreate = mutation({
 export const list = query({
   args: {},
   returns: v.array(orgDoc),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"orgs">[]> => {
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
@@ -416,7 +430,7 @@ export const list = query({
 export const remove = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
     // Check authenticated user
@@ -449,7 +463,7 @@ export const remove = mutation({
 export const setActive = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
     // Check authenticated user
@@ -484,7 +498,7 @@ export const update = mutation({
     ),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { orgId, name, plan } = args;
 
     // Check authenticated user

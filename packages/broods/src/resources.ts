@@ -1,10 +1,7 @@
 /**
  * Resource definition helpers for the code-first `broods/` project folder.
  *
- * Layout: markers, then types (env refs, project config, resource primitives,
- * per-kind config inputs, per-kind resource aliases), then the env runtime
- * value, the resource constructors, and the type guards. Every runtime function
- * here is synchronous.
+ * Every runtime function here is synchronous.
  */
 
 import type {
@@ -700,7 +697,7 @@ export const env: EnvAccessor = new Proxy(
     return { __beeblastEnv: true, name: name };
   },
   {
-    get: function (target, property, receiver) {
+    get: function (target, property, receiver): unknown {
       if (typeof property === "string" && ENV_NAME_PATTERN.test(property)) {
         throw new Error(
           `env.${property} is not supported; use env("${property}")`,

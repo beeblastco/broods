@@ -1,10 +1,8 @@
 "use client";
 
 /**
- * Webhooks panel: outbound event webhooks the platform delivers to the user's own
- * services. Each agent can register several (`config.hooks.webhooks`); this panel
- * lists them per agent and lets you add one, toggle it active/inactive, or remove
- * it. Edits write straight to the agent config the harness delivers from.
+ * An agent registers its outbound webhooks under `config.hooks.webhooks`. Edits
+ * here write straight to the agent config the harness delivers from.
  */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
@@ -22,9 +20,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
-  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active stage the webhooks are scoped to, or null while none is selected. */
   stageId: Id<"stages"> | null;
 }
 
@@ -46,7 +42,6 @@ type PendingWebhookDelete = {
   url: string;
 };
 
-/** Lists each agent's outbound webhooks with add / activate / remove controls. */
 export function WebhooksPanel({
   projectId,
   stageId,
@@ -65,12 +60,11 @@ export function WebhooksPanel({
 
   const [addingFor, setAddingFor] = useState<Id<"agentConfigs"> | null>(null);
 
-  // Webhook pending delete confirmation.
   const [deletingWebhook, setDeletingWebhook] =
     useState<PendingWebhookDelete | null>(null);
   const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
 
-  async function handleDeleteWebhook() {
+  async function handleDeleteWebhook(): Promise<void> {
     if (!deletingWebhook) return;
     // The mutation addresses webhooks by index only, so re-resolve the index
     // against the live list at confirm time. Another session may have
@@ -294,14 +288,13 @@ export function WebhooksPanel({
   );
 }
 
-/** Inline form to add an outbound webhook (URL, signing secret, optional event filter) to an agent. */
 function AddWebhookForm({
   agentConfigId,
   onDone,
 }: {
   agentConfigId: Id<"agentConfigs">;
   onDone: () => void;
-}) {
+}): React.JSX.Element {
   const addWebhook = useMutation(api.webhooks.addAgentWebhook);
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
@@ -309,7 +302,7 @@ function AddWebhookForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSave() {
+  async function handleSave(): Promise<void> {
     if (!url.trim() || !secret.trim() || busy) return;
     setBusy(true);
     setError(null);

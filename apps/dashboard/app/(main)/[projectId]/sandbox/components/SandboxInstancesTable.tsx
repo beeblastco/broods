@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Renders the live persistent sandbox instances for the active org. A search +
- * status toolbar filters the list, results paginate client-side, and each row
- * shows the instance's provider/status/size/image and a suspend↔resume toggle;
- * clicking a row opens the detail sheet (snapshot + terminate live there).
- * Suspending is confirmed first and locks the toggle until the instance settles.
- */
-
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
@@ -52,9 +44,8 @@ import {
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
 interface Props {
-  /** Sandbox instance rows from Convex. */
   instances: Array<Doc<"sandboxInstances">>;
-  /** Current project route id, used to build trace deep links. */
+  /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs, handed to the sheet's Logs tab. */
   observability: SandboxObservabilityScope | null;
@@ -135,7 +126,7 @@ export function SandboxInstancesTable({
   async function toggle(
     instance: Doc<"sandboxInstances">,
     nextRunning: boolean,
-  ) {
+  ): Promise<void> {
     if (!controllable(instance)) return;
     setPendingId(instance._id);
     setError(null);
@@ -191,12 +182,12 @@ export function SandboxInstancesTable({
   }
 
   /** Resets pagination whenever a filter changes so results stay visible. */
-  function setSearchAndReset(value: string) {
+  function setSearchAndReset(value: string): void {
     setSearch(value);
     setPage(0);
   }
 
-  function setStatusAndReset(value: string) {
+  function setStatusAndReset(value: string): void {
     setStatus(value);
     setPage(0);
   }

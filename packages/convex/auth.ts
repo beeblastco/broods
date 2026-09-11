@@ -25,7 +25,7 @@ function deriveName(data: {
 }
 
 export const { authKitEvent } = authKit.events({
-  "user.created": async (ctx, event) => {
+  "user.created": async (ctx, event): Promise<void> => {
     const avatarUrl =
       (event.data as { picture?: string | null }).picture ?? undefined;
 
@@ -54,7 +54,7 @@ export const { authKitEvent } = authKit.events({
       deletionScheduledFor: undefined,
     });
   },
-  "user.updated": async (ctx, event) => {
+  "user.updated": async (ctx, event): Promise<void> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", event.data.id))
@@ -74,7 +74,7 @@ export const { authKitEvent } = authKit.events({
       avatarUrl: avatarUrl,
     });
   },
-  "user.deleted": async (ctx, event) => {
+  "user.deleted": async (ctx, event): Promise<void> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", event.data.id))
@@ -99,8 +99,8 @@ export const { authKitEvent } = authKit.events({
       },
     );
   },
-  "session.created": async () => {},
-  "session.revoked": async () => {},
+  "session.created": async (): Promise<void> => {},
+  "session.revoked": async (): Promise<void> => {},
 });
 
 export const { authKitAction } = authKit.actions({

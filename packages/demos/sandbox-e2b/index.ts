@@ -12,7 +12,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.e2bAgent, {
   input: [
     "Run this E2B smoke test using ONE bash call per numbered step.",

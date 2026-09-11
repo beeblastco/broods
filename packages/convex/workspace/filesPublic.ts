@@ -16,6 +16,7 @@ import {
   listWorkspaceFiles,
   renameWorkspacePath,
   uploadWorkspaceFile,
+  type WorkspaceFileEntry,
   type WorkspaceFsRef,
 } from "../model/workspaceFs";
 
@@ -53,7 +54,7 @@ export const migrateLegacy = action({
     workspaceId: v.string(),
   },
   returns: v.array(fileEntry),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
     const user = await requireActionUser(ctx);
     const workspace = await resolveWorkspace(ctx, args, "admin");
     const legacyFiles: LegacyFile[] = await ctx.runQuery(
@@ -109,7 +110,7 @@ export const migrateLegacy = action({
 export const list = action({
   args: { projectId: v.id("projects"), workspaceId: v.string() },
   returns: v.array(fileEntry),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
     const workspace = await resolveWorkspace(ctx, args);
 
     return await listWorkspaceFiles(workspace);
@@ -126,7 +127,7 @@ export const upload = action({
     contentType: v.optional(v.string()),
   },
   returns: fileEntry,
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WorkspaceFileEntry> => {
     const workspace = await resolveWorkspace(ctx, args, "admin");
 
     return await uploadWorkspaceFile(workspace, {
@@ -145,7 +146,7 @@ export const remove = action({
     path: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const workspace = await resolveWorkspace(ctx, args, "admin");
     await deleteWorkspacePath(workspace, args.path);
 
@@ -162,7 +163,7 @@ export const rename = action({
     newPath: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const workspace = await resolveWorkspace(ctx, args, "admin");
     await renameWorkspacePath(workspace, args.path, args.newPath);
 

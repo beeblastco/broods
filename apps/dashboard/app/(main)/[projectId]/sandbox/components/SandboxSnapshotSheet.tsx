@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Slide-in detail for one sandbox snapshot/image. Read-only: snapshots are
- * captured from a running instance (see the instance detail sheet) or published
- * by the image pipeline, so this view exposes their identity and build state.
+ * Read-only. A snapshot is captured from a running instance, or published by
+ * the image pipeline.
  */
 
 import {
@@ -21,16 +20,19 @@ import {
 } from "./sandboxFormat";
 
 interface Props {
-  /** The snapshot whose detail is shown. */
   snapshot: Doc<"sandboxSnapshots">;
-  /** The parent table.s clock, so both tick together off one timer. */
+  /** The parent table's clock, so both tick together off one timer. */
   now: number;
-  /** Close the sheet. */
   onClose: () => void;
 }
 
-/** One label/value detail row. */
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}): React.JSX.Element {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-border py-2 last:border-0">
       <span className="text-xs text-muted-foreground">{label}</span>

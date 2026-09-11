@@ -113,15 +113,12 @@ Usage notes:
           // that merely cross-references this slug in its description never matches.
           // Safe as a BRE: the slug charset is [a-z0-9-] and the title has no `]`.
           const indexLinePattern = `^- \\[[^]]*](${slug}\\.md) — `;
-          // Same base64 + `sync` discipline as the write tool: commit both files to
-          // the S3 Files server before the sandbox freezes. The entry's index line
-          // is REPLACED (matched by its anchored defining line), so re-saving a
-          // title updates the summary future turns see instead of keeping the
-          // stale line. The workspace is a mountpoint-s3 FUSE mount, which rejects
-          // O_APPEND and rename() with EPERM, so every file op here must be a whole
-          // read or a single create/truncate write stream: the surviving index
-          // lines are captured into a shell variable, then the index is rewritten
-          // in one `>` pass. No `>>`, no `mv`, no temp files.
+          // Same base64 + `sync` discipline as the write tool: commit both files to the
+          // S3 Files server before the sandbox freezes. The workspace is a mountpoint-s3
+          // FUSE mount that rejects O_APPEND and rename() with EPERM, so surviving index
+          // lines go into a shell variable and the index is rewritten in one `>` pass.
+          // No `>>`, no `mv`, no temp files. Replacing the entry's line instead of
+          // appending is what makes a re-saved title update the summary, not duplicate it.
           const code =
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
             `index_body=$({ [ -f ${qIndex} ] && grep -v ${shellQuote(indexLinePattern)} ${qIndex}; } || printf '%s' ${shellQuote(indexHeader)}) && ` +

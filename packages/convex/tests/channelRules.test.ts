@@ -1,5 +1,3 @@
-/** Validation tests for the channel-record config-plane rules. */
-
 import { describe, expect, it } from "vitest";
 import {
   normalizeChannelRecordConfig,

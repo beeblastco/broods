@@ -50,7 +50,6 @@ export async function writeChangedRefs<
   if (failure?.status === "rejected") throw failure.reason;
 }
 
-/** Build the default node data for a new runtime resource node. */
 export function defaultRuntimeNodeData(
   type: string,
   label: string,
@@ -122,7 +121,7 @@ export function analyzeCanvasInfra(
   const refAgents = new Map<string, Set<string>>();
   // workspace node id → agent ids directly wired to it
   const workspaceDirectAgents = new Map<string, string[]>();
-  const addRef = (nodeId: string, agentId: string) => {
+  const addRef = (nodeId: string, agentId: string): void => {
     if (!refAgents.has(nodeId)) refAgents.set(nodeId, new Set());
     refAgents.get(nodeId)!.add(agentId);
   };
@@ -198,7 +197,6 @@ export function analyzeCanvasInfra(
   };
 }
 
-/** Derive all agent runtime references from the current canvas graph. */
 export function deriveAgentRuntimeRefs(
   nodes: Node[],
   edges: Edge[],
@@ -369,7 +367,7 @@ function resolveAgentReachability(
   adjacency: Map<string, Set<string>>,
 ): Record<string, boolean> {
   const typeById = new Map(nodes.map((node) => [node.id, node.type]));
-  const touchesAgent = (nodeId: string) =>
+  const touchesAgent = (nodeId: string): boolean =>
     neighbors(nodeId, adjacency).some((id) => typeById.get(id) === "agent");
 
   const reachable: Record<string, boolean> = {};

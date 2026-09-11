@@ -1,4 +1,3 @@
-/** Shared entry to the /ui-gallery fixture for the `ui` suite. */
 import type { Page } from "@playwright/test";
 
 /**

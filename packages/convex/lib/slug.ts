@@ -1,7 +1,3 @@
-/**
- * Slug helpers for project and stage naming.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 
@@ -51,8 +47,6 @@ export async function uniqueProjectSlug(
   }
 }
 
-// Orgs are separate namespaces, so only a sibling in the same org may force a
-// suffix.
 async function slugTaken(
   ctx: QueryCtx,
   orgId: Id<"orgs">,

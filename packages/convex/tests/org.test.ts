@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const orgTest = () => convexTest(schema, modules);
+const orgTest = (): TestConvex<typeof schema> => convexTest(schema, modules);
 
 type T = ReturnType<typeof orgTest>;
 
@@ -14,7 +15,7 @@ async function seedAccount(
   t: T,
   orgId: string,
   username = "beeblast-sale-agent-dev",
-) {
+): Promise<Id<"accounts">> {
   return await t.run(
     async (ctx) =>
       await ctx.db.insert("accounts", {
@@ -29,7 +30,7 @@ async function seedAccount(
   );
 }
 
-async function seedUser(t: T, email: string) {
+async function seedUser(t: T, email: string): Promise<Id<"users">> {
   return await t.run(
     async (ctx) =>
       await ctx.db.insert("users", {
@@ -43,8 +44,12 @@ async function seedUser(t: T, email: string) {
 
 const adopt = (
   t: T,
-  args: { accountId: any; ownerEmail: string; orgName: string },
-) => t.mutation(internal.org.orgs.adoptExternalAccount, args);
+  args: { accountId: Id<"accounts">; ownerEmail: string; orgName: string },
+): Promise<{
+  orgId: Id<"orgs">;
+  slug: string;
+  membershipId: Id<"orgMembers">;
+}> => t.mutation(internal.org.orgs.adoptExternalAccount, args);
 
 describe("adoptExternalAccount", () => {
   test("binds an external account to a new org owned by the target user", async () => {

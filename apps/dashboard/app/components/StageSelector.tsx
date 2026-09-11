@@ -1,6 +1,5 @@
 "use client";
 
-/** Dropdown selector for switching between project stages and creating new ones. */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
@@ -160,7 +159,7 @@ export function StageSelector(): React.JSX.Element | null {
   const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
   const selectedKind = selectedStage?.kind ?? "custom";
 
-  function handleSelectStage(stage: Doc<"stages">) {
+  function handleSelectStage(stage: Doc<"stages">): void {
     if (stage.kind === "production" && !stage.deploymentRegion) {
       setProductionOpen(true);
 
@@ -170,7 +169,7 @@ export function StageSelector(): React.JSX.Element | null {
     setStageId(stage._id);
   }
 
-  function handleSelectProductionTarget() {
+  function handleSelectProductionTarget(): void {
     if (productionStage?.deploymentRegion) {
       setStageId(productionStage._id);
 
@@ -180,7 +179,7 @@ export function StageSelector(): React.JSX.Element | null {
     setProductionOpen(true);
   }
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     if (!newName.trim() || !projectId) return;
     setIsCreating(true);
     try {
@@ -202,7 +201,7 @@ export function StageSelector(): React.JSX.Element | null {
     }
   }
 
-  async function handleInitializeProduction() {
+  async function handleInitializeProduction(): Promise<void> {
     if (!projectId) return;
     const sourceStageId = developmentStage?._id;
     if (!sourceStageId) return;

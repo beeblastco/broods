@@ -29,7 +29,7 @@ const HEX_CLIP =
   "polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%)";
 
 /** Inline `<code>` styling for prose mentions of commands and names. */
-function Mono({ children }: { children: ReactNode }) {
+function Mono({ children }: { children: ReactNode }): React.JSX.Element {
   return (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
       {children}
@@ -38,10 +38,10 @@ function Mono({ children }: { children: ReactNode }) {
 }
 
 /** Clipboard copy with a transient confirmation shown only after the write actually succeeds. */
-function useCopy() {
+function useCopy(): { copied: boolean; copy: (text: string) => Promise<void> } {
   const [copied, setCopied] = useState(false);
 
-  async function copy(text: string) {
+  async function copy(text: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -55,7 +55,13 @@ function useCopy() {
 }
 
 /** Honeycomb progress: one hex cell per step, filled for the current, dimmed for the done, hollow for the rest. */
-function HexSteps({ step, count }: { step: number; count: number }) {
+function HexSteps({
+  step,
+  count,
+}: {
+  step: number;
+  count: number;
+}): React.JSX.Element {
   return (
     <div
       className="flex items-center gap-1"
@@ -80,7 +86,7 @@ function HexSteps({ step, count }: { step: number; count: number }) {
 }
 
 /** A one-line command block with a corner copy control. */
-function CommandBlock({ command }: { command: string }) {
+function CommandBlock({ command }: { command: string }): React.JSX.Element {
   const { copied, copy } = useCopy();
 
   return (
@@ -107,7 +113,13 @@ function CommandBlock({ command }: { command: string }) {
   );
 }
 
-function DocsLink({ href, children }: { href: string; children: ReactNode }) {
+function DocsLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: ReactNode;
+}): React.JSX.Element {
   return (
     <a
       href={href}

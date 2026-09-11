@@ -303,9 +303,8 @@ function addDesiredMountEdge(
 
 /**
  * Side-handle "subagent" edge for an agent→agent call relationship. Matches the
- * dashboard's id scheme so it hydrates into the violet SubagentEdge; as with mount
- * edges only id/source/target are persisted and the handles/type are rebuilt from
- * the `subagent:` prefix on load. Source/target are the caller/callee agent nodes.
+ * dashboard's id scheme so it hydrates into the violet SubagentEdge.
+ * Source/target are the caller/callee agent nodes.
  */
 function addDesiredSubagentEdge(
   edges: Map<string, CanvasEdge>,
@@ -325,11 +324,6 @@ function cliResourceKeyForNode(node: CanvasNode): string {
   return `${node.type}:${name}`;
 }
 
-/**
- * Walk each desired agent's refs (sandbox, workspaces, subagents, skills,
- * mcp servers) and record the corresponding canvas edges plus workspace
- * writability.
- */
 function collectDesiredAgentEdges(options: {
   desiredResources: CanvasCliResource[];
   nodeIdByKindName: Map<string, string>;
@@ -422,7 +416,6 @@ function filterDesiredCanvasNodes(
   });
 }
 
-/** Normalize the stored layout and index its nodes by id and back-references. */
 function indexExistingCanvas(
   layout: Doc<"canvasLayouts"> | null,
 ): ExistingCanvas {
@@ -639,7 +632,6 @@ function normalizeCanvasNode(node: CanvasNode): CanvasNode {
   };
 }
 
-/** Patch the existing layout row, or insert one when nodes exist and none does. */
 async function persistCanvasLayout(
   ctx: MutationCtx,
   options: {

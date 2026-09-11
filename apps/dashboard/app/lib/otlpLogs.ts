@@ -24,6 +24,13 @@ type OtlpValue =
   | { doubleValue: number }
   | { boolValue: boolean };
 type OtlpAttribute = { key: string; value: OtlpValue };
+type OtlpLogRecord = {
+  timeUnixNano: string;
+  severityNumber: number;
+  severityText: string;
+  body: { stringValue: string };
+  attributes: OtlpAttribute[];
+};
 
 /** Parses core's `OTEL_EXPORTER_OTLP_HEADERS` form: `K=V,K2=V2`. */
 export function parseOtlpHeaders(
@@ -68,7 +75,7 @@ export function buildOtlpLogPayload(
   };
 }
 
-function toLogRecord(event: PerfEvent) {
+function toLogRecord(event: PerfEvent): OtlpLogRecord {
   const attributes: OtlpAttribute[] = [
     { key: "metric", value: { stringValue: event.name } },
     { key: "value", value: { doubleValue: event.value } },

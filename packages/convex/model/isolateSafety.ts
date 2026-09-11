@@ -21,9 +21,7 @@ const WEB_STREAMS_PATTERN =
   /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 
 /**
- * Cheap upload-time heuristic: whether a bundle stays inside the isolate's
- * global set. Bundles that mention Node-only globals, node: imports,
- * require(), bare package imports, or Web Streams are not isolate-safe.
+ * Cheap upload-time heuristic, not a proof.
  * @param bundleSource bundled JavaScript module source
  * @returns true when the bundle can run in the V8 isolate
  */

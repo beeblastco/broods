@@ -1,8 +1,3 @@
-/**
- * Async tool coordinator tests.
- * Cover result persistence and parent-message injection without provider calls.
- */
-
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { jsonSchema, tool, type UserModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";

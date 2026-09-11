@@ -484,7 +484,10 @@ function createHandlers(
     handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
     handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
   }> = {},
-) {
+): {
+  handleDirectRequest: (event: DirectInboundEvent) => Promise<Response>;
+  handleChannelRequest: (event: ChannelInboundEvent) => Promise<void>;
+} {
   return {
     handleDirectRequest: async (event: DirectInboundEvent) =>
       responseFromShape(
@@ -502,7 +505,12 @@ async function defaultDirectHandler(): Promise<ResponseShape> {
   };
 }
 
-function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
+function createIncomingEventRouter(
+  options: IntegrationRoutingOptions = {},
+): (
+  request: ReturnType<typeof coreRequest>,
+  handlers: ReturnType<typeof createHandlers>,
+) => Promise<ResponseShape> {
   return async (
     request: ReturnType<typeof coreRequest>,
     handlers: ReturnType<typeof createHandlers>,
@@ -595,7 +603,16 @@ function createTelegramEvent(
   );
 }
 
-function telegramUpdate() {
+function telegramUpdate(): {
+  update_id: number;
+  message: {
+    message_id: number;
+    date: number;
+    text: string;
+    chat: { id: number; type: string };
+    from: { id: number; is_bot: boolean; username: string };
+  };
+} {
   return {
     update_id: 7,
     message: {
@@ -608,7 +625,16 @@ function telegramUpdate() {
   };
 }
 
-function zaloUpdate() {
+function zaloUpdate(): {
+  event_name: string;
+  message: {
+    message_id: string;
+    date: number;
+    text: string;
+    chat: { id: string; chat_type: string };
+    from: { id: string; name: string; is_bot: boolean };
+  };
+} {
   return {
     event_name: "message.text.received",
     message: {

@@ -306,7 +306,7 @@ function raceWithAbort<T>(
   }
 
   return new Promise<T>((resolve, reject) => {
-    const abort = () => {
+    const abort = (): void => {
       void Promise.resolve(onAbort()).catch(() => {});
       reject(abortSignal.reason ?? new DOMException("Aborted", "AbortError"));
     };

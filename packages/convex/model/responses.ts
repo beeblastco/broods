@@ -64,7 +64,6 @@ export function toCronRunResponse(
 }
 
 /**
- * Map an agentPolicies document to the public account-management shape.
  * @param doc the agentPolicies document
  * @returns the public policy record
  */
@@ -84,7 +83,6 @@ export function toPublicAgentPolicyResponse(
 }
 
 /**
- * Project an agent document and decrypted config to the public API shape.
  * @param doc agent row
  * @param config decrypted config
  * @returns public agent response
@@ -106,7 +104,6 @@ export function toPublicAgentResponse(
 }
 
 /**
- * Map a channelRecords document to the public channel-record shape.
  * @param doc the channelRecords document
  * @returns the public channel record
  */
@@ -149,7 +146,6 @@ export function toPublicRoleResponse(
 }
 
 /**
- * Map a sandboxConfigs document and decrypted config to the public response.
  * @param doc the sandboxConfigs document
  * @param config decrypted sandbox config
  * @returns the public sandbox record with secrets redacted

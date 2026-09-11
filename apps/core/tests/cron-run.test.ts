@@ -1,8 +1,3 @@
-/**
- * Scheduled cron invocation tests.
- * Cover which conversation a cron run resumes and where its answer is delivered.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";

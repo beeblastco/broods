@@ -1,19 +1,25 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const runtimeKeyTest = () => convexTest(schema, modules);
+const runtimeKeyTest = (): TestConvex<typeof schema> =>
+  convexTest(schema, modules);
 
 type T = ReturnType<typeof runtimeKeyTest>;
 
 const AUTH_ID = "auth_owner";
 const SECRET_HASH = "hash-beeblast";
 
-async function seed(t: T) {
+async function seed(t: T): Promise<{
+  accountId: Id<"accounts">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",

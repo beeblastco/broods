@@ -26,11 +26,11 @@ export function markHandlerEntry(now: number): void {
 
 /**
  * Read and clear the cold-start window so the first agent run can emit it as a
- * single phase span. `runStartedMs` is when the agent loop began; it gates the
- * window so a warm container that was born long ago (e.g. it first handled a
- * webhook ack, then ran this loop minutes later) never stamps a stale init
- * window onto this request's trace. Returns null on warm runs, on runs that
- * began too long after process start, and after the first consumption.
+ * single phase span. `runStartedMs`, when the agent loop began, gates the window
+ * so a container born long ago (it first handled a webhook ack, then ran this loop
+ * minutes later) never stamps a stale init window onto this request's trace.
+ * Returns null on warm runs, on runs that began too long after process start, and
+ * after the first consumption.
  */
 export function consumeColdStart(
   runStartedMs: number,

@@ -1,6 +1,6 @@
 /**
- * Workspace harness feature toggle tests. Config validation moved to the
- * config plane and is covered by packages/convex/tests/workspaceRules.test.ts.
+ * Config validation moved to the config plane and is covered by
+ * packages/convex/tests/workspaceRules.test.ts.
  */
 
 import { describe, expect, it } from "bun:test";

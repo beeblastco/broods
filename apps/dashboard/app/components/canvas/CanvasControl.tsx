@@ -27,7 +27,6 @@ const TIDY_ICON_CELLS = [
   { x: 8, y: 8 },
 ];
 
-/** Zoom, fit-view and tidy controls for the canvas. */
 export function CanvasControls({
   onTidy,
 }: {

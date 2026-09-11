@@ -22,9 +22,6 @@ import { s3Client, type S3Access } from "./aws";
 const SANDBOX_GID = "990";
 const SANDBOX_UID = "993";
 
-/**
- * A single S3 object's listing metadata.
- */
 export interface S3ObjectInfo {
   key: string;
   size?: number;
@@ -66,7 +63,6 @@ export async function copyS3Object(
 }
 
 /**
- * Delete a single object.
  * @param bucket target bucket
  * @param key object key
  * @param access optional overrides for a bring-your-own bucket
@@ -81,7 +77,6 @@ export async function deleteS3Object(
 }
 
 /**
- * Delete every object under a prefix.
  * @param bucket target bucket
  * @param prefix key prefix
  * @param access optional overrides for a bring-your-own bucket
@@ -128,7 +123,6 @@ export async function ensureS3DirectoryMarkers(
 }
 
 /**
- * Presign a time-limited GET URL for an object.
  * @param bucket source bucket
  * @param key object key
  * @param options expiry in seconds (default 300)
@@ -229,7 +223,6 @@ export async function listS3Prefix(
 }
 
 /**
- * Read an object's raw bytes.
  * @param bucket source bucket
  * @param key object key
  * @returns the object body as bytes
@@ -251,7 +244,6 @@ export async function readS3Bytes(
 }
 
 /**
- * Read an object as UTF-8 text.
  * @param bucket source bucket
  * @param key object key
  * @returns the object body decoded as text
@@ -269,7 +261,6 @@ export async function readS3Text(bucket: string, key: string): Promise<string> {
 }
 
 /**
- * Check whether an object exists.
  * @param bucket source bucket
  * @param key object key
  * @param access optional overrides for a bring-your-own bucket

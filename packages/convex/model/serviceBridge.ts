@@ -5,7 +5,6 @@
  * resolveBearerAuth service-token branch checks both.
  */
 
-/** The broods account-manage base URL + service-auth secret, from the env. */
 export function serviceEnv(): { url: string; secret: string } {
   const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
   const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
@@ -18,7 +17,6 @@ export function serviceEnv(): { url: string; secret: string } {
   return { url: url.replace(/\/+$/, ""), secret: secret };
 }
 
-/** Service-auth headers: shared bearer secret plus the account scope. */
 export function serviceHeaders(accountId: string, secret: string): HeadersInit {
   return {
     Authorization: `Bearer ${secret}`,

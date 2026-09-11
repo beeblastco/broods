@@ -1,8 +1,3 @@
-/**
- * Thrown-value message tests.
- * Cover reading the message the AI SDK nests inside a stream error payload.
- */
-
 import { describe, expect, it } from "bun:test";
 import { toErrorMessage } from "../src/shared/errors.ts";
 

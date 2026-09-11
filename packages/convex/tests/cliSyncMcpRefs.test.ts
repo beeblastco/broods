@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /** `config.mcp` is keyed by mcp row id at rest, never by server name (#331). */
 
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -24,7 +24,7 @@ const mcpResource = {
   },
 };
 
-const t = () => convexTest(schema, modules);
+const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 /** Seeds the org, account and owner membership a CLI sync writes against. */

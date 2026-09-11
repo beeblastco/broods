@@ -1,6 +1,5 @@
 /**
  * Pancake channel adapter.
- * Keep Pancake webhook normalization and outbound message API calls here.
  *
  * Per-conversation policy (e.g. skipping human-owned conversations by tag) is
  * not baked in: the parsed source carries `tagIds` so a user `onMessageReceived`
@@ -206,12 +205,11 @@ async function sendPancakeMessage(
 }
 
 /**
- * Sends pictures or documents on Pancake, which takes neither directly.
- *
- * Every file goes up to `upload_contents` first and comes back as a content id,
- * and the message then references those ids. Pancake accepts one content id per
- * message, so a batch becomes a batch of messages. The caption rides the first,
- * because repeating it once per file reads as the same message sent over again.
+ * Sends pictures or documents on Pancake, which takes neither directly. Every file
+ * goes up to `upload_contents` first and comes back as a content id the message
+ * references. Pancake accepts one content id per message, so a batch becomes a
+ * batch of messages, the caption on the first: repeating it once per file reads as
+ * the same message sent over again.
  */
 async function sendPancakeAttachments(
   pageAccessToken: string,
@@ -352,10 +350,10 @@ function hashEventContent(
 /**
  * The photos and videos on a Pancake message, as Chat SDK attachments.
  *
- * Pancake hosts every upload itself and names it by URL, so there is no token to
- * attach and nothing to resolve first. The link in the webhook is the file. A
- * share card or link preview arrives in the same array with no file behind it,
- * and is dropped rather than turned into a broken download.
+ * Pancake hosts every upload and names it by URL, so there is no token to attach
+ * and nothing to resolve first: the link in the webhook is the file. A share card
+ * or link preview arrives in the same array with no file behind it, and is dropped
+ * rather than turned into a broken download.
  */
 function pancakeAttachments(
   value: PancakeAttachment[] | undefined,

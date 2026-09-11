@@ -107,11 +107,12 @@ export default function runSubagentTool(context: {
       inputSchema: jsonSchema<RunSubagentInput>(
         buildRunSubagentInputSchema(context.mode),
       ),
-      execute: async function (input, options) {
+      execute: async function (
+        input,
+        options,
+      ): Promise<RunSubagentDispatchResult> {
         const tasks = normalizeInput(input, context.mode);
 
-        // Keep the tool as a thin AI SDK adapter. The dispatcher starts child
-        // runs and coordinates later parent continuation outside this file.
         return context.dispatchSubagents(tasks, options.messages);
       },
     }),

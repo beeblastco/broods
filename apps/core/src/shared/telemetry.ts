@@ -1,11 +1,8 @@
 /**
- * Usage metering. Fire-and-forget write via the active storage boundary.
- *
- * The event path (Convex hot table telemetryEvents) has been removed; log
- * lines and spans now flow to NATS + OTLP via _shared/log.ts and otel.ts.
- * This file owns only the per-task usage row: one write per finished agent
- * invocation, forwarded to Convex storage. Never throws into the
- * agent path.
+ * Usage metering: one per-task row per finished agent invocation, written
+ * fire-and-forget through the active storage boundary. Never throws into the
+ * agent path. Log lines and spans go to NATS + OTLP via shared/log.ts and
+ * shared/otel.ts instead.
  */
 
 import { logError } from "./log.ts";
@@ -14,10 +11,6 @@ import type { TaskUsageInput } from "./storage.ts";
 
 export type { TaskUsageInput };
 
-/**
- * Record one finished-task usage row via the active storage boundary.
- * Fire-and-forget: errors are logged, never re-thrown.
- */
 export async function recordTaskUsage(input: TaskUsageInput): Promise<void> {
   try {
     await getStorage().taskUsage.record(input);

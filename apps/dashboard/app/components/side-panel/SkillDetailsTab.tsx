@@ -49,7 +49,7 @@ function TokenInput({
 }: {
   value: string;
   onChange: (v: string) => void;
-}) {
+}): React.JSX.Element {
   const [show, setShow] = useState(false);
 
   return (
@@ -85,7 +85,7 @@ function SourceCard({
   title: string;
   description: string;
   onClick: () => void;
-}) {
+}): React.JSX.Element {
   return (
     <button
       className="flex cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
@@ -100,7 +100,11 @@ function SourceCard({
   );
 }
 
-function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
+function GithubForm({
+  onSuccess,
+}: {
+  onSuccess: (skillPath: string) => void;
+}): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const createFromGithub = useAction(api.skillsPublic.createFromGithub);
   const [url, setUrl] = useState("");
@@ -110,7 +114,7 @@ function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
     message?: string;
   }>({ type: "idle" });
 
-  async function handleImport() {
+  async function handleImport(): Promise<void> {
     const trimmedUrl = url.trim();
     const trimmedToken = token.trim();
     if (!trimmedUrl || !trimmedToken) return;
@@ -190,7 +194,7 @@ function JsonForm({
 }: {
   existingPath?: string;
   onSuccess: (skillPath: string) => void;
-}) {
+}): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const createFromJson = useAction(api.skillsPublic.createFromJson);
   const [name, setName] = useState("");
@@ -212,7 +216,7 @@ function JsonForm({
     status.type !== "busy";
   const isUpdate = !!existingPath || status.type === "success";
 
-  async function handleSubmit() {
+  async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
     setSkillsBearerToken(token.trim());
     setStatus({ type: "busy" });
@@ -361,11 +365,11 @@ export function SkillDetailsTab({
     path.length > 0 &&
     includesSkillRef(skills.allowed, path);
 
-  function setSource(source: SkillSource) {
+  function setSource(source: SkillSource): void {
     onUpdateNodeConfig({ skillSource: source });
   }
 
-  function resetSource() {
+  function resetSource(): void {
     onUpdateNodeConfig({ skillSource: undefined });
   }
 
@@ -374,7 +378,7 @@ export function SkillDetailsTab({
    * `skills.enabled` master on in one write; disabling just removes the path. Writing the whole
    * branch keeps the master and allow-list consistent so the node badge never lags the panel.
    */
-  function setActive(next: boolean) {
+  function setActive(next: boolean): void {
     const allowedSet = new Set(
       next ? (skills.allowed ?? []) : withoutSkillRef(skills.allowed, path),
     );
@@ -401,11 +405,10 @@ export function SkillDetailsTab({
     );
   }
 
-  function handleSuccess(returnedPath: string) {
+  function handleSuccess(returnedPath: string): void {
     onUpdateSkillPath(returnedPath);
   }
 
-  // Source picker, shown when no source is set yet
   if (!skillSource) {
     return (
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">

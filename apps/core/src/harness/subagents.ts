@@ -46,7 +46,7 @@ import {
   type AgentLifecycleEmitter,
   type AgentLifecycleEventPayload,
 } from "./lifecycle.ts";
-import { Session } from "./session.ts";
+import { Session, type TurnContextSnapshot } from "./session.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,
@@ -371,12 +371,10 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Starts one child run in the background and tracks its lifecycle.
-   *
-   * This method intentionally does not await `runTask`. The parent model gets
-   * task ids back immediately while the promise keeps progressing in the same
-   * request or worker. Completion or failure is normalized into the coordinator
-   * queue so the parent loop can inject it later.
+   * Deliberately does not await `runTask`: the parent model gets task ids back
+   * immediately while the child keeps progressing in the same request or worker.
+   * Completion or failure is normalized into the coordinator queue so the parent
+   * loop can inject it later.
    */
   private startTask(
     task: ResolvedSubagentTask,
@@ -448,8 +446,6 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Executes a one-shot child agent turn and records the result.
-   *
    * Ephemeral child turns use an in-memory session wrapper. Persistent child
    * turns write the task prompt and generated child messages to the child
    * conversation while keeping inherited parent context ephemeral.
@@ -771,7 +767,7 @@ export class SubagentCoordinator {
     childSession: Session,
     task: ResolvedSubagentTask,
     incoming: ModelMessage[],
-  ) {
+  ): Promise<TurnContextSnapshot> {
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
         [...(task.inheritedContext ? task.parentMessages : []), ...incoming],
@@ -977,13 +973,11 @@ export function createEphemeralChildSession(
     agentId: childSession.agentId,
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
-    // Carry the deployment scope through to the child run. runAgentLoop reads
-    // these off the session to stamp project/stage/endpoint_id on the
-    // subtask span and to build the live NATS subject. Omitting them (the prior
-    // bug) left subagent spans with only account_id, so publishSpan early-returned
-    // (no live span) AND the dashboard's project+stage-scoped Tempo backfill
-    // never matched them. Subagents were invisible in tracing and a reload didn't
-    // bring them back.
+    // runAgentLoop reads the deployment scope off the session to stamp
+    // project/stage/endpoint_id on the subtask span and to build the live NATS
+    // subject. Omitting it left subagent spans carrying only account_id, so
+    // publishSpan early-returned and the dashboard's project+stage-scoped Tempo
+    // backfill never matched them: subagents were invisible in tracing.
     endpointId: childSession.endpointId,
     projectSlug: childSession.projectSlug,
     stageSlug: childSession.stageSlug,

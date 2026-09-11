@@ -353,25 +353,31 @@ export async function routeIncomingEvent(
 
 export function createIncomingEventRouter(
   options: IntegrationRoutingOptions = {},
-) {
+): (request: CoreRequest, handlers: IntegrationHandlers) => Promise<Response> {
   const authResolver = options.authResolver ?? resolveBearerAuth;
   const accountLoader =
     options.accountLoader ??
-    ((accountId: string) => getStorage().accounts.getById(accountId));
+    ((accountId: string): Promise<AccountRecord | null> =>
+      getStorage().accounts.getById(accountId));
   const agentLoader =
     options.agentLoader ??
-    ((accountId: string, agentId: string) =>
+    ((accountId: string, agentId: string): Promise<AgentRecord | null> =>
       getStorage().agents.getById(accountId, agentId));
   const agentLister =
     options.agentLister ??
-    ((accountId: string) => getStorage().agents.list(accountId));
+    ((accountId: string): Promise<AgentRecord[]> =>
+      getStorage().agents.list(accountId));
   const stageAgentLister =
     options.stageAgentLister ??
-    ((accountId: string, endpointId: string) =>
+    ((accountId: string, endpointId: string): Promise<AgentRecord[]> =>
       getStorage().agents.listForEndpoint(accountId, endpointId));
   const channelRecordLoader =
     options.channelRecordLoader ??
-    ((accountId: string, platform: string, externalId: string) =>
+    ((
+      accountId: string,
+      platform: string,
+      externalId: string,
+    ): Promise<ChannelRecord | null> =>
       getStorage().channelRecords.getByExternalId(
         accountId,
         platform,
@@ -379,14 +385,17 @@ export function createIncomingEventRouter(
       ));
   const deploymentLoader =
     options.deploymentLoader ??
-    ((accountId: string, agentId: string) =>
+    ((
+      accountId: string,
+      agentId: string,
+    ): Promise<AgentDeploymentScope | null> =>
       getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ??
       Promise.resolve(null));
   const asyncAgentResultLoader =
     options.asyncAgentResultLoader ?? getAsyncAgentResult;
   const ingressStatusLoader = options.ingressStatusLoader ?? getIngressStatus;
   const directApiEnabled = options.directApiEnabled ?? true;
-  const waitUntil = options.waitUntil ?? (() => {});
+  const waitUntil = options.waitUntil ?? ((): void => {});
 
   return async (
     request: CoreRequest,
@@ -469,8 +478,6 @@ async function handleHttpRequest(
     body: request.body,
   };
 
-  // Background-job completion: authenticated by the per-job token, not an account
-  // secret, so the sandbox never needs to hold account credentials.
   const sandboxJobCompletionMatch = request.path.match(
     /^\/sandbox-jobs\/([^/]+)\/complete$/,
   );
@@ -783,9 +790,6 @@ async function handleHttpRequest(
   }
 }
 
-/**
- * This is to handle the response to the external integration webhook
- */
 /**
  * Find the agent whose channel credentials verify this request. Only agents
  * that configure the channel are tried, signature checks are cheap, and the
@@ -1791,13 +1795,11 @@ export function channelActionsFromConfig(
 }
 
 /**
- * Push a single message into a chat channel outside the inbound webhook. Callers
- * use it to deliver a background job's result back to the conversation it came
- * from.
- * Rebuilds the channel sender from the agent's encrypted config + the stored
- * routing `source`, reusing the same adapter the webhook path uses. Each channel
- * decides how to deliver a delayed message inside its own module (e.g. Discord
- * falls back to a bot-token channel post once its interaction token expires).
+ * Push a single message into a chat channel outside the inbound webhook, to
+ * deliver a background job's result back to the conversation it came from. Each
+ * channel decides how a delayed message is delivered inside its own module:
+ * Discord falls back to a bot-token channel post once its interaction token
+ * expires.
  */
 export async function sendChannelReply(options: {
   config: AgentConfig;
@@ -2036,7 +2038,6 @@ function parseDirectQuestionAnswers(value: unknown): DirectQuestionAnswer[] {
   });
 }
 
-/** Validates the optional public ingress mode. */
 function parseIngressMode(value: unknown): IngressMode | undefined {
   if (value === undefined) return undefined;
   if (

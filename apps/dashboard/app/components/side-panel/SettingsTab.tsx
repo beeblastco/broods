@@ -12,7 +12,6 @@ export type NodeType =
   | "sandbox"
   | "skill";
 
-/** Delete warning copy per node type. */
 const DELETE_DESCRIPTIONS: Record<
   NodeType,
   { summary: string; detail: string }
@@ -49,7 +48,6 @@ const DELETE_DESCRIPTIONS: Record<
   },
 };
 
-/** Capitalised label for each node type. */
 const NODE_TYPE_LABELS: Record<NodeType, string> = {
   agent: "agent",
   database: "database",
@@ -95,7 +93,7 @@ export function SettingsTab({
   };
   const typeLabel = NODE_TYPE_LABELS[nodeType] ?? "node";
 
-  async function handleDelete() {
+  async function handleDelete(): Promise<void> {
     setIsDeleting(true);
     try {
       await onDelete();
@@ -109,7 +107,6 @@ export function SettingsTab({
     <>
       <div className="flex flex-1 flex-col gap-5 p-4">
         {deleteLocked ? (
-          /* Delete locked: ownership is pending or code owns the resource. */
           <div className="rounded-lg border border-destructive/40 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -146,7 +143,6 @@ export function SettingsTab({
             </div>
           </div>
         ) : (
-          /* Danger zone */
           <div className="rounded-lg border border-destructive/40 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>

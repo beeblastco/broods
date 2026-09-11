@@ -1,6 +1,5 @@
 "use client";
 
-/** Client-side providers for Convex, WorkOS AuthKit, and theming. */
 import {
   AuthKitProvider,
   useAccessToken,

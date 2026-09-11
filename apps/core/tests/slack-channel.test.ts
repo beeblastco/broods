@@ -1,8 +1,3 @@
-/**
- * Slack channel adapter tests.
- * Cover signature verification and event/slash-command normalization here.
- */
-
 import {
   afterEach,
   beforeEach,
@@ -608,7 +603,7 @@ describe("slack channel adapter", () => {
     // The interval check reads Date.now(); undo the suite's frozen clock so
     // elapsed time is real here (beforeEach re-freezes it for other tests).
     setSystemTime();
-    const wait = (ms: number) =>
+    const wait = (ms: number): Promise<unknown> =>
       new Promise((resolve) => setTimeout(resolve, ms));
     const chunks = await collect(
       toSlackStream(
@@ -921,7 +916,9 @@ async function parseChannelMention(
   return parsed.message;
 }
 
-function createTestSlackChannel(allowedChannelIds: Set<string> | null) {
+function createTestSlackChannel(
+  allowedChannelIds: Set<string> | null,
+): ChannelAdapter {
   const users = new Map([
     ["U1", "Alex"],
     ["U2", "Blair"],
@@ -943,7 +940,13 @@ function createTestSlackChannel(allowedChannelIds: Set<string> | null) {
 function createEventRequest(
   payload: Record<string, unknown>,
   timestamp: string = "1776988800",
-) {
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: Record<string, string>;
+  body: string;
+} {
   const body = JSON.stringify(payload);
 
   return {
@@ -958,7 +961,13 @@ function createEventRequest(
 function createSlashCommandRequest(
   body: string,
   timestamp: string = "1776988800",
-) {
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: { "content-type": string };
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",

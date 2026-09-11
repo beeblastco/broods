@@ -292,8 +292,8 @@ export async function handleWorkspaceFilesRoute(
 }
 
 /**
- * Match a download-token redemption and return the raw token. Kept separate from
- * parseRoute because this one route runs before authentication.
+ * Kept separate from parseRoute because this one route runs before
+ * authentication.
  * @param pathname request path
  * @returns the token, or null when the path is not a redemption
  */
@@ -320,7 +320,6 @@ function generateDownloadToken(): string {
 }
 
 /**
- * Read the requested token lifetime, defaulting and capping it.
  * @param value client-supplied expiresInSeconds
  * @returns the lifetime in seconds, or a 400 response
  */

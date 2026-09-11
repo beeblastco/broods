@@ -135,11 +135,14 @@ describe("deriveSubagentRefs", () => {
 });
 
 /** Minimal ref shape: `writeChangedRefs` only reads `configId`. */
-function ref(configId: string, value: string) {
+function ref(
+  configId: string,
+  value: string,
+): { configId: Id<"agentConfigs">; value: string } {
   return { configId: configId as Id<"agentConfigs">, value: value };
 }
 
-const serializeValue = (r: { value: string }) => r.value;
+const serializeValue = (r: { value: string }): string => r.value;
 
 describe("writeChangedRefs caching", () => {
   test("skips a ref whose serialization is unchanged", async () => {
@@ -161,7 +164,7 @@ describe("writeChangedRefs caching", () => {
   test("a failed write stays uncached, so the retry writes it again", async () => {
     const cache = new Map<string, string>();
     let attempts = 0;
-    const write = async () => {
+    const write = async (): Promise<void> => {
       attempts += 1;
       if (attempts === 1) throw new Error("mutation failed");
     };
@@ -180,7 +183,7 @@ describe("writeChangedRefs caching", () => {
   test("a partial failure caches only the refs that landed", async () => {
     const cache = new Map<string, string>();
     const attempts: string[] = [];
-    const write = async (r: { configId: string }) => {
+    const write = async (r: { configId: string }): Promise<void> => {
       attempts.push(r.configId);
       if (r.configId === "cfg_bad") throw new Error("mutation failed");
     };

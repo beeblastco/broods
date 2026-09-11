@@ -8,7 +8,6 @@
 import { Switch } from "@/app/components/ui/switch";
 import type { ReactNode } from "react";
 
-/** Label + Switch row; the switch is the feature's enable control. */
 export function ToggleRow({
   label,
   description,
@@ -42,7 +41,6 @@ export function ToggleRow({
   );
 }
 
-/** Indented reveal block matching the Agent card's expand styling. */
 export function ExpandBlock({
   children,
 }: {

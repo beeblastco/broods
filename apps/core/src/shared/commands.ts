@@ -1,7 +1,4 @@
-/**
- * Shared bot commands.
- * Keep channel-agnostic command logic here.
- */
+/** Channel-agnostic bot commands. */
 
 import type { UserContent } from "ai";
 import { extractText, type ChannelActions } from "./channels.ts";

@@ -1905,7 +1905,12 @@ function deploymentIngress(
     projectSlug: string;
     stageSlug: string;
   }> = {},
-) {
+): {
+  accountId: string;
+  endpointId: string;
+  projectSlug: string;
+  stageSlug: string;
+} {
   return {
     accountId: TEST_ACCOUNT.accountId,
     endpointId: "env-endpoint",

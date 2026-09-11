@@ -112,7 +112,6 @@ export function applyPositions<
   });
 }
 
-/** Re-position every node by {@link tidyCanvasLayout}, leaving the rest untouched. */
 export function applyTidyLayout<
   T extends LayoutNode & { position: LayoutPosition },
 >(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
@@ -144,7 +143,6 @@ export function findFreePosition(
   return start;
 }
 
-/** Lay the whole graph out, returning the new position of every node by id. */
 export function tidyCanvasLayout(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -191,7 +189,6 @@ export function tidyCanvasLayout(
   return positions;
 }
 
-/** Whether two same-sized cards would touch, margin included. */
 function cardsOverlap(a: LayoutPosition, b: LayoutPosition): boolean {
   return (
     Math.abs(a.x - b.x) < NODE_WIDTH + NODE_MARGIN &&
@@ -209,7 +206,6 @@ function columnRank(type: string): number {
   return COLUMN_RANKS.get(type) ?? COLUMN_RANKS.size;
 }
 
-/** Compare two nodes by their display label, falling back to id. */
 function compareByLabel(a: LayoutNode, b: LayoutNode): number {
   return labelOf(a).localeCompare(labelOf(b));
 }
@@ -224,7 +220,6 @@ function edgeKind(edge: LayoutEdge): "mount" | "subagent" | "default" {
   return "default";
 }
 
-/** Group services into typed columns, each column sorted by label. */
 function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
   const byType = new Map<string, LayoutNode[]>();
   for (const node of services) {
@@ -239,10 +234,6 @@ function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
     .map(([, column]) => column.sort(compareByLabel));
 }
 
-/**
- * Split the graph into agents, per-agent exclusive services, shared services
- * and orphans, and record the sub-agent hierarchy.
- */
 function indexGraph(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -400,7 +391,6 @@ function ringOffsets(ring: number): LayoutPosition[] {
   );
 }
 
-/** Nearest background dot to an arbitrary point. */
 function snapToGrid(position: LayoutPosition): LayoutPosition {
   return {
     x: Math.round(position.x / GRID) * GRID,

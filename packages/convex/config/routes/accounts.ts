@@ -38,7 +38,6 @@ type AccountUpdateInput = {
 };
 
 /**
- * Handle account self-management and admin account config routes.
  * @param ctx Convex action context
  * @param req incoming HTTP request
  * @param route parsed account route
@@ -206,7 +205,6 @@ function optionalString(value: unknown, name: string): string | undefined {
 }
 
 /**
- * Require a trimmed non-empty string.
  * @param value raw value
  * @param name field name for error messages
  * @returns trimmed string
@@ -257,7 +255,6 @@ async function rotateAccountSecretResponse(
 }
 
 /**
- * Project an account document to the public account response shape.
  * @param account account document
  * @returns public account record
  */
@@ -273,7 +270,6 @@ function toPublicAccount(account: Doc<"accounts">): Record<string, unknown> {
 }
 
 /**
- * Update an account and return the public response wrapper.
  * @param ctx Convex action context
  * @param accountId account id to update
  * @param input raw update body

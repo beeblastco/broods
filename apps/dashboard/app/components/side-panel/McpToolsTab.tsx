@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * Tool explorer for MCP nodes: lists the server's live tools, expands each to
- * its schema, and runs one with JSON arguments.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";

@@ -42,8 +42,7 @@ crons.interval(
   internal.account.roles.pruneExpiredSessions,
   {},
 );
-// Blobs minted through an upload URL but never registered; walks storage
-// oldest-first and reschedules itself page by page.
+// Blobs minted through an upload URL but never registered by a workspace file.
 crons.interval(
   "prune orphan uploads",
   { hours: 24 },

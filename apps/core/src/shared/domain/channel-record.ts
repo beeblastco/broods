@@ -1,11 +1,10 @@
 /**
  * Channel records: an account-scoped row per real place a team talks. One Slack
  * channel, one Discord channel, one repository. It binds that place to an agent
- * and adds instructions, workspaces, policies and roles scoped to it.
- * Distinct from `config.channels`, which holds one adapter's credentials.
- * A record narrows and adds; it never grants capability the agent lacks.
- * Input validation lives in the config plane
- * (packages/convex/model/channelRules.ts) and is re-exported here.
+ * and adds instructions, workspaces, policies and roles scoped to it. Distinct
+ * from `config.channels`, which holds one adapter's credentials. A record
+ * narrows and adds; it never grants capability the agent lacks. Input validation
+ * lives in packages/convex/model/channelRules.ts and is re-exported here.
  */
 
 import type { ChannelReplyIn } from "@broods/convex/model/channelRules";
@@ -78,7 +77,6 @@ export interface ChannelRecord {
   updatedAt: string;
 }
 
-/** The agent a message in this channel should run on. */
 export function resolveChannelAgentId(
   record: ChannelRecord,
 ): string | undefined {

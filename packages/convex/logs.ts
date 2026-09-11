@@ -221,9 +221,6 @@ export const fetchUsageStats = query({
   },
 });
 
-/**
- * Re-group usage rollup rows into the requested range's bins and total them.
- */
 function aggregateUsage(
   rows: UsageBucketRow[],
   binSeconds: number,

@@ -1,8 +1,3 @@
-/**
- * Session context management tests.
- * Cover pruning defaults and compaction threshold behavior.
- */
-
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
 import type { Session } from "../src/harness/session.ts";

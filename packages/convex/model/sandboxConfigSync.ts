@@ -17,11 +17,8 @@ import {
 import { loadEnvironmentVariableValues } from "./environmentValues";
 
 /**
- * For every sandbox config in the stage that references `name`, decrypt
- * its placeholder source, re-resolve against the stage's current values,
- * and re-encrypt `encryptedConfig`. No-ops on rows without a stored source
- * (legacy rows synced before placeholder retention) or when the encryption
- * secret is absent.
+ * No-ops on rows without a stored source (legacy rows synced before
+ * placeholder retention) or when the encryption secret is absent.
  * @param value the variable's new value, or `undefined` when it was removed
  */
 export async function refreshSandboxConfigsForEnvironmentVariable(

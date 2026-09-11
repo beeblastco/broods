@@ -10,11 +10,10 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
 
-/** Runs idempotent runtime cleanup followed by the final Convex user purge. */
 export const run = internalAction({
   args: { authId: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const accountIds: Id<"accounts">[] = await ctx.runQuery(
       internal.org.workosUserDeletion.listSoleOwnedAccounts,
       {

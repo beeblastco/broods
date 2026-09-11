@@ -1,6 +1,5 @@
 "use client";
 
-/** Dialog for creating a project, with a random name pre-filled. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -72,12 +71,12 @@ export function CreateProjectDialog({
     };
   }, [open]);
 
-  function handleOpenChange(next: boolean) {
+  function handleOpenChange(next: boolean): void {
     if (!next) setName("");
     onOpenChange(next);
   }
 
-  async function handleCreate() {
+  async function handleCreate(): Promise<void> {
     if (!name.trim()) return;
     setIsCreating(true);
     try {

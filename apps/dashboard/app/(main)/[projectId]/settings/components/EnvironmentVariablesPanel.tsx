@@ -1,6 +1,5 @@
 "use client";
 
-/** Environment variables panel: manage runtime variables for the stage currently selected in the header. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -26,13 +25,10 @@ type EnvironmentVariable = FunctionReturnType<
 const FIELD_CLASS = "h-8 min-w-0 flex-1 font-mono text-xs";
 
 interface Props {
-  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active stage whose variables are managed, or null while none is selected. */
   stageId: Id<"stages"> | null;
 }
 
-/** Lists, adds, and removes runtime variables for the active stage. */
 export function EnvironmentVariablesPanel({
   projectId,
   stageId,
@@ -50,7 +46,7 @@ export function EnvironmentVariablesPanel({
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  // Plaintext values revealed via the eye icon, keyed by variable id. Each reveal is audited server-side.
+  // Keyed by variable id. Every reveal is audited server-side.
   const [revealedState, setRevealedState] = useState<{
     stageId: Id<"stages"> | null;
     values: Record<string, string>;
@@ -58,13 +54,14 @@ export function EnvironmentVariablesPanel({
   const revealed =
     revealedState.stageId === stageId ? revealedState.values : {};
 
-  // Variable pending delete confirmation.
   const [deletingVar, setDeletingVar] = useState<EnvironmentVariable | null>(
     null,
   );
   const [isDeletingVar, setIsDeletingVar] = useState(false);
 
-  async function toggleReveal(variableId: Id<"environmentVariables">) {
+  async function toggleReveal(
+    variableId: Id<"environmentVariables">,
+  ): Promise<void> {
     if (!stageId) return;
     if (revealed[variableId] !== undefined) {
       setRevealedState((prev) => {
@@ -92,7 +89,7 @@ export function EnvironmentVariablesPanel({
     }));
   }
 
-  async function handleAdd() {
+  async function handleAdd(): Promise<void> {
     if (!name.trim() || busy || !stageId) return;
     setBusy(true);
     try {
@@ -110,7 +107,7 @@ export function EnvironmentVariablesPanel({
     }
   }
 
-  async function handleDeleteVar() {
+  async function handleDeleteVar(): Promise<void> {
     if (!deletingVar) return;
     setIsDeletingVar(true);
     try {

@@ -1,5 +1,5 @@
 /**
- * Component fixture for the browser tests in tests/e2e. Renders the pieces
+ * Component fixture for the browser tests in e2e/ui. Renders the pieces
  * that broke in the wild (select popup, onboarding card, canvas controls,
  * save pill) with no Convex or auth behind them, so Playwright can measure
  * their real layout. Dev only: the proxy lets it through unauthenticated

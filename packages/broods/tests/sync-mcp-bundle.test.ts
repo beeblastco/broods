@@ -6,6 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
+import type { CliManifest } from "../src/contracts.ts";
 import { BroodsSyncClient } from "../src/sync.ts";
 
 interface SentRequest {
@@ -14,7 +15,7 @@ interface SentRequest {
   body: string;
 }
 
-function manifestWithBundle(bundle: string) {
+function manifestWithBundle(bundle: string): CliManifest {
   return {
     version: 1 as const,
     project: "demo-app",
@@ -29,7 +30,7 @@ function manifestWithBundle(bundle: string) {
   };
 }
 
-function recordingClient() {
+function recordingClient(): { client: BroodsSyncClient; sent: SentRequest[] } {
   const sent: SentRequest[] = [];
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",

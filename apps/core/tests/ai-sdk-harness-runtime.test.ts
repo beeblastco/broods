@@ -1,5 +1,4 @@
 /**
- * Broods AI SDK Harness runtime construction tests.
  * Each probe runs in a child process so importing the real driver cannot prime
  * Bun's module cache ahead of executor tests that install module-level fakes.
  * Live bridge bootstrap and connectivity are covered by the opt-in integration test.

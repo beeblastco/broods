@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Live PTY terminal for a workdir- or MicroVM-backed sandbox instance. Mints a
- * sealed terminal ticket through Convex, then bridges an xterm.js terminal to the
- * public gateway's terminal WebSocket (raw bytes both ways, no resize protocol).
+ * Mints a sealed terminal ticket through Convex, then bridges xterm.js to the
+ * gateway's terminal WebSocket. Raw bytes both ways, no resize protocol.
  */
 
 import { Button } from "@/app/components/ui/button";
@@ -19,11 +18,9 @@ import { useEffect, useRef, useState } from "react";
 type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
 
 interface Props {
-  /** Sandbox config the instance belongs to. */
   sandboxId: Id<"sandboxConfigs">;
-  /** Reservation key identifying the running instance. */
   reservationKey: string;
-  /** Disable connecting (e.g. instance terminating). */
+  /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
 }
 
@@ -48,10 +45,9 @@ export function LiveSandboxTerminal({
   const [status, setStatus] = useState<TerminalStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  // Tear down the socket + terminal when the sheet unmounts. The disposed flag
-  // also aborts a handleConnect still awaiting the ticket or the xterm import.
-  // Without it that continuation would open a live PTY socket (which resumes a
-  // suspended instance) on an unmounted component, leaking it.
+  // The disposed flag aborts a handleConnect still awaiting the ticket or the
+  // xterm import. Without it that continuation opens a live PTY socket (which
+  // resumes a suspended instance) on an unmounted component, and leaks it.
   const disposedRef = useRef(false);
   useEffect(() => {
     disposedRef.current = false;
@@ -65,7 +61,7 @@ export function LiveSandboxTerminal({
     };
   }, []);
 
-  async function handleConnect() {
+  async function handleConnect(): Promise<void> {
     const container = containerRef.current;
     if (!container || disabled) return;
     setStatus("connecting");

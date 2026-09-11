@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * Billing and plan panel. Shows the current subscription and opens the Stripe
- * Checkout and Customer Portal flows for upgrades.
- */
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
@@ -20,7 +16,6 @@ interface Props {
   projectId: Id<"projects">;
 }
 
-/** Convert a Unix epoch (seconds) to a readable date string. */
 function formatPeriodEnd(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleDateString([], {
     year: "numeric",
@@ -48,7 +43,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const isSubscribed =
     billingInfo?.status === "active" || billingInfo?.status === "trialing";
 
-  async function handleUpgrade() {
+  async function handleUpgrade(): Promise<void> {
     setCheckoutLoading(true);
     setActionError(null);
     try {
@@ -65,7 +60,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     }
   }
 
-  async function handlePortal() {
+  async function handlePortal(): Promise<void> {
     setPortalLoading(true);
     setActionError(null);
     try {
@@ -97,7 +92,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   return (
     <div className="grid gap-8">
-      {/* Current plan */}
       <Section
         title="Current plan"
         description="Your active subscription and included resources."
@@ -170,7 +164,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         </div>
       </Section>
 
-      {/* Plan limits */}
       <Section
         title="Plan limits"
         description="Resource limits for your current plan tier."
@@ -190,7 +183,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
         </div>
       </Section>
 
-      {/* Upgrade prompt for free users */}
       {!onMaxPlan && (
         <Section
           title="Upgrade to Pro"

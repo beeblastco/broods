@@ -4,6 +4,7 @@
 
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -65,7 +66,7 @@ export const ensureSynced = action({
 export const getCurrent = query({
   args: {},
   returns: v.union(v.null(), userDoc),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Doc<"users"> | null> => {
     const user = await authKit.getAuthUser(ctx);
     if (!user) return null;
 
@@ -82,7 +83,7 @@ export const updateProfile = mutation({
     accountHandle: v.optional(v.string()),
   },
   returns: v.id("users"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"users">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -136,7 +137,7 @@ export const syncProfile = mutation({
     avatarUrl: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { name, avatarUrl } = args;
 
     // Check authenticated user
@@ -172,7 +173,7 @@ export const syncProfile = mutation({
 export const requestAccountDeletion = mutation({
   args: {},
   returns: v.object({ scheduledFor: v.number() }),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<{ scheduledFor: number }> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");

@@ -1,10 +1,3 @@
-/**
- * Workspace S3 mount resolver tests (sandbox/s3-mount.ts). Covers the mount
- * identity (managed namespace prefix vs bring-your-own bucket prefix) and the
- * credential resolution (assume-role for BYO + platform role; none when no role),
- * driving the real STS AssumeRole call shape with a mocked client.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 let lastAssumeRoleInput: Record<string, unknown> | undefined;

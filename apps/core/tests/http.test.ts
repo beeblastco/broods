@@ -1,8 +1,3 @@
-/**
- * Shared HTTP helper tests: outbound URL validation for user-configured
- * webhook targets.
- */
-
 import { dns } from "bun";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { assertPublicHttpsUrl, publicHostFetch } from "../src/shared/http.ts";

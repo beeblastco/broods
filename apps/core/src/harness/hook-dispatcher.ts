@@ -31,8 +31,8 @@ export interface HookDispatcher {
 }
 
 const NO_HOOKS: HookDispatcher = {
-  hasHooksFor: () => false,
-  runMutation: async function () {
+  hasHooksFor: (): boolean => false,
+  runMutation: async function (): Promise<Record<string, unknown> | undefined> {
     return undefined;
   },
 };
@@ -70,8 +70,11 @@ export function createHookDispatcher(
   let queue: Promise<unknown> = Promise.resolve();
 
   return {
-    hasHooksFor: (event) => index.has(event),
-    runMutation: async function (event, payload) {
+    hasHooksFor: (event): boolean => index.has(event),
+    runMutation: async function (
+      event,
+      payload,
+    ): Promise<Record<string, unknown> | undefined> {
       const records = index.get(event);
       if (!records || records.length === 0) {
         return undefined;
@@ -194,7 +197,6 @@ export async function applyMessageSendingHook(
   return typeof mutation?.text === "string" ? mutation.text : text;
 }
 
-/** Resolve the active hook records referenced by the run's config.hooks.code. */
 async function loadAgentHooks(
   accountId: string,
   refs: AgentCodeHookConfig[],

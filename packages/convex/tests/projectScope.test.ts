@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { agentsInProject, cronsInProject } from "../model/projectScope";
@@ -7,7 +7,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-const t = () => convexTest(schema, modules);
+const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 // The public queries wrap these helpers behind getProjectForRole, which needs
@@ -15,7 +15,18 @@ type T = ReturnType<typeof t>;
 // derivation below is the part unique to project scoping, so it is tested
 // directly against a real ctx.
 
-async function seed(tt: T) {
+async function seed(tt: T): Promise<{
+  accountId: Id<"accounts">;
+  projectA: Id<"projects">;
+  projectB: Id<"projects">;
+  agentA1: Id<"agents">;
+  agentA2: Id<"agents">;
+  agentB: Id<"agents">;
+  stranded: Id<"agents">;
+  foreignAgent: Id<"agents">;
+  cronA1: Id<"crons">;
+  cronStranded: Id<"crons">;
+}> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
     const accountId = await ctx.db.insert("accounts", {
@@ -34,7 +45,7 @@ async function seed(tt: T) {
       plan: "free",
       createdAt: now,
     });
-    const mkProject = async (name: string) =>
+    const mkProject = async (name: string): Promise<Id<"projects">> =>
       await ctx.db.insert("projects", {
         authId: "auth_owner",
         orgId: orgId,
@@ -42,7 +53,7 @@ async function seed(tt: T) {
         slug: name,
         updatedAt: now,
       });
-    const mkStage = async (projectId: Id<"projects">) =>
+    const mkStage = async (projectId: Id<"projects">): Promise<Id<"stages">> =>
       await ctx.db.insert("stages", {
         authId: "auth_owner",
         projectId: projectId,
@@ -51,7 +62,7 @@ async function seed(tt: T) {
         isDefault: true,
         updatedAt: now,
       });
-    const mkAgent = async (name: string) =>
+    const mkAgent = async (name: string): Promise<Id<"agents">> =>
       await ctx.db.insert("agents", {
         accountId: accountId,
         name: name,
@@ -63,7 +74,7 @@ async function seed(tt: T) {
       stageId: Id<"stages">,
       agentId: string | undefined,
       name: string,
-    ) =>
+    ): Promise<Id<"agentConfigs">> =>
       await ctx.db.insert("agentConfigs", {
         authId: "auth_owner",
         name: name,
@@ -72,7 +83,10 @@ async function seed(tt: T) {
         stageId: stageId,
         updatedAt: now,
       });
-    const mkCron = async (agentId: Id<"agents">, name: string) =>
+    const mkCron = async (
+      agentId: Id<"agents">,
+      name: string,
+    ): Promise<Id<"crons">> =>
       await ctx.db.insert("crons", {
         accountId: accountId,
         name: name,

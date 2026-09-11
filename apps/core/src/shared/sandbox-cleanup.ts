@@ -35,11 +35,11 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
 /**
  * Release the reservations the sweeper found expired. The row goes first, as a
  * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
- * to the machine since the listing refreshed the deadline, and tearing it down
- * under that run would lose its sandbox. Only once the row is taken is the machine
- * torn down, by the id the sweeper holds. A teardown that fails hands the row
- * back, so the sweeper's deferral spaces the retry out instead of the orphan
- * listing offering the same machine every pass.
+ * since the listing refreshed the deadline, and tearing the machine down under that
+ * run would lose its sandbox. Only once the row is taken is the machine torn down,
+ * by the id the sweeper holds. A failed teardown hands the row back, so the
+ * sweeper's deferral spaces the retry out instead of the orphan listing offering
+ * the same machine every pass.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,

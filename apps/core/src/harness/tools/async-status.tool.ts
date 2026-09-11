@@ -3,18 +3,14 @@
  * async tool call by its statusId.
  *
  * Auto-registered (see tools/index.ts) when the agent has any async tool or a
- * persistent sandbox. Reads the AsyncToolResult row, and for a detached sandbox
- * job rebuilds the workspace's executor to poll status / tail logs / stop it,
- * settling the row when the job finishes. Background jobs also deliver themselves
- * automatically (sandbox callback), so polling is optional. It just lets the
- * model see progress or a result sooner.
+ * persistent sandbox. A detached sandbox job is polled through the workspace's
+ * executor and its row settled here; background jobs also deliver themselves
+ * through the sandbox callback, so polling only surfaces the result sooner.
  *
- * The model-facing id is called `statusId`; it carries the same value as the
- * internal AsyncToolResult `resultId` (the table's partition key), renamed only
- * at this boundary to read clearly against the action verbs. The `logs`/`stop`
- * actions exist ONLY when the agent can launch background (bash) jobs. An async
- * tool call has no live process to tail or kill, so the description and the
- * action enum are built from `supportsJobs` to keep the prompt from drifting.
+ * `statusId` carries the internal AsyncToolResult `resultId`, renamed at this
+ * boundary. `logs`/`stop` exist only when the agent can launch background (bash)
+ * jobs, so the description and the action enum are both built from
+ * `supportsJobs` to keep the prompt from drifting.
  */
 
 import { jsonSchema, tool, type JSONValue, type ToolSet } from "ai";
@@ -96,7 +92,7 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      execute: async function (input) {
+      execute: async function (input): Promise<JSONValue> {
         const { statusId, action = "status" } = input;
         const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
@@ -204,8 +200,6 @@ The result is delivered back into the conversation automatically when it finishe
   };
 }
 
-// Preserve the job's terminal state and exit code, and include captured logs
-// in the structured terminal status.
 async function settleTerminalJob(
   resultId: string,
   executor: SandboxExecutor,
@@ -236,8 +230,7 @@ async function settleTerminalJob(
       error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
     });
   }
-  // The model is consuming this terminal result through the poll, so suppress the
-  // auto-delivery resume from re-injecting the same result.
+  // Consumed through the poll, so the auto-delivery resume must not re-inject it.
   await markAsyncToolResultObserved(resultId);
 
   return {

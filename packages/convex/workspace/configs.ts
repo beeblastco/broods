@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
 import { workspaceConfigsFields } from "../schema";
 
 const workspaceConfigDoc = v.object({
@@ -25,7 +26,7 @@ export const getById = internalQuery({
     workspaceId: v.string(),
   },
   returns: v.union(workspaceConfigDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"workspaceConfigs"> | null> => {
     const normalized = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
@@ -38,7 +39,7 @@ export const getById = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(workspaceConfigDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"workspaceConfigs">[]> => {
     return await ctx.db
       .query("workspaceConfigs")
       .withIndex("by_accountId_and_name", (q) =>
@@ -56,7 +57,7 @@ export const create = internalMutation({
     config: v.any(),
   },
   returns: v.id("workspaceConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"workspaceConfigs">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -84,7 +85,7 @@ export const update = internalMutation({
     config: v.optional(v.any()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { accountId, workspaceId, ...patch } = args;
     const normalized = ctx.db.normalizeId("workspaceConfigs", workspaceId);
     if (!normalized) {
@@ -118,7 +119,7 @@ export const remove = internalMutation({
     workspaceId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
     if (!normalized) {
       throw new Error(

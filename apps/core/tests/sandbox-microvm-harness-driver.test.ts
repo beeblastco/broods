@@ -1,6 +1,6 @@
 /**
- * Core Lambda MicroVM Harness driver contract tests. These use an in-memory
- * executor and loopback proxy only; no AWS or shared control plane is touched.
+ * These use an in-memory executor and loopback proxy only; no AWS or shared
+ * control plane is touched.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -251,6 +251,10 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   };
 }
 
-function result(stdout = "", stderr = "", exitCode = 0) {
+function result(
+  stdout = "",
+  stderr = "",
+  exitCode = 0,
+): { stdout: string; stderr: string; exitCode: number } {
   return { stdout: stdout, stderr: stderr, exitCode: exitCode };
 }

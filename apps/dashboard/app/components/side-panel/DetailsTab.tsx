@@ -1,6 +1,5 @@
 "use client";
 
-/** Details tab showing editable agent name, deployment credentials, and built-in tool config. */
 import { ChannelsSection } from "@/app/components/side-panel/ChannelsSection";
 import {
   ExpandBlock,
@@ -305,7 +304,7 @@ export function DetailsTab({
     }
   }
 
-  function handleToggleOutputFormat(enabled: boolean) {
+  function handleToggleOutputFormat(enabled: boolean): void {
     if (!enabled) {
       setOutputSchemaError(null);
       setHasEditedOutputSchema(false);
@@ -331,7 +330,7 @@ export function DetailsTab({
     }
   }
 
-  function handleApplySchema() {
+  function handleApplySchema(): void {
     const parsed = parseSchemaText(displayOutputSchemaText);
     if (!parsed) {
       return;
@@ -341,7 +340,7 @@ export function DetailsTab({
     onUpdateOutputFormat?.(buildOutputFormatPayload(parsed));
   }
 
-  function handleImportSchemaFile(file: File | undefined) {
+  function handleImportSchemaFile(file: File | undefined): void {
     if (!file) return;
 
     const reader = new FileReader();
@@ -361,7 +360,7 @@ export function DetailsTab({
     reader.readAsText(file);
   }
 
-  function handleCopy(value: string, field: string) {
+  function handleCopy(value: string, field: string): void {
     navigator.clipboard.writeText(value);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
@@ -372,7 +371,7 @@ export function DetailsTab({
     provider: AgentProvider,
     modelId: string,
     customBaseUrl = editCustomBaseUrl,
-  ) {
+  ): void {
     const trimmed = modelId.trim();
     if (!trimmed) {
       return;
@@ -389,7 +388,7 @@ export function DetailsTab({
     });
   }
 
-  function togglePolicyId(policyId: string) {
+  function togglePolicyId(policyId: string): void {
     const nextIds = assignedPolicyIds.includes(policyId)
       ? assignedPolicyIds.filter((entry) => entry !== policyId)
       : [...assignedPolicyIds, policyId];

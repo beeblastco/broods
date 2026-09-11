@@ -1,10 +1,10 @@
 /**
  * Public media route. Serves one workspace file per sealed ticket.
  *
- * Chat providers store the URL we hand them and fetch it lazily, so this is the
- * durable alternative to a presigned S3 link: storage stays private, the ticket
- * is the only credential, and every fetch is logged. Keep it read-only; anything
- * that needs an account identity belongs behind the authenticated routes.
+ * Chat providers store the URL and fetch it lazily, so this replaces a presigned
+ * S3 link: storage stays private, the ticket is the only credential, every fetch
+ * is logged. Read-only; anything needing an account identity belongs behind the
+ * authenticated routes.
  */
 
 import { requireEnv } from "./shared/env.ts";

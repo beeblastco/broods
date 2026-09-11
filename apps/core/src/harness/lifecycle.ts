@@ -1,6 +1,5 @@
 /**
  * Agent lifecycle event delivery.
- * This is for the webhook event delivery and event hook configuration
  * Keep stable event payloads and subscriber transport wiring here.
  */
 
@@ -41,16 +40,12 @@ export function createAgentLifecycleEmitter(
   agentConfig: AgentConfig,
   transport?: PinnedFetchTransport,
 ): AgentLifecycleEmitter {
-  // An agent can register several outbound webhooks; keep only deliverable ones
-  // (enabled with both a URL and a signing secret).
   const webhooks = (agentConfig.hooks?.webhooks ?? []).filter(
     (webhook) => webhook?.enabled && webhook.url && webhook.secret,
   );
 
   return {
-    emit: async function (type, payload = {}) {
-      // A webhook with no events allow-list receives every event; otherwise only
-      // the events it subscribed to.
+    emit: async function (type, payload = {}): Promise<void> {
       const targets = webhooks.filter(
         (webhook) => !webhook.events || webhook.events.includes(type),
       );

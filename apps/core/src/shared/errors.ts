@@ -23,10 +23,10 @@ interface ProviderErrorPayload {
  * Normalize a thrown value to the message worth showing. `@ai-sdk/openai`
  * surfaces a Responses failure as `{ type, response: { error: { message } } }`
  * and a nested error chunk as `{ type, error: { message } }`, so `String()` on
- * either renders "[object Object]" and the reason is gone for good, because it
- * is never logged anywhere else. `getErrorMessage` from `@ai-sdk/provider`
- * stops at JSON for both. Fall back to JSON here too, so an unrecognised
- * payload is still legible.
+ * either renders "[object Object]" and the reason is gone for good: it is never
+ * logged anywhere else. `getErrorMessage` from `@ai-sdk/provider` stops at JSON
+ * for both, so this falls back to JSON too and an unrecognised payload stays
+ * legible.
  */
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {

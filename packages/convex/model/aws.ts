@@ -12,18 +12,12 @@
 import { STSClient, AssumeRoleCommand } from "@aws-sdk/client-sts";
 import { S3Client } from "@aws-sdk/client-s3";
 
-/**
- * Temporary credentials from assuming ConvexAwsRole.
- */
 interface AssumedCredentials {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken: string;
 }
 
-/**
- * Resolved AWS access configuration from the Convex deployment environment.
- */
 interface AwsAccess {
   region: string;
   roleArn: string;

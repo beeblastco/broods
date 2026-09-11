@@ -1,9 +1,3 @@
-/**
- * Sandbox size catalog tests.
- * Cover specs resolution (pinned size vs. derived from options) and the workdir
- * vcpu clamp.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   resolveSandboxSpecs,

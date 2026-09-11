@@ -922,7 +922,6 @@ function nowNs(): bigint {
   return BigInt(Date.now()) * NS_PER_MS;
 }
 
-/** Whether an entry is at or above the subscription's minimum level. */
 // Tempo's search is scoped by tag, but a matched trace's detail can carry spans
 // from other scopes, so every row is checked against the socket's scope before
 // it leaves. Both the backfill and the single-trace fetch go through here.
@@ -937,6 +936,7 @@ function rowInScope(
   );
 }
 
+/** Whether an entry is at or above the subscription's minimum level. */
 function meetsMinLevel(
   entry: ObservabilityLogEntry,
   minLevel: LogLevel,

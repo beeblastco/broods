@@ -1,6 +1,5 @@
 /**
- * Transactional persistence for the core runtime. These functions replace the
- * former Convex conversation, claim, async-result, and reservation tables.
+ * Transactional persistence for the core runtime.
  */
 
 import { type Infer, v } from "convex/values";
@@ -10,6 +9,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
   reservedSandboxValidator,
@@ -67,7 +67,7 @@ export const claimEvent = internalMutation({
     ttlSeconds: v.number(),
   },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     await requireActiveAccount(ctx, args.accountId);
     const key = claimKeyForAccount(args.accountId, args.key);
     const existing = await ctx.db
@@ -100,7 +100,7 @@ export const claimEvent = internalMutation({
 export const releaseClaim = internalMutation({
   args: { accountId: v.id("accounts"), key: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await requireActiveAccount(ctx, args.accountId);
     const key = claimKeyForAccount(args.accountId, args.key);
     const row = await ctx.db
@@ -117,13 +117,12 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * Appends one ordered event to a runtime conversation.
  * @returns null after the event is persisted
  */
 export const appendConversationEvent = internalMutation({
   args: { conversationKey: v.string(), cursor: v.string(), event: v.any() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
     await ctx.db.insert("runtimeConversationEvents", {
@@ -136,7 +135,6 @@ export const appendConversationEvent = internalMutation({
 });
 
 /**
- * Lists one bounded page of ordered conversation events after an optional cursor.
  * @returns page rows plus an exclusive cursor for the next page
  */
 export const listConversationEvents = internalQuery({
@@ -168,7 +166,6 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-/** Loads the resumable checkpoint for an AI SDK Harness conversation. */
 export const getHarnessSession = internalQuery({
   args: { conversationKey: v.string() },
   returns: v.union(
@@ -209,7 +206,6 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-/** Upserts the latest checkpoint after an AI SDK Harness turn. */
 export const saveHarnessSession = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -224,7 +220,7 @@ export const saveHarnessSession = internalMutation({
     resumeState: v.any(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
     const serializedResumeState = JSON.stringify(args.resumeState);
@@ -273,7 +269,10 @@ export const clearConversation = internalMutation({
     deleted: v.number(),
     hasMore: v.boolean(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ deleted: number; hasMore: boolean }> => {
     await requireActiveAccount(ctx, accountIdFromKey(args.conversationKey));
     const rows = await ctx.db
       .query("runtimeConversationEvents")
@@ -305,7 +304,7 @@ export const clearConversation = internalMutation({
 export const createAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), conversationKey: v.string() },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
@@ -336,7 +335,7 @@ export const createAsyncAgentResult = internalMutation({
 export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults"> | null> =>
     await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -344,7 +343,6 @@ export const getAsyncAgentResult = internalQuery({
 });
 
 /**
- * Applies an async agent status, approval, response, or error transition.
  * @returns null after the result is updated
  */
 export const updateAsyncAgentResult = internalMutation({
@@ -357,7 +355,7 @@ export const updateAsyncAgentResult = internalMutation({
     questions: v.optional(v.array(v.any())),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -396,7 +394,7 @@ export const createAsyncToolResult = internalMutation({
     sealed: v.optional(v.boolean()),
   },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
     const existing = await ctx.db
@@ -459,7 +457,7 @@ export const createAsyncToolResult = internalMutation({
 export const bindAsyncToolResultSandbox = internalMutation({
   args: { resultId: v.string(), sandbox: reservedSandboxValidator },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
@@ -494,7 +492,7 @@ export const getAsyncToolResult = internalQuery({
 export const getAsyncToolToken = internalQuery({
   args: { resultId: v.string(), completionToken: v.string() },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const row = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
@@ -510,7 +508,6 @@ export const getAsyncToolToken = internalQuery({
   },
 });
 /**
- * Lists the bounded async tool siblings for one parent event.
  * @returns the public sibling result documents
  */
 export const listAsyncToolResults = internalQuery({
@@ -548,13 +545,12 @@ export const listPendingAsyncToolResults = internalQuery({
     ).map(hideCompletionTokenHash),
 });
 /**
- * Looks up fan-in group registration and seal state for a parent event.
  * @returns the fan-in group or null when it does not exist
  */
 export const getAsyncToolGroup = internalQuery({
   args: { parentEventId: v.string() },
   returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> =>
     await ctx.db
       .query("runtimeAsyncToolGroups")
       .withIndex("by_parentEventId", (q) =>
@@ -569,7 +565,7 @@ export const getAsyncToolGroup = internalQuery({
 export const sealAsyncToolGroup = internalMutation({
   args: { parentEventId: v.string() },
   returns: v.union(toolGroupDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"runtimeAsyncToolGroups"> | null> => {
     const row = await ctx.db
       .query("runtimeAsyncToolGroups")
       .withIndex("by_parentEventId", (q) =>
@@ -645,13 +641,12 @@ export const updateAsyncToolResult = internalMutation({
 });
 
 /**
- * Resolves the provider ID for a persistent sandbox reservation.
  * @returns the provider ID or null when the reservation is absent
  */
 export const getSandboxReservation = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<string | null> =>
     (
       await ctx.db
         .query("sandboxReservations")
@@ -708,7 +703,10 @@ const sandboxReservationSummary = v.object({
 export const listExpiredSandboxReservations = internalQuery({
   args: { limit: v.number() },
   returns: v.array(sandboxReservationSummary),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
     const now = Math.floor(Date.now() / 1000);
     const rows = await ctx.db
       .query("sandboxReservations")
@@ -733,7 +731,10 @@ export const listExpiredSandboxReservations = internalQuery({
 export const listOrphanedSandboxInstances = internalQuery({
   args: { limit: v.number() },
   returns: v.array(sandboxReservationSummary),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
     const idleBefore = Date.now() - SANDBOX_RESERVATION_TTL_SECONDS * 1000;
     const rows = await ctx.db
       .query("sandboxInstances")
@@ -775,7 +776,7 @@ export const claimSandboxReservation = internalMutation({
     accountId: v.string(),
   },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     // The reservation key is a hashed workspace namespace, so the owning account
     // can't be parsed from it. Core passes accountId explicitly.
     await requireActiveAccount(ctx, args.accountId);
@@ -813,7 +814,7 @@ export const saveSandboxReservation = internalMutation({
     accountId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
@@ -856,7 +857,7 @@ export const deferSandboxReservations = internalMutation({
     ),
   },
   returns: v.number(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<number> => {
     const expiresAt =
       Math.floor(Date.now() / 1000) + SANDBOX_RESERVATION_TTL_SECONDS;
     let deferred = 0;
@@ -1157,7 +1158,7 @@ export const deleteAccountRuntimeData = internalMutation({
 export const pruneExpired = internalMutation({
   args: {},
   returns: v.number(),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<number> => {
     const now = Math.floor(Date.now() / 1000);
     const claims = await ctx.db
       .query("runtimeClaims")
@@ -1190,7 +1191,6 @@ export const pruneExpired = internalMutation({
 });
 
 /**
- * Extracts the account ID from an account-scoped runtime key.
  * @param value account-scoped runtime key
  * @returns embedded account ID
  * @throws when the key has no valid account prefix
@@ -1203,7 +1203,6 @@ function accountIdFromKey(value: string): string {
 }
 
 /**
- * Normalizes a claim key into its owning account namespace.
  * @param accountId owning account ID
  * @param key scoped or integration-provided claim key
  * @returns account-scoped claim key
@@ -1239,7 +1238,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   return publicRow;
 }
 
-/** Whether the reservation still names this machine. */
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,

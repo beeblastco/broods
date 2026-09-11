@@ -332,7 +332,10 @@ export const mintStageSession = mutation({
     v.object({ token: v.string(), expiresAt: v.number() }),
     v.null(),
   ),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<{ token: string; expiresAt: number } | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -375,7 +378,7 @@ export const mintStageSession = mutation({
 export const revealKeyForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (ctx, { projectId, stageId }): Promise<string | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -439,7 +442,6 @@ export const rotate = mutation({
   },
 });
 
-/** Decrypt a deployment's stored runtime key. */
 async function decryptApiKey(deployment: {
   apiKeyCiphertext: string;
   apiKeyIv: string;
@@ -461,12 +463,10 @@ async function decryptApiKey(deployment: {
   return value;
 }
 
-/** Safe display label for a deployment key: prefix + last four chars. */
 function deploymentKeyHint(token: string): string {
   return `${DEPLOYMENT_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
-/** Encrypt a plaintext key into the three at-rest blob fields stored on the row. */
 async function encryptApiKey(rawApiKey: string): Promise<{
   apiKeyCiphertext: string;
   apiKeyIv: string;
@@ -516,7 +516,6 @@ function endpointIdForStage(stageId: Id<"stages">): string {
   return `stage-${stageId.slice(-8)}`;
 }
 
-/** Generate a random raw deployment key. */
 function generateDeploymentKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   let binary = "";
@@ -557,7 +556,6 @@ async function recordDeploymentAudit(
   });
 }
 
-/** Resolve the project's org account, slug, and the stage's slug. */
 async function resolveStageContext(
   ctx: MutationCtx,
   projectId: Id<"projects">,

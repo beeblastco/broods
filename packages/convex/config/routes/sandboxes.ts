@@ -28,10 +28,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/**
- * Sandbox config CRUD: stores encrypted config blobs and redacts secrets on read.
- * Mirrors core's former handleSandboxRoute contract.
- */
 export async function handleSandboxConfigRoute(
   ctx: ActionCtx,
   req: Request,

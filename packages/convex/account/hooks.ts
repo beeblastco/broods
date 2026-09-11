@@ -3,6 +3,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { accountHookEventValidator, accountHooksFields } from "../schema";
 
@@ -18,7 +19,7 @@ export const getById = internalQuery({
     hookId: v.string(),
   },
   returns: v.union(accountHookDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountHooks"> | null> => {
     const normalized = ctx.db.normalizeId("accountHooks", args.hookId);
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
@@ -32,7 +33,7 @@ export const getById = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(accountHookDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountHooks">[]> => {
     return await ctx.db
       .query("accountHooks")
       .withIndex("by_accountId_and_status", (q) =>
@@ -52,7 +53,7 @@ export const create = internalMutation({
     sha256: v.string(),
   },
   returns: v.id("accountHooks"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"accountHooks">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -85,7 +86,7 @@ export const update = internalMutation({
     sha256: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("accountHooks", args.hookId);
     if (!normalized) {
       throw new Error("Hook does not belong to the supplied accountId");
@@ -121,7 +122,7 @@ export const remove = internalMutation({
     hookId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("accountHooks", args.hookId);
     if (!normalized) {
       throw new Error("Hook does not belong to the supplied accountId");

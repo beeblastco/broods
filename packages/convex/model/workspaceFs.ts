@@ -57,7 +57,6 @@ interface WorkspaceFsTarget {
 }
 
 /**
- * List files and folders under a workspace's S3 namespace.
  * @param ref the workspace to read
  * @returns files plus synthesized parent folders
  */

@@ -1,8 +1,8 @@
 "use client";
 
-/** Right-hand detail column shared by the tracing and monitoring tables: fixed
- * width, header with a close button, scrollable body. The table shrinks beside
- * it (split layout), so the panel never covers the timeline column. */
+/** Right-hand detail column shared by the tracing and monitoring tables. The
+ * table shrinks beside it rather than sliding under, so the panel never covers
+ * the timeline column. */
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 

@@ -140,14 +140,13 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 }
 
 /**
- * `fetch` for tenant-configured model endpoints: resolve the hostname, refuse
- * it when any address is private, link-local or a metadata range, then connect
- * to the address that was validated with the name pinned into SNI and `Host`.
- * `assertPublicHttpsUrl` only sees the hostname string at config time; this is
- * what stops a public name that later resolves inward, with no rebind window.
- * Bun's `fetch` keeps the streaming Web `Response` the AI SDK needs, which
- * `guardedFetch` does not give. `redirect: "error"` because a redirect would
- * leave the pinned address by name.
+ * `fetch` for tenant-configured model endpoints: resolve the hostname, refuse it
+ * when any address is private, link-local or a metadata range, then connect to
+ * the validated address with the name pinned into SNI and `Host`. That is what
+ * stops a public name that later resolves inward, with no rebind window, since
+ * `assertPublicHttpsUrl` only sees the hostname string at config time. Bun's
+ * `fetch` keeps the streaming Web `Response` the AI SDK needs and `guardedFetch`
+ * does not. `redirect: "error"` because a redirect would leave the pinned address.
  */
 export async function publicHostFetch(
   input: string | URL | Request,

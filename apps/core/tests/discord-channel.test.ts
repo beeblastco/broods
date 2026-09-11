@@ -580,7 +580,13 @@ async function parseGatewayMedia(
   return parsed.message;
 }
 
-function createRequest(payload: Record<string, unknown>) {
+function createRequest(payload: Record<string, unknown>): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: { "x-signature-ed25519": string; "x-signature-timestamp": string };
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",
@@ -593,7 +599,13 @@ function createRequest(payload: Record<string, unknown>) {
   };
 }
 
-function createGatewayRequest(payload: Record<string, unknown>) {
+function createGatewayRequest(payload: Record<string, unknown>): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: { "x-discord-gateway-token": string };
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",

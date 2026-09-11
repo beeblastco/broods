@@ -1,6 +1,5 @@
 "use client";
 
-/** Dashboard page with sidebar navigation and a titled content panel. */
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
@@ -49,16 +48,15 @@ export default function DashboardPage(): React.JSX.Element {
   }) as Doc<"stages">[] | undefined;
   const activeTab = (searchParams.get("tab") as DashboardTab) || "monitoring";
 
-  // Build a tab href that preserves the current params (e.g. ?stage=) so the link is shareable
-  // and can be opened in a new browser tab.
-  const tabHref = (tabId: DashboardTab) => {
+  // Carries the current params (e.g. ?stage=) through, so a tab link stays
+  // shareable and survives being opened in a new browser tab.
+  const tabHref = (tabId: DashboardTab): string => {
     const next = new URLSearchParams(searchParams.toString());
     next.set("tab", tabId);
 
     return `/${projectId}/dashboard?${next.toString()}`;
   };
 
-  // Resolve the stage to scope analytics to: URL selection, else default, else first.
   const activeStage =
     stages?.find((stage) => stage._id === stageId) ??
     stages?.find((stage) => stage.isDefault) ??
@@ -66,8 +64,8 @@ export default function DashboardPage(): React.JSX.Element {
     null;
   const activeStageId = activeStage?._id ?? null;
 
-  // Fetch the active deployment to get projectSlug, stageSlug, and endpointId
-  // for the observability WS and session-storage API key lookup.
+  // Source of projectSlug, stageSlug and endpointId: the observability WS and
+  // the session-storage key lookup are both keyed on them.
   const activeDeployment = useQuery(
     api.agent.deployments.getForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
@@ -88,7 +86,6 @@ export default function DashboardPage(): React.JSX.Element {
     stageId: string;
     msg: string;
   } | null>(null);
-  // Reveal dialog (key + SDK usage). `justCreated` reframes it right after a mint.
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
@@ -143,9 +140,8 @@ export default function DashboardPage(): React.JSX.Element {
     }
   }, [activeStageId, projectId, ensureKey]);
 
-  // Rotate the stage's runtime key, surfacing the new plaintext immediately
-  // through the same `generated` channel the mint flow uses. Rethrows so the
-  // Rotate control can show the failure inline.
+  // Surfaces the new plaintext through the same `generated` channel the mint
+  // flow uses. The rejection propagates so the Rotate control shows it inline.
   const rotateViewingKey = useCallback(async () => {
     if (!activeStageId) return;
     const result = await rotateKey({
@@ -203,7 +199,7 @@ export default function DashboardPage(): React.JSX.Element {
     />
   );
 
-  const renderPanel = () => {
+  const renderPanel = (): React.JSX.Element => {
     switch (activeTab) {
       case "monitoring":
         return observabilityApiKey ? (
@@ -262,7 +258,6 @@ export default function DashboardPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
       <aside className="flex w-48 shrink-0 flex-col bg-transparent">
         <div className="px-6 pt-9.25 pb-3">
           <h2 className="text-xl font-semibold text-foreground">Dashboard</h2>

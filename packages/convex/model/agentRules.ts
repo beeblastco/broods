@@ -169,7 +169,6 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
 ] as const;
 
 /**
- * Validate and normalize a full stored agent config.
  * @param value unknown config value
  * @returns normalized agent config
  */
@@ -248,7 +247,6 @@ export function normalizeAgentConfigPatch(
 }
 
 /**
- * Merge a validated patch into an existing config and revalidate the result.
  * @param existing existing stored config
  * @param patch patch object
  * @returns merged normalized config

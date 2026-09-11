@@ -48,7 +48,6 @@ export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
   data: Record<string, unknown>;
 };
 
-/** Shared inputs for materializing one workspace/sandbox canvas node. */
 type MaterializeNodeOptions = {
   account: Doc<"accounts">;
   projectId: Id<"projects">;
@@ -80,7 +79,10 @@ export const cliManagedResourceNames = query({
     workspace: v.array(v.string()),
     sandbox: v.array(v.string()),
   }),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<{ agent: string[]; workspace: string[]; sandbox: string[] }> => {
     const empty = { agent: [], workspace: [], sandbox: [] };
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
@@ -142,7 +144,10 @@ export const getByProject = query({
       edges: v.array(canvasEdgeValidator),
     }),
   ),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<{ nodes: CanvasNode[]; edges: CanvasEdge[] } | null> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -181,7 +186,10 @@ export const resourceOwnership = query({
     v.string(),
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
   ),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<Record<string, "cli" | "dashboard" | "api">> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -229,7 +237,14 @@ export const saveLayout = mutation({
     edges: v.array(canvasEdgeValidator),
   },
   returns: saveLayoutResult,
-  handler: async (ctx, { projectId, stageId, nodes, edges }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, nodes, edges },
+  ): Promise<{
+    layoutId: Id<"canvasLayouts">;
+    nodes: CanvasNode[];
+    edges: CanvasEdge[];
+  }> => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -294,7 +309,6 @@ export const saveLayout = mutation({
   },
 });
 
-/** Return the org account backing a project, if it has been provisioned. */
 async function accountForProject(
   ctx: MutationCtx,
   project: Doc<"projects">,
@@ -305,7 +319,6 @@ async function accountForProject(
     .unique();
 }
 
-/** Coerce an unknown canvas node data payload into a mutable record. */
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -639,7 +652,6 @@ function resourceFieldsChanged(
   );
 }
 
-/** Stable signature of runtime resource references in a canvas node list. */
 function resourceReferenceSignature(nodes: CanvasNode[]): string {
   return nodes
     .map((node) => asRecord(node.data).resourceId)
@@ -648,7 +660,6 @@ function resourceReferenceSignature(nodes: CanvasNode[]): string {
     .join("\n");
 }
 
-/** True when a runtime resource row belongs to the canvas stage being saved. */
 function rowBelongsToStage(
   row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
   projectId: Id<"projects">,

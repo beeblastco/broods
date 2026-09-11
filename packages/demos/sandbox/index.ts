@@ -9,7 +9,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.myAgent, {
   input: [
     "Use exactly one bash call per numbered step.",

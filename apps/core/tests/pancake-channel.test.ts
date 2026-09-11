@@ -1,8 +1,3 @@
-/**
- * Pancake channel adapter tests.
- * Cover webhook normalization and page-scoped filtering here.
- */
-
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
@@ -330,7 +325,13 @@ async function parsePancakeMedia(
 function createPancakeRequest(
   payload: Record<string, unknown>,
   rawQueryString = "",
-) {
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: { "content-type": string };
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",

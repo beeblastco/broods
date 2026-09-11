@@ -1,7 +1,3 @@
-/**
- * Org membership lookups and role enforcement.
- */
-
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 

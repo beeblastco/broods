@@ -1,6 +1,5 @@
 "use client";
 
-/** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
 import { PerfReporter } from "@/app/components/PerfReporter";
 import {
@@ -15,7 +14,6 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-/** Backoff before re-running the signup sync after a failed attempt. */
 const SYNC_RETRY_MS = 5_000;
 
 // Shown once, on the first login of an account's life. It has no business
@@ -47,7 +45,7 @@ export default function MainLayout({
   // Surface the one-time account secret produced by first-login auto-provision
   // in the onboarding dialog, even after the home route navigates away.
   useEffect(() => {
-    const sync = () => setOnboardingSecret(readOnboardingSecret());
+    const sync = (): void => setOnboardingSecret(readOnboardingSecret());
     sync();
 
     return subscribeOnboardingSecret(sync);

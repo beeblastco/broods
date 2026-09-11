@@ -27,7 +27,9 @@ export default function stopSubagentTool(
         required: ["taskId", "agentId"],
         additionalProperties: false,
       }),
-      execute: async function (input) {
+      execute: async function (
+        input,
+      ): Promise<{ status: "stopping" | "not_running" }> {
         const record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));

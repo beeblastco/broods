@@ -49,9 +49,6 @@ const TEXT_EXTENSIONS = new Set([
   ".yml",
 ]);
 
-/**
- * One file inside a skill bundle upload.
- */
 export interface SkillBundleFile {
   path: string;
   bytes: Uint8Array;
@@ -67,16 +64,10 @@ export interface SkillMetadata {
   path: string;
 }
 
-/**
- * A stored skill's metadata and file manifest.
- */
 export interface StoredSkill extends SkillMetadata {
   files: Array<{ path: string; size?: number }>;
 }
 
-/**
- * A validated skill bundle: parsed SKILL.md metadata plus normalized files.
- */
 export interface ValidatedSkillBundle {
   metadata: Omit<SkillMetadata, "path">;
   files: SkillBundleFile[];
@@ -145,7 +136,6 @@ export async function createOrReplaceSkill(
 }
 
 /**
- * Delete a stored skill's objects.
  * @param accountId account id owning the skill
  * @param skillName the skill name
  * @returns the number of objects deleted
@@ -223,7 +213,6 @@ export async function fetchGitHubSkillFiles(
 }
 
 /**
- * Load a stored skill's metadata and file manifest.
  * @param accountId account id owning the skill
  * @param skillName the skill name (without the account prefix)
  * @returns the stored skill, or null when it does not exist
@@ -246,7 +235,6 @@ export async function getSkill(
 }
 
 /**
- * List an account's stored skills' metadata.
  * @param accountId account id owning the skills
  * @returns name/description/path for every readable skill
  */
@@ -272,7 +260,6 @@ export async function listAccountSkills(
 }
 
 /**
- * Read one stored skill file's raw bytes.
  * @param skillPath the `${accountId}/${skillName}` prefix
  * @param filePath the file path inside the skill
  * @returns the file contents
@@ -288,7 +275,6 @@ export async function readSkillFileBytes(
 }
 
 /**
- * Read the skills bucket name from the Convex deployment environment.
  * @returns the bucket name
  * @throws when SKILLS_BUCKET_NAME is not configured
  */

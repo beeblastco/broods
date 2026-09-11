@@ -1,7 +1,4 @@
-/**
- * Shared sandbox configuration limits.
- * Keep app-level defaults and environment overrides here.
- */
+/** Shared sandbox configuration limits and their environment overrides. */
 
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
 import { optionalEnv } from "./env.ts";
@@ -36,12 +33,11 @@ export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;
 
 /**
- * The managed workspace bucket key prefix for a namespace, the single source of
- * truth for the on-bucket layout, shared by the harness-side S3 reads/writes and the
- * sandbox's own mount so they always see the same files. A namespace's files live
- * directly under `<namespace>/` (the namespace is itself the tenant-isolation
- * boundary the mount session policy scopes to). Pass the namespace the sandbox
- * receives; callers append their own trailing `/` and sub-path.
+ * The managed workspace bucket key prefix for a namespace. One source of truth for
+ * the on-bucket layout, shared by the harness-side S3 reads/writes and the sandbox's
+ * own mount so they always see the same files. A namespace's files live directly
+ * under `<namespace>/`, the namespace being the tenant-isolation boundary the mount
+ * session policy scopes to. Callers append their own trailing `/` and sub-path.
  */
 export function workspaceNamespacePrefix(namespace: string): string {
   return namespace;

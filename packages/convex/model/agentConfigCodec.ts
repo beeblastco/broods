@@ -73,10 +73,9 @@ export interface FlatAgentConfig {
 }
 
 /**
- * Inverse of {@link toNestedAgentConfig}. Pulls known fields back out of a
- * nested broods AgentConfig so the canvas's flat `agentConfigs` row
- * can mirror what the API caller wrote. Anything we don't have a flat
- * column for is preserved in `extraConfig`.
+ * The flat columns {@link fromNestedAgentConfig} pulls back out of a nested
+ * broods AgentConfig, so the canvas's flat `agentConfigs` row can mirror what
+ * the API caller wrote. Anything with no flat column lands in `extraConfig`.
  */
 export interface FlatPatch {
   provider?: string;
@@ -258,7 +257,6 @@ export function substituteEnvPlaceholders<T>(
   return substitutePlaceholders(config, variables, ENV_PLACEHOLDER_PATTERN_G);
 }
 
-/** Project a flat dashboard row into the nested broods shape. */
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
@@ -272,7 +270,6 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   return assembleNestedConfig(extra, agent, model, tools);
 }
 
-/** Final nested-object assembly for {@link toNestedAgentConfig}: only non-empty branches survive. */
 function assembleNestedConfig(
   extra: Record<string, unknown>,
   agent: Record<string, unknown>,
@@ -327,7 +324,6 @@ function base64UrlToBytes(s: string): Uint8Array {
   return out;
 }
 
-/** Nested `agent` branch for {@link toNestedAgentConfig}: extraConfig carry-over plus flat overrides. */
 function buildNestedAgentBranch(
   flat: FlatAgentConfig,
   extra: Record<string, unknown>,
@@ -342,7 +338,6 @@ function buildNestedAgentBranch(
   return agent;
 }
 
-/** Nested `model` branch for {@link toNestedAgentConfig}: merges providerOptions from both stores. */
 function buildNestedModelBranch(
   flat: FlatAgentConfig,
   extra: Record<string, unknown>,
@@ -368,7 +363,6 @@ function buildNestedModelBranch(
   return model;
 }
 
-/** Nested `tools` branch for {@link toNestedAgentConfig}: flat search flags fill an absent googleSearch. */
 function buildNestedToolsBranch(
   flat: FlatAgentConfig,
   extra: Record<string, unknown>,
@@ -494,11 +488,9 @@ function extractSearchToolFields(
 }
 
 /**
- * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
- * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
- * so options kept in separate stores, reasoning in `extraConfig.model` versus
- * other provider options in the flat column, don't clobber each other. `overlay`
- * wins
+ * Provider sub-objects (e.g. `anthropic`, `openai`) merge key-by-key rather
+ * than replacing wholesale, because reasoning is kept in `extraConfig.model`
+ * while the other provider options are kept in the flat column. `overlay` wins
  * on direct key conflicts.
  */
 function mergeProviderOptions(

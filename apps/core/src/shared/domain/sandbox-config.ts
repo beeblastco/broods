@@ -1,11 +1,9 @@
 /**
  * Sandbox config: account-scoped, reusable sandbox definitions referenced by
  * agents via `config.sandbox`. A sandbox is a collection of Claude-Code-style
- * tools (bash/read/write/edit/glob/grep) backed by a provider. Validation and
- * the public projection live in the config plane
- * (packages/convex/model/sandboxRules.ts); this file keeps the runtime record
- * contract and re-exports the shared types under core's names.
- * Stored encrypted at rest because `envVars`/`options` may hold secrets.
+ * tools (bash/read/write/edit/glob/grep) backed by a provider. Stored encrypted
+ * at rest because `envVars`/`options` may hold secrets. Validation and the
+ * public projection live in packages/convex/model/sandboxRules.ts.
  */
 
 import type { SandboxConfig } from "@broods/convex/model/sandboxRules";

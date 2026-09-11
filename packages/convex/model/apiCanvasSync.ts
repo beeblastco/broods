@@ -183,7 +183,6 @@ async function adoptResourceRow(
   return row.stageId === sync.stageId;
 }
 
-/** Normalize the stored layout and index its nodes by id and back-references. */
 function indexExistingCanvas(layout: Doc<"canvasLayouts">): ExistingApiCanvas {
   const existingNodes = (layout.nodes as CanvasNode[]).map((node) => ({
     id: String(node.id),
@@ -225,8 +224,7 @@ function reconcileApiWiring(sync: ApiWiringSync): {
   nextNodes: CanvasNode[];
   nextEdges: CanvasEdge[];
 } {
-  /** API-managed edge: both endpoints are API-owned nodes. */
-  const isApiManagedEdge = (edge: CanvasEdge) =>
+  const isApiManagedEdge = (edge: CanvasEdge): boolean =>
     sync.nextById.get(edge.source)?.data.managedBy === "api" &&
     sync.nextById.get(edge.target)?.data.managedBy === "api";
   // Stale API wiring is pruned; user-drawn edges and the wiring of agents

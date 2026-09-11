@@ -1,8 +1,6 @@
 /**
  * Workspace config validation tests, ported from core's former
- * workspace-config.test.ts when the normalizers moved here. Cover defaults,
- * storage/harness validation, create/update normalization, and the
- * (secret-free) public projection.
+ * workspace-config.test.ts when the normalizers moved here.
  */
 
 import { describe, expect, it } from "vitest";

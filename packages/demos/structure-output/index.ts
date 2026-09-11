@@ -7,7 +7,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.structuredAssistant, {
   input:
     "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",

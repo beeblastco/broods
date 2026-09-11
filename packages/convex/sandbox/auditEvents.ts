@@ -23,7 +23,7 @@ export const listForInstance = query({
     limit: v.optional(v.number()),
   },
   returns: v.array(sandboxAuditEventDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"sandboxAuditEvents">[]> => {
     const account = await getActiveAccountForUser(ctx);
     if (!account) return [];
     const limit = Math.max(1, Math.min(args.limit ?? 20, 50));
@@ -62,7 +62,7 @@ export const insert = internalMutation({
     truncated: sandboxAuditEventsFields.truncated,
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>

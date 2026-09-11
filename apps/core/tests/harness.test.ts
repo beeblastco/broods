@@ -1,8 +1,3 @@
-/**
- * Agent harness tests.
- * Cover model-loop edge cases without calling provider APIs.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpsServer, type Server } from "node:https";

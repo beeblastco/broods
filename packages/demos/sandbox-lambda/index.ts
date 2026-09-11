@@ -7,7 +7,6 @@ import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient();
 
-// Stream the response from the agent and print it to stdout.
 for await (const chunk of client.stream(api.agents.myAgent, {
   input: [
     "1. Run tools to write fib.py that prints the first 10 Fibonacci numbers, then run python3 fib.py.",

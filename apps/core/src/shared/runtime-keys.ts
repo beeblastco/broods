@@ -1,6 +1,6 @@
 /**
- * Runtime key helpers shared by account-management and harness-processing.
- * Keep account scoping, public direct API validation, leases, and filesystem namespaces here.
+ * Runtime key helpers shared by account-management and harness-processing:
+ * account scoping, public direct API validation, leases, filesystem namespaces.
  */
 
 import { createHash } from "node:crypto";

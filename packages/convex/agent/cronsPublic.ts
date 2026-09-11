@@ -15,7 +15,6 @@ const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 const CRON_ADMIN_REQUIRED =
   "Scheduled jobs can only be changed by an org admin.";
 
-/** Creates a cron job (crons row + registered schedule) for the active org. */
 export const create = mutation({
   args: {
     name: v.string(),
@@ -28,7 +27,7 @@ export const create = mutation({
     description: v.optional(v.string()),
   },
   returns: v.object({ cronId: v.string() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ cronId: string }> => {
     const account = await getActiveAccountForUser(ctx, "admin");
     if (!account) throw new Error(CRON_ADMIN_REQUIRED);
 
@@ -41,7 +40,6 @@ export const create = mutation({
   },
 });
 
-/** Updates a cron job and its registered schedule for the active org. */
 export const update = mutation({
   args: {
     cronId: v.string(),
@@ -55,7 +53,7 @@ export const update = mutation({
     description: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { cronId, ...patch } = args;
     const account = await getActiveAccountForUser(ctx, "admin");
     if (!account) throw new Error(CRON_ADMIN_REQUIRED);
@@ -71,11 +69,10 @@ export const update = mutation({
   },
 });
 
-/** Removes a cron job and its registered schedule for the active org. */
 export const remove = mutation({
   args: { cronId: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const account = await getActiveAccountForUser(ctx, "admin");
     if (!account) throw new Error(CRON_ADMIN_REQUIRED);
 

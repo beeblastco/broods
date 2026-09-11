@@ -7,13 +7,10 @@
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 
-/** Possible agent health statuses for display. */
 export type AgentHealthStatus = "healthy" | "deploying" | "idle" | "unhealthy";
 
-/** Health check polling interval in ms. */
 const HEALTH_CHECK_INTERVAL = 30_000;
 
-/** Shared cache for core service health across all hook instances. */
 let healthCache: { healthy: boolean | null; checkedAt: number } = {
   healthy: null,
   checkedAt: 0,
@@ -38,8 +35,7 @@ async function fetchHealthWithTimeout(
   }
 }
 
-/** Notify all active hook instances of a health update. */
-function notifyListeners() {
+function notifyListeners(): void {
   for (const listener of listeners) {
     listener();
   }
@@ -81,7 +77,7 @@ async function checkServiceHealth(): Promise<boolean> {
 }
 
 /** Start shared polling when the first hook mounts. */
-function subscribe(listener: () => void) {
+function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   listenerCount++;
   if (listenerCount === 1) {

@@ -1,6 +1,5 @@
 "use client";
 
-/** Displays the authenticated user avatar with a dropdown menu for account actions. */
 import {
   Avatar,
   AvatarFallback,

@@ -15,7 +15,6 @@ import { MAX_MCP_BUNDLE_BYTES, mcpBundleStorageKey } from "../model/mcp";
 import { writeS3Object } from "../model/s3";
 
 /**
- * Store a code hook bundle in the account bundles bucket.
  * @param accountId account id owning the hook
  * @param sha256 hex sha256 of the already-normalized bundle contents
  * @param storageId Convex storage id holding the JavaScript module source
@@ -28,7 +27,7 @@ export const putHookBundle = internalAction({
     storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<string> =>
     await writeBundleObject(
       args,
       accountHookBundleStorageKey,
@@ -49,7 +48,7 @@ export const putMcpBundle = internalAction({
     storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<string> => {
     const bytes = await bundleBytes(ctx, args.storageId);
     if (bytes.byteLength > MAX_MCP_BUNDLE_BYTES) {
       throw new Error(

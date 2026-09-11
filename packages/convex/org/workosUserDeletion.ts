@@ -12,7 +12,7 @@ import { purgeUser } from "../model/cascade";
 export const listSoleOwnedAccounts = internalQuery({
   args: { authId: v.string() },
   returns: v.array(v.id("accounts")),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"accounts">[]> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
@@ -46,7 +46,7 @@ export const listSoleOwnedAccounts = internalQuery({
 export const finalize = internalMutation({
   args: { authId: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
@@ -63,7 +63,7 @@ export const finalize = internalMutation({
 export const scheduleRetry = internalMutation({
   args: { authId: v.string() },
   returns: v.union(v.null(), v.number()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<number | null> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))

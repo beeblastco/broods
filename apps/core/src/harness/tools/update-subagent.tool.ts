@@ -37,6 +37,10 @@ interface UpdateSubagentInput extends SubagentToolInput {
   message: string;
 }
 
+type UpdateSubagentOutput =
+  | { status: "not_running" }
+  | { status: "queued"; mode: UpdateSubagentInput["mode"] };
+
 interface UpdateSubagentContext extends SubagentToolContext {
   agentConfig: AgentConfig;
   dispatchAppliedIngress?: DispatchAppliedIngress;
@@ -66,7 +70,7 @@ export default function updateSubagentTool(
         required: ["taskId", "agentId", "mode", "message"],
         additionalProperties: false,
       }),
-      execute: async function (input) {
+      execute: async function (input): Promise<UpdateSubagentOutput> {
         const record = await getOwnedSubagent(context, input);
         if (!record) {
           return toolError(subagentNotFound(input.taskId));

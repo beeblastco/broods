@@ -117,8 +117,6 @@ Usage notes:
           if (!ws) {
             return toolError("Error: no workspace attached");
           }
-          // List through the mount when one is available (sandbox-backed, or a
-          // read-only mount); otherwise list S3 objects directly (sandbox: null opt-out).
           const runner = ws.sandbox ?? ws.readMount;
           if (!runner) {
             return await s3Glob(ws, pattern, path);

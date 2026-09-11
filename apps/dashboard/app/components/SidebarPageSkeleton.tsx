@@ -1,4 +1,3 @@
-/** Sidebar-shaped loading skeleton matching the dashboard/settings page layout. */
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { cn } from "@/app/lib/utils";
 

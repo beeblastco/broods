@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Org API access panel: provision a broods account for the org, show
- * its accountId + base URL, and rotate the Bearer secret. The plaintext is
- * shown exactly once after provision/rotate because only the hash is stored.
+ * The plaintext secret is shown exactly once after provision or rotate; only
+ * its hash is stored, so it can never be read back.
  */
 
 import { Section } from "@/app/components/Section";
@@ -26,7 +25,6 @@ import { Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
-  /** The org this panel is rendering settings for. */
   org: Doc<"orgs">;
 }
 
@@ -48,7 +46,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const harnessUrl =
     process.env.NEXT_PUBLIC_BROODS_HARNESS_URL ?? "(not configured)";
 
-  async function handleProvision() {
+  async function handleProvision(): Promise<void> {
     setPending(true);
     setError(null);
     try {
@@ -62,7 +60,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
     }
   }
 
-  async function handleRotate() {
+  async function handleRotate(): Promise<void> {
     setPending(true);
     setError(null);
     try {
@@ -77,7 +75,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
     }
   }
 
-  function copy(text: string, label: string) {
+  function copy(text: string, label: string): void {
     navigator.clipboard.writeText(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 1500);
@@ -269,14 +267,13 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   );
 }
 
-/** One-shot dialog that displays a newly-issued secret. */
 function NewSecretDialog({
   secret,
   onClose,
 }: {
   secret: string;
   onClose: () => void;
-}) {
+}): React.JSX.Element {
   const [open, setOpen] = useState(true);
 
   return (

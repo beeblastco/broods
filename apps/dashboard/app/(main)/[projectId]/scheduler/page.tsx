@@ -1,13 +1,8 @@
 "use client";
 
 /**
- * Cron jobs management page. Lists the scheduled runs of this project's
- * agents and lets the user create, edit, and remove them. CRUD goes through
- * Convex actions that write the crons row and its registered schedule in one
- * transaction.
- *
- * Scoped to the project in the URL, not the whole org: a cron's project is
- * derived from the agent it runs, so the picker and the table only ever show
+ * Scoped to the project in the URL rather than the whole org. A cron's project
+ * comes from the agent it runs, so the picker and the table only ever show
  * agents this project owns.
  */
 

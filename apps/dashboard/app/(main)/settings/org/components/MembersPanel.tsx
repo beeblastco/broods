@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Members panel: list org members with role, invite by email, change roles,
- * and remove. Reads/writes via api.org.members; gated server-side.
- */
-
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import {
@@ -33,7 +28,6 @@ import { useState } from "react";
 type Role = "owner" | "admin" | "member";
 
 interface Props {
-  /** The org whose members are being managed. */
   org: Doc<"orgs">;
 }
 
@@ -99,11 +93,10 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const [inviteNotice, setInviteNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Member pending removal confirmation.
   const [removingMember, setRemovingMember] = useState<MemberRow | null>(null);
   const [isRemovingMember, setIsRemovingMember] = useState(false);
 
-  async function handleInvite() {
+  async function handleInvite(): Promise<void> {
     const email = inviteEmail.trim();
     if (!email) return;
     setInviting(true);
@@ -120,7 +113,10 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     }
   }
 
-  async function handleRoleChange(membershipId: Id<"orgMembers">, role: Role) {
+  async function handleRoleChange(
+    membershipId: Id<"orgMembers">,
+    role: Role,
+  ): Promise<void> {
     setActionError(null);
     try {
       await updateRole({ membershipId: membershipId, role: role });
@@ -129,7 +125,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     }
   }
 
-  async function handleRemoveMember() {
+  async function handleRemoveMember(): Promise<void> {
     if (!removingMember) return;
     setIsRemovingMember(true);
     setActionError(null);

@@ -48,10 +48,6 @@ type RuntimeFileCacheEntry = {
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function buildTree(files: FileRecord[]): FileNode[] {
   const map = new Map<string, FileNode>();
   for (const f of files) {
@@ -74,7 +70,7 @@ function buildTree(files: FileRecord[]): FileNode[] {
     }
   }
 
-  const sort = (nodes: FileNode[]) => {
+  const sort = (nodes: FileNode[]): void => {
     nodes.sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
 
@@ -221,8 +217,7 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-/** Renders a colored file type icon via react-file-icon. */
-function ExtIcon({ name }: { name: string }) {
+function ExtIcon({ name }: { name: string }): React.JSX.Element {
   const ext = name.includes(".")
     ? (name.split(".").pop()?.toLowerCase() ?? "")
     : "";
@@ -244,7 +239,7 @@ function RenameInput({
   initialValue: string;
   onCommit: (value: string) => void;
   onCancel: () => void;
-}) {
+}): React.JSX.Element {
   const [draft, setDraft] = useState(initialValue);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -252,7 +247,7 @@ function RenameInput({
     ref.current?.select();
   }, []);
 
-  const commit = () => {
+  const commit = (): void => {
     const trimmed = draft.trim();
     if (trimmed && trimmed !== initialValue) {
       onCommit(trimmed);
@@ -283,10 +278,6 @@ function RenameInput({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tree row
-// ---------------------------------------------------------------------------
-
 function TreeRow({
   node,
   depth,
@@ -313,14 +304,14 @@ function TreeRow({
   onRenameStart: (path: string) => void;
   onRenameCommit: (node: FileNode, newName: string) => void;
   onRenameCancel: () => void;
-}) {
+}): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const isExpanded = expanded.has(node.path);
   const isSelected = selected === node.path;
   const isRenaming = renamingPath === node.path;
   const isUploading = uploading.has(node.path);
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = (e: React.MouseEvent): void => {
     e.stopPropagation();
     onSelect(node.path);
     if (node.isFolder) onToggle(node.path);
@@ -458,7 +449,6 @@ function TreeRow({
   );
 }
 
-/** VSCode-style file explorer panel for a workspace canvas node. */
 export function WorkspaceFilesTab({
   projectId,
   nodeId,
@@ -499,7 +489,6 @@ export function WorkspaceFilesTab({
   const [isDragOver, setIsDragOver] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Node pending delete confirmation.
   const [pendingDeleteNode, setPendingDeleteNode] = useState<FileNode | null>(
     null,
   );
@@ -601,7 +590,7 @@ export function WorkspaceFilesTab({
 
   useEffect(() => {
     if (!workspaceId) return;
-    const refreshWhenVisible = () => {
+    const refreshWhenVisible = (): void => {
       if (document.visibilityState === "visible") {
         void refreshRuntimeFiles().catch(() => {});
       }
@@ -619,7 +608,6 @@ export function WorkspaceFilesTab({
 
   const files = workspaceId ? runtimeFiles : convexFiles;
 
-  // Deselect when clicking the blank area of the panel
   const handleContainerClick = useCallback(() => {
     setSelected(null);
     setRenamingPath(null);
@@ -676,14 +664,13 @@ export function WorkspaceFilesTab({
     ],
   );
 
-  // Opens the delete confirmation dialog for a node (click or keyboard Delete).
   const handleDelete = useCallback((node: FileNode) => {
     setPendingDeleteNode(node);
   }, []);
 
   // Keyboard: Delete/Backspace = open delete dialog for selected, F2 = rename selected
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handler = (e: KeyboardEvent): void => {
       if (renamingPath) return;
       if (
         (e.key === "Delete" || e.key === "Backspace") &&

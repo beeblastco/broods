@@ -1,9 +1,3 @@
-/**
- * Zalo channel adapter tests.
- * Cover webhook auth, allow-list filtering, text message normalization, and
- * outbound sends here.
- */
-
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
 import type { Attachment } from "chat";
@@ -486,7 +480,13 @@ function zaloSource(): ZaloSource {
 function createZaloRequest(
   body: unknown,
   headers: Record<string, string> = { "x-bot-api-secret-token": "zalo-secret" },
-) {
+): {
+  method: string;
+  rawPath: string;
+  rawQueryString: string;
+  headers: Record<string, string>;
+  body: string;
+} {
   return {
     method: "POST",
     rawPath: "/",

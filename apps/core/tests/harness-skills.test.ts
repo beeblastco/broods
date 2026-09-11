@@ -1,8 +1,3 @@
-/**
- * Harness-processing skill loading and invocation tests.
- * Cover listConfiguredSkillMetadata, loadConfiguredSkillPrompt, listSkillMetadataForConfig, and loadSkillContent.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { S3ObjectInfo } from "../src/shared/s3.ts";
 import * as realS3 from "../src/shared/s3.ts";

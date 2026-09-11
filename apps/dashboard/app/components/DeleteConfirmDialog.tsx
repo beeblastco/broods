@@ -47,14 +47,14 @@ export function DeleteConfirmDialog({
     : `delete ${resourceName}`;
   const canConfirm = phrase === deletePhrase && !isDeleting;
 
-  function handleOpenChange(next: boolean) {
+  function handleOpenChange(next: boolean): void {
     if (!next) {
       setPhrase("");
     }
     onOpenChange(next);
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(): Promise<void> {
     if (!canConfirm) return;
     await onConfirm();
   }

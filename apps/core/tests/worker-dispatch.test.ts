@@ -1,9 +1,3 @@
-/**
- * In-process worker dispatch tests.
- * Cover the container replacement for the Lambda Event self-invoke: capped
- * concurrency, FIFO queueing, failure swallowing, and shutdown draining.
- */
-
 import { describe, expect, it } from "bun:test";
 
 const { dispatchInProcessWorker, drainInProcessWorkers } =
@@ -36,15 +30,17 @@ describe("in-process worker dispatch", () => {
     let active = 0;
     let peakActive = 0;
 
-    const run = (id: number) => async () => {
-      started.push(id);
-      active += 1;
-      peakActive = Math.max(peakActive, active);
-      await new Promise<void>((resolve) => {
-        releases.push(resolve);
-      });
-      active -= 1;
-    };
+    const run =
+      (id: number): (() => Promise<void>) =>
+      async () => {
+        started.push(id);
+        active += 1;
+        peakActive = Math.max(peakActive, active);
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        active -= 1;
+      };
 
     const waitForStarted = async (count: number): Promise<void> => {
       for (let i = 0; i < 200 && started.length < count; i += 1) {

@@ -1,6 +1,5 @@
 "use client";
 
-/** Monitoring panel: dense, full-height log table streamed live from the gateway observability WS. */
 import { Badge } from "@/app/components/ui/badge";
 import {
   entryKey,
@@ -55,7 +54,6 @@ function formatDateTime(ms: number): { date: string; time: string } {
   return { date: date, time: `${time}.${ms3.slice(0, 2)}` };
 }
 
-/** Parse a datetime-local input value into epoch ms, or null when empty/invalid. */
 function toEpochMs(value: string): number | null {
   if (!value) return null;
   const ms = new Date(value).getTime();
@@ -63,10 +61,7 @@ function toEpochMs(value: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/**
- * Best-effort prettifier: if the message starts with a JSON object/array,
- * parse and re-stringify with indentation. Falls back to the raw string.
- */
+/** `pretty` is the raw string unchanged when the message is not JSON. */
 function parseLogMessage(raw: string): {
   summary: string;
   pretty: string;
@@ -94,14 +89,13 @@ function parseLogMessage(raw: string): {
   return { summary: trimmed.slice(0, 200), pretty: trimmed };
 }
 
-/** Strip the long region / account suffix from the function name for table density. */
+/** The region and account suffix is dead weight in a dense table. */
 function shortFunctionName(name: string): string {
   return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
 }
 
 // Both themes per level: the 400 shades only clear WCAG AA on the dark card,
 // the 700 shades only on the light one.
-/** Text color per log level. INFO gets its own color rather than the muted one. */
 function levelColor(level: ObservabilityLogEntry["level"]): string {
   if (level === "ERROR") return "text-red-700 dark:text-red-400";
   if (level === "WARN") return "text-amber-700 dark:text-amber-400";
@@ -110,7 +104,6 @@ function levelColor(level: ObservabilityLogEntry["level"]): string {
   return "text-muted-foreground";
 }
 
-/** Matching dot color so the level reads at a glance even when scanning fast. */
 function levelDot(level: ObservabilityLogEntry["level"]): string {
   if (level === "ERROR") return "bg-red-400";
   if (level === "WARN") return "bg-amber-400";
@@ -127,7 +120,7 @@ function LogRow({
   entry: ObservabilityLogEntry;
   isSelected: boolean;
   onSelect: () => void;
-}) {
+}): React.JSX.Element {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   const { date, time } = formatDateTime(entry.ts);
 
@@ -185,14 +178,13 @@ function LogRow({
   );
 }
 
-/** Side-panel body for a selected log: trace link, endpoint, pretty payload. */
 function LogDetails({
   entry,
   onViewTrace,
 }: {
   entry: ObservabilityLogEntry;
   onViewTrace: (traceId: string) => void;
-}) {
+}): React.JSX.Element {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   // A line logged outside any task run carries no trace, or the all-zero
   // sentinel; neither has anything to open on the Tracing tab.
@@ -256,8 +248,7 @@ export function MonitoringPanel({
     [selected],
   );
 
-  // Switch to the Tracing tab focused on a log's trace, preserving stage/other params.
-  const viewTrace = (traceId: string) => {
+  const viewTrace = (traceId: string): void => {
     const next = new URLSearchParams(searchParams.toString());
     next.set("tab", "tracing");
     next.set("trace", traceId);
@@ -309,7 +300,7 @@ export function MonitoringPanel({
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
 
-  const clearFilters = () => {
+  const clearFilters = (): void => {
     setFilter("");
     setLevel("all");
     setFromTime("");

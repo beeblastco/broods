@@ -216,7 +216,7 @@ async function startWebSocketSseStream(options: {
   });
 
   return await new Promise<WebSocketStreamResult>((resolve, reject) => {
-    const fail = (error: Error) => {
+    const fail = (error: Error): void => {
       if (!settled) {
         settled = true;
         reject(error);
@@ -233,7 +233,7 @@ async function startWebSocketSseStream(options: {
       }
     };
 
-    const finishStream = () => {
+    const finishStream = (): void => {
       if (streamController) {
         streamController.close();
         streamController = null;
@@ -243,7 +243,7 @@ async function startWebSocketSseStream(options: {
       }
     };
 
-    const onAbort = () => {
+    const onAbort = (): void => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "cancel" }));
       }
@@ -665,14 +665,12 @@ export function useAgentChat({
     messagesRef.current = messages;
   }, [messages]);
 
-  // Abort in-flight streams when the component using this hook unmounts.
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
     };
   }, []);
 
-  /** Send a message and stream the assistant response. */
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -838,7 +836,6 @@ export function useAgentChat({
           }
         }
 
-        // Parse SSE -> UIMessageChunk -> UIMessage
         const chunkStream = parseJsonEventStream({
           stream: streamBody,
           schema: uiMessageChunkSchema,
@@ -900,7 +897,6 @@ export function useAgentChat({
     ],
   );
 
-  /** Reset chat history and server session for a new conversation. */
   const resetChat = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);

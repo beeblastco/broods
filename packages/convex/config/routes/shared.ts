@@ -22,7 +22,6 @@ export type ConfigAuth =
   | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
 
 /**
- * Convert resolved HTTP auth into audit actor metadata.
  * @param auth resolved config HTTP auth
  * @returns actor metadata for audit rows
  */
@@ -35,7 +34,6 @@ export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
   return { kind: "apiAccountSecret", id: auth.account._id };
 }
 
-/** Extract a Bearer token from a request. */
 export function bearerToken(req: Request): string | null {
   const header = req.headers.get("Authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
@@ -52,7 +50,7 @@ export function configEncryptionSecret(): string {
 }
 
 /**
- * Fetch an account id while treating malformed ids as not found.
+ * Fetch an account document by id, treating malformed ids as not found.
  * @param ctx Convex action context
  * @param accountId account id string from the route
  * @returns account document or null
@@ -75,7 +73,6 @@ export async function getAccountById(
   }
 }
 
-/** Serialize a JSON response body with the given status. */
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status: status,
@@ -109,7 +106,6 @@ export async function parseJsonRequest(req: Request): Promise<unknown> {
 }
 
 /**
- * Resolve the Bearer token to an account or a role session.
  * @param ctx the action context
  * @param req the incoming request
  * @returns account or role auth, or an error response

@@ -1,7 +1,4 @@
-/**
- * Shared channel contracts.
- * Define the shared HTTP and channel adapter boundaries for inbound webhook traffic.
- */
+/** Shared HTTP and channel adapter contracts for inbound webhook traffic. */
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
@@ -15,11 +12,11 @@ export type ChannelIngressEvent =
   | (SystemModelMessage & { persist?: false });
 
 /**
- * A document or picture handed to a channel for delivery. This is the Chat
- * SDK's own attachment shape, narrowed to what this layer guarantees: a
- * workspace file has no address of its own, so it always travels as a URL the
- * provider fetches for itself. `type` is fixed per alias because that is the
- * field an adapter maps onto the provider's photo or document endpoint.
+ * A document or picture handed to a channel for delivery. The Chat SDK's own
+ * attachment shape, narrowed: a workspace file has no address of its own, so it
+ * always travels as a URL the provider fetches for itself. `type` is fixed per
+ * alias because that is the field an adapter maps onto the provider's photo or
+ * document endpoint.
  */
 export type ChannelFile = Attachment & { type: "file"; url: string };
 
@@ -126,16 +123,14 @@ export interface InboundMessage {
   channelName: string;
   content: UserContent;
   /**
-   * Pictures, documents, voice notes and videos that arrived with the message,
-   * in the Chat SDK's own attachment shape, the same one the outbound aliases
-   * above narrow, kept wide here because inbound is whatever the provider sent.
-   *
-   * Adapters name the attachment and leave the bytes alone. Parsing runs before
-   * the webhook is acknowledged, so downloading there would hold the provider's
-   * connection open for the length of a video; `fetchData` is the adapter's own
-   * authenticated reader (Telegram resolves a file id through getFile and signs
-   * the download with the bot token; Slack sends a bearer header for a private
-   * file) and the harness calls it once the turn is already running.
+   * Pictures, documents, voice notes and videos that arrived with the message, in
+   * the wide Chat SDK attachment shape because inbound is whatever the provider
+   * sent. Adapters name the attachment and leave the bytes alone: parsing runs
+   * before the webhook is acknowledged, so downloading there would hold the
+   * provider's connection open for the length of a video. `fetchData` is the
+   * adapter's own authenticated reader (Telegram resolves a file id through
+   * getFile and signs the download with the bot token; Slack sends a bearer header
+   * for a private file), called once the turn is already running.
    */
   attachments?: Attachment[];
   events?: ChannelIngressEvent[];
@@ -167,8 +162,8 @@ export interface ParsedChannelCleanup {
 }
 
 /**
- * Channel parse results describe what the webhook should do before the agent runs.
- * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
+ * What the webhook should do before the agent runs. Some providers need an
+ * immediate HTTP response; others can be acknowledged and processed later.
  */
 export type ChannelParseResult =
   | ParsedChannelMessage
@@ -182,8 +177,8 @@ export interface ChannelAdapter {
   canHandle(req: ChannelRequest): boolean;
   authenticate(req: ChannelRequest): boolean | Promise<boolean>;
   /**
-   * Normalize a webhook request into a channel message, provider response, or ignored event.
-   * Parsing may be async when a channel must check external state before deciding to run the agent.
+   * Async when a channel must check external state before deciding to run the
+   * agent.
    */
   parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
   actions(msg: InboundMessage): ChannelActions;
@@ -206,11 +201,10 @@ export interface ChannelAdapter {
 }
 
 /**
- * Bytes for an attachment, however this one happens to carry them.
- * Providers that upload rather than fetch need the file itself. A workspace
- * file arrives with `fetchData` so the object is read straight from storage and
- * only when a provider actually asks; a picture named by public URL has no such
- * reader, so it is fetched the same way the provider would have.
+ * Bytes for an attachment, for providers that upload rather than fetch. A
+ * workspace file arrives with `fetchData` so the object is read straight from
+ * storage and only when a provider asks; a picture named by public URL has no
+ * such reader, so it is fetched the same way the provider would have.
  */
 export async function channelAttachmentBytes(
   attachment: ChannelFile | ChannelImage,
@@ -229,10 +223,9 @@ export async function channelAttachmentBytes(
 }
 
 /**
- * Filename to upload an attachment under.
- * Providers decide whether to preview a file from its name, so a nameless one
- * would arrive extensionless and render as a generic download. Workspace files
- * are named already; this is for a picture named only by URL.
+ * Providers decide whether to preview a file from its name, so a nameless
+ * upload would arrive extensionless and render as a generic download. Workspace
+ * files are named already; this is for a picture named only by URL.
  */
 export function channelAttachmentName(
   attachment: ChannelFile | ChannelImage,
@@ -259,9 +252,8 @@ export function extractText(content: UserContent): string {
 }
 
 /**
- * Builds the set a reach gate reads. No list stays null, which the gate reads
- * as open. An empty `Set` would mean the opposite, so the distinction cannot
- * be dropped at the call site.
+ * No list stays null, which the reach gate reads as open. An empty `Set` means
+ * the opposite, so the distinction cannot be dropped at the call site.
  */
 export function reachSet(ids: string[] | undefined): Set<string> | null {
   return ids ? new Set(ids) : null;
@@ -269,10 +261,9 @@ export function reachSet(ids: string[] | undefined): Set<string> | null {
 
 /**
  * The reach gate. Answered from the webhook payload alone, so an unwanted room
- * or sender is dropped before any record read or policy call. The deployment
- * load still runs ahead of it, so this is cheap, not free.
- * No list, or the wildcard, lets everything through; an id the payload never
- * carried matches nothing.
+ * or sender is dropped before any record read or policy call (the deployment
+ * load still runs ahead of it). No list, or the wildcard, lets everything
+ * through; an id the payload never carried matches nothing.
  */
 export function isAllowedId(
   allowed: ReadonlySet<string> | null | undefined,

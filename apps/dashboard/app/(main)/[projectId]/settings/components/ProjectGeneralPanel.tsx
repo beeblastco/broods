@@ -1,6 +1,5 @@
 "use client";
 
-/** Project general settings: rename the project and view its slug. */
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -13,7 +12,6 @@ import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
 interface Props {
-  /** Project being edited. */
   projectId: Id<"projects">;
 }
 
@@ -50,7 +48,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
     (trimmedName.length > 0 && trimmedName !== project.name) ||
     trimmedDesc !== (project.description ?? "");
 
-  async function handleSave() {
+  async function handleSave(): Promise<void> {
     if (!dirty || !trimmedName) return;
     setSaving(true);
     setSaveError(null);

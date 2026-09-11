@@ -9,6 +9,7 @@
 
 import { v } from "convex/values";
 import type { GeneratedIds } from "./types";
+import type { Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { ensureStageDeployment } from "../agent/deployments";
 import {
@@ -180,15 +181,21 @@ export const resolveCliAuth = internalQuery({
       deployKeyId: v.optional(v.id("deployKeys")),
     }),
   ),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    accountId: Id<"accounts">;
+    secretHash: string;
+    scoped: boolean;
+    deployKeyId?: Id<"deployKeys">;
+  } | null> => {
     const { tokenHash, project, stage } = args;
 
-    // Org Bearer secret → full account access.
     const account = await accountFromSecretHash(ctx, tokenHash);
     if (account)
       return { accountId: account._id, secretHash: tokenHash, scoped: false };
 
-    // Scoped deploy key → only valid for its bound project + stage.
     const deployKey = await ctx.db
       .query("deployKeys")
       .withIndex("by_keyHash", (q) => q.eq("keyHash", tokenHash))
@@ -445,7 +452,10 @@ export const ensureScopeBySecretHash = internalMutation({
     projectId: v.id("projects"),
     stageId: v.id("stages"),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, args.project);
@@ -471,7 +481,16 @@ export const listExternalResourcesForAccount = internalQuery({
       stageId: v.id("stages"),
     }),
   ),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    Array<{
+      kind: "skill" | "hook" | "mcp";
+      name: string;
+      stageId: Id<"stages">;
+    }>
+  > => {
     const rows = await ctx.db
       .query("cliExternalResources")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -499,7 +518,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     prune: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, args.project);
@@ -562,9 +581,6 @@ export const recordExternalResourcesBySecretHash = internalMutation({
   },
 });
 
-/**
- * Replaces the dashboard file tree for a CLI-managed skill node with uploaded bundle files.
- */
 export const replaceSkillNodeFilesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -582,7 +598,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
     ),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const resolved = await resolveProjectStage(
@@ -641,7 +657,7 @@ export const deleteResourceBySecretHash = internalMutation({
     name: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { secretHash, project, stage, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
@@ -677,7 +693,7 @@ export const setEnvBySecretHash = internalMutation({
     value: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { secretHash, project, stage, name, value } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
@@ -756,7 +772,12 @@ export const listEnvBySecretHash = internalQuery({
       valueDigest: v.optional(v.string()),
     }),
   ),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    Array<{ name: string; updatedAt: number; valueDigest?: string }>
+  > => {
     const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
@@ -799,7 +820,7 @@ export const getEnvBySecretHash = internalMutation({
     revealedByDeployKeyId: v.optional(v.id("deployKeys")),
   },
   returns: v.union(v.null(), v.object({ value: v.string() })),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ value: string } | null> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
@@ -858,7 +879,7 @@ export const removeEnvBySecretHash = internalMutation({
     name: v.string(),
   },
   returns: v.object({ removed: v.boolean() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ removed: boolean }> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");

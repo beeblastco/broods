@@ -1,17 +1,19 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-function runtimeTest() {
+function runtimeTest(): TestConvex<typeof schema> {
   return convexTest(schema, modules);
 }
 
-/** Creates one account for runtime-write tests. */
-async function createActiveAccount(t: ReturnType<typeof runtimeTest>) {
+async function createActiveAccount(
+  t: ReturnType<typeof runtimeTest>,
+): Promise<Id<"accounts">> {
   const now = Date.now();
 
   return await t.run(
@@ -27,7 +29,6 @@ async function createActiveAccount(t: ReturnType<typeof runtimeTest>) {
   );
 }
 
-/** Builds an account-owned conversation key. */
 function conversationKeyFor(accountId: string): string {
   return `acct:${accountId}:agent:test-agent:api:test-conversation`;
 }
@@ -910,7 +911,7 @@ describe("sandbox reservation expiry", () => {
     t: ReturnType<typeof runtimeTest>,
     reservationKey: string,
     expiresAt: number,
-  ) {
+  ): Promise<void> {
     await t.run(async (ctx) => {
       await ctx.db.insert("sandboxReservations", {
         accountId: ACCOUNT,
@@ -1128,7 +1129,9 @@ describe("runtime.deleteAgentRuntimeData", () => {
   const FAR_FUTURE_EXPIRY = 9_999_999_999;
 
   /** Two agents in one account, each with a row in every key-scoped table. */
-  async function seedTwoAgents(t: ReturnType<typeof runtimeTest>) {
+  async function seedTwoAgents(
+    t: ReturnType<typeof runtimeTest>,
+  ): Promise<void> {
     await t.run(async (ctx) => {
       for (const agentId of [AGENT, OTHER_AGENT]) {
         const conversationKey = `acct:${ACCOUNT}:agent:${agentId}:tg:1`;

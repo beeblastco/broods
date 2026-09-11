@@ -9,7 +9,10 @@ import {
   normalizePolicyDocument as normalizeRulesPolicyDocument,
 } from "../model/policyRules";
 
-const policyWith = (operator: string, value: unknown) => ({
+const policyWith = (
+  operator: string,
+  value: unknown,
+): Record<string, unknown> => ({
   name: "p1",
   document: {
     version: 1,
@@ -103,7 +106,7 @@ describe("normalizeCreatePolicyInput", () => {
   });
 
   it("rejects heterogeneous condition value arrays", () => {
-    const documentWithValue = (value: unknown) => ({
+    const documentWithValue = (value: unknown): Record<string, unknown> => ({
       version: 1,
       rules: [
         {

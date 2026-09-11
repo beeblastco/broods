@@ -22,7 +22,7 @@ type Listing = {
 function localStore(
   value: Listing[],
   queryArgs: Record<string, unknown> = { env: "e1" },
-) {
+): { store: OptimisticLocalStore; written: Listing[][] } {
   const written: Listing[][] = [];
   const store = {
     getAllQueries: () => [{ args: queryArgs, value: value }],
@@ -34,7 +34,7 @@ function localStore(
   return { store: store, written: written };
 }
 
-function webhook(index: number, enabled: boolean) {
+function webhook(index: number, enabled: boolean): Listing["webhooks"][number] {
   return {
     index: index,
     enabled: enabled,

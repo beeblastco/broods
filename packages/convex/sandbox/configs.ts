@@ -6,6 +6,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { sandboxConfigsFields } from "../schema";
 
@@ -26,7 +27,7 @@ export const getById = internalQuery({
     sandboxId: v.string(),
   },
   returns: v.union(sandboxConfigDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"sandboxConfigs"> | null> => {
     const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
@@ -39,7 +40,7 @@ export const getById = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(sandboxConfigDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"sandboxConfigs">[]> => {
     return await ctx.db
       .query("sandboxConfigs")
       .withIndex("by_accountId_and_name", (q) =>
@@ -59,7 +60,7 @@ export const create = internalMutation({
     encryptionTag: v.optional(v.string()),
   },
   returns: v.id("sandboxConfigs"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"sandboxConfigs">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -91,7 +92,7 @@ export const update = internalMutation({
     encryptionTag: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { accountId, sandboxId, ...patch } = args;
     const normalized = ctx.db.normalizeId("sandboxConfigs", sandboxId);
     if (!normalized) {
@@ -133,7 +134,7 @@ export const remove = internalMutation({
     sandboxId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
     if (!normalized) {
       throw new Error(

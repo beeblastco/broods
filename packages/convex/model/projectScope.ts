@@ -133,8 +133,6 @@ export async function cronsInProject(
   return crons.filter((cron) => agentIds.has(cron.agentId));
 }
 
-// `agentConfigs.agentId` is a loose `v.string()`, so the accountId check is
-// what stops a stale row naming another account's agent from surfacing here.
 async function agentsForConfigs(
   ctx: Ctx,
   configs: Doc<"agentConfigs">[],

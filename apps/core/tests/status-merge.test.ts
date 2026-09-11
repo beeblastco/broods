@@ -67,7 +67,7 @@ afterEach(() => {
   runtime.query = originalQuery;
 });
 
-function statusRequest() {
+function statusRequest(): Promise<Response> {
   return handler(
     coreRequest("GET", "/status/one?agentId=agent_1", {
       authorization: "Bearer fp_acct_known-secret",
@@ -75,7 +75,15 @@ function statusRequest() {
   );
 }
 
-function ingress(overrides: Record<string, unknown> = {}) {
+function ingress(overrides: Record<string, unknown> = {}): {
+  eventId: string;
+  conversationKey: string;
+  requestedMode: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  expiresAt: number;
+} {
   return {
     eventId: SCOPED_EVENT_ID,
     conversationKey: SCOPED_CONVERSATION_KEY,

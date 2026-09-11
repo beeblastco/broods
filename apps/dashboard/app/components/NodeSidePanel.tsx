@@ -1,6 +1,5 @@
 "use client";
 
-/** Side panel displaying node details, configuration, and settings for the selected canvas node. */
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
@@ -88,7 +87,6 @@ const nodeStatusBadgeText: Record<"running" | "idle" | "error", string> = {
   error: "Error",
 };
 
-/** Maps agent health status to Badge variant. */
 const healthBadgeVariant: Record<
   AgentHealthStatus,
   "success" | "warning" | "secondary" | "destructive"
@@ -133,7 +131,6 @@ type HeaderStatusBadge = {
   variant: "success" | "warning" | "secondary" | "destructive";
 };
 
-/** Panel header labels per node type. */
 const PANEL_TITLES: Record<NodeType, string> = {
   agent: "Agent",
   database: "Session",
@@ -214,7 +211,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }, [nodeId, nodeType, selectedAt]);
 
-  // Agent health status (agent nodes only)
   const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
 
   // Connected agent config for skill nodes, so the header status badge mirrors
@@ -231,7 +227,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     !nodeId ||
     (infraAnalysis.connectedToAgent[nodeId] ?? false);
 
-  // Agent config for editable name (agent nodes only)
   const agentConfig = useQuery(
     api.agent.config.getById,
     isAgent && agentConfigId ? { configId: agentConfigId } : "skip",
@@ -271,7 +266,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const removeMcpForNode = useAction(api.mcp.removeForNode);
   const { canWrite } = useOrgRole();
 
-  // Editable name (agent uses agentConfig, others use canvas label)
   const [editName, setEditName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -303,7 +297,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // Delete-key request can open it before the lazily mounted tab ever renders.
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  // Reset to the details tab when a different node is selected.
   const [tabSyncedNodeId, setTabSyncedNodeId] = useState(node?.id);
   if (node?.id !== tabSyncedNodeId) {
     setTabSyncedNodeId(node?.id);
@@ -1127,7 +1120,7 @@ function ServiceDetailsTab({
   onSaveName: () => void;
   nameChanged: boolean;
   isSaving: boolean;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">

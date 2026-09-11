@@ -1,6 +1,6 @@
 /**
- * Workdir-first core driver contract tests. The driver receives a fake existing
- * executor reservation and never touches Convex, a real Workdir host, or the run loop.
+ * The driver receives a fake existing executor reservation and never touches
+ * Convex, a real Workdir host, or the run loop.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -296,7 +296,12 @@ function fakeWorkdir(
     processStdout?: Uint8Array;
     onLaunch?: () => void;
   } = {},
-) {
+): {
+  sandbox: Sandbox;
+  launchCommands: string[];
+  launchEnvs: (Record<string, string> | undefined)[];
+  readonly killCalls: number;
+} {
   const files = new Map<string, Uint8Array>();
   const temporaryFiles = new Map<string, string>();
   const processes = new Map<
@@ -408,6 +413,10 @@ function fakeWorkdir(
   };
 }
 
-function result(stdout = "", exit_code = 0, stderr = "") {
+function result(
+  stdout = "",
+  exit_code = 0,
+  stderr = "",
+): { stdout: string; stderr: string; exit_code: number } {
   return { stdout: stdout, stderr: stderr, exit_code: exit_code };
 }

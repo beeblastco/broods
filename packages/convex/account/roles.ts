@@ -46,10 +46,7 @@ const rolePrincipalValidator = v.object({
   stageId: v.optional(v.id("stages")),
 });
 
-/**
- * Create a role for an account. Scope ids arrive as strings from the HTTP
- * route and are validated against the account here.
- */
+/** Scope ids arrive as strings from the HTTP route and are validated here. */
 export const createInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -95,7 +92,7 @@ export const createSession = internalMutation({
     expiresAt: v.number(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await ctx.db.insert("roleSessions", {
       tokenHash: args.tokenHash,
       roleId: args.roleId,
@@ -108,20 +105,18 @@ export const createSession = internalMutation({
   },
 });
 
-/** Look up one role by its public id within an account. */
 export const getByRoleId = internalQuery({
   args: { accountId: v.id("accounts"), roleId: v.string() },
   returns: v.union(roleDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountRoles"> | null> => {
     return await getOwnedRole(ctx, args.accountId, args.roleId);
   },
 });
 
-/** List an account's roles, active and disabled. */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(roleDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountRoles">[]> => {
     return await ctx.db
       .query("accountRoles")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -139,7 +134,7 @@ export const pruneExpiredSessions = internalMutation({
     batchSize: v.optional(v.number()),
   },
   returns: v.object({ sessionsDeleted: v.number() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ sessionsDeleted: number }> => {
     const now = args.now ?? Date.now();
     const batchSize = Math.min(
       Math.max(1, Math.floor(args.batchSize ?? DEFAULT_PRUNE_BATCH_SIZE)),
@@ -171,7 +166,7 @@ export const pruneExpiredSessions = internalMutation({
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), roleId: v.string() },
   returns: v.union(roleDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountRoles"> | null> => {
     const role = await getOwnedRole(ctx, args.accountId, args.roleId);
     if (!role) return null;
     const sessions = await ctx.db
@@ -214,7 +209,7 @@ export const resolveSession = internalQuery({
   },
 });
 
-/** Patch a role's name, policy, or status. Null when unknown/foreign. */
+/** Null when the role is unknown or belongs to another account. */
 export const updateInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -224,7 +219,7 @@ export const updateInternal = internalMutation({
     status: v.optional(v.union(v.literal("active"), v.literal("disabled"))),
   },
   returns: v.union(roleDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"accountRoles"> | null> => {
     const role = await getOwnedRole(ctx, args.accountId, args.roleId);
     if (!role) return null;
     const policy =

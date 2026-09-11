@@ -208,7 +208,6 @@ const CHANNELS: ChannelKind[] = [
 
 type ChannelConfig = Record<string, unknown>;
 
-/** Read a (possibly nested) value from a channel config. */
 function readAt(config: ChannelConfig, path: string[]): unknown {
   return path.reduce<unknown>(
     (cursor, key) => (cursor as ChannelConfig | undefined)?.[key],
@@ -251,14 +250,12 @@ function parseFieldValue(type: FieldType, raw: string): unknown {
   return trimmed;
 }
 
-/** Render a field's stored value back into its input string. */
 function formatFieldValue(value: unknown): string {
   if (Array.isArray(value)) return value.join(", ");
 
   return value == null ? "" : String(value);
 }
 
-/** Secret input with a show/hide toggle; accepts `${ENV}` placeholders. */
 function SecretField({
   defaultValue,
   placeholder,
@@ -267,7 +264,7 @@ function SecretField({
   defaultValue: string;
   placeholder?: string;
   onCommit: (v: string) => void;
-}) {
+}): React.JSX.Element {
   const [show, setShow] = useState(false);
 
   return (
@@ -297,7 +294,6 @@ function SecretField({
   );
 }
 
-/** Agent channels editor. Lists configured channels and lets the user add the remaining kinds. */
 export function ChannelsSection({
   agentConfig,
   onUpdateChannel,
@@ -320,14 +316,12 @@ export function ChannelsSection({
   const configured = CHANNELS.filter((c) => channels[c.kind] !== undefined);
   const available = CHANNELS.filter((c) => channels[c.kind] === undefined);
 
-  // Channel kind pending delete confirmation.
   const [deletingChannel, setDeletingChannel] = useState<ChannelKind | null>(
     null,
   );
   const [isDeletingChannel, setIsDeletingChannel] = useState(false);
 
-  /** Commit a single field edit for a channel kind. */
-  function commitField(kind: string, field: ChannelField, raw: string) {
+  function commitField(kind: string, field: ChannelField, raw: string): void {
     const current = (channels[kind] as ChannelConfig | undefined) ?? {};
     const next = writeAt(
       current,
@@ -337,7 +331,7 @@ export function ChannelsSection({
     void onUpdateChannel(kind, next);
   }
 
-  async function handleDeleteChannel() {
+  async function handleDeleteChannel(): Promise<void> {
     if (!deletingChannel) return;
     setIsDeletingChannel(true);
     try {

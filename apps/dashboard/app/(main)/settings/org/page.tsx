@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Organization settings page with sidebar navigation matching the project
- * settings + dashboard layout. Tabs: General, API Access, Members, Danger Zone.
- */
-
 import { Button } from "@/app/components/ui/button";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -33,7 +28,7 @@ export default function OrgSettingsPage(): React.JSX.Element {
   const activeLabel =
     TABS.find((t) => t.id === activeTab)?.label ?? "Organization";
 
-  const renderPanel = () => {
+  const renderPanel = (): React.JSX.Element | null => {
     if (!org) return null;
     switch (activeTab) {
       case "general":
@@ -51,7 +46,6 @@ export default function OrgSettingsPage(): React.JSX.Element {
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
       <aside className="flex w-48 shrink-0 flex-col bg-transparent">
         <div className="px-6 pt-9.25 pb-3">
           <h2 className="text-xl font-semibold text-foreground">
@@ -86,7 +80,6 @@ export default function OrgSettingsPage(): React.JSX.Element {
         </nav>
       </aside>
 
-      {/* Content area */}
       <div className="flex flex-1 flex-col overflow-auto">
         <div className="px-6 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
           <h2 className="text-xl font-semibold text-foreground">

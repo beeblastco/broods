@@ -1,7 +1,3 @@
-/**
- * Pinned fetch bridge tests for custom-tool isolate SSRF protection.
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";

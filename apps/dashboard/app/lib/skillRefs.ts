@@ -1,7 +1,3 @@
-/**
- * Helpers for matching local skill node labels against agent `skills.allowed` entries.
- */
-
 /** Returns true when an allowed skill entry names the local path directly or by trailing segment. */
 export function matchesSkillRef(
   allowedRef: string,
@@ -18,7 +14,6 @@ export function matchesSkillRef(
   return ref.slice(slashIndex + 1) === path;
 }
 
-/** Returns true when a skill path appears in the allowed list. */
 export function includesSkillRef(
   allowed: readonly string[] | undefined,
   skillPath: string,
@@ -26,7 +21,6 @@ export function includesSkillRef(
   return (allowed ?? []).some((entry) => matchesSkillRef(entry, skillPath));
 }
 
-/** Removes every allowed entry that targets the given local skill path. */
 export function withoutSkillRef(
   allowed: readonly string[] | undefined,
   skillPath: string,

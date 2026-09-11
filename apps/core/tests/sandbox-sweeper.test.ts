@@ -41,7 +41,7 @@ type ExpiredReservation = ReservedSandbox & { accountId: string };
 let expired: ExpiredReservation[] = [];
 let orphans: ExpiredReservation[] = [];
 let mutateCalls: MutateCall[] = [];
-let leaseResult: (accountId: string) => boolean = () => true;
+let leaseResult: (accountId: string) => boolean = (): true => true;
 
 function accountsOf(name: string): unknown[] {
   return mutateCalls

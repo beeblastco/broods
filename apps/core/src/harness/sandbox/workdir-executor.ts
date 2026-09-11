@@ -6,14 +6,7 @@
  * production. A real microVM: declare an S3 workspace mount + egress policy at
  * create, then run the bash `code` as-is. Persistent mode reserves one sandbox
  * per key and uses workdir's native pause/resume + standby; snapshots capture
- * reusable images.
- *
- * S3 workspace mount (see #s3MountStrategy): the mount target + credentials come
- * from the workspace's storage config (resolveS3Mount). `exec` strategy mounts via
- * mount-s3 with short-lived assume-role credentials (a bring-your-own-bucket role,
- * or the platform role, the default when SANDBOX_MOUNT_ROLE_ARN is set);
- * `declarative` strategy declares a boot mount that reads static keys from named
- * org secrets (no role configured). Both honor an S3-compatible endpoint (R2/MinIO).
+ * reusable images. See #s3MountStrategy for the S3 workspace mount.
  */
 
 import {
@@ -280,8 +273,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     );
   }
 
-  // Create/resume the reserved sandbox ahead of the first real call. Fire-and-
-  // forget: callers feature-detect and ignore failures.
+  // Fire-and-forget: callers feature-detect and ignore failures.
   async prewarm(request: {
     namespace?: string;
     reservationKey?: string;
@@ -378,8 +370,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // at acquire time. Checking between turns rather than on a timer means an expiry can
   // never interrupt a running exec: the next call retires the old sandbox and boots
   // a fresh one, which costs a cold create instead of a resume. Local disk is lost;
-  // the S3 workspace mount is not, so the agent's files come back with it. Unset
-  // maxLifetimeSeconds keeps the sandbox until something releases the reservation.
+  // the S3 workspace mount is not, so the agent's files come back with it.
   #outlivedMaxLifetime(claimedAt: number): boolean {
     const { maxLifetimeSeconds } = resolveSandboxLifecycle(
       this.#config.lifecycle,
@@ -434,6 +425,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   //                   per-namespace scoped creds, but a per-call exec env can.
   //  - `declarative`: no role -> declare a boot mount that reads static keys from
   //                   named org secrets (#s3Mounts), for stores without a role.
+  // Both honor an S3-compatible endpoint (R2/MinIO) via `options.s3Endpoint`.
   // Gated on the run's namespace, not `storage`: managed workspaces carry no
   // storage block (their bucket is the managed fallback), same as microvm.
   #s3MountStrategy(request: {
@@ -445,8 +437,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return mountRoleArn(this.#config.storage) ? "exec" : "declarative";
   }
 
-  // Build the resolver context from the workspace storage plus executor option /
-  // env fallbacks. Throws when the workspace namespace is missing.
+  // Throws when the run carries no workspace namespace.
   #s3Context(request: { namespace?: string }): S3MountContext {
     if (!request.namespace) {
       throw new Error(
@@ -758,17 +749,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  // `exec` strategy: mount the bucket via mount-s3 inside the guest, handing it
-  // short-lived credentials (incl. the session token) scoped to the mount prefix as
-  // per-call exec env, never the harness's own broad creds, which any code the
-  // agent runs could read (the daytona model).
+  // `exec` strategy: mount the bucket with mount-s3 in the guest, on short-lived
+  // credentials scoped to the mount prefix and passed as per-call exec env. Never the
+  // harness's own broad creds, which any code the agent runs could read.
   //
   // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
   // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry.
   // mount-s3 only reads them at startup, so rotating means replacing the daemon.
   // Age comes from a stamp written with the harness's clock, not the guest's, which a
-  // Firecracker pause freezes. The stamp lives on agent-writable disk, so it is treated
-  // as untrusted input: anything non-numeric reads as "unknown age" and forces a remount.
+  // Firecracker pause freezes. The stamp sits on agent-writable disk, so anything
+  // non-numeric reads as "unknown age" and forces a remount.
   async #ensureS3Mount(
     sandbox: Sandbox,
     request: { namespace?: string; workspaceRoot?: string },

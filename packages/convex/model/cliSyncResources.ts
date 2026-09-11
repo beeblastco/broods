@@ -649,7 +649,6 @@ export async function syncWorkspaceResources(
   return ids;
 }
 
-/** True when an agent's nested config lists other agents in `subagent.allowed`. */
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
   const subagent = nested.subagent;
 

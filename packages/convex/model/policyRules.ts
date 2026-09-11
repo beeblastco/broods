@@ -67,9 +67,6 @@ export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
 
 export type PolicyAction = AgentPolicyAction | ApiPolicyAction;
 
-/**
- * One optional predicate on a policy rule.
- */
 export interface PolicyCondition {
   attribute: string;
   operator: PolicyConditionOperator;
@@ -96,9 +93,6 @@ export interface PolicyDocument {
 
 export type PolicyEffect = "allow" | "deny";
 
-/**
- * Resource selector fields supported by policy rules.
- */
 export interface PolicyResourceSelector {
   toolNames?: string[];
   /** MCP registration ids, for scoping tool.call rules per server (#331). */
@@ -112,9 +106,6 @@ export interface PolicyResourceSelector {
   resourceIds?: string[];
 }
 
-/**
- * One allow/deny rule inside a policy document.
- */
 export interface PolicyRule {
   id: string;
   effect: PolicyEffect;

@@ -1,16 +1,10 @@
 /**
  * Inbound audio, read as words.
  *
- * Audio is transcribed once at ingest and the words travel as text, which every
- * model reads and no provider refuses on media type. The model comes from the
- * account's own provider settings, so this costs no extra configuration, and
- * `config.model.transcriptionModelId` picks a different one.
- *
- * A failure is never the end of it. Which failure it was decides what the agent
- * is told to do next, because the three are not the same problem: a busy
- * provider is worth reading the file again for, a refused container is worth
- * handing to the agent with the file, and an account with no speech-to-text is
- * worth asking the sender about instead of burning a turn discovering that.
+ * Audio is transcribed once at ingest and travels as text, which every model
+ * reads and no provider refuses on media type. The model comes from the
+ * account's own provider settings; `config.model.transcriptionModelId` picks a
+ * different one.
  */
 
 import { APICallError } from "@ai-sdk/provider";
@@ -21,21 +15,17 @@ import { logWarn } from "../shared/log.ts";
 import { resolveTranscriptionModel } from "./provider.ts";
 
 /**
- * How patient each caller can afford to be.
- *
- * Ingest runs before the agent has said anything, so a provider having a bad
- * minute must not hold the first reply for the length of a backoff. It fails
- * fast and the note tells the agent to read the file, which is the same call
- * made later and off the critical path. By then the agent is waiting on a tool
- * result and a couple of retries are cheaper than another round trip.
+ * How patient each caller can afford to be. Ingest runs before the agent has
+ * said anything, so a provider having a bad minute must not hold the first reply
+ * for the length of a backoff; it fails fast and the note tells the agent to read
+ * the file, off the critical path, where retries are cheaper than a round trip.
  */
 export const TRANSCRIPTION_RETRIES = { ingest: 0, tool: 2 } as const;
 
 /**
  * Ceiling on one speech-to-text call. `maxRetries` bounds attempts, not a socket
- * that never answers, and ingest runs before the agent has said anything. Set
- * above what a long recording legitimately needs, since the point is to end a
- * hang rather than to cut work short.
+ * that never answers. Set above what a long recording legitimately needs: the
+ * point is to end a hang, not to cut work short.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 60_000;
 
@@ -102,9 +92,6 @@ export async function transcribeWithModel(
   }
 }
 
-// A 400 is the provider reading the file and refusing it, which is the agent's
-// to work with because it holds the file. Anything else it names, a rejected key
-// or a model that is not there, is about the account, not the recording.
 /**
  * The one next step that can work, for a failure that has one. Keyed by recovery
  * so a new kind is a build error rather than the mildest wording by default.
@@ -122,6 +109,9 @@ export function transcriptAdvice(
   return advice[recovery];
 }
 
+// A 400 is the provider reading the file and refusing it, which is the agent's
+// to work with because it holds the file. Anything else it names, a rejected key
+// or a model that is not there, is about the account, not the recording.
 function recoveryFor(error: unknown): TranscriptRecovery {
   if (!APICallError.isInstance(error)) {
     return "unavailable";

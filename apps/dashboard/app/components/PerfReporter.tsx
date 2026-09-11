@@ -19,7 +19,7 @@ type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
 
 // Hoisted so the callback identity never changes. A new function would make
 // useReportWebVitals replay every metric collected so far.
-function reportWebVital(metric: WebVitalsMetric) {
+function reportWebVital(metric: WebVitalsMetric): void {
   reportPerf(`web-vital.${metric.name}`, metric.value, {
     unit: metric.name === "CLS" ? "score" : "ms",
     attributes: {

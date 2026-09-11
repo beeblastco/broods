@@ -26,7 +26,7 @@ export const getById = internalQuery({
     serverId: v.string(),
   },
   returns: v.union(mcpDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"mcp"> | null> => {
     const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
@@ -40,7 +40,7 @@ export const getById = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(mcpDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
     return await ctx.db
       .query("mcp")
       .withIndex("by_accountId_and_status", (q) =>
@@ -53,7 +53,7 @@ export const list = internalQuery({
 export const listForStage = internalQuery({
   args: { stageId: v.id("stages") },
   returns: v.array(mcpDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
     return await ctx.db
       .query("mcp")
       .withIndex("by_stageId_and_status", (q) =>
@@ -78,7 +78,10 @@ export const resolveScope = internalQuery({
     }),
     v.null(),
   ),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) return null;
     const resolved = await resolveProjectStage(
@@ -115,7 +118,7 @@ export const create = internalMutation({
     sourceCode: v.optional(v.string()),
   },
   returns: v.id("mcp"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"mcp">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -179,7 +182,7 @@ export const remove = internalMutation({
     serverId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
       throw new Error("MCP server does not belong to the supplied accountId");
@@ -219,7 +222,7 @@ export const update = internalMutation({
     sourceCode: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
       throw new Error("MCP server does not belong to the supplied accountId");
@@ -302,7 +305,6 @@ function updatePatch(
   };
 }
 
-/** Throw when an active server already claims `name` on this stage. */
 async function requireNameFree(
   ctx: MutationCtx,
   stageId: Id<"stages">,

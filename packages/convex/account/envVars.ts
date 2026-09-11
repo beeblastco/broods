@@ -23,7 +23,10 @@ import {
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Array<{ name: string; updatedAt: number }>> => {
     const rows = await ctx.db
       .query("accountEnvVars")
       .withIndex("by_accountId_and_name", (q) =>
@@ -39,7 +42,7 @@ export const list = internalQuery({
 export const loadValues = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.record(v.string(), v.string()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Record<string, string>> => {
     return await loadValuesForAccount(ctx, args.accountId);
   },
 });
@@ -48,7 +51,7 @@ export const loadValues = internalQuery({
 export const set = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string(), value: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const secret = encryptionSecret();
     const existing = await ctx.db
       .query("accountEnvVars")
@@ -88,7 +91,7 @@ export const set = internalMutation({
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), name: v.string() },
   returns: v.boolean(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const existing = await ctx.db
       .query("accountEnvVars")
       .withIndex("by_accountId_and_name", (q) =>
@@ -104,7 +107,6 @@ export const remove = internalMutation({
   },
 });
 
-/** Read the shared AES-GCM secret used by config and environment blobs. */
 function encryptionSecret(): string {
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
   if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required");

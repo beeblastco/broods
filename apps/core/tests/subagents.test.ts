@@ -1,8 +1,3 @@
-/**
- * Subagent coordinator tests.
- * Cover parent-result batching without running provider models.
- */
-
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";

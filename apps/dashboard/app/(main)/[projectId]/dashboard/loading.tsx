@@ -1,4 +1,3 @@
-/** Skeleton shown while the dashboard page chunk and data load. */
 import { SidebarPageSkeleton } from "@/app/components/SidebarPageSkeleton";
 
 export default function DashboardLoading(): React.JSX.Element {

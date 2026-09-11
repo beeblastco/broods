@@ -1,4 +1,3 @@
-/** Side-panel section heading. Small caps, muted, matches Agent DetailsTab. */
 export function SectionHeader({
   children,
 }: {

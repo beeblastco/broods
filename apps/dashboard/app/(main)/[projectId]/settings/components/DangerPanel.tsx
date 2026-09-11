@@ -1,6 +1,5 @@
 "use client";
 
-/** Danger panel: delete the active stage or the entire project, each behind a typed confirmation. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -13,9 +12,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 interface Props {
-  /** Project to delete. */
   projectId: Id<"projects">;
-  /** Active stage that the stage-scoped delete acts on, or null. */
   stageId: Id<"stages"> | null;
 }
 
@@ -44,7 +41,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
   const defaultStage = stages?.find((stage) => stage.isDefault) ?? null;
   const canDeleteStage = Boolean(activeStage && !activeStage.isDefault);
 
-  async function handleDeleteProject() {
+  async function handleDeleteProject(): Promise<void> {
     setIsDeletingProject(true);
     setProjectDeleteError(null);
     try {
@@ -59,7 +56,7 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
     }
   }
 
-  async function handleDeleteStage() {
+  async function handleDeleteStage(): Promise<void> {
     if (!activeStage) return;
     setIsDeletingStage(true);
     setStageDeleteError(null);

@@ -299,9 +299,7 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-/**
- * Handle scheduled cron jobs dispatched by the Convex crons component.
- */
+/** Handle scheduled cron jobs dispatched by the Convex crons component. */
 async function handleScheduledCron(event: CronInvocation): Promise<void> {
   const crons = getStorage().crons;
   const job = await crons.getById(event.accountId, event.cronId);
@@ -623,9 +621,6 @@ async function settleChannelQuestion(
   return true;
 }
 
-/**
- * Handle a direct SSE request.
- */
 async function handleDirectRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
@@ -750,10 +745,7 @@ async function handleDirectRequest(
   }
 }
 
-/**
- * Handle a direct async request.
- * Return a 202 Accepted response and trigger an in-process async worker.
- */
+/** Answer a direct async request with 202 and hand it to an in-process worker. */
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
@@ -821,10 +813,7 @@ async function handleAsyncRequest(
   return acceptedAsyncResponse(event.statusUrl, event, "processing");
 }
 
-/**
- * Handle an in-process async worker request.
- * Publish the final result into storage.
- */
+/** Run an in-process async worker request and publish its final result to storage. */
 async function handleAsyncWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
@@ -1012,10 +1001,7 @@ async function handleAsyncWorkerRequest(
   }
 }
 
-/**
- * Handle an in-process NATS worker request.
- * Publish the streaming event to NATS subject.
- */
+/** Run an in-process NATS worker request, publishing stream parts to its subject. */
 async function handleNatsWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
@@ -1105,9 +1091,8 @@ async function handleNatsWorkerRequest(
             .catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
-          // The event also sends additional tool-approval-request so that the websocket gateway can easily
-          // extract this data and do sth with it.
-          // This is intentional (the user will receive the tool-approval-request event separately)
+          // Sent as its own event, on top of the stream part, so the WebSocket
+          // gateway can pick the approvals out without parsing the stream.
           fencedPublisher
             .publish({ type: "tool-approval-request", approvals: approvals })
             .catch(() => {});
@@ -1184,10 +1169,7 @@ async function handleNatsWorkerRequest(
   }
 }
 
-/**
- * Handle an integration channel webhook request.
- * Publish the final result back to the channel integration sendText() function.
- */
+/** Run a channel webhook request and reply through that channel's ChannelActions. */
 async function handleChannelRequest(
   event: ChannelInboundEvent,
   context?: RequestContext,
@@ -1582,9 +1564,6 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
   });
 }
 
-/**
- * Handle a status request.
- */
 async function handleStatusRequest(
   event: StatusInboundEvent,
 ): Promise<Response> {
@@ -1851,10 +1830,6 @@ async function pushReplyToChannel(
   }
 }
 
-/**
- * Dispatches an in-process harness worker for a direct API async request.
- * Used for background processing of non-streaming requests.
- */
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker({
     kind: "direct-api-async-worker",
@@ -1862,10 +1837,7 @@ async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   } satisfies AsyncWorkerInvocation);
 }
 
-/**
- * Invokes the appropriate worker (NATS or async) to continue processing after async tool completion.
- * Routes to NATS worker if the original request was a WebSocket connection, otherwise uses async worker.
- */
+/** Continues an async-tool completion on the worker its original request came in on. */
 async function invokeAsyncToolContinuationWorker(
   event: DirectInboundEvent,
   settled: AsyncToolResultRecord,
@@ -1884,10 +1856,6 @@ async function invokeAsyncToolContinuationWorker(
   await invokeAsyncWorker(event);
 }
 
-/**
- * Dispatches an in-process harness worker for NATS-based WebSocket streaming.
- * Used for real-time streaming responses to connected clients.
- */
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker({
     kind: "nats-worker",
@@ -2073,7 +2041,6 @@ async function dispatchSessionMessage(
   };
 }
 
-/** Durably admits an internally generated continuation before scheduling it. */
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
@@ -2133,10 +2100,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   };
 }
 
-/**
- * Dispatch a worker payload as fire-and-forget in-process background work. The
- * async fan-out runs in this process, not via a Lambda self-invoke.
- */
+/** Fire-and-forget background work; the fan-out runs in-process, not via a Lambda self-invoke. */
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
@@ -2174,11 +2138,9 @@ export function dispatchInProcessWorker(
       });
     },
   );
-  // Reclaim the slot when the worker finishes OR overruns its deadline. Unlike
-  // Lambda, nothing here kills a hung model stream/tool, so without this a few
-  // stuck workers would pin every slot and wedge async processing for all
-  // tenants on the pod. An overrun leaves the underlying work running but frees
-  // the slot (and unblocks shutdown drain).
+  // Nothing here kills a hung model stream or tool the way Lambda does, so a few
+  // stuck workers would otherwise pin every slot for every tenant on the pod. An
+  // overrun frees the slot but leaves the underlying work running.
   let slotTimer: ReturnType<typeof setTimeout> | undefined;
   const guarded = Promise.race([
     execution,
@@ -2732,13 +2694,10 @@ async function runParentContinuationLoop(options: {
       };
     }
     if (stream.didFail()) {
-      // A failed parent pass may have already dispatched subagents in an earlier
-      // step that are still running in the background. Wait for them to settle
-      // before returning so each child finalizes, publishing AND flushing its
-      // terminal span. Otherwise the abandoned children spin "running" forever in
-      // the dashboard: their running span was stored durably, but the request or
-      // worker returned before the terminal one was ever flushed. Bounded by the
-      // same deadline budget as the success path.
+      // Subagents dispatched by an earlier step may still be running. Returning
+      // now leaves them spinning "running" forever in the dashboard: the running
+      // span is durable, the terminal one never gets flushed. Bounded by the same
+      // deadline budget as the success path.
       if (options.subagentCoordinator.pendingCount > 0) {
         await options.subagentCoordinator.waitForIdle({
           onHeartbeat: options.onHeartbeat,
@@ -2757,7 +2716,6 @@ async function runParentContinuationLoop(options: {
       };
     }
 
-    // Wait for any injected subagents or internal async tools to complete.
     const injected = await waitAndDrainAsyncWork(
       options.subagentCoordinator,
       options.asyncToolCoordinator,
@@ -2795,14 +2753,11 @@ async function runParentContinuationLoop(options: {
 }
 
 /**
- * Bridges one completed parent model pass to the next continuation pass.
- *
- * After the parent stream ends, subagent and async-tool results may already be
- * queued, still be running, or be absent. This helper waits for outstanding
- * in-process work, emits wait heartbeats while waiting, and injects
+ * Bridges one completed parent model pass to the next continuation pass: waits
+ * for outstanding in-process work, heartbeats while waiting, and injects
  * parent-visible completions plus timeout notices near the request or worker
  * deadline. Detached sandbox background jobs add no in-memory pending work, so
- * waiting here only holds the request or worker for subagents and async tools.
+ * waiting here only holds the caller for subagents and async tools.
  */
 async function waitAndDrainAsyncWork(
   subagentCoordinator: SubagentCoordinator,

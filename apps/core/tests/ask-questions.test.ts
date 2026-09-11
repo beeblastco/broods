@@ -1,9 +1,3 @@
-/**
- * ask_questions tests.
- * Cover the row the tool leaves behind, how the prompt reaches a channel, and
- * how a typed reply, a button click or an expired prompt resolves against it.
- */
-
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";

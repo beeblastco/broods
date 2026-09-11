@@ -17,10 +17,7 @@ import {
 import { toPublicAgentPolicyResponse } from "../../model/responses";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
-/**
- * Agent policy CRUD: list/create on the collection, get/patch/delete by id.
- * Mirrors core's former handlePolicyRoute contract.
- */
+/** Mirrors core's former handlePolicyRoute contract. */
 export async function handlePolicyConfigRoute(
   ctx: ActionCtx,
   req: Request,

@@ -1,11 +1,11 @@
 /**
- * Core server helper tests.
  * server.ts is a flat Bun.serve script; its logic lives in exported pure
  * helpers: CoreRequest synthesis, path routing, and waitUntil draining. These
  * tests cover them without starting a server.
  */
 
 import { describe, expect, it } from "bun:test";
+import type { CoreRequest } from "../src/shared/http.ts";
 import {
   drainInFlight,
   routesToAccountManage,
@@ -21,7 +21,7 @@ async function buildCoreRequest(
     body?: string;
   },
   socketAddress?: string,
-) {
+): Promise<CoreRequest> {
   const url = new URL(input.url ?? "http://127.0.0.1/");
   const request = new Request(url.toString(), {
     method: input.method ?? "GET",

@@ -1,7 +1,7 @@
 /**
- * Core-owned Workdir port for the runtime-unwired AI SDK Harness adapter.
- * Provider selection and reservations stay in the existing sandbox executor;
- * live HarnessAgent selection belongs in the later run-loop integration.
+ * Core-owned Workdir driver for the AI SDK Harness sandbox adapter.
+ * Reservation ownership stays in WorkdirSandboxExecutor; an exposed port is a
+ * workdir preview URL, so a config with no API key cannot publish one at all.
  */
 
 import { Buffer } from "node:buffer";

@@ -6,7 +6,6 @@
 export const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 
 /**
- * Generate a one-time account secret with the public account prefix.
  * @returns plaintext secret to show once to the caller
  */
 export function createAccountSecret(): string {
@@ -46,7 +45,6 @@ export async function sha256Hex(value: string): Promise<string> {
 }
 
 /**
- * Encode bytes as lowercase hex.
  * @param bytes bytes to encode
  * @returns lowercase hex string
  */

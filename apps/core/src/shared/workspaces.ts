@@ -3,8 +3,8 @@
  *
  * Agents reference standalone, account-scoped sandbox / workspace records by id.
  * This module resolves those references into concrete runtime configs and derives
- * the filesystem namespace for each workspace. The namespace is scoped by
- * `accountId:workspaceId` (NOT agent/conversation), so agents that share a
+ * each workspace's filesystem namespace. The namespace is scoped by
+ * `accountId:workspaceId`, NOT agent or conversation, so agents that share a
  * workspaceId read and write the SAME files.
  */
 
@@ -132,7 +132,6 @@ export function pinnedSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
 }
 
-/** Derive the shared filesystem namespace for a workspace record. */
 export function workspaceNamespace(
   accountId: string | undefined,
   workspaceId: string,

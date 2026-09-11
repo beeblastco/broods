@@ -23,7 +23,7 @@ import { USAGE_GRAIN_MS, foldRollupBucket } from "./usage";
 export const backfillUsageRollupGrains = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ patched: v.number(), isDone: v.boolean() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
     const page = await ctx.db
       .query("usageRollups")
       .paginate({ numItems: 100, cursor: args.cursor ?? null });
@@ -89,7 +89,10 @@ export const migrateCronsToConvexScheduler = internalMutation({
     skipped: v.number(),
     isDone: v.boolean(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ registered: number; skipped: number; isDone: boolean }> => {
     const page = await ctx.db
       .query("crons")
       .paginate({ numItems: 50, cursor: args.cursor ?? null });

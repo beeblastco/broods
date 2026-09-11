@@ -4,7 +4,7 @@
  * plus bounded terminal commands here. Each action proxies to broods's account-
  * manage service endpoint with the shared service-auth secret; broods owns the
  * provider credentials + lifecycle and writes the resulting status back into Convex.
- * Mirrors `cronPublic.ts`.
+ * Mirrors `agent/cronsPublic.ts`.
  */
 
 import { v } from "convex/values";
@@ -13,7 +13,6 @@ import { api, internal } from "../_generated/api";
 import { authKit } from "../auth";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 
-/** Captures a reusable snapshot/image from a running sandbox instance. */
 export const createSnapshot = action({
   args: {
     sandboxId: v.id("sandboxConfigs"),
@@ -21,7 +20,7 @@ export const createSnapshot = action({
     name: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", {
       name: args.name,
     });
@@ -42,7 +41,10 @@ export const openTerminal = action({
     expiresAt: v.number(),
     websocketPath: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ token: string; expiresAt: number; websocketPath: string }> => {
     const result = await callLifecycle(
       ctx,
       args.sandboxId,
@@ -69,29 +71,26 @@ export const openTerminal = action({
   },
 });
 
-/** Refreshes the mirrored instance state from the provider control plane. */
 export const refreshSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
 
     return null;
   },
 });
 
-/** Resumes a suspended sandbox instance. */
 export const resumeSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await callLifecycle(ctx, args.sandboxId, args.reservationKey, "resume");
 
     return null;
   },
 });
 
-/** Runs one bounded shell command against a reserved sandbox instance. */
 export const runSandboxCommand = action({
   args: {
     sandboxId: v.id("sandboxConfigs"),
@@ -108,7 +107,19 @@ export const runSandboxCommand = action({
     truncated: v.boolean(),
     provider: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    ok: boolean;
+    runtime: string;
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    durationMs: number;
+    truncated: boolean;
+    provider: string;
+  }> => {
     const result = await callLifecycle(
       ctx,
       args.sandboxId,
@@ -147,7 +158,7 @@ export const runSandboxCommand = action({
 export const suspendSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await markInstance(ctx, args.reservationKey, "suspending");
     try {
       await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
@@ -164,7 +175,7 @@ export const suspendSandbox = action({
 export const terminateSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminate");
 
     return null;
@@ -196,7 +207,7 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
  * @param ctx the action context.
  * @param sandboxId the sandbox config the instance belongs to.
  * @param reservationKey the broods reconnection key identifying the instance.
- * @param op the lifecycle verb (suspend|resume|terminate).
+ * @param op the lifecycle verb (suspend|resume|terminate|snapshot|refresh|exec|terminal).
  * @throws when no account resolves or broods returns a non-2xx response.
  */
 async function callLifecycle(

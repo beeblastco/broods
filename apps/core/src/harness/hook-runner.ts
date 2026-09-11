@@ -2,10 +2,10 @@
  * User code hook execution.
  * Loads an uploaded accountHooks bundle, runs the handler for a fired event in
  * the V8 isolate pool, and returns the validated, field-scoped mutation the
- * caller folds into harness state. Hooks
- * are non-fatal: a throw/timeout logs and yields no mutation so the agent run is
- * never broken. Fire-point wiring lives in harness.ts / integrations.ts; this
- * file owns only "run one hook, sanitize its return".
+ * caller folds into harness state. Hooks are non-fatal: a throw or timeout logs
+ * and yields no mutation, so the agent run is never broken. Fire-point wiring
+ * lives in harness.ts / integrations.ts; this file owns only "run one hook,
+ * sanitize its return".
  */
 
 import type { JSONValue } from "ai";

@@ -22,16 +22,12 @@ export function setSkillsBearerToken(token: string): void {
   if (!canUseSessionStorage()) return;
   try {
     window.sessionStorage.setItem(STORAGE_KEY, token);
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 export function clearSkillsBearerToken(): void {
   if (!canUseSessionStorage()) return;
   try {
     window.sessionStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // ignore
-  }
+  } catch {}
 }

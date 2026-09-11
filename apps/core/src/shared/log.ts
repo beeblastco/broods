@@ -168,7 +168,6 @@ export function redact(
   return out;
 }
 
-/** Collect sensitive values from decrypted account/agent configuration. */
 export function collectSecretValues(value: unknown): string[] {
   const secrets = new Set<string>();
 
@@ -274,7 +273,6 @@ function emit(
   const service = process.env.SERVICE_NAME ?? "broods-core";
   const secretValues = [...sensitiveEnvValues(), ...(ctx?.secretValues ?? [])];
 
-  // Build the full structured entry, then redact the message and data payload.
   const redactedMessage = redactString(message, secretValues);
   const redactedData = data
     ? (redact(data, secretValues) as Record<string, unknown>)
@@ -295,13 +293,10 @@ function emit(
       : {}),
   };
 
-  // 1. stdout: always, unmodified entry
   process.stdout.write(JSON.stringify(entry) + "\n");
 
-  // 2. OTLP: best-effort; emitOtelLog never throws
   emitOtelLog(level, entry);
 
-  // 3. NATS: INFO/WARN/ERROR only, context must be set
   if (level !== "DEBUG" && ctx) {
     const obsEntry: ObservabilityLogEntry = {
       ts: ts,

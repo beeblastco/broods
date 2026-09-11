@@ -5,6 +5,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
 import {
   encryptAgentConfigBlob,
@@ -39,7 +40,7 @@ export const getById = internalQuery({
     agentId: v.string(),
   },
   returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
     const normalized = ctx.db.normalizeId("agents", args.agentId);
     if (!normalized) return null;
     const agent = await ctx.db.get(normalized);
@@ -54,7 +55,7 @@ export const getById = internalQuery({
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(agentDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
     return await ctx.db
       .query("agents")
       .withIndex("by_accountId_and_name", (q) =>
@@ -72,7 +73,7 @@ export const listForEndpoint = internalQuery({
     endpointId: v.string(),
   },
   returns: v.array(agentDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
     const deployment = await ctx.db
       .query("agentDeployments")
       .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
@@ -106,7 +107,7 @@ export const getByName = internalQuery({
     name: v.string(),
   },
   returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
     return await ctx.db
       .query("agents")
       .withIndex("by_accountId_and_name", (q) =>
@@ -129,7 +130,7 @@ export const create = internalMutation({
     sourceEncryptionTag: v.optional(v.string()),
   },
   returns: v.id("agents"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agents">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
@@ -183,7 +184,7 @@ export const create = internalMutation({
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(agentDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -217,7 +218,7 @@ export const update = internalMutation({
     clearSourceConfig: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const { accountId, agentId, clearSourceConfig, ...patch } = args;
     const normalized = ctx.db.normalizeId("agents", agentId);
     if (!normalized) {
@@ -296,7 +297,7 @@ export const seedEncryptedConfigForTest = internalMutation({
     ),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET not set");
     const normalized = ctx.db.normalizeId("agents", args.agentId);
@@ -329,7 +330,7 @@ export const remove = internalMutation({
     agentId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agents", args.agentId);
     if (!normalized) {
       throw new Error("Agent does not belong to the supplied accountId");
@@ -385,7 +386,7 @@ export const remove = internalMutation({
       await ctx.db.delete(linkedConfig._id);
 
       // Recompute the API-managed wiring so workspace/sandbox/skill nodes
-      // no remaining API agent references disappear with their agent.
+      // with no remaining API agent references disappear with their agent.
       if (linkedConfig.projectId && linkedConfig.stageId) {
         await syncApiAgentCanvasWiring(ctx, {
           projectId: linkedConfig.projectId,

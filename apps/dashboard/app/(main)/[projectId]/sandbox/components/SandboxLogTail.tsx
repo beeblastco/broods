@@ -1,11 +1,10 @@
 "use client";
 
 /**
- * Live tail of one sandbox instance's guest output: what the MicroVM wrote to
- * stdout/stderr, shipped through the CloudWatch-to-Loki bridge. Subscribes to the
- * gateway observability WS with the instance's sandbox id, so the gateway polls
- * Loki for this instance alone. Lines land a few seconds after the guest writes
- * them; that latency is the bridge, not the tab.
+ * Guest stdout/stderr for one MicroVM, shipped through the CloudWatch-to-Loki
+ * bridge. Subscribing with the instance's sandbox id makes the gateway poll
+ * Loki for this instance alone. Lines land a few seconds late; that is the
+ * bridge, not the tab.
  */
 
 import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
@@ -29,7 +28,7 @@ export type SandboxLogId = string & { readonly __brand: "sandboxLogId" };
 export interface SandboxObservabilityScope {
   projectSlug: string;
   stageSlug: string;
-  /** The stage runtime key, or undefined while it has none. */
+  /** The stage runtime key. */
   apiKey: string | undefined;
 }
 

@@ -44,7 +44,7 @@ export default function loadSkillTool(
         required: ["path"],
         additionalProperties: false,
       } as const),
-      execute: async function (input) {
+      execute: async function (input): Promise<string> {
         const skillPath = (input as { path?: unknown }).path;
         const resources = (input as { resources?: unknown }).resources;
         if (typeof skillPath !== "string") {

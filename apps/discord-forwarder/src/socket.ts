@@ -103,15 +103,11 @@ export class GatewaySocket {
 
   private dial(): void {
     if (this.state === "stopped") return;
-    // `resumeUrl` only ever holds a value this same function already rebuilt, so
-    // this second pass cannot change it at runtime. It stays because the URL
-    // decides where the RESUME frame's bot token goes, and one regex per dial
-    // proves that at the point of use, by eye and to the taint analyzer, instead
-    // of resting on every assignment to the field staying clean.
-    //
-    // A session whose URL does not survive the rebuild is no session, which is
-    // what makes one nullable value enough to decide both whether to reserve an
-    // IDENTIFY and whether to send RESUME.
+    // Rebuilt again even though the field already holds a rebuilt value: the
+    // RESUME frame carries the bot token, so the host is re-proved at the point
+    // of use rather than resting on every assignment staying clean. A session
+    // whose URL fails the rebuild is no session, so one nullable decides both
+    // whether to reserve an IDENTIFY and whether to send RESUME.
     const resumeUrl =
       this.sessionId && this.resumeUrl
         ? resumeGatewayUrl(this.resumeUrl)
@@ -143,12 +139,10 @@ export class GatewaySocket {
     // An error is always followed by a close, so let the close handler decide.
     socket.addEventListener("error", (): void => socket.close());
 
-    // Every other timer in this class is armed by an event that has to arrive
-    // first: the heartbeat by HELLO, the reconnect by a close. So a socket that
-    // opens and then goes silent, with no HELLO or a READY this code cannot
-    // read, holds no timer at all and stays half-open for the life of the process,
-    // with that bot quietly answering nothing. This is the one timer that does
-    // not wait to be invited.
+    // Every other timer here is armed by an event that must arrive first, the
+    // heartbeat by HELLO and the reconnect by a close. A socket that opens and
+    // then goes silent holds no timer at all, so it would stay half-open for the
+    // life of the process.
     this.connectTimer = setTimeout((): void => {
       if (this.socket !== socket) return;
       logWarn("Discord gateway never became ready, reconnecting", {

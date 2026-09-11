@@ -24,10 +24,7 @@ import {
   writeAudit,
 } from "./shared";
 
-/**
- * Workspace config CRUD: list/create on the collection, get/patch/delete by id.
- * Mirrors core's former handleWorkspaceRoute contract.
- */
+/** Mirrors core's former handleWorkspaceRoute contract. */
 export async function handleWorkspaceConfigRoute(
   ctx: ActionCtx,
   req: Request,

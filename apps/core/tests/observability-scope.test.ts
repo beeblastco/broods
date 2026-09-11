@@ -1,5 +1,4 @@
 /**
- * Observability-scope isolation tests.
  * The self-hosted container serves many tenants concurrently in one process, so
  * the per-request observability context (log-redaction secrets + NATS routing
  * tags) must not leak across concurrent requests. Verifies runWithObservabilityScope
@@ -37,7 +36,7 @@ describe("observability scope isolation", () => {
   it("keeps concurrent scopes from clobbering each other's context", async () => {
     const seen: Record<string, string | undefined> = {};
 
-    const tenant = (id: string) =>
+    const tenant = (id: string): Promise<void> =>
       runWithObservabilityScope(async () => {
         setObservabilityContext(ctx(id));
         // Yield repeatedly so the two tenants interleave on the event loop; a
@@ -54,7 +53,7 @@ describe("observability scope isolation", () => {
 
   it("isolates secretValues used for redaction across concurrent scopes", async () => {
     const captured: Record<string, readonly string[] | undefined> = {};
-    const tenant = (id: string) =>
+    const tenant = (id: string): Promise<void> =>
       runWithObservabilityScope(async () => {
         setObservabilityContext(ctx(id));
         await Promise.resolve();

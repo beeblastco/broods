@@ -110,10 +110,7 @@ export async function handleAgentChannelDirectoryRoute(
   return json({ channels: directory.channels, truncated: directory.truncated });
 }
 
-/**
- * Agent CRUD: list/create on the collection, get/patch/delete by id.
- * Mirrors core's former handleAgentRoute contract.
- */
+/** Mirrors core's former handleAgentRoute contract. */
 export async function handleAgentConfigRoute(
   ctx: ActionCtx,
   req: Request,
@@ -226,7 +223,6 @@ async function encryptAgentConfig(
   return await encryptAgentConfigBlob(config, configEncryptionSecret());
 }
 
-/** Collection verbs: list agents on GET, create (with name-collision 409) on POST. */
 async function handleAgentCollectionRoute(
   ctx: ActionCtx,
   req: Request,
@@ -326,7 +322,6 @@ async function handleAgentCollectionRoute(
   return methodNotAllowed(["GET", "POST"]);
 }
 
-/** PATCH one agent: merge config, re-encrypt, and persist with a 409 on name collision. */
 async function patchAgentConfigRoute(
   ctx: ActionCtx,
   req: Request,
@@ -415,7 +410,6 @@ async function patchAgentConfigRoute(
     : json({ error: "Agent not found" }, 404);
 }
 
-/** Resolve valid account env references on a normalized config, rejecting missing names on writes. */
 async function prepareAccountAgentConfig(
   ctx: ActionCtx,
   accountId: Id<"accounts">,

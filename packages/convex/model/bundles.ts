@@ -15,7 +15,6 @@ const BUNDLE_CONTENT_TYPE = "application/javascript";
 
 type PutBundleAction = typeof internal.aws.bundles.putHookBundle;
 
-/** Stores a code hook bundle in S3 and returns its object key. */
 export async function putHookBundle(
   ctx: ActionCtx,
   options: { accountId: Id<"accounts">; sha256: string; bundle: string },
@@ -67,8 +66,6 @@ export async function storeMcpBundle(
   }
 }
 
-// Couriers the bytes through Convex storage, runs the S3 writer action, and
-// always deletes the blob, pass or fail.
 async function putBundle(
   ctx: ActionCtx,
   action: PutBundleAction,

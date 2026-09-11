@@ -5,7 +5,6 @@ import { appOrigin } from "@/app/lib/authConfig";
 const RETRY_COOKIE_NAME = "wos-callback-retry";
 
 /**
- * Exchanges the WorkOS OAuth code for a session and redirects to the app.
  * On callback failure (e.g. expired PKCE cookie) restarts the sign-in flow
  * once, guarded by a one-shot cookie so a broken setup cannot redirect-loop.
  * @returns Redirect response after successful authentication

@@ -1,7 +1,3 @@
-/**
- * AI SDK Harness session composition over Broods durability.
- */
-
 import { describe, expect, it, mock } from "bun:test";
 import {
   openAiSdkHarnessSession,

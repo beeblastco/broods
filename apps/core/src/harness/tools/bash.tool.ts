@@ -138,8 +138,6 @@ Usage notes:
 - Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxTargetNote(context)}${backgroundNote(context)}`;
 }
 
-// Detached jobs need a reserved sandbox, so this rides alongside the two reserved
-// notes rather than repeating inside each of them.
 function backgroundNote(context: SandboxToolContext): string {
   if (!backgroundAvailable(context)) {
     return "";
@@ -238,7 +236,7 @@ async function dispatchBackground(
   _sandbox: SandboxExecutorConfig,
   command: string,
   toolCallId: string,
-) {
+): Promise<string> {
   if (!ws || ws.sandbox?.persistent !== true) {
     return toolError(
       "Error: background jobs require a persistent workspace sandbox",
@@ -338,7 +336,8 @@ async function dispatchBackground(
     : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
 
   return toolText(
-    // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
+    // statusId is the model-facing name; the stored row keeps resultId, like every
+    // other async tool result.
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
       controls,
   );

@@ -1,11 +1,5 @@
-/**
- * Sandbox tool tests.
- * Cover the Claude-Code-style tool set (bash/read/write/edit/glob/grep): the
- * sandbox-backed path compiling to bash on the AWS Lambda MicroVM sandbox, the
- * read-only mount default, and the S3-direct opt-out path.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { ToolApprovalStatus } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -30,7 +24,10 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
       return {};
   }
 });
-const microvmFetchResponse = async (_url: string, init: { body: string }) => {
+const microvmFetchResponse = async (
+  _url: string,
+  init: { body: string },
+): Promise<Response> => {
   const payload = JSON.parse(init.body);
 
   return new Response(
@@ -265,7 +262,7 @@ async function approvalStatus(
     agentSandbox?: unknown;
     agentSandboxPermissionMode?: unknown;
   },
-) {
+): Promise<ToolApprovalStatus> {
   const { compatibilityApprovalStatus } =
     await import("../src/harness/policy.ts");
 
@@ -309,7 +306,11 @@ function microvmCommandsOfType(type: string): unknown[] {
 async function tool(
   name: "bash" | "read" | "write" | "edit" | "glob" | "grep",
   ctx: never,
-) {
+): Promise<{
+  description: string;
+  inputSchema: unknown;
+  execute(input: Record<string, unknown>): Promise<string>;
+}> {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
 
   return mod.default(ctx)[name.replace("-", "_")] as {
@@ -996,7 +997,11 @@ describe("memory tool", () => {
   // Slack conversation: originSessionId must be the channel scope (thread ts dropped).
   const conversationKey = "acct:a1:agent:ag1:slack:T123:C456:1784216136.381309";
 
-  async function memorySave(ctx: Record<string, unknown>) {
+  async function memorySave(ctx: Record<string, unknown>): Promise<{
+    execute(
+      input: Record<string, unknown>,
+    ): Promise<{ type: string; value: string }>;
+  }> {
     const mod = await import("../src/harness/tools/memory.tool.ts");
 
     return mod.default({ ...ctx, conversationKey: conversationKey } as never)

@@ -27,7 +27,6 @@ export interface ApiPrincipal extends RolePrincipal {
   kind: "role";
 }
 
-/** The config-plane resource a request addresses. */
 export interface ApiResource {
   type: ApiResourceType;
   id?: string;
@@ -105,7 +104,6 @@ export function roleDenial(
   return decision.allow ? null : `Role is not allowed to ${action}`;
 }
 
-/** Project a stored role identity into the `authorize()` principal shape. */
 export function rolePrincipal(role: RolePrincipal): ApiPrincipal {
   return {
     kind: "role",

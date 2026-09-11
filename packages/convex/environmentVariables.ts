@@ -43,7 +43,10 @@ const environmentVariableDoc = v.object({
 export const list = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(environmentVariableDoc),
-  handler: async (ctx, { projectId, stageId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId },
+  ): Promise<ReturnType<typeof maskEnvironmentVariable>[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -71,7 +74,7 @@ export const list = query({
 export const remove = mutation({
   args: { variableId: v.id("environmentVariables") },
   returns: v.id("environmentVariables"),
-  handler: async (ctx, { variableId }) => {
+  handler: async (ctx, { variableId }): Promise<Id<"environmentVariables">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -131,7 +134,10 @@ export const reveal = mutation({
     variableId: v.id("environmentVariables"),
   },
   returns: v.object({ value: v.string() }),
-  handler: async (ctx, { projectId, stageId, variableId }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, variableId },
+  ): Promise<{ value: string }> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -169,10 +175,6 @@ export const reveal = mutation({
   },
 });
 
-/**
- * Upserts a variable by name within a stage: patches the value when the
- * name already exists, otherwise inserts a new row.
- */
 export const set = mutation({
   args: {
     projectId: v.id("projects"),
@@ -181,7 +183,10 @@ export const set = mutation({
     value: v.string(),
   },
   returns: v.id("environmentVariables"),
-  handler: async (ctx, { projectId, stageId, name, value }) => {
+  handler: async (
+    ctx,
+    { projectId, stageId, name, value },
+  ): Promise<Id<"environmentVariables">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {

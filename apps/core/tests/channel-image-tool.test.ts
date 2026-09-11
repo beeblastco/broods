@@ -1,10 +1,3 @@
-/**
- * send-images and send-files workspace delivery tests.
- * Cover handing workspace files to a channel that only fetches public URLs, the
- * split between a channel that attaches documents and one that cannot, and the
- * rungs send-images drops through when a channel will not show pictures.
- */
-
 import {
   afterEach,
   beforeEach,

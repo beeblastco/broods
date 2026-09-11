@@ -1,4 +1,3 @@
-/** Skeleton shown while the dashboard page chunk and data load. */
 import { Skeleton } from "@/app/components/ui/skeleton";
 
 export default function DashboardLoading(): React.JSX.Element {

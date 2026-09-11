@@ -13,7 +13,6 @@ import schema from "../schema";
 
 export type RuntimeTest = TestConvex<typeof schema>;
 
-/** The runtime functions the suite calls, with the arguments it passes. */
 export interface RuntimeFunctions {
   runtime: {
     appendConversationEvent: FunctionReference<
@@ -135,7 +134,6 @@ export function createRuntimeTest(): RuntimeTest {
   return convexTest(schema, modules);
 }
 
-/** One active account, the way every runtime function expects to find one. */
 export async function seedAccount(test: RuntimeTest): Promise<string> {
   const now = Date.now();
 

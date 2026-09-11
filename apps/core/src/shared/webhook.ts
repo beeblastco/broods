@@ -1,7 +1,4 @@
-/**
- * Shared outbound webhook delivery helpers.
- * Keep generic signing and HTTP callback logic here.
- */
+/** Outbound webhook signing and delivery. */
 
 import { createHmac } from "node:crypto";
 import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";

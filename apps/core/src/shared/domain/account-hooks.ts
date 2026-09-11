@@ -1,10 +1,9 @@
 /**
  * Account-owned code hook record contracts. Bundle bytes live in S3; upload
- * validation is the config plane's (packages/convex/model/accountHooks.ts).
- * Hooks run inline in the harness hot path, so they are isolate-only: bundles
- * that need node/npm are rejected at upload. The runner in
- * harness/hook-runner.ts loads a bundle and invokes its per-event handler in
- * the V8 isolate pool.
+ * validation is packages/convex/model/accountHooks.ts. Hooks run inline in the
+ * harness hot path, so they are isolate-only: bundles that need node/npm are
+ * rejected at upload. harness/hook-runner.ts loads a bundle and invokes its
+ * per-event handler in the V8 isolate pool.
  */
 
 import type { AgentHookEventName } from "./agent-config.ts";

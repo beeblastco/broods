@@ -58,7 +58,7 @@ type ConfigRoute =
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
-export const handle = httpAction(async (ctx, req) => {
+export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const pathname = new URL(req.url).pathname;
 
@@ -162,7 +162,6 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
   }
 }
 
-/** Dispatch an authorized request to its resource family's handler. */
 async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
@@ -467,7 +466,6 @@ function parseCronRoute(pathname: string): ConfigRoute | null {
 }
 
 /**
- * Parse a config-plane pathname into its route parts.
  * @param pathname the request pathname
  * @returns the parsed route, or null when the path is not a config route
  */

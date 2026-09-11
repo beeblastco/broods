@@ -73,7 +73,7 @@ function TokenPrompt({
   label: string;
   onConfirm: (token: string) => void;
   onCancel: () => void;
-}) {
+}): React.JSX.Element {
   const [draft, setDraft] = useState("");
   const [show, setShow] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -135,17 +135,13 @@ function TokenPrompt({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Create SKILL.md wizard
-// ---------------------------------------------------------------------------
-
 function CreateSkillMdForm({
   onSubmit,
   onCancel,
 }: {
   onSubmit: (name: string, description: string) => void;
   onCancel: () => void;
-}) {
+}): React.JSX.Element {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const nameValid =
@@ -204,7 +200,6 @@ function CreateSkillMdForm({
   );
 }
 
-/** Skill file explorer with publish/import against the broods account-manage API. */
 export function SkillFilesTab({
   projectId,
   nodeId,
@@ -252,7 +247,6 @@ export function SkillFilesTab({
     if (!skillMdUrl) setSkillMeta(null);
   }
 
-  // Fetch and parse SKILL.md whenever its URL changes
   useEffect(() => {
     if (!skillMdUrl) return;
     let cancelled = false;
@@ -262,7 +256,6 @@ export function SkillFilesTab({
         if (!cancelled) {
           const meta = parseSkillMd(text);
           setSkillMeta(meta);
-          // Auto-update the skill path when SKILL.md name changes
           if (meta.name) {
             const accountPart = skillPath.includes("/")
               ? skillPath.split("/")[0]

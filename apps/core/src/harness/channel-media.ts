@@ -1,23 +1,19 @@
 /**
  * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
  *
- * A picture, document, voice note or video that arrives on a channel is read
- * once, stored in the agent's workspace, and handed to the model as a sealed
- * media link rather than as bytes. That link is the same durable ticket the
- * outbound tools mint: storage stays private, the ticket is the only credential,
- * and it never expires, so the turn still resolves when the conversation is
- * replayed months later. A presigned S3 URL cannot do that, and inlining base64
- * cannot either, since the conversation is stored as JSON.
+ * Media is read once, stored in the agent's workspace, and handed to the model
+ * as the same sealed ticket the outbound tools mint: storage stays private, the
+ * ticket is the only credential, and it never expires, so the turn still
+ * resolves when the conversation is replayed months later. A presigned S3 URL
+ * expires, and base64 bloats a conversation that is stored as JSON.
  *
- * Whatever the model cannot read natively still arrives. It becomes a saved
- * workspace file the agent can open with `read` or `bash`, so a voice note is a
- * transcription job rather than a failed turn.
+ * What the model cannot read natively becomes a workspace file the agent opens
+ * with `read` or `bash`, so a voice note is a transcription job, not a failed turn.
  *
- * An agent with no workspace stores nothing and keeps the media anyway: the
- * message row holds a reference to the file the channel still hosts, and the
- * bytes are read from the channel again whenever a later turn replays that
- * message. How long that keeps working is the channel's answer, not ours.
- * Telegram serves a file id forever, a Discord link dies within a day.
+ * With no workspace the message row holds a reference to the file the channel
+ * still hosts, and the bytes are read again whenever a later turn replays that
+ * message. How long that keeps working is the channel's answer: Telegram serves
+ * a file id forever, a Discord link dies within a day.
  */
 
 import {
@@ -213,9 +209,8 @@ export function acceptsNativeMedia(
  * Reads each attachment once and returns the parts to append to the message.
  *
  * Never throws: an attachment that cannot be read becomes a line of text saying
- * so. A provider outage should cost the agent one picture, not the turn. A
- * silent drop would leave the model answering a message it cannot see the half
- * of.
+ * so, because a provider outage should cost the agent one picture, not the turn,
+ * and a silent drop would leave the model answering half a message.
  */
 export async function ingestInboundAttachments(
   attachments: Attachment[],
@@ -318,7 +313,6 @@ export async function rehydrateStoredMedia(
 }
 
 /**
- * The media type to trust for these bytes.
  * The bytes win over the provider's claim. Telegram calls every photo a JPEG
  * whatever was uploaded, and Discord labels a voice note `application/ogg`
  * without saying whether it is audio or video. The exception is a sniff that
@@ -447,14 +441,11 @@ function transcriptLine(item: StoredAttachment): string {
  * The provider's own fetch, for an attachment named only by URL. The URL is not
  * trusted input: `zalo-channel` and `pancake-channel` both take it straight out
  * of the inbound webhook body, so whoever posts to the webhook picks the host.
- * Protocol alone is not the boundary, because a public name can resolve to a
- * private address, and a name that resolves publicly once can resolve privately
- * a moment later. `guardedFetch` closes both: it refuses private and metadata
- * addresses on the original URL and on every redirect hop, and it opens the
- * socket to the exact address it validated, so a DNS answer that changes
- * between lookup and connect changes nothing. The body is counted as it
- * arrives, so a missing or lying Content-Length cannot be used to exhaust the
- * pod, ten attachments at a time.
+ * `guardedFetch` refuses private and metadata addresses on the original URL and
+ * on every redirect hop, and opens the socket to the exact address it validated,
+ * so a DNS answer that changes between lookup and connect changes nothing. It
+ * counts the body as it arrives, so a missing or lying Content-Length cannot
+ * exhaust the pod ten attachments at a time.
  */
 async function fetchAttachmentUrl(
   raw: string,

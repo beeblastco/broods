@@ -1,6 +1,5 @@
 "use client";
 
-/** Right-side navigation links for the header bar. */
 import { cn } from "@/app/lib/utils";
 import Link from "next/link";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
@@ -15,7 +14,7 @@ const NAV_ITEMS = [
 ] as const;
 
 /** Inner nav links that read search params. */
-function NavLinksInner() {
+function NavLinksInner(): React.JSX.Element {
   const pathname = usePathname();
   const params = useParams<{ projectId?: string }>();
   const searchParams = useSearchParams();

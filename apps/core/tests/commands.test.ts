@@ -1,8 +1,3 @@
-/**
- * Bot command tests.
- * Cover command parsing, execution, Discord resolution, and registration here.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";

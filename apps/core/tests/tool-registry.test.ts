@@ -1,10 +1,5 @@
-/**
- * Harness tool registry tests.
- * Cover agent-configured allowlisting without invoking tool providers.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ToolExecuteFunction, ToolSet } from "ai";
+import type { ToolApprovalStatus, ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { Session } from "../src/harness/session.ts";
@@ -1516,7 +1511,7 @@ async function approvalStatus(
     agentSandboxPermissionMode?: unknown;
     approvalRequirements?: Map<string, true>;
   },
-) {
+): Promise<ToolApprovalStatus> {
   const { compatibilityApprovalStatus } =
     await import("../src/harness/policy.ts");
 

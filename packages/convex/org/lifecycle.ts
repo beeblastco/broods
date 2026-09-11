@@ -61,7 +61,7 @@ export const provision = action({
 export const rotateSecret = action({
   args: { orgId: v.id("orgs") },
   returns: v.object({ secret: v.string() }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ secret: string }> => {
     const org = await ctx.runQuery(api.org.orgs.getByIdForAdmin, {
       orgId: args.orgId,
     });

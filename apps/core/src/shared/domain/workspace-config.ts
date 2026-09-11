@@ -4,8 +4,7 @@
  * S3-backed filesystem mounted into a sandbox; agents referencing the same
  * workspaceId share the same files. Holds no secrets, so it is stored in
  * plaintext (unlike sandbox config). Validation and the public projection live
- * in the config plane (packages/convex/model/workspaceRules.ts); this file
- * keeps the runtime record contract and the harness feature toggles.
+ * in packages/convex/model/workspaceRules.ts.
  */
 
 import type { WorkspaceConfig } from "@broods/convex/model/workspaceRules";

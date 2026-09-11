@@ -47,7 +47,7 @@ export const create = mutation({
     document: v.any(),
   },
   returns: v.id("agentPolicies"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -118,7 +118,7 @@ export const createInternal = internalMutation({
     managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
   },
   returns: v.id("agentPolicies"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     const account = await ctx.db.get(args.accountId);
     if (!account) throw new Error(`Account not found: ${args.accountId}`);
     const document = normalizePolicyDocument(args.document);
@@ -148,7 +148,7 @@ export const createInternal = internalMutation({
 export const getById = internalQuery({
   args: { accountId: v.id("accounts"), policyId: v.string() },
   returns: v.union(policyDoc, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agentPolicies"> | null> => {
     const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
     if (!normalized) return null;
     const policy = await ctx.db.get(normalized);
@@ -164,14 +164,13 @@ export const getById = internalQuery({
 });
 
 /**
- * Internal list of active policies for an account.
  * @param accountId owning account
  * @returns active policies
  */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(policyDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agentPolicies">[]> => {
     return await ctx.db
       .query("agentPolicies")
       .withIndex("by_accountId_and_status", (q) =>
@@ -182,7 +181,6 @@ export const list = internalQuery({
 });
 
 /**
- * Lists active policies for a project stage.
  * @param projectId project containing the policies
  * @param stageId stage containing the policies
  * @returns active policy documents
@@ -190,7 +188,7 @@ export const list = internalQuery({
 export const listForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(policyDoc),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Doc<"agentPolicies">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -259,7 +257,7 @@ export function normalizePolicyDocument(value: unknown): unknown {
 export const remove = mutation({
   args: { policyId: v.id("agentPolicies") },
   returns: v.id("agentPolicies"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -286,7 +284,7 @@ export const remove = mutation({
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), policyId: v.string() },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
     if (!normalized)
       throw new Error("Policy does not belong to the supplied accountId");
@@ -317,7 +315,7 @@ export const update = mutation({
     document: v.optional(v.any()),
   },
   returns: v.id("agentPolicies"),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -357,7 +355,7 @@ export const updateInternal = internalMutation({
     status: v.optional(policyStatusValidator),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
     if (!normalized)
       throw new Error("Policy does not belong to the supplied accountId");
@@ -393,7 +391,7 @@ export const updateInternal = internalMutation({
 export const usageCounts = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.record(v.string(), v.number()),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Record<string, number>> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {

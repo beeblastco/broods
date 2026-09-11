@@ -76,7 +76,7 @@ export function launchScript(
 ): string {
   assertSafeJobId(jobId);
   const q = shellQuote;
-  const f = (ext: string) => q(`${jobsDir}/${jobId}.${ext}`);
+  const f = (ext: string): string => q(`${jobsDir}/${jobId}.${ext}`);
   const wrapper = [
     `echo $$ > ${f("pid")}`,
     `cd ${q(workDir)}`,
@@ -101,7 +101,7 @@ export function launchScript(
 
 export function statusScript(jobsDir: string, jobId: string): string {
   assertSafeJobId(jobId);
-  const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
 
   // Exit recorded => terminal. Otherwise the job is "running" only if it was
   // launched in this boot AND its session leader is still alive; a boot-id
@@ -131,7 +131,7 @@ export function logsScript(
 
 export function stopScript(jobsDir: string, jobId: string): string {
   assertSafeJobId(jobId);
-  const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
 
   return [
     `if [ -f ${f("pid")} ]; then kill -TERM -"$(cat ${f("pid")})" 2>/dev/null || true; sleep 1; kill -KILL -"$(cat ${f("pid")})" 2>/dev/null || true; fi`,

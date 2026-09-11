@@ -1,8 +1,3 @@
-/**
- * Skill validation tests.
- * Cover frontmatter parsing, path safety, and GitHub import URL sanitization.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   contentTypeForSkillPath,

@@ -1,6 +1,6 @@
 "use client";
 
-/** Shared search + level/status + time-range + refresh toolbar for the logs and tracing panels. */
+/** Shared by the logs and tracing panels, so a filter added here shows up on both. */
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import {

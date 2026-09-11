@@ -1,5 +1,6 @@
 /**
- * HTTP route registration for AuthKit and Stripe webhook handlers.
+ * HTTP route registration: AuthKit, the Stripe webhook, the CLI routes, and the
+ * config-plane routes the gateway forwards here.
  */
 
 import { processEvent } from "@convex-dev/stripe";

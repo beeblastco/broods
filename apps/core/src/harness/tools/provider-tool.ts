@@ -1,6 +1,5 @@
 /**
- * Generic provider-defined tool resolution.
- * Every config.tools key is resolved
+ * Generic provider-defined tool resolution. Every config.tools key resolves
  * against the configured AI SDK provider's `tools` namespace, so every
  * provider-executed tool a provider ships is configurable without core code.
  */
