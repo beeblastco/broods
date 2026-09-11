@@ -163,6 +163,18 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 }
 
+/** Resolves as an exhausted read when the signal aborts; never otherwise. */
+function abortedRead(
+  signal: AbortSignal | undefined,
+): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
+  return new Promise((resolve) => {
+    if (!signal) return;
+    const done = () => resolve({ done: true, value: undefined });
+    if (signal.aborted) done();
+    else signal.addEventListener("abort", done, { once: true });
+  });
+}
+
 /**
  * Adapt the client's async generator to the `ReadableStream` the SDK expects.
  * Aborting races the in-flight read so a stalled turn stops immediately instead
@@ -196,17 +208,5 @@ function toReadableStream(
       else controller.enqueue(next.value);
     },
     cancel: release,
-  });
-}
-
-/** Resolves as an exhausted read when the signal aborts; never otherwise. */
-function abortedRead(
-  signal: AbortSignal | undefined,
-): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
-  return new Promise((resolve) => {
-    if (!signal) return;
-    const done = () => resolve({ done: true, value: undefined });
-    if (signal.aborted) done();
-    else signal.addEventListener("abort", done, { once: true });
   });
 }

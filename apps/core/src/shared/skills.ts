@@ -7,35 +7,6 @@ import { readS3Text, s3ObjectExists } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
 
-export interface SkillMetadata {
-  name: string;
-  description: string;
-  path: string;
-}
-
-export interface SkillBundleFile {
-  path: string;
-  bytes: Uint8Array;
-  contentType?: string;
-}
-
-export interface ValidatedSkillBundle {
-  metadata: Omit<SkillMetadata, "path">;
-  files: SkillBundleFile[];
-}
-
-export class SkillAuthorizationError extends Error {
-  constructor(public readonly skillPath: string) {
-    super(`Skill path belongs to another account: ${skillPath}`);
-  }
-}
-
-export class SkillNotFoundError extends Error {
-  constructor(public readonly skillPath: string) {
-    super(`Skill not found: ${skillPath}`);
-  }
-}
-
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
@@ -71,15 +42,33 @@ const EXECUTABLE_EXTENSIONS = new Set([
   ".ts",
 ]);
 
-export async function readSkillMarkdown(
-  accountId: string,
-  skillName: string,
-): Promise<string | null> {
-  validateSkillName(skillName);
+export interface SkillBundleFile {
+  path: string;
+  bytes: Uint8Array;
+  contentType?: string;
+}
 
-  return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(
-    () => null,
-  );
+export interface SkillMetadata {
+  name: string;
+  description: string;
+  path: string;
+}
+
+export interface ValidatedSkillBundle {
+  metadata: Omit<SkillMetadata, "path">;
+  files: SkillBundleFile[];
+}
+
+export class SkillAuthorizationError extends Error {
+  constructor(public readonly skillPath: string) {
+    super(`Skill path belongs to another account: ${skillPath}`);
+  }
+}
+
+export class SkillNotFoundError extends Error {
+  constructor(public readonly skillPath: string) {
+    super(`Skill not found: ${skillPath}`);
+  }
 }
 
 export async function assertAccountOwnsSkillPath(
@@ -100,82 +89,39 @@ export async function assertAccountOwnsSkillPath(
   }
 }
 
-export async function readSkillText(
-  skillPath: string,
-  resourcePath: string,
-): Promise<string> {
-  return readS3Text(
-    skillsBucketName(),
-    `${skillPath}/${normalizeBundlePath(resourcePath)}`,
-  );
-}
-
-export function parseSkillMarkdown(
-  markdown: string,
-): Omit<SkillMetadata, "path"> {
-  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!match?.[1]) {
-    throw new Error("SKILL.md must start with YAML frontmatter");
-  }
-
-  const frontmatter = parseSimpleYamlFrontmatter(match[1]);
-  const name = frontmatter.name;
-  const description = frontmatter.description;
-  validateSkillName(name);
-  validateSkillDescription(description);
-
-  return { name: name, description: description };
-}
-
-export function skillInstructionsFromMarkdown(markdown: string): string {
-  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
-}
-
-export function validateSkillBundle(
-  input: SkillBundleFile[],
-): ValidatedSkillBundle {
-  const files = input.map((file) => ({
-    ...file,
-    path: normalizeBundlePath(file.path),
-  }));
-  const seen = new Set<string>();
-  let totalBytes = 0;
-  for (const file of files) {
-    if (seen.has(file.path)) {
-      throw new Error(`Duplicate skill file path: ${file.path}`);
-    }
-    seen.add(file.path);
-    totalBytes += file.bytes.byteLength;
-    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new Error(`Skill file is too large: ${file.path}`);
-    }
-    if (!isSupportedTextFile(file.path, file.bytes)) {
-      throw new Error(`Skill file must be a supported text file: ${file.path}`);
-    }
-  }
-  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new Error("Skill bundle exceeds 30 MB");
-  }
-
-  const skillFile = files.find((file) => file.path === SKILL_FILE);
-  if (!skillFile) {
-    throw new Error("Skill bundle must include SKILL.md at the root");
-  }
-
-  return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
-    files: files,
-  };
-}
-
 export function contentTypeForSkillPath(filePath: string): string {
   return path.extname(filePath).toLowerCase() === ".json"
     ? "application/json"
     : "text/plain; charset=utf-8";
 }
 
+export function formatSkillPath(accountId: string, skillName: string): string {
+  validateSkillName(skillName);
+
+  return `${accountId}/${skillName}`;
+}
+
 export function isExecutableSkillPath(filePath: string): boolean {
   return EXECUTABLE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+export function normalizeBundlePath(value: string): string {
+  if (typeof value !== "string") {
+    throw new Error("Skill file path must be a string");
+  }
+
+  const trimmed = value.trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith("/") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\0") ||
+    trimmed.split("/").some((part) => part === ".." || part === "")
+  ) {
+    throw new Error(`Invalid skill file path: ${value}`);
+  }
+
+  return trimmed;
 }
 
 export function parseGitHubSkillUrl(value: unknown): {
@@ -221,6 +167,23 @@ export function parseGitHubSkillUrl(value: unknown): {
   };
 }
 
+export function parseSkillMarkdown(
+  markdown: string,
+): Omit<SkillMetadata, "path"> {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match?.[1]) {
+    throw new Error("SKILL.md must start with YAML frontmatter");
+  }
+
+  const frontmatter = parseSimpleYamlFrontmatter(match[1]);
+  const name = frontmatter.name;
+  const description = frontmatter.description;
+  validateSkillName(name);
+  validateSkillDescription(description);
+
+  return { name: name, description: description };
+}
+
 export function parseSkillPath(
   skillPath: string,
 ): { accountId: string; skillName: string } | null {
@@ -240,29 +203,85 @@ export function parseSkillPath(
   };
 }
 
-export function formatSkillPath(accountId: string, skillName: string): string {
+export async function readSkillMarkdown(
+  accountId: string,
+  skillName: string,
+): Promise<string | null> {
   validateSkillName(skillName);
 
-  return `${accountId}/${skillName}`;
+  return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(
+    () => null,
+  );
 }
 
-export function normalizeBundlePath(value: string): string {
-  if (typeof value !== "string") {
-    throw new Error("Skill file path must be a string");
+export async function readSkillText(
+  skillPath: string,
+  resourcePath: string,
+): Promise<string> {
+  return readS3Text(
+    skillsBucketName(),
+    `${skillPath}/${normalizeBundlePath(resourcePath)}`,
+  );
+}
+
+export function skillInstructionsFromMarkdown(markdown: string): string {
+  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
+}
+
+export function skillsBucketName(): string {
+  return requireEnv("SKILLS_BUCKET_NAME");
+}
+
+export function validateSkillBundle(
+  input: SkillBundleFile[],
+): ValidatedSkillBundle {
+  const files = input.map((file) => ({
+    ...file,
+    path: normalizeBundlePath(file.path),
+  }));
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`Duplicate skill file path: ${file.path}`);
+    }
+    seen.add(file.path);
+    totalBytes += file.bytes.byteLength;
+    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
+      throw new Error(`Skill file is too large: ${file.path}`);
+    }
+    if (!isSupportedTextFile(file.path, file.bytes)) {
+      throw new Error(`Skill file must be a supported text file: ${file.path}`);
+    }
+  }
+  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+    throw new Error("Skill bundle exceeds 30 MB");
   }
 
-  const trimmed = value.trim();
+  const skillFile = files.find((file) => file.path === SKILL_FILE);
+  if (!skillFile) {
+    throw new Error("Skill bundle must include SKILL.md at the root");
+  }
+
+  return {
+    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    files: files,
+  };
+}
+
+export function validateSkillDescription(
+  value: unknown,
+): asserts value is string {
   if (
-    !trimmed ||
-    trimmed.startsWith("/") ||
-    trimmed.includes("\\") ||
-    trimmed.includes("\0") ||
-    trimmed.split("/").some((part) => part === ".." || part === "")
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
+    /<[^>]*>/.test(value)
   ) {
-    throw new Error(`Invalid skill file path: ${value}`);
+    throw new Error(
+      "Skill description must be non-empty, max 1024 chars, and cannot contain XML tags",
+    );
   }
-
-  return trimmed;
 }
 
 export function validateSkillName(value: unknown): asserts value is string {
@@ -281,23 +300,10 @@ export function validateSkillName(value: unknown): asserts value is string {
   }
 }
 
-export function validateSkillDescription(
-  value: unknown,
-): asserts value is string {
-  if (
-    typeof value !== "string" ||
-    value.trim().length === 0 ||
-    value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
-    /<[^>]*>/.test(value)
-  ) {
-    throw new Error(
-      "Skill description must be non-empty, max 1024 chars, and cannot contain XML tags",
-    );
+function assertSafeGitHubSegment(value: string, name: string): void {
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new Error(`GitHub ${name} contains unsupported characters`);
   }
-}
-
-export function skillsBucketName(): string {
-  return requireEnv("SKILLS_BUCKET_NAME");
 }
 
 function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
@@ -333,10 +339,4 @@ function stripYamlScalarQuotes(value: string): string {
   }
 
   return trimmed;
-}
-
-function assertSafeGitHubSegment(value: string, name: string): void {
-  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
-    throw new Error(`GitHub ${name} contains unsupported characters`);
-  }
 }

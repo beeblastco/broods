@@ -72,6 +72,21 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
  */
 type ForeignExternalResources = Set<string>;
 
+/**
+ * Refuse to create, replace, or prune an account-wide resource whose name is
+ * recorded as managed by a different stage.
+ */
+export function assertNotForeign(
+  foreign: ForeignExternalResources,
+  kind: "skill" | "hook",
+  name: string,
+): void {
+  if (!foreign.has(`${kind}:${name}`)) return;
+  throw new Error(
+    `${kind}:${name} is managed by another stage of this account and cannot be changed from this one`,
+  );
+}
+
 /** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
   ctx: ActionCtx,
@@ -277,6 +292,23 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Crons are account-wide rows but a job belongs to the stage of the agent it
+ * targets, so a name is matched only among this stage's agents. A same-named
+ * job of another stage is neither touched nor a conflict; null means create.
+ */
+export function stageCronByName<T extends { name: string; agentId: string }>(
+  existing: T[],
+  stageAgentIds: Set<string>,
+  name: string,
+): T | null {
+  return (
+    existing.find(
+      (job) => job.name === name && stageAgentIds.has(job.agentId),
+    ) ?? null
+  );
+}
+
 function asOptionalRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
@@ -378,6 +410,23 @@ function desiredCrons(
         status: cronStatus(config.status),
       });
     });
+}
+
+async function foreignExternalResources(
+  ctx: ActionCtx,
+  accountId: Id<"accounts">,
+  scope: ProjectStageScope,
+): Promise<ForeignExternalResources> {
+  const rows = await ctx.runQuery(
+    internal.cli.sync.listExternalResourcesForAccount,
+    { accountId: accountId },
+  );
+
+  return new Set(
+    rows
+      .filter((row) => row.stageId !== scope.stageId)
+      .map((row) => `${row.kind}:${row.name}`),
+  );
 }
 
 /** PUT `/manifest`: sync external resources, the manifest, skills files, crons. */
@@ -677,55 +726,6 @@ async function syncExternalResources(
   );
 
   return { skills: skills, hooks: hooks, mcp: mcp };
-}
-
-/**
- * Crons are account-wide rows but a job belongs to the stage of the agent it
- * targets, so a name is matched only among this stage's agents. A same-named
- * job of another stage is neither touched nor a conflict; null means create.
- */
-export function stageCronByName<T extends { name: string; agentId: string }>(
-  existing: T[],
-  stageAgentIds: Set<string>,
-  name: string,
-): T | null {
-  return (
-    existing.find(
-      (job) => job.name === name && stageAgentIds.has(job.agentId),
-    ) ?? null
-  );
-}
-
-/**
- * Refuse to create, replace, or prune an account-wide resource whose name is
- * recorded as managed by a different stage.
- */
-export function assertNotForeign(
-  foreign: ForeignExternalResources,
-  kind: "skill" | "hook",
-  name: string,
-): void {
-  if (!foreign.has(`${kind}:${name}`)) return;
-  throw new Error(
-    `${kind}:${name} is managed by another stage of this account and cannot be changed from this one`,
-  );
-}
-
-async function foreignExternalResources(
-  ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  scope: ProjectStageScope,
-): Promise<ForeignExternalResources> {
-  const rows = await ctx.runQuery(
-    internal.cli.sync.listExternalResourcesForAccount,
-    { accountId: accountId },
-  );
-
-  return new Set(
-    rows
-      .filter((row) => row.stageId !== scope.stageId)
-      .map((row) => `${row.kind}:${row.name}`),
-  );
 }
 
 async function syncHookResources(

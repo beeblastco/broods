@@ -18,11 +18,6 @@ import { formatChoiceRow } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
-interface LoginCallback {
-  code: string;
-  baseUrl: string;
-}
-
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
   "--base-url",
@@ -36,6 +31,27 @@ const VALUE_OPTIONS = new Set([
   "--sandbox",
   "-n",
 ]);
+
+interface LoginCallback {
+  code: string;
+  baseUrl: string;
+}
+
+export function hasFlag(args: string[], name: string): boolean {
+  return args.includes(name);
+}
+
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function optionValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+
+  return index >= 0 ? args[index + 1] : undefined;
+}
 
 /**
  * Positional arguments only. `--project foo` puts `foo` in the list too, so
@@ -58,20 +74,65 @@ export function positionalArgs(args: string[]): string[] {
   return positional;
 }
 
-export function optionValue(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
+export async function loginWithBrowser(
+  dashboardUrl: string,
+): Promise<StoredAuthConfig> {
+  // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
+  const state = randomUUID();
+  // PKCE: the code that comes back through the localhost callback is only
+  // exchangeable by this process, which holds the verifier.
+  const codeVerifier = randomBytes(32).toString("base64url");
+  const codeChallenge = createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+  const { code, close } = await waitForCallback(state);
 
-  return index >= 0 ? args[index + 1] : undefined;
-}
+  try {
+    const callbackUrl = code.callbackUrl;
+    const startUrl =
+      `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
+      new URLSearchParams({
+        callback: callbackUrl,
+        state: state,
+        code_challenge: codeChallenge,
+      });
+    await assertCliAuthRouteExists(startUrl);
+    openBrowser(startUrl);
+    console.log(`Opening ${startUrl}`);
+    const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
+    // The dashboard advertises the API base URL in the callback; the
+    // exchange and all later sync/env calls go there directly.
+    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Login exchange failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    const payload = (await response.json()) as {
+      token: string;
+      user?: StoredAuthConfig["user"];
+      org?: StoredAuthConfig["org"];
+      account?: StoredAuthConfig["account"];
+    };
+    const auth = {
+      baseUrl: login.baseUrl,
+      dashboardUrl: stripTrailingSlash(dashboardUrl),
+      token: payload.token,
+      createdAt: new Date().toISOString(),
+      ...(payload.user ? { user: payload.user } : {}),
+      ...(payload.org ? { org: payload.org } : {}),
+      ...(payload.account ? { account: payload.account } : {}),
+    };
+    await writeStoredAuth(auth);
 
-export function hasFlag(args: string[], name: string): boolean {
-  return args.includes(name);
-}
-
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+    return auth;
+  } finally {
+    close();
+  }
 }
 
 export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
@@ -89,6 +150,24 @@ export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   };
 }
 
+/**
+ * Asks a yes/no question on the terminal, defaulting to no. Returns false when
+ * stdin is not a TTY (e.g. CI) so non-interactive runs never block on a prompt.
+ */
+export async function promptConfirm(question: string): Promise<boolean> {
+  if (!input.isTTY) return false;
+  const rl = createInterface({ input: input, output: output });
+  try {
+    const answer = (await rl.question(`${question} [y/N] `))
+      .trim()
+      .toLowerCase();
+
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 export async function promptSecret(label: string): Promise<string> {
   const rl = createInterface({ input: input, output: output });
   try {
@@ -96,32 +175,6 @@ export async function promptSecret(label: string): Promise<string> {
     if (!value) throw new Error(`${label} is required`);
 
     return value;
-  } finally {
-    rl.close();
-  }
-}
-
-/**
- * Free-text prompt with an editable default. Returns the default (or "") when
- * stdin is not a TTY, so a CI run errors on the missing value instead of
- * hanging on a question nobody can answer.
- */
-export async function promptText(
-  label: string,
-  defaultValue?: string,
-): Promise<string> {
-  if (!input.isTTY) return defaultValue ?? "";
-  const rl = createInterface({ input: input, output: output });
-  try {
-    const pending = rl.question(`${label}: `);
-    if (defaultValue) {
-      if (input.isTTY && output.isTTY) output.write("\x1b[90m");
-      rl.write(defaultValue);
-      if (input.isTTY && output.isTTY) output.write("\x1b[0m");
-    }
-    const answer = (await pending).trim();
-
-    return answer || defaultValue || "";
   } finally {
     rl.close();
   }
@@ -207,81 +260,28 @@ export async function promptSelectOrText<T extends object>(
 }
 
 /**
- * Asks a yes/no question on the terminal, defaulting to no. Returns false when
- * stdin is not a TTY (e.g. CI) so non-interactive runs never block on a prompt.
+ * Free-text prompt with an editable default. Returns the default (or "") when
+ * stdin is not a TTY, so a CI run errors on the missing value instead of
+ * hanging on a question nobody can answer.
  */
-export async function promptConfirm(question: string): Promise<boolean> {
-  if (!input.isTTY) return false;
+export async function promptText(
+  label: string,
+  defaultValue?: string,
+): Promise<string> {
+  if (!input.isTTY) return defaultValue ?? "";
   const rl = createInterface({ input: input, output: output });
   try {
-    const answer = (await rl.question(`${question} [y/N] `))
-      .trim()
-      .toLowerCase();
+    const pending = rl.question(`${label}: `);
+    if (defaultValue) {
+      if (input.isTTY && output.isTTY) output.write("\x1b[90m");
+      rl.write(defaultValue);
+      if (input.isTTY && output.isTTY) output.write("\x1b[0m");
+    }
+    const answer = (await pending).trim();
 
-    return answer === "y" || answer === "yes";
+    return answer || defaultValue || "";
   } finally {
     rl.close();
-  }
-}
-
-export async function loginWithBrowser(
-  dashboardUrl: string,
-): Promise<StoredAuthConfig> {
-  // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
-  const state = randomUUID();
-  // PKCE: the code that comes back through the localhost callback is only
-  // exchangeable by this process, which holds the verifier.
-  const codeVerifier = randomBytes(32).toString("base64url");
-  const codeChallenge = createHash("sha256")
-    .update(codeVerifier)
-    .digest("base64url");
-  const { code, close } = await waitForCallback(state);
-
-  try {
-    const callbackUrl = code.callbackUrl;
-    const startUrl =
-      `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
-      new URLSearchParams({
-        callback: callbackUrl,
-        state: state,
-        code_challenge: codeChallenge,
-      });
-    await assertCliAuthRouteExists(startUrl);
-    openBrowser(startUrl);
-    console.log(`Opening ${startUrl}`);
-    const login = await waitWithTimeout(code.promise, LOGIN_TIMEOUT_MS);
-    // The dashboard advertises the API base URL in the callback; the
-    // exchange and all later sync/env calls go there directly.
-    const response = await fetch(`${login.baseUrl}/v1/account/auth/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Login exchange failed: ${response.status} ${await response.text()}`,
-      );
-    }
-    const payload = (await response.json()) as {
-      token: string;
-      user?: StoredAuthConfig["user"];
-      org?: StoredAuthConfig["org"];
-      account?: StoredAuthConfig["account"];
-    };
-    const auth = {
-      baseUrl: login.baseUrl,
-      dashboardUrl: stripTrailingSlash(dashboardUrl),
-      token: payload.token,
-      createdAt: new Date().toISOString(),
-      ...(payload.user ? { user: payload.user } : {}),
-      ...(payload.org ? { org: payload.org } : {}),
-      ...(payload.account ? { account: payload.account } : {}),
-    };
-    await writeStoredAuth(auth);
-
-    return auth;
-  } finally {
-    close();
   }
 }
 
@@ -302,6 +302,29 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
       `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
     );
   }
+}
+
+function callbackPort(): number {
+  const raw = process.env.BROODS_LOGIN_PORT;
+  if (raw) {
+    const port = Number(raw);
+    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
+    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
+  }
+
+  return 18987;
+}
+
+function openBrowser(url: string): void {
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "cmd"
+        : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
+  const child = spawn(command, args, { stdio: "ignore", detached: true });
+  child.unref();
 }
 
 function waitForCallback(expectedState: string): Promise<{
@@ -414,27 +437,4 @@ async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-function callbackPort(): number {
-  const raw = process.env.BROODS_LOGIN_PORT;
-  if (raw) {
-    const port = Number(raw);
-    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
-    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
-  }
-
-  return 18987;
-}
-
-function openBrowser(url: string): void {
-  const command =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
-  const child = spawn(command, args, { stdio: "ignore", detached: true });
-  child.unref();
 }

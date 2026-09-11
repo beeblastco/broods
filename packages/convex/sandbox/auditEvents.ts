@@ -16,30 +16,6 @@ const sandboxAuditEventDoc = v.object({
   _creationTime: v.number(),
 });
 
-/** Lists recent audit events for one sandbox instance in the active org. */
-export const listForInstance = query({
-  args: {
-    reservationKey: v.string(),
-    limit: v.optional(v.number()),
-  },
-  returns: v.array(sandboxAuditEventDoc),
-  handler: async (ctx, args): Promise<Doc<"sandboxAuditEvents">[]> => {
-    const account = await getActiveAccountForUser(ctx);
-    if (!account) return [];
-    const limit = Math.max(1, Math.min(args.limit ?? 20, 50));
-
-    return await ctx.db
-      .query("sandboxAuditEvents")
-      .withIndex("by_accountId_and_reservationKey_and_createdAt", (q) =>
-        q
-          .eq("accountId", account._id)
-          .eq("reservationKey", args.reservationKey),
-      )
-      .order("desc")
-      .take(limit);
-  },
-});
-
 /** Inserts one sandbox lifecycle audit row, enriching it from the instance row. */
 export const insert = internalMutation({
   args: {
@@ -78,6 +54,30 @@ export const insert = internalMutation({
     });
 
     return null;
+  },
+});
+
+/** Lists recent audit events for one sandbox instance in the active org. */
+export const listForInstance = query({
+  args: {
+    reservationKey: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(sandboxAuditEventDoc),
+  handler: async (ctx, args): Promise<Doc<"sandboxAuditEvents">[]> => {
+    const account = await getActiveAccountForUser(ctx);
+    if (!account) return [];
+    const limit = Math.max(1, Math.min(args.limit ?? 20, 50));
+
+    return await ctx.db
+      .query("sandboxAuditEvents")
+      .withIndex("by_accountId_and_reservationKey_and_createdAt", (q) =>
+        q
+          .eq("accountId", account._id)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .order("desc")
+      .take(limit);
   },
 });
 

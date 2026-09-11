@@ -25,6 +25,73 @@ import {
 import { memo, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
+type SubagentPanelEvent = {
+  phase: "started" | "tool_call" | "tool_result";
+  text: string;
+};
+
+type SubagentPanelPart = {
+  type: "subagent-panel";
+  taskId: string;
+  sessionId: string;
+  agentName?: string;
+  status: "running" | "completed";
+  events: SubagentPanelEvent[];
+  text: string;
+};
+
+export function TestTab({
+  activeDeployment,
+  deploymentApiKey,
+  agentId,
+  nodeColor,
+}: {
+  activeDeployment: StageDeployment | undefined;
+  deploymentApiKey?: string;
+  agentId: string;
+  nodeColor?: string;
+}): React.JSX.Element {
+  if (!activeDeployment) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-4">
+        <p className="text-center text-xs text-muted-foreground">
+          No runtime API key for this stage yet. Generate one in Details to test
+          this agent.
+        </p>
+      </div>
+    );
+  }
+  if (!agentId) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-4">
+        <p className="text-center text-xs text-muted-foreground">
+          Save this agent before testing it.
+        </p>
+      </div>
+    );
+  }
+  if (!deploymentApiKey) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-4">
+        <p className="text-center text-xs text-muted-foreground">
+          Loading the encrypted runtime key…
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <ChatWindow
+      endpointId={activeDeployment.endpointId}
+      agentId={agentId}
+      apiKey={deploymentApiKey}
+      projectSlug={activeDeployment.projectSlug}
+      nodeColor={nodeColor}
+      stageSlug={activeDeployment.stageSlug}
+    />
+  );
+}
+
 /**
  * Tracks elapsed time in ms while isActive is true.
  * Freezes the value once isActive becomes false.
@@ -57,21 +124,6 @@ function extractAssistantText(message: UIMessage): string {
     .map((part) => ("text" in part ? part.text : ""))
     .join("");
 }
-
-type SubagentPanelEvent = {
-  phase: "started" | "tool_call" | "tool_result";
-  text: string;
-};
-
-type SubagentPanelPart = {
-  type: "subagent-panel";
-  taskId: string;
-  sessionId: string;
-  agentName?: string;
-  status: "running" | "completed";
-  events: SubagentPanelEvent[];
-  text: string;
-};
 
 function parseSubagentSpeaker(text: string): { agentName: string } | null {
   const match = text.match(/^Subagent\s+([^:\n]+):/i);
@@ -154,58 +206,6 @@ function colorFromName(name: string): string {
   }
 
   return palette[hash % palette.length];
-}
-
-export function TestTab({
-  activeDeployment,
-  deploymentApiKey,
-  agentId,
-  nodeColor,
-}: {
-  activeDeployment: StageDeployment | undefined;
-  deploymentApiKey?: string;
-  agentId: string;
-  nodeColor?: string;
-}): React.JSX.Element {
-  if (!activeDeployment) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-4">
-        <p className="text-center text-xs text-muted-foreground">
-          No runtime API key for this stage yet. Generate one in Details to test
-          this agent.
-        </p>
-      </div>
-    );
-  }
-  if (!agentId) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-4">
-        <p className="text-center text-xs text-muted-foreground">
-          Save this agent before testing it.
-        </p>
-      </div>
-    );
-  }
-  if (!deploymentApiKey) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-4">
-        <p className="text-center text-xs text-muted-foreground">
-          Loading the encrypted runtime key…
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <ChatWindow
-      endpointId={activeDeployment.endpointId}
-      agentId={agentId}
-      apiKey={deploymentApiKey}
-      projectSlug={activeDeployment.projectSlug}
-      nodeColor={nodeColor}
-      stageSlug={activeDeployment.stageSlug}
-    />
-  );
 }
 
 function ChatWindow({

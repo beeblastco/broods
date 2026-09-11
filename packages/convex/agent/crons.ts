@@ -59,50 +59,6 @@ const cronRunDoc = v.object({
 
 type Ctx = QueryCtx | MutationCtx;
 
-/**
- * POST one fired cron job to the gateway's /v1/cron-runs leaf, where core
- * starts the configured agent. The crons component (and the Convex scheduler
- * for one-time jobs) invokes this with the same {kind, accountId, cronId}
- * payload EventBridge used to deliver, so core is untouched.
- */
-export const dispatch = internalAction({
-  args: { accountId: v.id("accounts"), cronId: v.id("crons") },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const live = await ctx.runQuery(internal.agent.crons.isLive, {
-      accountId: args.accountId,
-      cronId: args.cronId,
-    });
-    if (!live) {
-      // The row is gone (a cascade that could not reach the registration, or
-      // a crash between the two). Retire the schedule instead of firing it
-      // at a deleted job forever.
-      await deleteRegistrationIfExists(ctx, args.cronId);
-
-      return null;
-    }
-
-    const service = serviceEnv();
-    const response = await fetch(`${service.url}/v1/cron-runs`, {
-      method: "POST",
-      headers: serviceHeaders(args.accountId, service.secret),
-      body: JSON.stringify({
-        kind: "cron",
-        accountId: args.accountId,
-        cronId: args.cronId,
-        scheduledTime: new Date().toISOString(),
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Cron run dispatch failed with status ${response.status}`,
-      );
-    }
-
-    return null;
-  },
-});
-
 export const completeRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -192,6 +148,50 @@ export const createRun = internalMutation({
       status: "started",
       startedAt: Date.now(),
     });
+  },
+});
+
+/**
+ * POST one fired cron job to the gateway's /v1/cron-runs leaf, where core
+ * starts the configured agent. The crons component (and the Convex scheduler
+ * for one-time jobs) invokes this with the same {kind, accountId, cronId}
+ * payload EventBridge used to deliver, so core is untouched.
+ */
+export const dispatch = internalAction({
+  args: { accountId: v.id("accounts"), cronId: v.id("crons") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const live = await ctx.runQuery(internal.agent.crons.isLive, {
+      accountId: args.accountId,
+      cronId: args.cronId,
+    });
+    if (!live) {
+      // The row is gone (a cascade that could not reach the registration, or
+      // a crash between the two). Retire the schedule instead of firing it
+      // at a deleted job forever.
+      await deleteRegistrationIfExists(ctx, args.cronId);
+
+      return null;
+    }
+
+    const service = serviceEnv();
+    const response = await fetch(`${service.url}/v1/cron-runs`, {
+      method: "POST",
+      headers: serviceHeaders(args.accountId, service.secret),
+      body: JSON.stringify({
+        kind: "cron",
+        accountId: args.accountId,
+        cronId: args.cronId,
+        scheduledTime: new Date().toISOString(),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Cron run dispatch failed with status ${response.status}`,
+      );
+    }
+
+    return null;
   },
 });
 

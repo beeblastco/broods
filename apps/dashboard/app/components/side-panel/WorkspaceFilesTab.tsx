@@ -48,407 +48,6 @@ type RuntimeFileCacheEntry = {
 const RUNTIME_FILE_CACHE_PREFIX = "broods.workspace-files.v1";
 const runtimeFileCache = new Map<string, RuntimeFileCacheEntry>();
 
-function buildTree(files: FileRecord[]): FileNode[] {
-  const map = new Map<string, FileNode>();
-  for (const f of files) {
-    map.set(f.path, { ...f, children: f.isFolder ? [] : undefined });
-  }
-
-  const roots: FileNode[] = [];
-  for (const [path, node] of map) {
-    const slash = path.lastIndexOf("/");
-    if (slash === -1) {
-      roots.push(node);
-    } else {
-      const parentPath = path.slice(0, slash);
-      const parent = map.get(parentPath);
-      if (parent?.children) {
-        parent.children.push(node);
-      } else {
-        roots.push(node);
-      }
-    }
-  }
-
-  const sort = (nodes: FileNode[]): void => {
-    nodes.sort((a, b) => {
-      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-
-      return a.name.localeCompare(b.name);
-    });
-    for (const n of nodes) {
-      if (n.children) sort(n.children);
-    }
-  };
-  sort(roots);
-
-  return roots;
-}
-
-function withoutPath(files: FileRecord[], path: string): FileRecord[] {
-  return files.filter(
-    (file) => file.path !== path && !file.path.startsWith(`${path}/`),
-  );
-}
-
-function withRenamedPath(
-  files: FileRecord[],
-  path: string,
-  newPath: string,
-): FileRecord[] {
-  return files.map((file) => {
-    if (file.path !== path && !file.path.startsWith(`${path}/`)) return file;
-    const nextPath = `${newPath}${file.path.slice(path.length)}`;
-
-    return {
-      ...file,
-      path: nextPath,
-      ...(file.path === path ? { name: newPath.split("/").at(-1)! } : {}),
-    };
-  });
-}
-
-function runtimeFileCacheKey(
-  projectId: string | undefined,
-  workspaceId: string | undefined,
-): string | undefined {
-  return projectId && workspaceId ? `${projectId}:${workspaceId}` : undefined;
-}
-
-function readRuntimeFileCache(
-  key: string | undefined,
-): RuntimeFileCacheEntry | undefined {
-  if (!key) return undefined;
-  const memory = runtimeFileCache.get(key);
-  if (memory) return memory;
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.sessionStorage.getItem(
-      `${RUNTIME_FILE_CACHE_PREFIX}:${key}`,
-    );
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as RuntimeFileCacheEntry;
-    if (!Array.isArray(parsed.files) || typeof parsed.cachedAt !== "number")
-      return undefined;
-    runtimeFileCache.set(key, parsed);
-
-    return parsed;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeRuntimeFileCache(
-  key: string | undefined,
-  files: FileRecord[],
-): void {
-  if (!key) return;
-  const entry = { files: files, cachedAt: Date.now() };
-  runtimeFileCache.set(key, entry);
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(
-      `${RUNTIME_FILE_CACHE_PREFIX}:${key}`,
-      JSON.stringify(entry),
-    );
-  } catch {
-    // Cache failures must never block workspace access.
-  }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function readAllEntries(
-  reader: FileSystemDirectoryReader,
-): Promise<FileSystemEntry[]> {
-  const all: FileSystemEntry[] = [];
-  while (true) {
-    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-      reader.readEntries(resolve, reject);
-    });
-    if (batch.length === 0) break;
-    all.push(...batch);
-  }
-
-  return all;
-}
-
-async function collectEntries(
-  entry: FileSystemEntry,
-  parentPath: string,
-  files: Array<{ file: File; path: string }>,
-  folders: string[],
-): Promise<void> {
-  const currentPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
-  if (entry.isFile) {
-    const fileEntry = entry as FileSystemFileEntry;
-    const file = await new Promise<File>((resolve, reject) =>
-      fileEntry.file(resolve, reject),
-    );
-    files.push({ file: file, path: currentPath });
-  } else if (entry.isDirectory) {
-    folders.push(currentPath);
-    const dirEntry = entry as FileSystemDirectoryEntry;
-    const children = await readAllEntries(dirEntry.createReader());
-    for (const child of children) {
-      await collectEntries(child, currentPath, files, folders);
-    }
-  }
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  if (file.size > 512 * 1024) {
-    throw new Error(`${file.name} exceeds the 512 KiB dashboard upload limit.`);
-  }
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  const chunkSize = 32 * 1024;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(
-      ...bytes.subarray(offset, offset + chunkSize),
-    );
-  }
-
-  return btoa(binary);
-}
-
-function ExtIcon({ name }: { name: string }): React.JSX.Element {
-  const ext = name.includes(".")
-    ? (name.split(".").pop()?.toLowerCase() ?? "")
-    : "";
-  const style: StyleProps =
-    (defaultStyles as Record<string, StyleProps>)[ext] ?? {};
-
-  return (
-    <span className="mr-1.5 inline-flex size-3.5 shrink-0 items-center">
-      <FileIcon extension={ext} {...style} />
-    </span>
-  );
-}
-
-function RenameInput({
-  initialValue,
-  onCommit,
-  onCancel,
-}: {
-  initialValue: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const [draft, setDraft] = useState(initialValue);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.select();
-  }, []);
-
-  const commit = (): void => {
-    const trimmed = draft.trim();
-    if (trimmed && trimmed !== initialValue) {
-      onCommit(trimmed);
-    } else {
-      onCancel();
-    }
-  };
-
-  return (
-    <Input
-      ref={ref}
-      value={draft}
-      className="h-4.5 flex-1 rounded-sm border-primary px-1 py-0 font-mono text-[12px]"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onClick={(e) => e.stopPropagation()}
-    />
-  );
-}
-
-function TreeRow({
-  node,
-  depth,
-  expanded,
-  uploading,
-  selected,
-  renamingPath,
-  onSelect,
-  onToggle,
-  onDelete,
-  onRenameStart,
-  onRenameCommit,
-  onRenameCancel,
-}: {
-  node: FileNode;
-  depth: number;
-  expanded: Set<string>;
-  uploading: Set<string>;
-  selected: string | null;
-  renamingPath: string | null;
-  onSelect: (path: string) => void;
-  onToggle: (path: string) => void;
-  onDelete: (node: FileNode) => void;
-  onRenameStart: (path: string) => void;
-  onRenameCommit: (node: FileNode, newName: string) => void;
-  onRenameCancel: () => void;
-}): React.JSX.Element {
-  const { canWrite } = useOrgRole();
-  const isExpanded = expanded.has(node.path);
-  const isSelected = selected === node.path;
-  const isRenaming = renamingPath === node.path;
-  const isUploading = uploading.has(node.path);
-
-  const handleClick = (e: React.MouseEvent): void => {
-    e.stopPropagation();
-    onSelect(node.path);
-    if (node.isFolder) onToggle(node.path);
-  };
-
-  return (
-    <>
-      <div
-        className={cn(
-          "group flex h-5.5 select-none items-center gap-0 pr-1 text-[13px]",
-          "cursor-pointer",
-          isSelected
-            ? "bg-accent text-accent-foreground"
-            : "text-foreground/80 hover:bg-muted/50",
-        )}
-        style={{ paddingLeft: `${4 + depth * 16}px` }}
-        onClick={handleClick}
-        title={isRenaming ? undefined : node.path}
-      >
-        {/* chevron / spacer */}
-        <span className="flex w-4 shrink-0 items-center justify-center">
-          {node.isFolder ? (
-            isExpanded ? (
-              <ChevronDown className="size-3 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-3 text-muted-foreground" />
-            )
-          ) : null}
-        </span>
-
-        {/* icon */}
-        {node.isFolder ? (
-          isExpanded ? (
-            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
-          ) : (
-            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
-          )
-        ) : (
-          <ExtIcon name={node.name} />
-        )}
-
-        {/* name or rename input */}
-        {isRenaming ? (
-          <RenameInput
-            initialValue={node.name}
-            onCommit={(newName) => onRenameCommit(node, newName)}
-            onCancel={onRenameCancel}
-          />
-        ) : (
-          <span
-            className="flex-1 truncate font-mono text-[12px]"
-            onDoubleClick={(e) => {
-              if (!canWrite) return;
-              e.stopPropagation();
-              onRenameStart(node.path);
-            }}
-          >
-            {node.name}
-          </span>
-        )}
-
-        {/* size hint when selected */}
-        {!node.isFolder &&
-          node.sizeBytes !== undefined &&
-          isSelected &&
-          !isRenaming && (
-            <span className="mr-1 shrink-0 text-[10px] text-muted-foreground">
-              {formatBytes(node.sizeBytes)}
-            </span>
-          )}
-
-        {/* action buttons, visible on hover or when selected */}
-        {!isRenaming && (
-          <span
-            className={cn(
-              "flex shrink-0 items-center gap-0.5",
-              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-            )}
-          >
-            {isUploading ? (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-            ) : canWrite ? (
-              <>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-5 cursor-pointer"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRenameStart(node.path);
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className="size-5 cursor-pointer text-destructive hover:text-destructive"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(node);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </>
-            ) : null}
-          </span>
-        )}
-      </div>
-
-      {/* children */}
-      {node.isFolder &&
-        isExpanded &&
-        node.children?.map((child) => (
-          <TreeRow
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            expanded={expanded}
-            uploading={uploading}
-            selected={selected}
-            renamingPath={renamingPath}
-            onSelect={onSelect}
-            onToggle={onToggle}
-            onDelete={onDelete}
-            onRenameStart={onRenameStart}
-            onRenameCommit={onRenameCommit}
-            onRenameCancel={onRenameCancel}
-          />
-        ))}
-    </>
-  );
-}
-
 export function WorkspaceFilesTab({
   projectId,
   nodeId,
@@ -1120,5 +719,406 @@ export function WorkspaceFilesTab({
         />
       )}
     </div>
+  );
+}
+
+function buildTree(files: FileRecord[]): FileNode[] {
+  const map = new Map<string, FileNode>();
+  for (const f of files) {
+    map.set(f.path, { ...f, children: f.isFolder ? [] : undefined });
+  }
+
+  const roots: FileNode[] = [];
+  for (const [path, node] of map) {
+    const slash = path.lastIndexOf("/");
+    if (slash === -1) {
+      roots.push(node);
+    } else {
+      const parentPath = path.slice(0, slash);
+      const parent = map.get(parentPath);
+      if (parent?.children) {
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+  }
+
+  const sort = (nodes: FileNode[]): void => {
+    nodes.sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+
+      return a.name.localeCompare(b.name);
+    });
+    for (const n of nodes) {
+      if (n.children) sort(n.children);
+    }
+  };
+  sort(roots);
+
+  return roots;
+}
+
+function withoutPath(files: FileRecord[], path: string): FileRecord[] {
+  return files.filter(
+    (file) => file.path !== path && !file.path.startsWith(`${path}/`),
+  );
+}
+
+function withRenamedPath(
+  files: FileRecord[],
+  path: string,
+  newPath: string,
+): FileRecord[] {
+  return files.map((file) => {
+    if (file.path !== path && !file.path.startsWith(`${path}/`)) return file;
+    const nextPath = `${newPath}${file.path.slice(path.length)}`;
+
+    return {
+      ...file,
+      path: nextPath,
+      ...(file.path === path ? { name: newPath.split("/").at(-1)! } : {}),
+    };
+  });
+}
+
+function readRuntimeFileCache(
+  key: string | undefined,
+): RuntimeFileCacheEntry | undefined {
+  if (!key) return undefined;
+  const memory = runtimeFileCache.get(key);
+  if (memory) return memory;
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.sessionStorage.getItem(
+      `${RUNTIME_FILE_CACHE_PREFIX}:${key}`,
+    );
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as RuntimeFileCacheEntry;
+    if (!Array.isArray(parsed.files) || typeof parsed.cachedAt !== "number")
+      return undefined;
+    runtimeFileCache.set(key, parsed);
+
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function runtimeFileCacheKey(
+  projectId: string | undefined,
+  workspaceId: string | undefined,
+): string | undefined {
+  return projectId && workspaceId ? `${projectId}:${workspaceId}` : undefined;
+}
+
+function writeRuntimeFileCache(
+  key: string | undefined,
+  files: FileRecord[],
+): void {
+  if (!key) return;
+  const entry = { files: files, cachedAt: Date.now() };
+  runtimeFileCache.set(key, entry);
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      `${RUNTIME_FILE_CACHE_PREFIX}:${key}`,
+      JSON.stringify(entry),
+    );
+  } catch {
+    // Cache failures must never block workspace access.
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function collectEntries(
+  entry: FileSystemEntry,
+  parentPath: string,
+  files: Array<{ file: File; path: string }>,
+  folders: string[],
+): Promise<void> {
+  const currentPath = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+  if (entry.isFile) {
+    const fileEntry = entry as FileSystemFileEntry;
+    const file = await new Promise<File>((resolve, reject) =>
+      fileEntry.file(resolve, reject),
+    );
+    files.push({ file: file, path: currentPath });
+  } else if (entry.isDirectory) {
+    folders.push(currentPath);
+    const dirEntry = entry as FileSystemDirectoryEntry;
+    const children = await readAllEntries(dirEntry.createReader());
+    for (const child of children) {
+      await collectEntries(child, currentPath, files, folders);
+    }
+  }
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  if (file.size > 512 * 1024) {
+    throw new Error(`${file.name} exceeds the 512 KiB dashboard upload limit.`);
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunkSize = 32 * 1024;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + chunkSize),
+    );
+  }
+
+  return btoa(binary);
+}
+
+async function readAllEntries(
+  reader: FileSystemDirectoryReader,
+): Promise<FileSystemEntry[]> {
+  const all: FileSystemEntry[] = [];
+  while (true) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, reject);
+    });
+    if (batch.length === 0) break;
+    all.push(...batch);
+  }
+
+  return all;
+}
+
+function ExtIcon({ name }: { name: string }): React.JSX.Element {
+  const ext = name.includes(".")
+    ? (name.split(".").pop()?.toLowerCase() ?? "")
+    : "";
+  const style: StyleProps =
+    (defaultStyles as Record<string, StyleProps>)[ext] ?? {};
+
+  return (
+    <span className="mr-1.5 inline-flex size-3.5 shrink-0 items-center">
+      <FileIcon extension={ext} {...style} />
+    </span>
+  );
+}
+
+function RenameInput({
+  initialValue,
+  onCommit,
+  onCancel,
+}: {
+  initialValue: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(initialValue);
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    ref.current?.select();
+  }, []);
+
+  const commit = (): void => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== initialValue) {
+      onCommit(trimmed);
+    } else {
+      onCancel();
+    }
+  };
+
+  return (
+    <Input
+      ref={ref}
+      value={draft}
+      className="h-4.5 flex-1 rounded-sm border-primary px-1 py-0 font-mono text-[12px]"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+function TreeRow({
+  node,
+  depth,
+  expanded,
+  uploading,
+  selected,
+  renamingPath,
+  onSelect,
+  onToggle,
+  onDelete,
+  onRenameStart,
+  onRenameCommit,
+  onRenameCancel,
+}: {
+  node: FileNode;
+  depth: number;
+  expanded: Set<string>;
+  uploading: Set<string>;
+  selected: string | null;
+  renamingPath: string | null;
+  onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
+  onDelete: (node: FileNode) => void;
+  onRenameStart: (path: string) => void;
+  onRenameCommit: (node: FileNode, newName: string) => void;
+  onRenameCancel: () => void;
+}): React.JSX.Element {
+  const { canWrite } = useOrgRole();
+  const isExpanded = expanded.has(node.path);
+  const isSelected = selected === node.path;
+  const isRenaming = renamingPath === node.path;
+  const isUploading = uploading.has(node.path);
+
+  const handleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    onSelect(node.path);
+    if (node.isFolder) onToggle(node.path);
+  };
+
+  return (
+    <>
+      <div
+        className={cn(
+          "group flex h-5.5 select-none items-center gap-0 pr-1 text-[13px]",
+          "cursor-pointer",
+          isSelected
+            ? "bg-accent text-accent-foreground"
+            : "text-foreground/80 hover:bg-muted/50",
+        )}
+        style={{ paddingLeft: `${4 + depth * 16}px` }}
+        onClick={handleClick}
+        title={isRenaming ? undefined : node.path}
+      >
+        {/* chevron / spacer */}
+        <span className="flex w-4 shrink-0 items-center justify-center">
+          {node.isFolder ? (
+            isExpanded ? (
+              <ChevronDown className="size-3 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3 text-muted-foreground" />
+            )
+          ) : null}
+        </span>
+
+        {/* icon */}
+        {node.isFolder ? (
+          isExpanded ? (
+            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
+          ) : (
+            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
+          )
+        ) : (
+          <ExtIcon name={node.name} />
+        )}
+
+        {/* name or rename input */}
+        {isRenaming ? (
+          <RenameInput
+            initialValue={node.name}
+            onCommit={(newName) => onRenameCommit(node, newName)}
+            onCancel={onRenameCancel}
+          />
+        ) : (
+          <span
+            className="flex-1 truncate font-mono text-[12px]"
+            onDoubleClick={(e) => {
+              if (!canWrite) return;
+              e.stopPropagation();
+              onRenameStart(node.path);
+            }}
+          >
+            {node.name}
+          </span>
+        )}
+
+        {/* size hint when selected */}
+        {!node.isFolder &&
+          node.sizeBytes !== undefined &&
+          isSelected &&
+          !isRenaming && (
+            <span className="mr-1 shrink-0 text-[10px] text-muted-foreground">
+              {formatBytes(node.sizeBytes)}
+            </span>
+          )}
+
+        {/* action buttons, visible on hover or when selected */}
+        {!isRenaming && (
+          <span
+            className={cn(
+              "flex shrink-0 items-center gap-0.5",
+              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            )}
+          >
+            {isUploading ? (
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+            ) : canWrite ? (
+              <>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 cursor-pointer"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRenameStart(node.path);
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                </Button>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 cursor-pointer text-destructive hover:text-destructive"
+                  title="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(node);
+                  }}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </>
+            ) : null}
+          </span>
+        )}
+      </div>
+
+      {/* children */}
+      {node.isFolder &&
+        isExpanded &&
+        node.children?.map((child) => (
+          <TreeRow
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            expanded={expanded}
+            uploading={uploading}
+            selected={selected}
+            renamingPath={renamingPath}
+            onSelect={onSelect}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onRenameStart={onRenameStart}
+            onRenameCommit={onRenameCommit}
+            onRenameCancel={onRenameCancel}
+          />
+        ))}
+    </>
   );
 }

@@ -39,6 +39,7 @@ import type { Cron, CronRun, Skill } from "./types.ts";
  * module pulls in Node-only .env loading and this one must stay edge-safe.
  */
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
+const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
 export interface BroodsAccountClientOptions {
   /** Base URL of the broods gateway. Falls back to `BROODS_BASE_URL`, then `https://gateway.broods.app`. */
@@ -85,19 +86,6 @@ export interface CreateAgentResult {
 export interface AccountEnvVar {
   name: string;
   updatedAt: number;
-}
-
-const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
-
-/** Build a validated account env-var reference for use in an agent config. */
-export function envPlaceholder(name: string): string {
-  if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
-    throw new Error(
-      "envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
-    );
-  }
-
-  return `\${${name}}`;
 }
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */
@@ -354,6 +342,17 @@ export class BroodsAccountApiError extends Error {
 
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
+/** Build a validated account env-var reference for use in an agent config. */
+export function envPlaceholder(name: string): string {
+  if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
+    throw new Error(
+      "envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
+    );
+  }
+
+  return `\${${name}}`;
+}
+
 /**
  * The credential the environment supplies, with a role session winning over
  * the account secret. The constructor throws through this same resolution, so
@@ -362,19 +361,6 @@ declare const process: { env?: Record<string, string | undefined> } | undefined;
  */
 export function resolveEnvCredential(): string | undefined {
   return envVar("BROODS_SESSION_TOKEN") ?? envVar("BROODS_ACCOUNT_SECRET");
-}
-
-function envVar(name: string): string | undefined {
-  return typeof process !== "undefined" ? process?.env?.[name] : undefined;
-}
-
-function stageScopeQuery(scope: StageScope): string {
-  const query = new URLSearchParams({
-    project: scope.project,
-    stage: scope.stage,
-  });
-
-  return `?${query.toString()}`;
 }
 
 /**
@@ -1248,4 +1234,17 @@ export class BroodsAccountClient {
 
     return (await response.json()) as T;
   }
+}
+
+function envVar(name: string): string | undefined {
+  return typeof process !== "undefined" ? process?.env?.[name] : undefined;
+}
+
+function stageScopeQuery(scope: StageScope): string {
+  const query = new URLSearchParams({
+    project: scope.project,
+    stage: scope.stage,
+  });
+
+  return `?${query.toString()}`;
 }

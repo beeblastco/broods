@@ -37,14 +37,26 @@ import {
 } from "./tools/filesystem-utils.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
+// httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits
+// on the tool-approval path: a hung OPA endpoint would stall gated tool
+// execution. A rejected evaluation fails closed inside opaPolicy.
+const OPA_EVALUATE_TIMEOUT_MS = 3000;
+
+/** Rego entrypoint. Both the per-tool approval and the invoke gate use it. */
+const POLICY_DECISION_PATH = "broods/authz/decision";
+
+const POLICY_INPUT_MAX_DEPTH = 4;
+const POLICY_INPUT_MAX_ARRAY = 20;
+const POLICY_INPUT_MAX_STRING = 500;
+const POLICY_INPUT_PREVIEW_MAX = 160;
+const POLICY_REDACTED_VALUE = "[redacted]";
+const SENSITIVE_INPUT_KEY =
+  /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
+
 type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
   (...args: never[]) => unknown
 >;
-
-export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
-  return (agentConfig.policies?.length ?? 0) > 0;
-}
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
 // any dotted path, so these are usable in rule conditions with no engine change.
@@ -63,6 +75,59 @@ export function channelPolicyIdentity(
     ...(identity.userName ? { userName: identity.userName } : {}),
     ...(identity.userRoles?.length ? { userRoles: identity.userRoles } : {}),
   };
+}
+
+export function compatibilityApprovalStatus(
+  toolName: string,
+  input: unknown,
+  options: {
+    configuredApprovals: ReadonlyMap<string, true>;
+    workspaces: ResolvedWorkspace[];
+    agentSandbox?: SandboxExecutorConfig;
+    agentSandboxPermissionMode?: SandboxPermissionMode;
+  },
+): ToolApprovalStatus {
+  const record =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
+  const workspace =
+    typeof record.workspace === "string" ? record.workspace : undefined;
+  const onSandbox = record.sandbox === true;
+
+  if (toolName === "bash") {
+    return bashNeedsApproval(
+      {
+        workspaces: options.workspaces,
+        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+        ...(options.agentSandboxPermissionMode
+          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
+          : {}),
+      },
+      {
+        ...(workspace ? { workspace: workspace } : {}),
+        ...(onSandbox ? { sandbox: true } : {}),
+      },
+    )
+      ? "user-approval"
+      : undefined;
+  }
+
+  // memory_save writes workspace files (memory/*.md + the index), so it follows
+  // the same approval path as write/edit.
+  if (
+    toolName === "write" ||
+    toolName === "edit" ||
+    toolName === "memory_save"
+  ) {
+    return editNeedsApproval(options.workspaces, workspace)
+      ? "user-approval"
+      : undefined;
+  }
+
+  return options.configuredApprovals.has(toolName)
+    ? "user-approval"
+    : undefined;
 }
 
 export async function createPolicyToolApproval(
@@ -158,6 +223,32 @@ export async function createPolicyToolApproval(
     : undefined;
 }
 
+export function createRuntimeToolApproval(options: {
+  configuredApprovals: ReadonlyMap<string, true>;
+  workspaces: ResolvedWorkspace[];
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
+  policyApproval?: RuntimeToolApproval;
+}): RuntimeToolApproval | undefined {
+  const hasCompatibilityApprovals =
+    options.configuredApprovals.size > 0 ||
+    options.workspaces.some((workspace) => workspace.sandbox) ||
+    Boolean(options.agentSandbox);
+
+  if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
+
+  return async (event) => {
+    const compatibility = compatibilityApprovalStatus(
+      event.toolCall.toolName,
+      event.toolCall.input,
+      options,
+    );
+    if (compatibility) return compatibility;
+
+    return options.policyApproval?.(event);
+  };
+}
+
 // Gates the turn before it starts: may this person address the agent here?
 // Audit records only; enforce denies, including on an unreachable OPA.
 export async function evaluateChannelInvoke(
@@ -226,6 +317,10 @@ export async function evaluateChannelInvoke(
   }
 }
 
+export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
+  return (agentConfig.policies?.length ?? 0) > 0;
+}
+
 export function policyDecisionLogMessage(input: {
   action?: string;
   decision: string;
@@ -248,85 +343,6 @@ export function policyDecisionLogMessage(input: {
   const message = `Agent policy ${action} ${input.toolName} (${input.mode})${details ? `: ${details}` : ""}`;
 
   return input.reason ? `${message}: ${input.reason}` : message;
-}
-
-export function createRuntimeToolApproval(options: {
-  configuredApprovals: ReadonlyMap<string, true>;
-  workspaces: ResolvedWorkspace[];
-  agentSandbox?: SandboxExecutorConfig;
-  agentSandboxPermissionMode?: SandboxPermissionMode;
-  policyApproval?: RuntimeToolApproval;
-}): RuntimeToolApproval | undefined {
-  const hasCompatibilityApprovals =
-    options.configuredApprovals.size > 0 ||
-    options.workspaces.some((workspace) => workspace.sandbox) ||
-    Boolean(options.agentSandbox);
-
-  if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
-
-  return async (event) => {
-    const compatibility = compatibilityApprovalStatus(
-      event.toolCall.toolName,
-      event.toolCall.input,
-      options,
-    );
-    if (compatibility) return compatibility;
-
-    return options.policyApproval?.(event);
-  };
-}
-
-export function compatibilityApprovalStatus(
-  toolName: string,
-  input: unknown,
-  options: {
-    configuredApprovals: ReadonlyMap<string, true>;
-    workspaces: ResolvedWorkspace[];
-    agentSandbox?: SandboxExecutorConfig;
-    agentSandboxPermissionMode?: SandboxPermissionMode;
-  },
-): ToolApprovalStatus {
-  const record =
-    input && typeof input === "object"
-      ? (input as Record<string, unknown>)
-      : {};
-  const workspace =
-    typeof record.workspace === "string" ? record.workspace : undefined;
-  const onSandbox = record.sandbox === true;
-
-  if (toolName === "bash") {
-    return bashNeedsApproval(
-      {
-        workspaces: options.workspaces,
-        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
-        ...(options.agentSandboxPermissionMode
-          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
-          : {}),
-      },
-      {
-        ...(workspace ? { workspace: workspace } : {}),
-        ...(onSandbox ? { sandbox: true } : {}),
-      },
-    )
-      ? "user-approval"
-      : undefined;
-  }
-
-  // memory_save writes workspace files (memory/*.md + the index), so it follows
-  // the same approval path as write/edit.
-  if (
-    toolName === "write" ||
-    toolName === "edit" ||
-    toolName === "memory_save"
-  ) {
-    return editNeedsApproval(options.workspaces, workspace)
-      ? "user-approval"
-      : undefined;
-  }
-
-  return options.configuredApprovals.has(toolName)
-    ? "user-approval"
-    : undefined;
 }
 
 export function policyInputForTool(
@@ -446,29 +462,91 @@ export function policyInputForTool(
   return { action: "tool.call", ...base };
 }
 
-function toolContextForPolicy(
-  input: unknown,
-): NonNullable<PolicyDecisionInput["tool"]> {
-  const sanitizedInput = sanitizePolicyToolInput(input);
-
-  return {
-    ...(sanitizedInput ? { input: sanitizedInput } : {}),
-    ...(sanitizedInput
-      ? { inputKeys: Object.keys(sanitizedInput).sort() }
-      : {}),
-    ...(sanitizedInput
-      ? { inputPreview: formatPolicyInputPreview(sanitizedInput) }
-      : {}),
-  };
+/**
+ * Summary stage for a set of attached policies, matching what the rego decides:
+ * the place is enforcing as soon as one policy attached to it enforces.
+ */
+function enforcingMode(documents: PolicyDocument[]): PolicyMode {
+  return documents.some((document) => document.mode === "enforce")
+    ? "enforce"
+    : "audit";
 }
 
-const POLICY_INPUT_MAX_DEPTH = 4;
-const POLICY_INPUT_MAX_ARRAY = 20;
-const POLICY_INPUT_MAX_STRING = 500;
-const POLICY_INPUT_PREVIEW_MAX = 160;
-const POLICY_REDACTED_VALUE = "[redacted]";
-const SENSITIVE_INPUT_KEY =
-  /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
+function formatPolicyInputPreview(input: Record<string, unknown>): string {
+  return Object.entries(input)
+    .slice(0, 6)
+    .map(([key, value]) => `${key}=${formatPolicyPreviewValue(value)}`)
+    .join(" ")
+    .slice(0, POLICY_INPUT_PREVIEW_MAX);
+}
+
+function formatPolicyPreviewValue(value: unknown): string {
+  if (typeof value === "string")
+    return JSON.stringify(
+      value.length > 80 ? `${value.slice(0, 80)}...` : value,
+    );
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  if (Array.isArray(value)) return `[array:${value.length}]`;
+  if (value && typeof value === "object") return "{object}";
+
+  return String(value);
+}
+
+async function loadPolicyDocuments(
+  accountId: string,
+  policyIds: string[],
+): Promise<PolicyDocument[]> {
+  const requested = [...new Set(policyIds)];
+  const records = await Promise.all(
+    requested.map((policyId) =>
+      getStorage().agentPolicies.getById(accountId, policyId),
+    ),
+  );
+  // A reference that resolves to nothing is a misconfiguration, not an empty
+  // policy: say so, or the rule silently stops applying.
+  const missing = requested.filter((_, index) => !records[index]);
+  if (missing.length > 0) {
+    logWarn("Policy references did not resolve", {
+      accountId: accountId,
+      policyIds: missing,
+    });
+  }
+
+  return records
+    .filter((record): record is NonNullable<typeof record> => Boolean(record))
+    .map((record) => record.document);
+}
+
+function policyClient(): PolicyClient {
+  const opaToken = optionalEnv("OPA_API_TOKEN");
+
+  return withEvaluationDeadline(
+    httpPolicyClient({
+      url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181",
+      ...(opaToken ? { headers: { authorization: `Bearer ${opaToken}` } } : {}),
+    }),
+    OPA_EVALUATE_TIMEOUT_MS,
+  );
+}
+
+function resolveWorkspaceForPolicy(
+  workspaces: ResolvedWorkspace[],
+  workspaceName: string | undefined,
+): ResolvedWorkspace | undefined {
+  try {
+    return resolveWorkspace(workspaces, workspaceName);
+  } catch (error) {
+    // Workspace-scoped selectors cannot match without this context, so make
+    // the miss visible before enforcement mode relies on it.
+    logDebug("Policy workspace resolution failed", {
+      workspaceName: workspaceName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return undefined;
+  }
+}
 
 function sanitizePolicyToolInput(
   value: unknown,
@@ -511,105 +589,27 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
   return String(value);
 }
 
+function toolContextForPolicy(
+  input: unknown,
+): NonNullable<PolicyDecisionInput["tool"]> {
+  const sanitizedInput = sanitizePolicyToolInput(input);
+
+  return {
+    ...(sanitizedInput ? { input: sanitizedInput } : {}),
+    ...(sanitizedInput
+      ? { inputKeys: Object.keys(sanitizedInput).sort() }
+      : {}),
+    ...(sanitizedInput
+      ? { inputPreview: formatPolicyInputPreview(sanitizedInput) }
+      : {}),
+  };
+}
+
 function truncatePolicyString(value: string): string {
   return value.length > POLICY_INPUT_MAX_STRING
     ? `${value.slice(0, POLICY_INPUT_MAX_STRING)}...`
     : value;
 }
-
-function formatPolicyInputPreview(input: Record<string, unknown>): string {
-  return Object.entries(input)
-    .slice(0, 6)
-    .map(([key, value]) => `${key}=${formatPolicyPreviewValue(value)}`)
-    .join(" ")
-    .slice(0, POLICY_INPUT_PREVIEW_MAX);
-}
-
-function formatPolicyPreviewValue(value: unknown): string {
-  if (typeof value === "string")
-    return JSON.stringify(
-      value.length > 80 ? `${value.slice(0, 80)}...` : value,
-    );
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  if (Array.isArray(value)) return `[array:${value.length}]`;
-  if (value && typeof value === "object") return "{object}";
-
-  return String(value);
-}
-
-function resolveWorkspaceForPolicy(
-  workspaces: ResolvedWorkspace[],
-  workspaceName: string | undefined,
-): ResolvedWorkspace | undefined {
-  try {
-    return resolveWorkspace(workspaces, workspaceName);
-  } catch (error) {
-    // Workspace-scoped selectors cannot match without this context, so make
-    // the miss visible before enforcement mode relies on it.
-    logDebug("Policy workspace resolution failed", {
-      workspaceName: workspaceName,
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    return undefined;
-  }
-}
-
-/** Rego entrypoint. Both the per-tool approval and the invoke gate use it. */
-const POLICY_DECISION_PATH = "broods/authz/decision";
-
-/**
- * Summary stage for a set of attached policies, matching what the rego decides:
- * the place is enforcing as soon as one policy attached to it enforces.
- */
-function enforcingMode(documents: PolicyDocument[]): PolicyMode {
-  return documents.some((document) => document.mode === "enforce")
-    ? "enforce"
-    : "audit";
-}
-
-async function loadPolicyDocuments(
-  accountId: string,
-  policyIds: string[],
-): Promise<PolicyDocument[]> {
-  const requested = [...new Set(policyIds)];
-  const records = await Promise.all(
-    requested.map((policyId) =>
-      getStorage().agentPolicies.getById(accountId, policyId),
-    ),
-  );
-  // A reference that resolves to nothing is a misconfiguration, not an empty
-  // policy: say so, or the rule silently stops applying.
-  const missing = requested.filter((_, index) => !records[index]);
-  if (missing.length > 0) {
-    logWarn("Policy references did not resolve", {
-      accountId: accountId,
-      policyIds: missing,
-    });
-  }
-
-  return records
-    .filter((record): record is NonNullable<typeof record> => Boolean(record))
-    .map((record) => record.document);
-}
-
-function policyClient(): PolicyClient {
-  const opaToken = optionalEnv("OPA_API_TOKEN");
-
-  return withEvaluationDeadline(
-    httpPolicyClient({
-      url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181",
-      ...(opaToken ? { headers: { authorization: `Bearer ${opaToken}` } } : {}),
-    }),
-    OPA_EVALUATE_TIMEOUT_MS,
-  );
-}
-
-// httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits
-// on the tool-approval path: a hung OPA endpoint would stall gated tool
-// execution. A rejected evaluation fails closed inside opaPolicy.
-const OPA_EVALUATE_TIMEOUT_MS = 3000;
 
 function withEvaluationDeadline(
   client: PolicyClient,

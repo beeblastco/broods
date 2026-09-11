@@ -43,291 +43,6 @@ type SkillsSlice = {
   allowed?: string[];
 };
 
-function TokenInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}): React.JSX.Element {
-  const [show, setShow] = useState(false);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type={show ? "text" : "password"}
-        value={value}
-        placeholder="fp_acct_…"
-        className="h-7 flex-1 font-mono text-[11px]"
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        className="cursor-pointer"
-        type="button"
-        onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide token" : "Show token"}
-      >
-        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </Button>
-    </div>
-  );
-}
-
-function SourceCard({
-  icon,
-  title,
-  description,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onClick: () => void;
-}): React.JSX.Element {
-  return (
-    <button
-      className="flex cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
-      onClick={onClick}
-    >
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
-        <span className="text-xs font-medium text-foreground">{title}</span>
-      </div>
-      <p className="text-[11px] text-muted-foreground">{description}</p>
-    </button>
-  );
-}
-
-function GithubForm({
-  onSuccess,
-}: {
-  onSuccess: (skillPath: string) => void;
-}): React.JSX.Element {
-  const { canWrite } = useOrgRole();
-  const createFromGithub = useAction(api.skillsPublic.createFromGithub);
-  const [url, setUrl] = useState("");
-  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
-  const [status, setStatus] = useState<{
-    type: "idle" | "busy" | "error";
-    message?: string;
-  }>({ type: "idle" });
-
-  async function handleImport(): Promise<void> {
-    const trimmedUrl = url.trim();
-    const trimmedToken = token.trim();
-    if (!trimmedUrl || !trimmedToken) return;
-
-    setSkillsBearerToken(trimmedToken);
-    setStatus({ type: "busy" });
-    try {
-      const result = await createFromGithub({
-        bearerToken: trimmedToken,
-        githubUrl: trimmedUrl,
-      });
-      onSuccess(result.path);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
-        clearSkillsBearerToken();
-        setToken("");
-      }
-      setStatus({ type: "error", message: msg });
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>GitHub URL</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Format:{" "}
-          <code className="rounded bg-muted px-1">
-            https://github.com/&#123;owner&#125;/&#123;repo&#125;/tree/&#123;ref&#125;/&#123;path&#125;
-          </code>
-        </p>
-        <Input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          className="h-8 font-mono text-xs"
-          placeholder="https://github.com/owner/repo/tree/main/skill"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Your broods Bearer token (starts with{" "}
-          <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
-          session only.
-        </p>
-        <TokenInput value={token} onChange={setToken} />
-      </div>
-
-      {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-          {status.message}
-        </p>
-      )}
-
-      {canWrite && (
-        <Button
-          size="sm"
-          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
-          disabled={!url.trim() || !token.trim() || status.type === "busy"}
-          onClick={() => void handleImport()}
-        >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          Import from GitHub
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function JsonForm({
-  existingPath,
-  onSuccess,
-}: {
-  existingPath?: string;
-  onSuccess: (skillPath: string) => void;
-}): React.JSX.Element {
-  const { canWrite } = useOrgRole();
-  const createFromJson = useAction(api.skillsPublic.createFromJson);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [content, setContent] = useState("");
-  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
-  const [status, setStatus] = useState<{
-    type: "idle" | "busy" | "success" | "error";
-    message?: string;
-  }>({ type: "idle" });
-
-  const nameValid =
-    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
-  const canSubmit =
-    nameValid &&
-    description.trim() &&
-    content.trim() &&
-    token.trim() &&
-    status.type !== "busy";
-  const isUpdate = !!existingPath || status.type === "success";
-
-  async function handleSubmit(): Promise<void> {
-    if (!canSubmit) return;
-    setSkillsBearerToken(token.trim());
-    setStatus({ type: "busy" });
-    try {
-      const result = await createFromJson({
-        bearerToken: token.trim(),
-        name: name,
-        description: description.trim(),
-        content: content.trim(),
-      });
-      setStatus({ type: "success", message: `Skill "${result.name}" saved.` });
-      onSuccess(result.path);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
-        clearSkillsBearerToken();
-        setToken("");
-      }
-      setStatus({ type: "error", message: msg });
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Skill name</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Lowercase letters, numbers, and hyphens. Max 64 characters.
-        </p>
-        <Input
-          value={name}
-          onChange={(e) =>
-            setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-          }
-          className="h-8 font-mono text-xs"
-          placeholder="support-flow"
-          disabled={isUpdate}
-        />
-        {name && !nameValid && (
-          <p className="text-[11px] text-destructive">
-            Must start and end with a letter or number.
-          </p>
-        )}
-        {isUpdate && (
-          <p className="text-[11px] text-muted-foreground">
-            Name cannot be changed after creation. Use &ldquo;Change&rdquo; to
-            start over.
-          </p>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Description</SectionHeader>
-        <Textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What this skill does and when the agent should use it."
-          className="h-16 resize-none text-xs"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Instructions (SKILL.md)</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Markdown content that tells the agent how to apply this skill.
-        </p>
-        <Textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="# My Skill&#10;&#10;When the user asks about X, you should..."
-          className="min-h-25 resize-y font-mono text-xs"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Your broods Bearer token. Saved in session only.
-        </p>
-        <TokenInput value={token} onChange={setToken} />
-      </div>
-
-      {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-          {status.message}
-        </p>
-      )}
-
-      {status.type === "success" && status.message && (
-        <p className="rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
-          {status.message}
-        </p>
-      )}
-
-      {canWrite && (
-        <Button
-          size="sm"
-          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
-          disabled={!canSubmit}
-          onClick={() => void handleSubmit()}
-        >
-          {status.type === "busy" && (
-            <Loader2 className="size-3.5 animate-spin" />
-          )}
-          {isUpdate ? "Update skill" : "Create skill"}
-        </Button>
-      )}
-    </div>
-  );
-}
-
 export function SkillDetailsTab({
   nodeId,
   nodeConfig,
@@ -571,6 +286,291 @@ export function SkillDetailsTab({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function GithubForm({
+  onSuccess,
+}: {
+  onSuccess: (skillPath: string) => void;
+}): React.JSX.Element {
+  const { canWrite } = useOrgRole();
+  const createFromGithub = useAction(api.skillsPublic.createFromGithub);
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
+  const [status, setStatus] = useState<{
+    type: "idle" | "busy" | "error";
+    message?: string;
+  }>({ type: "idle" });
+
+  async function handleImport(): Promise<void> {
+    const trimmedUrl = url.trim();
+    const trimmedToken = token.trim();
+    if (!trimmedUrl || !trimmedToken) return;
+
+    setSkillsBearerToken(trimmedToken);
+    setStatus({ type: "busy" });
+    try {
+      const result = await createFromGithub({
+        bearerToken: trimmedToken,
+        githubUrl: trimmedUrl,
+      });
+      onSuccess(result.path);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
+        clearSkillsBearerToken();
+        setToken("");
+      }
+      setStatus({ type: "error", message: msg });
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>GitHub URL</SectionHeader>
+        <p className="text-[11px] text-muted-foreground">
+          Format:{" "}
+          <code className="rounded bg-muted px-1">
+            https://github.com/&#123;owner&#125;/&#123;repo&#125;/tree/&#123;ref&#125;/&#123;path&#125;
+          </code>
+        </p>
+        <Input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className="h-8 font-mono text-xs"
+          placeholder="https://github.com/owner/repo/tree/main/skill"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>Account token</SectionHeader>
+        <p className="text-[11px] text-muted-foreground">
+          Your broods Bearer token (starts with{" "}
+          <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
+          session only.
+        </p>
+        <TokenInput value={token} onChange={setToken} />
+      </div>
+
+      {status.type === "error" && (
+        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {status.message}
+        </p>
+      )}
+
+      {canWrite && (
+        <Button
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          disabled={!url.trim() || !token.trim() || status.type === "busy"}
+          onClick={() => void handleImport()}
+        >
+          {status.type === "busy" && (
+            <Loader2 className="size-3.5 animate-spin" />
+          )}
+          Import from GitHub
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function JsonForm({
+  existingPath,
+  onSuccess,
+}: {
+  existingPath?: string;
+  onSuccess: (skillPath: string) => void;
+}): React.JSX.Element {
+  const { canWrite } = useOrgRole();
+  const createFromJson = useAction(api.skillsPublic.createFromJson);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [content, setContent] = useState("");
+  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
+  const [status, setStatus] = useState<{
+    type: "idle" | "busy" | "success" | "error";
+    message?: string;
+  }>({ type: "idle" });
+
+  const nameValid =
+    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  const canSubmit =
+    nameValid &&
+    description.trim() &&
+    content.trim() &&
+    token.trim() &&
+    status.type !== "busy";
+  const isUpdate = !!existingPath || status.type === "success";
+
+  async function handleSubmit(): Promise<void> {
+    if (!canSubmit) return;
+    setSkillsBearerToken(token.trim());
+    setStatus({ type: "busy" });
+    try {
+      const result = await createFromJson({
+        bearerToken: token.trim(),
+        name: name,
+        description: description.trim(),
+        content: content.trim(),
+      });
+      setStatus({ type: "success", message: `Skill "${result.name}" saved.` });
+      onSuccess(result.path);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
+        clearSkillsBearerToken();
+        setToken("");
+      }
+      setStatus({ type: "error", message: msg });
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>Skill name</SectionHeader>
+        <p className="text-[11px] text-muted-foreground">
+          Lowercase letters, numbers, and hyphens. Max 64 characters.
+        </p>
+        <Input
+          value={name}
+          onChange={(e) =>
+            setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+          }
+          className="h-8 font-mono text-xs"
+          placeholder="support-flow"
+          disabled={isUpdate}
+        />
+        {name && !nameValid && (
+          <p className="text-[11px] text-destructive">
+            Must start and end with a letter or number.
+          </p>
+        )}
+        {isUpdate && (
+          <p className="text-[11px] text-muted-foreground">
+            Name cannot be changed after creation. Use &ldquo;Change&rdquo; to
+            start over.
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>Description</SectionHeader>
+        <Textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What this skill does and when the agent should use it."
+          className="h-16 resize-none text-xs"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>Instructions (SKILL.md)</SectionHeader>
+        <p className="text-[11px] text-muted-foreground">
+          Markdown content that tells the agent how to apply this skill.
+        </p>
+        <Textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="# My Skill&#10;&#10;When the user asks about X, you should..."
+          className="min-h-25 resize-y font-mono text-xs"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <SectionHeader>Account token</SectionHeader>
+        <p className="text-[11px] text-muted-foreground">
+          Your broods Bearer token. Saved in session only.
+        </p>
+        <TokenInput value={token} onChange={setToken} />
+      </div>
+
+      {status.type === "error" && (
+        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {status.message}
+        </p>
+      )}
+
+      {status.type === "success" && status.message && (
+        <p className="rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+          {status.message}
+        </p>
+      )}
+
+      {canWrite && (
+        <Button
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          disabled={!canSubmit}
+          onClick={() => void handleSubmit()}
+        >
+          {status.type === "busy" && (
+            <Loader2 className="size-3.5 animate-spin" />
+          )}
+          {isUpdate ? "Update skill" : "Create skill"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function SourceCard({
+  icon,
+  title,
+  description,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  onClick: () => void;
+}): React.JSX.Element {
+  return (
+    <button
+      className="flex cursor-pointer flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/40"
+      onClick={onClick}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground">{icon}</span>
+        <span className="text-xs font-medium text-foreground">{title}</span>
+      </div>
+      <p className="text-[11px] text-muted-foreground">{description}</p>
+    </button>
+  );
+}
+
+function TokenInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}): React.JSX.Element {
+  const [show, setShow] = useState(false);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        type={show ? "text" : "password"}
+        value={value}
+        placeholder="fp_acct_…"
+        className="h-7 flex-1 font-mono text-[11px]"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        className="cursor-pointer"
+        type="button"
+        onClick={() => setShow((v) => !v)}
+        aria-label={show ? "Hide token" : "Show token"}
+      >
+        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+      </Button>
     </div>
   );
 }

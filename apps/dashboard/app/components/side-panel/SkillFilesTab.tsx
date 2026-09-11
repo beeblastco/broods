@@ -51,155 +51,6 @@ const ALLOWED_EXTENSIONS = new Set([
   "yml",
 ]);
 
-function parseSkillMd(text: string): { name?: string; description?: string } {
-  const match = text.match(/^---\n([\s\S]+?)\n---/);
-  if (!match) return {};
-  const fm = match[1];
-  const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim();
-  const desc = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim();
-
-  return { name: name, description: desc };
-}
-
-function buildSkillMdContent(name: string, description: string): string {
-  return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDescribe what this skill does and when the agent should use it.\n`;
-}
-
-function TokenPrompt({
-  label,
-  onConfirm,
-  onCancel,
-}: {
-  label: string;
-  onConfirm: (token: string) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const [draft, setDraft] = useState("");
-  const [show, setShow] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-foreground">{label}</span>
-        <button
-          className="cursor-pointer text-muted-foreground hover:text-foreground"
-          onClick={onCancel}
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
-      <p className="text-[10px] text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
-        session only.
-      </p>
-      <div className="flex items-center gap-1.5">
-        <Input
-          ref={ref}
-          type={show ? "text" : "password"}
-          value={draft}
-          placeholder="fp_acct_…"
-          className="h-7 flex-1 font-mono text-[11px]"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") onCancel();
-          }}
-        />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          onClick={() => setShow((v) => !v)}
-        >
-          {show ? (
-            <EyeOff className="size-3.5" />
-          ) : (
-            <Eye className="size-3.5" />
-          )}
-        </Button>
-      </div>
-      <Button
-        size="sm"
-        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
-        disabled={!draft.trim()}
-        onClick={() => onConfirm(draft.trim())}
-      >
-        Confirm
-      </Button>
-    </div>
-  );
-}
-
-function CreateSkillMdForm({
-  onSubmit,
-  onCancel,
-}: {
-  onSubmit: (name: string, description: string) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const [name, setName] = useState("");
-  const [desc, setDesc] = useState("");
-  const nameValid =
-    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-foreground">
-          Create SKILL.md
-        </span>
-        <button
-          className="cursor-pointer text-muted-foreground hover:text-foreground"
-          onClick={onCancel}
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
-      <p className="text-[10px] text-muted-foreground">
-        Lowercase letters, numbers, hyphens. Required at the bundle root.
-      </p>
-      <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted-foreground">Skill name</label>
-        <Input
-          value={name}
-          placeholder="support-flow"
-          className="h-7 font-mono text-[11px]"
-          onChange={(e) =>
-            setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
-          }
-        />
-        {name && !nameValid && (
-          <p className="text-[10px] text-destructive">
-            Name must start and end with a letter or number.
-          </p>
-        )}
-      </div>
-      <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted-foreground">Description</label>
-        <Textarea
-          value={desc}
-          placeholder="What this skill does and when to use it."
-          className="h-16 resize-none text-[11px]"
-          onChange={(e) => setDesc(e.target.value)}
-        />
-      </div>
-      <Button
-        size="sm"
-        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
-        disabled={!nameValid || !desc.trim()}
-        onClick={() => onSubmit(name, desc.trim())}
-      >
-        Create
-      </Button>
-    </div>
-  );
-}
-
 export function SkillFilesTab({
   projectId,
   nodeId,
@@ -485,6 +336,155 @@ export function SkillFilesTab({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function buildSkillMdContent(name: string, description: string): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDescribe what this skill does and when the agent should use it.\n`;
+}
+
+function parseSkillMd(text: string): { name?: string; description?: string } {
+  const match = text.match(/^---\n([\s\S]+?)\n---/);
+  if (!match) return {};
+  const fm = match[1];
+  const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim();
+  const desc = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+
+  return { name: name, description: desc };
+}
+
+function CreateSkillMdForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (name: string, description: string) => void;
+  onCancel: () => void;
+}): React.JSX.Element {
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const nameValid =
+    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium text-foreground">
+          Create SKILL.md
+        </span>
+        <button
+          className="cursor-pointer text-muted-foreground hover:text-foreground"
+          onClick={onCancel}
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Lowercase letters, numbers, hyphens. Required at the bundle root.
+      </p>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] text-muted-foreground">Skill name</label>
+        <Input
+          value={name}
+          placeholder="support-flow"
+          className="h-7 font-mono text-[11px]"
+          onChange={(e) =>
+            setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
+          }
+        />
+        {name && !nameValid && (
+          <p className="text-[10px] text-destructive">
+            Name must start and end with a letter or number.
+          </p>
+        )}
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] text-muted-foreground">Description</label>
+        <Textarea
+          value={desc}
+          placeholder="What this skill does and when to use it."
+          className="h-16 resize-none text-[11px]"
+          onChange={(e) => setDesc(e.target.value)}
+        />
+      </div>
+      <Button
+        size="sm"
+        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
+        disabled={!nameValid || !desc.trim()}
+        onClick={() => onSubmit(name, desc.trim())}
+      >
+        Create
+      </Button>
+    </div>
+  );
+}
+
+function TokenPrompt({
+  label,
+  onConfirm,
+  onCancel,
+}: {
+  label: string;
+  onConfirm: (token: string) => void;
+  onCancel: () => void;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState("");
+  const [show, setShow] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium text-foreground">{label}</span>
+        <button
+          className="cursor-pointer text-muted-foreground hover:text-foreground"
+          onClick={onCancel}
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
+        session only.
+      </p>
+      <div className="flex items-center gap-1.5">
+        <Input
+          ref={ref}
+          type={show ? "text" : "password"}
+          value={draft}
+          placeholder="fp_acct_…"
+          className="h-7 flex-1 font-mono text-[11px]"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
+            if (e.key === "Escape") onCancel();
+          }}
+        />
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          className="cursor-pointer"
+          onClick={() => setShow((v) => !v)}
+        >
+          {show ? (
+            <EyeOff className="size-3.5" />
+          ) : (
+            <Eye className="size-3.5" />
+          )}
+        </Button>
+      </div>
+      <Button
+        size="sm"
+        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
+        disabled={!draft.trim()}
+        onClick={() => onConfirm(draft.trim())}
+      >
+        Confirm
+      </Button>
     </div>
   );
 }

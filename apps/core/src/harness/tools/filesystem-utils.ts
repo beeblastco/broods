@@ -116,19 +116,6 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-// The reservation key a namespace-less run reconnects on, normally derived per
-// agent by resolveAgentRuntime rather than written by the author.
-function statelessReservationKeyFor(
-  config: SandboxExecutorConfig,
-): string | undefined {
-  const options = isPlainObject(config.options) ? config.options : {};
-  const reservationKey = options.reservationKey;
-
-  return typeof reservationKey === "string" && reservationKey.trim()
-    ? reservationKey.trim()
-    : undefined;
-}
-
 /**
  * Whether the agent's own sandbox needs a way in of its own. It does not when there
  * are no workspaces (bash already runs there), nor when a workspace mounts that same
@@ -277,44 +264,6 @@ export async function runSandbox(
   return result;
 }
 
-async function runSandboxOn(
-  config: SandboxExecutorConfig,
-  namespace: string | undefined,
-  code: string,
-  metadata: SandboxRunMetadata | undefined,
-): Promise<SandboxRunResult> {
-  const executor = createSandboxExecutor(config);
-  const limits = workspaceSandboxLimits(config.provider);
-  const reservationKey =
-    !namespace && config.persistent === true
-      ? statelessReservationKeyFor(config)
-      : undefined;
-
-  return executor.run({
-    code: code,
-    ...(namespace
-      ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
-      : {}),
-    ...(reservationKey
-      ? {
-          reservationKey: reservationKey,
-          workspaceRoot: workspaceRootFor(config),
-        }
-      : {}),
-    ...(metadata ? { metadata: metadata } : {}),
-    timeoutSeconds: boundedInteger(
-      config.timeout,
-      limits.defaultTimeoutSeconds,
-      limits.maxTimeoutSeconds,
-    ),
-    outputLimitBytes: boundedInteger(
-      config.outputLimitBytes,
-      limits.defaultOutputLimitBytes,
-      limits.maxOutputLimitBytes,
-    ),
-  });
-}
-
 /**
  * The work runs inside the sandbox (not the harness), so it survives the request.
  * The caller supplies the jobId (so the tracking row exists before the job can
@@ -421,12 +370,6 @@ export function targetsAgentSandbox(
     selection.sandbox === true &&
     hasStandaloneSandbox(context.workspaces, context.agentSandbox)
   );
-}
-
-function permissionModeFor(
-  workspace: ResolvedWorkspace | undefined,
-): SandboxPermissionMode {
-  return workspace?.sandbox?.permissionMode ?? "ask";
 }
 
 // S3-direct read-only path (workspaces with neither a sandbox nor a readMount).
@@ -586,12 +529,6 @@ export function formatRunText(result: SandboxRunResult): string {
   return `${result.stdout}${result.stderr}`;
 }
 
-function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
-  return config.runtimes && config.runtimes.length > 0
-    ? config.runtimes
-    : ["bash", "python", "node"];
-}
-
 export function runtimeDescription(
   config: SandboxExecutorConfig | undefined,
 ): string {
@@ -741,20 +678,6 @@ function absoluteWriteTarget(command: string): string | undefined {
   return undefined;
 }
 
-function isEphemeralPath(path: string): boolean {
-  return EPHEMERAL_WRITE_ROOTS.some(
-    (root) => path === root.slice(0, -1) || path.startsWith(root),
-  );
-}
-
-// Name a concrete relative path in the error so the retry is obvious rather than
-// something the model has to invent.
-function workspaceRelativeSuggestion(target: string): string {
-  const basename = target.split("/").filter(Boolean).pop();
-
-  return basename ? `./${basename}` : "./output";
-}
-
 function invokesCommand(command: string, names: string[]): boolean {
   const escaped = names
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -763,10 +686,73 @@ function invokesCommand(command: string, names: string[]): boolean {
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
 }
 
-// Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
-// matched. Otherwise the two dots are never adjacent and no pattern can see them.
-function unescapeShellChars(command: string): string {
-  return command.replace(/\\(.)/g, "$1");
+function isEphemeralPath(path: string): boolean {
+  return EPHEMERAL_WRITE_ROOTS.some(
+    (root) => path === root.slice(0, -1) || path.startsWith(root),
+  );
+}
+
+function permissionModeFor(
+  workspace: ResolvedWorkspace | undefined,
+): SandboxPermissionMode {
+  return workspace?.sandbox?.permissionMode ?? "ask";
+}
+
+async function runSandboxOn(
+  config: SandboxExecutorConfig,
+  namespace: string | undefined,
+  code: string,
+  metadata: SandboxRunMetadata | undefined,
+): Promise<SandboxRunResult> {
+  const executor = createSandboxExecutor(config);
+  const limits = workspaceSandboxLimits(config.provider);
+  const reservationKey =
+    !namespace && config.persistent === true
+      ? statelessReservationKeyFor(config)
+      : undefined;
+
+  return executor.run({
+    code: code,
+    ...(namespace
+      ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
+      : {}),
+    ...(reservationKey
+      ? {
+          reservationKey: reservationKey,
+          workspaceRoot: workspaceRootFor(config),
+        }
+      : {}),
+    ...(metadata ? { metadata: metadata } : {}),
+    timeoutSeconds: boundedInteger(
+      config.timeout,
+      limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
+    outputLimitBytes: boundedInteger(
+      config.outputLimitBytes,
+      limits.defaultOutputLimitBytes,
+      limits.maxOutputLimitBytes,
+    ),
+  });
+}
+
+function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
+  return config.runtimes && config.runtimes.length > 0
+    ? config.runtimes
+    : ["bash", "python", "node"];
+}
+
+// The reservation key a namespace-less run reconnects on, normally derived per
+// agent by resolveAgentRuntime rather than written by the author.
+function statelessReservationKeyFor(
+  config: SandboxExecutorConfig,
+): string | undefined {
+  const options = isPlainObject(config.options) ? config.options : {};
+  const reservationKey = options.reservationKey;
+
+  return typeof reservationKey === "string" && reservationKey.trim()
+    ? reservationKey.trim()
+    : undefined;
 }
 
 function stripHereDocBodies(command: string): string {
@@ -788,4 +774,18 @@ function stripHereDocBodies(command: string): string {
   }
 
   return kept.join("\n");
+}
+
+// Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
+// matched. Otherwise the two dots are never adjacent and no pattern can see them.
+function unescapeShellChars(command: string): string {
+  return command.replace(/\\(.)/g, "$1");
+}
+
+// Name a concrete relative path in the error so the retry is obvious rather than
+// something the model has to invent.
+function workspaceRelativeSuggestion(target: string): string {
+  const basename = target.split("/").filter(Boolean).pop();
+
+  return basename ? `./${basename}` : "./output";
 }

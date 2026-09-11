@@ -107,29 +107,400 @@ const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
   },
 };
 
-function formatDuration(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+// A root task/subtask still "running" past this likely never reported its
+// terminal span (crash/freeze or a lost publish), so we treat it as finished.
+// Otherwise the spinner spins forever.
+const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
-  return `${ms}ms`;
+interface SpanGroup {
+  root: ObservabilitySpanRow;
+  childrenByParent: Map<string, ObservabilitySpanRow[]>;
+  // Absolute time window the waterfall bars are scaled against (covers spans like
+  // cold start that begin before the root task span).
+  windowStart: number;
+  windowSpan: number;
+  // Effective task duration used to size the top-level bar on a scale shared
+  // across tasks, so a longer task always reads as a longer bar. Running tasks
+  // fall back to elapsed window so their bar grows as steps stream in.
+  taskDurationMs: number;
 }
 
-/** Date + time for the "Started" column so a task is locatable across days, not just within the hour. */
-function formatDateTime(ms: number): string {
-  return new Date(ms).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
+export function TracingPanel({
+  projectSlug,
+  stageSlug,
+  apiKey,
+}: Props): React.JSX.Element {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const focusTraceId = searchParams.get("trace");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [fromTime, setFromTime] = useState("");
+  const [toTime, setToTime] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
+  const { entries, status, history, error, refresh, fetchTrace } =
+    useObservabilityStream({
+      stream: "traces",
+      projectSlug: projectSlug,
+      stageSlug: stageSlug,
+      apiKey: apiKey,
+      backfill: 100,
+    });
 
-  return Number.isFinite(ms) ? ms : null;
+  const fromMs = toEpochMs(fromTime);
+  const toMs = toEpochMs(toTime);
+  const hasFilters =
+    filter.trim() !== "" ||
+    statusFilter !== "all" ||
+    fromMs !== null ||
+    toMs !== null;
+
+  // Every task in the buffer, before filters. Focus resolution runs against
+  // this so a filtered-out trace is never mistaken for one absent from history.
+  const allGroups = useMemo(() => groupSpans(entries), [entries]);
+
+  const groups = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+
+    return allGroups.filter((group) => {
+      const { root, childrenByParent } = group;
+      if (statusFilter !== "all" && root.status !== statusFilter) return false;
+      if (fromMs !== null && root.startTimeMs < fromMs) return false;
+      if (toMs !== null && root.startTimeMs > toMs) return false;
+      if (!needle) return true;
+
+      const allSpans = [root, ...[...childrenByParent.values()].flat()];
+
+      return allSpans.some((span) =>
+        [
+          span.name,
+          span.kind,
+          span.status,
+          span.traceId,
+          span.agentId ?? "",
+          span.conversationKey ?? "",
+          JSON.stringify(span.attributes ?? {}),
+        ].some((value) => value.toLowerCase().includes(needle)),
+      );
+    });
+  }, [allGroups, filter, statusFilter, fromMs, toMs]);
+
+  // Shared duration scale for the top-level task bars so bar length is
+  // comparable across tasks (longest visible task fills the column).
+  const scaleMaxMs = useMemo(
+    () => Math.max(1, ...groups.map((group) => group.taskDurationMs)),
+    [groups],
+  );
+
+  // Resolve the selected key against the live groups so the panel tracks span
+  // updates (running → ok) and closes itself when the span leaves the view.
+  const selected = useMemo(() => {
+    if (!selectedKey) return null;
+    for (const group of groups) {
+      const spans = [
+        group.root,
+        ...[...group.childrenByParent.values()].flat(),
+      ];
+      const span = spans.find(
+        (candidate) => spanKey(candidate) === selectedKey,
+      );
+      if (span) return { span: span, group: group };
+    }
+
+    return null;
+  }, [groups, selectedKey]);
+
+  // Deliberately no auto-expand: new tasks arrive collapsed, since the row
+  // already shows live status and a tree popping open on every task is noisy.
+
+  // Reset paging when the filters change so "Load more" starts from the top.
+  // Render-time adjustment, not an effect.
+  const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
+  const [prevFilterSignature, setPrevFilterSignature] =
+    useState(filterSignature);
+  if (filterSignature !== prevFilterSignature) {
+    setPrevFilterSignature(filterSignature);
+    setVisibleCount(PAGE_SIZE);
+  }
+
+  // Arriving from a log's "View trace": expand that trace, page it into view,
+  // scroll to it, then drop the param so a manual collapse is not re-fought.
+  const focusedRef = useRef<string | null>(null);
+  // The focus key a one-trace Tempo fetch was already sent for, so a miss
+  // ends in a notice instead of another fetch.
+  const fetchedRef = useRef<string | null>(null);
+  const [missingTrace, setMissingTrace] = useState<string | null>(null);
+  // A new focus target retires the notice about the previous one.
+  const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
+  if (focusTraceId !== prevFocusTraceId) {
+    setPrevFocusTraceId(focusTraceId);
+    if (focusTraceId) setMissingTrace(null);
+  }
+  // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
+  // below would otherwise swallow a repeat click on the same "↳ from parent" link).
+  const [refocusNonce, setRefocusNonce] = useState(0);
+  const dropFocusParam = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("trace");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [searchParams, pathname, router]);
+  useEffect(() => {
+    if (!focusTraceId) return;
+    const focusKey = `${focusTraceId}:${refocusNonce}`;
+    if (focusedRef.current === focusKey) return;
+    const index = groups.findIndex(
+      (group) => group.root.traceId === focusTraceId,
+    );
+    if (index === -1) {
+      // The trace is in the buffer but a filter is hiding it: clear the filters
+      // so it renders, then let the effect re-run and scroll to it. Only a
+      // trace absent from the whole buffer is a candidate for a Tempo fetch.
+      if (allGroups.some((group) => group.root.traceId === focusTraceId)) {
+        setFilter("");
+        setStatusFilter("all");
+        setFromTime("");
+        setToTime("");
+
+        return;
+      }
+      // Not in the recent history: ask Tempo for that one trace, once the
+      // backfill has settled so the two answers cannot race. Record the request
+      // only if it actually went out, so a closed socket doesn't get reported as
+      // a miss without ever asking. A second real miss is reported.
+      if (history === "loading" || history === "none") return;
+      if (fetchedRef.current !== focusKey) {
+        if (fetchTrace(focusTraceId)) fetchedRef.current = focusKey;
+
+        return;
+      }
+      focusedRef.current = focusKey;
+      setMissingTrace(focusTraceId);
+      dropFocusParam();
+
+      return;
+    }
+    const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
+    setExpanded((current) =>
+      current.has(rootKey) ? current : new Set([...current, rootKey]),
+    );
+    // A trace beyond the current page isn't in the DOM yet: page it in and
+    // finish on the re-run (visibleCount is a dep). Marking done or dropping
+    // the param now would skip the scroll and highlight entirely.
+    if (index >= visibleCount) {
+      setVisibleCount(index + 1);
+
+      return;
+    }
+    const target = document.getElementById(`task-${focusTraceId}`);
+    if (!target) return;
+    focusedRef.current = focusKey;
+    target.scrollIntoView({ block: "center" });
+    dropFocusParam();
+  }, [
+    focusTraceId,
+    refocusNonce,
+    groups,
+    allGroups,
+    visibleCount,
+    history,
+    fetchTrace,
+    dropFocusParam,
+  ]);
+
+  const toggle = (key: string): void => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      return next;
+    });
+  };
+
+  // Jump to another trace (a subagent's "↳ from parent" link). Reuses the
+  // `?trace=` focus effect above, which expands, pages in, scrolls, and highlights.
+  // Bumps the nonce (not the ref) so re-clicking the same link re-focuses.
+  const focusTrace = useCallback(
+    (traceId: string) => {
+      setRefocusNonce((nonce) => nonce + 1);
+      const next = new URLSearchParams(searchParams.toString());
+      next.set("trace", traceId);
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    },
+    [searchParams, pathname, router],
+  );
+
+  const clearFilters = (): void => {
+    setFilter("");
+    setStatusFilter("all");
+    setFromTime("");
+    setToTime("");
+  };
+
+  const visibleGroups = groups.slice(0, visibleCount);
+  const remaining = groups.length - visibleGroups.length;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <p className="shrink-0 text-xs text-muted-foreground">
+        Task bars scaled by duration. Expand a task for its step waterfall;
+        click any row to inspect input, reasoning, and output in the side panel.
+      </p>
+
+      <ObservabilityToolbar
+        search={filter}
+        onSearchChange={setFilter}
+        searchPlaceholder={`Search ${groups.length} task${groups.length === 1 ? "" : "s"}…`}
+        filterAriaLabel="Filter by status"
+        filterValue={statusFilter}
+        filterOptions={STATUS_FILTER_OPTIONS}
+        onFilterChange={(value) => setStatusFilter(value as StatusFilter)}
+        fromTime={fromTime}
+        onFromTimeChange={setFromTime}
+        toTime={toTime}
+        onToTimeChange={setToTime}
+        hasFilters={hasFilters}
+        onClear={clearFilters}
+        onRefresh={refresh}
+        refreshDisabled={status === "idle"}
+        refreshSpinning={status === "connecting"}
+        refreshTitle={error ?? "Refresh traces"}
+        isError={status === "error"}
+      />
+
+      {missingTrace && (
+        <p
+          aria-live="polite"
+          className="flex shrink-0 items-center gap-2 text-xs text-destructive"
+        >
+          <span className="truncate font-mono">
+            Trace {missingTrace} is not available
+            {error ? `: ${error}` : " in this stage's history."}
+          </span>
+          <button
+            type="button"
+            onClick={() => setMissingTrace(null)}
+            className="cursor-pointer underline underline-offset-2"
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
+
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+          <table className="w-full text-xs font-mono table-fixed">
+            <colgroup>
+              <col className="w-37" />
+              <col className="w-[26%]" />
+              <col className="w-21" />
+              <col className="w-18" />
+              <col className="w-18" />
+              <col />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-3 py-2 font-medium">Started</th>
+                <th className="px-3 py-2 font-medium">Task / Span</th>
+                <th className="px-3 py-2 font-medium">Kind</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Duration</th>
+                <th className="px-3 py-2 font-medium">Timeline</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleGroups.flatMap((group) =>
+                renderSpanRows(
+                  group.root,
+                  0,
+                  group,
+                  scaleMaxMs,
+                  expanded,
+                  toggle,
+                  selectedKey,
+                  setSelectedKey,
+                  focusTraceId,
+                  isTaskRunning(group.root),
+                  focusTrace,
+                ),
+              )}
+              {groups.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="h-32 text-center text-xs text-muted-foreground"
+                  >
+                    {entries.length === 0
+                      ? emptyStreamMessage(history, error, "traces", "7 days")
+                      : "No tasks match the current filters."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {remaining > 0 && (
+            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+              >
+                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+                {remaining.toLocaleString()} older task
+                {remaining === 1 ? "" : "s"}
+              </button>
+            </div>
+          )}
+        </div>
+        {selected && (
+          <ObservabilityDetailPanel
+            title={spanLabel(selected.span)}
+            meta={
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                <Badge
+                  className={cn(
+                    "px-1.5 py-0 text-[10px] uppercase tracking-wide",
+                    kindTheme(selected.span.kind).badgeBg,
+                    kindTheme(selected.span.kind).text,
+                  )}
+                >
+                  {selected.span.kind}
+                </Badge>
+                <span
+                  className={cn(
+                    "font-medium",
+                    isStale(selected.span, isTaskRunning(selected.group.root))
+                      ? "text-muted-foreground"
+                      : statusColor(selected.span.status),
+                  )}
+                >
+                  {isStale(selected.span, isTaskRunning(selected.group.root))
+                    ? "ended"
+                    : selected.span.status}
+                </span>
+                <span className="text-muted-foreground">
+                  {selected.span.durationMs > 0
+                    ? formatDuration(selected.span.durationMs)
+                    : "—"}{" "}
+                  · {formatDateTime(selected.span.startTimeMs)}
+                </span>
+              </div>
+            }
+            onClose={() => setSelectedKey(null)}
+          >
+            <SpanDetails span={selected.span} />
+          </ObservabilityDetailPanel>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function displayAttribute(value: unknown): string {
@@ -147,6 +518,24 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
+/** Date + time for the "Started" column so a task is locatable across days, not just within the hour. */
+function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function formatDuration(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+
+  return `${ms}ms`;
+}
+
 function numericAttribute(
   span: ObservabilitySpanRow,
   key: string,
@@ -160,10 +549,17 @@ function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
 
-// A root task/subtask still "running" past this likely never reported its
-// terminal span (crash/freeze or a lost publish), so we treat it as finished.
-// Otherwise the spinner spins forever.
-const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
+function toEpochMs(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** A live "running" span under a task that already finished never reported its end. */
+function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
+  return span.status === "running" && !taskRunning;
+}
 
 function isTaskRunning(root: ObservabilitySpanRow): boolean {
   return (
@@ -172,9 +568,10 @@ function isTaskRunning(root: ObservabilitySpanRow): boolean {
   );
 }
 
-/** A live "running" span under a task that already finished never reported its end. */
-function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
-  return span.status === "running" && !taskRunning;
+/** KIND_THEME lookup with a fallback: core can ship a new span kind before
+ * this dashboard build knows it, and that must not take down the panel. */
+function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
+  return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
 }
 
 // The hue carries meaning here, so each tone needs both themes: the 300/400
@@ -184,25 +581,6 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
   if (status === "error") return "text-red-700 dark:text-red-400";
 
   return "text-emerald-700 dark:text-emerald-400";
-}
-
-/** KIND_THEME lookup with a fallback: core can ship a new span kind before
- * this dashboard build knows it, and that must not take down the panel. */
-function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
-  return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
-}
-
-interface SpanGroup {
-  root: ObservabilitySpanRow;
-  childrenByParent: Map<string, ObservabilitySpanRow[]>;
-  // Absolute time window the waterfall bars are scaled against (covers spans like
-  // cold start that begin before the root task span).
-  windowStart: number;
-  windowSpan: number;
-  // Effective task duration used to size the top-level bar on a scale shared
-  // across tasks, so a longer task always reads as a longer bar. Running tasks
-  // fall back to elapsed window so their bar grows as steps stream in.
-  taskDurationMs: number;
 }
 
 /** Newest task first. */
@@ -772,382 +1150,4 @@ function renderSpanRows(
   }
 
   return rows;
-}
-
-export function TracingPanel({
-  projectSlug,
-  stageSlug,
-  apiKey,
-}: Props): React.JSX.Element {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const focusTraceId = searchParams.get("trace");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [fromTime, setFromTime] = useState("");
-  const [toTime, setToTime] = useState("");
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-
-  const { entries, status, history, error, refresh, fetchTrace } =
-    useObservabilityStream({
-      stream: "traces",
-      projectSlug: projectSlug,
-      stageSlug: stageSlug,
-      apiKey: apiKey,
-      backfill: 100,
-    });
-
-  const fromMs = toEpochMs(fromTime);
-  const toMs = toEpochMs(toTime);
-  const hasFilters =
-    filter.trim() !== "" ||
-    statusFilter !== "all" ||
-    fromMs !== null ||
-    toMs !== null;
-
-  // Every task in the buffer, before filters. Focus resolution runs against
-  // this so a filtered-out trace is never mistaken for one absent from history.
-  const allGroups = useMemo(() => groupSpans(entries), [entries]);
-
-  const groups = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-
-    return allGroups.filter((group) => {
-      const { root, childrenByParent } = group;
-      if (statusFilter !== "all" && root.status !== statusFilter) return false;
-      if (fromMs !== null && root.startTimeMs < fromMs) return false;
-      if (toMs !== null && root.startTimeMs > toMs) return false;
-      if (!needle) return true;
-
-      const allSpans = [root, ...[...childrenByParent.values()].flat()];
-
-      return allSpans.some((span) =>
-        [
-          span.name,
-          span.kind,
-          span.status,
-          span.traceId,
-          span.agentId ?? "",
-          span.conversationKey ?? "",
-          JSON.stringify(span.attributes ?? {}),
-        ].some((value) => value.toLowerCase().includes(needle)),
-      );
-    });
-  }, [allGroups, filter, statusFilter, fromMs, toMs]);
-
-  // Shared duration scale for the top-level task bars so bar length is
-  // comparable across tasks (longest visible task fills the column).
-  const scaleMaxMs = useMemo(
-    () => Math.max(1, ...groups.map((group) => group.taskDurationMs)),
-    [groups],
-  );
-
-  // Resolve the selected key against the live groups so the panel tracks span
-  // updates (running → ok) and closes itself when the span leaves the view.
-  const selected = useMemo(() => {
-    if (!selectedKey) return null;
-    for (const group of groups) {
-      const spans = [
-        group.root,
-        ...[...group.childrenByParent.values()].flat(),
-      ];
-      const span = spans.find(
-        (candidate) => spanKey(candidate) === selectedKey,
-      );
-      if (span) return { span: span, group: group };
-    }
-
-    return null;
-  }, [groups, selectedKey]);
-
-  // Deliberately no auto-expand: new tasks arrive collapsed, since the row
-  // already shows live status and a tree popping open on every task is noisy.
-
-  // Reset paging when the filters change so "Load more" starts from the top.
-  // Render-time adjustment, not an effect.
-  const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
-  const [prevFilterSignature, setPrevFilterSignature] =
-    useState(filterSignature);
-  if (filterSignature !== prevFilterSignature) {
-    setPrevFilterSignature(filterSignature);
-    setVisibleCount(PAGE_SIZE);
-  }
-
-  // Arriving from a log's "View trace": expand that trace, page it into view,
-  // scroll to it, then drop the param so a manual collapse is not re-fought.
-  const focusedRef = useRef<string | null>(null);
-  // The focus key a one-trace Tempo fetch was already sent for, so a miss
-  // ends in a notice instead of another fetch.
-  const fetchedRef = useRef<string | null>(null);
-  const [missingTrace, setMissingTrace] = useState<string | null>(null);
-  // A new focus target retires the notice about the previous one.
-  const [prevFocusTraceId, setPrevFocusTraceId] = useState(focusTraceId);
-  if (focusTraceId !== prevFocusTraceId) {
-    setPrevFocusTraceId(focusTraceId);
-    if (focusTraceId) setMissingTrace(null);
-  }
-  // Bumped by focusTrace to force a re-focus of the same trace (the ref dedup
-  // below would otherwise swallow a repeat click on the same "↳ from parent" link).
-  const [refocusNonce, setRefocusNonce] = useState(0);
-  const dropFocusParam = useCallback(() => {
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("trace");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [searchParams, pathname, router]);
-  useEffect(() => {
-    if (!focusTraceId) return;
-    const focusKey = `${focusTraceId}:${refocusNonce}`;
-    if (focusedRef.current === focusKey) return;
-    const index = groups.findIndex(
-      (group) => group.root.traceId === focusTraceId,
-    );
-    if (index === -1) {
-      // The trace is in the buffer but a filter is hiding it: clear the filters
-      // so it renders, then let the effect re-run and scroll to it. Only a
-      // trace absent from the whole buffer is a candidate for a Tempo fetch.
-      if (allGroups.some((group) => group.root.traceId === focusTraceId)) {
-        setFilter("");
-        setStatusFilter("all");
-        setFromTime("");
-        setToTime("");
-
-        return;
-      }
-      // Not in the recent history: ask Tempo for that one trace, once the
-      // backfill has settled so the two answers cannot race. Record the request
-      // only if it actually went out, so a closed socket doesn't get reported as
-      // a miss without ever asking. A second real miss is reported.
-      if (history === "loading" || history === "none") return;
-      if (fetchedRef.current !== focusKey) {
-        if (fetchTrace(focusTraceId)) fetchedRef.current = focusKey;
-
-        return;
-      }
-      focusedRef.current = focusKey;
-      setMissingTrace(focusTraceId);
-      dropFocusParam();
-
-      return;
-    }
-    const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
-    setExpanded((current) =>
-      current.has(rootKey) ? current : new Set([...current, rootKey]),
-    );
-    // A trace beyond the current page isn't in the DOM yet: page it in and
-    // finish on the re-run (visibleCount is a dep). Marking done or dropping
-    // the param now would skip the scroll and highlight entirely.
-    if (index >= visibleCount) {
-      setVisibleCount(index + 1);
-
-      return;
-    }
-    const target = document.getElementById(`task-${focusTraceId}`);
-    if (!target) return;
-    focusedRef.current = focusKey;
-    target.scrollIntoView({ block: "center" });
-    dropFocusParam();
-  }, [
-    focusTraceId,
-    refocusNonce,
-    groups,
-    allGroups,
-    visibleCount,
-    history,
-    fetchTrace,
-    dropFocusParam,
-  ]);
-
-  const toggle = (key: string): void => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-
-      return next;
-    });
-  };
-
-  // Jump to another trace (a subagent's "↳ from parent" link). Reuses the
-  // `?trace=` focus effect above, which expands, pages in, scrolls, and highlights.
-  // Bumps the nonce (not the ref) so re-clicking the same link re-focuses.
-  const focusTrace = useCallback(
-    (traceId: string) => {
-      setRefocusNonce((nonce) => nonce + 1);
-      const next = new URLSearchParams(searchParams.toString());
-      next.set("trace", traceId);
-      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-    },
-    [searchParams, pathname, router],
-  );
-
-  const clearFilters = (): void => {
-    setFilter("");
-    setStatusFilter("all");
-    setFromTime("");
-    setToTime("");
-  };
-
-  const visibleGroups = groups.slice(0, visibleCount);
-  const remaining = groups.length - visibleGroups.length;
-
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <p className="shrink-0 text-xs text-muted-foreground">
-        Task bars scaled by duration. Expand a task for its step waterfall;
-        click any row to inspect input, reasoning, and output in the side panel.
-      </p>
-
-      <ObservabilityToolbar
-        search={filter}
-        onSearchChange={setFilter}
-        searchPlaceholder={`Search ${groups.length} task${groups.length === 1 ? "" : "s"}…`}
-        filterAriaLabel="Filter by status"
-        filterValue={statusFilter}
-        filterOptions={STATUS_FILTER_OPTIONS}
-        onFilterChange={(value) => setStatusFilter(value as StatusFilter)}
-        fromTime={fromTime}
-        onFromTimeChange={setFromTime}
-        toTime={toTime}
-        onToTimeChange={setToTime}
-        hasFilters={hasFilters}
-        onClear={clearFilters}
-        onRefresh={refresh}
-        refreshDisabled={status === "idle"}
-        refreshSpinning={status === "connecting"}
-        refreshTitle={error ?? "Refresh traces"}
-        isError={status === "error"}
-      />
-
-      {missingTrace && (
-        <p
-          aria-live="polite"
-          className="flex shrink-0 items-center gap-2 text-xs text-destructive"
-        >
-          <span className="truncate font-mono">
-            Trace {missingTrace} is not available
-            {error ? `: ${error}` : " in this stage's history."}
-          </span>
-          <button
-            type="button"
-            onClick={() => setMissingTrace(null)}
-            className="cursor-pointer underline underline-offset-2"
-          >
-            Dismiss
-          </button>
-        </p>
-      )}
-
-      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-          <table className="w-full text-xs font-mono table-fixed">
-            <colgroup>
-              <col className="w-37" />
-              <col className="w-[26%]" />
-              <col className="w-21" />
-              <col className="w-18" />
-              <col className="w-18" />
-              <col />
-            </colgroup>
-            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Started</th>
-                <th className="px-3 py-2 font-medium">Task / Span</th>
-                <th className="px-3 py-2 font-medium">Kind</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Duration</th>
-                <th className="px-3 py-2 font-medium">Timeline</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleGroups.flatMap((group) =>
-                renderSpanRows(
-                  group.root,
-                  0,
-                  group,
-                  scaleMaxMs,
-                  expanded,
-                  toggle,
-                  selectedKey,
-                  setSelectedKey,
-                  focusTraceId,
-                  isTaskRunning(group.root),
-                  focusTrace,
-                ),
-              )}
-              {groups.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="h-32 text-center text-xs text-muted-foreground"
-                  >
-                    {entries.length === 0
-                      ? emptyStreamMessage(history, error, "traces", "7 days")
-                      : "No tasks match the current filters."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          {remaining > 0 && (
-            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
-              <button
-                type="button"
-                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-              >
-                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-                {remaining.toLocaleString()} older task
-                {remaining === 1 ? "" : "s"}
-              </button>
-            </div>
-          )}
-        </div>
-        {selected && (
-          <ObservabilityDetailPanel
-            title={spanLabel(selected.span)}
-            meta={
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                <Badge
-                  className={cn(
-                    "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-                    kindTheme(selected.span.kind).badgeBg,
-                    kindTheme(selected.span.kind).text,
-                  )}
-                >
-                  {selected.span.kind}
-                </Badge>
-                <span
-                  className={cn(
-                    "font-medium",
-                    isStale(selected.span, isTaskRunning(selected.group.root))
-                      ? "text-muted-foreground"
-                      : statusColor(selected.span.status),
-                  )}
-                >
-                  {isStale(selected.span, isTaskRunning(selected.group.root))
-                    ? "ended"
-                    : selected.span.status}
-                </span>
-                <span className="text-muted-foreground">
-                  {selected.span.durationMs > 0
-                    ? formatDuration(selected.span.durationMs)
-                    : "—"}{" "}
-                  · {formatDateTime(selected.span.startTimeMs)}
-                </span>
-              </div>
-            }
-            onClose={() => setSelectedKey(null)}
-          >
-            <SpanDetails span={selected.span} />
-          </ObservabilityDetailPanel>
-        )}
-      </div>
-    </div>
-  );
 }

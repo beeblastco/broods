@@ -51,17 +51,6 @@ export function hashAccountSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
 
-export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
-  return {
-    accountId: account.accountId,
-    username: account.username,
-    ...(account.description ? { description: account.description } : {}),
-    status: account.status,
-    createdAt: account.createdAt,
-    updatedAt: account.updatedAt,
-  };
-}
-
 export function normalizeCreateAccountInput(
   value: unknown,
 ): CreateAccountInput {
@@ -107,12 +96,15 @@ export function normalizeUpdateAccountInput(
   return normalized;
 }
 
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
+export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
+  return {
+    accountId: account.accountId,
+    username: account.username,
+    ...(account.description ? { description: account.description } : {}),
+    status: account.status,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt,
+  };
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
@@ -121,4 +113,12 @@ function optionalString(value: unknown, name: string): string | undefined {
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+
+  return value.trim();
 }

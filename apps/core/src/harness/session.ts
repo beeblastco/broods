@@ -227,6 +227,17 @@ export interface SessionOptions {
   trigger?: RunTrigger;
 }
 
+/**
+ * A channel message's events after attachment ingestion, split by durability.
+ * `events` carries only sealed links and text, safe for admission to queue or
+ * persist. `turnEvents` adds the byte-backed parts an agent with no workspace
+ * gets for the current turn; those must never reach a stored record.
+ */
+export interface IngestedChannelEvents {
+  events: ConversationIngressEvent[];
+  turnEvents: ConversationIngressEvent[];
+}
+
 export class Session {
   readonly eventId: string;
   readonly conversationKey: string;
@@ -990,15 +1001,51 @@ export class Session {
   }
 }
 
-/**
- * A channel message's events after attachment ingestion, split by durability.
- * `events` carries only sealed links and text, safe for admission to queue or
- * persist. `turnEvents` adds the byte-backed parts an agent with no workspace
- * gets for the current turn; those must never reach a stored record.
- */
-export interface IngestedChannelEvents {
-  events: ConversationIngressEvent[];
-  turnEvents: ConversationIngressEvent[];
+// Message persistence sanitization. Exported so tests can verify the
+// metadata-envelope split without going through Convex.
+export function createStoredEventFromModelMessage(
+  message: ModelMessage | undefined,
+  sourceEventId: string,
+  producer: MessageProducer = {},
+): StoredConversationEvent | null {
+  if (!message) {
+    return null;
+  }
+
+  switch (message.role) {
+    case "user": {
+      // Opaque hook metadata rides the stored envelope; the persisted model
+      // message stays a clean AI SDK shape.
+      const { metadata, ...userMessage } = message as UserModelMessage & {
+        metadata?: unknown;
+      };
+
+      return toStoredConversationEvent(
+        sanitizeUserMessage(userMessage),
+        sourceEventId,
+        metadata,
+      );
+    }
+    case "assistant":
+      return toStoredConversationEvent(
+        sanitizeAssistantMessage(message, producer.retainsReasoning === true),
+        sourceEventId,
+        undefined,
+        producer.model,
+      );
+    case "tool":
+      return toStoredConversationEvent(
+        sanitizeToolMessage(message),
+        sourceEventId,
+      );
+    case "system":
+      return toStoredConversationEvent(
+        systemModelMessageSchema.parse(message),
+        sourceEventId,
+      );
+    default:
+      return null;
+  }
 }
 
 /**
@@ -1064,53 +1111,6 @@ export async function ingestChannelAttachments(
   };
 }
 
-// Message persistence sanitization. Exported so tests can verify the
-// metadata-envelope split without going through Convex.
-export function createStoredEventFromModelMessage(
-  message: ModelMessage | undefined,
-  sourceEventId: string,
-  producer: MessageProducer = {},
-): StoredConversationEvent | null {
-  if (!message) {
-    return null;
-  }
-
-  switch (message.role) {
-    case "user": {
-      // Opaque hook metadata rides the stored envelope; the persisted model
-      // message stays a clean AI SDK shape.
-      const { metadata, ...userMessage } = message as UserModelMessage & {
-        metadata?: unknown;
-      };
-
-      return toStoredConversationEvent(
-        sanitizeUserMessage(userMessage),
-        sourceEventId,
-        metadata,
-      );
-    }
-    case "assistant":
-      return toStoredConversationEvent(
-        sanitizeAssistantMessage(message, producer.retainsReasoning === true),
-        sourceEventId,
-        undefined,
-        producer.model,
-      );
-    case "tool":
-      return toStoredConversationEvent(
-        sanitizeToolMessage(message),
-        sourceEventId,
-      );
-    case "system":
-      return toStoredConversationEvent(
-        systemModelMessageSchema.parse(message),
-        sourceEventId,
-      );
-    default:
-      return null;
-  }
-}
-
 // After compaction, the messages that must survive into the resumed turn: a
 // trailing user message, or a tool-approval response plus the assistant message
 // carrying the tool call it answers.
@@ -1168,6 +1168,19 @@ export function stripEnvelopeFieldsFromMessages(
   });
 }
 
+function agentSystemMessages(
+  system: string | SystemModelMessage | SystemModelMessage[] | undefined,
+): SystemModelMessage[] {
+  if (system === undefined) {
+    return [];
+  }
+  if (typeof system === "string") {
+    return [{ role: "system", content: system }];
+  }
+
+  return Array.isArray(system) ? system : [system];
+}
+
 /**
  * Puts the stored media on the message it arrived with, the newest user event.
  * Earlier events are the context a channel batched ahead of it, and attaching a
@@ -1198,17 +1211,16 @@ function appendToLatestUserEvent(
   return [...events, { role: "user", content: parts }];
 }
 
-function agentSystemMessages(
-  system: string | SystemModelMessage | SystemModelMessage[] | undefined,
-): SystemModelMessage[] {
-  if (system === undefined) {
-    return [];
-  }
-  if (typeof system === "string") {
-    return [{ role: "system", content: system }];
-  }
+// The partition one channel's config carries, shared by the Session and the
+// pre-admission attachment path so both resolve the same runtime scope.
+function channelPartitionFromConfig(
+  agentConfig: AgentConfig,
+  channelName: string,
+): ChannelPartition | undefined {
+  const config = agentConfig.channels?.[channelName];
+  const partition = isPlainObject(config) ? config.partition : undefined;
 
-  return Array.isArray(system) ? system : [system];
+  return isPartition(partition) ? partition : undefined;
 }
 
 function createSystemContextSnapshot(
@@ -1393,6 +1405,13 @@ ${guidance}
 </workspace>`;
 }
 
+function isPartition(value: unknown): value is ChannelPartition {
+  if (!isPlainObject(value)) return false;
+  if (value.by === "shared") return value.alias === undefined;
+
+  return value.by === "conversation" && typeof value.alias === "string";
+}
+
 /**
  * Reasoning rides along because OpenAI's Responses API replays a stored
  * assistant message by item id and rejects the reference when the reasoning
@@ -1416,6 +1435,28 @@ function isPersistedToolContentPart(
   return part.type === "tool-approval-response" || part.type === "tool-result";
 }
 
+// Whether a media part points at its bytes instead of carrying them. A URL
+// object or an `http(s)` string is a reference; a base64 string, a Buffer or a
+// typed array is the payload itself. A `data:` URL is a payload wearing a URL's
+// clothes, so it is excluded by the scheme check rather than by the type.
+// A file part may also tag its data (`{ type: "url", url }`), which the direct
+// API accepts, so that shape unwraps to the same check.
+function isStorableMediaReference(
+  value: ImagePart["image"] | FilePart["data"],
+): boolean {
+  if (value instanceof URL) {
+    return value.protocol === "http:" || value.protocol === "https:";
+  }
+  if (typeof value === "object" && "type" in value && value.type === "url") {
+    return isStorableMediaReference(value.url);
+  }
+
+  return (
+    typeof value === "string" &&
+    (/^https?:\/\//i.test(value) || value.startsWith(MEDIA_REFERENCE_SCHEME))
+  );
+}
+
 function isToolApprovalResponseMessage(
   message: ModelMessage | undefined,
 ): message is ToolModelMessage {
@@ -1424,25 +1465,6 @@ function isToolApprovalResponseMessage(
     message.content.length > 0 &&
     message.content.every((part) => part.type === "tool-approval-response")
   );
-}
-
-// The partition one channel's config carries, shared by the Session and the
-// pre-admission attachment path so both resolve the same runtime scope.
-function channelPartitionFromConfig(
-  agentConfig: AgentConfig,
-  channelName: string,
-): ChannelPartition | undefined {
-  const config = agentConfig.channels?.[channelName];
-  const partition = isPlainObject(config) ? config.partition : undefined;
-
-  return isPartition(partition) ? partition : undefined;
-}
-
-function isPartition(value: unknown): value is ChannelPartition {
-  if (!isPlainObject(value)) return false;
-  if (value.by === "shared") return value.alias === undefined;
-
-  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 function projectActiveConversationEntries(
@@ -1570,28 +1592,6 @@ function sanitizeUserMessage(
         content: [{ type: "text", text: "[attachment not retained]" }],
       }
     : null;
-}
-
-// Whether a media part points at its bytes instead of carrying them. A URL
-// object or an `http(s)` string is a reference; a base64 string, a Buffer or a
-// typed array is the payload itself. A `data:` URL is a payload wearing a URL's
-// clothes, so it is excluded by the scheme check rather than by the type.
-// A file part may also tag its data (`{ type: "url", url }`), which the direct
-// API accepts, so that shape unwraps to the same check.
-function isStorableMediaReference(
-  value: ImagePart["image"] | FilePart["data"],
-): boolean {
-  if (value instanceof URL) {
-    return value.protocol === "http:" || value.protocol === "https:";
-  }
-  if (typeof value === "object" && "type" in value && value.type === "url") {
-    return isStorableMediaReference(value.url);
-  }
-
-  return (
-    typeof value === "string" &&
-    (/^https?:\/\//i.test(value) || value.startsWith(MEDIA_REFERENCE_SCHEME))
-  );
 }
 
 function toStoredConversationEvent<

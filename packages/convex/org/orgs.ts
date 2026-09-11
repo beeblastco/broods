@@ -263,54 +263,6 @@ export const getActiveAccount = query({
   },
 });
 
-/**
- * Resolves the broods `accounts` doc for the caller's active org, or null when
- * the user is unauthenticated, has no active org, or it has not been
- * provisioned yet. Shared by the account-scoped public queries so the
- * auth -> user -> org -> account chain lives in one place.
- * @param ctx query/mutation context.
- * @param requiredRole minimum org role; omitted means any membership.
- * @returns the account document, or null when none resolves or the role is short.
- */
-export async function getActiveAccountForUser(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<Doc<"accounts"> | null> {
-  const active = await activeAccountForCaller(ctx, requiredRole);
-
-  return active ? active.account : null;
-}
-
-/**
- * The account behind a user's active org plus the role they hold there. The
- * org owner is an owner even when their membership row says otherwise.
- */
-export async function resolveActiveAccount(
-  ctx: QueryCtx,
-  authId: string,
-): Promise<ActiveAccount | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-  if (!org) return null;
-  const membership = await getOrgMembership(ctx, org._id, user._id);
-  const role: OrgRole | undefined =
-    org.ownerAuthId === authId ? "owner" : membership?.role;
-  if (!role) return null;
-
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-    .unique();
-  if (!account) return null;
-
-  return { account: account, role: role };
-}
-
 /** Returns one org by id when the caller has admin-level membership. */
 export const getByIdForAdmin = query({
   args: { orgId: v.id("orgs") },
@@ -525,6 +477,54 @@ export const update = mutation({
     return null;
   },
 });
+
+/**
+ * Resolves the broods `accounts` doc for the caller's active org, or null when
+ * the user is unauthenticated, has no active org, or it has not been
+ * provisioned yet. Shared by the account-scoped public queries so the
+ * auth -> user -> org -> account chain lives in one place.
+ * @param ctx query/mutation context.
+ * @param requiredRole minimum org role; omitted means any membership.
+ * @returns the account document, or null when none resolves or the role is short.
+ */
+export async function getActiveAccountForUser(
+  ctx: QueryCtx,
+  requiredRole?: OrgRole,
+): Promise<Doc<"accounts"> | null> {
+  const active = await activeAccountForCaller(ctx, requiredRole);
+
+  return active ? active.account : null;
+}
+
+/**
+ * The account behind a user's active org plus the role they hold there. The
+ * org owner is an owner even when their membership row says otherwise.
+ */
+export async function resolveActiveAccount(
+  ctx: QueryCtx,
+  authId: string,
+): Promise<ActiveAccount | null> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return null;
+
+  const org = await getActiveOrgForUser(ctx, user._id);
+  if (!org) return null;
+  const membership = await getOrgMembership(ctx, org._id, user._id);
+  const role: OrgRole | undefined =
+    org.ownerAuthId === authId ? "owner" : membership?.role;
+  if (!role) return null;
+
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+    .unique();
+  if (!account) return null;
+
+  return { account: account, role: role };
+}
 
 async function activeAccountForCaller(
   ctx: QueryCtx,

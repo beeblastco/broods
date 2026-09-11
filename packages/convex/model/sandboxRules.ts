@@ -14,13 +14,16 @@ export const SANDBOX_PROVIDERS = [
   "daytona",
   "vercel",
 ] as const;
+
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
 export const SANDBOX_PERMISSION_MODES = ["edit", "ask", "bypass"] as const;
+
 export const SANDBOX_NETWORK_MODES = [
   "allow-all",
   "deny-all",
   "restricted",
 ] as const;
+
 export const SANDBOX_SIZE_NAMES = [
   "tiny",
   "xsmall",
@@ -39,9 +42,13 @@ export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 
 export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
+
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
+
 export type PermissionMode = (typeof SANDBOX_PERMISSION_MODES)[number];
+
 export type NetworkMode = (typeof SANDBOX_NETWORK_MODES)[number];
+
 export type SandboxSize = (typeof SANDBOX_SIZE_NAMES)[number];
 
 /**
@@ -255,6 +262,21 @@ function asObject(value: unknown): Record<string, unknown> {
   return value;
 }
 
+function assertEnvVarsAndOptions(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
+    throw new Error("config.envVars must be an object with string values");
+  }
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.options must be an object");
+  }
+  if (config.options !== undefined) {
+    validateProviderOptions(provider, config.options);
+  }
+}
+
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
@@ -272,21 +294,6 @@ function assertNetworkEnforceable(
     throw new Error(
       "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
     );
-  }
-}
-
-function assertEnvVarsAndOptions(
-  config: Record<string, unknown>,
-  provider: SandboxProvider,
-): void {
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new Error("config.envVars must be an object with string values");
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.options must be an object");
-  }
-  if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options);
   }
 }
 

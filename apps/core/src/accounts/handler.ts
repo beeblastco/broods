@@ -673,6 +673,37 @@ async function deleteAccountResponse(
   });
 }
 
+function boundedInteger(
+  value: unknown,
+  defaultValue: number,
+  max: number,
+): number {
+  if (value === undefined || value === null) {
+    return defaultValue;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
+    return defaultValue;
+  }
+
+  return parsed;
+}
+
+function errorResponseForError(err: unknown): Response {
+  if (err instanceof AccountEndpointUnauthorizedError) {
+    return errorResponse(401, err.message);
+  }
+
+  return errorResponse(
+    400,
+    err instanceof Error ? err.message : "Invalid request",
+  );
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function requireAccountAuth(
   auth: AuthContext,
   options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
@@ -691,36 +722,6 @@ function requireAccountAuth(
   }
 
   return auth.account;
-}
-
-function toCreateAccountResponse(
-  account: AccountRecord,
-): Record<string, unknown> {
-  return {
-    accountId: account.accountId,
-    username: account.username,
-    ...(account.description ? { description: account.description } : {}),
-  };
-}
-
-function boundedInteger(
-  value: unknown,
-  defaultValue: number,
-  max: number,
-): number {
-  if (value === undefined || value === null) {
-    return defaultValue;
-  }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function sandboxAuditActor(value: unknown): SandboxAuditActor {
@@ -748,13 +749,12 @@ function sandboxAuditActor(value: unknown): SandboxAuditActor {
   };
 }
 
-function errorResponseForError(err: unknown): Response {
-  if (err instanceof AccountEndpointUnauthorizedError) {
-    return errorResponse(401, err.message);
-  }
-
-  return errorResponse(
-    400,
-    err instanceof Error ? err.message : "Invalid request",
-  );
+function toCreateAccountResponse(
+  account: AccountRecord,
+): Record<string, unknown> {
+  return {
+    accountId: account.accountId,
+    username: account.username,
+    ...(account.description ? { description: account.description } : {}),
+  };
 }

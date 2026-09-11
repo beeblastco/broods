@@ -11,6 +11,47 @@ const MAX_SOURCE_BYTES = 512 * 1024;
 const ALLOWED_PACKAGES = new Set(["@modelcontextprotocol/server", "zod"]);
 const NODE_BUILTINS = new Set(builtinModules);
 
+/**
+ * Source imports are limited to the allowlist plus node builtins; default
+ * resolution would inline any file the server process can read. Imports
+ * resolved from inside node_modules stay open so allowed packages can reach
+ * their own deps.
+ */
+const importAllowlist: Plugin = {
+  name: "import-allowlist",
+  setup: function (builder): void {
+    builder.onResolve({ filter: /.*/ }, (args) => {
+      if (args.kind === "entry-point") return null;
+      if (args.importer.includes("node_modules")) return null;
+      const bare = args.path.replace(/^node:/, "");
+      const packageRoot = args.path.startsWith("@")
+        ? args.path.split("/").slice(0, 2).join("/")
+        : args.path.split("/")[0]!;
+      // A "." or ".." segment on an allowed package (e.g. "zod/../../secret")
+      // escapes node_modules and inlines arbitrary server files into the bundle.
+      const traverses =
+        args.path.includes("\\") ||
+        args.path
+          .split("/")
+          .some((segment) => segment === "." || segment === "..");
+      if (
+        !traverses &&
+        (NODE_BUILTINS.has(bare) || ALLOWED_PACKAGES.has(packageRoot))
+      ) {
+        return null;
+      }
+
+      return {
+        errors: [
+          {
+            text: `import "${args.path}" is not allowed here: hosted MCP source may import ${[...ALLOWED_PACKAGES].join(", ")} and node builtins`,
+          },
+        ],
+      };
+    });
+  },
+};
+
 export async function POST(request: Request): Promise<Response> {
   let sourceCode: unknown;
   try {
@@ -72,47 +113,6 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 }
-
-/**
- * Source imports are limited to the allowlist plus node builtins; default
- * resolution would inline any file the server process can read. Imports
- * resolved from inside node_modules stay open so allowed packages can reach
- * their own deps.
- */
-const importAllowlist: Plugin = {
-  name: "import-allowlist",
-  setup: function (builder): void {
-    builder.onResolve({ filter: /.*/ }, (args) => {
-      if (args.kind === "entry-point") return null;
-      if (args.importer.includes("node_modules")) return null;
-      const bare = args.path.replace(/^node:/, "");
-      const packageRoot = args.path.startsWith("@")
-        ? args.path.split("/").slice(0, 2).join("/")
-        : args.path.split("/")[0]!;
-      // A "." or ".." segment on an allowed package (e.g. "zod/../../secret")
-      // escapes node_modules and inlines arbitrary server files into the bundle.
-      const traverses =
-        args.path.includes("\\") ||
-        args.path
-          .split("/")
-          .some((segment) => segment === "." || segment === "..");
-      if (
-        !traverses &&
-        (NODE_BUILTINS.has(bare) || ALLOWED_PACKAGES.has(packageRoot))
-      ) {
-        return null;
-      }
-
-      return {
-        errors: [
-          {
-            text: `import "${args.path}" is not allowed here: hosted MCP source may import ${[...ALLOWED_PACKAGES].join(", ")} and node builtins`,
-          },
-        ],
-      };
-    });
-  },
-};
 
 function isBuildFailure(error: unknown): error is BuildFailure {
   return (

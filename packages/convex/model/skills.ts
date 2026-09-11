@@ -24,6 +24,7 @@ import {
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+
 // A tarball larger than this can never yield a valid bundle, so it is refused
 // before decompression instead of being materialized in memory.
 const MAX_SKILL_ARCHIVE_BYTES = 2 * MAX_SKILL_BUNDLE_BYTES;
@@ -260,6 +261,40 @@ export async function listAccountSkills(
 }
 
 /**
+ * Buffer a stream, refusing it once it grows past `maxBytes` so a high-ratio
+ * archive is cut off instead of exhausting memory.
+ */
+export async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new Error(`GitHub archive exceeds the ${maxBytes} byte limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return bytes;
+}
+
+/**
  * @param skillPath the `${accountId}/${skillName}` prefix
  * @param filePath the file path inside the skill
  * @returns the file contents
@@ -394,40 +429,6 @@ function parsePaxPath(content: string): string | null {
   }
 
   return null;
-}
-
-/**
- * Buffer a stream, refusing it once it grows past `maxBytes` so a high-ratio
- * archive is cut off instead of exhausting memory.
- */
-export async function readCapped(
-  stream: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        throw new Error(`GitHub archive exceeds the ${maxBytes} byte limit`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  return bytes;
 }
 
 /**

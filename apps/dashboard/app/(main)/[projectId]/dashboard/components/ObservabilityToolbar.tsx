@@ -19,24 +19,6 @@ export interface ToolbarFilterOption {
   label: string;
 }
 
-/**
- * What an empty logs or traces table should say. "Waiting" alone hid a failed
- * or still-running history query behind the same text as a quiet stage.
- */
-export function emptyStreamMessage(
-  history: ObservabilityHistoryStatus,
-  error: string | null,
-  noun: "logs" | "traces",
-  window: string,
-): string {
-  if (history === "loading") return `Loading ${noun} from the last ${window}…`;
-  if (history === "failed")
-    return `Couldn't load ${noun}: ${error ?? "history query failed"}`;
-  if (history === "loaded") return `No ${noun} in the last ${window}.`;
-
-  return `Waiting for ${noun}…`;
-}
-
 interface Props {
   search: string;
   onSearchChange: (value: string) => void;
@@ -56,6 +38,24 @@ interface Props {
   refreshSpinning: boolean;
   refreshTitle: string;
   isError: boolean;
+}
+
+/**
+ * What an empty logs or traces table should say. "Waiting" alone hid a failed
+ * or still-running history query behind the same text as a quiet stage.
+ */
+export function emptyStreamMessage(
+  history: ObservabilityHistoryStatus,
+  error: string | null,
+  noun: "logs" | "traces",
+  window: string,
+): string {
+  if (history === "loading") return `Loading ${noun} from the last ${window}…`;
+  if (history === "failed")
+    return `Couldn't load ${noun}: ${error ?? "history query failed"}`;
+  if (history === "loaded") return `No ${noun} in the last ${window}.`;
+
+  return `Waiting for ${noun}…`;
 }
 
 export function ObservabilityToolbar({

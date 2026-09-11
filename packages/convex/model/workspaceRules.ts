@@ -16,6 +16,7 @@ const HASH_HEX_LENGTH = 40;
 /** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
+
 export type WorkspaceStorageProvider =
   (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
@@ -195,6 +196,47 @@ export function normalizeFilePath(value: unknown): string {
   return path;
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (!isPlainObject(value)) throw new Error("config must be an object");
+
+  return value;
+}
+
+function assertOptionalBoolean(value: unknown, name: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${name} must be a boolean`);
+  }
+}
+
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  }
+}
+
+function normalizeHarnessFeature(
+  value: unknown,
+  name: string,
+): { enabled?: boolean } | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  assertOptionalBoolean(value.enabled, `${name}.enabled`);
+
+  // Features default to on: `enabled: true` normalizes away to the omitted form.
+  return value.enabled === false ? { enabled: false } : undefined;
+}
+
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   if (value === undefined) {
     return { provider: "s3" };
@@ -264,45 +306,12 @@ function normalizeWorkspaceStorageAuth(
   );
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new Error("config must be an object");
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
 
-  return value;
-}
-
-function normalizeHarnessFeature(
-  value: unknown,
-  name: string,
-): { enabled?: boolean } | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error(`${name} must be an object`);
-  }
-  assertOptionalBoolean(value.enabled, `${name}.enabled`);
-
-  // Features default to on: `enabled: true` normalizes away to the omitted form.
-  return value.enabled === false ? { enabled: false } : undefined;
-}
-
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
-  }
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
-  }
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireString(value: unknown, name: string): string {
@@ -311,12 +320,4 @@ function requireString(value: unknown, name: string): string {
   }
 
   return value.trim();
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
 }

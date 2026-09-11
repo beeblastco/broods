@@ -16,14 +16,6 @@ interface Props {
   projectId: Id<"projects">;
 }
 
-function formatPeriodEnd(epochSeconds: number): string {
-  return new Date(epochSeconds * 1000).toLocaleDateString([], {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
-
 export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
@@ -234,4 +226,12 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       )}
     </div>
   );
+}
+
+function formatPeriodEnd(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleDateString([], {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }

@@ -43,85 +43,28 @@ type RollupCounters = {
 };
 
 /**
- * Upsert one usage rollup bucket: add `counters` onto the row keyed by
- * (account, endpoint, grain, bucketStart, provider, model), inserting it when
- * absent. The composite index predates `grain`, so grains sharing an aligned
- * bucketStart are narrowed in JS; a legacy row with no grain counts as "5m"
- * and gets stamped on first touch. Shared with the backfill in migrations.ts.
+ * Deletes raw task usage samples older than the retention window, one bounded
+ * batch per invocation. Samples exist for retry dedup (a window of minutes)
+ * and are folded into `usageRollups` at write time, so old rows are pure
+ * storage growth. The creation-index range reads nothing when nothing is due.
  */
-export async function foldRollupBucket(
-  ctx: MutationCtx,
-  target: {
-    accountId: Id<"accounts">;
-    endpointId: string;
-    grain: UsageGrain;
-    bucketStart: number;
-    modelProvider: string;
-    modelId: string;
-    counters: RollupCounters;
-  },
-): Promise<void> {
-  const candidates = await ctx.db
-    .query("usageRollups")
-    .withIndex(
-      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
-      (q) =>
-        q
-          .eq("accountId", target.accountId)
-          .eq("endpointId", target.endpointId)
-          .eq("bucketStart", target.bucketStart)
-          .eq("modelProvider", target.modelProvider)
-          .eq("modelId", target.modelId),
-    )
-    .collect();
-  const existing = candidates.find(
-    (row) => (row.grain ?? "5m") === target.grain,
-  );
+export const pruneExpiredTaskUsage = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const cutoff = Date.now() - TASK_USAGE_RETENTION_MS;
+    const rows = await ctx.db
+      .query("taskUsage")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff))
+      .take(TASK_USAGE_PRUNE_BATCH_SIZE);
+    for (const row of rows) await ctx.db.delete(row._id);
+    if (rows.length === TASK_USAGE_PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.usage.pruneExpiredTaskUsage, {});
+    }
 
-  if (existing) {
-    await ctx.db.patch(existing._id, {
-      grain: target.grain,
-      inputTokens: existing.inputTokens + target.counters.inputTokens,
-      outputTokens: existing.outputTokens + target.counters.outputTokens,
-      reasoningTokens:
-        existing.reasoningTokens + target.counters.reasoningTokens,
-      cachedInputTokens:
-        existing.cachedInputTokens + target.counters.cachedInputTokens,
-      cacheWriteTokens:
-        existing.cacheWriteTokens + target.counters.cacheWriteTokens,
-      totalTokens: existing.totalTokens + target.counters.totalTokens,
-      runtimeWallMs: existing.runtimeWallMs + target.counters.runtimeWallMs,
-      agentSandboxCpuUsec:
-        existing.agentSandboxCpuUsec + target.counters.agentSandboxCpuUsec,
-      toolSandboxCpuUsec:
-        existing.toolSandboxCpuUsec + target.counters.toolSandboxCpuUsec,
-      invocations: existing.invocations + target.counters.invocations,
-      modelCalls: existing.modelCalls + target.counters.modelCalls,
-      updatedAt: Date.now(),
-    });
-  } else {
-    await ctx.db.insert("usageRollups", {
-      accountId: target.accountId,
-      endpointId: target.endpointId,
-      grain: target.grain,
-      bucketStart: target.bucketStart,
-      modelProvider: target.modelProvider,
-      modelId: target.modelId,
-      inputTokens: target.counters.inputTokens,
-      outputTokens: target.counters.outputTokens,
-      reasoningTokens: target.counters.reasoningTokens,
-      cachedInputTokens: target.counters.cachedInputTokens,
-      cacheWriteTokens: target.counters.cacheWriteTokens,
-      totalTokens: target.counters.totalTokens,
-      runtimeWallMs: target.counters.runtimeWallMs,
-      agentSandboxCpuUsec: target.counters.agentSandboxCpuUsec,
-      toolSandboxCpuUsec: target.counters.toolSandboxCpuUsec,
-      invocations: target.counters.invocations,
-      modelCalls: target.counters.modelCalls,
-      updatedAt: Date.now(),
-    });
-  }
-}
+    return rows.length;
+  },
+});
 
 /**
  * Record one finished agent task: insert a `taskUsage` row and fold its
@@ -248,25 +191,82 @@ export const recordTaskUsage = internalMutation({
 });
 
 /**
- * Deletes raw task usage samples older than the retention window, one bounded
- * batch per invocation. Samples exist for retry dedup (a window of minutes)
- * and are folded into `usageRollups` at write time, so old rows are pure
- * storage growth. The creation-index range reads nothing when nothing is due.
+ * Upsert one usage rollup bucket: add `counters` onto the row keyed by
+ * (account, endpoint, grain, bucketStart, provider, model), inserting it when
+ * absent. The composite index predates `grain`, so grains sharing an aligned
+ * bucketStart are narrowed in JS; a legacy row with no grain counts as "5m"
+ * and gets stamped on first touch. Shared with the backfill in migrations.ts.
  */
-export const pruneExpiredTaskUsage = internalMutation({
-  args: {},
-  returns: v.number(),
-  handler: async (ctx): Promise<number> => {
-    const cutoff = Date.now() - TASK_USAGE_RETENTION_MS;
-    const rows = await ctx.db
-      .query("taskUsage")
-      .withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff))
-      .take(TASK_USAGE_PRUNE_BATCH_SIZE);
-    for (const row of rows) await ctx.db.delete(row._id);
-    if (rows.length === TASK_USAGE_PRUNE_BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.usage.pruneExpiredTaskUsage, {});
-    }
-
-    return rows.length;
+export async function foldRollupBucket(
+  ctx: MutationCtx,
+  target: {
+    accountId: Id<"accounts">;
+    endpointId: string;
+    grain: UsageGrain;
+    bucketStart: number;
+    modelProvider: string;
+    modelId: string;
+    counters: RollupCounters;
   },
-});
+): Promise<void> {
+  const candidates = await ctx.db
+    .query("usageRollups")
+    .withIndex(
+      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
+      (q) =>
+        q
+          .eq("accountId", target.accountId)
+          .eq("endpointId", target.endpointId)
+          .eq("bucketStart", target.bucketStart)
+          .eq("modelProvider", target.modelProvider)
+          .eq("modelId", target.modelId),
+    )
+    .collect();
+  const existing = candidates.find(
+    (row) => (row.grain ?? "5m") === target.grain,
+  );
+
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      grain: target.grain,
+      inputTokens: existing.inputTokens + target.counters.inputTokens,
+      outputTokens: existing.outputTokens + target.counters.outputTokens,
+      reasoningTokens:
+        existing.reasoningTokens + target.counters.reasoningTokens,
+      cachedInputTokens:
+        existing.cachedInputTokens + target.counters.cachedInputTokens,
+      cacheWriteTokens:
+        existing.cacheWriteTokens + target.counters.cacheWriteTokens,
+      totalTokens: existing.totalTokens + target.counters.totalTokens,
+      runtimeWallMs: existing.runtimeWallMs + target.counters.runtimeWallMs,
+      agentSandboxCpuUsec:
+        existing.agentSandboxCpuUsec + target.counters.agentSandboxCpuUsec,
+      toolSandboxCpuUsec:
+        existing.toolSandboxCpuUsec + target.counters.toolSandboxCpuUsec,
+      invocations: existing.invocations + target.counters.invocations,
+      modelCalls: existing.modelCalls + target.counters.modelCalls,
+      updatedAt: Date.now(),
+    });
+  } else {
+    await ctx.db.insert("usageRollups", {
+      accountId: target.accountId,
+      endpointId: target.endpointId,
+      grain: target.grain,
+      bucketStart: target.bucketStart,
+      modelProvider: target.modelProvider,
+      modelId: target.modelId,
+      inputTokens: target.counters.inputTokens,
+      outputTokens: target.counters.outputTokens,
+      reasoningTokens: target.counters.reasoningTokens,
+      cachedInputTokens: target.counters.cachedInputTokens,
+      cacheWriteTokens: target.counters.cacheWriteTokens,
+      totalTokens: target.counters.totalTokens,
+      runtimeWallMs: target.counters.runtimeWallMs,
+      agentSandboxCpuUsec: target.counters.agentSandboxCpuUsec,
+      toolSandboxCpuUsec: target.counters.toolSandboxCpuUsec,
+      invocations: target.counters.invocations,
+      modelCalls: target.counters.modelCalls,
+      updatedAt: Date.now(),
+    });
+  }
+}

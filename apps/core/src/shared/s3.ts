@@ -13,17 +13,10 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logDebug, logError } from "./log.ts";
 
-export interface S3ObjectInfo {
-  key: string;
-  size?: number;
-  lastModified?: string;
-  etag?: string;
-}
+const SANDBOX_UID = "993";
+const SANDBOX_GID = "990";
 
-export interface S3ObjectHead {
-  contentLength?: number;
-  contentType?: string;
-}
+let defaultClient: AwsS3Client | undefined;
 
 // Per-call S3 access for reads against a bring-your-own bucket: short-lived
 // assume-role credentials plus the bucket's region/endpoint. Omitted (the common
@@ -38,97 +31,16 @@ export interface S3Access {
   endpoint?: string;
 }
 
-const SANDBOX_UID = "993";
-const SANDBOX_GID = "990";
-
-let defaultClient: AwsS3Client | undefined;
-
-// The default (env-configured) client is shared so the credential chain
-// resolves once per process, not per call; access-scoped clients carry their
-// own credentials and stay per-call.
-function awsClient(access?: S3Access): AwsS3Client {
-  if (access) {
-    return new AwsS3Client({
-      region: access.region ?? process.env.AWS_REGION,
-      ...(access.endpoint
-        ? { endpoint: access.endpoint, forcePathStyle: true }
-        : {}),
-      ...(access.credentials ? { credentials: access.credentials } : {}),
-    });
-  }
-  defaultClient ??= new AwsS3Client({ region: process.env.AWS_REGION });
-
-  return defaultClient;
+export interface S3ObjectHead {
+  contentLength?: number;
+  contentType?: string;
 }
 
-export async function readS3Text(
-  bucket: string,
-  key: string,
-  access?: S3Access,
-): Promise<string> {
-  const body = await readS3Body(bucket, key, access);
-
-  return body.transformToString();
-}
-
-export async function getS3ObjectUrl(
-  bucket: string,
-  key: string,
-  options: { expiresInSeconds?: number; access?: S3Access } = {},
-): Promise<string> {
-  return getSignedUrl(
-    awsClient(options.access),
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
-    { expiresIn: options.expiresInSeconds ?? 300 },
-  );
-}
-
-export async function readS3Bytes(
-  bucket: string,
-  key: string,
-  access?: S3Access,
-): Promise<Uint8Array> {
-  const body = await readS3Body(bucket, key, access);
-
-  return body.transformToByteArray();
-}
-
-export async function writeS3Object(
-  bucket: string,
-  key: string,
-  body: string | Uint8Array,
-  options: { contentType?: string; executable?: boolean } = {},
-): Promise<number> {
-  const size = typeof body === "string" ? body.length : body.byteLength;
-  logDebug("s3.write start", {
-    bucket: bucket,
-    key: key,
-    contentType: options.contentType,
-    size: size,
-  });
-  try {
-    await putS3Object(bucket, key, body, {
-      contentType: options.contentType,
-      metadata: posixMetadata(
-        key.endsWith("/") ? "directory" : "file",
-        options.executable === true,
-      ),
-    });
-    logDebug("s3.write success", { bucket: bucket, key: key, result: size });
-
-    return size;
-  } catch (err) {
-    logError("s3.write failed", {
-      bucket: bucket,
-      key: key,
-      error: err instanceof Error ? err.message : String(err),
-      errorName: err instanceof Error ? err.name : typeof err,
-      errorStack: err instanceof Error ? err.stack : undefined,
-      errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
-    });
-    throw err;
-  }
+export interface S3ObjectInfo {
+  key: string;
+  size?: number;
+  lastModified?: string;
+  etag?: string;
 }
 
 export async function copyS3Object(
@@ -180,6 +92,32 @@ export async function copyS3Object(
   }
 }
 
+export async function deleteS3Object(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<void> {
+  await awsClient(access).send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    }),
+  );
+}
+
+export async function deleteS3Prefix(
+  bucket: string,
+  prefix: string,
+  access?: S3Access,
+): Promise<number> {
+  const objects = await listS3Prefix(bucket, prefix, access);
+  await Promise.all(
+    objects.map((object) => deleteS3Object(bucket, object.key, access)),
+  );
+
+  return objects.length;
+}
+
 export async function ensureS3DirectoryMarkers(
   bucket: string,
   key: string,
@@ -195,6 +133,18 @@ export async function ensureS3DirectoryMarkers(
       metadata: posixMetadata("directory"),
     });
   }
+}
+
+export async function getS3ObjectUrl(
+  bucket: string,
+  key: string,
+  options: { expiresInSeconds?: number; access?: S3Access } = {},
+): Promise<string> {
+  return getSignedUrl(
+    awsClient(options.access),
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn: options.expiresInSeconds ?? 300 },
+  );
 }
 
 // Object metadata without the body, or null when the key does not exist. The
@@ -228,42 +178,27 @@ export async function headS3Object(
   }
 }
 
-export async function s3ObjectExists(
-  bucket: string,
-  key: string,
-  access?: S3Access,
-): Promise<boolean> {
-  logDebug("s3.exists start", { bucket: bucket, key: key });
-  try {
-    const head = await headS3Object(bucket, key, access);
-    logDebug("s3.exists result", {
-      bucket: bucket,
-      key: key,
-      exists: head !== null,
-    });
-
-    return head !== null;
-  } catch (err) {
-    const details: Record<string, unknown> = {
-      bucket: bucket,
-      key: key,
-      error: err instanceof Error ? err.message : String(err),
-      errorName: err instanceof Error ? err.name : typeof err,
-      errorStack: err instanceof Error ? err.stack : undefined,
-      errorCause:
-        err instanceof Error && err.cause ? String(err.cause) : undefined,
-    };
-    if (err && typeof err === "object") {
-      const e = err as Record<string, unknown>;
-      const metadata = e.$metadata as Record<string, unknown> | undefined;
-      details.statusCode = e.statusCode ?? e.status ?? metadata?.httpStatusCode;
-      details.errorCode = e.code ?? e.Code;
-      details.errorRequestId = e.requestId ?? metadata?.requestId;
-      details.errorKeys = Object.keys(e);
-    }
-    logError("s3.exists failed", details);
-    throw err;
+export function isMissingS3Error(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
   }
+
+  const candidate = error as {
+    name?: string;
+    code?: string;
+    Code?: string;
+    status?: number;
+    $metadata?: { httpStatusCode?: number };
+  };
+
+  return (
+    candidate.name === "NoSuchKey" ||
+    candidate.name === "NotFound" ||
+    (candidate.name === "S3Error" && candidate.status === 404) ||
+    candidate.code === "NoSuchKey" ||
+    candidate.Code === "NoSuchKey" ||
+    candidate.$metadata?.httpStatusCode === 404
+  );
 }
 
 export async function listS3Prefix(
@@ -326,49 +261,134 @@ export async function listS3Prefix(
   return objects;
 }
 
-export async function deleteS3Object(
+export async function readS3Bytes(
   bucket: string,
   key: string,
   access?: S3Access,
-): Promise<void> {
-  await awsClient(access).send(
-    new DeleteObjectCommand({
-      Bucket: bucket,
-      Key: key,
-    }),
-  );
+): Promise<Uint8Array> {
+  const body = await readS3Body(bucket, key, access);
+
+  return body.transformToByteArray();
 }
 
-export async function deleteS3Prefix(
-  bucket: string,
-  prefix: string,
-  access?: S3Access,
-): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix, access);
-  await Promise.all(
-    objects.map((object) => deleteS3Object(bucket, object.key, access)),
-  );
-
-  return objects.length;
-}
-
-async function readS3Body(
+export async function readS3Text(
   bucket: string,
   key: string,
   access?: S3Access,
-): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
-  const result = await awsClient(access).send(
-    new GetObjectCommand({
-      Bucket: bucket,
-      Key: key,
-    }),
-  );
+): Promise<string> {
+  const body = await readS3Body(bucket, key, access);
 
-  if (!result.Body) {
-    throw new Error(`S3 object has no body: ${key}`);
+  return body.transformToString();
+}
+
+export async function s3ObjectExists(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<boolean> {
+  logDebug("s3.exists start", { bucket: bucket, key: key });
+  try {
+    const head = await headS3Object(bucket, key, access);
+    logDebug("s3.exists result", {
+      bucket: bucket,
+      key: key,
+      exists: head !== null,
+    });
+
+    return head !== null;
+  } catch (err) {
+    const details: Record<string, unknown> = {
+      bucket: bucket,
+      key: key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause:
+        err instanceof Error && err.cause ? String(err.cause) : undefined,
+    };
+    if (err && typeof err === "object") {
+      const e = err as Record<string, unknown>;
+      const metadata = e.$metadata as Record<string, unknown> | undefined;
+      details.statusCode = e.statusCode ?? e.status ?? metadata?.httpStatusCode;
+      details.errorCode = e.code ?? e.Code;
+      details.errorRequestId = e.requestId ?? metadata?.requestId;
+      details.errorKeys = Object.keys(e);
+    }
+    logError("s3.exists failed", details);
+    throw err;
   }
+}
 
-  return result.Body;
+export async function writeS3Object(
+  bucket: string,
+  key: string,
+  body: string | Uint8Array,
+  options: { contentType?: string; executable?: boolean } = {},
+): Promise<number> {
+  const size = typeof body === "string" ? body.length : body.byteLength;
+  logDebug("s3.write start", {
+    bucket: bucket,
+    key: key,
+    contentType: options.contentType,
+    size: size,
+  });
+  try {
+    await putS3Object(bucket, key, body, {
+      contentType: options.contentType,
+      metadata: posixMetadata(
+        key.endsWith("/") ? "directory" : "file",
+        options.executable === true,
+      ),
+    });
+    logDebug("s3.write success", { bucket: bucket, key: key, result: size });
+
+    return size;
+  } catch (err) {
+    logError("s3.write failed", {
+      bucket: bucket,
+      key: key,
+      error: err instanceof Error ? err.message : String(err),
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorStack: err instanceof Error ? err.stack : undefined,
+      errorCause:
+        err instanceof Error && err.cause ? String(err.cause) : undefined,
+    });
+    throw err;
+  }
+}
+
+// The default (env-configured) client is shared so the credential chain
+// resolves once per process, not per call; access-scoped clients carry their
+// own credentials and stay per-call.
+function awsClient(access?: S3Access): AwsS3Client {
+  if (access) {
+    return new AwsS3Client({
+      region: access.region ?? process.env.AWS_REGION,
+      ...(access.endpoint
+        ? { endpoint: access.endpoint, forcePathStyle: true }
+        : {}),
+      ...(access.credentials ? { credentials: access.credentials } : {}),
+    });
+  }
+  defaultClient ??= new AwsS3Client({ region: process.env.AWS_REGION });
+
+  return defaultClient;
+}
+
+function posixMetadata(
+  kind: "file" | "directory",
+  executable = false,
+): Record<string, string> {
+  const now = `${Date.now()}000000ns`;
+
+  return {
+    "file-owner": SANDBOX_UID,
+    "file-group": SANDBOX_GID,
+    "file-permissions":
+      kind === "directory" ? "0040777" : executable ? "0100777" : "0100666",
+    "file-atime": now,
+    "file-mtime": now,
+  };
 }
 
 async function putS3Object(
@@ -388,41 +408,21 @@ async function putS3Object(
   );
 }
 
-function posixMetadata(
-  kind: "file" | "directory",
-  executable = false,
-): Record<string, string> {
-  const now = `${Date.now()}000000ns`;
+async function readS3Body(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
+  const result = await awsClient(access).send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    }),
+  );
 
-  return {
-    "file-owner": SANDBOX_UID,
-    "file-group": SANDBOX_GID,
-    "file-permissions":
-      kind === "directory" ? "0040777" : executable ? "0100777" : "0100666",
-    "file-atime": now,
-    "file-mtime": now,
-  };
-}
-
-export function isMissingS3Error(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
+  if (!result.Body) {
+    throw new Error(`S3 object has no body: ${key}`);
   }
 
-  const candidate = error as {
-    name?: string;
-    code?: string;
-    Code?: string;
-    status?: number;
-    $metadata?: { httpStatusCode?: number };
-  };
-
-  return (
-    candidate.name === "NoSuchKey" ||
-    candidate.name === "NotFound" ||
-    (candidate.name === "S3Error" && candidate.status === 404) ||
-    candidate.code === "NoSuchKey" ||
-    candidate.Code === "NoSuchKey" ||
-    candidate.$metadata?.httpStatusCode === 404
-  );
+  return result.Body;
 }

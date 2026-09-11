@@ -23,11 +23,12 @@ import {
 } from "../model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
-// RFC 7636: 43..128 unreserved characters, base64url without padding.
-const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 export const CLI_TOKEN_PREFIX = "fp_cli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
+
+// RFC 7636: 43..128 unreserved characters, base64url without padding.
+const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 // planValidator stays ahead of onboardingOrgValidator, which embeds it;
@@ -427,6 +428,22 @@ export const selectOnboardingOrg = internalMutation({
   },
 });
 
+/** S256 PKCE transform: base64url(sha256(verifier)), no padding. */
+export async function pkceChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  let binary = "";
+  for (const byte of new Uint8Array(digest))
+    binary += String.fromCharCode(byte);
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status: status,
@@ -498,22 +515,6 @@ async function onboardingContext(
       name: user.name,
     },
   };
-}
-
-/** S256 PKCE transform: base64url(sha256(verifier)), no padding. */
-export async function pkceChallenge(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(verifier),
-  );
-  let binary = "";
-  for (const byte of new Uint8Array(digest))
-    binary += String.fromCharCode(byte);
-
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
 }
 
 function randomToken(prefix: string): string {

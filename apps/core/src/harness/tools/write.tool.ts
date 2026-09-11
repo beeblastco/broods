@@ -23,24 +23,6 @@ interface WriteInput {
   workspace?: string;
 }
 
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-
-  return {
-    type: "object",
-    properties: {
-      file_path: {
-        type: "string",
-        description: "Path to write, relative to the workspace root.",
-      },
-      content: { type: "string", description: "Full file contents to write." },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["file_path", "content"],
-    additionalProperties: false,
-  };
-}
-
 export default function writeTool(context: SandboxToolContext): ToolSet {
   return {
     write: tool({
@@ -90,5 +72,23 @@ Usage notes:
         }
       },
     }),
+  };
+}
+
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
+  return {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "Path to write, relative to the workspace root.",
+      },
+      content: { type: "string", description: "Full file contents to write." },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["file_path", "content"],
+    additionalProperties: false,
   };
 }

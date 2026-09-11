@@ -21,28 +21,11 @@ import { optionalEnv } from "../../shared/env.ts";
 import type { S3Access } from "../../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
-export interface S3MountIdentity {
-  bucket: string;
-  // Key prefix the mount exposes and the session is scoped to; non-empty, "/"-terminated.
-  prefix: string;
-  region?: string;
-  endpoint?: string;
-}
-
 export interface ResolvedS3Mount extends S3MountIdentity {
   // Present when the harness resolved credentials (assume-role / platform role).
   // Absent => the provider must supply credentials itself (workdir declarative
   // org secrets, or static keys in the sandbox envVars).
   credentials?: S3MountCredentials;
-}
-
-export interface S3MountCredentials {
-  AWS_ACCESS_KEY_ID: string;
-  AWS_SECRET_ACCESS_KEY: string;
-  AWS_SESSION_TOKEN: string;
-  // RFC3339 expiry. A sandbox that serves these to mountpoint-s3 needs it to know
-  // when to re-fetch; without it the session reads as non-expiring.
-  AWS_CREDENTIAL_EXPIRATION?: string;
 }
 
 export interface S3MountContext {
@@ -54,65 +37,21 @@ export interface S3MountContext {
   endpoint?: string;
 }
 
-// The mount role for a workspace: the developer's `assumeRole` role, else the
-// platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
-// supplies credentials another way. Sync, so the mount strategy can branch on it.
-export function mountRoleArn(
-  storage: WorkspaceStorageConfig | undefined,
-): string | undefined {
-  return storage?.auth?.type === "assumeRole"
-    ? storage.auth.roleArn
-    : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
+export interface S3MountCredentials {
+  AWS_ACCESS_KEY_ID: string;
+  AWS_SECRET_ACCESS_KEY: string;
+  AWS_SESSION_TOKEN: string;
+  // RFC3339 expiry. A sandbox that serves these to mountpoint-s3 needs it to know
+  // when to re-fetch; without it the session reads as non-expiring.
+  AWS_CREDENTIAL_EXPIRATION?: string;
 }
 
-// Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
-// A bring-your-own bucket uses its own layout under a required prefix; the shared
-// managed bucket is partitioned by namespace.
-export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
-  const storage = ctx.storage;
-  const bucket = storage?.bucket ?? ctx.managedBucket;
-  if (!bucket) {
-    throw new Error(
-      "workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).",
-    );
-  }
-  if (storage?.bucket && !normalizePrefix(storage.prefix)) {
-    throw new Error(
-      "workspace storage.prefix is required for a bring-your-own bucket; the mount is scoped to bucket/prefix/",
-    );
-  }
-  const prefix = storage?.bucket
-    ? joinPrefix(
-        normalizePrefix(storage.prefix),
-        namespaceIsolationSuffix(ctx.namespace),
-      )
-    : `${workspaceNamespacePrefix(ctx.namespace)}/`;
-  const region = storage?.region ?? ctx.region;
-  const endpoint = storage?.endpoint ?? ctx.endpoint;
-
-  return {
-    bucket: bucket,
-    prefix: prefix,
-    ...(region ? { region: region } : {}),
-    ...(endpoint ? { endpoint: endpoint } : {}),
-  };
-}
-
-function namespaceIsolationSuffix(namespace: string): string | undefined {
-  const separator = namespace.indexOf("/");
-
-  return separator >= 0 ? namespace.slice(separator + 1) : undefined;
-}
-
-function joinPrefix(
-  prefix: string | undefined,
-  suffix: string | undefined,
-): string {
-  const normalizedPrefix = prefix?.replace(/^\/+|\/+$/g, "");
-  const normalizedSuffix = suffix?.replace(/^\/+|\/+$/g, "");
-  const joined = [normalizedPrefix, normalizedSuffix].filter(Boolean).join("/");
-
-  return joined ? `${joined}/` : "";
+export interface S3MountIdentity {
+  bucket: string;
+  // Key prefix the mount exposes and the session is scoped to; non-empty, "/"-terminated.
+  prefix: string;
+  region?: string;
+  endpoint?: string;
 }
 
 // Where a harness-side read of a workspace lands: the bucket + key prefix, plus the
@@ -124,76 +63,6 @@ export interface S3ReadTarget {
   prefix: string;
   access?: S3Access;
   credentialsExpireAt?: Date;
-}
-
-// Build the resolver context for a harness-side read of a workspace's storage,
-// using the env defaults (managed bucket / region) the harness runs with. The
-// bring-your-own endpoint, when set, rides storage.endpoint.
-export function workspaceReadContext(
-  storage: WorkspaceStorageConfig | undefined,
-  namespace: string,
-): S3MountContext {
-  return {
-    storage: storage,
-    namespace: namespace,
-    managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
-    region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
-  };
-}
-
-// Resolve a harness read target. The managed bucket is read directly on the
-// harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
-// assumes the configured role for short-lived, prefix-scoped cross-account creds.
-export async function resolveS3ReadTarget(
-  ctx: S3MountContext,
-): Promise<S3ReadTarget> {
-  const identity = resolveS3MountIdentity(ctx);
-  if (!ctx.storage?.bucket) {
-    return { bucket: identity.bucket, prefix: identity.prefix };
-  }
-  const mount = await resolveS3Mount(ctx);
-  const access: S3Access = {
-    ...(mount.credentials
-      ? {
-          credentials: {
-            accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
-            secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
-            sessionToken: mount.credentials.AWS_SESSION_TOKEN,
-          },
-        }
-      : {}),
-    ...(mount.region ? { region: mount.region } : {}),
-    ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
-  };
-  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
-
-  return {
-    bucket: mount.bucket,
-    prefix: mount.prefix,
-    access: access,
-    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
-  };
-}
-
-export async function resolveS3Mount(
-  ctx: S3MountContext,
-): Promise<ResolvedS3Mount> {
-  const identity = resolveS3MountIdentity(ctx);
-  const roleArn = mountRoleArn(ctx.storage);
-  const externalId =
-    ctx.storage?.auth?.type === "assumeRole"
-      ? ctx.storage.auth.externalId
-      : undefined;
-  const credentials = roleArn
-    ? await assumeScopedMountCredentials({
-        roleArn: roleArn,
-        bucket: identity.bucket,
-        prefix: identity.prefix,
-        externalId: externalId,
-      })
-    : undefined;
-
-  return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
 }
 
 // Assume `roleArn` with a session policy narrowed to `bucket/prefix/*`; the prefix
@@ -255,6 +124,137 @@ export async function assumeScopedMountCredentials(params: {
       ? { AWS_CREDENTIAL_EXPIRATION: credentials.Expiration.toISOString() }
       : {}),
   };
+}
+
+// The mount role for a workspace: the developer's `assumeRole` role, else the
+// platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
+// supplies credentials another way. Sync, so the mount strategy can branch on it.
+export function mountRoleArn(
+  storage: WorkspaceStorageConfig | undefined,
+): string | undefined {
+  return storage?.auth?.type === "assumeRole"
+    ? storage.auth.roleArn
+    : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
+}
+
+export async function resolveS3Mount(
+  ctx: S3MountContext,
+): Promise<ResolvedS3Mount> {
+  const identity = resolveS3MountIdentity(ctx);
+  const roleArn = mountRoleArn(ctx.storage);
+  const externalId =
+    ctx.storage?.auth?.type === "assumeRole"
+      ? ctx.storage.auth.externalId
+      : undefined;
+  const credentials = roleArn
+    ? await assumeScopedMountCredentials({
+        roleArn: roleArn,
+        bucket: identity.bucket,
+        prefix: identity.prefix,
+        externalId: externalId,
+      })
+    : undefined;
+
+  return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
+}
+
+// Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
+// A bring-your-own bucket uses its own layout under a required prefix; the shared
+// managed bucket is partitioned by namespace.
+export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
+  const storage = ctx.storage;
+  const bucket = storage?.bucket ?? ctx.managedBucket;
+  if (!bucket) {
+    throw new Error(
+      "workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).",
+    );
+  }
+  if (storage?.bucket && !normalizePrefix(storage.prefix)) {
+    throw new Error(
+      "workspace storage.prefix is required for a bring-your-own bucket; the mount is scoped to bucket/prefix/",
+    );
+  }
+  const prefix = storage?.bucket
+    ? joinPrefix(
+        normalizePrefix(storage.prefix),
+        namespaceIsolationSuffix(ctx.namespace),
+      )
+    : `${workspaceNamespacePrefix(ctx.namespace)}/`;
+  const region = storage?.region ?? ctx.region;
+  const endpoint = storage?.endpoint ?? ctx.endpoint;
+
+  return {
+    bucket: bucket,
+    prefix: prefix,
+    ...(region ? { region: region } : {}),
+    ...(endpoint ? { endpoint: endpoint } : {}),
+  };
+}
+
+// Resolve a harness read target. The managed bucket is read directly on the
+// harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
+// assumes the configured role for short-lived, prefix-scoped cross-account creds.
+export async function resolveS3ReadTarget(
+  ctx: S3MountContext,
+): Promise<S3ReadTarget> {
+  const identity = resolveS3MountIdentity(ctx);
+  if (!ctx.storage?.bucket) {
+    return { bucket: identity.bucket, prefix: identity.prefix };
+  }
+  const mount = await resolveS3Mount(ctx);
+  const access: S3Access = {
+    ...(mount.credentials
+      ? {
+          credentials: {
+            accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
+            secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
+            sessionToken: mount.credentials.AWS_SESSION_TOKEN,
+          },
+        }
+      : {}),
+    ...(mount.region ? { region: mount.region } : {}),
+    ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
+  };
+  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+
+  return {
+    bucket: mount.bucket,
+    prefix: mount.prefix,
+    access: access,
+    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
+  };
+}
+
+// Build the resolver context for a harness-side read of a workspace's storage,
+// using the env defaults (managed bucket / region) the harness runs with. The
+// bring-your-own endpoint, when set, rides storage.endpoint.
+export function workspaceReadContext(
+  storage: WorkspaceStorageConfig | undefined,
+  namespace: string,
+): S3MountContext {
+  return {
+    storage: storage,
+    namespace: namespace,
+    managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
+    region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
+  };
+}
+
+function joinPrefix(
+  prefix: string | undefined,
+  suffix: string | undefined,
+): string {
+  const normalizedPrefix = prefix?.replace(/^\/+|\/+$/g, "");
+  const normalizedSuffix = suffix?.replace(/^\/+|\/+$/g, "");
+  const joined = [normalizedPrefix, normalizedSuffix].filter(Boolean).join("/");
+
+  return joined ? `${joined}/` : "";
+}
+
+function namespaceIsolationSuffix(namespace: string): string | undefined {
+  const separator = namespace.indexOf("/");
+
+  return separator >= 0 ? namespace.slice(separator + 1) : undefined;
 }
 
 function normalizePrefix(prefix: string | undefined): string {

@@ -71,6 +71,23 @@ export async function compactSessionContext(
   });
 }
 
+export function estimateContextLength(
+  system: SystemModelMessage[],
+  messages: ModelMessage[],
+): number {
+  // A serialized character count, not tokens: cheap and provider-independent.
+  return JSON.stringify({ system: system, messages: messages }).length;
+}
+
+export function isCompactionSummaryMessage(
+  message: SystemModelMessage,
+): boolean {
+  return (
+    typeof message.content === "string" &&
+    message.content.startsWith(COMPACTION_MARKER)
+  );
+}
+
 /**
  * Unconditional summary generation. Callers decide when to compact and which
  * messages fold in; this produces the summary row from them.
@@ -117,23 +134,6 @@ export async function summarizeConversation(
   });
 
   return summary;
-}
-
-export function isCompactionSummaryMessage(
-  message: SystemModelMessage,
-): boolean {
-  return (
-    typeof message.content === "string" &&
-    message.content.startsWith(COMPACTION_MARKER)
-  );
-}
-
-export function estimateContextLength(
-  system: SystemModelMessage[],
-  messages: ModelMessage[],
-): number {
-  // A serialized character count, not tokens: cheap and provider-independent.
-  return JSON.stringify({ system: system, messages: messages }).length;
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {

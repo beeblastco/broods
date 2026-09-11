@@ -443,6 +443,13 @@ async function measureBytesPerOp(benchCase: BenchCase): Promise<number> {
   return Math.max(0, (after - before) / iterations);
 }
 
+function median(sorted: readonly number[]): number {
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle]!;
+
+  return (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
 /**
  * The factor the suite as a whole moved by since the baselines were recorded:
  * the median of measured/baseline across every case that has a baseline and
@@ -465,13 +472,6 @@ function medianDriftRatio(
   if (ratios.length < MACHINE_RATIO_MIN_CASES) return 1;
 
   return median(ratios);
-}
-
-function median(sorted: readonly number[]): number {
-  const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[middle]!;
-
-  return (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function percentile(sorted: readonly number[], target: number): number {

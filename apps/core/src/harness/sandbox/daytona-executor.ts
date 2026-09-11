@@ -414,6 +414,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 }
 
+function artifactStdout(artifacts: unknown): string {
+  return isPlainObject(artifacts) && typeof artifacts.stdout === "string"
+    ? artifacts.stdout
+    : "";
+}
+
 function daytonaClientOptions(
   config: SandboxExecutorConfig,
 ): Record<string, unknown> {
@@ -484,6 +490,30 @@ async function daytonaCreateOptions(
   };
 }
 
+// Creds go into the sandbox env at create time because Daytona's mount-s3 runs via
+// `sudo -E` and reads them from the process env. The resolver hands back short-lived,
+// prefix-scoped assume-role creds; the harness's own broad runtime creds must never
+// land here, since agent code can read the env.
+async function daytonaEnvVars(
+  config: SandboxExecutorConfig,
+  request: { namespace?: string },
+  baseEnv: Record<string, string>,
+): Promise<Record<string, string>> {
+  const options = isPlainObject(config.options) ? config.options : {};
+  if (options.mountAwsS3Buckets !== true) {
+    return baseEnv;
+  }
+  const mount = await resolveS3Mount(daytonaS3Context(config, request));
+
+  return {
+    ...baseEnv,
+    ...(mount.credentials ?? staticAwsKeys(baseEnv)),
+    ...(mount.region
+      ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
+      : {}),
+  };
+}
+
 function daytonaNetworkOptions(
   config: SandboxExecutorConfig,
 ): Record<string, unknown> {
@@ -507,30 +537,6 @@ function daytonaNetworkOptions(
     networkBlockAll: true,
     ...((network.allowCidrs?.length ?? 0) > 0
       ? { networkAllowList: network.allowCidrs!.join(",") }
-      : {}),
-  };
-}
-
-// Creds go into the sandbox env at create time because Daytona's mount-s3 runs via
-// `sudo -E` and reads them from the process env. The resolver hands back short-lived,
-// prefix-scoped assume-role creds; the harness's own broad runtime creds must never
-// land here, since agent code can read the env.
-async function daytonaEnvVars(
-  config: SandboxExecutorConfig,
-  request: { namespace?: string },
-  baseEnv: Record<string, string>,
-): Promise<Record<string, string>> {
-  const options = isPlainObject(config.options) ? config.options : {};
-  if (options.mountAwsS3Buckets !== true) {
-    return baseEnv;
-  }
-  const mount = await resolveS3Mount(daytonaS3Context(config, request));
-
-  return {
-    ...baseEnv,
-    ...(mount.credentials ?? staticAwsKeys(baseEnv)),
-    ...(mount.region
-      ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
       : {}),
   };
 }
@@ -561,23 +567,16 @@ function daytonaS3Context(
   };
 }
 
-// Fallback for a store with no mount role: whatever static keys the account supplied.
-function staticAwsKeys(env: Record<string, string>): Record<string, string> {
-  const accessKeyId = env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
-  if (!accessKeyId || !secretAccessKey) {
+async function executeDaytonaSetupCommand(
+  sandbox: Sandbox,
+  command: string,
+): Promise<void> {
+  const response = await sandbox.process.executeCommand(command);
+  if ((response.exitCode ?? 0) !== 0) {
     throw new Error(
-      "Daytona AWS S3 mounts require SANDBOX_MOUNT_ROLE_ARN in the harness runtime or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in sandbox envVars.",
+      `Daytona setup command failed: ${command}\n${response.result ?? ""}`,
     );
   }
-
-  return {
-    AWS_ACCESS_KEY_ID: accessKeyId,
-    AWS_SECRET_ACCESS_KEY: secretAccessKey,
-    ...(env.AWS_SESSION_TOKEN
-      ? { AWS_SESSION_TOKEN: env.AWS_SESSION_TOKEN }
-      : {}),
-  };
 }
 
 async function mountAwsS3Buckets(
@@ -647,20 +646,21 @@ async function mountS3Bucket(
   );
 }
 
-async function executeDaytonaSetupCommand(
-  sandbox: Sandbox,
-  command: string,
-): Promise<void> {
-  const response = await sandbox.process.executeCommand(command);
-  if ((response.exitCode ?? 0) !== 0) {
+// Fallback for a store with no mount role: whatever static keys the account supplied.
+function staticAwsKeys(env: Record<string, string>): Record<string, string> {
+  const accessKeyId = env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
+  if (!accessKeyId || !secretAccessKey) {
     throw new Error(
-      `Daytona setup command failed: ${command}\n${response.result ?? ""}`,
+      "Daytona AWS S3 mounts require SANDBOX_MOUNT_ROLE_ARN in the harness runtime or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in sandbox envVars.",
     );
   }
-}
 
-function artifactStdout(artifacts: unknown): string {
-  return isPlainObject(artifacts) && typeof artifacts.stdout === "string"
-    ? artifacts.stdout
-    : "";
+  return {
+    AWS_ACCESS_KEY_ID: accessKeyId,
+    AWS_SECRET_ACCESS_KEY: secretAccessKey,
+    ...(env.AWS_SESSION_TOKEN
+      ? { AWS_SESSION_TOKEN: env.AWS_SESSION_TOKEN }
+      : {}),
+  };
 }

@@ -114,111 +114,6 @@ export const ensureForStage = mutation({
   },
 });
 
-/**
- * Find the stage's active deployment, creating one (with a fresh key) when
- * absent. When `rotate` is true an existing key is regenerated. Returns the raw
- * key whenever it can, either minted now or decrypted from the at-rest blob.
- */
-export async function ensureStageDeployment(
-  ctx: MutationCtx,
-  args: {
-    authId: string;
-    accountId: Id<"accounts">;
-    projectId: Id<"projects">;
-    stageId: Id<"stages">;
-    projectSlug: string;
-    stageSlug: string;
-    rotate?: boolean;
-  },
-): Promise<EnsureResult> {
-  const endpointId = endpointIdForStage(args.stageId);
-  const existing = await ctx.db
-    .query("agentDeployments")
-    .withIndex("by_projectId_and_stageId_and_status", (q) =>
-      q
-        .eq("projectId", args.projectId)
-        .eq("stageId", args.stageId)
-        .eq("status", "active"),
-    )
-    .first();
-
-  if (existing && args.rotate !== true) {
-    // Keep slugs fresh (project/stage can be renamed) but reuse the key,
-    // recovering its plaintext from the stored blob.
-    if (
-      existing.projectSlug !== args.projectSlug ||
-      existing.stageSlug !== args.stageSlug
-    ) {
-      await ctx.db.patch(existing._id, {
-        projectSlug: args.projectSlug,
-        stageSlug: args.stageSlug,
-        updatedAt: Date.now(),
-      });
-    }
-
-    return {
-      deploymentId: existing._id,
-      endpointId: existing.endpointId,
-      projectSlug: args.projectSlug,
-      stageSlug: args.stageSlug,
-      keyHint: existing.keyHint,
-      rawApiKey: await decryptApiKey(existing),
-    };
-  }
-
-  const rawApiKey = generateDeploymentKey();
-  const apiKeyHash = await sha256Hex(rawApiKey);
-  const keyHint = deploymentKeyHint(rawApiKey);
-  const encryptedKey = await encryptApiKey(rawApiKey);
-  const now = Date.now();
-
-  if (existing) {
-    await ctx.db.patch(existing._id, {
-      apiKeyHash: apiKeyHash,
-      keyHint: keyHint,
-      ...encryptedKey,
-      projectSlug: args.projectSlug,
-      stageSlug: args.stageSlug,
-      updatedAt: now,
-    });
-    await refreshAccountChannelEndpoints(ctx, args.accountId);
-
-    return {
-      deploymentId: existing._id,
-      endpointId: existing.endpointId,
-      projectSlug: args.projectSlug,
-      stageSlug: args.stageSlug,
-      keyHint: keyHint,
-      rawApiKey: rawApiKey,
-    };
-  }
-
-  const deploymentId = await ctx.db.insert("agentDeployments", {
-    authId: args.authId,
-    accountId: args.accountId,
-    projectId: args.projectId,
-    stageId: args.stageId,
-    status: "active",
-    endpointId: endpointId,
-    projectSlug: args.projectSlug,
-    stageSlug: args.stageSlug,
-    apiKeyHash: apiKeyHash,
-    keyHint: keyHint,
-    ...encryptedKey,
-    updatedAt: now,
-  });
-  await refreshAccountChannelEndpoints(ctx, args.accountId);
-
-  return {
-    deploymentId: deploymentId,
-    endpointId: endpointId,
-    projectSlug: args.projectSlug,
-    stageSlug: args.stageSlug,
-    keyHint: keyHint,
-    rawApiKey: rawApiKey,
-  };
-}
-
 /** Resolve the active stage deployment linked to one runtime agent. */
 export const getByAgentId = internalQuery({
   args: {
@@ -442,6 +337,111 @@ export const rotate = mutation({
   },
 });
 
+/**
+ * Find the stage's active deployment, creating one (with a fresh key) when
+ * absent. When `rotate` is true an existing key is regenerated. Returns the raw
+ * key whenever it can, either minted now or decrypted from the at-rest blob.
+ */
+export async function ensureStageDeployment(
+  ctx: MutationCtx,
+  args: {
+    authId: string;
+    accountId: Id<"accounts">;
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    projectSlug: string;
+    stageSlug: string;
+    rotate?: boolean;
+  },
+): Promise<EnsureResult> {
+  const endpointId = endpointIdForStage(args.stageId);
+  const existing = await ctx.db
+    .query("agentDeployments")
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
+      q
+        .eq("projectId", args.projectId)
+        .eq("stageId", args.stageId)
+        .eq("status", "active"),
+    )
+    .first();
+
+  if (existing && args.rotate !== true) {
+    // Keep slugs fresh (project/stage can be renamed) but reuse the key,
+    // recovering its plaintext from the stored blob.
+    if (
+      existing.projectSlug !== args.projectSlug ||
+      existing.stageSlug !== args.stageSlug
+    ) {
+      await ctx.db.patch(existing._id, {
+        projectSlug: args.projectSlug,
+        stageSlug: args.stageSlug,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return {
+      deploymentId: existing._id,
+      endpointId: existing.endpointId,
+      projectSlug: args.projectSlug,
+      stageSlug: args.stageSlug,
+      keyHint: existing.keyHint,
+      rawApiKey: await decryptApiKey(existing),
+    };
+  }
+
+  const rawApiKey = generateDeploymentKey();
+  const apiKeyHash = await sha256Hex(rawApiKey);
+  const keyHint = deploymentKeyHint(rawApiKey);
+  const encryptedKey = await encryptApiKey(rawApiKey);
+  const now = Date.now();
+
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      apiKeyHash: apiKeyHash,
+      keyHint: keyHint,
+      ...encryptedKey,
+      projectSlug: args.projectSlug,
+      stageSlug: args.stageSlug,
+      updatedAt: now,
+    });
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
+
+    return {
+      deploymentId: existing._id,
+      endpointId: existing.endpointId,
+      projectSlug: args.projectSlug,
+      stageSlug: args.stageSlug,
+      keyHint: keyHint,
+      rawApiKey: rawApiKey,
+    };
+  }
+
+  const deploymentId = await ctx.db.insert("agentDeployments", {
+    authId: args.authId,
+    accountId: args.accountId,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    status: "active",
+    endpointId: endpointId,
+    projectSlug: args.projectSlug,
+    stageSlug: args.stageSlug,
+    apiKeyHash: apiKeyHash,
+    keyHint: keyHint,
+    ...encryptedKey,
+    updatedAt: now,
+  });
+  await refreshAccountChannelEndpoints(ctx, args.accountId);
+
+  return {
+    deploymentId: deploymentId,
+    endpointId: endpointId,
+    projectSlug: args.projectSlug,
+    stageSlug: args.stageSlug,
+    keyHint: keyHint,
+    rawApiKey: rawApiKey,
+  };
+}
+
 async function decryptApiKey(deployment: {
   apiKeyCiphertext: string;
   apiKeyIv: string;
@@ -490,21 +490,6 @@ function encryptionSecret(): string {
   if (!secret) {
     throw new Error(
       "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime API keys",
-    );
-  }
-
-  return secret;
-}
-
-/**
- * The one service secret: `BROODS_SERVICE_AUTH_SECRET` here, the same value
- * as core's `SERVICE_AUTH_SECRET`, which also verifies stage session tickets.
- */
-function serviceSecret(): string {
-  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-  if (!secret) {
-    throw new Error(
-      "BROODS_SERVICE_AUTH_SECRET is required to mint stage session tickets",
     );
   }
 
@@ -588,6 +573,21 @@ async function resolveStageContext(
     stageSlug: stage.name.toLowerCase(),
     authId: project.authId,
   };
+}
+
+/**
+ * The one service secret: `BROODS_SERVICE_AUTH_SECRET` here, the same value
+ * as core's `SERVICE_AUTH_SECRET`, which also verifies stage session tickets.
+ */
+function serviceSecret(): string {
+  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      "BROODS_SERVICE_AUTH_SECRET is required to mint stage session tickets",
+    );
+  }
+
+  return secret;
 }
 
 function toEnsureReturn(result: EnsureResult): {

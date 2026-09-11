@@ -32,33 +32,6 @@ export interface TerminalTicket {
   expiresAt: number;
 }
 
-// The ticket key is derived, not the raw service secret, so a leaked ticket key
-// context can never stand in for service-to-service auth.
-function ticketKey(secret: string): Buffer {
-  return createHash("sha256")
-    .update(`sandbox-terminal-ticket:${secret}`)
-    .digest();
-}
-
-export function sealTerminalTicket(
-  ticket: TerminalTicket,
-  secret: string,
-): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(ticket), "utf-8"),
-    cipher.final(),
-  ]);
-
-  return [
-    TICKET_VERSION,
-    iv.toString("base64url"),
-    cipher.getAuthTag().toString("base64url"),
-    ciphertext.toString("base64url"),
-  ].join(".");
-}
-
 /**
  * Decrypts and validates a ticket. Returns null (never throws) on any tamper,
  * wrong-secret, or expiry failure so callers can try their other stage secrets.
@@ -117,4 +90,31 @@ export function openTerminalTicket(
   } catch {
     return null;
   }
+}
+
+export function sealTerminalTicket(
+  ticket: TerminalTicket,
+  secret: string,
+): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(ticket), "utf-8"),
+    cipher.final(),
+  ]);
+
+  return [
+    TICKET_VERSION,
+    iv.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
+    ciphertext.toString("base64url"),
+  ].join(".");
+}
+
+// The ticket key is derived, not the raw service secret, so a leaked ticket key
+// context can never stand in for service-to-service auth.
+function ticketKey(secret: string): Buffer {
+  return createHash("sha256")
+    .update(`sandbox-terminal-ticket:${secret}`)
+    .digest();
 }

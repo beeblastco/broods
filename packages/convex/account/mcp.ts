@@ -20,85 +20,6 @@ export const mcpDoc = v.object({
   _creationTime: v.number(),
 });
 
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    serverId: v.string(),
-  },
-  returns: v.union(mcpDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"mcp"> | null> => {
-    const normalized = ctx.db.normalizeId("mcp", args.serverId);
-    if (!normalized) return null;
-    const doc = await ctx.db.get(normalized);
-    if (!doc || doc.accountId !== args.accountId || doc.status !== "active")
-      return null;
-
-    return doc;
-  },
-});
-
-export const list = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(mcpDoc),
-  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
-    return await ctx.db
-      .query("mcp")
-      .withIndex("by_accountId_and_status", (q) =>
-        q.eq("accountId", args.accountId).eq("status", "active"),
-      )
-      .collect();
-  },
-});
-
-export const listForStage = internalQuery({
-  args: { stageId: v.id("stages") },
-  returns: v.array(mcpDoc),
-  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
-    return await ctx.db
-      .query("mcp")
-      .withIndex("by_stageId_and_status", (q) =>
-        q.eq("stageId", args.stageId).eq("status", "active"),
-      )
-      .collect();
-  },
-});
-
-// Unlike the CLI's `ensureScopeBySecretHash` this never creates: an unknown
-// slug is a client error, not a reason to spawn a project.
-export const resolveScope = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    project: v.string(),
-    stage: v.string(),
-  },
-  returns: v.union(
-    v.object({
-      projectId: v.id("projects"),
-      stageId: v.id("stages"),
-    }),
-    v.null(),
-  ),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> => {
-    const account = await ctx.db.get(args.accountId);
-    if (!account) return null;
-    const resolved = await resolveProjectStage(
-      ctx,
-      account,
-      args.project,
-      args.stage,
-    );
-    if (!resolved) return null;
-
-    return {
-      projectId: resolved.projectDoc._id,
-      stageId: resolved.stageDoc._id,
-    };
-  },
-});
-
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -176,6 +97,49 @@ export const create = internalMutation({
   },
 });
 
+export const getById = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    serverId: v.string(),
+  },
+  returns: v.union(mcpDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"mcp"> | null> => {
+    const normalized = ctx.db.normalizeId("mcp", args.serverId);
+    if (!normalized) return null;
+    const doc = await ctx.db.get(normalized);
+    if (!doc || doc.accountId !== args.accountId || doc.status !== "active")
+      return null;
+
+    return doc;
+  },
+});
+
+export const list = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(mcpDoc),
+  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
+    return await ctx.db
+      .query("mcp")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
+export const listForStage = internalQuery({
+  args: { stageId: v.id("stages") },
+  returns: v.array(mcpDoc),
+  handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
+    return await ctx.db
+      .query("mcp")
+      .withIndex("by_stageId_and_status", (q) =>
+        q.eq("stageId", args.stageId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -202,6 +166,42 @@ export const remove = internalMutation({
     });
 
     return null;
+  },
+});
+
+// Unlike the CLI's `ensureScopeBySecretHash` this never creates: an unknown
+// slug is a client error, not a reason to spawn a project.
+export const resolveScope = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    stage: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      projectId: v.id("projects"),
+      stageId: v.id("stages"),
+    }),
+    v.null(),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> => {
+    const account = await ctx.db.get(args.accountId);
+    if (!account) return null;
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      args.project,
+      args.stage,
+    );
+    if (!resolved) return null;
+
+    return {
+      projectId: resolved.projectDoc._id,
+      stageId: resolved.stageDoc._id,
+    };
   },
 });
 
@@ -244,6 +244,22 @@ export const update = internalMutation({
     return null;
   },
 });
+
+async function requireNameFree(
+  ctx: MutationCtx,
+  stageId: Id<"stages">,
+  name: string,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("mcp")
+    .withIndex("by_stageId_and_name", (q) =>
+      q.eq("stageId", stageId).eq("name", name),
+    )
+    .collect();
+  if (existing.some((doc) => doc.status === "active")) {
+    throw new Error(`name must be unique per stage: ${name}`);
+  }
+}
 
 /**
  * The fields an update writes. Provided args win; a transport switch clears
@@ -303,20 +319,4 @@ function updatePatch(
       : {}),
     updatedAt: Date.now(),
   };
-}
-
-async function requireNameFree(
-  ctx: MutationCtx,
-  stageId: Id<"stages">,
-  name: string,
-): Promise<void> {
-  const existing = await ctx.db
-    .query("mcp")
-    .withIndex("by_stageId_and_name", (q) =>
-      q.eq("stageId", stageId).eq("name", name),
-    )
-    .collect();
-  if (existing.some((doc) => doc.status === "active")) {
-    throw new Error(`name must be unique per stage: ${name}`);
-  }
 }

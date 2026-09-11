@@ -41,16 +41,45 @@ const webhookRow = v.object({
   events: v.array(v.string()),
 });
 
-/** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */
-function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
-  const hooks =
-    isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks)
-      ? extraConfig.hooks
-      : undefined;
-  const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
+/** @returns null */
+export const addAgentWebhook = mutation({
+  args: {
+    agentConfigId: v.id("agentConfigs"),
+    url: v.string(),
+    secret: v.string(),
+    events: v.optional(v.array(v.string())),
+    enabled: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { agentConfigId, url, secret, events, enabled },
+  ): Promise<null> => {
+    const user = await requireUser(ctx);
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
+      ...webhooks,
+      {
+        enabled: enabled !== false,
+        url: url.trim(),
+        secret: secret.trim(),
+        events: events ?? [],
+      },
+    ]);
+    await recordWebhookAudit(
+      ctx,
+      dashboardAuditActor(user),
+      agentConfigId,
+      "created",
+      "Agent webhook created",
+      {
+        events: events ?? [],
+        enabled: enabled !== false,
+      },
+    );
 
-  return webhooks.filter(isPlainObject);
-}
+    return null;
+  },
+});
 
 /**
  * List every agent in a stage with its configured outbound webhooks. Agents
@@ -105,119 +134,26 @@ export const listAgentWebhooks = query({
   },
 });
 
-/**
- * Load an owned agent config, apply a transform to its `hooks.webhooks` array, and
- * persist the result back into `extraConfig` plus the encrypted runtime agents row.
- * @param mutate receives the current webhooks and returns the next array
- * @throws when the config is missing or the caller does not own its project
- */
-async function mutateAgentWebhooks(
-  ctx: MutationCtx,
-  authId: string,
-  agentConfigId: Id<"agentConfigs">,
-  mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
-): Promise<void> {
-  const config = await ctx.db.get(agentConfigId);
-  if (!config) throw new Error("Agent config not found.");
-  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
-    throw new Error(WEBHOOK_ADMIN_REQUIRED);
-  }
-
-  const extra: Record<string, unknown> = isPlainObject(config.extraConfig)
-    ? { ...config.extraConfig }
-    : {};
-  const hooks: Record<string, unknown> = isPlainObject(extra.hooks)
-    ? { ...extra.hooks }
-    : {};
-  hooks.webhooks = mutate(readWebhooks(config.extraConfig));
-  extra.hooks = hooks;
-
-  await ctx.db.patch(agentConfigId, {
-    extraConfig: extra,
-    updatedAt: Date.now(),
-  });
-  await ensureAgentsRowForConfig(ctx, agentConfigId, authId);
-  await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
-}
-
-async function requireUser(
-  ctx: MutationCtx,
-): Promise<{ id: string; email?: string | null; name?: string | null }> {
-  // Check authenticated user
-  const user = await authKit.getAuthUser(ctx);
-  if (!user) {
-    throw new Error("User not found or not authenticated");
-  }
-
-  return user;
-}
-
-async function recordWebhookAudit(
-  ctx: MutationCtx,
-  actor: ConfigAuditActor,
-  agentConfigId: Id<"agentConfigs">,
-  action: string,
-  summary: string,
-  data?: Record<string, unknown>,
-): Promise<void> {
-  const config = await ctx.db.get(agentConfigId);
-  if (!config) return;
-  const accountId = await accountIdForProject(ctx, config.projectId);
-  if (!accountId) return;
-
-  await insertConfigAuditEvent(ctx.db, {
-    accountId: accountId,
-    projectId: config.projectId,
-    stageId: config.stageId,
-    actor: actor,
-    action: action,
-    resource: {
-      kind: "webhook",
-      id: `${agentConfigId}:${typeof data?.index === "number" ? data.index : "new"}`,
-      name: config.name,
-    },
-    summary: summary,
-    detailsJson: auditDetailsJson({
-      agentConfigId: agentConfigId,
-      agentId: config.agentId,
-      ...data,
-    }),
-  });
-}
-
 /** @returns null */
-export const addAgentWebhook = mutation({
+export const removeAgentWebhook = mutation({
   args: {
     agentConfigId: v.id("agentConfigs"),
-    url: v.string(),
-    secret: v.string(),
-    events: v.optional(v.array(v.string())),
-    enabled: v.optional(v.boolean()),
+    index: v.number(),
   },
   returns: v.null(),
-  handler: async (
-    ctx,
-    { agentConfigId, url, secret, events, enabled },
-  ): Promise<null> => {
+  handler: async (ctx, { agentConfigId, index }): Promise<null> => {
     const user = await requireUser(ctx);
-    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
-      ...webhooks,
-      {
-        enabled: enabled !== false,
-        url: url.trim(),
-        secret: secret.trim(),
-        events: events ?? [],
-      },
-    ]);
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
+      webhooks.filter((_, i) => i !== index),
+    );
     await recordWebhookAudit(
       ctx,
       dashboardAuditActor(user),
       agentConfigId,
-      "created",
-      "Agent webhook created",
+      "deleted",
+      "Agent webhook deleted",
       {
-        events: events ?? [],
-        enabled: enabled !== false,
+        index: index,
       },
     );
 
@@ -256,29 +192,93 @@ export const setAgentWebhookEnabled = mutation({
   },
 });
 
-/** @returns null */
-export const removeAgentWebhook = mutation({
-  args: {
-    agentConfigId: v.id("agentConfigs"),
-    index: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, { agentConfigId, index }): Promise<null> => {
-    const user = await requireUser(ctx);
-    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
-      webhooks.filter((_, i) => i !== index),
-    );
-    await recordWebhookAudit(
-      ctx,
-      dashboardAuditActor(user),
-      agentConfigId,
-      "deleted",
-      "Agent webhook deleted",
-      {
-        index: index,
-      },
-    );
+/**
+ * Load an owned agent config, apply a transform to its `hooks.webhooks` array, and
+ * persist the result back into `extraConfig` plus the encrypted runtime agents row.
+ * @param mutate receives the current webhooks and returns the next array
+ * @throws when the config is missing or the caller does not own its project
+ */
+async function mutateAgentWebhooks(
+  ctx: MutationCtx,
+  authId: string,
+  agentConfigId: Id<"agentConfigs">,
+  mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
+): Promise<void> {
+  const config = await ctx.db.get(agentConfigId);
+  if (!config) throw new Error("Agent config not found.");
+  if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
+    throw new Error(WEBHOOK_ADMIN_REQUIRED);
+  }
 
-    return null;
-  },
-});
+  const extra: Record<string, unknown> = isPlainObject(config.extraConfig)
+    ? { ...config.extraConfig }
+    : {};
+  const hooks: Record<string, unknown> = isPlainObject(extra.hooks)
+    ? { ...extra.hooks }
+    : {};
+  hooks.webhooks = mutate(readWebhooks(config.extraConfig));
+  extra.hooks = hooks;
+
+  await ctx.db.patch(agentConfigId, {
+    extraConfig: extra,
+    updatedAt: Date.now(),
+  });
+  await ensureAgentsRowForConfig(ctx, agentConfigId, authId);
+  await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
+}
+
+/** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */
+function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
+  const hooks =
+    isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks)
+      ? extraConfig.hooks
+      : undefined;
+  const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
+
+  return webhooks.filter(isPlainObject);
+}
+
+async function recordWebhookAudit(
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  agentConfigId: Id<"agentConfigs">,
+  action: string,
+  summary: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  const config = await ctx.db.get(agentConfigId);
+  if (!config) return;
+  const accountId = await accountIdForProject(ctx, config.projectId);
+  if (!accountId) return;
+
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: config.projectId,
+    stageId: config.stageId,
+    actor: actor,
+    action: action,
+    resource: {
+      kind: "webhook",
+      id: `${agentConfigId}:${typeof data?.index === "number" ? data.index : "new"}`,
+      name: config.name,
+    },
+    summary: summary,
+    detailsJson: auditDetailsJson({
+      agentConfigId: agentConfigId,
+      agentId: config.agentId,
+      ...data,
+    }),
+  });
+}
+
+async function requireUser(
+  ctx: MutationCtx,
+): Promise<{ id: string; email?: string | null; name?: string | null }> {
+  // Check authenticated user
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) {
+    throw new Error("User not found or not authenticated");
+  }
+
+  return user;
+}

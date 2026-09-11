@@ -114,6 +114,32 @@ import {
 } from "./questions.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
+const AGENT_PROCESSING_FAILED = "Agent processing failed";
+const CONVERSATION_BUSY =
+  "Conversation is already processing another turn. Try again when the current turn finishes.";
+const CHANNEL_APPROVAL_DENIAL_REASON =
+  "Tool approval is only supported through the direct API.";
+const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
+const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
+const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
+const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
+const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
+const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
+const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
+  "WORKER_TIMEOUT_BUDGET_MS",
+  10 * 60 * 1000,
+);
+const WORKER_SLOT_GRACE_MS = 5_000;
+const MAX_PENDING_WORKER_PAYLOADS = 1000;
+const textEncoder = new TextEncoder();
+const inProcessWorkers = new Set<Promise<void>>();
+const pendingWorkerPayloads: [
+  AsyncWorkerInvocation | NatsWorkerInvocation,
+  InProcessWorkerRun,
+][] = [];
+
+let activeInProcessWorkers = 0;
+
 type ContinuationOutcome =
   | { kind: "pending"; pendingCount: number }
   | { kind: "ready"; invoked: boolean; publicEventId: string }
@@ -156,31 +182,72 @@ interface ParentContinuationResult {
   questions: PendingQuestionSummary[];
 }
 
-const AGENT_PROCESSING_FAILED = "Agent processing failed";
-const CONVERSATION_BUSY =
-  "Conversation is already processing another turn. Try again when the current turn finishes.";
-const CHANNEL_APPROVAL_DENIAL_REASON =
-  "Tool approval is only supported through the direct API.";
-const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
-const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
-const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
-const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
-  "WORKER_TIMEOUT_BUDGET_MS",
-  10 * 60 * 1000,
-);
-const WORKER_SLOT_GRACE_MS = 5_000;
-const MAX_PENDING_WORKER_PAYLOADS = 1000;
-const textEncoder = new TextEncoder();
-const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerPayloads: [
-  AsyncWorkerInvocation | NatsWorkerInvocation,
-  InProcessWorkerRun,
-][] = [];
+export function dispatchInProcessWorker(
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+  run: InProcessWorkerRun = handler,
+): void {
+  if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
+    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
+      // Load-shed like a failed Lambda Event invoke: the awaiting caller
+      // surfaces the error instead of the queue growing without bound.
+      throw new Error("In-process worker queue is full");
+    }
+    pendingWorkerPayloads.push([payload, run]);
 
-let activeInProcessWorkers = 0;
+    return;
+  }
+
+  activeInProcessWorkers += 1;
+  const execution = run(payload, {
+    requestId: crypto.randomUUID(),
+    deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
+    // Workers run detached; they never emit an HTTP response, so there is no
+    // post-response tail to defer.
+    waitUntil: () => {},
+  }).then(
+    () => undefined,
+    (err) => {
+      logError("In-process worker failed", {
+        kind: payload.kind,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  );
+  // Nothing here kills a hung model stream or tool the way Lambda does, so a few
+  // stuck workers would otherwise pin every slot for every tenant on the pod. An
+  // overrun frees the slot but leaves the underlying work running.
+  let slotTimer: ReturnType<typeof setTimeout> | undefined;
+  const guarded = Promise.race([
+    execution,
+    new Promise<void>((resolve) => {
+      slotTimer = setTimeout(() => {
+        logError("In-process worker exceeded deadline; reclaiming slot", {
+          kind: payload.kind,
+          budgetMs: WORKER_TIMEOUT_BUDGET_MS,
+        });
+        resolve();
+      }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
+      slotTimer.unref?.();
+    }),
+  ]);
+  const worker: Promise<void> = guarded.finally(() => {
+    if (slotTimer) clearTimeout(slotTimer);
+    activeInProcessWorkers -= 1;
+    inProcessWorkers.delete(worker);
+    const next = pendingWorkerPayloads.shift();
+    if (next) {
+      dispatchInProcessWorker(next[0], next[1]);
+    }
+  });
+  inProcessWorkers.add(worker);
+}
+
+/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
+export async function drainInProcessWorkers(): Promise<void> {
+  while (inProcessWorkers.size > 0) {
+    await Promise.allSettled(inProcessWorkers);
+  }
+}
 
 export async function handler(
   event:
@@ -194,6 +261,35 @@ export async function handler(
   // scope so concurrent tenants in the shared container process cannot clobber
   // each other's log redaction secrets or NATS routing tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
+}
+
+/**
+ * Records a cron run's outcome, and retires a one-time job with it: its
+ * scheduled run is spent, so the row can never fire again.
+ */
+export async function settleCronRun(
+  accountId: string,
+  cronRun: DirectInboundEvent["cronRun"],
+  outcome: { result: JSONValue } | { error: string },
+): Promise<void> {
+  if (!cronRun) return;
+  const crons = getStorage().crons;
+  if ("error" in outcome) {
+    await crons.failRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.error,
+    );
+  } else {
+    await crons.completeRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.result,
+    );
+  }
+  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
 
 export async function settleFailedIngressAndDrain(
@@ -2107,104 +2203,8 @@ async function invokeHarnessWorker(
   dispatchInProcessWorker(payload);
 }
 
-export function dispatchInProcessWorker(
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  run: InProcessWorkerRun = handler,
-): void {
-  if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
-    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
-      // Load-shed like a failed Lambda Event invoke: the awaiting caller
-      // surfaces the error instead of the queue growing without bound.
-      throw new Error("In-process worker queue is full");
-    }
-    pendingWorkerPayloads.push([payload, run]);
-
-    return;
-  }
-
-  activeInProcessWorkers += 1;
-  const execution = run(payload, {
-    requestId: crypto.randomUUID(),
-    deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
-    // Workers run detached; they never emit an HTTP response, so there is no
-    // post-response tail to defer.
-    waitUntil: () => {},
-  }).then(
-    () => undefined,
-    (err) => {
-      logError("In-process worker failed", {
-        kind: payload.kind,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    },
-  );
-  // Nothing here kills a hung model stream or tool the way Lambda does, so a few
-  // stuck workers would otherwise pin every slot for every tenant on the pod. An
-  // overrun frees the slot but leaves the underlying work running.
-  let slotTimer: ReturnType<typeof setTimeout> | undefined;
-  const guarded = Promise.race([
-    execution,
-    new Promise<void>((resolve) => {
-      slotTimer = setTimeout(() => {
-        logError("In-process worker exceeded deadline; reclaiming slot", {
-          kind: payload.kind,
-          budgetMs: WORKER_TIMEOUT_BUDGET_MS,
-        });
-        resolve();
-      }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
-      slotTimer.unref?.();
-    }),
-  ]);
-  const worker: Promise<void> = guarded.finally(() => {
-    if (slotTimer) clearTimeout(slotTimer);
-    activeInProcessWorkers -= 1;
-    inProcessWorkers.delete(worker);
-    const next = pendingWorkerPayloads.shift();
-    if (next) {
-      dispatchInProcessWorker(next[0], next[1]);
-    }
-  });
-  inProcessWorkers.add(worker);
-}
-
-/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
-export async function drainInProcessWorkers(): Promise<void> {
-  while (inProcessWorkers.size > 0) {
-    await Promise.allSettled(inProcessWorkers);
-  }
-}
-
 function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
-}
-
-/**
- * Records a cron run's outcome, and retires a one-time job with it: its
- * scheduled run is spent, so the row can never fire again.
- */
-export async function settleCronRun(
-  accountId: string,
-  cronRun: DirectInboundEvent["cronRun"],
-  outcome: { result: JSONValue } | { error: string },
-): Promise<void> {
-  if (!cronRun) return;
-  const crons = getStorage().crons;
-  if ("error" in outcome) {
-    await crons.failRun(
-      accountId,
-      cronRun.cronId,
-      cronRun.runId,
-      outcome.error,
-    );
-  } else {
-    await crons.completeRun(
-      accountId,
-      cronRun.cronId,
-      cronRun.runId,
-      outcome.result,
-    );
-  }
-  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
 
 async function startScheduledAgentRun(

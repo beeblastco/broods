@@ -83,153 +83,29 @@ const TS_RE =
 const BASH_RE =
   /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b([A-Z_][A-Z0-9_]*)(?==)/g;
 
-function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
-  const re = lang === "bash" ? BASH_RE : TS_RE;
-  re.lastIndex = 0;
-  const out: ReactNode[] = [];
-  let last = 0;
-  let key = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(code)) !== null) {
-    if (m.index > last) out.push(code.slice(last, m.index));
-    const cls =
-      lang === "bash"
-        ? m[1]
-          ? COLOR.comment
-          : m[2]
-            ? COLOR.string
-            : COLOR.variable
-        : m[1]
-          ? COLOR.comment
-          : m[2]
-            ? COLOR.string
-            : m[3]
-              ? COLOR.keyword
-              : m[4]
-                ? COLOR.func
-                : COLOR.number;
-    out.push(
-      <span key={key++} className={cls}>
-        {m[0]}
-      </span>,
-    );
-    last = m.index + m[0].length;
-  }
-  if (last < code.length) out.push(code.slice(last));
-
-  return out;
-}
-
-/** `copyText` overrides what the button copies, so a masked display can still yield the real secret. */
-function CodeBlock({
-  code,
-  lang,
-  copyText,
-}: {
-  code: string;
-  lang: "ts" | "bash";
-  copyText?: string;
-}): React.JSX.Element {
-  const [copied, setCopied] = useState(false);
-
-  function copy(): void {
-    navigator.clipboard.writeText(copyText ?? code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
+export function RuntimeKeyDialog({
+  open,
+  onOpenChange,
+  apiKey,
+  justCreated = false,
+}: DialogProps): React.JSX.Element {
   return (
-    <div className="relative">
-      <pre className="overflow-x-auto rounded-md border border-border bg-[#1e1e1e] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#d4d4d4]">
-        <code>{highlight(code, lang)}</code>
-      </pre>
-      <button
-        type="button"
-        onClick={copy}
-        title="Copy"
-        className="absolute right-2 top-2 flex size-7 cursor-pointer items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-      >
-        {copied ? (
-          <Check className="size-3.5" />
-        ) : (
-          <Copy className="size-3.5" />
-        )}
-      </button>
-    </div>
-  );
-}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="size-4 text-foreground" />
+            {justCreated ? "Your runtime API key is ready" : "Runtime API key"}
+          </DialogTitle>
+          <DialogDescription>
+            This key authenticates runtime calls for this stage: agent runs,
+            streaming, and the observability views. Treat it like a password.
+          </DialogDescription>
+        </DialogHeader>
 
-function RotateButton({
-  onRotate,
-}: {
-  onRotate: () => Promise<void>;
-}): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false);
-  const [rotating, setRotating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function run(): Promise<void> {
-    setRotating(true);
-    setError(null);
-    try {
-      await onRotate();
-      setConfirming(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to rotate key");
-    } finally {
-      setRotating(false);
-    }
-  }
-
-  if (confirming) {
-    return (
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          Invalidate the current key?
-        </span>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-7 cursor-pointer"
-          disabled={rotating}
-          onClick={run}
-        >
-          {rotating ? <Loader2 className="size-3.5 animate-spin" /> : "Rotate"}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 cursor-pointer"
-          disabled={rotating}
-          onClick={() => setConfirming(false)}
-        >
-          Cancel
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 cursor-pointer text-muted-foreground"
-        onClick={() => setConfirming(true)}
-      >
-        <RefreshCw className="size-3.5" />
-        <span className="ml-1">Rotate</span>
-      </Button>
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
-    </div>
-  );
-}
-
-function Mono({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-      {children}
-    </code>
+        <RuntimeKeyView apiKey={apiKey} />
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -353,28 +229,152 @@ export function RuntimeKeyView({
   );
 }
 
-export function RuntimeKeyDialog({
-  open,
-  onOpenChange,
-  apiKey,
-  justCreated = false,
-}: DialogProps): React.JSX.Element {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="size-4 text-foreground" />
-            {justCreated ? "Your runtime API key is ready" : "Runtime API key"}
-          </DialogTitle>
-          <DialogDescription>
-            This key authenticates runtime calls for this stage: agent runs,
-            streaming, and the observability views. Treat it like a password.
-          </DialogDescription>
-        </DialogHeader>
+/** `copyText` overrides what the button copies, so a masked display can still yield the real secret. */
+function CodeBlock({
+  code,
+  lang,
+  copyText,
+}: {
+  code: string;
+  lang: "ts" | "bash";
+  copyText?: string;
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
 
-        <RuntimeKeyView apiKey={apiKey} />
-      </DialogContent>
-    </Dialog>
+  function copy(): void {
+    navigator.clipboard.writeText(copyText ?? code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="relative">
+      <pre className="overflow-x-auto rounded-md border border-border bg-[#1e1e1e] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#d4d4d4]">
+        <code>{highlight(code, lang)}</code>
+      </pre>
+      <button
+        type="button"
+        onClick={copy}
+        title="Copy"
+        className="absolute right-2 top-2 flex size-7 cursor-pointer items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+      >
+        {copied ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Copy className="size-3.5" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
+  const re = lang === "bash" ? BASH_RE : TS_RE;
+  re.lastIndex = 0;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    if (m.index > last) out.push(code.slice(last, m.index));
+    const cls =
+      lang === "bash"
+        ? m[1]
+          ? COLOR.comment
+          : m[2]
+            ? COLOR.string
+            : COLOR.variable
+        : m[1]
+          ? COLOR.comment
+          : m[2]
+            ? COLOR.string
+            : m[3]
+              ? COLOR.keyword
+              : m[4]
+                ? COLOR.func
+                : COLOR.number;
+    out.push(
+      <span key={key++} className={cls}>
+        {m[0]}
+      </span>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < code.length) out.push(code.slice(last));
+
+  return out;
+}
+
+function Mono({ children }: { children: ReactNode }): React.JSX.Element {
+  return (
+    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+      {children}
+    </code>
+  );
+}
+
+function RotateButton({
+  onRotate,
+}: {
+  onRotate: () => Promise<void>;
+}): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(): Promise<void> {
+    setRotating(true);
+    setError(null);
+    try {
+      await onRotate();
+      setConfirming(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to rotate key");
+    } finally {
+      setRotating(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">
+          Invalidate the current key?
+        </span>
+        <Button
+          variant="destructive"
+          size="sm"
+          className="h-7 cursor-pointer"
+          disabled={rotating}
+          onClick={run}
+        >
+          {rotating ? <Loader2 className="size-3.5 animate-spin" /> : "Rotate"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 cursor-pointer"
+          disabled={rotating}
+          onClick={() => setConfirming(false)}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 cursor-pointer text-muted-foreground"
+        onClick={() => setConfirming(true)}
+      >
+        <RefreshCw className="size-3.5" />
+        <span className="ml-1">Rotate</span>
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </div>
   );
 }

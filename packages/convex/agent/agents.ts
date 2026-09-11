@@ -28,95 +28,6 @@ const agentDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Look up an agent by the public string `agentId` used in the broods
- * HTTP contract. The validator accepts `v.string()` (not `v.id("agents")`)
- * so unknown / non-Convex-id values resolve to `null` (= "agent not found")
- * instead of throwing an ArgumentValidationError at the adapter boundary.
- */
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-  },
-  returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
-    const normalized = ctx.db.normalizeId("agents", args.agentId);
-    if (!normalized) return null;
-    const agent = await ctx.db.get(normalized);
-    if (!agent || agent.accountId !== args.accountId) {
-      return null;
-    }
-
-    return agent;
-  },
-});
-
-export const list = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(agentDoc),
-  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
-    return await ctx.db
-      .query("agents")
-      .withIndex("by_accountId_and_name", (q) =>
-        q.eq("accountId", args.accountId),
-      )
-      .collect();
-  },
-});
-
-// An endpointId belonging to another account resolves empty, so a guessed
-// stage URL cannot reach across accounts.
-export const listForEndpoint = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    endpointId: v.string(),
-  },
-  returns: v.array(agentDoc),
-  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
-      .first();
-    if (!deployment) return [];
-    if (deployment.accountId !== args.accountId) return [];
-    if (deployment.status !== "active") return [];
-
-    return await agentsInStage(
-      ctx,
-      {
-        projectId: deployment.projectId,
-        stageId: deployment.stageId,
-      },
-      args.accountId,
-    );
-  },
-});
-
-/**
- * Look up an account's agent by name. Names are unique per account (enforced
- * on create/rename), so config-plane clients can adopt an existing agent
- * instead of duplicating it.
- * @param accountId owning account
- * @param name agent name to look up
- * @returns agent document or null
- */
-export const getByName = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    name: v.string(),
-  },
-  returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
-    return await ctx.db
-      .query("agents")
-      .withIndex("by_accountId_and_name", (q) =>
-        q.eq("accountId", args.accountId).eq("name", args.name),
-      )
-      .first();
-  },
-});
-
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -174,6 +85,95 @@ export const create = internalMutation({
 });
 
 /**
+ * Look up an agent by the public string `agentId` used in the broods
+ * HTTP contract. The validator accepts `v.string()` (not `v.id("agents")`)
+ * so unknown / non-Convex-id values resolve to `null` (= "agent not found")
+ * instead of throwing an ArgumentValidationError at the adapter boundary.
+ */
+export const getById = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.string(),
+  },
+  returns: v.union(agentDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
+    const normalized = ctx.db.normalizeId("agents", args.agentId);
+    if (!normalized) return null;
+    const agent = await ctx.db.get(normalized);
+    if (!agent || agent.accountId !== args.accountId) {
+      return null;
+    }
+
+    return agent;
+  },
+});
+
+/**
+ * Look up an account's agent by name. Names are unique per account (enforced
+ * on create/rename), so config-plane clients can adopt an existing agent
+ * instead of duplicating it.
+ * @param accountId owning account
+ * @param name agent name to look up
+ * @returns agent document or null
+ */
+export const getByName = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    name: v.string(),
+  },
+  returns: v.union(agentDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
+    return await ctx.db
+      .query("agents")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId).eq("name", args.name),
+      )
+      .first();
+  },
+});
+
+export const list = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+    return await ctx.db
+      .query("agents")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .collect();
+  },
+});
+
+// An endpointId belonging to another account resolves empty, so a guessed
+// stage URL cannot reach across accounts.
+export const listForEndpoint = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+  },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
+      .first();
+    if (!deployment) return [];
+    if (deployment.accountId !== args.accountId) return [];
+    if (deployment.status !== "active") return [];
+
+    return await agentsInStage(
+      ctx,
+      {
+        projectId: deployment.projectId,
+        stageId: deployment.stageId,
+      },
+      args.accountId,
+    );
+  },
+});
+
+/**
  * Lists the agents this project owns, for the project's scheduler.
  *
  * `agents` rows are account-scoped and carry no projectId; the link is
@@ -200,127 +200,6 @@ export const listForProject = query({
     if (!accountId) return [];
 
     return await agentsInProject(ctx, args.projectId, accountId);
-  },
-});
-
-export const update = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-    name: v.optional(v.string()),
-    description: v.optional(v.string()),
-    encryptedConfig: v.optional(v.string()),
-    encryptionIv: v.optional(v.string()),
-    encryptionTag: v.optional(v.string()),
-    encryptedSourceConfig: v.optional(v.string()),
-    sourceEncryptionIv: v.optional(v.string()),
-    sourceEncryptionTag: v.optional(v.string()),
-    clearSourceConfig: v.optional(v.boolean()),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const { accountId, agentId, clearSourceConfig, ...patch } = args;
-    const normalized = ctx.db.normalizeId("agents", agentId);
-    if (!normalized) {
-      throw new Error("Agent does not belong to the supplied accountId");
-    }
-    const agent = await ctx.db.get(normalized);
-    if (!agent || agent.accountId !== accountId) {
-      throw new Error("Agent does not belong to the supplied accountId");
-    }
-
-    if (patch.name !== undefined && patch.name !== agent.name) {
-      const existing = await ctx.db
-        .query("agents")
-        .withIndex("by_accountId_and_name", (q) =>
-          q.eq("accountId", accountId).eq("name", patch.name!),
-        )
-        .first();
-      if (existing) {
-        throw new Error(`Agent name already exists: ${patch.name}`);
-      }
-    }
-
-    await ctx.db.patch(normalized, {
-      ...(patch.name !== undefined && { name: patch.name }),
-      ...(patch.description !== undefined && {
-        description: patch.description,
-      }),
-      ...(patch.encryptedConfig !== undefined && {
-        encryptedConfig: patch.encryptedConfig,
-      }),
-      ...(patch.encryptionIv !== undefined && {
-        encryptionIv: patch.encryptionIv,
-      }),
-      ...(patch.encryptionTag !== undefined && {
-        encryptionTag: patch.encryptionTag,
-      }),
-      ...(patch.encryptedSourceConfig !== undefined && {
-        encryptedSourceConfig: patch.encryptedSourceConfig,
-      }),
-      ...(patch.sourceEncryptionIv !== undefined && {
-        sourceEncryptionIv: patch.sourceEncryptionIv,
-      }),
-      ...(patch.sourceEncryptionTag !== undefined && {
-        sourceEncryptionTag: patch.sourceEncryptionTag,
-      }),
-      ...(clearSourceConfig === true && {
-        encryptedSourceConfig: undefined,
-        sourceEncryptionIv: undefined,
-        sourceEncryptionTag: undefined,
-      }),
-      updatedAt: Date.now(),
-    });
-
-    // Mirror API-side changes onto the canvas-side agentConfigs row so
-    // the Details/Config/Variables tabs reflect what the API caller wrote.
-    await mirrorAgentRowOntoConfig(ctx, normalized);
-    await refreshAccountChannelEndpoints(ctx, args.accountId);
-
-    return null;
-  },
-});
-
-/**
- * Test utility: encrypts a raw `AgentConfig` against the deployment's
- * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` and writes it onto the given agent.
- * Used by the CLI smoke-test to seed a working config without touching
- * the canvas / agentConfigs flow. Production sync should go through
- * `model/agentSync.pushEncryptedConfigToAgentRow` instead.
- */
-export const seedEncryptedConfigForTest = internalMutation({
-  args: {
-    agentId: v.string(),
-    config: v.any(),
-    variables: v.optional(
-      v.array(v.object({ key: v.string(), value: v.string() })),
-    ),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET not set");
-    const normalized = ctx.db.normalizeId("agents", args.agentId);
-    if (!normalized) throw new Error("Unknown agentId");
-    const variables: Record<string, string> = {};
-    for (const entry of args.variables ?? [])
-      variables[entry.key] = entry.value;
-    const resolved = substituteEnvPlaceholders(
-      args.config as Record<string, unknown>,
-      variables,
-    );
-    const encrypted = await encryptAgentConfigBlob(resolved, secret);
-    await ctx.db.patch(normalized, {
-      encryptedConfig: encrypted.ciphertext,
-      encryptionIv: encrypted.iv,
-      encryptionTag: encrypted.tag,
-      updatedAt: Date.now(),
-    });
-    await mirrorAgentRowOntoConfig(ctx, normalized);
-    const seeded = await ctx.db.get(normalized);
-    if (seeded) await refreshAccountChannelEndpoints(ctx, seeded.accountId);
-
-    return null;
   },
 });
 
@@ -396,6 +275,127 @@ export const remove = internalMutation({
     }
 
     await ctx.db.delete(normalized);
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
+
+    return null;
+  },
+});
+
+/**
+ * Test utility: encrypts a raw `AgentConfig` against the deployment's
+ * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` and writes it onto the given agent.
+ * Used by the CLI smoke-test to seed a working config without touching
+ * the canvas / agentConfigs flow. Production sync should go through
+ * `model/agentSync.pushEncryptedConfigToAgentRow` instead.
+ */
+export const seedEncryptedConfigForTest = internalMutation({
+  args: {
+    agentId: v.string(),
+    config: v.any(),
+    variables: v.optional(
+      v.array(v.object({ key: v.string(), value: v.string() })),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET not set");
+    const normalized = ctx.db.normalizeId("agents", args.agentId);
+    if (!normalized) throw new Error("Unknown agentId");
+    const variables: Record<string, string> = {};
+    for (const entry of args.variables ?? [])
+      variables[entry.key] = entry.value;
+    const resolved = substituteEnvPlaceholders(
+      args.config as Record<string, unknown>,
+      variables,
+    );
+    const encrypted = await encryptAgentConfigBlob(resolved, secret);
+    await ctx.db.patch(normalized, {
+      encryptedConfig: encrypted.ciphertext,
+      encryptionIv: encrypted.iv,
+      encryptionTag: encrypted.tag,
+      updatedAt: Date.now(),
+    });
+    await mirrorAgentRowOntoConfig(ctx, normalized);
+    const seeded = await ctx.db.get(normalized);
+    if (seeded) await refreshAccountChannelEndpoints(ctx, seeded.accountId);
+
+    return null;
+  },
+});
+
+export const update = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.string(),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+    encryptedConfig: v.optional(v.string()),
+    encryptionIv: v.optional(v.string()),
+    encryptionTag: v.optional(v.string()),
+    encryptedSourceConfig: v.optional(v.string()),
+    sourceEncryptionIv: v.optional(v.string()),
+    sourceEncryptionTag: v.optional(v.string()),
+    clearSourceConfig: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const { accountId, agentId, clearSourceConfig, ...patch } = args;
+    const normalized = ctx.db.normalizeId("agents", agentId);
+    if (!normalized) {
+      throw new Error("Agent does not belong to the supplied accountId");
+    }
+    const agent = await ctx.db.get(normalized);
+    if (!agent || agent.accountId !== accountId) {
+      throw new Error("Agent does not belong to the supplied accountId");
+    }
+
+    if (patch.name !== undefined && patch.name !== agent.name) {
+      const existing = await ctx.db
+        .query("agents")
+        .withIndex("by_accountId_and_name", (q) =>
+          q.eq("accountId", accountId).eq("name", patch.name!),
+        )
+        .first();
+      if (existing) {
+        throw new Error(`Agent name already exists: ${patch.name}`);
+      }
+    }
+
+    await ctx.db.patch(normalized, {
+      ...(patch.name !== undefined && { name: patch.name }),
+      ...(patch.description !== undefined && {
+        description: patch.description,
+      }),
+      ...(patch.encryptedConfig !== undefined && {
+        encryptedConfig: patch.encryptedConfig,
+      }),
+      ...(patch.encryptionIv !== undefined && {
+        encryptionIv: patch.encryptionIv,
+      }),
+      ...(patch.encryptionTag !== undefined && {
+        encryptionTag: patch.encryptionTag,
+      }),
+      ...(patch.encryptedSourceConfig !== undefined && {
+        encryptedSourceConfig: patch.encryptedSourceConfig,
+      }),
+      ...(patch.sourceEncryptionIv !== undefined && {
+        sourceEncryptionIv: patch.sourceEncryptionIv,
+      }),
+      ...(patch.sourceEncryptionTag !== undefined && {
+        sourceEncryptionTag: patch.sourceEncryptionTag,
+      }),
+      ...(clearSourceConfig === true && {
+        encryptedSourceConfig: undefined,
+        sourceEncryptionIv: undefined,
+        sourceEncryptionTag: undefined,
+      }),
+      updatedAt: Date.now(),
+    });
+
+    // Mirror API-side changes onto the canvas-side agentConfigs row so
+    // the Details/Config/Variables tabs reflect what the API caller wrote.
+    await mirrorAgentRowOntoConfig(ctx, normalized);
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return null;

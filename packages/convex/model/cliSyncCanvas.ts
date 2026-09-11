@@ -158,6 +158,25 @@ export async function syncCanvasLayoutForManifest(
   });
 }
 
+/** Agent→mcp edges. `config.mcp` is keyed by server row id. */
+function addAgentMcpEdges(
+  agentConfig: Record<string, unknown>,
+  agentNodeId: string,
+  nodeIdByKindName: Map<string, string>,
+  mcpNameById: Map<string, string>,
+  desiredEdges: Map<string, CanvasEdge>,
+): void {
+  const mcp = agentConfig.mcp;
+  if (!isPlainObject(mcp)) return;
+  for (const [serverId, serverConfig] of Object.entries(mcp)) {
+    const name = mcpNameById.get(serverId);
+    if (!name) continue;
+    if (isPlainObject(serverConfig) && serverConfig.enabled === false) continue;
+    const mcpNodeId = nodeIdByKindName.get(`mcp:${name}`);
+    if (mcpNodeId) addDesiredDefaultEdge(desiredEdges, agentNodeId, mcpNodeId);
+  }
+}
+
 /** Agent→skill edges from `skills.allowed` (bare names or account/name paths). */
 function addAgentSkillEdges(
   agentConfig: Record<string, unknown>,
@@ -194,25 +213,6 @@ function addAgentSubagentEdges(
     if (calleeNodeId && calleeNodeId !== agentNodeId) {
       addDesiredSubagentEdge(desiredEdges, agentNodeId, calleeNodeId);
     }
-  }
-}
-
-/** Agent→mcp edges. `config.mcp` is keyed by server row id. */
-function addAgentMcpEdges(
-  agentConfig: Record<string, unknown>,
-  agentNodeId: string,
-  nodeIdByKindName: Map<string, string>,
-  mcpNameById: Map<string, string>,
-  desiredEdges: Map<string, CanvasEdge>,
-): void {
-  const mcp = agentConfig.mcp;
-  if (!isPlainObject(mcp)) return;
-  for (const [serverId, serverConfig] of Object.entries(mcp)) {
-    const name = mcpNameById.get(serverId);
-    if (!name) continue;
-    if (isPlainObject(serverConfig) && serverConfig.enabled === false) continue;
-    const mcpNodeId = nodeIdByKindName.get(`mcp:${name}`);
-    if (mcpNodeId) addDesiredDefaultEdge(desiredEdges, agentNodeId, mcpNodeId);
   }
 }
 

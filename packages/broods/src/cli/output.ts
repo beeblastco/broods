@@ -67,13 +67,20 @@ export function formatDeploymentTarget(
   ].join("\n");
 }
 
-export function formatReadyLine(
-  durationMs: number,
+export function formatDiffEntries(
+  entries: DiffEntry[],
   options: FormatOptions = {},
-): string {
-  const time = (options.now ?? new Date()).toTimeString().slice(0, 8);
+): string[] {
+  const color = shouldUseColor(options);
 
-  return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
+  return entries.map((entry) => {
+    const marker = formatDiffMarker(entry.operation, color);
+    if (entry.operation === "rename" && entry.previousName) {
+      return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
+    }
+
+    return `  ${marker} ${entry.kind}:${entry.name}`;
+  });
 }
 
 /**
@@ -91,20 +98,13 @@ export function formatEnvSync(
   return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
 }
 
-export function formatDiffEntries(
-  entries: DiffEntry[],
+export function formatReadyLine(
+  durationMs: number,
   options: FormatOptions = {},
-): string[] {
-  const color = shouldUseColor(options);
+): string {
+  const time = (options.now ?? new Date()).toTimeString().slice(0, 8);
 
-  return entries.map((entry) => {
-    const marker = formatDiffMarker(entry.operation, color);
-    if (entry.operation === "rename" && entry.previousName) {
-      return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
-    }
-
-    return `  ${marker} ${entry.kind}:${entry.name}`;
-  });
+  return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
 }
 
 export function formatWarning(
@@ -114,48 +114,24 @@ export function formatWarning(
   return paint(message, YELLOW, shouldUseColor(options));
 }
 
-export function printReadyLine(durationMs: number): void {
-  console.error(formatReadyLine(durationMs));
-}
-
 export function printDeploymentTarget(target: DeploymentTarget): void {
   console.error(formatDeploymentTarget(target));
-}
-
-export function printEnvSync(names: string[]): void {
-  console.error(formatEnvSync(names));
 }
 
 export function printDiffEntries(entries: DiffEntry[]): void {
   for (const line of formatDiffEntries(entries)) console.log(line);
 }
 
+export function printEnvSync(names: string[]): void {
+  console.error(formatEnvSync(names));
+}
+
+export function printReadyLine(durationMs: number): void {
+  console.error(formatReadyLine(durationMs));
+}
+
 export function printWarning(message: string): void {
   console.log(formatWarning(message));
-}
-
-function shouldUseColor(options: FormatOptions): boolean {
-  if (options.color !== undefined) return options.color;
-  if (Object.hasOwn(process.env, "NO_COLOR")) return false;
-  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
-
-  return process.stderr.isTTY && process.env.TERM !== "dumb";
-}
-
-function paint(value: string, style: string, color: boolean): string {
-  return color ? `${style}${value}${RESET}` : value;
-}
-
-/**
- * The stage name as the backend stores it: `development` and `production` are
- * reserved and always canonicalize, every other name is kept verbatim.
- */
-function stageDisplayName(stage: string): string {
-  const normalized = stage.trim().toLowerCase();
-  if (normalized === "development") return "Development";
-  if (normalized === "production") return "Production";
-
-  return stage.trim();
 }
 
 function formatDiffMarker(
@@ -173,4 +149,28 @@ function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
   return `${Math.max(ms, 0).toFixed(1)}ms`;
+}
+
+function paint(value: string, style: string, color: boolean): string {
+  return color ? `${style}${value}${RESET}` : value;
+}
+
+function shouldUseColor(options: FormatOptions): boolean {
+  if (options.color !== undefined) return options.color;
+  if (Object.hasOwn(process.env, "NO_COLOR")) return false;
+  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
+
+  return process.stderr.isTTY && process.env.TERM !== "dumb";
+}
+
+/**
+ * The stage name as the backend stores it: `development` and `production` are
+ * reserved and always canonicalize, every other name is kept verbatim.
+ */
+function stageDisplayName(stage: string): string {
+  const normalized = stage.trim().toLowerCase();
+  if (normalized === "development") return "Development";
+  if (normalized === "production") return "Production";
+
+  return stage.trim();
 }

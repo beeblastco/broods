@@ -937,33 +937,6 @@ export class SubagentCoordinator {
   }
 }
 
-export async function pipeSubagentNatsStream(
-  stream: AgentLoopStream,
-  publisher: NatsPublisher,
-): Promise<void> {
-  const reader = stream.stream.getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      await publisher.publish(value as Record<string, unknown>);
-    }
-  } finally {
-    await stream.ensureFinalized();
-  }
-
-  const finalResponse = stream.finalResponse();
-  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
-    await publisher.publish({
-      type: "structured-output",
-      output: finalResponse,
-    });
-  }
-}
-
 export function createEphemeralChildSession(
   childSession: Session,
   system: SystemModelMessage[],
@@ -1012,19 +985,59 @@ export function createEphemeralChildSession(
   } as unknown as Session;
 }
 
-function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
-  return {
-    taskId: task.taskId,
-    agentId: task.agentId,
-    ...(task.description ? { description: task.description } : {}),
-    conversationKey: task.publicConversationKey,
-    statusPath: subagentStatusPath(task),
-    status: "running",
-  };
+export async function pipeSubagentNatsStream(
+  stream: AgentLoopStream,
+  publisher: NatsPublisher,
+): Promise<void> {
+  const reader = stream.stream.getReader();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      await publisher.publish(value as Record<string, unknown>);
+    }
+  } finally {
+    await stream.ensureFinalized();
+  }
+
+  const finalResponse = stream.finalResponse();
+  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
+    await publisher.publish({
+      type: "structured-output",
+      output: finalResponse,
+    });
+  }
 }
 
-function subagentStatusPath(task: ResolvedSubagentTask): string {
-  return `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
+function bestEffortSubagentPublisher(
+  publisher: NatsPublisher,
+  state: SubagentStreamState,
+  taskId: string,
+): NatsPublisher {
+  return {
+    publish: async (data) => {
+      if (data.type === "error") {
+        state.emittedError = true;
+      }
+      await publisher.publish(data).catch((error) => {
+        logError("Best-effort subagent stream publish failed", {
+          taskId: taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
+    close: async () => {
+      await publisher.close().catch((error) => {
+        logError("Best-effort subagent stream flush failed", {
+          taskId: taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
+  };
 }
 
 function completionToParentMessage(
@@ -1082,34 +1095,6 @@ function createSubagentPublisher(
   );
 }
 
-function bestEffortSubagentPublisher(
-  publisher: NatsPublisher,
-  state: SubagentStreamState,
-  taskId: string,
-): NatsPublisher {
-  return {
-    publish: async (data) => {
-      if (data.type === "error") {
-        state.emittedError = true;
-      }
-      await publisher.publish(data).catch((error) => {
-        logError("Best-effort subagent stream publish failed", {
-          taskId: taskId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    },
-    close: async () => {
-      await publisher.close().catch((error) => {
-        logError("Best-effort subagent stream flush failed", {
-          taskId: taskId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    },
-  };
-}
-
 function requireParentAccountId(session: Session): string {
   if (!session.accountId) {
     throw new Error("Subagents require an account-scoped parent session");
@@ -1120,4 +1105,19 @@ function requireParentAccountId(session: Session): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function subagentStatusPath(task: ResolvedSubagentTask): string {
+  return `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
+}
+
+function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
+  return {
+    taskId: task.taskId,
+    agentId: task.agentId,
+    ...(task.description ? { description: task.description } : {}),
+    conversationKey: task.publicConversationKey,
+    statusPath: subagentStatusPath(task),
+    status: "running",
+  };
 }

@@ -50,6 +50,12 @@ interface ObservabilityCell {
 const _obsStore = new AsyncLocalStorage<ObservabilityCell>();
 let _obsCtxGlobal: ObservabilityContext | null = null;
 
+export function getObservabilityContext(): ObservabilityContext | null {
+  const cell = _obsStore.getStore();
+
+  return cell ? cell.current : _obsCtxGlobal;
+}
+
 // Runs fn with a fresh, request-private observability cell. Nested scopes
 // (subagents, save/restore call sites) share the cell, which is correct because
 // it is the same logical request. Concurrent requests each get their own cell.
@@ -69,26 +75,69 @@ export function setObservabilityContext(
   _obsCtxGlobal = ctx;
 }
 
-export function getObservabilityContext(): ObservabilityContext | null {
-  const cell = _obsStore.getStore();
-
-  return cell ? cell.current : _obsCtxGlobal;
-}
-
 const _idGen = new RandomIdGenerator();
-
-export function mintTraceId(): string {
-  return _idGen.generateTraceId();
-}
 
 export function mintSpanId(): string {
   return _idGen.generateSpanId();
+}
+
+export function mintTraceId(): string {
+  return _idGen.generateTraceId();
 }
 
 let _tracer: Tracer | null = null;
 let _tracerProvider: BasicTracerProvider | null = null;
 let _loggerProvider: LoggerProvider | null = null;
 let _initialized = false;
+
+// Best-effort; `body` must already be redacted by the caller.
+export function emitOtelLog(
+  level: "INFO" | "WARN" | "ERROR" | "DEBUG",
+  body: Record<string, unknown>,
+): void {
+  try {
+    const ctx = getObservabilityContext();
+    const logger = logs.getLogger("broods-harness");
+    const severityMap: Record<string, SeverityNumber> = {
+      DEBUG: SeverityNumber.DEBUG,
+      INFO: SeverityNumber.INFO,
+      WARN: SeverityNumber.WARN,
+      ERROR: SeverityNumber.ERROR,
+    };
+    logger.emit({
+      severityNumber: severityMap[level] ?? SeverityNumber.INFO,
+      severityText: level,
+      body: typeof body.message === "string" ? body.message : level,
+      attributes: {
+        ...body,
+        ...(ctx ? observabilityAttributes(ctx) : {}),
+        ...(ctx ? { trace_id: ctx.traceId } : {}),
+      } as never,
+      ...(ctx ? { context: ctx.otelContext } : {}),
+      timestamp:
+        typeof body.time === "string"
+          ? new Date(body.time).getTime()
+          : Date.now(),
+    });
+  } catch {
+    // Best-effort: never propagate into the agent path.
+  }
+}
+
+/** Flush buffered logs and spans before the request returns or the process exits. */
+export async function forceFlushOtel(): Promise<void> {
+  await Promise.allSettled([
+    _tracerProvider?.forceFlush() ?? Promise.resolve(),
+    _loggerProvider?.forceFlush() ?? Promise.resolve(),
+  ]);
+}
+
+// Returns a noop tracer if initOtel() has not run.
+export function getTracer(): Tracer {
+  if (_tracer) return _tracer;
+
+  return trace.getTracer("broods-harness");
+}
 
 // Idempotent; a no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset. Reads the
 // endpoint and OTEL_EXPORTER_OTLP_HEADERS ("K=V,K2=V2", e.g. Authorization=Basic …).
@@ -156,13 +205,6 @@ export function initOtel(): void {
   }
 }
 
-// Returns a noop tracer if initOtel() has not run.
-export function getTracer(): Tracer {
-  if (_tracer) return _tracer;
-
-  return trace.getTracer("broods-harness");
-}
-
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
 export function observabilityAttributes(
   ctx: Pick<
@@ -183,46 +225,4 @@ export function observabilityAttributes(
     agent_id: ctx.agentId,
     conversation_key: ctx.conversationKey,
   };
-}
-
-/** Flush buffered logs and spans before the request returns or the process exits. */
-export async function forceFlushOtel(): Promise<void> {
-  await Promise.allSettled([
-    _tracerProvider?.forceFlush() ?? Promise.resolve(),
-    _loggerProvider?.forceFlush() ?? Promise.resolve(),
-  ]);
-}
-
-// Best-effort; `body` must already be redacted by the caller.
-export function emitOtelLog(
-  level: "INFO" | "WARN" | "ERROR" | "DEBUG",
-  body: Record<string, unknown>,
-): void {
-  try {
-    const ctx = getObservabilityContext();
-    const logger = logs.getLogger("broods-harness");
-    const severityMap: Record<string, SeverityNumber> = {
-      DEBUG: SeverityNumber.DEBUG,
-      INFO: SeverityNumber.INFO,
-      WARN: SeverityNumber.WARN,
-      ERROR: SeverityNumber.ERROR,
-    };
-    logger.emit({
-      severityNumber: severityMap[level] ?? SeverityNumber.INFO,
-      severityText: level,
-      body: typeof body.message === "string" ? body.message : level,
-      attributes: {
-        ...body,
-        ...(ctx ? observabilityAttributes(ctx) : {}),
-        ...(ctx ? { trace_id: ctx.traceId } : {}),
-      } as never,
-      ...(ctx ? { context: ctx.otelContext } : {}),
-      timestamp:
-        typeof body.time === "string"
-          ? new Date(body.time).getTime()
-          : Date.now(),
-    });
-  } catch {
-    // Best-effort: never propagate into the agent path.
-  }
 }

@@ -13,16 +13,10 @@ export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   },
 );
 
-function deriveName(data: {
-  firstName?: string | null;
-  lastName?: string | null;
-  email: string;
-}): string {
-  const first = data.firstName ?? "";
-  const last = data.lastName ?? "";
-
-  return `${first} ${last}`.trim() || data.email;
-}
+export const { authKitAction } = authKit.actions({
+  authentication: async (_ctx, _action, response) => response.allow(),
+  userRegistration: async (_ctx, _action, response) => response.allow(),
+});
 
 export const { authKitEvent } = authKit.events({
   "user.created": async (ctx, event): Promise<void> => {
@@ -103,7 +97,13 @@ export const { authKitEvent } = authKit.events({
   "session.revoked": async (): Promise<void> => {},
 });
 
-export const { authKitAction } = authKit.actions({
-  authentication: async (_ctx, _action, response) => response.allow(),
-  userRegistration: async (_ctx, _action, response) => response.allow(),
-});
+function deriveName(data: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email: string;
+}): string {
+  const first = data.firstName ?? "";
+  const last = data.lastName ?? "";
+
+  return `${first} ${last}`.trim() || data.email;
+}

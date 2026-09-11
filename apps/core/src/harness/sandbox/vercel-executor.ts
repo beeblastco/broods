@@ -453,27 +453,40 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-function vercelCreateOptions(
-  config: SandboxExecutorConfig,
-  request: { envVars?: Record<string, string>; timeoutSeconds: number },
-  persistent: boolean,
-): VercelCreateOptions {
-  const options = isPlainObject(config.options) ? config.options : {};
-  const lifecycle = resolveSandboxLifecycle(config.lifecycle);
-  const image = configString(options.image);
-  const runtime = configString(options.runtime);
+// The @vercel/sandbox SDK surfaces auth failures as a bare "Status code 403 is not
+// ok". Translate 401/403 into an actionable message so the agent sees what to fix.
+export function classifyVercelError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const numericStatus = [
+    (err as { status?: unknown })?.status,
+    (err as { statusCode?: unknown })?.statusCode,
+    (err as { response?: { status?: unknown } })?.response?.status,
+  ].find((value): value is number => typeof value === "number");
+  // Fall back to the SDK's documented auth-failure phrasing ("Status code 403 is not
+  // ok") rather than scanning for any 401/403 substring, which could match unrelated
+  // numbers (ids, timestamps) in some other error message.
+  const matched = /status code (401|403)\b/i.exec(message);
+  const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
+  if (status === 401 || status === 403) {
+    return new Error(
+      `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
+        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
+    );
+  }
 
-  return {
-    ...vercelAuthOptions(config),
-    ...(image ? { image: image } : runtime ? { runtime: runtime } : {}),
-    persistent: persistent,
-    timeout:
-      (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
-      1000,
-    networkPolicy: vercelNetworkPolicy(config),
-    env: mergeSandboxEnv(config.envVars, request.envVars),
-    tags: { app: "broods", provider: "vercel" },
-  };
+  return err instanceof Error ? err : new Error(message);
+}
+
+async function commandError(
+  result: CommandFinished,
+  fallback: string,
+): Promise<string> {
+  const [stderr, stdout] = await Promise.all([
+    result.stderr(),
+    result.stdout(),
+  ]);
+
+  return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
 function vercelAuthOptions(config: SandboxExecutorConfig): {
@@ -502,6 +515,29 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
   return { token: token!, teamId: teamId!, projectId: projectId! };
 }
 
+function vercelCreateOptions(
+  config: SandboxExecutorConfig,
+  request: { envVars?: Record<string, string>; timeoutSeconds: number },
+  persistent: boolean,
+): VercelCreateOptions {
+  const options = isPlainObject(config.options) ? config.options : {};
+  const lifecycle = resolveSandboxLifecycle(config.lifecycle);
+  const image = configString(options.image);
+  const runtime = configString(options.runtime);
+
+  return {
+    ...vercelAuthOptions(config),
+    ...(image ? { image: image } : runtime ? { runtime: runtime } : {}),
+    persistent: persistent,
+    timeout:
+      (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
+      1000,
+    networkPolicy: vercelNetworkPolicy(config),
+    env: mergeSandboxEnv(config.envVars, request.envVars),
+    tags: { app: "broods", provider: "vercel" },
+  };
+}
+
 function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
@@ -521,40 +557,4 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
 // created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
-}
-
-async function commandError(
-  result: CommandFinished,
-  fallback: string,
-): Promise<string> {
-  const [stderr, stdout] = await Promise.all([
-    result.stderr(),
-    result.stdout(),
-  ]);
-
-  return [stderr, stdout].filter(Boolean).join("\n") || fallback;
-}
-
-// The @vercel/sandbox SDK surfaces auth failures as a bare "Status code 403 is not
-// ok". Translate 401/403 into an actionable message so the agent sees what to fix.
-export function classifyVercelError(err: unknown): Error {
-  const message = err instanceof Error ? err.message : String(err);
-  const numericStatus = [
-    (err as { status?: unknown })?.status,
-    (err as { statusCode?: unknown })?.statusCode,
-    (err as { response?: { status?: unknown } })?.response?.status,
-  ].find((value): value is number => typeof value === "number");
-  // Fall back to the SDK's documented auth-failure phrasing ("Status code 403 is not
-  // ok") rather than scanning for any 401/403 substring, which could match unrelated
-  // numbers (ids, timestamps) in some other error message.
-  const matched = /status code (401|403)\b/i.exec(message);
-  const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
-  if (status === 401 || status === 403) {
-    return new Error(
-      `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
-        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
-    );
-  }
-
-  return err instanceof Error ? err : new Error(message);
 }

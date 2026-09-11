@@ -21,9 +21,11 @@ import {
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export interface AsyncToolPendingResult {
-  resultId: string;
-  status: "running";
+// Per-call context handed to the run/dispatch helpers. toolCallId rides along for
+// logging only; it is intentionally absent from the stored metadata/completion.
+interface AsyncToolCall extends AsyncToolPendingMetadata {
+  toolCallId: string;
+  execute: () => ReturnType<ToolExecute>;
 }
 
 export interface AsyncToolCompletion {
@@ -35,27 +37,25 @@ export interface AsyncToolCompletion {
   error?: string;
 }
 
-interface AsyncToolPendingMetadata {
-  resultId: string;
-  toolName: string;
-  input: unknown;
-}
-
-// Per-call context handed to the run/dispatch helpers. toolCallId rides along for
-// logging only; it is intentionally absent from the stored metadata/completion.
-interface AsyncToolCall extends AsyncToolPendingMetadata {
-  toolCallId: string;
-  execute: () => ReturnType<ToolExecute>;
-}
-
-type ToolEntry = ToolSet[string];
-
 /** Model-facing names of tools configured `async: true`. */
 export type AsyncToolNames = Set<string>;
 export type RunAsyncToolDispatch = (
   tools: ToolSet,
   asyncToolNames: AsyncToolNames,
 ) => ToolSet;
+
+interface AsyncToolPendingMetadata {
+  resultId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface AsyncToolPendingResult {
+  resultId: string;
+  status: "running";
+}
+
+type ToolEntry = ToolSet[string];
 
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
@@ -340,36 +340,6 @@ export function completionToParentMessage(
   };
 }
 
-async function resolveToolOutput(
-  output: ReturnType<ToolExecute>,
-): Promise<unknown> {
-  if (isAsyncIterable(output)) {
-    let lastOutput: unknown;
-    for await (const chunk of output) {
-      lastOutput = chunk;
-    }
-
-    return lastOutput;
-  }
-
-  return output;
-}
-
-function canonicalizeAsyncToolOutput(output: unknown): unknown {
-  if (
-    !isRecord(output) ||
-    output.type !== "content" ||
-    !Array.isArray(output.value)
-  ) {
-    return output;
-  }
-
-  return {
-    ...output,
-    value: output.value.map(canonicalizeAsyncToolContentPart),
-  };
-}
-
 function canonicalizeAsyncToolContentPart(part: unknown): unknown {
   if (
     !isRecord(part) ||
@@ -414,6 +384,32 @@ function canonicalizeAsyncToolContentPart(part: unknown): unknown {
   return part;
 }
 
+function canonicalizeAsyncToolOutput(output: unknown): unknown {
+  if (
+    !isRecord(output) ||
+    output.type !== "content" ||
+    !Array.isArray(output.value)
+  ) {
+    return output;
+  }
+
+  return {
+    ...output,
+    value: output.value.map(canonicalizeAsyncToolContentPart),
+  };
+}
+
+function formatUnknown(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
@@ -428,13 +424,17 @@ function pendingResultText(resultId: string, status: string): string {
   ].join("\n");
 }
 
-function formatUnknown(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
+async function resolveToolOutput(
+  output: ReturnType<ToolExecute>,
+): Promise<unknown> {
+  if (isAsyncIterable(output)) {
+    let lastOutput: unknown;
+    for await (const chunk of output) {
+      lastOutput = chunk;
+    }
+
+    return lastOutput;
   }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+
+  return output;
 }

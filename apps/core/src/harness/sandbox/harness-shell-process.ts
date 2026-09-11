@@ -222,6 +222,10 @@ export async function readHarnessStream(
   return new TextDecoder().decode(content);
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function processFileStream(
   executor: HarnessShellExecutor,
   path: string,
@@ -276,21 +280,6 @@ function processFileStream(
   return { stream: stream, done: completed.promise };
 }
 
-async function readProcessChunk(
-  executor: HarnessShellExecutor,
-  path: string,
-  offset: number,
-): Promise<Uint8Array> {
-  const result = await executor.exec(
-    `if [ -f ${shellQuote(path)} ]; then dd if=${shellQuote(path)} bs=1 skip=${offset} count=${PROCESS_CHUNK_BYTES} 2>/dev/null | base64 | tr -d '\\n'; fi`,
-  );
-  if (result.exitCode !== 0) {
-    throw shellProcessError("read process output", result);
-  }
-
-  return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
-}
-
 function raceWithAbort<T>(
   promise: Promise<T>,
   abortSignal: AbortSignal | undefined,
@@ -318,6 +307,21 @@ function raceWithAbort<T>(
   });
 }
 
+async function readProcessChunk(
+  executor: HarnessShellExecutor,
+  path: string,
+  offset: number,
+): Promise<Uint8Array> {
+  const result = await executor.exec(
+    `if [ -f ${shellQuote(path)} ]; then dd if=${shellQuote(path)} bs=1 skip=${offset} count=${PROCESS_CHUNK_BYTES} 2>/dev/null | base64 | tr -d '\\n'; fi`,
+  );
+  if (result.exitCode !== 0) {
+    throw shellProcessError("read process output", result);
+  }
+
+  return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
+}
+
 function shellProcessError(
   operation: string,
   result: { stdout: string; stderr: string; exitCode: number },
@@ -327,8 +331,4 @@ function shellProcessError(
       result.stdout ||
       `Sandbox failed to ${operation} (exit ${result.exitCode})`,
   );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

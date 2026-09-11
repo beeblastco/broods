@@ -4,15 +4,16 @@
  * zero runtime deps. Kept separate from the agent-test websocket-contracts.
  */
 
-// DEBUG never rides the live NATS relay. Core writes it to stdout/OTLP only, so
-// it reaches a client through Loki backfill and nowhere else.
-export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export const MAX_OBSERVABILITY_BACKFILL = 500;
 // The per-launch UUID core puts last in a MicroVM's CloudWatch log stream name.
 const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // A W3C trace id: 32 lowercase hex chars. All zeros is the "no span" sentinel.
 const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
+
+// DEBUG never rides the live NATS relay. Core writes it to stdout/OTLP only, so
+// it reaches a client through Loki backfill and nowhere else.
+export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 // Matches the shape core's shared/log.ts emits. Backfilled entries can be any
 // level; the live NATS stream is INFO+ only.
@@ -133,6 +134,16 @@ export type ObservabilityServerMessage =
   | ObservabilitySpanMessage
   | ObservabilityErrorMessage;
 
+/** Narrow an unknown wire value to a LogLevel. */
+export function isLogLevel(value: unknown): value is LogLevel {
+  return (
+    value === "DEBUG" ||
+    value === "INFO" ||
+    value === "WARN" ||
+    value === "ERROR"
+  );
+}
+
 export function isObservabilityClientMessage(
   v: unknown,
 ): v is ObservabilityClientMessage {
@@ -145,24 +156,9 @@ export function isObservabilityClientMessage(
   return false;
 }
 
-/** Narrow an unknown wire value to a LogLevel. */
-export function isLogLevel(value: unknown): value is LogLevel {
-  return (
-    value === "DEBUG" ||
-    value === "INFO" ||
-    value === "WARN" ||
-    value === "ERROR"
-  );
-}
-
 /** Whether a span is a top-level run, each of which owns its own trace. */
 export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
   return kind === "task" || kind === "cron" || kind === "subtask";
-}
-
-/** Whether a value is a real trace id a log line can be followed to. */
-export function isTraceId(value: unknown): value is string {
-  return typeof value === "string" && TRACE_ID_PATTERN.test(value);
 }
 
 /**
@@ -171,6 +167,11 @@ export function isTraceId(value: unknown): value is string {
  */
 export function isSandboxLogId(value: unknown): value is string {
   return typeof value === "string" && SANDBOX_LOG_ID_PATTERN.test(value);
+}
+
+/** Whether a value is a real trace id a log line can be followed to. */
+export function isTraceId(value: unknown): value is string {
+  return typeof value === "string" && TRACE_ID_PATTERN.test(value);
 }
 
 function isStreamName(value: unknown): value is "logs" | "traces" {

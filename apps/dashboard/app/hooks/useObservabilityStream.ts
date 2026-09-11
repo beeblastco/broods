@@ -94,20 +94,6 @@ const STREAM_CACHE = new Map<
 // visited in a session pins up to MAX_ENTRIES rows for the page's lifetime.
 const STREAM_CACHE_MAX_KEYS = 8;
 
-function cacheEntries(
-  key: string,
-  entries: (ObservabilityLogEntry | ObservabilitySpanRow)[],
-): void {
-  // Re-insert so iteration order doubles as LRU order.
-  STREAM_CACHE.delete(key);
-  STREAM_CACHE.set(key, entries);
-  while (STREAM_CACHE.size > STREAM_CACHE_MAX_KEYS) {
-    const oldest = STREAM_CACHE.keys().next().value;
-    if (oldest === undefined) break;
-    STREAM_CACHE.delete(oldest);
-  }
-}
-
 export function useObservabilityStream(
   options: UseObservabilityStreamOptions & { stream: "logs" },
 ): UseObservabilityStreamResult<ObservabilityLogEntry>;
@@ -426,6 +412,20 @@ export function mergeBackfill<
   return combined.length > MAX_ENTRIES
     ? combined.slice(0, MAX_ENTRIES)
     : combined;
+}
+
+function cacheEntries(
+  key: string,
+  entries: (ObservabilityLogEntry | ObservabilitySpanRow)[],
+): void {
+  // Re-insert so iteration order doubles as LRU order.
+  STREAM_CACHE.delete(key);
+  STREAM_CACHE.set(key, entries);
+  while (STREAM_CACHE.size > STREAM_CACHE_MAX_KEYS) {
+    const oldest = STREAM_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    STREAM_CACHE.delete(oldest);
+  }
 }
 
 function entryTime(

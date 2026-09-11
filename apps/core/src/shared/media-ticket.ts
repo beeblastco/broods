@@ -28,28 +28,6 @@ export interface MediaTicket {
   path: string;
 }
 
-// Derived, not the raw service secret, so a leaked media key can never stand in
-// for service-to-service auth.
-function ticketKey(secret: string): Buffer {
-  return createHash("sha256").update(`workspace-media-link:${secret}`).digest();
-}
-
-export function sealMediaTicket(ticket: MediaTicket, secret: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(ticket), "utf-8"),
-    cipher.final(),
-  ]);
-
-  return [
-    TICKET_VERSION,
-    iv.toString("base64url"),
-    cipher.getAuthTag().toString("base64url"),
-    ciphertext.toString("base64url"),
-  ].join(".");
-}
-
 /**
  * Decrypts and validates a ticket. Returns null (never throws) on any tamper or
  * wrong-secret failure, so the route answers 404 rather than leaking the reason.
@@ -98,4 +76,26 @@ export function openMediaTicket(
   } catch {
     return null;
   }
+}
+
+export function sealMediaTicket(ticket: MediaTicket, secret: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(ticket), "utf-8"),
+    cipher.final(),
+  ]);
+
+  return [
+    TICKET_VERSION,
+    iv.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
+    ciphertext.toString("base64url"),
+  ].join(".");
+}
+
+// Derived, not the raw service secret, so a leaked media key can never stand in
+// for service-to-service auth.
+function ticketKey(secret: string): Buffer {
+  return createHash("sha256").update(`workspace-media-link:${secret}`).digest();
 }

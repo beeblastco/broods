@@ -16,43 +16,6 @@ interface Props {
   agents: Array<Doc<"agents">>;
 }
 
-function relativeTime(ts: number | undefined): string {
-  if (!ts) return "—";
-  const diff = Date.now() - ts;
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-
-  return `${days}d ago`;
-}
-
-function statusBadge(status: Doc<"crons">["lastStatus"]): React.JSX.Element {
-  if (!status)
-    return (
-      <Badge variant="secondary" className="text-xs">
-        never run
-      </Badge>
-    );
-  if (status === "completed")
-    return <Badge className="text-xs">completed</Badge>;
-  if (status === "started")
-    return (
-      <Badge variant="secondary" className="text-xs">
-        running
-      </Badge>
-    );
-
-  return (
-    <Badge variant="destructive" className="text-xs">
-      failed
-    </Badge>
-  );
-}
-
 export function CronsTable({ crons, agents }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const remove = useMutation(api.agent.cronsPublic.remove);
@@ -200,5 +163,42 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
         />
       )}
     </>
+  );
+}
+
+function relativeTime(ts: number | undefined): string {
+  if (!ts) return "—";
+  const diff = Date.now() - ts;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+
+  return `${days}d ago`;
+}
+
+function statusBadge(status: Doc<"crons">["lastStatus"]): React.JSX.Element {
+  if (!status)
+    return (
+      <Badge variant="secondary" className="text-xs">
+        never run
+      </Badge>
+    );
+  if (status === "completed")
+    return <Badge className="text-xs">completed</Badge>;
+  if (status === "started")
+    return (
+      <Badge variant="secondary" className="text-xs">
+        running
+      </Badge>
+    );
+
+  return (
+    <Badge variant="destructive" className="text-xs">
+      failed
+    </Badge>
   );
 }

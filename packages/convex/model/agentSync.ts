@@ -32,257 +32,6 @@ import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
- * Returns the broods account that owns the caller's active org, or
- * null if the user has no active org or the org is not yet provisioned.
- */
-export async function resolveActiveAccountForAuthId(
-  ctx: MutationCtx,
-  authId: string,
-): Promise<Doc<"accounts"> | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-  if (!org) return null;
-
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-    .unique();
-
-  return account ?? null;
-}
-
-/**
- * Points `agentConfigs[configId].agentId` at a live `agents` row.
- * Idempotent: if `agentId` is already set and the row it names belongs to the
- * owning account, this returns it unchanged.
- *
- * Callers that authenticated as an account must pass `accountId`: the active
- * org is dashboard state and can name a different tenant than the credential.
- */
-export async function ensureAgentsRowForConfig(
-  ctx: MutationCtx,
-  configId: Id<"agentConfigs">,
-  authId: string,
-  accountId?: Id<"accounts">,
-): Promise<Id<"agents"> | null> {
-  const config = await ctx.db.get(configId);
-  if (!config || config.authId !== authId) return null;
-
-  if (config.agentId) {
-    const normalized = ctx.db.normalizeId("agents", config.agentId);
-    if (normalized) {
-      const existing = await ctx.db.get(normalized);
-      // A row under another account is a mis-filed agent from an earlier sync,
-      // not this account's agent: recreate rather than keep handing it back.
-      if (
-        existing &&
-        (accountId === undefined || existing.accountId === accountId)
-      ) {
-        return existing._id;
-      }
-    }
-  }
-
-  const account =
-    accountId !== undefined
-      ? await ctx.db.get(accountId)
-      : await resolveActiveAccountForAuthId(ctx, authId);
-  if (!account) return null;
-
-  const now = Date.now();
-  const agentId = await ctx.db.insert("agents", {
-    accountId: account._id,
-    name: config.name,
-    description: config.description,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  await ctx.db.patch(configId, { agentId: agentId, updatedAt: now });
-
-  return agentId;
-}
-
-/**
- * Builds the nested broods `AgentConfig` from the flat row, substitutes
- * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
- * AES-256-GCM secret, and writes the result onto the linked `agents` row.
- *
- * Silently no-ops when the `agentConfigs` row has no linked `agentId`
- *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
- *      not provisioned with a broods account).
- * Throws when a linked core agent exists but the shared encryption secret is
- * missing, because otherwise the runtime would keep stale or empty config.
- */
-export async function pushEncryptedConfigToAgentRow(
-  ctx: MutationCtx,
-  configId: Id<"agentConfigs">,
-): Promise<void> {
-  const config = await ctx.db.get(configId);
-  if (!config?.agentId) return;
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET must be configured before syncing agent runtime config.",
-    );
-  }
-  const normalized = ctx.db.normalizeId("agents", config.agentId);
-  if (!normalized) return;
-  const agent = await ctx.db.get(normalized);
-  if (!agent) return;
-
-  const variables = await loadAgentRuntimeSecrets(ctx, configId);
-
-  const nested = toNestedAgentConfig({
-    name: config.name,
-    description: config.description,
-    provider: config.provider,
-    modelId: config.modelId,
-    systemPrompt: config.systemPrompt,
-    maxTurns: config.maxTurns,
-    outputFormat: config.outputFormat as Record<string, unknown> | undefined,
-    providerOptions: config.providerOptions as
-      | Record<string, unknown>
-      | undefined,
-    temperature: config.temperature,
-    maxTokens: config.maxTokens,
-    memoryToolEnabled: config.memoryToolEnabled,
-    searchToolEnabled: config.searchToolEnabled,
-    searchToolConfig: config.searchToolConfig as
-      | Record<string, unknown>
-      | undefined,
-    extraConfig: config.extraConfig as Record<string, unknown> | undefined,
-  });
-  const resolved = substituteEnvPlaceholders(nested, variables);
-  const encrypted = await encryptAgentConfigBlob(resolved, secret);
-
-  await ctx.db.patch(normalized, {
-    encryptedConfig: encrypted.ciphertext,
-    encryptionIv: encrypted.iv,
-    encryptionTag: encrypted.tag,
-    updatedAt: Date.now(),
-  });
-  await refreshAccountChannelEndpoints(ctx, agent.accountId);
-}
-
-/**
- * Updates agent runtime secrets for configs that already reference an
- * environment variable, then re-pushes their encrypted harness config. Pass
- * `undefined` as the value to clear the secret when the variable is removed.
- */
-export async function refreshAgentConfigsForEnvironmentVariable(
-  ctx: MutationCtx,
-  projectId: Id<"projects">,
-  stageId: Id<"stages">,
-  name: string,
-  value: string | undefined,
-): Promise<void> {
-  const configs = await ctx.db
-    .query("agentConfigs")
-    .withIndex("by_projectId_and_stageId", (q) =>
-      q.eq("projectId", projectId).eq("stageId", stageId),
-    )
-    .collect();
-
-  for (const config of configs) {
-    const referencesVariable = config.runtimeVariables?.some(
-      (entry) => entry.key === name,
-    );
-    if (!referencesVariable) continue;
-
-    const previous = await loadAgentRuntimeSecrets(ctx, config._id);
-    const nextVariables = { ...previous };
-    if (value === undefined) {
-      delete nextVariables[name];
-    } else {
-      nextVariables[name] = value;
-    }
-    const publicRuntimeVariables = await saveAgentRuntimeSecrets(
-      ctx,
-      config._id,
-      Object.entries(nextVariables).map(([key, entryValue]) => ({
-        key: key,
-        value: entryValue,
-      })),
-    );
-    await ctx.db.patch(config._id, {
-      runtimeVariables: publicRuntimeVariables,
-      updatedAt: Date.now(),
-    });
-    await pushEncryptedConfigToAgentRow(ctx, config._id);
-  }
-}
-
-/**
- * Resolves the project + stage an account's API-created agents belong
- * to, creating them when the org has none.
- *
- * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
- * projects in both, so an authId-keyed lookup can drop A's agent into B's
- * project. The project is created on demand and named after the account, so
- * an org that never went through dashboard onboarding (an adopted service
- * account) still gets one meaningful project rather than a random empty one.
- */
-async function ensureCanvasTarget(
-  ctx: MutationCtx,
-  orgId: Id<"orgs">,
-  account: Doc<"accounts">,
-  authId: string,
-): Promise<{ project: Doc<"projects">; stage: Doc<"stages"> }> {
-  const now = Date.now();
-
-  // Oldest project in the org, so repeated calls converge on one target
-  // instead of scattering agents across whichever project sorted first. The
-  // index orders by slug, so oldest is picked here.
-  const existingProject = oldest(
-    await ctx.db
-      .query("projects")
-      .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-      .collect(),
-  );
-
-  const project =
-    existingProject ??
-    (await ctx.db.get(
-      await ctx.db.insert("projects", {
-        authId: authId,
-        orgId: orgId,
-        name: account.username,
-        description: `Agents provisioned through the ${account.username} account API.`,
-        slug: await uniqueProjectSlug(ctx, orgId, account.username),
-        updatedAt: now,
-      }),
-    ))!;
-
-  // by_projectId, not by_authId_and_projectId: the stage may have been
-  // created by a different org member than the one we're syncing as.
-  const existingStage = await ctx.db
-    .query("stages")
-    .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
-    .first();
-
-  const stage =
-    existingStage ??
-    (await ctx.db.get(
-      await ctx.db.insert("stages", {
-        authId: authId,
-        projectId: project._id,
-        name: "Development",
-        kind: "development",
-        isDefault: true,
-        updatedAt: now,
-      }),
-    ))!;
-
-  return { project: project, stage: stage };
-}
-
-/**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
  * the canvas), provision a matching `agentConfigs` row + canvas node on the
  * account's project/stage so the agent appears on the canvas
@@ -406,6 +155,58 @@ export async function backSyncCanvasFromAgentRow(
 }
 
 /**
+ * Points `agentConfigs[configId].agentId` at a live `agents` row.
+ * Idempotent: if `agentId` is already set and the row it names belongs to the
+ * owning account, this returns it unchanged.
+ *
+ * Callers that authenticated as an account must pass `accountId`: the active
+ * org is dashboard state and can name a different tenant than the credential.
+ */
+export async function ensureAgentsRowForConfig(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+  authId: string,
+  accountId?: Id<"accounts">,
+): Promise<Id<"agents"> | null> {
+  const config = await ctx.db.get(configId);
+  if (!config || config.authId !== authId) return null;
+
+  if (config.agentId) {
+    const normalized = ctx.db.normalizeId("agents", config.agentId);
+    if (normalized) {
+      const existing = await ctx.db.get(normalized);
+      // A row under another account is a mis-filed agent from an earlier sync,
+      // not this account's agent: recreate rather than keep handing it back.
+      if (
+        existing &&
+        (accountId === undefined || existing.accountId === accountId)
+      ) {
+        return existing._id;
+      }
+    }
+  }
+
+  const account =
+    accountId !== undefined
+      ? await ctx.db.get(accountId)
+      : await resolveActiveAccountForAuthId(ctx, authId);
+  if (!account) return null;
+
+  const now = Date.now();
+  const agentId = await ctx.db.insert("agents", {
+    accountId: account._id,
+    name: config.name,
+    description: config.description,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await ctx.db.patch(configId, { agentId: agentId, updatedAt: now });
+
+  return agentId;
+}
+
+/**
  * Reverse-update sync: when an `agents` row is updated via API (PATCH
  * /v1/agents/<id>), decrypt the new blob and refresh the linked
  * `agentConfigs` flat fields + extraConfig so the canvas Details/Config tabs
@@ -477,6 +278,141 @@ export async function mirrorAgentRowOntoConfig(
 }
 
 /**
+ * Builds the nested broods `AgentConfig` from the flat row, substitutes
+ * `${ENV}` placeholders from `runtimeVariables`, encrypts with the shared
+ * AES-256-GCM secret, and writes the result onto the linked `agents` row.
+ *
+ * Silently no-ops when the `agentConfigs` row has no linked `agentId`
+ *      (`ensureAgentsRowForConfig` hasn't run yet, e.g. because the org is
+ *      not provisioned with a broods account).
+ * Throws when a linked core agent exists but the shared encryption secret is
+ * missing, because otherwise the runtime would keep stale or empty config.
+ */
+export async function pushEncryptedConfigToAgentRow(
+  ctx: MutationCtx,
+  configId: Id<"agentConfigs">,
+): Promise<void> {
+  const config = await ctx.db.get(configId);
+  if (!config?.agentId) return;
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET must be configured before syncing agent runtime config.",
+    );
+  }
+  const normalized = ctx.db.normalizeId("agents", config.agentId);
+  if (!normalized) return;
+  const agent = await ctx.db.get(normalized);
+  if (!agent) return;
+
+  const variables = await loadAgentRuntimeSecrets(ctx, configId);
+
+  const nested = toNestedAgentConfig({
+    name: config.name,
+    description: config.description,
+    provider: config.provider,
+    modelId: config.modelId,
+    systemPrompt: config.systemPrompt,
+    maxTurns: config.maxTurns,
+    outputFormat: config.outputFormat as Record<string, unknown> | undefined,
+    providerOptions: config.providerOptions as
+      | Record<string, unknown>
+      | undefined,
+    temperature: config.temperature,
+    maxTokens: config.maxTokens,
+    memoryToolEnabled: config.memoryToolEnabled,
+    searchToolEnabled: config.searchToolEnabled,
+    searchToolConfig: config.searchToolConfig as
+      | Record<string, unknown>
+      | undefined,
+    extraConfig: config.extraConfig as Record<string, unknown> | undefined,
+  });
+  const resolved = substituteEnvPlaceholders(nested, variables);
+  const encrypted = await encryptAgentConfigBlob(resolved, secret);
+
+  await ctx.db.patch(normalized, {
+    encryptedConfig: encrypted.ciphertext,
+    encryptionIv: encrypted.iv,
+    encryptionTag: encrypted.tag,
+    updatedAt: Date.now(),
+  });
+  await refreshAccountChannelEndpoints(ctx, agent.accountId);
+}
+
+/**
+ * Updates agent runtime secrets for configs that already reference an
+ * environment variable, then re-pushes their encrypted harness config. Pass
+ * `undefined` as the value to clear the secret when the variable is removed.
+ */
+export async function refreshAgentConfigsForEnvironmentVariable(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+  name: string,
+  value: string | undefined,
+): Promise<void> {
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
+    )
+    .collect();
+
+  for (const config of configs) {
+    const referencesVariable = config.runtimeVariables?.some(
+      (entry) => entry.key === name,
+    );
+    if (!referencesVariable) continue;
+
+    const previous = await loadAgentRuntimeSecrets(ctx, config._id);
+    const nextVariables = { ...previous };
+    if (value === undefined) {
+      delete nextVariables[name];
+    } else {
+      nextVariables[name] = value;
+    }
+    const publicRuntimeVariables = await saveAgentRuntimeSecrets(
+      ctx,
+      config._id,
+      Object.entries(nextVariables).map(([key, entryValue]) => ({
+        key: key,
+        value: entryValue,
+      })),
+    );
+    await ctx.db.patch(config._id, {
+      runtimeVariables: publicRuntimeVariables,
+      updatedAt: Date.now(),
+    });
+    await pushEncryptedConfigToAgentRow(ctx, config._id);
+  }
+}
+
+/**
+ * Returns the broods account that owns the caller's active org, or
+ * null if the user has no active org or the org is not yet provisioned.
+ */
+export async function resolveActiveAccountForAuthId(
+  ctx: MutationCtx,
+  authId: string,
+): Promise<Doc<"accounts"> | null> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return null;
+
+  const org = await getActiveOrgForUser(ctx, user._id);
+  if (!org) return null;
+
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+    .unique();
+
+  return account ?? null;
+}
+
+/**
  * Mirrors name/description edits from `agentConfigs` onto the linked
  * `agents` row when one exists. Silently no-ops if the row is missing. The
  * next `ensureAgentsRowForConfig` call provisions it.
@@ -525,6 +461,70 @@ async function decryptAgentFlatPatch(
       : null;
 
   return decrypted ? fromNestedAgentConfig(decrypted) : null;
+}
+
+/**
+ * Resolves the project + stage an account's API-created agents belong
+ * to, creating them when the org has none.
+ *
+ * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
+ * projects in both, so an authId-keyed lookup can drop A's agent into B's
+ * project. The project is created on demand and named after the account, so
+ * an org that never went through dashboard onboarding (an adopted service
+ * account) still gets one meaningful project rather than a random empty one.
+ */
+async function ensureCanvasTarget(
+  ctx: MutationCtx,
+  orgId: Id<"orgs">,
+  account: Doc<"accounts">,
+  authId: string,
+): Promise<{ project: Doc<"projects">; stage: Doc<"stages"> }> {
+  const now = Date.now();
+
+  // Oldest project in the org, so repeated calls converge on one target
+  // instead of scattering agents across whichever project sorted first. The
+  // index orders by slug, so oldest is picked here.
+  const existingProject = oldest(
+    await ctx.db
+      .query("projects")
+      .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
+      .collect(),
+  );
+
+  const project =
+    existingProject ??
+    (await ctx.db.get(
+      await ctx.db.insert("projects", {
+        authId: authId,
+        orgId: orgId,
+        name: account.username,
+        description: `Agents provisioned through the ${account.username} account API.`,
+        slug: await uniqueProjectSlug(ctx, orgId, account.username),
+        updatedAt: now,
+      }),
+    ))!;
+
+  // by_projectId, not by_authId_and_projectId: the stage may have been
+  // created by a different org member than the one we're syncing as.
+  const existingStage = await ctx.db
+    .query("stages")
+    .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
+    .first();
+
+  const stage =
+    existingStage ??
+    (await ctx.db.get(
+      await ctx.db.insert("stages", {
+        authId: authId,
+        projectId: project._id,
+        name: "Development",
+        kind: "development",
+        isDefault: true,
+        updatedAt: now,
+      }),
+    ))!;
+
+  return { project: project, stage: stage };
 }
 
 /**

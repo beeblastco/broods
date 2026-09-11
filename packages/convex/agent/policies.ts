@@ -213,43 +213,6 @@ export const listForStage = query({
 });
 
 /**
- * Validates a policy document's shape before persisting.
- * Exported so CLI sync writes go through the same gate as CRUD mutations.
- * @param value candidate policy document
- * @returns the validated document
- * @throws when version, rules, effects, or actions are malformed
- */
-export function normalizePolicyDocument(value: unknown): unknown {
-  if (!isPlainObject(value))
-    throw new Error("Policy document must be an object.");
-  if (value.version !== 1)
-    throw new Error("Policy document version must be 1.");
-  if (!Array.isArray(value.rules))
-    throw new Error("Policy document rules must be an array.");
-  for (const [index, rule] of value.rules.entries()) {
-    if (!isPlainObject(rule))
-      throw new Error(`Policy rule ${index + 1} must be an object.`);
-    if (rule.effect !== "allow" && rule.effect !== "deny") {
-      throw new Error(`Policy rule ${index + 1} effect must be allow or deny.`);
-    }
-    if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
-      throw new Error(
-        `Policy rule ${index + 1} actions must be a non-empty array.`,
-      );
-    }
-    for (const action of rule.actions) {
-      if (typeof action !== "string" || !POLICY_ACTION_SET.has(action)) {
-        throw new Error(
-          `Policy rule ${index + 1} contains an unsupported action.`,
-        );
-      }
-    }
-  }
-
-  return value;
-}
-
-/**
  * Soft-deletes a dashboard-owned policy.
  * @param policyId policy to delete
  * @returns deleted policy id
@@ -426,6 +389,43 @@ export const usageCounts = query({
     return counts;
   },
 });
+
+/**
+ * Validates a policy document's shape before persisting.
+ * Exported so CLI sync writes go through the same gate as CRUD mutations.
+ * @param value candidate policy document
+ * @returns the validated document
+ * @throws when version, rules, effects, or actions are malformed
+ */
+export function normalizePolicyDocument(value: unknown): unknown {
+  if (!isPlainObject(value))
+    throw new Error("Policy document must be an object.");
+  if (value.version !== 1)
+    throw new Error("Policy document version must be 1.");
+  if (!Array.isArray(value.rules))
+    throw new Error("Policy document rules must be an array.");
+  for (const [index, rule] of value.rules.entries()) {
+    if (!isPlainObject(rule))
+      throw new Error(`Policy rule ${index + 1} must be an object.`);
+    if (rule.effect !== "allow" && rule.effect !== "deny") {
+      throw new Error(`Policy rule ${index + 1} effect must be allow or deny.`);
+    }
+    if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
+      throw new Error(
+        `Policy rule ${index + 1} actions must be a non-empty array.`,
+      );
+    }
+    for (const action of rule.actions) {
+      if (typeof action !== "string" || !POLICY_ACTION_SET.has(action)) {
+        throw new Error(
+          `Policy rule ${index + 1} contains an unsupported action.`,
+        );
+      }
+    }
+  }
+
+  return value;
+}
 
 async function requireEditablePolicy(
   ctx: Parameters<typeof getProjectForRole>[0],

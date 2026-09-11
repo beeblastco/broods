@@ -31,16 +31,6 @@ import { toolError } from "./utils.ts";
 
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
 
-interface AsyncStatusInput {
-  statusId: string;
-  action?: "status" | "logs" | "stop";
-}
-
-interface SandboxJobRef {
-  namespace: string;
-  jobId: string;
-}
-
 export interface AsyncStatusContext {
   // The caller's conversation. A statusId only resolves for its own conversation,
   // so one agent cannot inspect or stop another tenant's job.
@@ -50,6 +40,16 @@ export interface AsyncStatusContext {
   // `logs`/`stop` actions, which have no meaning for async tool calls (there is
   // no live process to tail or kill, and those are delivered automatically).
   supportsJobs: boolean;
+}
+
+interface AsyncStatusInput {
+  statusId: string;
+  action?: "status" | "logs" | "stop";
+}
+
+interface SandboxJobRef {
+  namespace: string;
+  jobId: string;
 }
 
 export default function asyncStatusTool(context: AsyncStatusContext): ToolSet {
@@ -200,6 +200,38 @@ The result is delivered back into the conversation automatically when it finishe
   };
 }
 
+function sandboxForNamespace(
+  context: AsyncStatusContext,
+  namespace: string,
+): SandboxExecutorConfig | undefined {
+  return (context.workspaces ?? []).find(
+    (entry) => entry.namespace === namespace && entry.sandbox,
+  )?.sandbox;
+}
+
+function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  if (
+    record.kind !== "sandbox_job" ||
+    typeof record.namespace !== "string" ||
+    typeof record.jobId !== "string"
+  ) {
+    return undefined;
+  }
+
+  return { namespace: record.namespace, jobId: record.jobId };
+}
+
+// A settled background-job response carries the captured logs (see
+// settleTerminalJob); non-job async tools return undefined here.
+function settledJobLogs(response: JSONValue | undefined): string | undefined {
+  if (!response || typeof response !== "object") return undefined;
+  const logs = (response as { logs?: unknown }).logs;
+
+  return typeof logs === "string" ? logs : undefined;
+}
+
 async function settleTerminalJob(
   resultId: string,
   executor: SandboxExecutor,
@@ -239,36 +271,4 @@ async function settleTerminalJob(
     exitCode: status.exitCode ?? null,
     logs: logs,
   };
-}
-
-function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const record = input as Record<string, unknown>;
-  if (
-    record.kind !== "sandbox_job" ||
-    typeof record.namespace !== "string" ||
-    typeof record.jobId !== "string"
-  ) {
-    return undefined;
-  }
-
-  return { namespace: record.namespace, jobId: record.jobId };
-}
-
-function sandboxForNamespace(
-  context: AsyncStatusContext,
-  namespace: string,
-): SandboxExecutorConfig | undefined {
-  return (context.workspaces ?? []).find(
-    (entry) => entry.namespace === namespace && entry.sandbox,
-  )?.sandbox;
-}
-
-// A settled background-job response carries the captured logs (see
-// settleTerminalJob); non-job async tools return undefined here.
-function settledJobLogs(response: JSONValue | undefined): string | undefined {
-  if (!response || typeof response !== "object") return undefined;
-  const logs = (response as { logs?: unknown }).logs;
-
-  return typeof logs === "string" ? logs : undefined;
 }

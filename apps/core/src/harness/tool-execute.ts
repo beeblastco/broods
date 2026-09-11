@@ -8,6 +8,10 @@
 import type { ToolSet } from "ai";
 import type { Session } from "./session.ts";
 
+const AsyncGeneratorFunction = Object.getPrototypeOf(
+  async function* (): AsyncGenerator<never, void, void> {},
+).constructor as new () => unknown;
+
 export type ToolExecute = NonNullable<ToolSet[string]["execute"]>;
 
 /** Runs around a tool call: `before` gates/rewrites input, `after` its result. */
@@ -16,9 +20,22 @@ export interface ToolExecuteHooks {
   after?: (output: unknown) => Promise<unknown>;
 }
 
-const AsyncGeneratorFunction = Object.getPrototypeOf(
-  async function* (): AsyncGenerator<never, void, void> {},
-).constructor as new () => unknown;
+export function isAsyncIterable(
+  value: unknown,
+): value is AsyncIterable<unknown> {
+  return Boolean(
+    value && typeof value === "object" && Symbol.asyncIterator in value,
+  );
+}
+
+/**
+ * Whether wrapping this execute must itself stream. Checked on the function, not
+ * on a call's return value, because a wrapper has to pick its own shape before
+ * it is allowed to start the tool.
+ */
+export function isStreamingExecute(execute: ToolExecute): boolean {
+  return execute instanceof AsyncGeneratorFunction;
+}
 
 // `after` applies to a streaming tool's last yield, which is the value the SDK
 // takes as its result.
@@ -78,23 +95,6 @@ export function wrapToolsWithOwnerFence(
       return input;
     },
   }));
-}
-
-export function isAsyncIterable(
-  value: unknown,
-): value is AsyncIterable<unknown> {
-  return Boolean(
-    value && typeof value === "object" && Symbol.asyncIterator in value,
-  );
-}
-
-/**
- * Whether wrapping this execute must itself stream. Checked on the function, not
- * on a call's return value, because a wrapper has to pick its own shape before
- * it is allowed to start the tool.
- */
-export function isStreamingExecute(execute: ToolExecute): boolean {
-  return execute instanceof AsyncGeneratorFunction;
 }
 
 async function runAfter(

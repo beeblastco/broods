@@ -63,20 +63,6 @@ const ALLOW_EXACT: ReadonlySet<string> = new Set([
   "modelcalls",
 ]);
 
-function isRedactedKey(key: string): boolean {
-  const norm = key.toLowerCase().replace(/[-_]/g, "");
-  if (ALLOW_EXACT.has(norm)) return false;
-  if (DENY_EXACT.has(norm)) return true;
-  for (const prefix of DENY_PREFIX) {
-    if (norm.startsWith(prefix)) return true;
-  }
-  for (const suffix of DENY_SUFFIX) {
-    if (norm.endsWith(suffix)) return true;
-  }
-
-  return false;
-}
-
 const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
@@ -84,89 +70,7 @@ const QUERY_SECRET_PATTERN =
 const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
 const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
 
-function isSensitiveEnvName(name: string): boolean {
-  const normalized = name.toLowerCase().replace(/[-_]/g, "");
-
-  return (
-    isRedactedKey(name) ||
-    normalized.includes("credential") ||
-    normalized.includes("authorization") ||
-    normalized.endsWith("headers") ||
-    normalized.endsWith("providerconfigjson") ||
-    normalized.endsWith("toolsjson")
-  );
-}
-
-function sensitiveEnvValues(): string[] {
-  const values: string[] = [];
-  for (const [name, value] of Object.entries(process.env)) {
-    if (!value || !isSensitiveEnvName(name)) continue;
-    if (value.length >= 4) values.push(value);
-    const authValue = value.match(/\b(?:Basic|Bearer)\s+([^,\s]+)/i)?.[1];
-    if (authValue && authValue.length >= 4) values.push(authValue);
-    if (
-      value.trimStart().startsWith("{") ||
-      value.trimStart().startsWith("[")
-    ) {
-      try {
-        values.push(...collectSecretValues(JSON.parse(value)));
-      } catch {
-        // Invalid JSON is still redacted as one opaque value above.
-      }
-    }
-  }
-
-  return values;
-}
-
-function redactString(value: string, secretValues: readonly string[]): string {
-  let redacted = value;
-  const uniqueSecrets = [
-    ...new Set(secretValues.filter((secret) => secret.length >= 4)),
-  ].sort((left, right) => right.length - left.length);
-  for (const secret of uniqueSecrets) {
-    redacted = redacted.split(secret).join("[redacted]");
-  }
-  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
-  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
-  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
-  redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
-  redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
-
-  return redacted;
-}
-
-/** Redact a free-form string using sensitive env values plus task-local secrets. */
-export function redactSensitiveText(
-  value: string,
-  additionalSecretValues: readonly string[] = [],
-): string {
-  return redactString(value, [
-    ...sensitiveEnvValues(),
-    ...additionalSecretValues,
-  ]);
-}
-
-/**
- * Deep-redact an arbitrary value. Sensitive keys are replaced wholesale, while
- * every nested string is scrubbed against the supplied secret-value set.
- */
-export function redact(
-  value: unknown,
-  secretValues: readonly string[] = sensitiveEnvValues(),
-): unknown {
-  if (typeof value === "string") return redactString(value, secretValues);
-  if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value))
-    return value.map((item) => redact(item, secretValues));
-
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    out[k] = isRedactedKey(k) ? "[redacted]" : redact(v, secretValues);
-  }
-
-  return out;
-}
+const ENCODER = new TextEncoder();
 
 export function collectSecretValues(value: unknown): string[] {
   const secrets = new Set<string>();
@@ -229,38 +133,58 @@ export function collectSecretValues(value: unknown): string[] {
   return [...secrets].filter((secret) => secret.length >= 4);
 }
 
-const ENCODER = new TextEncoder();
+/**
+ * Deep-redact an arbitrary value. Sensitive keys are replaced wholesale, while
+ * every nested string is scrubbed against the supplied secret-value set.
+ */
+export function redact(
+  value: unknown,
+  secretValues: readonly string[] = sensitiveEnvValues(),
+): unknown {
+  if (typeof value === "string") return redactString(value, secretValues);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value))
+    return value.map((item) => redact(item, secretValues));
 
-function publishNats(
-  level: "INFO" | "WARN" | "ERROR",
-  entry: ObservabilityLogEntry,
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isRedactedKey(k) ? "[redacted]" : redact(v, secretValues);
+  }
+
+  return out;
+}
+
+/** Redact a free-form string using sensitive env values plus task-local secrets. */
+export function redactSensitiveText(
+  value: string,
+  additionalSecretValues: readonly string[] = [],
+): string {
+  return redactString(value, [
+    ...sensitiveEnvValues(),
+    ...additionalSecretValues,
+  ]);
+}
+
+export function logDebug(
+  message: string,
+  data?: Record<string, unknown>,
 ): void {
-  const connPromise = getObservabilityNatsConn();
-  if (!connPromise) return;
+  emit("DEBUG", message, data);
+}
 
-  const ctx = getObservabilityContext();
-  // Skip when the task isn't deployment-scoped (channel/cron paths have empty
-  // project/stage/endpoint): no dashboard tab subscribes those, so publishing
-  // to a malformed subject is wasted. Durable OTLP + stdout still capture it.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage) return;
+export function logError(
+  message: string,
+  data?: Record<string, unknown>,
+): void {
+  emit("ERROR", message, data);
+}
 
-  const subject = logsSubject(
-    ctx.accountId,
-    ctx.project,
-    ctx.stage,
-    ctx.endpointId,
-  );
+export function logInfo(message: string, data?: Record<string, unknown>): void {
+  emit("INFO", message, data);
+}
 
-  connPromise
-    .then(async (conn) => {
-      // Ensure the durable stream captures this line for dashboard replay;
-      // memoized, so ~free after the first call. Live publish proceeds regardless.
-      await ensureObservabilityStream(conn).catch(() => {});
-      conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
-    })
-    .catch(() => {
-      // Best-effort; NATS hiccup must never lose durable (OTLP) data.
-    });
+export function logWarn(message: string, data?: Record<string, unknown>): void {
+  emit("WARN", message, data);
 }
 
 function emit(
@@ -315,24 +239,100 @@ function emit(
   }
 }
 
-export function logDebug(
-  message: string,
-  data?: Record<string, unknown>,
+function isRedactedKey(key: string): boolean {
+  const norm = key.toLowerCase().replace(/[-_]/g, "");
+  if (ALLOW_EXACT.has(norm)) return false;
+  if (DENY_EXACT.has(norm)) return true;
+  for (const prefix of DENY_PREFIX) {
+    if (norm.startsWith(prefix)) return true;
+  }
+  for (const suffix of DENY_SUFFIX) {
+    if (norm.endsWith(suffix)) return true;
+  }
+
+  return false;
+}
+
+function isSensitiveEnvName(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/[-_]/g, "");
+
+  return (
+    isRedactedKey(name) ||
+    normalized.includes("credential") ||
+    normalized.includes("authorization") ||
+    normalized.endsWith("headers") ||
+    normalized.endsWith("providerconfigjson") ||
+    normalized.endsWith("toolsjson")
+  );
+}
+
+function publishNats(
+  level: "INFO" | "WARN" | "ERROR",
+  entry: ObservabilityLogEntry,
 ): void {
-  emit("DEBUG", message, data);
+  const connPromise = getObservabilityNatsConn();
+  if (!connPromise) return;
+
+  const ctx = getObservabilityContext();
+  // Skip when the task isn't deployment-scoped (channel/cron paths have empty
+  // project/stage/endpoint): no dashboard tab subscribes those, so publishing
+  // to a malformed subject is wasted. Durable OTLP + stdout still capture it.
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage) return;
+
+  const subject = logsSubject(
+    ctx.accountId,
+    ctx.project,
+    ctx.stage,
+    ctx.endpointId,
+  );
+
+  connPromise
+    .then(async (conn) => {
+      // Ensure the durable stream captures this line for dashboard replay;
+      // memoized, so ~free after the first call. Live publish proceeds regardless.
+      await ensureObservabilityStream(conn).catch(() => {});
+      conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
+    })
+    .catch(() => {
+      // Best-effort; NATS hiccup must never lose durable (OTLP) data.
+    });
 }
 
-export function logInfo(message: string, data?: Record<string, unknown>): void {
-  emit("INFO", message, data);
+function redactString(value: string, secretValues: readonly string[]): string {
+  let redacted = value;
+  const uniqueSecrets = [
+    ...new Set(secretValues.filter((secret) => secret.length >= 4)),
+  ].sort((left, right) => right.length - left.length);
+  for (const secret of uniqueSecrets) {
+    redacted = redacted.split(secret).join("[redacted]");
+  }
+  redacted = redacted.replace(BEARER_SECRET_PATTERN, "Bearer [redacted]");
+  redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
+  redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
+  redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
+  redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
+
+  return redacted;
 }
 
-export function logWarn(message: string, data?: Record<string, unknown>): void {
-  emit("WARN", message, data);
-}
+function sensitiveEnvValues(): string[] {
+  const values: string[] = [];
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!value || !isSensitiveEnvName(name)) continue;
+    if (value.length >= 4) values.push(value);
+    const authValue = value.match(/\b(?:Basic|Bearer)\s+([^,\s]+)/i)?.[1];
+    if (authValue && authValue.length >= 4) values.push(authValue);
+    if (
+      value.trimStart().startsWith("{") ||
+      value.trimStart().startsWith("[")
+    ) {
+      try {
+        values.push(...collectSecretValues(JSON.parse(value)));
+      } catch {
+        // Invalid JSON is still redacted as one opaque value above.
+      }
+    }
+  }
 
-export function logError(
-  message: string,
-  data?: Record<string, unknown>,
-): void {
-  emit("ERROR", message, data);
+  return values;
 }

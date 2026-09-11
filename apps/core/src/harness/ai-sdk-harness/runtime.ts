@@ -264,6 +264,17 @@ function resolveHarnessToolFiltering(
     : {};
 }
 
+function withoutHarnessBuiltinTools(
+  tools: ToolSet,
+  harness: HarnessAgentAdapter,
+): ToolSet {
+  const builtinNames = new Set(Object.keys(harness.builtinTools));
+
+  return Object.fromEntries(
+    Object.entries(tools).filter(([name]) => !builtinNames.has(name)),
+  );
+}
+
 function withoutHarnessQuestionPrompt(
   options: HarnessAgentCommonOptions,
 ): HarnessToolFiltering {
@@ -288,15 +299,4 @@ function withoutHarnessQuestionPrompt(
       ]),
     ],
   };
-}
-
-function withoutHarnessBuiltinTools(
-  tools: ToolSet,
-  harness: HarnessAgentAdapter,
-): ToolSet {
-  const builtinNames = new Set(Object.keys(harness.builtinTools));
-
-  return Object.fromEntries(
-    Object.entries(tools).filter(([name]) => !builtinNames.has(name)),
-  );
 }

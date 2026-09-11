@@ -28,23 +28,26 @@ const fileEntry = v.object({
   updatedAt: v.optional(v.string()),
 });
 
-type RuntimeWorkspace = WorkspaceFsRef & {
-  accountId: Id<"accounts">;
-  workspaceId: Id<"workspaceConfigs">;
-};
 type LegacyFile = Pick<
   Doc<"workspaceFiles">,
   "_id" | "path" | "isFolder" | "storageId"
 >;
 
-async function requireActionUser(
-  ctx: ActionCtx,
-): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
-  const user = await authKit.getAuthUser(ctx);
-  if (!user) throw new Error("User not found or not authenticated");
+type RuntimeWorkspace = WorkspaceFsRef & {
+  accountId: Id<"accounts">;
+  workspaceId: Id<"workspaceConfigs">;
+};
 
-  return user;
-}
+/** Lists files from the S3 namespace mounted by the selected runtime workspace. */
+export const list = action({
+  args: { projectId: v.id("projects"), workspaceId: v.string() },
+  returns: v.array(fileEntry),
+  handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
+    const workspace = await resolveWorkspace(ctx, args);
+
+    return await listWorkspaceFiles(workspace);
+  },
+});
 
 /** Moves legacy files into S3 when needed and returns the authoritative file list. */
 export const migrateLegacy = action({
@@ -106,38 +109,6 @@ export const migrateLegacy = action({
   },
 });
 
-/** Lists files from the S3 namespace mounted by the selected runtime workspace. */
-export const list = action({
-  args: { projectId: v.id("projects"), workspaceId: v.string() },
-  returns: v.array(fileEntry),
-  handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
-    const workspace = await resolveWorkspace(ctx, args);
-
-    return await listWorkspaceFiles(workspace);
-  },
-});
-
-/** Uploads or replaces one file in the mounted S3 workspace. */
-export const upload = action({
-  args: {
-    projectId: v.id("projects"),
-    workspaceId: v.string(),
-    path: v.string(),
-    contentBase64: v.string(),
-    contentType: v.optional(v.string()),
-  },
-  returns: fileEntry,
-  handler: async (ctx, args): Promise<WorkspaceFileEntry> => {
-    const workspace = await resolveWorkspace(ctx, args, "admin");
-
-    return await uploadWorkspaceFile(workspace, {
-      path: args.path,
-      contentBase64: args.contentBase64,
-      contentType: args.contentType,
-    });
-  },
-});
-
 /** Deletes a file or folder prefix from the mounted S3 workspace. */
 export const remove = action({
   args: {
@@ -170,6 +141,36 @@ export const rename = action({
     return null;
   },
 });
+
+/** Uploads or replaces one file in the mounted S3 workspace. */
+export const upload = action({
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+    path: v.string(),
+    contentBase64: v.string(),
+    contentType: v.optional(v.string()),
+  },
+  returns: fileEntry,
+  handler: async (ctx, args): Promise<WorkspaceFileEntry> => {
+    const workspace = await resolveWorkspace(ctx, args, "admin");
+
+    return await uploadWorkspaceFile(workspace, {
+      path: args.path,
+      contentBase64: args.contentBase64,
+      contentType: args.contentType,
+    });
+  },
+});
+
+async function requireActionUser(
+  ctx: ActionCtx,
+): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) throw new Error("User not found or not authenticated");
+
+  return user;
+}
 
 async function resolveWorkspace(
   ctx: ActionCtx,

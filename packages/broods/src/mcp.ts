@@ -263,20 +263,6 @@ export function createBroodsMcpServer(
   return server;
 }
 
-/** MCP wants one text block; JSON keeps the shape the SDK returned. */
-function reply(value: unknown): CallToolResult {
-  return {
-    content: [{ type: "text", text: JSON.stringify(value ?? null, null, 2) }],
-  };
-}
-
-/** An API error is the agent's to read and act on, not a transport failure. */
-function failure(error: unknown): CallToolResult {
-  const text = error instanceof Error ? error.message : String(error);
-
-  return { content: [{ type: "text", text: text }], isError: true };
-}
-
 /** The one gate every destructive tool passes; `consequence` names the blast radius. */
 function assertConfirmed(
   confirm: boolean | undefined,
@@ -293,6 +279,20 @@ async function attempt(run: () => Promise<unknown>): Promise<CallToolResult> {
   } catch (error) {
     return failure(error);
   }
+}
+
+/** An API error is the agent's to read and act on, not a transport failure. */
+function failure(error: unknown): CallToolResult {
+  const text = error instanceof Error ? error.message : String(error);
+
+  return { content: [{ type: "text", text: text }], isError: true };
+}
+
+/** MCP wants one text block; JSON keeps the shape the SDK returned. */
+function reply(value: unknown): CallToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value ?? null, null, 2) }],
+  };
 }
 
 /**
@@ -316,124 +316,137 @@ function requireScope(
   return { project: resolvedProject, stage: resolvedStage };
 }
 
-/** Register list/get/create/update/delete for one resource, skipping absent verbs. */
-function registerResource(
+/**
+ * Org, project and stage live behind the CLI router, not the config plane, so
+ * they need a login token rather than an account secret or a role session.
+ * They are registered only when `broods login` has stored one: a role session
+ * is rejected by that router, so offering the tools without a login would hand
+ * the agent calls that can only 401.
+ */
+function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
+  server.registerTool(
+    "list-orgs",
+    {
+      description:
+        "Every organization this login can reach, with the current one marked.",
+      inputSchema: {},
+    },
+    async () =>
+      await attempt(async () => {
+        const context = await cli.getOnboarding();
+
+        return { currentOrgId: context.currentOrgId, orgs: context.orgs };
+      }),
+  );
+
+  server.registerTool(
+    "create-org",
+    {
+      description:
+        "Create an organization and switch this login to it. Later calls act in the new org.",
+      inputSchema: { name: z.string().min(1) },
+    },
+    async ({ name }) =>
+      await attempt(async () => await cli.createOnboardingOrg(name)),
+  );
+
+  server.registerTool(
+    "select-org",
+    {
+      description:
+        "Switch this login to another organization, by an orgId from list-orgs.",
+      inputSchema: { orgId: z.string().min(1) },
+    },
+    async ({ orgId }) =>
+      await attempt(async () => await cli.selectOnboardingOrg(orgId)),
+  );
+
+  server.registerTool(
+    "list-projects",
+    {
+      description:
+        "Every project in the current org, empty ones last. Project names are not unique, so take the id from here.",
+      inputSchema: {},
+    },
+    async () => await attempt(async () => await cli.listProjects()),
+  );
+
+  server.registerTool(
+    "list-stages",
+    {
+      description: "Every stage of one project, by project name.",
+      inputSchema: { project: z.string().min(1) },
+    },
+    async ({ project }) =>
+      await attempt(async () => await cli.listStages(project)),
+  );
+
+  server.registerTool(
+    "create-stage",
+    {
+      description:
+        "Create a stage in a project, optionally cloning another stage's architecture and env vars. A project name that does not exist yet is created with it, which is the only way to make a project without deploying a manifest.",
+      inputSchema: {
+        project: z.string().min(1),
+        name: z.string().min(1),
+        from: z
+          .string()
+          .optional()
+          .describe("Stage to clone architecture and env vars from."),
+      },
+    },
+    async ({ project, name, from }) =>
+      await attempt(async () => await cli.createStage(project, name, from)),
+  );
+}
+
+/**
+ * The tools whose blast radius no role policy bounds: rotating the account
+ * secret breaks every deployment holding the old one, and a project delete
+ * cascades through everything under it. `confirm` is asserted by the calling
+ * agent itself, so exposing these is the operator's opt-in, not the agent's.
+ */
+function registerDestructive(
   server: McpServer,
-  client: BroodsAccountClient,
-  spec: ResourceSpec,
-  defaults: McpScopeDefaults,
+  client: BroodsAccountClient | null,
+  cli: BroodsSyncClient | null,
 ): void {
-  const idField = z.string().min(1).describe(`The ${spec.key}.`);
-  const scopeNote = spec.scoped
-    ? ` ${spec.plural} live in one stage, so this also takes 'project' and 'stage'.`
-    : "";
-  const { list, get, create, update, remove } = spec;
-
-  // Scoped and unscoped register separately so each handler's arguments stay
-  // typed; a conditional shape widens them to unknown.
-  if (list) {
-    const description = `List every ${spec.singular} on the account.${scopeNote}`;
-    if (spec.scoped) {
-      server.registerTool(
-        `list-${spec.plural}`,
-        { description: description, inputSchema: SCOPE_FIELDS },
-        async ({ project, stage }) =>
-          await attempt(
-            async () =>
-              await list(client, requireScope(spec, defaults, project, stage)),
-          ),
-      );
-    } else {
-      server.registerTool(
-        `list-${spec.plural}`,
-        { description: description, inputSchema: {} },
-        async () => await attempt(async () => await list(client)),
-      );
-    }
-  }
-
-  if (get) {
+  if (client) {
     server.registerTool(
-      `get-${spec.singular}`,
-      {
-        description: `Read one ${spec.singular} by ${spec.key}.`,
-        inputSchema: { id: idField },
-      },
-      async ({ id }) => await attempt(async () => await get(client, id)),
-    );
-  }
-
-  if (create) {
-    const description =
-      `Create one ${spec.singular}. 'body' is the request body the config plane documents.` +
-      (spec.createHint ? ` ${spec.createHint}` : "") +
-      scopeNote +
-      " Prefer changing the broods/ manifest and deploying for anything the project already declares.";
-    const body = z.record(z.string(), z.unknown());
-    if (spec.scoped) {
-      server.registerTool(
-        `create-${spec.singular}`,
-        {
-          description: description,
-          inputSchema: { body: body, ...SCOPE_FIELDS },
-        },
-        async ({ body, project, stage }) =>
-          await attempt(
-            async () =>
-              await create(
-                client,
-                body,
-                requireScope(spec, defaults, project, stage),
-              ),
-          ),
-      );
-    } else {
-      server.registerTool(
-        `create-${spec.singular}`,
-        { description: description, inputSchema: { body: body } },
-        async ({ body }) =>
-          await attempt(async () => await create(client, body)),
-      );
-    }
-  }
-
-  if (update) {
-    server.registerTool(
-      `update-${spec.singular}`,
+      "rotate-secret",
       {
         description:
-          `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back.` +
-          (spec.updateHint ? ` ${spec.updateHint}` : ""),
-        inputSchema: {
-          id: idField,
-          body: z.record(z.string(), z.unknown()),
-        },
+          "Rotate the account secret. The current secret stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
+        inputSchema: { confirm: CONFIRM_FIELD },
       },
-      async ({ id, body }) =>
-        await attempt(async () => await update(client, id, body)),
-    );
-  }
-
-  if (remove) {
-    server.registerTool(
-      `delete-${spec.singular}`,
-      {
-        description:
-          `Delete one ${spec.singular}. Requires confirm:true, and takes one ${spec.key} per call: never loop this over a list.` +
-          (spec.deleteHint ? ` ${spec.deleteHint}` : ""),
-        inputSchema: {
-          id: idField,
-          confirm: CONFIRM_FIELD,
-        },
-      },
-      async ({ id, confirm }) =>
+      async ({ confirm }) =>
         await attempt(async () => {
           assertConfirmed(
             confirm,
-            `Deleting ${spec.singular} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,
+            "Everything holding the current secret breaks the moment this runs.",
           );
 
-          return { deleted: await remove(client, id), id: id };
+          return await client.rotateSecret();
+        }),
+    );
+  }
+
+  if (cli) {
+    server.registerTool(
+      "delete-project",
+      {
+        description:
+          "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
+        inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
+      },
+      async ({ projectId, confirm }) =>
+        await attempt(async () => {
+          assertConfirmed(
+            confirm,
+            `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
+          );
+
+          return await cli.deleteProject(projectId);
         }),
     );
   }
@@ -636,137 +649,124 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
   );
 }
 
-/**
- * Org, project and stage live behind the CLI router, not the config plane, so
- * they need a login token rather than an account secret or a role session.
- * They are registered only when `broods login` has stored one: a role session
- * is rejected by that router, so offering the tools without a login would hand
- * the agent calls that can only 401.
- */
-function registerCliScope(server: McpServer, cli: BroodsSyncClient): void {
-  server.registerTool(
-    "list-orgs",
-    {
-      description:
-        "Every organization this login can reach, with the current one marked.",
-      inputSchema: {},
-    },
-    async () =>
-      await attempt(async () => {
-        const context = await cli.getOnboarding();
-
-        return { currentOrgId: context.currentOrgId, orgs: context.orgs };
-      }),
-  );
-
-  server.registerTool(
-    "create-org",
-    {
-      description:
-        "Create an organization and switch this login to it. Later calls act in the new org.",
-      inputSchema: { name: z.string().min(1) },
-    },
-    async ({ name }) =>
-      await attempt(async () => await cli.createOnboardingOrg(name)),
-  );
-
-  server.registerTool(
-    "select-org",
-    {
-      description:
-        "Switch this login to another organization, by an orgId from list-orgs.",
-      inputSchema: { orgId: z.string().min(1) },
-    },
-    async ({ orgId }) =>
-      await attempt(async () => await cli.selectOnboardingOrg(orgId)),
-  );
-
-  server.registerTool(
-    "list-projects",
-    {
-      description:
-        "Every project in the current org, empty ones last. Project names are not unique, so take the id from here.",
-      inputSchema: {},
-    },
-    async () => await attempt(async () => await cli.listProjects()),
-  );
-
-  server.registerTool(
-    "list-stages",
-    {
-      description: "Every stage of one project, by project name.",
-      inputSchema: { project: z.string().min(1) },
-    },
-    async ({ project }) =>
-      await attempt(async () => await cli.listStages(project)),
-  );
-
-  server.registerTool(
-    "create-stage",
-    {
-      description:
-        "Create a stage in a project, optionally cloning another stage's architecture and env vars. A project name that does not exist yet is created with it, which is the only way to make a project without deploying a manifest.",
-      inputSchema: {
-        project: z.string().min(1),
-        name: z.string().min(1),
-        from: z
-          .string()
-          .optional()
-          .describe("Stage to clone architecture and env vars from."),
-      },
-    },
-    async ({ project, name, from }) =>
-      await attempt(async () => await cli.createStage(project, name, from)),
-  );
-}
-
-/**
- * The tools whose blast radius no role policy bounds: rotating the account
- * secret breaks every deployment holding the old one, and a project delete
- * cascades through everything under it. `confirm` is asserted by the calling
- * agent itself, so exposing these is the operator's opt-in, not the agent's.
- */
-function registerDestructive(
+/** Register list/get/create/update/delete for one resource, skipping absent verbs. */
+function registerResource(
   server: McpServer,
-  client: BroodsAccountClient | null,
-  cli: BroodsSyncClient | null,
+  client: BroodsAccountClient,
+  spec: ResourceSpec,
+  defaults: McpScopeDefaults,
 ): void {
-  if (client) {
-    server.registerTool(
-      "rotate-secret",
-      {
-        description:
-          "Rotate the account secret. The current secret stops working immediately and the new one is shown once, so this breaks every deployment and CI job still holding the old one. Requires confirm:true.",
-        inputSchema: { confirm: CONFIRM_FIELD },
-      },
-      async ({ confirm }) =>
-        await attempt(async () => {
-          assertConfirmed(
-            confirm,
-            "Everything holding the current secret breaks the moment this runs.",
-          );
+  const idField = z.string().min(1).describe(`The ${spec.key}.`);
+  const scopeNote = spec.scoped
+    ? ` ${spec.plural} live in one stage, so this also takes 'project' and 'stage'.`
+    : "";
+  const { list, get, create, update, remove } = spec;
 
-          return await client.rotateSecret();
-        }),
+  // Scoped and unscoped register separately so each handler's arguments stay
+  // typed; a conditional shape widens them to unknown.
+  if (list) {
+    const description = `List every ${spec.singular} on the account.${scopeNote}`;
+    if (spec.scoped) {
+      server.registerTool(
+        `list-${spec.plural}`,
+        { description: description, inputSchema: SCOPE_FIELDS },
+        async ({ project, stage }) =>
+          await attempt(
+            async () =>
+              await list(client, requireScope(spec, defaults, project, stage)),
+          ),
+      );
+    } else {
+      server.registerTool(
+        `list-${spec.plural}`,
+        { description: description, inputSchema: {} },
+        async () => await attempt(async () => await list(client)),
+      );
+    }
+  }
+
+  if (get) {
+    server.registerTool(
+      `get-${spec.singular}`,
+      {
+        description: `Read one ${spec.singular} by ${spec.key}.`,
+        inputSchema: { id: idField },
+      },
+      async ({ id }) => await attempt(async () => await get(client, id)),
     );
   }
 
-  if (cli) {
+  if (create) {
+    const description =
+      `Create one ${spec.singular}. 'body' is the request body the config plane documents.` +
+      (spec.createHint ? ` ${spec.createHint}` : "") +
+      scopeNote +
+      " Prefer changing the broods/ manifest and deploying for anything the project already declares.";
+    const body = z.record(z.string(), z.unknown());
+    if (spec.scoped) {
+      server.registerTool(
+        `create-${spec.singular}`,
+        {
+          description: description,
+          inputSchema: { body: body, ...SCOPE_FIELDS },
+        },
+        async ({ body, project, stage }) =>
+          await attempt(
+            async () =>
+              await create(
+                client,
+                body,
+                requireScope(spec, defaults, project, stage),
+              ),
+          ),
+      );
+    } else {
+      server.registerTool(
+        `create-${spec.singular}`,
+        { description: description, inputSchema: { body: body } },
+        async ({ body }) =>
+          await attempt(async () => await create(client, body)),
+      );
+    }
+  }
+
+  if (update) {
     server.registerTool(
-      "delete-project",
+      `update-${spec.singular}`,
       {
         description:
-          "Delete a project and everything under it: stages, agents, canvas, env vars, crons and workspace files. Takes a projectId from list-projects and requires confirm:true.",
-        inputSchema: { projectId: z.string().min(1), confirm: CONFIRM_FIELD },
+          `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back.` +
+          (spec.updateHint ? ` ${spec.updateHint}` : ""),
+        inputSchema: {
+          id: idField,
+          body: z.record(z.string(), z.unknown()),
+        },
       },
-      async ({ projectId, confirm }) =>
+      async ({ id, body }) =>
+        await attempt(async () => await update(client, id, body)),
+    );
+  }
+
+  if (remove) {
+    server.registerTool(
+      `delete-${spec.singular}`,
+      {
+        description:
+          `Delete one ${spec.singular}. Requires confirm:true, and takes one ${spec.key} per call: never loop this over a list.` +
+          (spec.deleteHint ? ` ${spec.deleteHint}` : ""),
+        inputSchema: {
+          id: idField,
+          confirm: CONFIRM_FIELD,
+        },
+      },
+      async ({ id, confirm }) =>
         await attempt(async () => {
           assertConfirmed(
             confirm,
-            `Project '${projectId}' and everything under it goes away: name it, get the owner's agreement, then retry.`,
+            `Deleting ${spec.singular} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,
           );
 
-          return await cli.deleteProject(projectId);
+          return { deleted: await remove(client, id), id: id };
         }),
     );
   }

@@ -77,39 +77,6 @@ export interface ChannelRecord {
   updatedAt: string;
 }
 
-export function resolveChannelAgentId(
-  record: ChannelRecord,
-): string | undefined {
-  const bindings = record.config.agentBindings;
-
-  return (bindings.find((binding) => binding.isDefault) ?? bindings[0])
-    ?.agentId;
-}
-
-// A provider id is only unique inside its team or guild, so a record naming one
-// must match the message's. Either side unset means the provider gave us nothing
-// to compare and the record stands.
-export function channelRecordMatchesWorkspace(
-  recordWorkspaceRef: string | undefined,
-  messageWorkspaceRef: string | undefined,
-): boolean {
-  if (!recordWorkspaceRef || !messageWorkspaceRef) return true;
-
-  return recordWorkspaceRef === messageWorkspaceRef;
-}
-
-/** Role ids an actor holds in this channel, for policy conditions. */
-export function channelActorRoles(
-  record: ChannelRecord,
-  userId: string | undefined,
-): string[] {
-  if (!userId) return [];
-
-  return (record.config.tagRoles ?? [])
-    .filter((role) => role.userIds.includes(userId))
-    .map((role) => role.roleId);
-}
-
 /**
  * Layer a channel record over the agent's runtime config for one turn.
  * Instructions append and policies union; workspaces and tools only narrow.
@@ -164,6 +131,39 @@ export function applyChannelRecord(
         }
       : {}),
   };
+}
+
+/** Role ids an actor holds in this channel, for policy conditions. */
+export function channelActorRoles(
+  record: ChannelRecord,
+  userId: string | undefined,
+): string[] {
+  if (!userId) return [];
+
+  return (record.config.tagRoles ?? [])
+    .filter((role) => role.userIds.includes(userId))
+    .map((role) => role.roleId);
+}
+
+// A provider id is only unique inside its team or guild, so a record naming one
+// must match the message's. Either side unset means the provider gave us nothing
+// to compare and the record stands.
+export function channelRecordMatchesWorkspace(
+  recordWorkspaceRef: string | undefined,
+  messageWorkspaceRef: string | undefined,
+): boolean {
+  if (!recordWorkspaceRef || !messageWorkspaceRef) return true;
+
+  return recordWorkspaceRef === messageWorkspaceRef;
+}
+
+export function resolveChannelAgentId(
+  record: ChannelRecord,
+): string | undefined {
+  const bindings = record.config.agentBindings;
+
+  return (bindings.find((binding) => binding.isDefault) ?? bindings[0])
+    ?.agentId;
 }
 
 function appendSystemInstructions(

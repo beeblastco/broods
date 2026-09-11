@@ -21,12 +21,16 @@ import {
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
+
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
 // coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
+
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
+
 const RUNTIME_DELETE_BATCH_SIZE = 100;
+
 // Idle window a reservation survives, refreshed on every acquire. Only core's sandbox
 // sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
 // without deleting the sandbox first strands the machine.
@@ -37,15 +41,18 @@ const asyncAgentDoc = v.object({
   _id: v.id("runtimeAsyncAgentResults"),
   _creationTime: v.number(),
 });
+
 const {
   completionTokenHash: _completionTokenHash,
   ...runtimeAsyncToolPublicFields
 } = runtimeAsyncToolResultsFields;
+
 const asyncToolDoc = v.object({
   ...runtimeAsyncToolPublicFields,
   _id: v.id("runtimeAsyncToolResults"),
   _creationTime: v.number(),
 });
+
 const toolGroupDoc = v.object({
   accountId: v.string(),
   parentEventId: v.string(),
@@ -54,6 +61,11 @@ const toolGroupDoc = v.object({
   expiresAt: v.number(),
   _id: v.id("runtimeAsyncToolGroups"),
   _creationTime: v.number(),
+});
+
+const sandboxReservationSummary = v.object({
+  ...reservedSandboxValidator.fields,
+  accountId: v.string(),
 });
 
 /**
@@ -469,6 +481,7 @@ export const bindAsyncToolResultSandbox = internalMutation({
     return null;
   },
 });
+
 /**
  * Looks up an async tool result without exposing callback authorization.
  * @returns the public result document or null when it does not exist
@@ -485,6 +498,7 @@ export const getAsyncToolResult = internalQuery({
     return row ? hideCompletionTokenHash(row) : null;
   },
 });
+
 /**
  * Verifies a supplied callback token without returning persisted authorization.
  * @returns whether the supplied token matches the persisted digest
@@ -507,6 +521,7 @@ export const getAsyncToolToken = internalQuery({
     );
   },
 });
+
 /**
  * @returns the public sibling result documents
  */
@@ -523,6 +538,7 @@ export const listAsyncToolResults = internalQuery({
         .take(1000)
     ).map(hideCompletionTokenHash),
 });
+
 /**
  * Lists the still-processing rows one tool left on a conversation, oldest
  * first. The ask_questions intake reads this to find the prompt a reply answers.
@@ -544,6 +560,7 @@ export const listPendingAsyncToolResults = internalQuery({
         .take(100)
     ).map(hideCompletionTokenHash),
 });
+
 /**
  * @returns the fan-in group or null when it does not exist
  */
@@ -558,6 +575,7 @@ export const getAsyncToolGroup = internalQuery({
       )
       .unique(),
 });
+
 /**
  * Seals a fan-in group after every sibling has been registered.
  * @returns the sealed group or null when it does not exist
@@ -658,6 +676,7 @@ export const getSandboxReservation = internalQuery({
         .unique()
     )?.externalId ?? null,
 });
+
 /**
  * The reservation's sandbox and when it was claimed, for the executors that enforce
  * `lifecycle.maxLifetimeSeconds` themselves and would otherwise read the same row
@@ -692,10 +711,7 @@ export const getSandboxReservationRecord = internalQuery({
     };
   },
 });
-const sandboxReservationSummary = v.object({
-  ...reservedSandboxValidator.fields,
-  accountId: v.string(),
-});
+
 /**
  * One page of reservations whose idle window has lapsed, oldest first.
  * @returns the expired reservations, up to `limit`
@@ -721,6 +737,7 @@ export const listExpiredSandboxReservations = internalQuery({
     }));
   },
 });
+
 /**
  * Mirror rows no reservation names any more (a teardown that failed, or the old
  * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
@@ -764,6 +781,7 @@ export const listOrphanedSandboxInstances = internalQuery({
     return orphans;
   },
 });
+
 /**
  * Claims a new persistent sandbox reservation if it is still unmapped.
  * @returns whether the reservation was created
@@ -800,6 +818,7 @@ export const claimSandboxReservation = internalMutation({
     return true;
   },
 });
+
 /**
  * Refreshes the idle deadline of a reservation that still names this sandbox
  * and belongs to this account. Never inserts or repoints: a released or
@@ -839,6 +858,7 @@ export const saveSandboxReservation = internalMutation({
     return null;
   },
 });
+
 /**
  * Pushes the deadline out on reservations the sweeper could not clear, so one it can
  * never clear stops holding the head of the `by_expiresAt` page. Patches only, so a
@@ -878,6 +898,7 @@ export const deferSandboxReservations = internalMutation({
     return deferred;
   },
 });
+
 /**
  * Deletes a reservation while it still names `expectedExternalId` (when given)
  * and, with `onlyExpired`, only once its deadline has lapsed: the sweeper takes
@@ -1238,22 +1259,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   return publicRow;
 }
 
-async function sandboxStillReserved(
-  ctx: MutationCtx,
-  sandbox: Infer<typeof reservedSandboxValidator>,
-): Promise<boolean> {
-  const row = await ctx.db
-    .query("sandboxReservations")
-    .withIndex("by_provider_and_reservationKey", (q) =>
-      q
-        .eq("provider", sandbox.provider)
-        .eq("reservationKey", sandbox.reservationKey),
-    )
-    .unique();
-
-  return row?.externalId === sandbox.externalId;
-}
-
 /**
  * Requires an account to exist and remain active in the runtime-write transaction.
  * @param ctx Convex mutation context
@@ -1269,4 +1274,20 @@ async function requireActiveAccount(
   if (!account || account.status !== "active") {
     throw new Error(`Account is not active: ${accountId}`);
   }
+}
+
+async function sandboxStillReserved(
+  ctx: MutationCtx,
+  sandbox: Infer<typeof reservedSandboxValidator>,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("sandboxReservations")
+    .withIndex("by_provider_and_reservationKey", (q) =>
+      q
+        .eq("provider", sandbox.provider)
+        .eq("reservationKey", sandbox.reservationKey),
+    )
+    .unique();
+
+  return row?.externalId === sandbox.externalId;
 }

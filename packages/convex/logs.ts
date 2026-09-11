@@ -60,6 +60,18 @@ const usageStats = v.object({
   }),
 });
 
+const RANGE_CONFIG: Record<
+  "1h" | "3h" | "1d" | "7d" | "30d" | "1y",
+  { lookbackMs: number; binSeconds: number }
+> = {
+  "1h": { lookbackMs: 60 * 60 * 1000, binSeconds: 5 * 60 },
+  "3h": { lookbackMs: 3 * 60 * 60 * 1000, binSeconds: 15 * 60 },
+  "1d": { lookbackMs: 24 * 60 * 60 * 1000, binSeconds: 60 * 60 },
+  "7d": { lookbackMs: 7 * 24 * 60 * 60 * 1000, binSeconds: 6 * 60 * 60 },
+  "30d": { lookbackMs: 30 * 24 * 60 * 60 * 1000, binSeconds: 24 * 60 * 60 },
+  "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
+};
+
 /** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
 type UsageBucketRow = {
   bucketStart: number;
@@ -83,71 +95,6 @@ type UsageTotals = Omit<
   UsageBucketRow,
   "bucketStart" | "modelProvider" | "modelId"
 >;
-
-const RANGE_CONFIG: Record<
-  "1h" | "3h" | "1d" | "7d" | "30d" | "1y",
-  { lookbackMs: number; binSeconds: number }
-> = {
-  "1h": { lookbackMs: 60 * 60 * 1000, binSeconds: 5 * 60 },
-  "3h": { lookbackMs: 3 * 60 * 60 * 1000, binSeconds: 15 * 60 },
-  "1d": { lookbackMs: 24 * 60 * 60 * 1000, binSeconds: 60 * 60 },
-  "7d": { lookbackMs: 7 * 24 * 60 * 60 * 1000, binSeconds: 6 * 60 * 60 },
-  "30d": { lookbackMs: 30 * 24 * 60 * 60 * 1000, binSeconds: 24 * 60 * 60 },
-  "1y": { lookbackMs: 365 * 24 * 60 * 60 * 1000, binSeconds: 7 * 24 * 60 * 60 },
-};
-
-/**
- * Rollup rows for one endpoint at one grain since `startMs`. At the "5m"
- * grain this also merges legacy rows that predate the `grain` field (they are
- * 5-minute buckets by convention until `migrations.backfillUsageRollupGrains`
- * stamps them). Exported for `fetchUsageStats` and its test; not a registered
- * Convex function.
- */
-export async function collectUsageRollups(
-  ctx: QueryCtx,
-  endpointId: string,
-  grain: UsageGrain,
-  startMs: number,
-): Promise<Doc<"usageRollups">[]> {
-  const rows = await ctx.db
-    .query("usageRollups")
-    .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
-      q
-        .eq("endpointId", endpointId)
-        .eq("grain", grain)
-        .gte("bucketStart", startMs),
-    )
-    .collect();
-  if (grain !== "5m") {
-    return rows;
-  }
-
-  // Pre-backfill legacy rows have no grain and live only under the old index.
-  const legacy = await ctx.db
-    .query("usageRollups")
-    .withIndex("by_endpointId_and_bucketStart", (q) =>
-      q.eq("endpointId", endpointId).gte("bucketStart", startMs),
-    )
-    .collect();
-
-  return [...rows, ...legacy.filter((row) => row.grain === undefined)];
-}
-
-/**
- * Rollup grain to read for a display bin: bins under an hour need "5m" rows,
- * under a day "hour" rows, and a day or wider "day" rows. Keeps long ranges
- * from collecting every 5-minute bucket.
- */
-export function usageGrainForBinSeconds(binSeconds: number): UsageGrain {
-  if (binSeconds < 60 * 60) {
-    return "5m";
-  }
-  if (binSeconds < 24 * 60 * 60) {
-    return "hour";
-  }
-
-  return "day";
-}
 
 /**
  * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
@@ -220,6 +167,59 @@ export const fetchUsageStats = query({
     return { ...base, buckets: buckets, totals: totals };
   },
 });
+
+/**
+ * Rollup rows for one endpoint at one grain since `startMs`. At the "5m"
+ * grain this also merges legacy rows that predate the `grain` field (they are
+ * 5-minute buckets by convention until `migrations.backfillUsageRollupGrains`
+ * stamps them). Exported for `fetchUsageStats` and its test; not a registered
+ * Convex function.
+ */
+export async function collectUsageRollups(
+  ctx: QueryCtx,
+  endpointId: string,
+  grain: UsageGrain,
+  startMs: number,
+): Promise<Doc<"usageRollups">[]> {
+  const rows = await ctx.db
+    .query("usageRollups")
+    .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
+      q
+        .eq("endpointId", endpointId)
+        .eq("grain", grain)
+        .gte("bucketStart", startMs),
+    )
+    .collect();
+  if (grain !== "5m") {
+    return rows;
+  }
+
+  // Pre-backfill legacy rows have no grain and live only under the old index.
+  const legacy = await ctx.db
+    .query("usageRollups")
+    .withIndex("by_endpointId_and_bucketStart", (q) =>
+      q.eq("endpointId", endpointId).gte("bucketStart", startMs),
+    )
+    .collect();
+
+  return [...rows, ...legacy.filter((row) => row.grain === undefined)];
+}
+
+/**
+ * Rollup grain to read for a display bin: bins under an hour need "5m" rows,
+ * under a day "hour" rows, and a day or wider "day" rows. Keeps long ranges
+ * from collecting every 5-minute bucket.
+ */
+export function usageGrainForBinSeconds(binSeconds: number): UsageGrain {
+  if (binSeconds < 60 * 60) {
+    return "5m";
+  }
+  if (binSeconds < 24 * 60 * 60) {
+    return "hour";
+  }
+
+  return "day";
+}
 
 function aggregateUsage(
   rows: UsageBucketRow[],
