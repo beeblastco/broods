@@ -793,6 +793,32 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(execCalls().every((c) => c.path.includes("/sbx_new/"))).toBe(true);
   });
 
+  it("retires a reserved sandbox workdir reports as deleted, without deleting it twice", async (): Promise<void> => {
+    storedSandboxExternalId = "sbx_stored";
+    reconnectState = "deleted";
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    await executor.run({
+      code: "echo again",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    // workdir keeps the deleted record and refuses a second delete, so release only
+    // drops the row; the exec then lands on a fresh sandbox instead of the deleted
+    // one's 409.
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(deleteSandboxInstanceMock).toHaveBeenCalled();
+    expect(
+      fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
+    ).toBe(true);
+    expect(execCalls().every((c) => c.path.includes("/sbx_new/"))).toBe(true);
+  });
+
   it("reports a failed sandbox as error with workdir's reason", async (): Promise<void> => {
     storedSandboxExternalId = "sbx_stored";
     reconnectState = "failed";

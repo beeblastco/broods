@@ -350,7 +350,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       (await getSandboxExternalId("sandbox", key));
     if (!externalId) return;
     try {
-      await (await this.#client.sandboxes.get(externalId)).delete();
+      const sandbox = await this.#client.sandboxes.get(externalId);
+      // workdir keeps the record of a deleted sandbox and refuses a second delete.
+      if (mapWorkdirState(sandbox.state) !== "terminating")
+        await sandbox.delete();
     } catch (err) {
       // Already gone => safe to forget. Wrong creds / transient => propagate so a
       // caller iterating multiple configs can try the next one.
@@ -700,10 +703,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // A reserved sandbox idles into `stopped`/`standby`; resume it before use.
   // (`standby` auto-resumes on exec, but resuming an explicit `stopped` is not.)
   // A `failed` one cannot be resumed at all (exec answers 409, only delete is
-  // allowed), so it is reported gone rather than handed back.
+  // allowed) and workdir keeps a `deleted` record that answers 409 to everything,
+  // so both are reported gone rather than handed back.
   async #reconnect(externalId: string): Promise<Sandbox> {
     const sandbox = await this.#client.sandboxes.get(externalId);
-    if (mapWorkdirState(sandbox.state) === "error") {
+    const state = mapWorkdirState(sandbox.state);
+    if (state === "error" || state === "terminating") {
       const reason = workdirRecordError(sandbox);
       throw new SandboxGoneError(
         `workdir sandbox ${externalId} is ${sandbox.state}${reason ? `: ${reason}` : ""}`,
