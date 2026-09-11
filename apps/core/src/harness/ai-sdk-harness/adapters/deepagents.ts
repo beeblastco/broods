@@ -10,7 +10,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicOrVercelAuthEnv,
@@ -22,7 +21,6 @@ export function createConfiguredDeepAgentsAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
   const harness = agentConfig.harness!;
-  const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   if (providerName !== "anthropic" && providerName !== "vercel") {
     throw new Error(
@@ -33,7 +31,6 @@ export function createConfiguredDeepAgentsAdapter(
 
   return createDeepAgents({
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
-    model: model,
     recursionLimit: agentConfig.agent?.maxTurn,
     startupTimeoutMs: harness.startupTimeoutMs,
   });
