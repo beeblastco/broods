@@ -10,6 +10,15 @@ import {
 import { useReactFlow } from "@xyflow/react";
 import type { ReactNode } from "react";
 
+/**
+ * How the canvas frames the whole architecture, on first paint and on every
+ * press of the fit-view control. ReactFlow reads a bare `padding` number as a
+ * fraction of the viewport, so 0.1 leaves a tenth of the frame as margin and
+ * the architecture fills the rest. `maxZoom` caps how far a one-node stage
+ * blows its card up.
+ */
+export const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 0.1 } as const;
+
 /** Top-left corners of the four cells in the tidy icon's 2x2 grid. */
 const TIDY_ICON_CELLS = [
   { x: 1.5, y: 1.5 },
@@ -52,7 +61,7 @@ export function CanvasControls({
         <div className="mx-1.5 my-0.5 border-t border-border" />
         <ControlButton
           label="Center the whole architecture"
-          onClick={() => fitView()}
+          onClick={() => fitView(FIT_VIEW_OPTIONS)}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path
