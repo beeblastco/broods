@@ -452,21 +452,22 @@ async function handleObservabilitySubscribe(
         scope,
         stream,
         state,
+        run,
         liveOnly,
         getNatsConnection,
       );
+  if (state.runs[stream] !== run) {
+    // Superseded while the consumer opened: the newer subscribe owns the
+    // stream, so neither this consumer nor its failure may reach it.
+    live?.unsubscribe();
+
+    return;
+  }
   if (!live) {
     sendObs(socket, {
       type: "error",
       error: "Live observability transport is unavailable.",
     });
-
-    return;
-  }
-  if (state.runs[stream] !== run) {
-    // Superseded while the consumer opened: the newer subscribe owns the
-    // stream, so this consumer must not relay or backfill into it.
-    live.unsubscribe();
 
     return;
   }
@@ -721,11 +722,15 @@ async function fetchTempoTrace(
   return tempoTraceRowsFromResponse(await response.json(), traceId);
 }
 
+// Opens the NATS consumer for `run`, the stream generation the subscribe holds.
+// Null when the transport is unavailable, or when a newer subscribe took the
+// stream while the consumer opened: then it is stopped before it relays a line.
 async function startLiveSubscription(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
-  stream: "logs" | "traces",
+  stream: ObservabilityStream,
   state: ObservabilitySocketState,
+  run: number,
   liveOnly: boolean,
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<LiveSubscription | null> {
@@ -741,6 +746,11 @@ async function startLiveSubscription(
         liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS,
       ).toISOString(),
     });
+    if (state.runs[stream] !== run) {
+      messages.stop();
+
+      return null;
+    }
     void relayNatsMessages(socket, messages, stream, state);
 
     return { unsubscribe: (): void => messages.stop() };
@@ -800,6 +810,8 @@ function startSandboxLogPoll(
         },
         true,
       );
+      // Unsubscribed while Loki answered: the rows belong to nobody now.
+      if (stopped) return;
       for (const [key, ns] of seen) if (ns < floorNs) seen.delete(key);
       for (const entry of unseen(rows))
         sendObs(socket, { type: "log", entry: entry });
@@ -824,6 +836,7 @@ function startSandboxLogPoll(
           },
           true,
         );
+        if (stopped) return;
         sendObs(socket, {
           type: "backfill",
           stream: "logs",
@@ -831,6 +844,7 @@ function startSandboxLogPoll(
         });
       } catch (error) {
         console.error("observability sandbox backfill failed:", error);
+        if (stopped) return;
         sendObs(socket, {
           type: "backfill",
           stream: "logs",

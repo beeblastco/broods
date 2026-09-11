@@ -11,6 +11,14 @@ import { afterAll, beforeEach, expect, it, mock } from "bun:test";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
 const e2bKillMock = mock(async (_sandboxId: string) => {});
+const claimSandboxInstanceMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+    _externalId: string,
+    _accountId: string | undefined,
+  ): Promise<boolean> => true,
+);
 const deleteSandboxInstanceMock = mock(
   async (
     _provider: string,
@@ -38,7 +46,7 @@ mock.module("e2b", () => ({
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: mock(async () => null),
   getSandboxReservationRecord: mock(async () => null),
-  claimSandboxInstance: mock(async () => true),
+  claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: mock(async () => {}),
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
@@ -62,6 +70,7 @@ afterAll(() => {
 
 beforeEach(() => {
   e2bKillMock.mockClear();
+  claimSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   removeSandboxInstanceMock.mockClear();
 });
@@ -89,6 +98,10 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
   // so only the confirmed one goes, and only while it still names that machine.
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
     ["acct-1", "key-b", "sbx-b"],
+  ]);
+  // The failed one gets its row back, so the sweeper can defer the retry.
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "sbx-a", "acct-1"],
   ]);
 });
 

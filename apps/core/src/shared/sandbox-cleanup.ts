@@ -6,7 +6,10 @@
 
 import { DaytonaSandboxExecutor } from "../harness/sandbox/daytona-executor.ts";
 import { E2BSandboxExecutor } from "../harness/sandbox/e2b-executor.ts";
-import { deleteSandboxInstance } from "../harness/sandbox/instance-store.ts";
+import {
+  claimSandboxInstance,
+  deleteSandboxInstance,
+} from "../harness/sandbox/instance-store.ts";
 import { MicrovmSandboxExecutor } from "../harness/sandbox/microvm-executor.ts";
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { VercelSandboxExecutor } from "../harness/sandbox/vercel-executor.ts";
@@ -34,7 +37,9 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
  * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
  * to the machine since the listing refreshed the deadline, and tearing it down
  * under that run would lose its sandbox. Only once the row is taken is the machine
- * torn down, by the id the sweeper holds.
+ * torn down, by the id the sweeper holds. A teardown that fails hands the row
+ * back, so the sweeper's deferral spaces the retry out instead of the orphan
+ * listing offering the same machine every pass.
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
@@ -70,7 +75,17 @@ export async function releaseExpiredSandboxes(
       key,
       reservation.externalId,
     );
-    if (!done) continue;
+    if (!done) {
+      // The claim refuses if a run mapped the key meanwhile, which is right:
+      // that run's machine is not ours to defer.
+      await claimSandboxInstance(
+        reservation.provider,
+        key,
+        reservation.externalId,
+        accountId,
+      ).catch(() => false);
+      continue;
+    }
     released.push(reservation);
     await removeSandboxInstance(accountId, key, reservation.externalId);
   }
