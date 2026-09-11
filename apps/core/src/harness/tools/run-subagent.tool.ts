@@ -144,6 +144,29 @@ function normalizeInput(
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
+function normalizeOptionalString(
+  value: unknown,
+  name: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${name} must be a string`);
+  }
+  const normalized = value.trim();
+
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeRequiredString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+
+  return value.trim();
+}
+
 function normalizeTask(
   value: unknown,
   index: number,
@@ -183,27 +206,4 @@ function normalizeTask(
     prompt: prompt,
     ...(conversationKey ? { conversationKey: conversationKey } : {}),
   };
-}
-
-function normalizeRequiredString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
-}
-
-function normalizeOptionalString(
-  value: unknown,
-  name: string,
-): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-  const normalized = value.trim();
-
-  return normalized.length > 0 ? normalized : undefined;
 }

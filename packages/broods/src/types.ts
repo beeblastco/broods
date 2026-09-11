@@ -23,22 +23,13 @@ export interface Agent {
   name: string;
 }
 
-export interface Sandbox {
-  sandboxId: string;
-  name: string;
-}
-
-export interface Workspace {
-  workspaceId: string;
-  name: string;
-}
-
-/** A tool call held for user approval by an `ask`-mode sandbox. */
-export interface ToolApprovalSummary {
-  approvalId: string;
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
+export interface AsyncRequestAccepted {
+  statusUrl: string;
+  statusId: string;
+  eventId: string;
+  agentId: string;
+  status?: "accepted" | "queued" | "applied" | "processing";
+  requestedMode?: "reject" | "followup" | "collect" | "steer";
 }
 
 export interface AsyncStatus {
@@ -63,15 +54,6 @@ export interface AsyncStatus {
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestion[];
-}
-
-export interface AsyncRequestAccepted {
-  statusUrl: string;
-  statusId: string;
-  eventId: string;
-  agentId: string;
-  status?: "accepted" | "queued" | "applied" | "processing";
-  requestedMode?: "reject" | "followup" | "collect" | "steer";
 }
 
 export interface Cron {
@@ -105,6 +87,11 @@ export interface CronRun {
   completedAt?: string;
 }
 
+export interface Sandbox {
+  sandboxId: string;
+  name: string;
+}
+
 export interface Skill {
   path: string;
   name: string;
@@ -113,4 +100,17 @@ export interface Skill {
     path: string;
     size?: number;
   }>;
+}
+
+/** A tool call held for user approval by an `ask`-mode sandbox. */
+export interface ToolApprovalSummary {
+  approvalId: string;
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+export interface Workspace {
+  workspaceId: string;
+  name: string;
 }

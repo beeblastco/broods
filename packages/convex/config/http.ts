@@ -162,6 +162,28 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
   }
 }
 
+/**
+ * Map a client-input error to its HTTP status. Core returned 401 for
+ * foreign-account skill paths and 404 for dangling agent references
+ * (errorResponseForError); everything else is a plain 400.
+ * @param error the recognized client-input error
+ * @returns the HTTP status core used for this message
+ */
+function clientErrorStatus(error: Error): number {
+  if (error.message.startsWith("Skill path belongs to another account:"))
+    return 401;
+  if (error.message.startsWith("Agent name already exists:")) return 409;
+  if (
+    error.message.startsWith("Skill not found:") ||
+    error.message.startsWith("Subagent not found:") ||
+    error.message.startsWith("Agent policy not found:")
+  ) {
+    return 404;
+  }
+
+  return 400;
+}
+
 async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
@@ -260,28 +282,6 @@ async function dispatchResourceRoute(
         route.name,
       );
   }
-}
-
-/**
- * Map a client-input error to its HTTP status. Core returned 401 for
- * foreign-account skill paths and 404 for dangling agent references
- * (errorResponseForError); everything else is a plain 400.
- * @param error the recognized client-input error
- * @returns the HTTP status core used for this message
- */
-function clientErrorStatus(error: Error): number {
-  if (error.message.startsWith("Skill path belongs to another account:"))
-    return 401;
-  if (error.message.startsWith("Agent name already exists:")) return 409;
-  if (
-    error.message.startsWith("Skill not found:") ||
-    error.message.startsWith("Subagent not found:") ||
-    error.message.startsWith("Agent policy not found:")
-  ) {
-    return 404;
-  }
-
-  return 400;
 }
 
 function isClientInputError(error: unknown): error is Error {

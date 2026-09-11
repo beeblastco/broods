@@ -30,44 +30,6 @@ export interface ConnectedAgentConfig {
 }
 
 /**
- * Walks edges from `nodeId` (BFS) and returns the first reachable agent
- * node's `agentConfigId`. `via` restricts intermediate node types, e.g. a
- * sandbox can only reach an agent through a workspace.
- */
-function findReachableAgentConfigId(
-  state: ReactFlowState,
-  nodeId: string | undefined,
-  via?: ReadonlyArray<string>,
-): string | undefined {
-  if (!nodeId || !state.edges || !state.nodeLookup) return undefined;
-
-  const visited = new Set<string>([nodeId]);
-  const queue: string[] = [nodeId];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const edge of state.edges) {
-      if (edge.source !== current && edge.target !== current) continue;
-
-      const next = edge.source === current ? edge.target : edge.source;
-      if (visited.has(next)) continue;
-      visited.add(next);
-
-      const node = state.nodeLookup.get(next);
-      if (!node) continue;
-      if (node.type === "agent") {
-        return node.data?.agentConfigId;
-      }
-      if (via && via.includes(node.type ?? "")) {
-        queue.push(next);
-      }
-    }
-  }
-
-  return undefined;
-}
-
-/**
  * Returns the connected agent's config plus an `updateBranch` helper that
  * writes a slice (top-level branch like "workspace" or nested path like
  * ["workspace", "sandbox"]) back through the agentConfig codec.
@@ -171,4 +133,42 @@ export function useConnectedAgentConfig(
     agentConfig: agentConfig,
     updateBranch: updateBranch,
   };
+}
+
+/**
+ * Walks edges from `nodeId` (BFS) and returns the first reachable agent
+ * node's `agentConfigId`. `via` restricts intermediate node types, e.g. a
+ * sandbox can only reach an agent through a workspace.
+ */
+function findReachableAgentConfigId(
+  state: ReactFlowState,
+  nodeId: string | undefined,
+  via?: ReadonlyArray<string>,
+): string | undefined {
+  if (!nodeId || !state.edges || !state.nodeLookup) return undefined;
+
+  const visited = new Set<string>([nodeId]);
+  const queue: string[] = [nodeId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of state.edges) {
+      if (edge.source !== current && edge.target !== current) continue;
+
+      const next = edge.source === current ? edge.target : edge.source;
+      if (visited.has(next)) continue;
+      visited.add(next);
+
+      const node = state.nodeLookup.get(next);
+      if (!node) continue;
+      if (node.type === "agent") {
+        return node.data?.agentConfigId;
+      }
+      if (via && via.includes(node.type ?? "")) {
+        queue.push(next);
+      }
+    }
+  }
+
+  return undefined;
 }

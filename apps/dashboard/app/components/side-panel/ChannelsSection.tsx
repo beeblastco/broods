@@ -32,6 +32,8 @@ type ChannelField = {
 
 type ChannelKind = { kind: string; label: string; fields: ChannelField[] };
 
+type ChannelConfig = Record<string, unknown>;
+
 /** The six broods channel kinds and their config fields (source of truth: agent-config.ts). */
 const CHANNELS: ChannelKind[] = [
   {
@@ -206,94 +208,6 @@ const CHANNELS: ChannelKind[] = [
   },
 ];
 
-type ChannelConfig = Record<string, unknown>;
-
-function readAt(config: ChannelConfig, path: string[]): unknown {
-  return path.reduce<unknown>(
-    (cursor, key) => (cursor as ChannelConfig | undefined)?.[key],
-    config,
-  );
-}
-
-/** Immutably set or delete a (possibly nested) value, pruning empty branches on delete. */
-function writeAt(
-  config: ChannelConfig,
-  path: string[],
-  value: unknown,
-): ChannelConfig {
-  const [head, ...rest] = path;
-  const next = { ...config };
-  if (rest.length === 0) {
-    if (value === undefined) delete next[head];
-    else next[head] = value;
-
-    return next;
-  }
-  const child = writeAt((next[head] as ChannelConfig) ?? {}, rest, value);
-  if (Object.keys(child).length === 0) delete next[head];
-  else next[head] = child;
-
-  return next;
-}
-
-/** Serialize a raw input string to the field's stored type, or `undefined` when empty. */
-function parseFieldValue(type: FieldType, raw: string): unknown {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  if (type === "stringList") {
-    return trimmed
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-
-  return trimmed;
-}
-
-function formatFieldValue(value: unknown): string {
-  if (Array.isArray(value)) return value.join(", ");
-
-  return value == null ? "" : String(value);
-}
-
-function SecretField({
-  defaultValue,
-  placeholder,
-  onCommit,
-}: {
-  defaultValue: string;
-  placeholder?: string;
-  onCommit: (v: string) => void;
-}): React.JSX.Element {
-  const [show, setShow] = useState(false);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type={show ? "text" : "password"}
-        defaultValue={defaultValue}
-        key={defaultValue}
-        placeholder={placeholder ?? "${ENV_NAME} or literal"}
-        className="h-7 flex-1 font-mono text-[11px]"
-        onBlur={(e) => onCommit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onCommit((e.target as HTMLInputElement).value);
-        }}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        type="button"
-        className="cursor-pointer"
-        onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide" : "Show"}
-      >
-        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </Button>
-    </div>
-  );
-}
-
 export function ChannelsSection({
   agentConfig,
   onUpdateChannel,
@@ -449,5 +363,91 @@ export function ChannelsSection({
         />
       )}
     </>
+  );
+}
+
+function formatFieldValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(", ");
+
+  return value == null ? "" : String(value);
+}
+
+/** Serialize a raw input string to the field's stored type, or `undefined` when empty. */
+function parseFieldValue(type: FieldType, raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (type === "stringList") {
+    return trimmed
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  return trimmed;
+}
+
+function readAt(config: ChannelConfig, path: string[]): unknown {
+  return path.reduce<unknown>(
+    (cursor, key) => (cursor as ChannelConfig | undefined)?.[key],
+    config,
+  );
+}
+
+/** Immutably set or delete a (possibly nested) value, pruning empty branches on delete. */
+function writeAt(
+  config: ChannelConfig,
+  path: string[],
+  value: unknown,
+): ChannelConfig {
+  const [head, ...rest] = path;
+  const next = { ...config };
+  if (rest.length === 0) {
+    if (value === undefined) delete next[head];
+    else next[head] = value;
+
+    return next;
+  }
+  const child = writeAt((next[head] as ChannelConfig) ?? {}, rest, value);
+  if (Object.keys(child).length === 0) delete next[head];
+  else next[head] = child;
+
+  return next;
+}
+
+function SecretField({
+  defaultValue,
+  placeholder,
+  onCommit,
+}: {
+  defaultValue: string;
+  placeholder?: string;
+  onCommit: (v: string) => void;
+}): React.JSX.Element {
+  const [show, setShow] = useState(false);
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        type={show ? "text" : "password"}
+        defaultValue={defaultValue}
+        key={defaultValue}
+        placeholder={placeholder ?? "${ENV_NAME} or literal"}
+        className="h-7 flex-1 font-mono text-[11px]"
+        onBlur={(e) => onCommit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onCommit((e.target as HTMLInputElement).value);
+        }}
+      />
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        type="button"
+        className="cursor-pointer"
+        onClick={() => setShow((v) => !v)}
+        aria-label={show ? "Hide" : "Show"}
+      >
+        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+      </Button>
+    </div>
   );
 }

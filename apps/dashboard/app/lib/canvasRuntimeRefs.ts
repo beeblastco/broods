@@ -23,6 +23,33 @@ export type AgentRuntimeRefs = {
   workspaces: WorkspaceRef[];
 };
 
+/**
+ * Effective-sandbox state for a workspace, resolved from the broods cascade
+ * `ws.sandbox (override) ?? config.sandbox (inherited) ?? none (read-only)`.
+ */
+export type WorkspaceSandboxState =
+  | { kind: "override"; sandboxLabels: string[] }
+  | { kind: "inherited"; sandboxLabel: string }
+  | { kind: "readonly" };
+
+/** Per-node infra annotations derived from the canvas graph for badge rendering. */
+export type CanvasInfraAnalysis = {
+  /** Workspace node id → its resolved effective-sandbox state. */
+  workspaceStates: Record<string, WorkspaceSandboxState>;
+  /** Workspace/sandbox node id → number of distinct agents that reference it. */
+  agentRefCounts: Record<string, number>;
+  /** Node id → whether an agent is reachable from it (drives the unwired badge). */
+  connectedToAgent: Record<string, boolean>;
+};
+
+/** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
+export type AgentSubagentRefs = {
+  /** Caller agent's config id. */
+  configId: Id<"agentConfigs">;
+  /** Config ids of the agents this one may call (one per outgoing `subagent` edge). */
+  calleeConfigIds: Id<"agentConfigs">[];
+};
+
 type RuntimeNode = Node<BaseNodeData> & { type?: string };
 
 // A config id is cached only once its write lands: caching before the await
@@ -75,30 +102,6 @@ export function defaultRuntimeNodeData(
   }
 
   return { label: label, status: "idle" };
-}
-
-/**
- * Effective-sandbox state for a workspace, resolved from the broods cascade
- * `ws.sandbox (override) ?? config.sandbox (inherited) ?? none (read-only)`.
- */
-export type WorkspaceSandboxState =
-  | { kind: "override"; sandboxLabels: string[] }
-  | { kind: "inherited"; sandboxLabel: string }
-  | { kind: "readonly" };
-
-/** Per-node infra annotations derived from the canvas graph for badge rendering. */
-export type CanvasInfraAnalysis = {
-  /** Workspace node id → its resolved effective-sandbox state. */
-  workspaceStates: Record<string, WorkspaceSandboxState>;
-  /** Workspace/sandbox node id → number of distinct agents that reference it. */
-  agentRefCounts: Record<string, number>;
-  /** Node id → whether an agent is reachable from it (drives the unwired badge). */
-  connectedToAgent: Record<string, boolean>;
-};
-
-/** Short display label for a runtime node, preferring the mount name. */
-function nodeLabel(node: RuntimeNode): string {
-  return (node.data.mountName ?? node.data.label ?? "").trim() || node.id;
 }
 
 /**
@@ -287,14 +290,6 @@ export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   });
 }
 
-/** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
-export type AgentSubagentRefs = {
-  /** Caller agent's config id. */
-  configId: Id<"agentConfigs">;
-  /** Config ids of the agents this one may call (one per outgoing `subagent` edge). */
-  calleeConfigIds: Id<"agentConfigs">[];
-};
-
 /**
  * Derive each agent's subagent call targets from directional `subagent` edges.
  * An edge source→target means the source agent may call the target agent, so the
@@ -360,6 +355,21 @@ function neighbors(
   return [...(adjacency.get(nodeId) ?? [])];
 }
 
+/** Short display label for a runtime node, preferring the mount name. */
+function nodeLabel(node: RuntimeNode): string {
+  return (node.data.mountName ?? node.data.label ?? "").trim() || node.id;
+}
+
+function normalizeWorkspaceName(value: string | undefined): string {
+  const normalized = (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "default";
+}
+
 // Infra nodes chain through other infra nodes; every other type counts only a
 // direct agent edge.
 function resolveAgentReachability(
@@ -413,16 +423,6 @@ function resourceIdFor(
   if (explicit) return explicit;
 
   return type === "workspace" ? `ws_${node.id}` : `sb_${node.id}`;
-}
-
-function normalizeWorkspaceName(value: string | undefined): string {
-  const normalized = (value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return normalized || "default";
 }
 
 function uniqueWorkspaceName(base: string, used: Set<string>): string {

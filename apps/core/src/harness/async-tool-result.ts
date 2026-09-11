@@ -44,6 +44,15 @@ export interface DetachedAsyncToolGroup {
   resultIds: string[];
   sealed: boolean;
 }
+export function bindAsyncToolResultSandbox(
+  resultId: string,
+  sandbox: ReservedSandbox,
+): Promise<null> {
+  return runtime.mutate("bindAsyncToolResultSandbox", {
+    resultId: resultId,
+    sandbox: sandbox,
+  });
+}
 /**
  * A one-row group sealed on insert, for a tool that settles on its own later
  * (a background job, an open question). The parent event is derived from the
@@ -68,15 +77,6 @@ export function createDetachedAsyncToolResult(options: {
     sealed: true,
   });
 }
-export function bindAsyncToolResultSandbox(
-  resultId: string,
-  sandbox: ReservedSandbox,
-): Promise<null> {
-  return runtime.mutate("bindAsyncToolResultSandbox", {
-    resultId: resultId,
-    sandbox: sandbox,
-  });
-}
 export function createPendingAsyncToolResult(options: {
   resultId: string;
   parentEventId: string;
@@ -89,14 +89,10 @@ export function createPendingAsyncToolResult(options: {
 }): Promise<boolean> {
   return runtime.mutate("createAsyncToolResult", options);
 }
-export function verifyAsyncToolCompletionToken(
+export function getAsyncToolResult(
   resultId: string,
-  completionToken: string,
-): Promise<boolean> {
-  return runtime.query("getAsyncToolToken", {
-    resultId: resultId,
-    completionToken: completionToken,
-  });
+): Promise<AsyncToolResultRecord | null> {
+  return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
@@ -114,44 +110,12 @@ export async function getDetachedAsyncToolGroup(
       }
     : null;
 }
-export async function sealDetachedAsyncToolGroup(
-  parentEventId: string,
-): Promise<DetachedAsyncToolGroup | null> {
-  const row = await runtime.mutate<DetachedAsyncToolGroup | null>(
-    "sealAsyncToolGroup",
-    { parentEventId: parentEventId },
-  );
-
-  return row
-    ? {
-        parentEventId: row.parentEventId,
-        resultIds: [...row.resultIds].sort(),
-        sealed: row.sealed,
-      }
-    : null;
-}
 export function listAsyncToolResultsByParentEvent(
   parentEventId: string,
 ): Promise<AsyncToolResultRecord[]> {
   return runtime.query("listAsyncToolResults", {
     parentEventId: parentEventId,
   });
-}
-export function getAsyncToolResult(
-  resultId: string,
-): Promise<AsyncToolResultRecord | null> {
-  return runtime.query("getAsyncToolResult", { resultId: resultId });
-}
-export async function markAsyncToolResultObserved(
-  resultId: string,
-): Promise<void> {
-  const row = await getAsyncToolResult(resultId);
-  if (row && row.status !== "processing")
-    await runtime.mutate("updateAsyncToolResult", {
-      resultId: resultId,
-      status: row.status,
-      observed: true,
-    });
 }
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
@@ -175,6 +139,33 @@ export async function markAsyncToolResultFailed(options: {
     onlyWhenProcessing: true,
   });
 }
+export async function markAsyncToolResultObserved(
+  resultId: string,
+): Promise<void> {
+  const row = await getAsyncToolResult(resultId);
+  if (row && row.status !== "processing")
+    await runtime.mutate("updateAsyncToolResult", {
+      resultId: resultId,
+      status: row.status,
+      observed: true,
+    });
+}
+export async function sealDetachedAsyncToolGroup(
+  parentEventId: string,
+): Promise<DetachedAsyncToolGroup | null> {
+  const row = await runtime.mutate<DetachedAsyncToolGroup | null>(
+    "sealAsyncToolGroup",
+    { parentEventId: parentEventId },
+  );
+
+  return row
+    ? {
+        parentEventId: row.parentEventId,
+        resultIds: [...row.resultIds].sort(),
+        sealed: row.sealed,
+      }
+    : null;
+}
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
@@ -188,5 +179,14 @@ export function settleAsyncToolResultFromCallback(options: {
     ...(options.status === "completed"
       ? { response: options.response }
       : { error: options.error ?? "Async tool call failed" }),
+  });
+}
+export function verifyAsyncToolCompletionToken(
+  resultId: string,
+  completionToken: string,
+): Promise<boolean> {
+  return runtime.query("getAsyncToolToken", {
+    resultId: resultId,
+    completionToken: completionToken,
   });
 }

@@ -234,15 +234,6 @@ export function lokiBackfillQuery(
   return [selector, ...filters].join(" | ");
 }
 
-/**
- * Quote a scope value for a LogQL label matcher or a Tempo logfmt tag. Stage
- * slugs are tenant-named, so a quote or backslash in one must stay inside
- * the string instead of ending the matcher.
- */
-export function quoteLabel(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
 export function lokiLogEntry(
   metadata: Record<string, string>,
   line: string,
@@ -310,6 +301,15 @@ export function lokiLogEntry(
     ),
     data: Object.keys(record).length > 0 ? record : metadata,
   };
+}
+
+/**
+ * Quote a scope value for a LogQL label matcher or a Tempo logfmt tag. Stage
+ * slugs are tenant-named, so a quote or backslash in one must stay inside
+ * the string instead of ending the matcher.
+ */
+export function quoteLabel(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 export function normalizeOtelId(value: unknown, byteLength: number): string {
@@ -922,6 +922,16 @@ function nowNs(): bigint {
   return BigInt(Date.now()) * NS_PER_MS;
 }
 
+/** Whether an entry is at or above the subscription's minimum level. */
+function meetsMinLevel(
+  entry: ObservabilityLogEntry,
+  minLevel: LogLevel,
+): boolean {
+  if (!isLogLevel(entry.level)) return false;
+
+  return LOG_LEVEL_ORDER[entry.level] >= LOG_LEVEL_ORDER[minLevel];
+}
+
 // Tempo's search is scoped by tag, but a matched trace's detail can carry spans
 // from other scopes, so every row is checked against the socket's scope before
 // it leaves. Both the backfill and the single-trace fetch go through here.
@@ -936,16 +946,6 @@ function rowInScope(
   );
 }
 
-/** Whether an entry is at or above the subscription's minimum level. */
-function meetsMinLevel(
-  entry: ObservabilityLogEntry,
-  minLevel: LogLevel,
-): boolean {
-  if (!isLogLevel(entry.level)) return false;
-
-  return LOG_LEVEL_ORDER[entry.level] >= LOG_LEVEL_ORDER[minLevel];
-}
-
 function optionalString(...values: unknown[]): string | undefined {
   return values.find(
     (value): value is string => typeof value === "string" && value.length > 0,
@@ -954,17 +954,6 @@ function optionalString(...values: unknown[]): string | undefined {
 
 function stringValue(...values: unknown[]): string {
   return optionalString(...values) ?? "";
-}
-
-function otelValue(value: OtelValue | undefined): unknown {
-  if (!value) return undefined;
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.intValue !== undefined) return Number(value.intValue);
-  if (value.doubleValue !== undefined) return value.doubleValue;
-  if (value.boolValue !== undefined) return value.boolValue;
-  if (value.arrayValue) return (value.arrayValue.values ?? []).map(otelValue);
-
-  return undefined;
 }
 
 function otelAttributes(
@@ -976,6 +965,17 @@ function otelAttributes(
   }
 
   return result;
+}
+
+function otelValue(value: OtelValue | undefined): unknown {
+  if (!value) return undefined;
+  if (value.stringValue !== undefined) return value.stringValue;
+  if (value.intValue !== undefined) return Number(value.intValue);
+  if (value.doubleValue !== undefined) return value.doubleValue;
+  if (value.boolValue !== undefined) return value.boolValue;
+  if (value.arrayValue) return (value.arrayValue.values ?? []).map(otelValue);
+
+  return undefined;
 }
 
 function spanKind(name: string): ObservabilitySpanRow["kind"] {

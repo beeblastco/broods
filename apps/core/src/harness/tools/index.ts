@@ -80,6 +80,14 @@ import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
 
+interface ResolvedMcpServer {
+  serverId: string;
+  serverConfig: AgentMcpEntry;
+  record: McpRecord;
+  connection: McpConnection;
+  remoteTools: RemoteMcpTool[];
+}
+
 // Runtime dependencies shared by tool factories. Model-facing input schemas
 // stay inside each individual tool file.
 export interface ToolContext {
@@ -406,20 +414,21 @@ export async function createTools(
     : tools;
 }
 
-function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
-  for (const toolName of denyTools ?? []) {
-    if (toolName in tools) {
-      delete tools[toolName];
-    }
-  }
+function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
+  const {
+    enabled: _enabled,
+    needsApproval: _needsApproval,
+    async: _async,
+    ...runtimeConfig
+  } = config;
+
+  return runtimeConfig;
 }
 
-interface ResolvedMcpServer {
-  serverId: string;
-  serverConfig: AgentMcpEntry;
-  record: McpRecord;
-  connection: McpConnection;
-  remoteTools: RemoteMcpTool[];
+function isToolEnabled(
+  config: AgentToolConfig | undefined,
+): config is AgentToolConfig {
+  return config !== undefined && config.enabled !== false;
 }
 
 /**
@@ -529,19 +538,10 @@ async function registerMcpTools(
   }
 }
 
-function isToolEnabled(
-  config: AgentToolConfig | undefined,
-): config is AgentToolConfig {
-  return config !== undefined && config.enabled !== false;
-}
-
-function externalToolRuntimeConfig(config: AgentToolConfig): AgentToolConfig {
-  const {
-    enabled: _enabled,
-    needsApproval: _needsApproval,
-    async: _async,
-    ...runtimeConfig
-  } = config;
-
-  return runtimeConfig;
+function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
+  for (const toolName of denyTools ?? []) {
+    if (toolName in tools) {
+      delete tools[toolName];
+    }
+  }
 }

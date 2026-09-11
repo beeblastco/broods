@@ -265,88 +265,6 @@ export function McpTab({
   );
 }
 
-function TransportToggle({
-  active,
-  onChange,
-}: {
-  active: "hosted" | "http";
-  onChange: (transport: "hosted" | "http") => void;
-}): React.JSX.Element {
-  return (
-    <div className="flex gap-2">
-      <Button
-        size="sm"
-        variant={active === "hosted" ? "default" : "outline"}
-        className="h-8 text-xs"
-        onClick={() => onChange("hosted")}
-      >
-        Hosted (write Node code)
-      </Button>
-      <Button
-        size="sm"
-        variant={active === "http" ? "default" : "outline"}
-        className="h-8 text-xs"
-        onClick={() => onChange("http")}
-      >
-        External URL
-      </Button>
-    </div>
-  );
-}
-
-function SavedBadge({ state }: { state: SaveState }): React.JSX.Element | null {
-  if (state.kind !== "saved") return null;
-
-  return (
-    <span className="flex items-center gap-1 text-xs text-emerald-500">
-      <Check className="size-3" />
-      {state.verified
-        ? `Verified · ${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`
-        : "Saved (probe skipped: env-ref headers)"}
-    </span>
-  );
-}
-
-/** Form state seeded from the saved row; synced during render, not an effect. */
-function useServerForm(server: Doc<"mcp"> | null | undefined): {
-  activeTransport: "hosted" | "http";
-  headersJson: string;
-  setHeadersJson: (value: string) => void;
-  setSourceCode: (value: string) => void;
-  setTransport: (value: "hosted" | "http") => void;
-  setUrl: (value: string) => void;
-  sourceCode: string;
-  url: string;
-} {
-  const [transport, setTransport] = useState<"hosted" | "http" | null>(null);
-  const [sourceCode, setSourceCode] = useState(DEFAULT_SOURCE);
-  const [url, setUrl] = useState("");
-  const [headersJson, setHeadersJson] = useState("");
-  const [syncedServer, setSyncedServer] = useState<unknown>(undefined);
-  if (server !== undefined && server !== syncedServer) {
-    setSyncedServer(server);
-    if (server) {
-      setTransport(server.transport);
-      setSourceCode(server.sourceCode ?? DEFAULT_SOURCE);
-      setUrl(server.url ?? "");
-      setHeadersJson(
-        server.headers ? JSON.stringify(server.headers, null, 2) : "",
-      );
-    }
-  }
-
-  return {
-    activeTransport: transport ?? server?.transport ?? "hosted",
-    headersJson: headersJson,
-    setHeadersJson: setHeadersJson,
-    setSourceCode: setSourceCode,
-    setTransport: setTransport,
-    setUrl: setUrl,
-    sourceCode: sourceCode,
-    url: url,
-  };
-}
-
 /** CLI-owned hosted rows: the source lives in the user's project, not here. */
 function BundleManagedNotice({
   server,
@@ -407,4 +325,86 @@ function parseHeaders(headersJson: string): Record<string, string> | undefined {
   }
 
   return parsed as Record<string, string>;
+}
+
+function SavedBadge({ state }: { state: SaveState }): React.JSX.Element | null {
+  if (state.kind !== "saved") return null;
+
+  return (
+    <span className="flex items-center gap-1 text-xs text-emerald-500">
+      <Check className="size-3" />
+      {state.verified
+        ? `Verified · ${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`
+        : "Saved (probe skipped: env-ref headers)"}
+    </span>
+  );
+}
+
+function TransportToggle({
+  active,
+  onChange,
+}: {
+  active: "hosted" | "http";
+  onChange: (transport: "hosted" | "http") => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex gap-2">
+      <Button
+        size="sm"
+        variant={active === "hosted" ? "default" : "outline"}
+        className="h-8 text-xs"
+        onClick={() => onChange("hosted")}
+      >
+        Hosted (write Node code)
+      </Button>
+      <Button
+        size="sm"
+        variant={active === "http" ? "default" : "outline"}
+        className="h-8 text-xs"
+        onClick={() => onChange("http")}
+      >
+        External URL
+      </Button>
+    </div>
+  );
+}
+
+/** Form state seeded from the saved row; synced during render, not an effect. */
+function useServerForm(server: Doc<"mcp"> | null | undefined): {
+  activeTransport: "hosted" | "http";
+  headersJson: string;
+  setHeadersJson: (value: string) => void;
+  setSourceCode: (value: string) => void;
+  setTransport: (value: "hosted" | "http") => void;
+  setUrl: (value: string) => void;
+  sourceCode: string;
+  url: string;
+} {
+  const [transport, setTransport] = useState<"hosted" | "http" | null>(null);
+  const [sourceCode, setSourceCode] = useState(DEFAULT_SOURCE);
+  const [url, setUrl] = useState("");
+  const [headersJson, setHeadersJson] = useState("");
+  const [syncedServer, setSyncedServer] = useState<unknown>(undefined);
+  if (server !== undefined && server !== syncedServer) {
+    setSyncedServer(server);
+    if (server) {
+      setTransport(server.transport);
+      setSourceCode(server.sourceCode ?? DEFAULT_SOURCE);
+      setUrl(server.url ?? "");
+      setHeadersJson(
+        server.headers ? JSON.stringify(server.headers, null, 2) : "",
+      );
+    }
+  }
+
+  return {
+    activeTransport: transport ?? server?.transport ?? "hosted",
+    headersJson: headersJson,
+    setHeadersJson: setHeadersJson,
+    setSourceCode: setSourceCode,
+    setTransport: setTransport,
+    setUrl: setUrl,
+    sourceCode: sourceCode,
+    url: url,
+  };
 }

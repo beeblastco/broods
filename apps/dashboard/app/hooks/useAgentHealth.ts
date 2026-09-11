@@ -20,25 +20,33 @@ let listenerCount = 0;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
 
-/** Browser-safe fetch timeout helper (works even when AbortSignal.timeout is unavailable). */
-async function fetchHealthWithTimeout(
-  url: string,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+/**
+ * Returns the health status of an agent based on core service reachability.
+ * @param agentConfigId agent config to check health for
+ * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy
+ */
+export function useAgentHealth(
+  agentConfigId: Id<"agentConfigs"> | undefined,
+): AgentHealthStatus {
+  const [, forceUpdate] = useState(0);
 
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
+  useEffect(() => {
+    if (!agentConfigId) return;
 
-function notifyListeners(): void {
-  for (const listener of listeners) {
-    listener();
+    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1));
+
+    return unsubscribe;
+  }, [agentConfigId]);
+
+  if (!agentConfigId) {
+    return "idle";
   }
+
+  if (healthCache.healthy === null) {
+    return "deploying";
+  }
+
+  return healthCache.healthy ? "healthy" : "unhealthy";
 }
 
 /** Fetch core service health, deduplicating concurrent requests. */
@@ -76,6 +84,27 @@ async function checkServiceHealth(): Promise<boolean> {
   return pendingCheck;
 }
 
+/** Browser-safe fetch timeout helper (works even when AbortSignal.timeout is unavailable). */
+async function fetchHealthWithTimeout(
+  url: string,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function notifyListeners(): void {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
 /** Start shared polling when the first hook mounts. */
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
@@ -93,33 +122,4 @@ function subscribe(listener: () => void): () => void {
       pollingInterval = null;
     }
   };
-}
-
-/**
- * Returns the health status of an agent based on core service reachability.
- * @param agentConfigId agent config to check health for
- * @returns AgentHealthStatus: healthy, deploying, idle, or unhealthy
- */
-export function useAgentHealth(
-  agentConfigId: Id<"agentConfigs"> | undefined,
-): AgentHealthStatus {
-  const [, forceUpdate] = useState(0);
-
-  useEffect(() => {
-    if (!agentConfigId) return;
-
-    const unsubscribe = subscribe(() => forceUpdate((n) => n + 1));
-
-    return unsubscribe;
-  }, [agentConfigId]);
-
-  if (!agentConfigId) {
-    return "idle";
-  }
-
-  if (healthCache.healthy === null) {
-    return "deploying";
-  }
-
-  return healthCache.healthy ? "healthy" : "unhealthy";
 }

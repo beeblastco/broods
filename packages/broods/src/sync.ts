@@ -585,36 +585,6 @@ export function diffManifests(
   return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
 }
 
-function snapshotResource(
-  resource: { kind: string; config: unknown } & Record<string, unknown>,
-): unknown {
-  const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (resource.kind !== "skill" && resource.kind !== "hook") return normalized;
-
-  return {
-    ...normalized,
-    config: stripArtifactContent(normalized.config),
-  };
-}
-
-function renameSnapshot(
-  resource: { kind: string; config: unknown } & Record<string, unknown>,
-): unknown {
-  const normalized = snapshotResource(resource) as Record<string, unknown>;
-  const { name: _name, ...rest } = normalized;
-
-  return rest;
-}
-
-function isRenamableKind(kind: string): boolean {
-  return (
-    kind === "agent" ||
-    kind === "workspace" ||
-    kind === "sandbox" ||
-    kind === "policy"
-  );
-}
-
 function diffSortKey(entry: DiffEntry): string {
   const rank: Record<DiffOperation, number> = {
     create: 0,
@@ -624,6 +594,15 @@ function diffSortKey(entry: DiffEntry): string {
   };
 
   return `${rank[entry.operation]}:${entry.kind}:${entry.previousName ?? ""}:${entry.name}`;
+}
+
+function isRenamableKind(kind: string): boolean {
+  return (
+    kind === "agent" ||
+    kind === "workspace" ||
+    kind === "sandbox" ||
+    kind === "policy"
+  );
 }
 
 function normalizeEnvRefs(value: unknown): unknown {
@@ -645,23 +624,25 @@ function normalizeEnvRefs(value: unknown): unknown {
   return value;
 }
 
-function stripArtifactContent(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripArtifactContent);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
-        if (key === "contentBase64" || key === "bundle") return [];
+function renameSnapshot(
+  resource: { kind: string; config: unknown } & Record<string, unknown>,
+): unknown {
+  const normalized = snapshotResource(resource) as Record<string, unknown>;
+  const { name: _name, ...rest } = normalized;
 
-        return [[key, stripArtifactContent(entry)]];
-      }),
-    );
-  }
-
-  return value;
+  return rest;
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
+function snapshotResource(
+  resource: { kind: string; config: unknown } & Record<string, unknown>,
+): unknown {
+  const normalized = normalizeEnvRefs(resource) as typeof resource;
+  if (resource.kind !== "skill" && resource.kind !== "hook") return normalized;
+
+  return {
+    ...normalized,
+    config: stripArtifactContent(normalized.config),
+  };
 }
 
 function sortValue(value: unknown): unknown {
@@ -677,22 +658,23 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * A 404 that is not JSON came from the router, not the handler: the deployment
- * predates the route. Says so, rather than letting it read as "not found".
- */
-function assertRouteMounted(
-  response: Response,
-  route: string,
-  command: string,
-): void {
-  if (response.status !== 404) return;
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (contentType.includes("application/json")) return;
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortValue(value));
+}
 
-  throw new Error(
-    `This broods deployment has no ${route} route yet. Update the backend to use \`${command}\`.`,
-  );
+function stripArtifactContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripArtifactContent);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, entry]) => {
+        if (key === "contentBase64" || key === "bundle") return [];
+
+        return [[key, stripArtifactContent(entry)]];
+      }),
+    );
+  }
+
+  return value;
 }
 
 /**
@@ -713,6 +695,24 @@ async function assertOk(response: Response, message: string): Promise<void> {
   }
 
   throw new Error(`${message}: ${response.status} ${reason}`);
+}
+
+/**
+ * A 404 that is not JSON came from the router, not the handler: the deployment
+ * predates the route. Says so, rather than letting it read as "not found".
+ */
+function assertRouteMounted(
+  response: Response,
+  route: string,
+  command: string,
+): void {
+  if (response.status !== 404) return;
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (contentType.includes("application/json")) return;
+
+  throw new Error(
+    `This broods deployment has no ${route} route yet. Update the backend to use \`${command}\`.`,
+  );
 }
 
 /** The bundle source when the MCP resource must be externalized, else null. */

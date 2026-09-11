@@ -224,6 +224,17 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   }
 }
 
+function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
+  const options = isPlainObject(config.options) ? config.options : {};
+  const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
+
+  return {
+    ...(apiKey ? { apiKey: apiKey } : {}),
+    timeoutMs:
+      resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
+  };
+}
+
 function e2bBackgroundCommand(
   request: SandboxRunRequest,
   jobId: string,
@@ -244,25 +255,6 @@ function e2bBackgroundCommand(
     `rm -f ${shellQuote(logFile)}`,
     `exit "$__rc"`,
   ].join("\n");
-}
-
-function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
-  const options = isPlainObject(config.options) ? config.options : {};
-  const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
-
-  return {
-    ...(apiKey ? { apiKey: apiKey } : {}),
-    timeoutMs:
-      resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
-  };
-}
-
-// e2b's bundle require()s chalk while the pi harness imports that same chalk as
-// ESM, and one eager graph holding both is a race. Load it only when e2b is used.
-async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
-  const { Sandbox } = await import("e2b");
-
-  return Sandbox;
 }
 
 function e2bCreateOptions(
@@ -286,4 +278,12 @@ function e2bCreateOptions(
         }
       : {}),
   };
+}
+
+// e2b's bundle require()s chalk while the pi harness imports that same chalk as
+// ESM, and one eager graph holding both is a race. Load it only when e2b is used.
+async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
+  const { Sandbox } = await import("e2b");
+
+  return Sandbox;
 }

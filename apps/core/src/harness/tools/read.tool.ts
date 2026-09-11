@@ -29,38 +29,13 @@ import {
 } from "../transcribe.ts";
 import { toolError, toolText } from "./utils.ts";
 
+const DEFAULT_LIMIT = 2000;
+
 interface ReadInput {
   file_path: string;
   offset?: number;
   limit?: number;
   workspace?: string;
-}
-
-const DEFAULT_LIMIT = 2000;
-
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-
-  return {
-    type: "object",
-    properties: {
-      file_path: {
-        type: "string",
-        description: "Path to the file, relative to the workspace root.",
-      },
-      offset: {
-        type: "integer",
-        description: "1-based line number to start reading from.",
-      },
-      limit: {
-        type: "integer",
-        description: `Maximum number of lines to read (default ${DEFAULT_LIMIT}).`,
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["file_path"],
-    additionalProperties: false,
-  };
 }
 
 export default function readTool(context: SandboxToolContext): ToolSet {
@@ -117,6 +92,31 @@ Usage notes:
         }
       },
     }),
+  };
+}
+
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
+  return {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "Path to the file, relative to the workspace root.",
+      },
+      offset: {
+        type: "integer",
+        description: "1-based line number to start reading from.",
+      },
+      limit: {
+        type: "integer",
+        description: `Maximum number of lines to read (default ${DEFAULT_LIMIT}).`,
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["file_path"],
+    additionalProperties: false,
   };
 }
 

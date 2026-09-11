@@ -37,6 +37,27 @@ const NO_HOOKS: HookDispatcher = {
   },
 };
 
+/**
+ * Runs channel.message.sending hooks on an outbound reply. Returns null when a
+ * hook drops the message, otherwise the (possibly rewritten) text. Shared by
+ * every reply-delivery path so outbound policy cannot silently miss one.
+ */
+export async function applyMessageSendingHook(
+  hooks: HookDispatcher,
+  channel: string,
+  text: string,
+): Promise<string | null> {
+  const mutation = await hooks.runMutation("channel.message.sending", {
+    channel: channel,
+    text: text,
+  });
+  if (mutation?.drop === true) {
+    return null;
+  }
+
+  return typeof mutation?.text === "string" ? mutation.text : text;
+}
+
 /** Builds the dispatcher for one agent run, resolving referenced hook records once. */
 export async function createAgentHookDispatcher(
   accountId: string | undefined,
@@ -105,32 +126,6 @@ export function createHookDispatcher(
   };
 }
 
-function buildEventIndex(
-  refs: AgentCodeHookConfig[],
-  records: AccountHookRecord[],
-): Map<AgentHookEventName, AccountHookRecord[]> {
-  const byId = new Map(records.map((record) => [record.hookId, record]));
-  const index = new Map<AgentHookEventName, AccountHookRecord[]>();
-  for (const ref of refs) {
-    const record = byId.get(ref.hookId);
-    if (!record || record.status !== "active") {
-      continue;
-    }
-    // A ref may narrow the bundle's declared events; the effective set is the
-    // intersection so a hook only fires for events it actually handles.
-    const events = ref.events
-      ? record.events.filter((event) => ref.events!.includes(event))
-      : record.events;
-    for (const event of events) {
-      const list = index.get(event) ?? [];
-      list.push(record);
-      index.set(event, list);
-    }
-  }
-
-  return index;
-}
-
 /**
  * Wraps every executable tool so a `tool.call.started` hook can deny or edit its
  * args before it runs and a `tool.result` hook can transform its output after.
@@ -176,25 +171,30 @@ export function wrapToolsWithHooks(
   }));
 }
 
-/**
- * Runs channel.message.sending hooks on an outbound reply. Returns null when a
- * hook drops the message, otherwise the (possibly rewritten) text. Shared by
- * every reply-delivery path so outbound policy cannot silently miss one.
- */
-export async function applyMessageSendingHook(
-  hooks: HookDispatcher,
-  channel: string,
-  text: string,
-): Promise<string | null> {
-  const mutation = await hooks.runMutation("channel.message.sending", {
-    channel: channel,
-    text: text,
-  });
-  if (mutation?.drop === true) {
-    return null;
+function buildEventIndex(
+  refs: AgentCodeHookConfig[],
+  records: AccountHookRecord[],
+): Map<AgentHookEventName, AccountHookRecord[]> {
+  const byId = new Map(records.map((record) => [record.hookId, record]));
+  const index = new Map<AgentHookEventName, AccountHookRecord[]>();
+  for (const ref of refs) {
+    const record = byId.get(ref.hookId);
+    if (!record || record.status !== "active") {
+      continue;
+    }
+    // A ref may narrow the bundle's declared events; the effective set is the
+    // intersection so a hook only fires for events it actually handles.
+    const events = ref.events
+      ? record.events.filter((event) => ref.events!.includes(event))
+      : record.events;
+    for (const event of events) {
+      const list = index.get(event) ?? [];
+      list.push(record);
+      index.set(event, list);
+    }
   }
 
-  return typeof mutation?.text === "string" ? mutation.text : text;
+  return index;
 }
 
 async function loadAgentHooks(

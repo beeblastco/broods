@@ -38,193 +38,6 @@ const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "DEBUG", label: "DEBUG" },
 ];
 
-function formatDateTime(ms: number): { date: string; time: string } {
-  const d = new Date(ms);
-  const date = d
-    .toLocaleDateString([], { month: "short", day: "2-digit" })
-    .toUpperCase();
-  const time = d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-  const ms3 = String(d.getMilliseconds()).padStart(3, "0");
-
-  return { date: date, time: `${time}.${ms3.slice(0, 2)}` };
-}
-
-function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/** `pretty` is the raw string unchanged when the message is not JSON. */
-function parseLogMessage(raw: string): {
-  summary: string;
-  pretty: string;
-  eventType?: string;
-} {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      const pretty = JSON.stringify(parsed, null, 2);
-      const summary =
-        (typeof parsed?.message === "string" && parsed.message) ||
-        (typeof parsed?.error === "string" && parsed.error) ||
-        (typeof parsed?.eventType === "string" && parsed.eventType) ||
-        trimmed.slice(0, 200);
-      const eventType =
-        typeof parsed?.eventType === "string" ? parsed.eventType : undefined;
-
-      return { summary: summary, pretty: pretty, eventType: eventType };
-    } catch {
-      // fall through
-    }
-  }
-
-  return { summary: trimmed.slice(0, 200), pretty: trimmed };
-}
-
-/** The region and account suffix is dead weight in a dense table. */
-function shortFunctionName(name: string): string {
-  return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
-}
-
-// Both themes per level: the 400 shades only clear WCAG AA on the dark card,
-// the 700 shades only on the light one.
-function levelColor(level: ObservabilityLogEntry["level"]): string {
-  if (level === "ERROR") return "text-red-700 dark:text-red-400";
-  if (level === "WARN") return "text-amber-700 dark:text-amber-400";
-  if (level === "INFO") return "text-sky-700 dark:text-sky-400";
-
-  return "text-muted-foreground";
-}
-
-function levelDot(level: ObservabilityLogEntry["level"]): string {
-  if (level === "ERROR") return "bg-red-400";
-  if (level === "WARN") return "bg-amber-400";
-  if (level === "INFO") return "bg-sky-400";
-
-  return "bg-muted-foreground/60";
-}
-
-function LogRow({
-  entry,
-  isSelected,
-  onSelect,
-}: {
-  entry: ObservabilityLogEntry;
-  isSelected: boolean;
-  onSelect: () => void;
-}): React.JSX.Element {
-  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
-  const { date, time } = formatDateTime(entry.ts);
-
-  return (
-    <tr
-      onClick={onSelect}
-      className={cn(
-        "cursor-pointer border-b border-border/40 hover:bg-accent/20 transition-colors",
-        isSelected && "bg-accent/30",
-      )}
-    >
-      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
-        <span className="text-muted-foreground mr-1">{date}</span>
-        {time}
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap">
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 font-medium",
-            levelColor(entry.level),
-          )}
-        >
-          {entry.level === "ERROR" || entry.level === "WARN" ? (
-            <AlertTriangle className="size-3" />
-          ) : (
-            <span
-              className={cn("size-1.5 rounded-full", levelDot(entry.level))}
-            />
-          )}
-          {entry.level}
-        </span>
-      </td>
-      <td
-        className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
-        title={entry.endpointId}
-      >
-        {entry.service
-          ? shortFunctionName(entry.service)
-          : entry.endpointId
-            ? shortFunctionName(entry.endpointId)
-            : (entry.agentId ?? "—")}
-      </td>
-      <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
-        {(parsed.eventType ?? entry.eventType) && (
-          <Badge
-            variant="secondary"
-            className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
-          >
-            {parsed.eventType ?? entry.eventType}
-          </Badge>
-        )}
-        {parsed.summary}
-      </td>
-    </tr>
-  );
-}
-
-function LogDetails({
-  entry,
-  onViewTrace,
-}: {
-  entry: ObservabilityLogEntry;
-  onViewTrace: (traceId: string) => void;
-}): React.JSX.Element {
-  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
-  // A line logged outside any task run carries no trace, or the all-zero
-  // sentinel; neither has anything to open on the Tracing tab.
-  const traceId = isTraceId(entry.traceId) ? entry.traceId : null;
-
-  return (
-    <div className="flex flex-col gap-2">
-      {traceId && (
-        <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-          <span className="truncate">trace: {traceId}</span>
-          <button
-            type="button"
-            onClick={() => onViewTrace(traceId)}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
-          >
-            View trace
-            <ArrowUpRight className="size-3" />
-          </button>
-        </div>
-      )}
-      {entry.endpointId && (
-        <div
-          className="text-[11px] text-muted-foreground break-all"
-          title={entry.endpointId}
-        >
-          {entry.endpointId}
-        </div>
-      )}
-      <pre
-        className={cn(
-          "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 overflow-auto text-xs",
-          levelColor(entry.level),
-        )}
-      >
-        {parsed.pretty}
-      </pre>
-    </div>
-  );
-}
-
 export function MonitoringPanel({
   projectSlug,
   stageSlug,
@@ -411,5 +224,192 @@ export function MonitoringPanel({
         )}
       </div>
     </div>
+  );
+}
+
+function formatDateTime(ms: number): { date: string; time: string } {
+  const d = new Date(ms);
+  const date = d
+    .toLocaleDateString([], { month: "short", day: "2-digit" })
+    .toUpperCase();
+  const time = d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const ms3 = String(d.getMilliseconds()).padStart(3, "0");
+
+  return { date: date, time: `${time}.${ms3.slice(0, 2)}` };
+}
+
+// Both themes per level: the 400 shades only clear WCAG AA on the dark card,
+// the 700 shades only on the light one.
+function levelColor(level: ObservabilityLogEntry["level"]): string {
+  if (level === "ERROR") return "text-red-700 dark:text-red-400";
+  if (level === "WARN") return "text-amber-700 dark:text-amber-400";
+  if (level === "INFO") return "text-sky-700 dark:text-sky-400";
+
+  return "text-muted-foreground";
+}
+
+function levelDot(level: ObservabilityLogEntry["level"]): string {
+  if (level === "ERROR") return "bg-red-400";
+  if (level === "WARN") return "bg-amber-400";
+  if (level === "INFO") return "bg-sky-400";
+
+  return "bg-muted-foreground/60";
+}
+
+/** `pretty` is the raw string unchanged when the message is not JSON. */
+function parseLogMessage(raw: string): {
+  summary: string;
+  pretty: string;
+  eventType?: string;
+} {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const pretty = JSON.stringify(parsed, null, 2);
+      const summary =
+        (typeof parsed?.message === "string" && parsed.message) ||
+        (typeof parsed?.error === "string" && parsed.error) ||
+        (typeof parsed?.eventType === "string" && parsed.eventType) ||
+        trimmed.slice(0, 200);
+      const eventType =
+        typeof parsed?.eventType === "string" ? parsed.eventType : undefined;
+
+      return { summary: summary, pretty: pretty, eventType: eventType };
+    } catch {
+      // fall through
+    }
+  }
+
+  return { summary: trimmed.slice(0, 200), pretty: trimmed };
+}
+
+/** The region and account suffix is dead weight in a dense table. */
+function shortFunctionName(name: string): string {
+  return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
+}
+
+function toEpochMs(value: string): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function LogDetails({
+  entry,
+  onViewTrace,
+}: {
+  entry: ObservabilityLogEntry;
+  onViewTrace: (traceId: string) => void;
+}): React.JSX.Element {
+  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
+  // A line logged outside any task run carries no trace, or the all-zero
+  // sentinel; neither has anything to open on the Tracing tab.
+  const traceId = isTraceId(entry.traceId) ? entry.traceId : null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {traceId && (
+        <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
+          <span className="truncate">trace: {traceId}</span>
+          <button
+            type="button"
+            onClick={() => onViewTrace(traceId)}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
+          >
+            View trace
+            <ArrowUpRight className="size-3" />
+          </button>
+        </div>
+      )}
+      {entry.endpointId && (
+        <div
+          className="text-[11px] text-muted-foreground break-all"
+          title={entry.endpointId}
+        >
+          {entry.endpointId}
+        </div>
+      )}
+      <pre
+        className={cn(
+          "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 overflow-auto text-xs",
+          levelColor(entry.level),
+        )}
+      >
+        {parsed.pretty}
+      </pre>
+    </div>
+  );
+}
+
+function LogRow({
+  entry,
+  isSelected,
+  onSelect,
+}: {
+  entry: ObservabilityLogEntry;
+  isSelected: boolean;
+  onSelect: () => void;
+}): React.JSX.Element {
+  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
+  const { date, time } = formatDateTime(entry.ts);
+
+  return (
+    <tr
+      onClick={onSelect}
+      className={cn(
+        "cursor-pointer border-b border-border/40 hover:bg-accent/20 transition-colors",
+        isSelected && "bg-accent/30",
+      )}
+    >
+      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
+        <span className="text-muted-foreground mr-1">{date}</span>
+        {time}
+      </td>
+      <td className="px-3 py-1.5 whitespace-nowrap">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 font-medium",
+            levelColor(entry.level),
+          )}
+        >
+          {entry.level === "ERROR" || entry.level === "WARN" ? (
+            <AlertTriangle className="size-3" />
+          ) : (
+            <span
+              className={cn("size-1.5 rounded-full", levelDot(entry.level))}
+            />
+          )}
+          {entry.level}
+        </span>
+      </td>
+      <td
+        className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
+        title={entry.endpointId}
+      >
+        {entry.service
+          ? shortFunctionName(entry.service)
+          : entry.endpointId
+            ? shortFunctionName(entry.endpointId)
+            : (entry.agentId ?? "—")}
+      </td>
+      <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
+        {(parsed.eventType ?? entry.eventType) && (
+          <Badge
+            variant="secondary"
+            className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
+          >
+            {parsed.eventType ?? entry.eventType}
+          </Badge>
+        )}
+        {parsed.summary}
+      </td>
+    </tr>
   );
 }

@@ -32,20 +32,18 @@ export const DEFAULT_RELEASE_GRACE_SECONDS = 7 * 24 * 60 * 60;
 // cannot pin a sandbox busy (and defeat scale-to-0) with unbounded jobs.
 export const MAX_CONCURRENT_BACKGROUND_JOBS = 10;
 
-/**
- * The managed workspace bucket key prefix for a namespace. One source of truth for
- * the on-bucket layout, shared by the harness-side S3 reads/writes and the sandbox's
- * own mount so they always see the same files. A namespace's files live directly
- * under `<namespace>/`, the namespace being the tenant-isolation boundary the mount
- * session policy scopes to. Callers append their own trailing `/` and sub-path.
- */
-export function workspaceNamespacePrefix(namespace: string): string {
-  return namespace;
-}
-
 export interface ResolvedSandboxLifecycle {
   idleTimeoutSeconds: number;
   maxLifetimeSeconds?: number;
+}
+
+export interface WorkspaceSandboxLimits {
+  defaultTimeoutSeconds: number;
+  defaultOutputLimitBytes: number;
+  maxTimeoutSeconds: number;
+  // Undefined => no harness-imposed memory ceiling (operator-sized providers).
+  maxMemoryLimitMb?: number;
+  maxOutputLimitBytes: number;
 }
 
 /**
@@ -66,13 +64,15 @@ export function resolveSandboxLifecycle(lifecycle?: {
   };
 }
 
-export interface WorkspaceSandboxLimits {
-  defaultTimeoutSeconds: number;
-  defaultOutputLimitBytes: number;
-  maxTimeoutSeconds: number;
-  // Undefined => no harness-imposed memory ceiling (operator-sized providers).
-  maxMemoryLimitMb?: number;
-  maxOutputLimitBytes: number;
+/**
+ * The managed workspace bucket key prefix for a namespace. One source of truth for
+ * the on-bucket layout, shared by the harness-side S3 reads/writes and the sandbox's
+ * own mount so they always see the same files. A namespace's files live directly
+ * under `<namespace>/`, the namespace being the tenant-isolation boundary the mount
+ * session policy scopes to. Callers append their own trailing `/` and sub-path.
+ */
+export function workspaceNamespacePrefix(namespace: string): string {
+  return namespace;
 }
 
 /**

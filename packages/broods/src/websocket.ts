@@ -370,6 +370,14 @@ export class BroodsWebSocketClient {
   }
 }
 
+export function toWebSocketBaseUrl(url: string): string {
+  const parsed = new URL(normalizeWebSocketServiceUrl(url));
+  if (parsed.protocol === "https:") parsed.protocol = "wss:";
+  if (parsed.protocol === "http:") parsed.protocol = "ws:";
+
+  return stripTrailingSlash(parsed.toString());
+}
+
 /**
  * The credential travels as a `Sec-WebSocket-Protocol` entry rather than in
  * the URL, so it never lands in proxy or access logs. The gateway answers
@@ -378,6 +386,55 @@ export class BroodsWebSocketClient {
  */
 export function webSocketSubprotocols(apiKey: string): string[] {
   return ["broods.v1", `broods.token.${apiKey}`];
+}
+
+export { BroodsWebSocketClient as WebSocketClient };
+export { BroodsWebSocketClient as WebsocketClient };
+export type {
+  WebSocketClientCancelMessage,
+  WebSocketClientAttachMessage,
+  WebSocketClientControlMessage,
+  WebSocketClientExecuteMessage,
+  WebSocketClientMessage,
+  WebSocketOutputMessage,
+  WebSocketServerMessage,
+  WebSocketStreamMessage,
+};
+
+function formatWireError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+
+  return error === undefined
+    ? "WebSocket stream error."
+    : JSON.stringify(error);
+}
+
+function normalizeWebSocketServiceUrl(value: string): string {
+  const trimmed = value.trim();
+  if (/^wss?:\/\//.test(trimmed)) return stripTrailingSlash(trimmed);
+
+  return normalizeHttpServiceUrl(trimmed);
+}
+
+function parseServerMessage(data: string): WebSocketServerMessage | null {
+  try {
+    const value = JSON.parse(data) as WebSocketServerMessage;
+
+    return typeof value === "object" &&
+      value !== null &&
+      typeof value.type === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveAgentId(
@@ -403,38 +460,6 @@ function resolveEndpointId(
   return endpointId;
 }
 
-export { BroodsWebSocketClient as WebSocketClient };
-export { BroodsWebSocketClient as WebsocketClient };
-export type {
-  WebSocketClientCancelMessage,
-  WebSocketClientAttachMessage,
-  WebSocketClientControlMessage,
-  WebSocketClientExecuteMessage,
-  WebSocketClientMessage,
-  WebSocketOutputMessage,
-  WebSocketServerMessage,
-  WebSocketStreamMessage,
-};
-
-export function toWebSocketBaseUrl(url: string): string {
-  const parsed = new URL(normalizeWebSocketServiceUrl(url));
-  if (parsed.protocol === "https:") parsed.protocol = "wss:";
-  if (parsed.protocol === "http:") parsed.protocol = "ws:";
-
-  return stripTrailingSlash(parsed.toString());
-}
-
-function normalizeWebSocketServiceUrl(value: string): string {
-  const trimmed = value.trim();
-  if (/^wss?:\/\//.test(trimmed)) return stripTrailingSlash(trimmed);
-
-  return normalizeHttpServiceUrl(trimmed);
-}
-
-function webSocketAccessError(baseUrl: string): Error {
-  return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
-}
-
 /** Unwraps durable output envelopes and forwards them to onOutput. */
 function unwrapServerMessage(
   payload: WebSocketServerMessage,
@@ -447,31 +472,6 @@ function unwrapServerMessage(
   return output.data as WebSocketServerMessage;
 }
 
-function parseServerMessage(data: string): WebSocketServerMessage | null {
-  try {
-    const value = JSON.parse(data) as WebSocketServerMessage;
-
-    return typeof value === "object" &&
-      value !== null &&
-      typeof value.type === "string"
-      ? value
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatWireError(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (
-    error &&
-    typeof error === "object" &&
-    typeof (error as { message?: unknown }).message === "string"
-  ) {
-    return (error as { message: string }).message;
-  }
-
-  return error === undefined
-    ? "WebSocket stream error."
-    : JSON.stringify(error);
+function webSocketAccessError(baseUrl: string): Error {
+  return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
 }

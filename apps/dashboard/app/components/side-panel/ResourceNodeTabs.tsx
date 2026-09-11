@@ -47,6 +47,154 @@ const HARNESS_FEATURES = [
   { key: "memory", label: "Memory" },
 ] as const;
 
+export function ResourceConfigTab({
+  nodeType,
+  data,
+  onUpdateNodeData,
+}: {
+  nodeType: "workspace" | "sandbox";
+  data: BaseNodeData;
+  onUpdateNodeData: UpdateNodeData;
+}): React.JSX.Element {
+  const fallback =
+    nodeType === "workspace"
+      ? WORKSPACE_DEFAULT_CONFIG
+      : SANDBOX_DEFAULT_CONFIG;
+
+  return (
+    <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+      <BranchEditor
+        title={nodeType === "workspace" ? "Workspace Config" : "Sandbox Config"}
+        value={data.config ?? fallback}
+        onSave={(config) =>
+          onUpdateNodeData({
+            config: isPlainObject(config) ? config : fallback,
+          })
+        }
+      />
+    </div>
+  );
+}
+
+export function SandboxResourceDetailsTab({
+  data,
+  editName,
+  setEditName,
+  onSaveName,
+  onUpdateNodeData,
+  managedByCode = false,
+}: {
+  data: BaseNodeData;
+  editName: string;
+  setEditName: (name: string) => void;
+  onSaveName: () => void;
+  onUpdateNodeData: UpdateNodeData;
+  /** Code owns this row, so the canvas save discards config edits: show them read-only. */
+  managedByCode?: boolean;
+}): React.JSX.Element {
+  const config: Record<string, unknown> = isPlainObject(data.config)
+    ? data.config
+    : SANDBOX_DEFAULT_CONFIG;
+  // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
+  // which is what code-synced sandboxes carry, not a flat `internet` boolean.
+  const network: { mode?: string } = isPlainObject(config.network)
+    ? (config.network as { mode?: string })
+    : {};
+
+  function setConfig(patch: Record<string, unknown>): void {
+    onUpdateNodeData({ config: { ...config, ...patch } });
+  }
+
+  return (
+    <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+      <ResourceNameFields
+        editName={editName}
+        setEditName={setEditName}
+        onSaveName={onSaveName}
+        resourceId={data.resourceId ?? ""}
+        resourceIdLabel="Sandbox id"
+        resourceIdPlaceholder="sb_default"
+        onResourceIdChange={(resourceId) =>
+          onUpdateNodeData({ resourceId: resourceId })
+        }
+      />
+
+      <Separator />
+
+      <div className="flex flex-col gap-3">
+        <SectionHeader>Sandbox config</SectionHeader>
+        {managedByCode && (
+          <p className="text-[11px] text-muted-foreground">
+            Defined in code. Edit the sandbox in your broods project and deploy.
+          </p>
+        )}
+        <SelectField
+          label="Provider"
+          disabled={managedByCode}
+          value={
+            typeof config.provider === "string" ? config.provider : "sandbox"
+          }
+          onValueChange={(provider) => setConfig({ provider: provider })}
+          options={[
+            { value: "sandbox", label: "Sandbox" },
+            { value: "lambda", label: "Managed VM" },
+            { value: "e2b", label: "e2b" },
+            { value: "daytona", label: "Daytona" },
+          ]}
+        />
+        <SelectField
+          label="Permission mode"
+          disabled={managedByCode}
+          value={
+            typeof config.permissionMode === "string"
+              ? config.permissionMode
+              : "ask"
+          }
+          onValueChange={(permissionMode) =>
+            setConfig({ permissionMode: permissionMode })
+          }
+          options={[
+            { value: "edit", label: "Edit" },
+            { value: "ask", label: "Ask" },
+            { value: "bypass", label: "Bypass" },
+          ]}
+        />
+        <ToggleRow
+          label="Internet"
+          description="Allow public network access from the sandbox."
+          disabled={managedByCode}
+          checked={
+            network.mode === "allow-all" || network.mode === "restricted"
+          }
+          onCheckedChange={(internet) =>
+            setConfig({
+              network: {
+                ...network,
+                // Preserve an existing `restricted` policy when toggling on;
+                // otherwise map the binary switch onto core's egress modes.
+                mode: internet
+                  ? network.mode === "restricted"
+                    ? "restricted"
+                    : "allow-all"
+                  : "deny-all",
+              },
+            })
+          }
+        />
+        <ToggleRow
+          label="Persistent"
+          description="Reserve a long-lived sandbox per workspace namespace."
+          disabled={managedByCode}
+          checked={config.persistent === true}
+          onCheckedChange={(persistent) =>
+            setConfig({ persistent: persistent ? true : undefined })
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceResourceDetailsTab({
   data,
   editName,
@@ -276,152 +424,22 @@ export function WorkspaceResourceDetailsTab({
   );
 }
 
-export function SandboxResourceDetailsTab({
-  data,
-  editName,
-  setEditName,
-  onSaveName,
-  onUpdateNodeData,
-  managedByCode = false,
-}: {
-  data: BaseNodeData;
-  editName: string;
-  setEditName: (name: string) => void;
-  onSaveName: () => void;
-  onUpdateNodeData: UpdateNodeData;
-  /** Code owns this row, so the canvas save discards config edits: show them read-only. */
-  managedByCode?: boolean;
-}): React.JSX.Element {
-  const config: Record<string, unknown> = isPlainObject(data.config)
-    ? data.config
-    : SANDBOX_DEFAULT_CONFIG;
-  // Egress policy. Core models this as `network.mode` (allow-all/deny-all/restricted),
-  // which is what code-synced sandboxes carry, not a flat `internet` boolean.
-  const network: { mode?: string } = isPlainObject(config.network)
-    ? (config.network as { mode?: string })
-    : {};
-
-  function setConfig(patch: Record<string, unknown>): void {
-    onUpdateNodeData({ config: { ...config, ...patch } });
+// Merge a patch, treating undefined as "remove this key". These objects are
+// persisted, so an `undefined` value would otherwise ride along as a real key.
+function mergeDropping(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
   }
 
-  return (
-    <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
-      <ResourceNameFields
-        editName={editName}
-        setEditName={setEditName}
-        onSaveName={onSaveName}
-        resourceId={data.resourceId ?? ""}
-        resourceIdLabel="Sandbox id"
-        resourceIdPlaceholder="sb_default"
-        onResourceIdChange={(resourceId) =>
-          onUpdateNodeData({ resourceId: resourceId })
-        }
-      />
-
-      <Separator />
-
-      <div className="flex flex-col gap-3">
-        <SectionHeader>Sandbox config</SectionHeader>
-        {managedByCode && (
-          <p className="text-[11px] text-muted-foreground">
-            Defined in code. Edit the sandbox in your broods project and deploy.
-          </p>
-        )}
-        <SelectField
-          label="Provider"
-          disabled={managedByCode}
-          value={
-            typeof config.provider === "string" ? config.provider : "sandbox"
-          }
-          onValueChange={(provider) => setConfig({ provider: provider })}
-          options={[
-            { value: "sandbox", label: "Sandbox" },
-            { value: "lambda", label: "Managed VM" },
-            { value: "e2b", label: "e2b" },
-            { value: "daytona", label: "Daytona" },
-          ]}
-        />
-        <SelectField
-          label="Permission mode"
-          disabled={managedByCode}
-          value={
-            typeof config.permissionMode === "string"
-              ? config.permissionMode
-              : "ask"
-          }
-          onValueChange={(permissionMode) =>
-            setConfig({ permissionMode: permissionMode })
-          }
-          options={[
-            { value: "edit", label: "Edit" },
-            { value: "ask", label: "Ask" },
-            { value: "bypass", label: "Bypass" },
-          ]}
-        />
-        <ToggleRow
-          label="Internet"
-          description="Allow public network access from the sandbox."
-          disabled={managedByCode}
-          checked={
-            network.mode === "allow-all" || network.mode === "restricted"
-          }
-          onCheckedChange={(internet) =>
-            setConfig({
-              network: {
-                ...network,
-                // Preserve an existing `restricted` policy when toggling on;
-                // otherwise map the binary switch onto core's egress modes.
-                mode: internet
-                  ? network.mode === "restricted"
-                    ? "restricted"
-                    : "allow-all"
-                  : "deny-all",
-              },
-            })
-          }
-        />
-        <ToggleRow
-          label="Persistent"
-          description="Reserve a long-lived sandbox per workspace namespace."
-          disabled={managedByCode}
-          checked={config.persistent === true}
-          onCheckedChange={(persistent) =>
-            setConfig({ persistent: persistent ? true : undefined })
-          }
-        />
-      </div>
-    </div>
-  );
-}
-
-export function ResourceConfigTab({
-  nodeType,
-  data,
-  onUpdateNodeData,
-}: {
-  nodeType: "workspace" | "sandbox";
-  data: BaseNodeData;
-  onUpdateNodeData: UpdateNodeData;
-}): React.JSX.Element {
-  const fallback =
-    nodeType === "workspace"
-      ? WORKSPACE_DEFAULT_CONFIG
-      : SANDBOX_DEFAULT_CONFIG;
-
-  return (
-    <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
-      <BranchEditor
-        title={nodeType === "workspace" ? "Workspace Config" : "Sandbox Config"}
-        value={data.config ?? fallback}
-        onSave={(config) =>
-          onUpdateNodeData({
-            config: isPlainObject(config) ? config : fallback,
-          })
-        }
-      />
-    </div>
-  );
+  return next;
 }
 
 function ResourceNameFields({
@@ -460,54 +478,6 @@ function ResourceNameFields({
         value={resourceId}
         placeholder={resourceIdPlaceholder}
         onCommit={(value) => onResourceIdChange(value || undefined)}
-      />
-    </div>
-  );
-}
-
-// Merge a patch, treating undefined as "remove this key". These objects are
-// persisted, so an `undefined` value would otherwise ride along as a real key.
-function mergeDropping(
-  base: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...base };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) {
-      delete next[key];
-    } else {
-      next[key] = value;
-    }
-  }
-
-  return next;
-}
-
-function TextField({
-  label,
-  value,
-  placeholder,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onCommit: (value: string) => void;
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] text-muted-foreground">{label}</label>
-      <Input
-        defaultValue={value}
-        placeholder={placeholder}
-        className="h-8 font-mono text-xs"
-        onBlur={(event) => onCommit(event.currentTarget.value.trim())}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            onCommit(event.currentTarget.value.trim());
-            event.currentTarget.blur();
-          }
-        }}
       />
     </div>
   );
@@ -552,6 +522,36 @@ function SelectField({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+function TextField({
+  label,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onCommit: (value: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[11px] text-muted-foreground">{label}</label>
+      <Input
+        defaultValue={value}
+        placeholder={placeholder}
+        className="h-8 font-mono text-xs"
+        onBlur={(event) => onCommit(event.currentTarget.value.trim())}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            onCommit(event.currentTarget.value.trim());
+            event.currentTarget.blur();
+          }
+        }}
+      />
     </div>
   );
 }

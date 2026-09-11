@@ -119,28 +119,6 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
-/**
- * Scope an author-pinned reservation key to its account. The registry lookup is
- * keyed by reservation key alone, so raw pinned text must never reach it: an
- * unscoped key could name, and reconnect to, another account's reserved machine.
- * The same string within one account still maps to one machine.
- */
-export function pinnedSandboxReservationKey(
-  accountId: string,
-  reservationKey: string,
-): string {
-  return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
-}
-
-export function workspaceNamespace(
-  accountId: string | undefined,
-  workspaceId: string,
-): string {
-  const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
-
-  return normalizeFilesystemNamespace(scope);
-}
-
 export function isolatedWorkspaceNamespace(
   baseNamespace: string,
   isolation: boolean | undefined,
@@ -172,6 +150,19 @@ export function isolatedWorkspaceNamespace(
   }
 
   return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
+}
+
+/**
+ * Scope an author-pinned reservation key to its account. The registry lookup is
+ * keyed by reservation key alone, so raw pinned text must never reach it: an
+ * unscoped key could name, and reconnect to, another account's reserved machine.
+ * The same string within one account still maps to one machine.
+ */
+export function pinnedSandboxReservationKey(
+  accountId: string,
+  reservationKey: string,
+): string {
+  return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
 }
 
 /**
@@ -294,6 +285,34 @@ export async function resolveAgentRuntime(
   };
 }
 
+export function resolveWorkspaceRefs(
+  agentConfig: AgentConfig,
+): AgentWorkspaceRef[] {
+  return agentConfig.workspaces ?? [];
+}
+
+export function workspaceNamespace(
+  accountId: string | undefined,
+  workspaceId: string,
+): string {
+  const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
+
+  return normalizeFilesystemNamespace(scope);
+}
+
+/**
+ * Namespaces for an account's workspace records, used by cleanup to purge the
+ * S3 data for shared workspaces. Pass the account's workspace ids.
+ */
+export function workspaceNamespacesForAccount(
+  accountId: string,
+  workspaceIds: string[],
+): string[] {
+  return workspaceIds.map((workspaceId) =>
+    workspaceNamespace(accountId, workspaceId),
+  );
+}
+
 /**
  * Give a persistent agent-level sandbox the reservation key its workspace-less
  * runs key persistence on, so `persistent: true` works without the author also
@@ -354,23 +373,4 @@ function sandboxControlPlane(
       ? { permissionMode: record.config.permissionMode }
       : {}),
   };
-}
-
-/**
- * Namespaces for an account's workspace records, used by cleanup to purge the
- * S3 data for shared workspaces. Pass the account's workspace ids.
- */
-export function workspaceNamespacesForAccount(
-  accountId: string,
-  workspaceIds: string[],
-): string[] {
-  return workspaceIds.map((workspaceId) =>
-    workspaceNamespace(accountId, workspaceId),
-  );
-}
-
-export function resolveWorkspaceRefs(
-  agentConfig: AgentConfig,
-): AgentWorkspaceRef[] {
-  return agentConfig.workspaces ?? [];
 }

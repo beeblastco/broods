@@ -951,6 +951,14 @@ async function responseJson(response: Response): Promise<IngressHttpResponse> {
     : {};
 }
 
+function ackNatsMessage(message: { ack?: () => void }): void {
+  try {
+    message.ack?.();
+  } catch {
+    return;
+  }
+}
+
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
   const parsed = parseJson(decoder.decode(data));
 
@@ -961,29 +969,11 @@ function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
     : null;
 }
 
-function ackNatsMessage(message: { ack?: () => void }): void {
-  try {
-    message.ack?.();
-  } catch {
-    return;
-  }
-}
-
 function sendAgentTest(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   payload: WebSocketServerMessage,
 ): void {
   socket.send(JSON.stringify(payload));
-}
-
-/** One stable digest of the status fields a client sees, for change detection. */
-function statusFingerprint(status: IngressHttpResponse): string {
-  return JSON.stringify([
-    status.status,
-    status.appliedMode,
-    status.appliedToEventId,
-    status.error,
-  ]);
 }
 
 /** Emits the single closing frame for a run: done when completed, else error. */
@@ -1003,6 +993,16 @@ function sendTerminalFrame(
   }
 
   sendAgentTest(socket, { type: "done" });
+}
+
+/** One stable digest of the status fields a client sees, for change detection. */
+function statusFingerprint(status: IngressHttpResponse): string {
+  return JSON.stringify([
+    status.status,
+    status.appliedMode,
+    status.appliedToEventId,
+    status.error,
+  ]);
 }
 
 /** Binds a cursor to its originating event so it cannot resume another one. */
@@ -1035,71 +1035,12 @@ function parseCursor(value: string): {
   };
 }
 
-function isIngressStatus(value: unknown): value is IngressStatus {
-  return (
-    value === "accepted" ||
-    value === "queued" ||
-    value === "applied" ||
-    value === "processing" ||
-    value === "awaiting_approval" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "expired"
-  );
-}
-
-function isIngressMode(
-  value: unknown,
-): value is "reject" | "followup" | "collect" | "steer" {
-  return (
-    value === "reject" ||
-    value === "followup" ||
-    value === "collect" ||
-    value === "steer"
-  );
-}
-
 function hasEventInput(value: object): boolean {
   const record = value as { input?: unknown; events?: unknown };
 
   return (
     typeof record.input === "string" ||
     (Array.isArray(record.events) && record.events.length > 0)
-  );
-}
-
-function isExecuteMessage(
-  value: object,
-): value is WebSocketClientExecuteMessage {
-  const record = value as { type?: unknown; agentId?: unknown; mode?: unknown };
-
-  return (
-    record.type === "execute" &&
-    typeof record.agentId === "string" &&
-    record.agentId.trim().length > 0 &&
-    (record.mode === undefined || isIngressMode(record.mode)) &&
-    hasEventInput(value)
-  );
-}
-
-function isControlMessage(
-  value: object,
-): value is WebSocketClientControlMessage {
-  const record = value as {
-    type?: unknown;
-    requestId?: unknown;
-    eventId?: unknown;
-    mode?: unknown;
-  };
-
-  return (
-    record.type === "control" &&
-    typeof record.requestId === "string" &&
-    record.requestId.length > 0 &&
-    typeof record.eventId === "string" &&
-    record.eventId.length > 0 &&
-    (record.mode === undefined || isIngressMode(record.mode)) &&
-    hasEventInput(value)
   );
 }
 
@@ -1124,5 +1065,64 @@ function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
     typeof record.eventId === "string" &&
     record.eventId.length > 0 &&
     (record.afterCursor === undefined || typeof record.afterCursor === "string")
+  );
+}
+
+function isControlMessage(
+  value: object,
+): value is WebSocketClientControlMessage {
+  const record = value as {
+    type?: unknown;
+    requestId?: unknown;
+    eventId?: unknown;
+    mode?: unknown;
+  };
+
+  return (
+    record.type === "control" &&
+    typeof record.requestId === "string" &&
+    record.requestId.length > 0 &&
+    typeof record.eventId === "string" &&
+    record.eventId.length > 0 &&
+    (record.mode === undefined || isIngressMode(record.mode)) &&
+    hasEventInput(value)
+  );
+}
+
+function isExecuteMessage(
+  value: object,
+): value is WebSocketClientExecuteMessage {
+  const record = value as { type?: unknown; agentId?: unknown; mode?: unknown };
+
+  return (
+    record.type === "execute" &&
+    typeof record.agentId === "string" &&
+    record.agentId.trim().length > 0 &&
+    (record.mode === undefined || isIngressMode(record.mode)) &&
+    hasEventInput(value)
+  );
+}
+
+function isIngressMode(
+  value: unknown,
+): value is "reject" | "followup" | "collect" | "steer" {
+  return (
+    value === "reject" ||
+    value === "followup" ||
+    value === "collect" ||
+    value === "steer"
+  );
+}
+
+function isIngressStatus(value: unknown): value is IngressStatus {
+  return (
+    value === "accepted" ||
+    value === "queued" ||
+    value === "applied" ||
+    value === "processing" ||
+    value === "awaiting_approval" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "expired"
   );
 }

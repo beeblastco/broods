@@ -137,11 +137,39 @@ const PRO_OPTIONS = { hideAttribution: true } as const;
 /** Drags step along the background dots, the same pitch the tidy layout cells sit on. */
 const SNAP_GRID: [number, number] = [GRID, GRID];
 
+/**
+ * Focus-mode dim caches, keyed by source object identity. Reusing the dimmed clone keeps
+ * unchanged elements referentially stable across drag frames. Fresh clones each frame
+ * would re-render every dimmed node/edge at 60fps. WeakMap entries follow their keys' GC.
+ */
+const dimmedNodeCache = new WeakMap<Node, Node>();
+const dimmedEdgeCache = new WeakMap<Edge, Edge>();
+
 // Once per document: a later client-side navigation mounts a new canvas, but
 // performance.now() still counts from the first navigation.
 let firstCanvasReported = false;
 
 type FlowPosition = { x: number; y: number };
+
+export function Canvas({
+  projectId,
+}: {
+  projectId: Id<"projects">;
+}): React.JSX.Element {
+  const { stageId } = useStage();
+
+  // Remount per stage: a stage switch with a debounced save pending would
+  // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
+  // sync) and the next edit would persist it into the new stage.
+  return (
+    <ReactFlowProvider>
+      <CanvasInner
+        key={`${projectId}:${stageId ?? "loading"}`}
+        projectId={projectId}
+      />
+    </ReactFlowProvider>
+  );
+}
 
 function hydrateEncodedHandleEdge(
   edge: Edge,
@@ -341,14 +369,6 @@ function layoutSignature(nodes: Node[], edges: Edge[]): string {
     e: edges.map((e) => [e.id, e.source, e.target, e.animated ?? false]),
   });
 }
-
-/**
- * Focus-mode dim caches, keyed by source object identity. Reusing the dimmed clone keeps
- * unchanged elements referentially stable across drag frames. Fresh clones each frame
- * would re-render every dimmed node/edge at 60fps. WeakMap entries follow their keys' GC.
- */
-const dimmedNodeCache = new WeakMap<Node, Node>();
-const dimmedEdgeCache = new WeakMap<Edge, Edge>();
 
 /** Ignore global shortcuts while typing in editable controls. */
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -1304,24 +1324,4 @@ function useEverTrue(flag: boolean): boolean {
   if (flag && !seen) setSeen(true);
 
   return seen || flag;
-}
-
-export function Canvas({
-  projectId,
-}: {
-  projectId: Id<"projects">;
-}): React.JSX.Element {
-  const { stageId } = useStage();
-
-  // Remount per stage: a stage switch with a debounced save pending would
-  // otherwise keep the old stage's graph on screen (hasLocalChanges blocks the
-  // sync) and the next edit would persist it into the new stage.
-  return (
-    <ReactFlowProvider>
-      <CanvasInner
-        key={`${projectId}:${stageId ?? "loading"}`}
-        projectId={projectId}
-      />
-    </ReactFlowProvider>
-  );
 }

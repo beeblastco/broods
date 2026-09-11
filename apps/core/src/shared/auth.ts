@@ -116,6 +116,17 @@ export async function resolveBearerAuth(
   return { kind: "account", account: account };
 }
 
+// Hashing both sides keeps the comparison constant-time regardless of length.
+export function timingSafeStringEqual(
+  actual: string,
+  expected: string,
+): boolean {
+  const actualDigest = createHash("sha256").update(actual).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+
+  return timingSafeEqual(actualDigest, expectedDigest);
+}
+
 /** Resolve an fp_sts_ token to role auth via the config-plane session store. */
 async function resolveRoleSessionAuth(
   token: string,
@@ -156,15 +167,4 @@ async function resolveStageSessionAuth(
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-// Hashing both sides keeps the comparison constant-time regardless of length.
-export function timingSafeStringEqual(
-  actual: string,
-  expected: string,
-): boolean {
-  const actualDigest = createHash("sha256").update(actual).digest();
-  const expectedDigest = createHash("sha256").update(expected).digest();
-
-  return timingSafeEqual(actualDigest, expectedDigest);
 }

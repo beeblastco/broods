@@ -225,14 +225,6 @@ export const commands: CommandHandler[] = [
   },
 ];
 
-export function parseCommand(text: string): string | null {
-  const token = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
-  if (!token.startsWith("/")) return null;
-  const match = getExecutableCommands().find((c) => c.aliases.includes(token));
-
-  return match ? token : null;
-}
-
 export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
@@ -252,6 +244,38 @@ export async function executeCommand(
     });
     await ctx.channel.sendText("Something went wrong. Please try again.");
   }
+}
+
+export function getDiscordCommandRegistrations(
+  scope: "global" | "guild" = "global",
+): DiscordCommandRegistration[] {
+  return commands.flatMap((command) => {
+    const discord = command.discord;
+    if (!discord) {
+      return [];
+    }
+
+    return discord.names.map((name) => ({
+      name: name,
+      description: discord.description,
+      ...(discord.options ? { options: discord.options } : {}),
+      ...(scope === "global"
+        ? {
+            integration_types:
+              discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
+            contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
+          }
+        : {}),
+    }));
+  });
+}
+
+export function parseCommand(text: string): string | null {
+  const token = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  if (!token.startsWith("/")) return null;
+  const match = getExecutableCommands().find((c) => c.aliases.includes(token));
+
+  return match ? token : null;
 }
 
 export function resolveChannelCommand({
@@ -290,30 +314,6 @@ export function resolveDiscordCommand(
     contentText: optionText.trim(),
     commandToken: handler.aliases[0],
   };
-}
-
-export function getDiscordCommandRegistrations(
-  scope: "global" | "guild" = "global",
-): DiscordCommandRegistration[] {
-  return commands.flatMap((command) => {
-    const discord = command.discord;
-    if (!discord) {
-      return [];
-    }
-
-    return discord.names.map((name) => ({
-      name: name,
-      description: discord.description,
-      ...(discord.options ? { options: discord.options } : {}),
-      ...(scope === "global"
-        ? {
-            integration_types:
-              discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
-            contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
-          }
-        : {}),
-    }));
-  });
 }
 
 function getExecutableCommands(): Array<

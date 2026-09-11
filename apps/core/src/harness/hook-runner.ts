@@ -42,12 +42,6 @@ const HOOK_MUTABLE_FIELDS = {
 
 export type HookMutableEvent = keyof typeof HOOK_MUTABLE_FIELDS;
 
-export function isHookMutableEvent(
-  event: AgentHookEventName,
-): event is HookMutableEvent {
-  return event in HOOK_MUTABLE_FIELDS;
-}
-
 export interface RunCodeHookParams {
   accountId: string;
   record: AccountHookRecord;
@@ -65,6 +59,12 @@ export interface CodeHookOutcome {
   mutation: Record<string, unknown> | undefined;
   /** The run state after the hook ran (unchanged on decline/error/timeout). */
   state: Record<string, unknown>;
+}
+
+export function isHookMutableEvent(
+  event: AgentHookEventName,
+): event is HookMutableEvent {
+  return event in HOOK_MUTABLE_FIELDS;
 }
 
 /**
@@ -102,61 +102,6 @@ export async function runCodeHook(
   }
 }
 
-/** Loads the hook bundle from S3 and builds the isolate runner payload. */
-async function createHookRunnerPayload(
-  params: RunCodeHookParams,
-): Promise<Record<string, unknown>> {
-  const { record, event, payload, config } = params;
-  const bytes = await readS3Bytes(toolBundlesBucket(), record.bundleStorageKey);
-
-  return {
-    bundleSourceB64: Buffer.from(bytes).toString("base64"),
-    expectedSha256: record.sha256,
-    toolName: record.name,
-    hookEvent: event,
-    input: payload,
-    config: config ?? {},
-    state: params.state,
-  };
-}
-
-/**
- * Keep the hook's mutated run state when it is a valid, size-bounded plain
- * object; otherwise fall back to the state the hook was given (a bad/oversized
- * state must not silently replace what earlier hooks accumulated).
- */
-function sanitizeHookState(
-  state: unknown,
-  fallback: Record<string, unknown>,
-): Record<string, unknown> {
-  if (!isPlainObject(state)) return fallback;
-  if (Object.keys(state).length === 0) return state;
-
-  const serialized = safeStringify(state);
-  if (
-    serialized === undefined ||
-    Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES
-  ) {
-    return fallback;
-  }
-
-  return state;
-}
-
-async function runForResult(
-  accountId: string,
-  payload: Record<string, unknown>,
-): Promise<unknown> {
-  // A hook returns a single value; the isolate yields chunks only for the async
-  // -iterable tool path, so the last yielded value is the handler's return.
-  let result: unknown;
-  for await (const value of streamIsolatePayload(accountId, payload)) {
-    result = value;
-  }
-
-  return result;
-}
-
 /**
  * Keep only the fields a hook is allowed to mutate at this event, after a size
  * cap. Returns undefined when the event is observe-only, the return is not an
@@ -184,10 +129,65 @@ export function sanitizeHookResult(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** Loads the hook bundle from S3 and builds the isolate runner payload. */
+async function createHookRunnerPayload(
+  params: RunCodeHookParams,
+): Promise<Record<string, unknown>> {
+  const { record, event, payload, config } = params;
+  const bytes = await readS3Bytes(toolBundlesBucket(), record.bundleStorageKey);
+
+  return {
+    bundleSourceB64: Buffer.from(bytes).toString("base64"),
+    expectedSha256: record.sha256,
+    toolName: record.name,
+    hookEvent: event,
+    input: payload,
+    config: config ?? {},
+    state: params.state,
+  };
+}
+
+async function runForResult(
+  accountId: string,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
+  // A hook returns a single value; the isolate yields chunks only for the async
+  // -iterable tool path, so the last yielded value is the handler's return.
+  let result: unknown;
+  for await (const value of streamIsolatePayload(accountId, payload)) {
+    result = value;
+  }
+
+  return result;
+}
+
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Keep the hook's mutated run state when it is a valid, size-bounded plain
+ * object; otherwise fall back to the state the hook was given (a bad/oversized
+ * state must not silently replace what earlier hooks accumulated).
+ */
+function sanitizeHookState(
+  state: unknown,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!isPlainObject(state)) return fallback;
+  if (Object.keys(state).length === 0) return state;
+
+  const serialized = safeStringify(state);
+  if (
+    serialized === undefined ||
+    Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES
+  ) {
+    return fallback;
+  }
+
+  return state;
 }

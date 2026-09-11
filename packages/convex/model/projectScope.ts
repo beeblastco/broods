@@ -21,58 +21,6 @@ export type ProjectStageScope = {
   stageId: Id<"stages">;
 };
 
-/** Stage names are matched case- and whitespace-insensitively everywhere. */
-export function stageNameEquals(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase();
-}
-
-// Resolve-only: an unknown name yields null rather than creating a project,
-// which is what separates every read path from the CLI's ensure path.
-export async function resolveProject(
-  ctx: Ctx,
-  account: Doc<"accounts">,
-  project: string,
-): Promise<Doc<"projects"> | null> {
-  const orgId = ctx.db.normalizeId("orgs", account.orgId);
-  if (!orgId) return null;
-  const name = project.trim();
-  if (!name) return null;
-
-  const projects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
-
-  return (
-    projects.find((entry) => entry.name === name || entry.slug === name) ?? null
-  );
-}
-
-export async function resolveProjectStage(
-  ctx: Ctx,
-  account: Doc<"accounts">,
-  project: string,
-  stage: string,
-): Promise<{
-  projectDoc: Doc<"projects">;
-  stageDoc: Doc<"stages">;
-} | null> {
-  const projectDoc = await resolveProject(ctx, account, project);
-  if (!projectDoc) return null;
-
-  const stages = await ctx.db
-    .query("stages")
-    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
-    .collect();
-  const stageDoc = stages.find((entry) => stageNameEquals(entry.name, stage));
-  if (!stageDoc) return null;
-
-  return {
-    projectDoc: projectDoc,
-    stageDoc: stageDoc,
-  };
-}
-
 /**
  * The agents that `accountId` owns and that belong to `projectId`, across
  * every stage.
@@ -131,6 +79,58 @@ export async function cronsInProject(
     .collect();
 
   return crons.filter((cron) => agentIds.has(cron.agentId));
+}
+
+// Resolve-only: an unknown name yields null rather than creating a project,
+// which is what separates every read path from the CLI's ensure path.
+export async function resolveProject(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  project: string,
+): Promise<Doc<"projects"> | null> {
+  const orgId = ctx.db.normalizeId("orgs", account.orgId);
+  if (!orgId) return null;
+  const name = project.trim();
+  if (!name) return null;
+
+  const projects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
+    .collect();
+
+  return (
+    projects.find((entry) => entry.name === name || entry.slug === name) ?? null
+  );
+}
+
+export async function resolveProjectStage(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  project: string,
+  stage: string,
+): Promise<{
+  projectDoc: Doc<"projects">;
+  stageDoc: Doc<"stages">;
+} | null> {
+  const projectDoc = await resolveProject(ctx, account, project);
+  if (!projectDoc) return null;
+
+  const stages = await ctx.db
+    .query("stages")
+    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+    .collect();
+  const stageDoc = stages.find((entry) => stageNameEquals(entry.name, stage));
+  if (!stageDoc) return null;
+
+  return {
+    projectDoc: projectDoc,
+    stageDoc: stageDoc,
+  };
+}
+
+/** Stage names are matched case- and whitespace-insensitively everywhere. */
+export function stageNameEquals(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
 async function agentsForConfigs(

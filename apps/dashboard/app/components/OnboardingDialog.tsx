@@ -14,13 +14,6 @@ import { cn } from "@/app/lib/utils";
 import { ArrowUpRight, Check, Copy, Eye, EyeOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-interface Props {
-  /** The one-time plaintext account secret to hand over on step two. */
-  secret: string;
-  /** Called when the user finishes the flow; the caller clears the secret and routes to /projects. */
-  onDone: () => void;
-}
-
 const CLI_COMMAND =
   "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
 
@@ -28,109 +21,11 @@ const CLI_COMMAND =
 const HEX_CLIP =
   "polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%)";
 
-/** Inline `<code>` styling for prose mentions of commands and names. */
-function Mono({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
-      {children}
-    </code>
-  );
-}
-
-/** Clipboard copy with a transient confirmation shown only after the write actually succeeds. */
-function useCopy(): { copied: boolean; copy: (text: string) => Promise<void> } {
-  const [copied, setCopied] = useState(false);
-
-  async function copy(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return { copied: copied, copy: copy };
-}
-
-/** Honeycomb progress: one hex cell per step, filled for the current, dimmed for the done, hollow for the rest. */
-function HexSteps({
-  step,
-  count,
-}: {
-  step: number;
-  count: number;
-}): React.JSX.Element {
-  return (
-    <div
-      className="flex items-center gap-1"
-      aria-label={`Step ${step + 1} of ${count}`}
-    >
-      {Array.from({ length: count }, (_, index) => (
-        <span
-          key={index}
-          style={{ clipPath: HEX_CLIP }}
-          className={cn(
-            "size-2.5 transition-colors duration-300",
-            index === step
-              ? "bg-foreground"
-              : index < step
-                ? "bg-foreground/35"
-                : "bg-muted",
-          )}
-        />
-      ))}
-    </div>
-  );
-}
-
-/** A one-line command block with a corner copy control. */
-function CommandBlock({ command }: { command: string }): React.JSX.Element {
-  const { copied, copy } = useCopy();
-
-  return (
-    // min-w-0: as a grid item this would otherwise grow to the command's
-    // intrinsic width and push the whole card past its edge.
-    <div className="relative min-w-0">
-      <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-2.5 pr-12 font-mono text-xs leading-relaxed text-foreground">
-        <span className="select-none text-muted-foreground">$ </span>
-        {command}
-      </pre>
-      <button
-        type="button"
-        title="Copy command"
-        onClick={() => copy(command)}
-        className="absolute right-1.5 top-1.5 flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      >
-        {copied ? (
-          <Check className="size-3.5" />
-        ) : (
-          <Copy className="size-3.5" />
-        )}
-      </button>
-    </div>
-  );
-}
-
-function DocsLink({
-  href,
-  children,
-}: {
-  href: string;
-  children: ReactNode;
-}): React.JSX.Element {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex cursor-pointer items-center gap-0.5 text-xs font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-4 transition-colors hover:decoration-foreground"
-    >
-      {children}
-      <ArrowUpRight className="size-3" />
-    </a>
-  );
+interface Props {
+  /** The one-time plaintext account secret to hand over on step two. */
+  secret: string;
+  /** Called when the user finishes the flow; the caller clears the secret and routes to /projects. */
+  onDone: () => void;
 }
 
 /**
@@ -280,4 +175,109 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
       </DialogContent>
     </Dialog>
   );
+}
+
+/** A one-line command block with a corner copy control. */
+function CommandBlock({ command }: { command: string }): React.JSX.Element {
+  const { copied, copy } = useCopy();
+
+  return (
+    // min-w-0: as a grid item this would otherwise grow to the command's
+    // intrinsic width and push the whole card past its edge.
+    <div className="relative min-w-0">
+      <pre className="overflow-x-auto rounded-md border bg-muted/50 px-3 py-2.5 pr-12 font-mono text-xs leading-relaxed text-foreground">
+        <span className="select-none text-muted-foreground">$ </span>
+        {command}
+      </pre>
+      <button
+        type="button"
+        title="Copy command"
+        onClick={() => copy(command)}
+        className="absolute right-1.5 top-1.5 flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        {copied ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Copy className="size-3.5" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function DocsLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: ReactNode;
+}): React.JSX.Element {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex cursor-pointer items-center gap-0.5 text-xs font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-4 transition-colors hover:decoration-foreground"
+    >
+      {children}
+      <ArrowUpRight className="size-3" />
+    </a>
+  );
+}
+
+/** Honeycomb progress: one hex cell per step, filled for the current, dimmed for the done, hollow for the rest. */
+function HexSteps({
+  step,
+  count,
+}: {
+  step: number;
+  count: number;
+}): React.JSX.Element {
+  return (
+    <div
+      className="flex items-center gap-1"
+      aria-label={`Step ${step + 1} of ${count}`}
+    >
+      {Array.from({ length: count }, (_, index) => (
+        <span
+          key={index}
+          style={{ clipPath: HEX_CLIP }}
+          className={cn(
+            "size-2.5 transition-colors duration-300",
+            index === step
+              ? "bg-foreground"
+              : index < step
+                ? "bg-foreground/35"
+                : "bg-muted",
+          )}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Inline `<code>` styling for prose mentions of commands and names. */
+function Mono({ children }: { children: ReactNode }): React.JSX.Element {
+  return (
+    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+      {children}
+    </code>
+  );
+}
+
+/** Clipboard copy with a transient confirmation shown only after the write actually succeeds. */
+function useCopy(): { copied: boolean; copy: (text: string) => Promise<void> } {
+  const [copied, setCopied] = useState(false);
+
+  async function copy(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return { copied: copied, copy: copy };
 }

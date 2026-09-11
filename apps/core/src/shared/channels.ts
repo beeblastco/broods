@@ -251,12 +251,8 @@ export function extractText(content: UserContent): string {
     .join("");
 }
 
-/**
- * No list stays null, which the reach gate reads as open. An empty `Set` means
- * the opposite, so the distinction cannot be dropped at the call site.
- */
-export function reachSet(ids: string[] | undefined): Set<string> | null {
-  return ids ? new Set(ids) : null;
+export function formatChannelErrorText(error: string): string {
+  return `⚠️ ${simplifyErrorText(error)}`;
 }
 
 /**
@@ -275,8 +271,12 @@ export function isAllowedId(
   return allowed.has(id);
 }
 
-export function formatChannelErrorText(error: string): string {
-  return `⚠️ ${simplifyErrorText(error)}`;
+/**
+ * No list stays null, which the reach gate reads as open. An empty `Set` means
+ * the opposite, so the distinction cannot be dropped at the call site.
+ */
+export function reachSet(ids: string[] | undefined): Set<string> | null {
+  return ids ? new Set(ids) : null;
 }
 
 // Provider/runtime errors reach the chat raw and ugly ("Failed after 3 attempts.

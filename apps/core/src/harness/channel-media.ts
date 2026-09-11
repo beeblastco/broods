@@ -110,11 +110,33 @@ const PROVIDER_NATIVE_MEDIA: Partial<
   vertex: ["application/pdf", "audio/*", "video/*"],
 };
 
-type UserContentPart = Exclude<UserContent, string>[number];
-
 // Least-recently-used first, which is the order `cacheMedia` evicts in.
 const mediaCache = new Map<string, Buffer>();
 let mediaCacheBytes = 0;
+
+export interface InboundMediaContext {
+  accountId?: string;
+  /**
+   * Decides which media types go over as native parts, and supplies the
+   * credentials audio is transcribed with. Absent means neither: every
+   * attachment becomes a workspace file, which is the safe direction.
+   */
+  agentConfig?: AgentConfig;
+  /** Names the channel in the note the agent reads, and in the logs. */
+  channelName: string;
+  /** Scopes the media folder so two messages cannot overwrite each other. */
+  eventId: string;
+  /** Where the bytes are stored. Without one, only the current turn sees them. */
+  workspace?: ResolvedWorkspace;
+}
+
+// One attachment paired with the part it produced. A null part means nothing
+// about it reached the model, which the note has to say rather than imply the
+// file is there to look at.
+interface IngestedAttachment {
+  stored: StoredAttachment;
+  part: UserContentPart | null;
+}
 
 /**
  * One ingested message in its two forms. `turn` is what the model reads now:
@@ -140,22 +162,6 @@ interface MediaReference {
   url: string;
 }
 
-export interface InboundMediaContext {
-  accountId?: string;
-  /**
-   * Decides which media types go over as native parts, and supplies the
-   * credentials audio is transcribed with. Absent means neither: every
-   * attachment becomes a workspace file, which is the safe direction.
-   */
-  agentConfig?: AgentConfig;
-  /** Names the channel in the note the agent reads, and in the logs. */
-  channelName: string;
-  /** Scopes the media folder so two messages cannot overwrite each other. */
-  eventId: string;
-  /** Where the bytes are stored. Without one, only the current turn sees them. */
-  workspace?: ResolvedWorkspace;
-}
-
 // One attachment after ingestion, in either of the two states that matter: it
 // reached the workspace, or it did not and the agent is told why.
 interface StoredAttachment {
@@ -175,13 +181,7 @@ interface StoredAttachment {
   transcript?: TranscriptOutcome;
 }
 
-// One attachment paired with the part it produced. A null part means nothing
-// about it reached the model, which the note has to say rather than imply the
-// file is there to look at.
-interface IngestedAttachment {
-  stored: StoredAttachment;
-  part: UserContentPart | null;
-}
+type UserContentPart = Exclude<UserContent, string>[number];
 
 /**
  * Whether this provider reads this media type as a prompt part of its own.
@@ -341,37 +341,6 @@ function assertWithinLimit(size: number, mediaType: string | null): void {
   }
 }
 
-// Bytes for a reference, if this pod still holds them. Re-inserting on a hit
-// keeps the Map in least-recently-used order, which is the order eviction wants.
-function cachedMedia(reference: string): Buffer | undefined {
-  const bytes = mediaCache.get(reference);
-  if (!bytes) {
-    return undefined;
-  }
-  mediaCache.delete(reference);
-  mediaCache.set(reference, bytes);
-
-  return bytes;
-}
-
-// Keeps bytes for the next turn that replays this message, evicting the least
-// recently used until the cache is back under its ceiling.
-function cacheMedia(reference: string, bytes: Buffer): void {
-  if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
-    return;
-  }
-  mediaCache.delete(reference);
-  mediaCache.set(reference, bytes);
-  mediaCacheBytes += bytes.byteLength;
-  for (const [key, value] of mediaCache) {
-    if (mediaCacheBytes <= MEDIA_CACHE_MAX_BYTES) {
-      break;
-    }
-    mediaCache.delete(key);
-    mediaCacheBytes -= value.byteLength;
-  }
-}
-
 // The line the agent reads: what arrived, where it landed, and what to do with
 // the parts the model cannot see for itself. The "read it yourself" wording is
 // deliberate. Told only that a file exists, models ask the sender to paste it.
@@ -403,38 +372,58 @@ function attachmentNote(
   ].join("\n");
 }
 
-// Where the agent goes to open this attachment, or why it cannot.
-function whereItLanded(
-  item: StoredAttachment,
-  part: UserContentPart | null,
-  channelName: string,
-): string {
-  if (item.path) {
-    return `saved to ${item.path}`;
-  }
-  if (item.reference) {
-    return `is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.`;
-  }
-  if (part) {
-    return "is available for this message only; no workspace is attached to store it.";
+// Audio the model cannot hear for itself, read into words. Skipped where the
+// provider takes the recording natively, since listening to it beats a
+// transcript of it.
+async function audioTranscript(
+  bytes: Buffer,
+  mediaType: string,
+  agentConfig: AgentConfig | undefined,
+): Promise<TranscriptOutcome | undefined> {
+  if (
+    !agentConfig ||
+    !mediaType.startsWith("audio/") ||
+    acceptsNativeMedia(agentConfig.model?.provider, mediaType)
+  ) {
+    return undefined;
   }
 
-  return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
+  return await transcribeAudio(
+    agentConfig,
+    bytes,
+    TRANSCRIPTION_RETRIES.ingest,
+  );
 }
 
-// What the audio said, or what to do about not knowing.
-function transcriptLine(item: StoredAttachment): string {
-  const transcript = item.transcript;
-  if (!transcript) {
-    return "";
+// Bytes for a reference, if this pod still holds them. Re-inserting on a hit
+// keeps the Map in least-recently-used order, which is the order eviction wants.
+function cachedMedia(reference: string): Buffer | undefined {
+  const bytes = mediaCache.get(reference);
+  if (!bytes) {
+    return undefined;
   }
-  if (transcript.status === "transcribed") {
-    return transcript.text
-      ? `\n  Transcript: ${transcript.text}`
-      : "\n  Transcript: no speech in the recording.";
-  }
+  mediaCache.delete(reference);
+  mediaCache.set(reference, bytes);
 
-  return `\n  Not transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, item.path)}`;
+  return bytes;
+}
+
+// Keeps bytes for the next turn that replays this message, evicting the least
+// recently used until the cache is back under its ceiling.
+function cacheMedia(reference: string, bytes: Buffer): void {
+  if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
+    return;
+  }
+  mediaCache.delete(reference);
+  mediaCache.set(reference, bytes);
+  mediaCacheBytes += bytes.byteLength;
+  for (const [key, value] of mediaCache) {
+    if (mediaCacheBytes <= MEDIA_CACHE_MAX_BYTES) {
+      break;
+    }
+    mediaCache.delete(key);
+    mediaCacheBytes -= value.byteLength;
+  }
 }
 
 /**
@@ -477,6 +466,23 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+// A file part this module stored: a channel reference it can read again, or a
+// sealed workspace link. Tool results and subagent output arrive as file parts
+// too, carrying shapes this module never wrote, and re-gating those would
+// rewrite results it has no business judging.
+function isStoredMediaPart(
+  part: UserContentPart,
+): part is Extract<UserContentPart, { type: "file" }> {
+  if (part.type !== "file" || typeof part.data !== "string") {
+    return false;
+  }
+
+  return (
+    parseMediaReference(part.data) !== null ||
+    part.data.includes(MEDIA_PATH_PREFIX)
+  );
+}
+
 function limitForMediaType(mediaType: string | undefined): number {
   return mediaType?.startsWith("image/")
     ? MAX_IMAGE_BYTES
@@ -499,21 +505,20 @@ function mediaFileName(
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
 }
 
-// A file part this module stored: a channel reference it can read again, or a
-// sealed workspace link. Tool results and subagent output arrive as file parts
-// too, carrying shapes this module never wrote, and re-gating those would
-// rewrite results it has no business judging.
-function isStoredMediaPart(
-  part: UserContentPart,
-): part is Extract<UserContentPart, { type: "file" }> {
-  if (part.type !== "file" || typeof part.data !== "string") {
-    return false;
-  }
+// A workspace path an agent can read back, and a shell will not fight over.
+// The hash keeps two messages that both carry `image.jpg` apart without making
+// the name unreadable.
+function mediaPath(name: string, eventId: string, index: number): string {
+  const folder = createHash("sha256")
+    .update(eventId)
+    .digest("hex")
+    .slice(0, 12);
+  const safeName = name
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 
-  return (
-    parseMediaReference(part.data) !== null ||
-    part.data.includes(MEDIA_PATH_PREFIX)
-  );
+  return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
 // The reference a part carries, when it carries one. Only a plain string is
@@ -555,22 +560,6 @@ function mediaReferenceUrl(
   url.searchParams.set("type", attachment.type);
 
   return url.toString();
-}
-
-// A workspace path an agent can read back, and a shell will not fight over.
-// The hash keeps two messages that both carry `image.jpg` apart without making
-// the name unreadable.
-function mediaPath(name: string, eventId: string, index: number): string {
-  const folder = createHash("sha256")
-    .update(eventId)
-    .digest("hex")
-    .slice(0, 12);
-  const safeName = name
-    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-
-  return `${MEDIA_DIRECTORY}/${folder}/${index}-${safeName || "attachment"}`;
 }
 
 // The part the model actually receives. Pictures go over as pictures; anything
@@ -799,27 +788,38 @@ async function storeAttachment(
   }
 }
 
-// Audio the model cannot hear for itself, read into words. Skipped where the
-// provider takes the recording natively, since listening to it beats a
-// transcript of it.
-async function audioTranscript(
-  bytes: Buffer,
-  mediaType: string,
-  agentConfig: AgentConfig | undefined,
-): Promise<TranscriptOutcome | undefined> {
-  if (
-    !agentConfig ||
-    !mediaType.startsWith("audio/") ||
-    acceptsNativeMedia(agentConfig.model?.provider, mediaType)
-  ) {
-    return undefined;
+// What the audio said, or what to do about not knowing.
+function transcriptLine(item: StoredAttachment): string {
+  const transcript = item.transcript;
+  if (!transcript) {
+    return "";
+  }
+  if (transcript.status === "transcribed") {
+    return transcript.text
+      ? `\n  Transcript: ${transcript.text}`
+      : "\n  Transcript: no speech in the recording.";
   }
 
-  return await transcribeAudio(
-    agentConfig,
-    bytes,
-    TRANSCRIPTION_RETRIES.ingest,
-  );
+  return `\n  Not transcribed: ${transcript.reason}. ${transcriptAdvice(transcript.recovery, item.path)}`;
+}
+
+// Where the agent goes to open this attachment, or why it cannot.
+function whereItLanded(
+  item: StoredAttachment,
+  part: UserContentPart | null,
+  channelName: string,
+): string {
+  if (item.path) {
+    return `saved to ${item.path}`;
+  }
+  if (item.reference) {
+    return `is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.`;
+  }
+  if (part) {
+    return "is available for this message only; no workspace is attached to store it.";
+  }
+
+  return "could not be shown: this model does not accept the type, and there is no workspace to store it in.";
 }
 
 // Straight to S3 rather than through the sandbox: a read-only workspace has no

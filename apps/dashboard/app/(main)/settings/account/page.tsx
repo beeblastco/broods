@@ -17,6 +17,62 @@ const TABS: Array<{ id: AccountTab; label: string; danger?: boolean }> = [
   { id: "danger", label: "Danger Zone", danger: true },
 ];
 
+export default function AccountSettingsPage(): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const activeTab = (searchParams.get("tab") as AccountTab) || "profile";
+  const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Account";
+
+  return (
+    <div className="flex h-full">
+      <aside className="flex w-48 shrink-0 flex-col bg-transparent">
+        <div className="px-6 pt-9.25 pb-3">
+          <h2 className="text-xl font-semibold text-foreground">Account</h2>
+        </div>
+        <nav className="flex flex-col gap-0.5 px-3">
+          {TABS.map((tab) => (
+            <Button
+              key={tab.id}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "w-full justify-start px-3 cursor-pointer",
+                activeTab === tab.id
+                  ? tab.danger
+                    ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    : "bg-accent text-foreground"
+                  : tab.danger
+                    ? "text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+              )}
+              onClick={() => {
+                const p = new URLSearchParams(searchParams.toString());
+                p.set("tab", tab.id);
+                router.push(`/settings/account?${p.toString()}`);
+              }}
+            >
+              {tab.label}
+            </Button>
+          ))}
+        </nav>
+      </aside>
+
+      <div className="flex flex-1 flex-col overflow-auto">
+        <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
+          <h2 className="text-xl font-semibold text-foreground">
+            {activeLabel}
+          </h2>
+        </div>
+        <div className="mx-auto w-full max-w-2xl px-8 pb-12">
+          {activeTab === "profile" && <AccountPanel />}
+          {activeTab === "danger" && <AccountDangerPanel />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AccountDangerPanel(): React.JSX.Element {
   const currentUser = useQuery(api.user.getCurrent);
   const requestAccountDeletion = useMutation(api.user.requestAccountDeletion);
@@ -112,61 +168,5 @@ function AccountDangerPanel(): React.JSX.Element {
         isDeleting={isDeleting}
       />
     </>
-  );
-}
-
-export default function AccountSettingsPage(): React.JSX.Element {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const activeTab = (searchParams.get("tab") as AccountTab) || "profile";
-  const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Account";
-
-  return (
-    <div className="flex h-full">
-      <aside className="flex w-48 shrink-0 flex-col bg-transparent">
-        <div className="px-6 pt-9.25 pb-3">
-          <h2 className="text-xl font-semibold text-foreground">Account</h2>
-        </div>
-        <nav className="flex flex-col gap-0.5 px-3">
-          {TABS.map((tab) => (
-            <Button
-              key={tab.id}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "w-full justify-start px-3 cursor-pointer",
-                activeTab === tab.id
-                  ? tab.danger
-                    ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
-                    : "bg-accent text-foreground"
-                  : tab.danger
-                    ? "text-destructive/70 hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-              )}
-              onClick={() => {
-                const p = new URLSearchParams(searchParams.toString());
-                p.set("tab", tab.id);
-                router.push(`/settings/account?${p.toString()}`);
-              }}
-            >
-              {tab.label}
-            </Button>
-          ))}
-        </nav>
-      </aside>
-
-      <div className="flex flex-1 flex-col overflow-auto">
-        <div className="px-8 pt-9.25 pb-6 mx-auto w-full max-w-2xl shrink-0">
-          <h2 className="text-xl font-semibold text-foreground">
-            {activeLabel}
-          </h2>
-        </div>
-        <div className="mx-auto w-full max-w-2xl px-8 pb-12">
-          {activeTab === "profile" && <AccountPanel />}
-          {activeTab === "danger" && <AccountDangerPanel />}
-        </div>
-      </div>
-    </div>
   );
 }

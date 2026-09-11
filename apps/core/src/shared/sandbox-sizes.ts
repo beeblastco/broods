@@ -36,6 +36,28 @@ export interface SandboxRunMetadata {
 }
 
 /**
+ * Control-plane metadata threaded from the runtime resolver to an executor so a
+ * freshly reserved sandbox can mirror itself into the Convex `sandboxInstances`
+ * registry. Absent for synthetic/stateless configs (the mirror then no-ops).
+ */
+export interface SandboxControlPlane {
+  accountId: string;
+  /** Optional SaaS route scope for dashboard live views. */
+  projectId?: string;
+  stageId?: string;
+  /** The owning sandbox config row, so the dashboard can drive its write-path. */
+  sandboxConfigId?: string;
+  name: string;
+  specs: SandboxSpecs;
+  /** Snapshot/image the instance launched from, when pinned. */
+  snapshotId?: string;
+  /** Non-secret egress policy (config `network.mode`), mirrored for the dashboard Networking view. */
+  egress?: SandboxNetworkMode;
+  /** Tool approval policy (`edit`/`ask`/`bypass`), mirrored for the dashboard Security view. */
+  permissionMode?: SandboxPermissionMode;
+}
+
+/**
  * Canonical size catalog. Free tier = `tiny` + `xsmall` (quota enforcement is a
  * later usage workstream); `small`+ are paid. Disk is fixed per size to stay valid
  * on both self-hosted backends (workdir disk ∈ {8,16,32,64}; MicroVM disk is fixed).
@@ -61,28 +83,6 @@ const DEFAULT_SIZE: SandboxSize = "xsmall";
 
 /** vcpu values workdir accepts; the catalog's `tiny` (0.25) clamps up to 0.5. */
 const WORKDIR_CPU_CHOICES: readonly number[] = [0.5, 1, 2, 4];
-
-/**
- * Control-plane metadata threaded from the runtime resolver to an executor so a
- * freshly reserved sandbox can mirror itself into the Convex `sandboxInstances`
- * registry. Absent for synthetic/stateless configs (the mirror then no-ops).
- */
-export interface SandboxControlPlane {
-  accountId: string;
-  /** Optional SaaS route scope for dashboard live views. */
-  projectId?: string;
-  stageId?: string;
-  /** The owning sandbox config row, so the dashboard can drive its write-path. */
-  sandboxConfigId?: string;
-  name: string;
-  specs: SandboxSpecs;
-  /** Snapshot/image the instance launched from, when pinned. */
-  snapshotId?: string;
-  /** Non-secret egress policy (config `network.mode`), mirrored for the dashboard Networking view. */
-  egress?: SandboxNetworkMode;
-  /** Tool approval policy (`edit`/`ask`/`bypass`), mirrored for the dashboard Security view. */
-  permissionMode?: SandboxPermissionMode;
-}
 
 /**
  * Resolve the specs to mirror for a sandbox config. A pinned `size` wins; otherwise

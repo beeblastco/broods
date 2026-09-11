@@ -66,39 +66,24 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
-export async function loadConfiguredSkillPrompt(
-  allowedSkillPaths: string[],
-  skillPath: string,
-  resourcePaths: string[] = [],
-  workspaceNamespace?: string,
-): Promise<{
-  path: string;
-  loadedPaths: string[];
-  stagedPath?: string;
-  stagedFiles: string[];
-  bytes: number;
-  prompt: SystemModelMessage;
-}> {
-  if (!allowedSkillPaths.includes(skillPath)) {
-    throw new Error(`Skill is not configured for this agent: ${skillPath}`);
+export async function listSkillMetadataForConfig(
+  accountId: string,
+  skillPaths: string[] = [],
+): Promise<SkillMetadata[]> {
+  const enabled: SkillMetadata[] = [];
+  for (const skillPath of skillPaths) {
+    await assertAccountOwnsSkillPath(accountId, skillPath);
+    const parsed = parseSkillPath(skillPath)!;
+    const skillText = await readSkillMarkdown(accountId, parsed.skillName);
+    if (skillText) {
+      enabled.push({
+        ...parseSkillMarkdown(skillText),
+        path: skillPath,
+      });
+    }
   }
 
-  const loaded = await loadSkillContent(skillPath, resourcePaths);
-  const staged = workspaceNamespace
-    ? await stageSkillBundleForSandbox(skillPath, workspaceNamespace)
-    : null;
-
-  return {
-    path: skillPath,
-    loadedPaths: loaded.parts.map((part) => part.path),
-    ...(staged ? { stagedPath: staged.stagedPath } : {}),
-    stagedFiles: staged?.files ?? [],
-    bytes: loaded.bytes,
-    prompt: {
-      role: "system",
-      content: formatLoadedSkillPrompt(loaded, staged),
-    },
-  };
+  return enabled;
 }
 
 export async function loadConfiguredHarnessSkills(
@@ -162,24 +147,39 @@ export async function loadConfiguredHarnessSkills(
   return skills;
 }
 
-export async function listSkillMetadataForConfig(
-  accountId: string,
-  skillPaths: string[] = [],
-): Promise<SkillMetadata[]> {
-  const enabled: SkillMetadata[] = [];
-  for (const skillPath of skillPaths) {
-    await assertAccountOwnsSkillPath(accountId, skillPath);
-    const parsed = parseSkillPath(skillPath)!;
-    const skillText = await readSkillMarkdown(accountId, parsed.skillName);
-    if (skillText) {
-      enabled.push({
-        ...parseSkillMarkdown(skillText),
-        path: skillPath,
-      });
-    }
+export async function loadConfiguredSkillPrompt(
+  allowedSkillPaths: string[],
+  skillPath: string,
+  resourcePaths: string[] = [],
+  workspaceNamespace?: string,
+): Promise<{
+  path: string;
+  loadedPaths: string[];
+  stagedPath?: string;
+  stagedFiles: string[];
+  bytes: number;
+  prompt: SystemModelMessage;
+}> {
+  if (!allowedSkillPaths.includes(skillPath)) {
+    throw new Error(`Skill is not configured for this agent: ${skillPath}`);
   }
 
-  return enabled;
+  const loaded = await loadSkillContent(skillPath, resourcePaths);
+  const staged = workspaceNamespace
+    ? await stageSkillBundleForSandbox(skillPath, workspaceNamespace)
+    : null;
+
+  return {
+    path: skillPath,
+    loadedPaths: loaded.parts.map((part) => part.path),
+    ...(staged ? { stagedPath: staged.stagedPath } : {}),
+    stagedFiles: staged?.files ?? [],
+    bytes: loaded.bytes,
+    prompt: {
+      role: "system",
+      content: formatLoadedSkillPrompt(loaded, staged),
+    },
+  };
 }
 
 export async function loadSkillContent(
@@ -224,6 +224,104 @@ export async function loadSkillContent(
       0,
     ),
   };
+}
+
+function canonicalStagedPath(skillName: string): string {
+  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
+}
+
+function canonicalStagePrefix(
+  workspaceNamespace: string,
+  skillName: string,
+): string {
+  return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
+}
+
+function compareSkillBundlePath(a: string, b: string): number {
+  if (a === SKILL_FILE) return b === SKILL_FILE ? 0 : -1;
+  if (b === SKILL_FILE) return 1;
+
+  return a.localeCompare(b);
+}
+
+async function deleteStaleStagedSkillFiles(
+  workspaceBucket: string,
+  destinationPrefix: string,
+  sourcePathSet: Set<string>,
+): Promise<void> {
+  const stagedObjects = await listS3Prefix(workspaceBucket, destinationPrefix);
+  await Promise.all(
+    stagedObjects.map(async (object) => {
+      if (object.key.endsWith("/")) {
+        return;
+      }
+      const relativePath = normalizeBundlePath(
+        object.key.slice(destinationPrefix.length),
+      );
+      if (sourcePathSet.has(relativePath)) {
+        return;
+      }
+      await deleteS3Object(workspaceBucket, object.key);
+    }),
+  );
+}
+
+function formatLoadedSkillPrompt(
+  loaded: Awaited<ReturnType<typeof loadSkillContent>>,
+  staged?: SkillBundleSandboxStage | null,
+): string {
+  const parts = loaded.parts
+    .map((part) => `## ${part.path}\n\n${part.text.trim()}`)
+    .join("\n\n");
+  const mirrorText =
+    staged && staged.mirrorPaths.length > 0
+      ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
+      : "";
+  const sandboxText = staged
+    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
+    : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
+
+  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
+  // refreshed system instructions instead of polluting chat history.
+  return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
+${parts}${sandboxText}
+</loaded-skill>`;
+}
+
+async function listSkillSourceFiles(
+  skillPath: string,
+): Promise<SkillSourceFile[]> {
+  const sourcePrefix = `${skillPath}/`;
+  const objects = await listS3Prefix(skillsBucketName(), sourcePrefix);
+
+  return objects
+    .flatMap((object) => {
+      if (object.key.endsWith("/")) {
+        return [];
+      }
+
+      return [
+        {
+          key: object.key,
+          path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
+        },
+      ];
+    })
+    .sort((a, b) => compareSkillBundlePath(a.path, b.path));
+}
+
+function mirrorStagedPaths(skillName: string): string[] {
+  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
+}
+
+function mirrorStagePrefixes(
+  workspaceNamespace: string,
+  skillName: string,
+): string[] {
+  return SKILL_MIRROR_DIRS.map(
+    (dir) =>
+      `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
+  );
 }
 
 async function stageSkillBundleForSandbox(
@@ -286,102 +384,4 @@ async function stageSkillFiles(
       );
     }),
   );
-}
-
-async function listSkillSourceFiles(
-  skillPath: string,
-): Promise<SkillSourceFile[]> {
-  const sourcePrefix = `${skillPath}/`;
-  const objects = await listS3Prefix(skillsBucketName(), sourcePrefix);
-
-  return objects
-    .flatMap((object) => {
-      if (object.key.endsWith("/")) {
-        return [];
-      }
-
-      return [
-        {
-          key: object.key,
-          path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
-        },
-      ];
-    })
-    .sort((a, b) => compareSkillBundlePath(a.path, b.path));
-}
-
-async function deleteStaleStagedSkillFiles(
-  workspaceBucket: string,
-  destinationPrefix: string,
-  sourcePathSet: Set<string>,
-): Promise<void> {
-  const stagedObjects = await listS3Prefix(workspaceBucket, destinationPrefix);
-  await Promise.all(
-    stagedObjects.map(async (object) => {
-      if (object.key.endsWith("/")) {
-        return;
-      }
-      const relativePath = normalizeBundlePath(
-        object.key.slice(destinationPrefix.length),
-      );
-      if (sourcePathSet.has(relativePath)) {
-        return;
-      }
-      await deleteS3Object(workspaceBucket, object.key);
-    }),
-  );
-}
-
-function canonicalStagePrefix(
-  workspaceNamespace: string,
-  skillName: string,
-): string {
-  return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
-}
-
-function mirrorStagePrefixes(
-  workspaceNamespace: string,
-  skillName: string,
-): string[] {
-  return SKILL_MIRROR_DIRS.map(
-    (dir) =>
-      `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
-  );
-}
-
-function canonicalStagedPath(skillName: string): string {
-  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
-}
-
-function mirrorStagedPaths(skillName: string): string[] {
-  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
-}
-
-function compareSkillBundlePath(a: string, b: string): number {
-  if (a === SKILL_FILE) return b === SKILL_FILE ? 0 : -1;
-  if (b === SKILL_FILE) return 1;
-
-  return a.localeCompare(b);
-}
-
-function formatLoadedSkillPrompt(
-  loaded: Awaited<ReturnType<typeof loadSkillContent>>,
-  staged?: SkillBundleSandboxStage | null,
-): string {
-  const parts = loaded.parts
-    .map((part) => `## ${part.path}\n\n${part.text.trim()}`)
-    .join("\n\n");
-  const mirrorText =
-    staged && staged.mirrorPaths.length > 0
-      ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
-      : "";
-  const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
-    : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
-
-  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
-  // refreshed system instructions instead of polluting chat history.
-  return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
-${parts}${sandboxText}
-</loaded-skill>`;
 }

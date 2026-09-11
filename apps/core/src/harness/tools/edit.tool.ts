@@ -25,70 +25,6 @@ interface EditInput {
   workspace?: string;
 }
 
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-
-  return {
-    type: "object",
-    properties: {
-      file_path: {
-        type: "string",
-        description: "Path to edit, relative to the workspace root.",
-      },
-      old_string: { type: "string", description: "The exact text to replace." },
-      new_string: {
-        type: "string",
-        description: "The replacement text (must differ from old_string).",
-      },
-      replace_all: {
-        type: "boolean",
-        description:
-          "Replace every occurrence instead of requiring a unique match.",
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["file_path", "old_string", "new_string"],
-    additionalProperties: false,
-  };
-}
-
-function editScript(
-  pathB64: string,
-  oldB64: string,
-  newB64: string,
-  replaceAll: boolean,
-): string {
-  return [
-    "node <<'NODEEOF'",
-    "const fs = require('node:fs');",
-    `const path = Buffer.from("${pathB64}", "base64").toString("utf8");`,
-    `const oldString = Buffer.from("${oldB64}", "base64").toString("utf8");`,
-    `const newString = Buffer.from("${newB64}", "base64").toString("utf8");`,
-    `const replaceAll = ${replaceAll ? "true" : "false"};`,
-    "function fail(message) { process.stderr.write(message + '\\n'); process.exit(1); }",
-    "if (oldString.length === 0) fail('Error: old_string must not be empty');",
-    "if (oldString === newString) fail('Error: old_string and new_string are identical');",
-    "let data;",
-    "try {",
-    "  data = fs.readFileSync(path, 'utf8');",
-    "} catch (error) {",
-    "  if (error && error.code === 'ENOENT') fail(`Error: file not found: ${path}`);",
-    "  throw error;",
-    "}",
-    "const count = data.split(oldString).length - 1;",
-    "if (count === 0) fail(`Error: old_string not found in ${path}`);",
-    "if (!replaceAll && count > 1) fail(`Error: old_string is not unique (${count} matches); add context or set replace_all`);",
-    "const updated = replaceAll ? data.split(oldString).join(newString) : data.replace(oldString, newString);",
-    // fsync the rewrite so it commits to the S3 Files server before the Lambda freezes;
-    // a plain writeFileSync can be lost on the next cold container. See docs/workspace/sandbox/lambda.md.
-    "const fd = fs.openSync(path, 'w');",
-    "try { fs.writeSync(fd, updated, null, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }",
-    "const replacements = replaceAll ? count : 1;",
-    "process.stdout.write(`Edited ${path} (${replacements} replacement${replacements === 1 ? '' : 's'})\\n`);",
-    "NODEEOF",
-  ].join("\n");
-}
-
 export default function editTool(context: SandboxToolContext): ToolSet {
   return {
     edit: tool({
@@ -136,5 +72,69 @@ Usage notes:
         }
       },
     }),
+  };
+}
+
+function editScript(
+  pathB64: string,
+  oldB64: string,
+  newB64: string,
+  replaceAll: boolean,
+): string {
+  return [
+    "node <<'NODEEOF'",
+    "const fs = require('node:fs');",
+    `const path = Buffer.from("${pathB64}", "base64").toString("utf8");`,
+    `const oldString = Buffer.from("${oldB64}", "base64").toString("utf8");`,
+    `const newString = Buffer.from("${newB64}", "base64").toString("utf8");`,
+    `const replaceAll = ${replaceAll ? "true" : "false"};`,
+    "function fail(message) { process.stderr.write(message + '\\n'); process.exit(1); }",
+    "if (oldString.length === 0) fail('Error: old_string must not be empty');",
+    "if (oldString === newString) fail('Error: old_string and new_string are identical');",
+    "let data;",
+    "try {",
+    "  data = fs.readFileSync(path, 'utf8');",
+    "} catch (error) {",
+    "  if (error && error.code === 'ENOENT') fail(`Error: file not found: ${path}`);",
+    "  throw error;",
+    "}",
+    "const count = data.split(oldString).length - 1;",
+    "if (count === 0) fail(`Error: old_string not found in ${path}`);",
+    "if (!replaceAll && count > 1) fail(`Error: old_string is not unique (${count} matches); add context or set replace_all`);",
+    "const updated = replaceAll ? data.split(oldString).join(newString) : data.replace(oldString, newString);",
+    // fsync the rewrite so it commits to the S3 Files server before the Lambda freezes;
+    // a plain writeFileSync can be lost on the next cold container. See docs/workspace/sandbox/lambda.md.
+    "const fd = fs.openSync(path, 'w');",
+    "try { fs.writeSync(fd, updated, null, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }",
+    "const replacements = replaceAll ? count : 1;",
+    "process.stdout.write(`Edited ${path} (${replacements} replacement${replacements === 1 ? '' : 's'})\\n`);",
+    "NODEEOF",
+  ].join("\n");
+}
+
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
+  return {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "Path to edit, relative to the workspace root.",
+      },
+      old_string: { type: "string", description: "The exact text to replace." },
+      new_string: {
+        type: "string",
+        description: "The replacement text (must differ from old_string).",
+      },
+      replace_all: {
+        type: "boolean",
+        description:
+          "Replace every occurrence instead of requiring a unique match.",
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["file_path", "old_string", "new_string"],
+    additionalProperties: false,
   };
 }

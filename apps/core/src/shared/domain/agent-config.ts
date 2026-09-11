@@ -739,6 +739,16 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   return config as AgentConfig;
 }
 
+export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
+  if (!isPlainObject(value)) {
+    throw new Error("config must be an object");
+  }
+
+  validateConfigPatch(value, "config");
+
+  return value;
+}
+
 function normalizeHarnessConfig(value: unknown): void {
   if (value == null) {
     return;
@@ -828,16 +838,6 @@ function normalizeHarnessDebugConfig(value: unknown): void {
     value.subsystems,
     "config.harness.debug.subsystems",
   );
-}
-
-export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
-  if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
-  }
-
-  validateConfigPatch(value, "config");
-
-  return value;
 }
 
 function normalizeChannelsConfig(value: unknown): void {
@@ -1688,8 +1688,42 @@ function assertOptionalPositiveInteger(
   }
 }
 
+/**
+ * Folds per-run overrides into a shallow copy of the agent config for one
+ * invocation. Model overrides ride on `model` and are read where the config
+ * already flows. `system` is handled separately as ephemeral system messages.
+ * Returns the original config untouched when there are no model overrides.
+ */
+export function applyRunOverrides(
+  config: AgentConfig,
+  overrides?: RunOverrides,
+): AgentConfig {
+  if (
+    !overrides ||
+    !(overrides.model && Object.keys(overrides.model).length > 0)
+  ) {
+    return config;
+  }
+  const next: AgentConfig = { ...config };
+  if (overrides.model && Object.keys(overrides.model).length > 0) {
+    next.model = { ...config.model, ...overrides.model };
+  }
+
+  return next;
+}
+
 export function decodeStoredAgentConfig(value: unknown): AgentConfig {
   return decodeStoredConfigObject(value) as AgentConfig;
+}
+
+export function decodeStoredConfigObject(
+  value: unknown,
+): Record<string, unknown> {
+  if (isEncryptedAgentConfig(value)) {
+    return decryptConfigObject(value);
+  }
+
+  throw new Error("Stored config must be encrypted");
 }
 
 export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
@@ -1721,14 +1755,37 @@ export function encryptConfigObject(config: object): EncryptedAgentConfig {
   };
 }
 
-export function decodeStoredConfigObject(
-  value: unknown,
-): Record<string, unknown> {
-  if (isEncryptedAgentConfig(value)) {
-    return decryptConfigObject(value);
-  }
+export function mergeAgentConfig(
+  existing: AgentConfig,
+  patch: AgentConfigPatch,
+): AgentConfig {
+  return normalizeAgentConfig(mergeConfigValue(existing, patch));
+}
 
-  throw new Error("Stored config must be encrypted");
+// Generic deep-merge + secret redaction reused by the sandbox/workspace config
+// stores so they share the agent config's patch semantics (null deletes a key,
+// the REDACTED sentinel preserves the existing secret).
+export function mergeConfigObjects(
+  existing: object,
+  patch: object,
+): Record<string, unknown> {
+  const merged = mergeConfigValue(existing, patch);
+
+  return isPlainObject(merged) ? merged : {};
+}
+
+export function redactAgentConfig(config: AgentConfig): AgentConfig {
+  return redactSecrets(config) as AgentConfig;
+}
+
+export function redactConfigSecrets<T>(value: T): T {
+  return redactSecrets(value) as T;
+}
+
+function agentConfigEncryptionKey(): Buffer {
+  return createHash("sha256")
+    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
+    .digest();
 }
 
 function decryptConfigObject(
@@ -1753,12 +1810,6 @@ function decryptConfigObject(
   return parsed;
 }
 
-function agentConfigEncryptionKey(): Buffer {
-  return createHash("sha256")
-    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
-    .digest();
-}
-
 function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
   if (!isPlainObject(value)) {
     return false;
@@ -1773,35 +1824,24 @@ function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
   );
 }
 
-export function mergeAgentConfig(
-  existing: AgentConfig,
-  patch: AgentConfigPatch,
-): AgentConfig {
-  return normalizeAgentConfig(mergeConfigValue(existing, patch));
-}
+function isSecretConfigKey(key: string): boolean {
+  const normalized = key.toLowerCase();
 
-/**
- * Folds per-run overrides into a shallow copy of the agent config for one
- * invocation. Model overrides ride on `model` and are read where the config
- * already flows. `system` is handled separately as ephemeral system messages.
- * Returns the original config untouched when there are no model overrides.
- */
-export function applyRunOverrides(
-  config: AgentConfig,
-  overrides?: RunOverrides,
-): AgentConfig {
-  if (
-    !overrides ||
-    !(overrides.model && Object.keys(overrides.model).length > 0)
-  ) {
-    return config;
-  }
-  const next: AgentConfig = { ...config };
-  if (overrides.model && Object.keys(overrides.model).length > 0) {
-    next.model = { ...config.model, ...overrides.model };
-  }
-
-  return next;
+  return (
+    normalized.includes("secret") ||
+    normalized.includes("token") ||
+    normalized.includes("privatekey") ||
+    normalized.includes("private_key") ||
+    normalized.includes("credential") ||
+    normalized.includes("kubeconfig") ||
+    normalized.includes("certificate") ||
+    normalized.includes("accesskey") ||
+    normalized.includes("access_key") ||
+    normalized.includes("password") ||
+    normalized.includes("passwd") ||
+    normalized === "apikey" ||
+    normalized === "api_key"
+  );
 }
 
 function mergeConfigValue(existing: unknown, patch: unknown): unknown {
@@ -1840,26 +1880,6 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-export function redactAgentConfig(config: AgentConfig): AgentConfig {
-  return redactSecrets(config) as AgentConfig;
-}
-
-// Generic deep-merge + secret redaction reused by the sandbox/workspace config
-// stores so they share the agent config's patch semantics (null deletes a key,
-// the REDACTED sentinel preserves the existing secret).
-export function mergeConfigObjects(
-  existing: object,
-  patch: object,
-): Record<string, unknown> {
-  const merged = mergeConfigValue(existing, patch);
-
-  return isPlainObject(merged) ? merged : {};
-}
-
-export function redactConfigSecrets<T>(value: T): T {
-  return redactSecrets(value) as T;
-}
-
 function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactSecrets);
@@ -1876,25 +1896,5 @@ function redactSecrets(value: unknown): unknown {
         ? REDACTED_SECRET_VALUE
         : redactSecrets(entry),
     ]),
-  );
-}
-
-function isSecretConfigKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  return (
-    normalized.includes("secret") ||
-    normalized.includes("token") ||
-    normalized.includes("privatekey") ||
-    normalized.includes("private_key") ||
-    normalized.includes("credential") ||
-    normalized.includes("kubeconfig") ||
-    normalized.includes("certificate") ||
-    normalized.includes("accesskey") ||
-    normalized.includes("access_key") ||
-    normalized.includes("password") ||
-    normalized.includes("passwd") ||
-    normalized === "apikey" ||
-    normalized === "api_key"
   );
 }

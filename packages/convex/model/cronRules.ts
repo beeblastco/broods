@@ -10,7 +10,6 @@ import type { CronInfo } from "@convex-dev/crons";
 import { isPlainObject } from "./objects";
 
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
-
 const timezoneFormatters = new Map<string, Intl.DateTimeFormat>();
 
 const RATE_MS_PER_UNIT: Record<string, number> = {
@@ -228,104 +227,68 @@ export function parseCronRunsLimit(value: string | null): number | undefined {
   return parsed;
 }
 
-/** Collapses a one-of `input`/`events` payload into the stored events list. */
-function runPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): unknown[] {
-  const hasInput = payload.input !== undefined;
-  const hasEvents = payload.events !== undefined;
-  if (hasInput === hasEvents) {
-    throw new Error("Provide exactly one of input or events");
+/**
+ * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
+ * wall-clock time is read in `timezone` when given, UTC otherwise, the same
+ * semantics EventBridge Scheduler applied.
+ */
+function atExpressionToTimestamp(
+  expression: string,
+  timezone: string | undefined,
+): number {
+  const match = /^at\((\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\)$/.exec(
+    expression,
+  );
+  if (!match) {
+    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
   }
-  if (hasInput) {
-    return [
-      {
-        role: "user",
-        content: [{ type: "text", text: String(payload.input) }],
-      },
-    ];
-  }
+  const [
+    ,
+    year = "",
+    month = "",
+    day = "",
+    hour = "",
+    minute = "",
+    second = "",
+  ] = match;
+  const asUtc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
+  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
+  if (!timezone) return asUtc;
 
-  return normalizeEvents(payload.events);
+  // Two passes pin the wall clock to the zone's offset at the target instant,
+  // which the first guess (the UTC reading) can miss across a DST boundary.
+  const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
+
+  return asUtc - timezoneOffsetMs(adjusted, timezone);
 }
 
-/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
-function optionalRunPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): unknown[] | undefined {
-  if (payload.input === undefined && payload.events === undefined)
-    return undefined;
+/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
+function convertDayOfWeek(field: string): string {
+  if (field === "?" || field === "*") return "*";
 
-  return runPayloadToEvents(payload);
-}
+  return field
+    .split(",")
+    .map((item) =>
+      item
+        .split("-")
+        .map((token) => {
+          const [base, step] = token.split("/") as [string, string | undefined];
+          const converted = DAY_OF_WEEK_NAMES.has(base.toUpperCase())
+            ? base
+            : String(requireDayOfWeekNumber(base) - 1);
 
-function normalizeEvents(value: unknown): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("events must be a non-empty array of model messages");
-  }
-
-  return value;
-}
-
-function normalizeScheduleExpression(value: unknown): string {
-  const expression = requireString(value, "scheduleExpression", 256);
-  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new Error(
-      "scheduleExpression must use cron(...), rate(...), or at(...)",
-    );
-  }
-
-  return expression;
-}
-
-function normalizeTimezone(value: unknown): string {
-  const timezone = requireString(value, "timezone", 64);
-  if (!TIMEZONE_PATTERN.test(timezone)) {
-    throw new Error("timezone contains unsupported characters");
-  }
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
-  } catch {
-    throw new Error("timezone must be a valid IANA timezone");
-  }
-
-  return timezone;
-}
-
-function normalizeCronStatus(value: unknown): CronStatus {
-  if (value === "active" || value === "paused") return value;
-  throw new Error("status must be active or paused");
-}
-
-function requireString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string {
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length === 0)
-    throw new Error(`${name} must be a non-empty string`);
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed;
-}
-
-function optionalString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed.length > 0 ? trimmed : undefined;
+          return step === undefined ? converted : `${converted}/${step}`;
+        })
+        .join("-"),
+    )
+    .join(",");
 }
 
 /**
@@ -368,26 +331,67 @@ function cronExpressionToCronspec(fields: string): string {
   ].join(" ");
 }
 
-/** Shift an AWS day-of-week field (1-7, 1 = Sunday) to unix cron's 0-6. */
-function convertDayOfWeek(field: string): string {
-  if (field === "?" || field === "*") return "*";
+function normalizeCronStatus(value: unknown): CronStatus {
+  if (value === "active" || value === "paused") return value;
+  throw new Error("status must be active or paused");
+}
 
-  return field
-    .split(",")
-    .map((item) =>
-      item
-        .split("-")
-        .map((token) => {
-          const [base, step] = token.split("/") as [string, string | undefined];
-          const converted = DAY_OF_WEEK_NAMES.has(base.toUpperCase())
-            ? base
-            : String(requireDayOfWeekNumber(base) - 1);
+function normalizeEvents(value: unknown): unknown[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("events must be a non-empty array of model messages");
+  }
 
-          return step === undefined ? converted : `${converted}/${step}`;
-        })
-        .join("-"),
-    )
-    .join(",");
+  return value;
+}
+
+function normalizeScheduleExpression(value: unknown): string {
+  const expression = requireString(value, "scheduleExpression", 256);
+  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
+    throw new Error(
+      "scheduleExpression must use cron(...), rate(...), or at(...)",
+    );
+  }
+
+  return expression;
+}
+
+function normalizeTimezone(value: unknown): string {
+  const timezone = requireString(value, "timezone", 64);
+  if (!TIMEZONE_PATTERN.test(timezone)) {
+    throw new Error("timezone contains unsupported characters");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new Error("timezone must be a valid IANA timezone");
+  }
+
+  return timezone;
+}
+
+/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
+function optionalRunPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): unknown[] | undefined {
+  if (payload.input === undefined && payload.events === undefined)
+    return undefined;
+
+  return runPayloadToEvents(payload);
+}
+
+function optionalString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
+
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /** Parses an AWS numeric day-of-week token (1-7, 1 = Sunday), or throws. */
@@ -402,46 +406,41 @@ function requireDayOfWeekNumber(token: string): number {
   return value;
 }
 
-/**
- * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
- * wall-clock time is read in `timezone` when given, UTC otherwise, the same
- * semantics EventBridge Scheduler applied.
- */
-function atExpressionToTimestamp(
-  expression: string,
-  timezone: string | undefined,
-): number {
-  const match = /^at\((\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\)$/.exec(
-    expression,
-  );
-  if (!match) {
-    throw new Error("at(...) must use the at(yyyy-mm-ddThh:mm:ss) form");
+function requireString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string {
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length === 0)
+    throw new Error(`${name} must be a non-empty string`);
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
+
+  return trimmed;
+}
+
+/** Collapses a one-of `input`/`events` payload into the stored events list. */
+function runPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): unknown[] {
+  const hasInput = payload.input !== undefined;
+  const hasEvents = payload.events !== undefined;
+  if (hasInput === hasEvents) {
+    throw new Error("Provide exactly one of input or events");
   }
-  const [
-    ,
-    year = "",
-    month = "",
-    day = "",
-    hour = "",
-    minute = "",
-    second = "",
-  ] = match;
-  const asUtc = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-  );
-  if (Number.isNaN(asUtc)) throw new Error("at(...) date is not a valid time");
-  if (!timezone) return asUtc;
+  if (hasInput) {
+    return [
+      {
+        role: "user",
+        content: [{ type: "text", text: String(payload.input) }],
+      },
+    ];
+  }
 
-  // Two passes pin the wall clock to the zone's offset at the target instant,
-  // which the first guess (the UTC reading) can miss across a DST boundary.
-  const adjusted = asUtc - timezoneOffsetMs(asUtc, timezone);
-
-  return asUtc - timezoneOffsetMs(adjusted, timezone);
+  return normalizeEvents(payload.events);
 }
 
 /** Offset of `timezone` from UTC at `timestamp`, in milliseconds. */

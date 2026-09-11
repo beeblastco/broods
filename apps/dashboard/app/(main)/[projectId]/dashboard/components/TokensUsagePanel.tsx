@@ -72,16 +72,410 @@ const EMPTY_LIVE_OVERLAY: LiveOverlay = {
   toolSandboxCpuUsec: 0,
 };
 
+// A task still "running" past this likely never reported its terminal span
+// (crash/freeze), so excluding it keeps a dead task from inflating the live total
+// forever.
+const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
+
+const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
+  { id: "1h", label: "1h" },
+  { id: "3h", label: "3h" },
+  { id: "1d", label: "1d" },
+  { id: "7d", label: "7d" },
+  { id: "30d", label: "30d" },
+  { id: "1y", label: "1y" },
+];
+
+const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> =
+  [
+    { key: "inputTokens", label: "Input", color: "#60a5fa" },
+    { key: "outputTokens", label: "Output", color: "#34d399" },
+    { key: "reasoningTokens", label: "Reasoning", color: "#a78bfa" },
+    { key: "cachedInputTokens", label: "Cache read", color: "#fbbf24" },
+    { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
+  ];
+
+// Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
+// hosted MCP server bundles.
+const SANDBOX_CPU_SERIES: Array<{
+  key: keyof Bucket;
+  label: string;
+  color: string;
+}> = [
+  { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
+  { key: "toolSandboxCpuUsec", label: "MCP sandbox", color: "#fb923c" },
+];
+
+export function TokensUsagePanel({
+  projectId,
+  stageId,
+  projectSlug,
+  stageSlug,
+  apiKey,
+}: Props): React.JSX.Element {
+  const [range, setRange] = useState<Range>("1h");
+
+  // Reactive subscription: usage totals update live as the harness meters tokens.
+  const data = useQuery(api.logs.fetchUsageStats, {
+    projectId: projectId,
+    stageId: stageId ?? undefined,
+    range: range,
+  });
+  const stats: UsageStats | null = data ?? null;
+  const isFetching = data === undefined;
+
+  // Convex only records usage at task finalize, so a run in flight needs the
+  // trace stream to show anything at all. See liveOverlayFromTraces.
+  const { entries: liveSpans } = useObservabilityStream({
+    stream: "traces",
+    projectSlug: projectSlug,
+    stageSlug: stageSlug,
+    apiKey: apiKey,
+    backfill: 30,
+  });
+  const liveOverlay = useMemo(
+    () => liveOverlayFromTraces(liveSpans),
+    [liveSpans],
+  );
+  const isStreamingLive = liveOverlay.invocations > 0;
+
+  // Zero-filled even before the first query resolves, so the first paint is an
+  // empty grid rather than a "no data" card.
+  const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
+  const bins = useMemo(() => {
+    const merged = stats ? mergeByBucket(stats.buckets) : [];
+    const filled = fillBucketsAcrossRange(
+      merged,
+      binSeconds,
+      RANGE_SECONDS[range],
+    );
+    // Fold in-progress tokens, task/model counts, and sandbox CPU into the most
+    // recent bin so every chart (tokens, tasks & model calls, compute) grows live.
+    if (filled.length > 0 && liveOverlay.invocations > 0) {
+      const last = filled[filled.length - 1];
+      filled[filled.length - 1] = {
+        ...last,
+        inputTokens: last.inputTokens + liveOverlay.inputTokens,
+        outputTokens: last.outputTokens + liveOverlay.outputTokens,
+        reasoningTokens: last.reasoningTokens + liveOverlay.reasoningTokens,
+        cachedInputTokens:
+          last.cachedInputTokens + liveOverlay.cachedInputTokens,
+        totalTokens:
+          last.totalTokens +
+          liveOverlay.inputTokens +
+          liveOverlay.outputTokens +
+          liveOverlay.reasoningTokens,
+        invocations: last.invocations + liveOverlay.invocations,
+        modelCalls: last.modelCalls + liveOverlay.modelCalls,
+        agentSandboxCpuUsec:
+          last.agentSandboxCpuUsec + liveOverlay.agentSandboxCpuUsec,
+        toolSandboxCpuUsec:
+          last.toolSandboxCpuUsec + liveOverlay.toolSandboxCpuUsec,
+      };
+    }
+
+    return filled;
+  }, [stats, binSeconds, range, liveOverlay]);
+  const byModel = useMemo(
+    () => (stats ? aggregateByModel(stats.buckets) : []),
+    [stats],
+  );
+  const pricedByModel = useMemo(
+    () =>
+      byModel.map((model) => ({
+        ...model,
+        estimatedCost: estimateModelTokenCost(
+          model.modelProvider,
+          model.modelId,
+          model,
+        ),
+      })),
+    [byModel],
+  );
+  const estimatedCost = pricedByModel.reduce(
+    (total, model) => total + (model.estimatedCost?.total ?? 0),
+    0,
+  );
+  const unpricedModels = pricedByModel.filter(
+    (model) => model.estimatedCost === null,
+  ).length;
+  const compute = stats?.totals;
+
+  return (
+    <div className="grid gap-8">
+      <Section
+        title="Usage overview"
+        description="Token consumption and model activity, metered live by the agent harness."
+      >
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-1 rounded-md border border-border bg-card p-1">
+            {RANGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setRange(opt.id)}
+                className={cn(
+                  "px-2.5 py-1 text-xs rounded cursor-pointer transition-colors",
+                  range === opt.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            {/* Spin only while connecting. A live stream stays open indefinitely
+                and a spinning icon for its whole lifetime repaints continuously. */}
+            <RefreshCw
+              className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
+            />
+            {isFetching
+              ? "Connecting…"
+              : isStreamingLive
+                ? "Streaming"
+                : "Live"}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <ComputeTile
+            label="Estimated token cost"
+            value={formatUsd(estimatedCost)}
+            color="#34d399"
+          />
+          <ComputeTile
+            label="Cache read"
+            value={formatNumber(
+              (stats?.totals.cachedInputTokens ?? 0) +
+                liveOverlay.cachedInputTokens,
+            )}
+            color="#fbbf24"
+          />
+          <ComputeTile
+            label="Cache write"
+            value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)}
+            color="#fb7185"
+          />
+        </div>
+        {unpricedModels > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {unpricedModels} model{unpricedModels === 1 ? " is" : "s are"} not
+            included in the estimate because no standard rate is configured.
+          </p>
+        )}
+      </Section>
+
+      <Section
+        title="Token usage over time"
+        description="Stacked: input, output, reasoning, cache reads, and cache writes."
+      >
+        <div className="rounded-lg border border-border bg-card p-3">
+          <StackedBarChart
+            bins={bins}
+            binSeconds={binSeconds}
+            series={TOKEN_SERIES}
+            total={(b) => b.totalTokens}
+          />
+          <div className="flex flex-wrap gap-3 pt-2 pl-1">
+            {TOKEN_SERIES.map((s) => (
+              <div
+                key={s.key as string}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  className="size-2.5 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
+                {s.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        title="Tasks & model calls over time"
+        description="Number of agent tasks and individual model invocations."
+      >
+        <div className="rounded-lg border border-border bg-card p-3">
+          <InvocationsChart bins={bins} binSeconds={binSeconds} />
+          <div className="flex flex-wrap gap-3 pt-2 pl-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ backgroundColor: "#22d3ee" }}
+              />
+              Tasks
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ backgroundColor: "#f472b6" }}
+              />
+              Model calls
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        title="Compute"
+        description="Harness runtime time and sandbox CPU, the agent's own sandbox against the MCP sandbox that runs hosted MCP server bundles."
+      >
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          <ComputeTile
+            label="Runtime"
+            value={formatMs(compute?.runtimeWallMs ?? 0)}
+            color="#818cf8"
+          />
+          <ComputeTile
+            label="Agent sandbox CPU"
+            value={formatCpuUsec(
+              (compute?.agentSandboxCpuUsec ?? 0) +
+                liveOverlay.agentSandboxCpuUsec,
+            )}
+            color="#2dd4bf"
+          />
+          <ComputeTile
+            label="MCP sandbox CPU"
+            value={formatCpuUsec(
+              (compute?.toolSandboxCpuUsec ?? 0) +
+                liveOverlay.toolSandboxCpuUsec,
+            )}
+            color="#fb923c"
+          />
+        </div>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <StackedBarChart
+            bins={bins}
+            binSeconds={binSeconds}
+            series={SANDBOX_CPU_SERIES}
+            formatAxis={formatCpuUsec}
+            formatValue={formatCpuUsec}
+            totalLabel="Sandbox CPU"
+          />
+          <div className="flex flex-wrap gap-3 pt-2 pl-1">
+            {SANDBOX_CPU_SERIES.map((s) => (
+              <div
+                key={s.key as string}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  className="size-2.5 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
+                {s.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        title="By model & provider"
+        description="Per-(provider, model) totals over the selected window."
+      >
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
+          <table className="w-full min-w-170 text-xs">
+            <thead>
+              <tr className="text-left text-muted-foreground border-b border-border">
+                <th className="px-3 py-2 font-medium whitespace-nowrap">
+                  Provider
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap">
+                  Model
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Input
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Output
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Reasoning
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Cache read
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Cache write
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Total
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Tasks
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Calls
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Est. cost
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border font-mono">
+              {byModel.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="px-3 py-6 text-center text-muted-foreground"
+                  >
+                    Waiting for model activity…
+                  </td>
+                </tr>
+              )}
+              {pricedByModel.map((m) => (
+                <tr key={`${m.modelProvider}::${m.modelId}`}>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {m.modelProvider}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">{m.modelId}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.inputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.outputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.reasoningTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.cachedInputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.cacheWriteTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.totalTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.invocations)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.modelCalls)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {m.estimatedCost
+                      ? formatUsd(m.estimatedCost.total)
+                      : "Unpriced"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 function numericAttribute(span: ObservabilitySpanRow, key: string): number {
   const value = span.attributes?.[key];
 
   return typeof value === "number" ? value : 0;
 }
-
-// A task still "running" past this likely never reported its terminal span
-// (crash/freeze), so excluding it keeps a dead task from inflating the live total
-// forever.
-const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
@@ -133,35 +527,6 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
 
   return totals;
 }
-
-const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
-  { id: "1h", label: "1h" },
-  { id: "3h", label: "3h" },
-  { id: "1d", label: "1d" },
-  { id: "7d", label: "7d" },
-  { id: "30d", label: "30d" },
-  { id: "1y", label: "1y" },
-];
-
-const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> =
-  [
-    { key: "inputTokens", label: "Input", color: "#60a5fa" },
-    { key: "outputTokens", label: "Output", color: "#34d399" },
-    { key: "reasoningTokens", label: "Reasoning", color: "#a78bfa" },
-    { key: "cachedInputTokens", label: "Cache read", color: "#fbbf24" },
-    { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
-  ];
-
-// Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
-// hosted MCP server bundles.
-const SANDBOX_CPU_SERIES: Array<{
-  key: keyof Bucket;
-  label: string;
-  color: string;
-}> = [
-  { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
-  { key: "toolSandboxCpuUsec", label: "MCP sandbox", color: "#fb923c" },
-];
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -755,371 +1120,6 @@ function ComputeTile({
         {label}
       </div>
       <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
-    </div>
-  );
-}
-
-export function TokensUsagePanel({
-  projectId,
-  stageId,
-  projectSlug,
-  stageSlug,
-  apiKey,
-}: Props): React.JSX.Element {
-  const [range, setRange] = useState<Range>("1h");
-
-  // Reactive subscription: usage totals update live as the harness meters tokens.
-  const data = useQuery(api.logs.fetchUsageStats, {
-    projectId: projectId,
-    stageId: stageId ?? undefined,
-    range: range,
-  });
-  const stats: UsageStats | null = data ?? null;
-  const isFetching = data === undefined;
-
-  // Convex only records usage at task finalize, so a run in flight needs the
-  // trace stream to show anything at all. See liveOverlayFromTraces.
-  const { entries: liveSpans } = useObservabilityStream({
-    stream: "traces",
-    projectSlug: projectSlug,
-    stageSlug: stageSlug,
-    apiKey: apiKey,
-    backfill: 30,
-  });
-  const liveOverlay = useMemo(
-    () => liveOverlayFromTraces(liveSpans),
-    [liveSpans],
-  );
-  const isStreamingLive = liveOverlay.invocations > 0;
-
-  // Zero-filled even before the first query resolves, so the first paint is an
-  // empty grid rather than a "no data" card.
-  const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
-  const bins = useMemo(() => {
-    const merged = stats ? mergeByBucket(stats.buckets) : [];
-    const filled = fillBucketsAcrossRange(
-      merged,
-      binSeconds,
-      RANGE_SECONDS[range],
-    );
-    // Fold in-progress tokens, task/model counts, and sandbox CPU into the most
-    // recent bin so every chart (tokens, tasks & model calls, compute) grows live.
-    if (filled.length > 0 && liveOverlay.invocations > 0) {
-      const last = filled[filled.length - 1];
-      filled[filled.length - 1] = {
-        ...last,
-        inputTokens: last.inputTokens + liveOverlay.inputTokens,
-        outputTokens: last.outputTokens + liveOverlay.outputTokens,
-        reasoningTokens: last.reasoningTokens + liveOverlay.reasoningTokens,
-        cachedInputTokens:
-          last.cachedInputTokens + liveOverlay.cachedInputTokens,
-        totalTokens:
-          last.totalTokens +
-          liveOverlay.inputTokens +
-          liveOverlay.outputTokens +
-          liveOverlay.reasoningTokens,
-        invocations: last.invocations + liveOverlay.invocations,
-        modelCalls: last.modelCalls + liveOverlay.modelCalls,
-        agentSandboxCpuUsec:
-          last.agentSandboxCpuUsec + liveOverlay.agentSandboxCpuUsec,
-        toolSandboxCpuUsec:
-          last.toolSandboxCpuUsec + liveOverlay.toolSandboxCpuUsec,
-      };
-    }
-
-    return filled;
-  }, [stats, binSeconds, range, liveOverlay]);
-  const byModel = useMemo(
-    () => (stats ? aggregateByModel(stats.buckets) : []),
-    [stats],
-  );
-  const pricedByModel = useMemo(
-    () =>
-      byModel.map((model) => ({
-        ...model,
-        estimatedCost: estimateModelTokenCost(
-          model.modelProvider,
-          model.modelId,
-          model,
-        ),
-      })),
-    [byModel],
-  );
-  const estimatedCost = pricedByModel.reduce(
-    (total, model) => total + (model.estimatedCost?.total ?? 0),
-    0,
-  );
-  const unpricedModels = pricedByModel.filter(
-    (model) => model.estimatedCost === null,
-  ).length;
-  const compute = stats?.totals;
-
-  return (
-    <div className="grid gap-8">
-      <Section
-        title="Usage overview"
-        description="Token consumption and model activity, metered live by the agent harness."
-      >
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-1 rounded-md border border-border bg-card p-1">
-            {RANGE_OPTIONS.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setRange(opt.id)}
-                className={cn(
-                  "px-2.5 py-1 text-xs rounded cursor-pointer transition-colors",
-                  range === opt.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {/* Spin only while connecting. A live stream stays open indefinitely
-                and a spinning icon for its whole lifetime repaints continuously. */}
-            <RefreshCw
-              className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
-            />
-            {isFetching
-              ? "Connecting…"
-              : isStreamingLive
-                ? "Streaming"
-                : "Live"}
-          </span>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <ComputeTile
-            label="Estimated token cost"
-            value={formatUsd(estimatedCost)}
-            color="#34d399"
-          />
-          <ComputeTile
-            label="Cache read"
-            value={formatNumber(
-              (stats?.totals.cachedInputTokens ?? 0) +
-                liveOverlay.cachedInputTokens,
-            )}
-            color="#fbbf24"
-          />
-          <ComputeTile
-            label="Cache write"
-            value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)}
-            color="#fb7185"
-          />
-        </div>
-        {unpricedModels > 0 && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {unpricedModels} model{unpricedModels === 1 ? " is" : "s are"} not
-            included in the estimate because no standard rate is configured.
-          </p>
-        )}
-      </Section>
-
-      <Section
-        title="Token usage over time"
-        description="Stacked: input, output, reasoning, cache reads, and cache writes."
-      >
-        <div className="rounded-lg border border-border bg-card p-3">
-          <StackedBarChart
-            bins={bins}
-            binSeconds={binSeconds}
-            series={TOKEN_SERIES}
-            total={(b) => b.totalTokens}
-          />
-          <div className="flex flex-wrap gap-3 pt-2 pl-1">
-            {TOKEN_SERIES.map((s) => (
-              <div
-                key={s.key as string}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <span
-                  className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: s.color }}
-                />
-                {s.label}
-              </div>
-            ))}
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="Tasks & model calls over time"
-        description="Number of agent tasks and individual model invocations."
-      >
-        <div className="rounded-lg border border-border bg-card p-3">
-          <InvocationsChart bins={bins} binSeconds={binSeconds} />
-          <div className="flex flex-wrap gap-3 pt-2 pl-1">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span
-                className="size-2.5 rounded-sm"
-                style={{ backgroundColor: "#22d3ee" }}
-              />
-              Tasks
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span
-                className="size-2.5 rounded-sm"
-                style={{ backgroundColor: "#f472b6" }}
-              />
-              Model calls
-            </div>
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="Compute"
-        description="Harness runtime time and sandbox CPU, the agent's own sandbox against the MCP sandbox that runs hosted MCP server bundles."
-      >
-        <div className="mb-4 grid grid-cols-3 gap-3">
-          <ComputeTile
-            label="Runtime"
-            value={formatMs(compute?.runtimeWallMs ?? 0)}
-            color="#818cf8"
-          />
-          <ComputeTile
-            label="Agent sandbox CPU"
-            value={formatCpuUsec(
-              (compute?.agentSandboxCpuUsec ?? 0) +
-                liveOverlay.agentSandboxCpuUsec,
-            )}
-            color="#2dd4bf"
-          />
-          <ComputeTile
-            label="MCP sandbox CPU"
-            value={formatCpuUsec(
-              (compute?.toolSandboxCpuUsec ?? 0) +
-                liveOverlay.toolSandboxCpuUsec,
-            )}
-            color="#fb923c"
-          />
-        </div>
-        <div className="rounded-lg border border-border bg-card p-3">
-          <StackedBarChart
-            bins={bins}
-            binSeconds={binSeconds}
-            series={SANDBOX_CPU_SERIES}
-            formatAxis={formatCpuUsec}
-            formatValue={formatCpuUsec}
-            totalLabel="Sandbox CPU"
-          />
-          <div className="flex flex-wrap gap-3 pt-2 pl-1">
-            {SANDBOX_CPU_SERIES.map((s) => (
-              <div
-                key={s.key as string}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <span
-                  className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: s.color }}
-                />
-                {s.label}
-              </div>
-            ))}
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="By model & provider"
-        description="Per-(provider, model) totals over the selected window."
-      >
-        <div className="rounded-lg border border-border bg-card overflow-x-auto">
-          <table className="w-full min-w-170 text-xs">
-            <thead>
-              <tr className="text-left text-muted-foreground border-b border-border">
-                <th className="px-3 py-2 font-medium whitespace-nowrap">
-                  Provider
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap">
-                  Model
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Input
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Output
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Reasoning
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Cache read
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Cache write
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Total
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Tasks
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Calls
-                </th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
-                  Est. cost
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border font-mono">
-              {byModel.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={11}
-                    className="px-3 py-6 text-center text-muted-foreground"
-                  >
-                    Waiting for model activity…
-                  </td>
-                </tr>
-              )}
-              {pricedByModel.map((m) => (
-                <tr key={`${m.modelProvider}::${m.modelId}`}>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    {m.modelProvider}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">{m.modelId}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.inputTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.outputTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.reasoningTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.cachedInputTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.cacheWriteTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.totalTokens)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.invocations)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {formatNumber(m.modelCalls)}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {m.estimatedCost
-                      ? formatUsd(m.estimatedCost.total)
-                      : "Unpriced"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Section>
     </div>
   );
 }

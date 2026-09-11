@@ -18,96 +18,6 @@ const channelRecordDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Look up a channel record by the public string id. The validator accepts
- * `v.string()` (not `v.id`) so unknown / non-Convex-id values resolve to `null`
- * (= "not found") instead of throwing at the adapter boundary.
- */
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    channelRecordId: v.string(),
-  },
-  returns: v.union(channelRecordDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
-    const normalized = ctx.db.normalizeId(
-      "channelRecords",
-      args.channelRecordId,
-    );
-    if (!normalized) return null;
-    const doc = await ctx.db.get(normalized);
-    if (!doc || doc.accountId !== args.accountId) return null;
-
-    return doc;
-  },
-});
-
-/**
- * Resolve the active record for one place. Deleted rows never match, so a
- * removed record falls the webhook back to its agent-scoped behaviour instead
- * of routing to an agent the operator has detached.
- */
-export const getByExternalId = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    platform: v.string(),
-    externalId: v.string(),
-  },
-  returns: v.union(channelRecordDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
-    // Deleting a record leaves the row in place, so a place that has been
-    // rebound a few times holds one active row and a pile of dead ones.
-    // `status` is in the index key rather than a filter: this runs on every
-    // inbound message, and reading the whole history to discard it would make
-    // the hot path cost grow with how often the channel has changed hands.
-    return await ctx.db
-      .query("channelRecords")
-      .withIndex("by_accountId_platform_external", (q) =>
-        q
-          .eq("accountId", args.accountId)
-          .eq("platform", args.platform)
-          .eq("externalId", args.externalId)
-          .eq("status", "active"),
-      )
-      .first();
-  },
-});
-
-/**
- * Every record including soft-deleted tombstones. Account-deletion cleanup
- * (core's `removeAllForAccount`) depends on seeing the dead rows; listing
- * surfaces use `listActive`.
- */
-export const list = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(channelRecordDoc),
-  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
-    return await ctx.db
-      .query("channelRecords")
-      .withIndex("by_accountId_and_status", (q) =>
-        q.eq("accountId", args.accountId),
-      )
-      .collect();
-  },
-});
-
-/**
- * Active records only, so listing a long-churned account does not read its
- * pile of tombstones. Same shape as `list`.
- */
-export const listActive = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(channelRecordDoc),
-  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
-    return await ctx.db
-      .query("channelRecords")
-      .withIndex("by_accountId_and_status", (q) =>
-        q.eq("accountId", args.accountId).eq("status", "active"),
-      )
-      .collect();
-  },
-});
-
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -156,6 +66,114 @@ export const create = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+/**
+ * Resolve the active record for one place. Deleted rows never match, so a
+ * removed record falls the webhook back to its agent-scoped behaviour instead
+ * of routing to an agent the operator has detached.
+ */
+export const getByExternalId = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    platform: v.string(),
+    externalId: v.string(),
+  },
+  returns: v.union(channelRecordDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
+    // Deleting a record leaves the row in place, so a place that has been
+    // rebound a few times holds one active row and a pile of dead ones.
+    // `status` is in the index key rather than a filter: this runs on every
+    // inbound message, and reading the whole history to discard it would make
+    // the hot path cost grow with how often the channel has changed hands.
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_platform_external", (q) =>
+        q
+          .eq("accountId", args.accountId)
+          .eq("platform", args.platform)
+          .eq("externalId", args.externalId)
+          .eq("status", "active"),
+      )
+      .first();
+  },
+});
+
+/**
+ * Look up a channel record by the public string id. The validator accepts
+ * `v.string()` (not `v.id`) so unknown / non-Convex-id values resolve to `null`
+ * (= "not found") instead of throwing at the adapter boundary.
+ */
+export const getById = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    channelRecordId: v.string(),
+  },
+  returns: v.union(channelRecordDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"channelRecords"> | null> => {
+    const normalized = ctx.db.normalizeId(
+      "channelRecords",
+      args.channelRecordId,
+    );
+    if (!normalized) return null;
+    const doc = await ctx.db.get(normalized);
+    if (!doc || doc.accountId !== args.accountId) return null;
+
+    return doc;
+  },
+});
+
+/**
+ * Every record including soft-deleted tombstones. Account-deletion cleanup
+ * (core's `removeAllForAccount`) depends on seeing the dead rows; listing
+ * surfaces use `listActive`.
+ */
+export const list = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(channelRecordDoc),
+  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .collect();
+  },
+});
+
+/**
+ * Active records only, so listing a long-churned account does not read its
+ * pile of tombstones. Same shape as `list`.
+ */
+export const listActive = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(channelRecordDoc),
+  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
+export const remove = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    channelRecordId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const doc = await loadOwnedRecord(
+      ctx,
+      args.accountId,
+      args.channelRecordId,
+    );
+    await ctx.db.delete(doc._id);
+
+    return null;
   },
 });
 
@@ -208,24 +226,6 @@ export const update = internalMutation({
       ...(patch.status === "active" && { deletedAt: undefined }),
       updatedAt: Date.now(),
     });
-
-    return null;
-  },
-});
-
-export const remove = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    channelRecordId: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const doc = await loadOwnedRecord(
-      ctx,
-      args.accountId,
-      args.channelRecordId,
-    );
-    await ctx.db.delete(doc._id);
 
     return null;
   },

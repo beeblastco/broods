@@ -129,6 +129,18 @@ const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
 
 const SPAN_ENCODER = new TextEncoder();
 
+// Generated-content stream parts that count toward per-step streaming windows
+// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
+// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
+const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-input-start",
+  "tool-input-delta",
+  "tool-call",
+  "file",
+]);
+
 type TrackedSpan = {
   otelSpan: Span;
   otelContext: OtelContext;
@@ -139,39 +151,6 @@ type TrackedSpan = {
   startTimeMs: number;
   attributes: Record<string, string | number | boolean>;
 };
-
-// Best-effort and non-blocking: returns once the span's bytes reach the NATS
-// client. A caller needing delivery before the container freezes (the terminal
-// span) awaits this, then flushObservabilityNats(); others ignore it.
-function publishSpan(row: ObservabilitySpanRow): Promise<void> {
-  const connPromise = getObservabilityNatsConn();
-  if (!connPromise) return Promise.resolve();
-
-  const ctx = getObservabilityContext();
-  // Skip traffic that cannot be resolved to a deployment. No dashboard trace
-  // subscription exists for that scope; Tempo still receives the OTel span.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage)
-    return Promise.resolve();
-
-  const subject = tracesSubject(
-    ctx.accountId,
-    ctx.project,
-    ctx.stage,
-    ctx.endpointId,
-  );
-
-  return connPromise
-    .then(async (conn) => {
-      // Create the durable stream up front so even the first span of a cold
-      // container lands for replay; memoized, so this is ~free after the
-      // first call. If it fails the live publish still reaches subscribers.
-      await ensureObservabilityStream(conn).catch(() => {});
-      conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
-    })
-    .catch(() => {
-      // Best-effort: NATS hiccup must not affect the run.
-    });
-}
 
 type ApprovalRequestOutput = ToolApprovalRequestOutput<ToolSet>;
 type ApprovalToolCall = ApprovalRequestOutput["toolCall"];
@@ -1935,6 +1914,42 @@ export async function runAgentLoop(
   });
 }
 
+// The system prompt is assembled per turn from the agent config plus every
+// injected block (memory index, workspace/memory/scheduler/skills/subagent
+// harness prompts, loaded skills, persisted system context, steering). Traces
+// carry the joined text the provider is actually instructed with, so a reader
+// can see the whole context a run had rather than only its chat messages. The
+// counts ride alongside because `serialize` truncates oversized payloads.
+export function systemTraceAttributes(
+  system: SystemModelMessage[],
+  serialize: (value: unknown) => string,
+): Record<string, string | number> {
+  return {
+    "model.system": serialize(
+      system.map((message) => message.content).join("\n\n"),
+    ),
+    "model.system_part_count": system.length,
+    "model.system_chars": system.reduce(
+      (total, message) => total + message.content.length,
+      0,
+    ),
+  };
+}
+
+// The SDK measures execute() directly, so it wins; the handler clock is only a
+// fallback, and it overstates parallel calls by the model's own time.
+export function toolSpanDurationMs(
+  startTimeMs: number,
+  handlerNowMs: number,
+  toolExecutionMs: number | undefined,
+): number {
+  if (typeof toolExecutionMs === "number" && Number.isFinite(toolExecutionMs)) {
+    return Math.max(0, toolExecutionMs);
+  }
+
+  return Math.max(0, handlerNowMs - startTimeMs);
+}
+
 function errorMessage(error: unknown): string {
   const rawMessage = toErrorMessage(error);
   // This text reaches the end user via reply.onErrorText, so it must pass the
@@ -2088,18 +2103,6 @@ function startHarnessLeaseMonitor(
   return () => clearInterval(timer);
 }
 
-// Generated-content stream parts that count toward per-step streaming windows
-// (time-to-first-token / last-token). v7 delivers every TextStreamPart to
-// onChunk, so boundary, lifecycle, and post-execution parts must not qualify.
-const MODEL_CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
-  "text-delta",
-  "reasoning-delta",
-  "tool-input-start",
-  "tool-input-delta",
-  "tool-call",
-  "file",
-]);
-
 function formatCallWarning(warning: {
   type: string;
   feature?: string;
@@ -2125,40 +2128,37 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
-// The system prompt is assembled per turn from the agent config plus every
-// injected block (memory index, workspace/memory/scheduler/skills/subagent
-// harness prompts, loaded skills, persisted system context, steering). Traces
-// carry the joined text the provider is actually instructed with, so a reader
-// can see the whole context a run had rather than only its chat messages. The
-// counts ride alongside because `serialize` truncates oversized payloads.
-export function systemTraceAttributes(
-  system: SystemModelMessage[],
-  serialize: (value: unknown) => string,
-): Record<string, string | number> {
-  return {
-    "model.system": serialize(
-      system.map((message) => message.content).join("\n\n"),
-    ),
-    "model.system_part_count": system.length,
-    "model.system_chars": system.reduce(
-      (total, message) => total + message.content.length,
-      0,
-    ),
-  };
-}
+// Best-effort and non-blocking: returns once the span's bytes reach the NATS
+// client. A caller needing delivery before the container freezes (the terminal
+// span) awaits this, then flushObservabilityNats(); others ignore it.
+function publishSpan(row: ObservabilitySpanRow): Promise<void> {
+  const connPromise = getObservabilityNatsConn();
+  if (!connPromise) return Promise.resolve();
 
-// The SDK measures execute() directly, so it wins; the handler clock is only a
-// fallback, and it overstates parallel calls by the model's own time.
-export function toolSpanDurationMs(
-  startTimeMs: number,
-  handlerNowMs: number,
-  toolExecutionMs: number | undefined,
-): number {
-  if (typeof toolExecutionMs === "number" && Number.isFinite(toolExecutionMs)) {
-    return Math.max(0, toolExecutionMs);
-  }
+  const ctx = getObservabilityContext();
+  // Skip traffic that cannot be resolved to a deployment. No dashboard trace
+  // subscription exists for that scope; Tempo still receives the OTel span.
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage)
+    return Promise.resolve();
 
-  return Math.max(0, handlerNowMs - startTimeMs);
+  const subject = tracesSubject(
+    ctx.accountId,
+    ctx.project,
+    ctx.stage,
+    ctx.endpointId,
+  );
+
+  return connPromise
+    .then(async (conn) => {
+      // Create the durable stream up front so even the first span of a cold
+      // container lands for replay; memoized, so this is ~free after the
+      // first call. If it fails the live publish still reaches subscribers.
+      await ensureObservabilityStream(conn).catch(() => {});
+      conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
+    })
+    .catch(() => {
+      // Best-effort: NATS hiccup must not affect the run.
+    });
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

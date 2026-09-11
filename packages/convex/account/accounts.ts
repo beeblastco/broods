@@ -18,50 +18,6 @@ const accountDoc = v.object({
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
-// Takes a string, not v.id: the caller is a URL segment. A v.id validator
-// rejects an unissued id by throwing, which reaches the webhook as a 500 and
-// makes a provider retry a webhook that will never work. normalizeId turns
-// "not an account id" into null, so it answers 404 and a real outage still throws.
-export const getById = internalQuery({
-  args: { accountId: v.string() },
-  returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    const accountId = ctx.db.normalizeId("accounts", args.accountId);
-
-    return accountId ? await ctx.db.get(accountId) : null;
-  },
-});
-
-export const getBySecretHash = internalQuery({
-  args: { secretHash: v.string() },
-  returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    return await ctx.db
-      .query("accounts")
-      .withIndex("by_secretHash", (q) => q.eq("secretHash", args.secretHash))
-      .unique();
-  },
-});
-
-export const getByOrgId = internalQuery({
-  args: { orgId: v.string() },
-  returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    return await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
-      .unique();
-  },
-});
-
-export const list = internalQuery({
-  args: {},
-  returns: v.array(accountDoc),
-  handler: async (ctx): Promise<Doc<"accounts">[]> => {
-    return await ctx.db.query("accounts").collect();
-  },
-});
-
 /**
  * @returns the complete persisted account document
  */
@@ -102,36 +58,47 @@ export const create = internalMutation({
   },
 });
 
-/**
- * @returns the updated document, or null when the account does not exist
- */
-export const update = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    username: v.optional(v.string()),
-    description: v.optional(v.union(v.string(), v.null())),
-    status: v.optional(statusValidator),
-    secretHash: v.optional(v.string()),
-  },
+// Takes a string, not v.id: the caller is a URL segment. A v.id validator
+// rejects an unissued id by throwing, which reaches the webhook as a 500 and
+// makes a provider retry a webhook that will never work. normalizeId turns
+// "not an account id" into null, so it answers 404 and a real outage still throws.
+export const getById = internalQuery({
+  args: { accountId: v.string() },
   returns: v.union(accountDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    const { accountId, ...patch } = args;
-    const account = await ctx.db.get(accountId);
-    if (!account) {
-      return null;
-    }
+    const accountId = ctx.db.normalizeId("accounts", args.accountId);
 
-    await ctx.db.patch(accountId, {
-      ...(patch.username !== undefined && { username: patch.username }),
-      ...(patch.description !== undefined && {
-        description: patch.description ?? undefined,
-      }),
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.secretHash !== undefined && { secretHash: patch.secretHash }),
-      updatedAt: Date.now(),
-    });
+    return accountId ? await ctx.db.get(accountId) : null;
+  },
+});
 
-    return await ctx.db.get(accountId);
+export const getByOrgId = internalQuery({
+  args: { orgId: v.string() },
+  returns: v.union(accountDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
+    return await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+      .unique();
+  },
+});
+
+export const getBySecretHash = internalQuery({
+  args: { secretHash: v.string() },
+  returns: v.union(accountDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
+    return await ctx.db
+      .query("accounts")
+      .withIndex("by_secretHash", (q) => q.eq("secretHash", args.secretHash))
+      .unique();
+  },
+});
+
+export const list = internalQuery({
+  args: {},
+  returns: v.array(accountDoc),
+  handler: async (ctx): Promise<Doc<"accounts">[]> => {
+    return await ctx.db.query("accounts").collect();
   },
 });
 
@@ -162,5 +129,38 @@ export const removeBatch = internalMutation({
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     return await deleteAccountContentsBatch(ctx, args.accountId);
+  },
+});
+
+/**
+ * @returns the updated document, or null when the account does not exist
+ */
+export const update = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    username: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
+    status: v.optional(statusValidator),
+    secretHash: v.optional(v.string()),
+  },
+  returns: v.union(accountDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
+    const { accountId, ...patch } = args;
+    const account = await ctx.db.get(accountId);
+    if (!account) {
+      return null;
+    }
+
+    await ctx.db.patch(accountId, {
+      ...(patch.username !== undefined && { username: patch.username }),
+      ...(patch.description !== undefined && {
+        description: patch.description ?? undefined,
+      }),
+      ...(patch.status !== undefined && { status: patch.status }),
+      ...(patch.secretHash !== undefined && { secretHash: patch.secretHash }),
+      updatedAt: Date.now(),
+    });
+
+    return await ctx.db.get(accountId);
   },
 });

@@ -93,6 +93,186 @@ export const create = mutation({
   },
 });
 
+export const ensureDefault = mutation({
+  args: { projectId: v.id("projects") },
+  returns: v.union(v.null(), v.id("stages")),
+  handler: async (ctx, { projectId }): Promise<Id<"stages"> | null> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    // No-op when the project is gone: a just-deleted project briefly keeps the
+    // header's "no stages → ensureDefault" effect firing, so return null
+    // instead of throwing rather than resurrecting a stage.
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project) return null;
+
+    const existing = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+
+    const now = Date.now();
+    const development = existing.find((stage) => stage.kind === "development");
+    // A member reads the current default and never repairs or creates one.
+    if (!(await getProjectForRole(ctx, authUser.id, projectId, "admin"))) {
+      return development?._id ?? null;
+    }
+
+    // Otherwise guarantee a Development row that is the sole default, creating
+    // one if needed and demoting any other stage that claims the default.
+    let changed = !development;
+    const developmentId =
+      development?._id ??
+      (await ctx.db.insert("stages", {
+        authId: authUser.id,
+        projectId: projectId,
+        name: "Development",
+        kind: "development",
+        isDefault: true,
+        updatedAt: now,
+      }));
+
+    for (const stage of existing) {
+      const shouldBeDefault = stage._id === developmentId;
+      const needsNameFix =
+        shouldBeDefault &&
+        (stage.kind !== "development" || stage.name !== "Development");
+      if (stage.isDefault !== shouldBeDefault || needsNameFix) {
+        await ctx.db.patch(stage._id, {
+          ...(shouldBeDefault
+            ? { name: "Development", kind: "development" as const }
+            : {}),
+          isDefault: shouldBeDefault,
+          updatedAt: now,
+        });
+        changed = true;
+      }
+    }
+    if (changed) await ctx.db.patch(projectId, { updatedAt: now });
+
+    return developmentId;
+  },
+});
+
+export const initializeProduction = mutation({
+  args: {
+    projectId: v.id("projects"),
+    sourceStageId: v.id("stages"),
+    deploymentRegion: deploymentRegion,
+  },
+  returns: v.id("stages"),
+  handler: async (
+    ctx,
+    { projectId, sourceStageId, deploymentRegion },
+  ): Promise<Id<"stages">> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
+
+    const source = await getOwnedStage(ctx, authUser.id, sourceStageId);
+    if (!source || source.projectId !== projectId) {
+      throw new Error("Source stage not found.");
+    }
+
+    const existing = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+      .collect();
+    const production = existing.find((stage) => stage.kind === "production");
+    const now = Date.now();
+    const productionId =
+      production?._id ??
+      (await ctx.db.insert("stages", {
+        authId: authUser.id,
+        projectId: projectId,
+        name: "Production",
+        kind: "production",
+        deploymentRegion: deploymentRegion,
+        isDefault: false,
+        updatedAt: now,
+      }));
+
+    const productionHasContents = production
+      ? await hasStageContents(ctx, projectId, production._id)
+      : false;
+    if (!productionHasContents && productionId !== sourceStageId) {
+      await duplicateStageContents(
+        ctx,
+        authUser.id,
+        projectId,
+        sourceStageId,
+        productionId,
+        now,
+      );
+    }
+
+    await ctx.db.patch(productionId, {
+      name: "Production",
+      kind: "production",
+      deploymentRegion: deploymentRegion,
+      isDefault: false,
+      updatedAt: now,
+    });
+    for (const stage of existing.filter(
+      (entry) =>
+        entry._id !== productionId &&
+        entry.isDefault &&
+        entry.kind !== "development",
+    )) {
+      await ctx.db.patch(stage._id, { isDefault: false, updatedAt: now });
+    }
+    await ctx.db.patch(projectId, { updatedAt: now });
+
+    return productionId;
+  },
+});
+
+export const list = query({
+  args: { projectId: v.id("projects") },
+  returns: v.array(stageDoc),
+  handler: async (ctx, { projectId }): Promise<Doc<"stages">[]> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    return listStagesForProject(ctx, authUser.id, projectId);
+  },
+});
+
+export const remove = mutation({
+  args: { stageId: v.id("stages") },
+  returns: v.id("stages"),
+  handler: async (ctx, { stageId }): Promise<Id<"stages">> => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage) throw new Error("Stage not found.");
+    if (stage.isDefault)
+      throw new Error("The default stage cannot be deleted.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      stage.projectId,
+      "admin",
+    );
+    if (!project) throw new Error("Stage not found.");
+
+    await deleteStageContents(ctx, stage);
+
+    await ctx.db.delete(stageId);
+    await ctx.db.patch(stage.projectId, { updatedAt: Date.now() });
+
+    return stageId;
+  },
+});
+
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
  * deployments and linked broods `agents` rows), the canvas layout, MCP
@@ -385,147 +565,6 @@ export async function duplicateStageContents(
   }
 }
 
-export const ensureDefault = mutation({
-  args: { projectId: v.id("projects") },
-  returns: v.union(v.null(), v.id("stages")),
-  handler: async (ctx, { projectId }): Promise<Id<"stages"> | null> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    // No-op when the project is gone: a just-deleted project briefly keeps the
-    // header's "no stages → ensureDefault" effect firing, so return null
-    // instead of throwing rather than resurrecting a stage.
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) return null;
-
-    const existing = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-
-    const now = Date.now();
-    const development = existing.find((stage) => stage.kind === "development");
-    // A member reads the current default and never repairs or creates one.
-    if (!(await getProjectForRole(ctx, authUser.id, projectId, "admin"))) {
-      return development?._id ?? null;
-    }
-
-    // Otherwise guarantee a Development row that is the sole default, creating
-    // one if needed and demoting any other stage that claims the default.
-    let changed = !development;
-    const developmentId =
-      development?._id ??
-      (await ctx.db.insert("stages", {
-        authId: authUser.id,
-        projectId: projectId,
-        name: "Development",
-        kind: "development",
-        isDefault: true,
-        updatedAt: now,
-      }));
-
-    for (const stage of existing) {
-      const shouldBeDefault = stage._id === developmentId;
-      const needsNameFix =
-        shouldBeDefault &&
-        (stage.kind !== "development" || stage.name !== "Development");
-      if (stage.isDefault !== shouldBeDefault || needsNameFix) {
-        await ctx.db.patch(stage._id, {
-          ...(shouldBeDefault
-            ? { name: "Development", kind: "development" as const }
-            : {}),
-          isDefault: shouldBeDefault,
-          updatedAt: now,
-        });
-        changed = true;
-      }
-    }
-    if (changed) await ctx.db.patch(projectId, { updatedAt: now });
-
-    return developmentId;
-  },
-});
-
-export const initializeProduction = mutation({
-  args: {
-    projectId: v.id("projects"),
-    sourceStageId: v.id("stages"),
-    deploymentRegion: deploymentRegion,
-  },
-  returns: v.id("stages"),
-  handler: async (
-    ctx,
-    { projectId, sourceStageId, deploymentRegion },
-  ): Promise<Id<"stages">> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
-    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
-
-    const source = await getOwnedStage(ctx, authUser.id, sourceStageId);
-    if (!source || source.projectId !== projectId) {
-      throw new Error("Source stage not found.");
-    }
-
-    const existing = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-    const production = existing.find((stage) => stage.kind === "production");
-    const now = Date.now();
-    const productionId =
-      production?._id ??
-      (await ctx.db.insert("stages", {
-        authId: authUser.id,
-        projectId: projectId,
-        name: "Production",
-        kind: "production",
-        deploymentRegion: deploymentRegion,
-        isDefault: false,
-        updatedAt: now,
-      }));
-
-    const productionHasContents = production
-      ? await hasStageContents(ctx, projectId, production._id)
-      : false;
-    if (!productionHasContents && productionId !== sourceStageId) {
-      await duplicateStageContents(
-        ctx,
-        authUser.id,
-        projectId,
-        sourceStageId,
-        productionId,
-        now,
-      );
-    }
-
-    await ctx.db.patch(productionId, {
-      name: "Production",
-      kind: "production",
-      deploymentRegion: deploymentRegion,
-      isDefault: false,
-      updatedAt: now,
-    });
-    for (const stage of existing.filter(
-      (entry) =>
-        entry._id !== productionId &&
-        entry.isDefault &&
-        entry.kind !== "development",
-    )) {
-      await ctx.db.patch(stage._id, { isDefault: false, updatedAt: now });
-    }
-    await ctx.db.patch(projectId, { updatedAt: now });
-
-    return productionId;
-  },
-});
-
 /** The role a stage name implies at creation: the two reserved names, else custom. */
 export function kindForStageName(name: string): Doc<"stages">["kind"] {
   const normalized = name.trim().toLowerCase();
@@ -534,17 +573,6 @@ export function kindForStageName(name: string): Doc<"stages">["kind"] {
 
   return "custom";
 }
-
-export const list = query({
-  args: { projectId: v.id("projects") },
-  returns: v.array(stageDoc),
-  handler: async (ctx, { projectId }): Promise<Doc<"stages">[]> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    return listStagesForProject(ctx, authUser.id, projectId);
-  },
-});
 
 /**
  * Stage listing for any org member. Split from the `list` query so the role
@@ -574,34 +602,6 @@ export async function listStagesForProject(
       : a.name.localeCompare(b.name),
   );
 }
-
-export const remove = mutation({
-  args: { stageId: v.id("stages") },
-  returns: v.id("stages"),
-  handler: async (ctx, { stageId }): Promise<Id<"stages">> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage) throw new Error("Stage not found.");
-    if (stage.isDefault)
-      throw new Error("The default stage cannot be deleted.");
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      stage.projectId,
-      "admin",
-    );
-    if (!project) throw new Error("Stage not found.");
-
-    await deleteStageContents(ctx, stage);
-
-    await ctx.db.delete(stageId);
-    await ctx.db.patch(stage.projectId, { updatedAt: Date.now() });
-
-    return stageId;
-  },
-});
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)

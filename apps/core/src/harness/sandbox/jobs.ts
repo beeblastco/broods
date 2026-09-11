@@ -19,46 +19,46 @@ export interface LaunchOptions {
   callback?: SandboxJobCallback;
 }
 
+// Env for the exec that launches a job; the token never rides the script text.
+export function callbackEnv(
+  callback: SandboxJobCallback | undefined,
+): Record<string, string> {
+  return callback ? { __CB_TOKEN: callback.token } : {};
+}
+
+// POSTs the job's outcome back to the harness so the conversation resumes without
+// the model having to poll. python3 is on PATH in every sandbox image; failures
+// (no egress, no python) are swallowed and the model can still poll async_status.
+export function callbackSnippet(
+  callback: SandboxJobCallback,
+  logFile: string,
+): string {
+  const env = [
+    `__CB_URL=${shellQuote(callback.url)}`,
+    `__CB_LOG=${shellQuote(logFile)}`,
+    `__CB_CODE="$__rc"`,
+  ].join(" ");
+  const py = [
+    `import json,os,urllib.request`,
+    `code=os.environ.get("__CB_CODE","")`,
+    `try:`,
+    `    with open(os.environ["__CB_LOG"],"rb") as fh: logs=fh.read()[-32768:].decode("utf-8","replace")`,
+    `except Exception: logs=""`,
+    `try: ec=int(code)`,
+    `except Exception: ec=None`,
+    `ok = code=="0"`,
+    `body={"status":"completed" if ok else "failed","response":{"exitCode":ec,"logs":logs}}`,
+    `if not ok: body["error"]="Background job exited with code %s\\n%s"%(code,logs)`,
+    `req=urllib.request.Request(os.environ["__CB_URL"],data=json.dumps(body).encode("utf-8"),method="POST",headers={"Content-Type":"application/json","x-job-token":os.environ["__CB_TOKEN"]})`,
+    `try: urllib.request.urlopen(req,timeout=15)`,
+    `except Exception: pass`,
+  ].join("\n");
+
+  return `${env} python3 - <<'__FPCB__' >/dev/null 2>&1 || true\n${py}\n__FPCB__`;
+}
+
 export function generateJobId(): string {
   return `job_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-}
-
-// Job ids land inside shell-quoted file paths; reject anything that could
-// traverse out of jobsDir.
-function assertSafeJobId(jobId: string): void {
-  if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
-    throw new Error(`Invalid job id: ${jobId}`);
-  }
-}
-
-/**
- * onCreate/onResume hook script for providers without native lifecycle
- * callbacks (daytona/sandbox; vercel uses the SDK's own hooks).
- * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
- * every acquisition. Returns undefined when no hooks are configured.
- */
-export function lifecycleScript(
-  workDir: string,
-  onCreate?: string[],
-  onResume?: string[],
-): string | undefined {
-  if (!onCreate?.length && !onResume?.length) return undefined;
-  const marker = `${workDir}/.fp-setup-done`;
-
-  return [
-    "set -e",
-    `mkdir -p ${shellQuote(workDir)}`,
-    `cd ${shellQuote(workDir)}`,
-    ...(onCreate?.length
-      ? [
-          `if [ ! -f ${shellQuote(marker)} ]; then`,
-          ...onCreate,
-          `  touch ${shellQuote(marker)}`,
-          "fi",
-        ]
-      : []),
-    ...(onResume ?? []),
-  ].join("\n");
 }
 
 /**
@@ -99,23 +99,33 @@ export function launchScript(
   ].join("\n");
 }
 
-export function statusScript(jobsDir: string, jobId: string): string {
-  assertSafeJobId(jobId);
-  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+/**
+ * onCreate/onResume hook script for providers without native lifecycle
+ * callbacks (daytona/sandbox; vercel uses the SDK's own hooks).
+ * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
+ * every acquisition. Returns undefined when no hooks are configured.
+ */
+export function lifecycleScript(
+  workDir: string,
+  onCreate?: string[],
+  onResume?: string[],
+): string | undefined {
+  if (!onCreate?.length && !onResume?.length) return undefined;
+  const marker = `${workDir}/.fp-setup-done`;
 
-  // Exit recorded => terminal. Otherwise the job is "running" only if it was
-  // launched in this boot AND its session leader is still alive; a boot-id
-  // mismatch (sandbox recreated) or a dead pid with no exit means it was killed.
   return [
-    `if [ -f ${f("exit")} ]; then echo "done $(cat ${f("exit")})";`,
-    `elif [ -f ${f("running")} ]; then`,
-    `  stored=$(cat ${f("running")} 2>/dev/null);`,
-    `  current=$(cat ${shellQuote(BOOT_ID_FILE)} 2>/dev/null);`,
-    `  if [ -n "$current" ] && [ -n "$stored" ] && [ "$stored" != "$current" ]; then echo "done 137";`,
-    `  elif [ -f ${f("pid")} ] && kill -0 "$(cat ${f("pid")})" 2>/dev/null; then echo running;`,
-    `  elif [ -f ${f("pid")} ]; then echo "done 137";`,
-    `  else echo running; fi;`,
-    `else echo unknown; fi`,
+    "set -e",
+    `mkdir -p ${shellQuote(workDir)}`,
+    `cd ${shellQuote(workDir)}`,
+    ...(onCreate?.length
+      ? [
+          `if [ ! -f ${shellQuote(marker)} ]; then`,
+          ...onCreate,
+          `  touch ${shellQuote(marker)}`,
+          "fi",
+        ]
+      : []),
+    ...(onResume ?? []),
   ].join("\n");
 }
 
@@ -127,17 +137,6 @@ export function logsScript(
   assertSafeJobId(jobId);
 
   return `tail -c ${bytes} ${shellQuote(`${jobsDir}/${jobId}.log`)} 2>/dev/null || true`;
-}
-
-export function stopScript(jobsDir: string, jobId: string): string {
-  assertSafeJobId(jobId);
-  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
-
-  return [
-    `if [ -f ${f("pid")} ]; then kill -TERM -"$(cat ${f("pid")})" 2>/dev/null || true; sleep 1; kill -KILL -"$(cat ${f("pid")})" 2>/dev/null || true; fi`,
-    `[ -f ${f("exit")} ] || echo 143 > ${f("exit")}`,
-    `rm -f ${f("running")}`,
-  ].join("; ");
 }
 
 export function parseJobStatus(
@@ -159,40 +158,41 @@ export function parseJobStatus(
   return { jobId: jobId, state: text === "running" ? "running" : "unknown" };
 }
 
-// Env for the exec that launches a job; the token never rides the script text.
-export function callbackEnv(
-  callback: SandboxJobCallback | undefined,
-): Record<string, string> {
-  return callback ? { __CB_TOKEN: callback.token } : {};
+export function statusScript(jobsDir: string, jobId: string): string {
+  assertSafeJobId(jobId);
+  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+
+  // Exit recorded => terminal. Otherwise the job is "running" only if it was
+  // launched in this boot AND its session leader is still alive; a boot-id
+  // mismatch (sandbox recreated) or a dead pid with no exit means it was killed.
+  return [
+    `if [ -f ${f("exit")} ]; then echo "done $(cat ${f("exit")})";`,
+    `elif [ -f ${f("running")} ]; then`,
+    `  stored=$(cat ${f("running")} 2>/dev/null);`,
+    `  current=$(cat ${shellQuote(BOOT_ID_FILE)} 2>/dev/null);`,
+    `  if [ -n "$current" ] && [ -n "$stored" ] && [ "$stored" != "$current" ]; then echo "done 137";`,
+    `  elif [ -f ${f("pid")} ] && kill -0 "$(cat ${f("pid")})" 2>/dev/null; then echo running;`,
+    `  elif [ -f ${f("pid")} ]; then echo "done 137";`,
+    `  else echo running; fi;`,
+    `else echo unknown; fi`,
+  ].join("\n");
 }
 
-// POSTs the job's outcome back to the harness so the conversation resumes without
-// the model having to poll. python3 is on PATH in every sandbox image; failures
-// (no egress, no python) are swallowed and the model can still poll async_status.
-export function callbackSnippet(
-  callback: SandboxJobCallback,
-  logFile: string,
-): string {
-  const env = [
-    `__CB_URL=${shellQuote(callback.url)}`,
-    `__CB_LOG=${shellQuote(logFile)}`,
-    `__CB_CODE="$__rc"`,
-  ].join(" ");
-  const py = [
-    `import json,os,urllib.request`,
-    `code=os.environ.get("__CB_CODE","")`,
-    `try:`,
-    `    with open(os.environ["__CB_LOG"],"rb") as fh: logs=fh.read()[-32768:].decode("utf-8","replace")`,
-    `except Exception: logs=""`,
-    `try: ec=int(code)`,
-    `except Exception: ec=None`,
-    `ok = code=="0"`,
-    `body={"status":"completed" if ok else "failed","response":{"exitCode":ec,"logs":logs}}`,
-    `if not ok: body["error"]="Background job exited with code %s\\n%s"%(code,logs)`,
-    `req=urllib.request.Request(os.environ["__CB_URL"],data=json.dumps(body).encode("utf-8"),method="POST",headers={"Content-Type":"application/json","x-job-token":os.environ["__CB_TOKEN"]})`,
-    `try: urllib.request.urlopen(req,timeout=15)`,
-    `except Exception: pass`,
-  ].join("\n");
+export function stopScript(jobsDir: string, jobId: string): string {
+  assertSafeJobId(jobId);
+  const f = (ext: string): string => shellQuote(`${jobsDir}/${jobId}.${ext}`);
 
-  return `${env} python3 - <<'__FPCB__' >/dev/null 2>&1 || true\n${py}\n__FPCB__`;
+  return [
+    `if [ -f ${f("pid")} ]; then kill -TERM -"$(cat ${f("pid")})" 2>/dev/null || true; sleep 1; kill -KILL -"$(cat ${f("pid")})" 2>/dev/null || true; fi`,
+    `[ -f ${f("exit")} ] || echo 143 > ${f("exit")}`,
+    `rm -f ${f("running")}`,
+  ].join("; ");
+}
+
+// Job ids land inside shell-quoted file paths; reject anything that could
+// traverse out of jobsDir.
+function assertSafeJobId(jobId: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+    throw new Error(`Invalid job id: ${jobId}`);
+  }
 }

@@ -57,6 +57,48 @@ interface WorkspaceFsTarget {
 }
 
 /**
+ * Delete a file or folder prefix from a workspace's S3 namespace.
+ * @param ref the workspace to write to
+ * @param rawPath the file or folder path
+ * @returns the number of objects deleted
+ */
+export async function deleteWorkspacePath(
+  ref: WorkspaceFsRef,
+  rawPath: unknown,
+): Promise<number> {
+  const path = normalizeFilePath(rawPath);
+  const target = await resolveTarget(ref);
+  const key = `${target.prefix}${path}`;
+  const descendants = await deleteS3Prefix(
+    target.bucket,
+    `${key}/`,
+    target.access,
+  );
+  if (await s3ObjectExists(target.bucket, key, target.access)) {
+    await deleteS3Object(target.bucket, key, target.access);
+
+    return descendants + 1;
+  }
+
+  return descendants;
+}
+
+/**
+ * Read the filesystem bucket name from the Convex deployment environment.
+ * @returns the bucket name
+ * @throws when the variable is unset
+ */
+export function filesystemBucketName(): string {
+  const bucket = process.env.FILESYSTEM_BUCKET_NAME;
+  if (!bucket)
+    throw new Error(
+      "Workspace filesystem requires FILESYSTEM_BUCKET_NAME in the Convex deployment environment",
+    );
+
+  return bucket;
+}
+
+/**
  * @param ref the workspace to read
  * @returns files plus synthesized parent folders
  */
@@ -96,91 +138,6 @@ export async function listWorkspaceFiles(
   }
 
   return [...entries.values()];
-}
-
-/**
- * Upload or replace one file in a workspace's S3 namespace.
- * @param ref the workspace to write to
- * @param input file path, base64 contents, and optional content type
- * @returns the stored file entry
- * @throws when the path is invalid or the file exceeds the size limit
- */
-export async function uploadWorkspaceFile(
-  ref: WorkspaceFsRef,
-  input: { path: unknown; contentBase64: unknown; contentType?: unknown },
-): Promise<WorkspaceFileEntry> {
-  const path = normalizeFilePath(input.path);
-  if (typeof input.contentBase64 !== "string")
-    throw new Error("contentBase64 is required");
-  const content = Buffer.from(input.contentBase64, "base64");
-  if (content.byteLength > MAX_WORKSPACE_FILE_BYTES)
-    throw new Error("Workspace uploads must not exceed 512 KiB");
-  const target = await resolveTarget(ref);
-  const key = `${target.prefix}${path}`;
-  await ensureS3DirectoryMarkers(target.bucket, key, target.access);
-  await writeS3Object(
-    target.bucket,
-    key,
-    content,
-    typeof input.contentType === "string" && input.contentType
-      ? { contentType: input.contentType }
-      : {},
-    target.access,
-  );
-
-  return {
-    path: path,
-    name: path.split("/").at(-1)!,
-    isFolder: false,
-    sizeBytes: content.byteLength,
-  };
-}
-
-/**
- * Presign a short-lived download URL for one workspace file.
- * @param ref the workspace to read
- * @param rawPath the file path
- * @returns a presigned S3 GET URL
- * @throws when the file does not exist
- */
-export async function workspaceFileDownloadUrl(
-  ref: WorkspaceFsRef,
-  rawPath: unknown,
-): Promise<string> {
-  const path = normalizeFilePath(rawPath);
-  const target = await resolveTarget(ref);
-  const key = `${target.prefix}${path}`;
-  if (!(await s3ObjectExists(target.bucket, key, target.access)))
-    throw new Error("Workspace file not found");
-
-  return await getS3ObjectUrl(target.bucket, key, {}, target.access);
-}
-
-/**
- * Delete a file or folder prefix from a workspace's S3 namespace.
- * @param ref the workspace to write to
- * @param rawPath the file or folder path
- * @returns the number of objects deleted
- */
-export async function deleteWorkspacePath(
-  ref: WorkspaceFsRef,
-  rawPath: unknown,
-): Promise<number> {
-  const path = normalizeFilePath(rawPath);
-  const target = await resolveTarget(ref);
-  const key = `${target.prefix}${path}`;
-  const descendants = await deleteS3Prefix(
-    target.bucket,
-    `${key}/`,
-    target.access,
-  );
-  if (await s3ObjectExists(target.bucket, key, target.access)) {
-    await deleteS3Object(target.bucket, key, target.access);
-
-    return descendants + 1;
-  }
-
-  return descendants;
 }
 
 /**
@@ -270,18 +227,67 @@ export async function renameWorkspacePath(
 }
 
 /**
- * Read the filesystem bucket name from the Convex deployment environment.
- * @returns the bucket name
- * @throws when the variable is unset
+ * Upload or replace one file in a workspace's S3 namespace.
+ * @param ref the workspace to write to
+ * @param input file path, base64 contents, and optional content type
+ * @returns the stored file entry
+ * @throws when the path is invalid or the file exceeds the size limit
  */
-export function filesystemBucketName(): string {
-  const bucket = process.env.FILESYSTEM_BUCKET_NAME;
-  if (!bucket)
-    throw new Error(
-      "Workspace filesystem requires FILESYSTEM_BUCKET_NAME in the Convex deployment environment",
-    );
+export async function uploadWorkspaceFile(
+  ref: WorkspaceFsRef,
+  input: { path: unknown; contentBase64: unknown; contentType?: unknown },
+): Promise<WorkspaceFileEntry> {
+  const path = normalizeFilePath(input.path);
+  if (typeof input.contentBase64 !== "string")
+    throw new Error("contentBase64 is required");
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength > MAX_WORKSPACE_FILE_BYTES)
+    throw new Error("Workspace uploads must not exceed 512 KiB");
+  const target = await resolveTarget(ref);
+  const key = `${target.prefix}${path}`;
+  await ensureS3DirectoryMarkers(target.bucket, key, target.access);
+  await writeS3Object(
+    target.bucket,
+    key,
+    content,
+    typeof input.contentType === "string" && input.contentType
+      ? { contentType: input.contentType }
+      : {},
+    target.access,
+  );
 
-  return bucket;
+  return {
+    path: path,
+    name: path.split("/").at(-1)!,
+    isFolder: false,
+    sizeBytes: content.byteLength,
+  };
+}
+
+/**
+ * Presign a short-lived download URL for one workspace file.
+ * @param ref the workspace to read
+ * @param rawPath the file path
+ * @returns a presigned S3 GET URL
+ * @throws when the file does not exist
+ */
+export async function workspaceFileDownloadUrl(
+  ref: WorkspaceFsRef,
+  rawPath: unknown,
+): Promise<string> {
+  const path = normalizeFilePath(rawPath);
+  const target = await resolveTarget(ref);
+  const key = `${target.prefix}${path}`;
+  if (!(await s3ObjectExists(target.bucket, key, target.access)))
+    throw new Error("Workspace file not found");
+
+  return await getS3ObjectUrl(target.bucket, key, {}, target.access);
+}
+
+function normalizePrefix(prefix: string | undefined): string {
+  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+
+  return trimmed.length > 0 ? `${trimmed}/` : "";
 }
 
 /**
@@ -324,10 +330,4 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
       ...(storage.endpoint ? { endpoint: storage.endpoint } : {}),
     },
   };
-}
-
-function normalizePrefix(prefix: string | undefined): string {
-  const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
-
-  return trimmed.length > 0 ? `${trimmed}/` : "";
 }

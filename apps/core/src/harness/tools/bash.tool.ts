@@ -50,11 +50,91 @@ interface BashInput {
   pty?: boolean;
 }
 
-// Attach the command to a real pseudo-terminal inside the guest (util-linux
-// `script`): programs see isatty()=true and a normal terminal line discipline,
-// which is what interactive-only CLIs and TTY-gated output paths check for.
-function ptyCommand(command: string): string {
-  return `script -qec ${shellQuote(command)} /dev/null`;
+export default function bashTool(context: SandboxToolContext): ToolSet {
+  return {
+    bash: tool({
+      description: description(context),
+      inputSchema: jsonSchema(inputSchema(context)),
+      execute: async function (input, options) {
+        const {
+          command,
+          workspace,
+          sandbox: onSandbox,
+          background,
+          pty,
+        } = input as BashInput;
+        const trimmed = (command ?? "").trim();
+        if (!trimmed) {
+          return toolError("Error: command is required");
+        }
+        try {
+          // Silently preferring one would let the policy layer be told a workspace
+          // that the run never touches, so an incoherent selection is refused.
+          if (workspace !== undefined && onSandbox === true) {
+            return toolError(
+              "Error: pass either workspace or sandbox, not both — they select different places to run",
+            );
+          }
+          const target = {
+            ...(workspace ? { workspace: workspace } : {}),
+            ...(onSandbox === true ? { sandbox: true } : {}),
+          };
+          const ws = targetsAgentSandbox(context, target)
+            ? undefined
+            : resolveWorkspace(context.workspaces, workspace);
+          const sandbox = ws?.sandbox ?? context.agentSandbox;
+          if (!sandbox) {
+            return toolError("Error: no sandbox available for this command");
+          }
+          const outsideWorkspace = ws
+            ? outsideWorkspaceCommand(trimmed, {
+                persistentOwnSandbox: writesOutsideAllowed(
+                  ws,
+                  context.agentSandbox,
+                ),
+              })
+            : undefined;
+          if (outsideWorkspace) {
+            return toolError(outsideWorkspace);
+          }
+          const disallowed = disallowedRuntimeCommand(sandbox, trimmed);
+          if (disallowed) {
+            return toolError(disallowed);
+          }
+          // The PTY wrapper is applied after the policy guards so they always
+          // inspect the real command, never the `script` wrapper.
+          const effective = pty === true ? ptyCommand(trimmed) : trimmed;
+          if (background === true) {
+            return await dispatchBackground(
+              context,
+              ws,
+              sandbox,
+              effective,
+              options.toolCallId,
+            );
+          }
+          logDebug("bash tool command", {
+            namespace: ws?.namespace,
+            commandLength: trimmed.length,
+            pty: pty === true,
+          });
+
+          return toolText(
+            formatRunText(
+              await runSandbox(sandbox, ws?.namespace, effective, {
+                onSandboxCpu: context.onSandboxCpu,
+                metadata: sandboxRunMetadata(context, ws),
+              }),
+            ),
+          );
+        } catch (cause) {
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
+        }
+      },
+    }),
+  };
 }
 
 // Background jobs need a persistent workspace sandbox (to outlive the request)
@@ -68,48 +148,13 @@ function backgroundAvailable(context: SandboxToolContext): boolean {
   );
 }
 
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-  const standaloneSandbox = hasStandaloneSandbox(
-    context.workspaces,
-    context.agentSandbox,
-  );
+function backgroundNote(context: SandboxToolContext): string {
+  if (!backgroundAvailable(context)) {
+    return "";
+  }
 
-  return {
-    type: "object",
-    properties: {
-      command: {
-        type: "string",
-        description: "The bash command to run.",
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-      ...(standaloneSandbox
-        ? {
-            sandbox: {
-              type: "boolean",
-              description:
-                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
-            } as JSONSchema7,
-          }
-        : {}),
-      pty: {
-        type: "boolean",
-        description:
-          "Run the command attached to a real interactive TTY (pseudo-terminal). Use when a program refuses to run or degrades without a terminal (isatty checks, TTY-only prompts, terminal UIs). Note: stderr merges into stdout and lines end with CRLF.",
-      },
-      ...(backgroundAvailable(context)
-        ? {
-            background: {
-              type: "boolean",
-              description:
-                "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
-            } as JSONSchema7,
-          }
-        : {}),
-    },
-    required: ["command"],
-    additionalProperties: false,
-  };
+  return `
+- Set background:true for long-running commands in a reserved workspace; the result is delivered back automatically when it finishes, and you can check on it with async_status.`;
 }
 
 function description(context: SandboxToolContext): string {
@@ -136,98 +181,6 @@ Usage notes:
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
 - Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxTargetNote(context)}${backgroundNote(context)}`;
-}
-
-function backgroundNote(context: SandboxToolContext): string {
-  if (!backgroundAvailable(context)) {
-    return "";
-  }
-
-  return `
-- Set background:true for long-running commands in a reserved workspace; the result is delivered back automatically when it finishes, and you can check on it with async_status.`;
-}
-
-// The write guard is not on everywhere: it steps aside on the agent's own reserved
-// sandbox, so claiming "writes elsewhere are rejected" there would be a lie the model
-// then works around. Stay silent when every workspace is exempt.
-function writeGuardNote(context: SandboxToolContext): string {
-  const guarded = context.workspaces.filter(
-    (workspace) => !writesOutsideAllowed(workspace, context.agentSandbox),
-  );
-  if (guarded.length === 0) {
-    return "";
-  }
-
-  const scope =
-    guarded.length === context.workspaces.length
-      ? "Writes"
-      : `In ${guarded.map((workspace) => workspace.name).join(", ")}, writes`;
-
-  return ` ${scope} to an absolute path elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.`;
-}
-
-// Scenario note: a reserved sandbox the agent only borrows. Its filesystem does
-// survive between calls, but the durability bullet above is about what outlives the
-// reservation, and saying nothing here would read as "this resets every call".
-function reservedNote(context: SandboxToolContext): string {
-  const names = context.workspaces
-    .filter(
-      (workspace) =>
-        workspace.sandbox?.persistent === true &&
-        !isAgentOwnSandbox(workspace, context.agentSandbox),
-    )
-    .map((workspace) => workspace.name);
-  if (names.length === 0) {
-    return "";
-  }
-
-  return `
-- ${names.join(", ")} run on a reserved (persistent) sandbox: packages installed under $HOME (e.g. a uv/venv or npm prefix) survive across calls until the reservation ends. It is an execution layer you borrow, so writes outside the workspace directory are still rejected — keep results in the workspace.`;
-}
-
-// Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
-// machine around them is the agent's too and the durability guard steps aside.
-function ownSandboxNote(context: SandboxToolContext): string {
-  const names = context.workspaces
-    .filter((workspace) =>
-      writesOutsideAllowed(workspace, context.agentSandbox),
-    )
-    .map((workspace) => workspace.name);
-  if (names.length === 0) {
-    return "";
-  }
-
-  return `
-- Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
-}
-
-// A workspace-less run reconnects on options.reservationKey (derived per agent by
-// resolveAgentRuntime, or pinned). No key means nothing survives, no note.
-function reservedStandaloneNote(context: SandboxToolContext): string {
-  const options = isPlainObject(context.agentSandbox?.options)
-    ? context.agentSandbox.options
-    : {};
-  const reserved =
-    context.agentSandbox?.persistent === true &&
-    typeof options.reservationKey === "string" &&
-    options.reservationKey.trim().length > 0;
-
-  if (!reserved) {
-    return "";
-  }
-
-  return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
-}
-
-// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
-// only way onto it is to ask for it. What it keeps is reservedStandaloneNote's job.
-function sandboxTargetNote(context: SandboxToolContext): string {
-  if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
-    return "";
-  }
-
-  return `
-- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
 }
 
 async function dispatchBackground(
@@ -343,89 +296,136 @@ async function dispatchBackground(
   );
 }
 
-export default function bashTool(context: SandboxToolContext): ToolSet {
-  return {
-    bash: tool({
-      description: description(context),
-      inputSchema: jsonSchema(inputSchema(context)),
-      execute: async function (input, options) {
-        const {
-          command,
-          workspace,
-          sandbox: onSandbox,
-          background,
-          pty,
-        } = input as BashInput;
-        const trimmed = (command ?? "").trim();
-        if (!trimmed) {
-          return toolError("Error: command is required");
-        }
-        try {
-          // Silently preferring one would let the policy layer be told a workspace
-          // that the run never touches, so an incoherent selection is refused.
-          if (workspace !== undefined && onSandbox === true) {
-            return toolError(
-              "Error: pass either workspace or sandbox, not both — they select different places to run",
-            );
-          }
-          const target = {
-            ...(workspace ? { workspace: workspace } : {}),
-            ...(onSandbox === true ? { sandbox: true } : {}),
-          };
-          const ws = targetsAgentSandbox(context, target)
-            ? undefined
-            : resolveWorkspace(context.workspaces, workspace);
-          const sandbox = ws?.sandbox ?? context.agentSandbox;
-          if (!sandbox) {
-            return toolError("Error: no sandbox available for this command");
-          }
-          const outsideWorkspace = ws
-            ? outsideWorkspaceCommand(trimmed, {
-                persistentOwnSandbox: writesOutsideAllowed(
-                  ws,
-                  context.agentSandbox,
-                ),
-              })
-            : undefined;
-          if (outsideWorkspace) {
-            return toolError(outsideWorkspace);
-          }
-          const disallowed = disallowedRuntimeCommand(sandbox, trimmed);
-          if (disallowed) {
-            return toolError(disallowed);
-          }
-          // The PTY wrapper is applied after the policy guards so they always
-          // inspect the real command, never the `script` wrapper.
-          const effective = pty === true ? ptyCommand(trimmed) : trimmed;
-          if (background === true) {
-            return await dispatchBackground(
-              context,
-              ws,
-              sandbox,
-              effective,
-              options.toolCallId,
-            );
-          }
-          logDebug("bash tool command", {
-            namespace: ws?.namespace,
-            commandLength: trimmed.length,
-            pty: pty === true,
-          });
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+  const standaloneSandbox = hasStandaloneSandbox(
+    context.workspaces,
+    context.agentSandbox,
+  );
 
-          return toolText(
-            formatRunText(
-              await runSandbox(sandbox, ws?.namespace, effective, {
-                onSandboxCpu: context.onSandboxCpu,
-                metadata: sandboxRunMetadata(context, ws),
-              }),
-            ),
-          );
-        } catch (cause) {
-          return toolError(
-            cause instanceof Error ? cause.message : String(cause),
-          );
-        }
+  return {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "The bash command to run.",
       },
-    }),
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+      ...(standaloneSandbox
+        ? {
+            sandbox: {
+              type: "boolean",
+              description:
+                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
+            } as JSONSchema7,
+          }
+        : {}),
+      pty: {
+        type: "boolean",
+        description:
+          "Run the command attached to a real interactive TTY (pseudo-terminal). Use when a program refuses to run or degrades without a terminal (isatty checks, TTY-only prompts, terminal UIs). Note: stderr merges into stdout and lines end with CRLF.",
+      },
+      ...(backgroundAvailable(context)
+        ? {
+            background: {
+              type: "boolean",
+              description:
+                "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+            } as JSONSchema7,
+          }
+        : {}),
+    },
+    required: ["command"],
+    additionalProperties: false,
   };
+}
+
+// Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
+// machine around them is the agent's too and the durability guard steps aside.
+function ownSandboxNote(context: SandboxToolContext): string {
+  const names = context.workspaces
+    .filter((workspace) =>
+      writesOutsideAllowed(workspace, context.agentSandbox),
+    )
+    .map((workspace) => workspace.name);
+  if (names.length === 0) {
+    return "";
+  }
+
+  return `
+- Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
+}
+
+// Attach the command to a real pseudo-terminal inside the guest (util-linux
+// `script`): programs see isatty()=true and a normal terminal line discipline,
+// which is what interactive-only CLIs and TTY-gated output paths check for.
+function ptyCommand(command: string): string {
+  return `script -qec ${shellQuote(command)} /dev/null`;
+}
+
+// Scenario note: a reserved sandbox the agent only borrows. Its filesystem does
+// survive between calls, but the durability bullet above is about what outlives the
+// reservation, and saying nothing here would read as "this resets every call".
+function reservedNote(context: SandboxToolContext): string {
+  const names = context.workspaces
+    .filter(
+      (workspace) =>
+        workspace.sandbox?.persistent === true &&
+        !isAgentOwnSandbox(workspace, context.agentSandbox),
+    )
+    .map((workspace) => workspace.name);
+  if (names.length === 0) {
+    return "";
+  }
+
+  return `
+- ${names.join(", ")} run on a reserved (persistent) sandbox: packages installed under $HOME (e.g. a uv/venv or npm prefix) survive across calls until the reservation ends. It is an execution layer you borrow, so writes outside the workspace directory are still rejected — keep results in the workspace.`;
+}
+
+// A workspace-less run reconnects on options.reservationKey (derived per agent by
+// resolveAgentRuntime, or pinned). No key means nothing survives, no note.
+function reservedStandaloneNote(context: SandboxToolContext): string {
+  const options = isPlainObject(context.agentSandbox?.options)
+    ? context.agentSandbox.options
+    : {};
+  const reserved =
+    context.agentSandbox?.persistent === true &&
+    typeof options.reservationKey === "string" &&
+    options.reservationKey.trim().length > 0;
+
+  if (!reserved) {
+    return "";
+  }
+
+  return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
+}
+
+// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
+// only way onto it is to ask for it. What it keeps is reservedStandaloneNote's job.
+function sandboxTargetNote(context: SandboxToolContext): string {
+  if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
+    return "";
+  }
+
+  return `
+- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
+}
+
+// The write guard is not on everywhere: it steps aside on the agent's own reserved
+// sandbox, so claiming "writes elsewhere are rejected" there would be a lie the model
+// then works around. Stay silent when every workspace is exempt.
+function writeGuardNote(context: SandboxToolContext): string {
+  const guarded = context.workspaces.filter(
+    (workspace) => !writesOutsideAllowed(workspace, context.agentSandbox),
+  );
+  if (guarded.length === 0) {
+    return "";
+  }
+
+  const scope =
+    guarded.length === context.workspaces.length
+      ? "Writes"
+      : `In ${guarded.map((workspace) => workspace.name).join(", ")}, writes`;
+
+  return ` ${scope} to an absolute path elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.`;
 }

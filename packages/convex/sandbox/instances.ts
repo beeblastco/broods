@@ -24,6 +24,54 @@ const sandboxInstanceDoc = v.object({
 });
 
 /**
+ * Internal action helper: verifies a dashboard lifecycle request targets an
+ * instance owned by the active account and created from the supplied sandbox row.
+ */
+export const isControllable = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    sandboxConfigId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+
+    return Boolean(
+      instance &&
+      instance.accountId === args.accountId &&
+      instance.sandboxConfigId === args.sandboxConfigId,
+    );
+  },
+});
+
+/**
+ * Internal list of mirrored sandbox instances for one account. Rows are
+ * deleted on termination and live counts are bounded by the per-workspace
+ * sandbox concurrency limits, so the 1000-row take is a generous ceiling,
+ * not a pagination seam.
+ * @param accountId the owning account
+ * @returns the account's instance rows
+ */
+export const listForAccount = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(sandboxInstanceDoc),
+  handler: async (ctx, args): Promise<Doc<"sandboxInstances">[]> => {
+    return await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_accountId_projectId_and_stageId", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .take(1000);
+  },
+});
+
+/**
  * Public query: lists persistent sandbox instances for the caller's active org.
  * Used by the dashboard Sandbox tab for live status.
  * @returns the account's instance rows, or `[]` when no org/account resolves.
@@ -47,6 +95,90 @@ export const listForActiveOrg = query({
           .eq("stageId", args.stageId),
       )
       .take(100);
+  },
+});
+
+/**
+ * Drops an instance row when broods terminates the sandbox or releases the
+ * reservation. No-op when the key is unknown, belongs to another account, or
+ * (when `externalId` is given) has since been repointed at another machine.
+ * @param accountId the owning account.
+ * @param reservationKey the broods reconnection key.
+ * @param externalId the provider id the caller tore down, when the row must still name it.
+ */
+export const remove = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    reservationKey: v.string(),
+    externalId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { accountId, reservationKey, externalId },
+  ): Promise<null> => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", reservationKey),
+      )
+      .unique();
+    if (
+      instance &&
+      instance.accountId === accountId &&
+      (externalId === undefined || instance.externalId === externalId)
+    ) {
+      await ctx.db.delete(instance._id);
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Records a lifecycle transition (suspend/resume) for an instance, stamping the
+ * matching timestamp. No-op when the key is unknown or belongs to another
+ * account. Called by broods after the provider lifecycle call succeeds.
+ * @param accountId the owning account.
+ * @param reservationKey the broods reconnection key.
+ * @param status the new lifecycle status.
+ * @param errorMessage the provider's reason when `status` is `error`.
+ */
+export const setStatus = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    reservationKey: v.string(),
+    status: sandboxInstancesFields.status,
+    observed: v.optional(v.boolean()),
+    errorMessage: sandboxInstancesFields.errorMessage,
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { accountId, reservationKey, status, observed, errorMessage },
+  ): Promise<null> => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", reservationKey),
+      )
+      .unique();
+    if (!instance || instance.accountId !== accountId) return null;
+
+    const now = Date.now();
+    await ctx.db.patch(instance._id, {
+      status: status,
+      // `undefined` unsets the field, so a reason never outlives its error.
+      errorMessage: status === "error" ? errorMessage : undefined,
+      // Only a use moves "last used". Stamping every transition let a suspend --
+      // or a status read that merely observed one -- rewrite it to now, so a row
+      // untouched for a day still read as seconds old.
+      ...(status === "running" && !observed ? { lastUsedAt: now } : {}),
+      ...(status === "suspended" ? { suspendedAt: now } : {}),
+      ...(status === "terminating" ? { terminatedAt: now } : {}),
+    });
+
+    return null;
   },
 });
 
@@ -132,138 +264,6 @@ export const upsert = internalMutation({
         : {}),
       ...fields,
     });
-
-    return null;
-  },
-});
-
-/**
- * Internal action helper: verifies a dashboard lifecycle request targets an
- * instance owned by the active account and created from the supplied sandbox row.
- */
-export const isControllable = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    sandboxConfigId: v.id("sandboxConfigs"),
-    reservationKey: v.string(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
-    const instance = await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_reservationKey", (q) =>
-        q.eq("reservationKey", args.reservationKey),
-      )
-      .unique();
-
-    return Boolean(
-      instance &&
-      instance.accountId === args.accountId &&
-      instance.sandboxConfigId === args.sandboxConfigId,
-    );
-  },
-});
-
-/**
- * Internal list of mirrored sandbox instances for one account. Rows are
- * deleted on termination and live counts are bounded by the per-workspace
- * sandbox concurrency limits, so the 1000-row take is a generous ceiling,
- * not a pagination seam.
- * @param accountId the owning account
- * @returns the account's instance rows
- */
-export const listForAccount = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(sandboxInstanceDoc),
-  handler: async (ctx, args): Promise<Doc<"sandboxInstances">[]> => {
-    return await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_accountId_projectId_and_stageId", (q) =>
-        q.eq("accountId", args.accountId),
-      )
-      .take(1000);
-  },
-});
-
-/**
- * Records a lifecycle transition (suspend/resume) for an instance, stamping the
- * matching timestamp. No-op when the key is unknown or belongs to another
- * account. Called by broods after the provider lifecycle call succeeds.
- * @param accountId the owning account.
- * @param reservationKey the broods reconnection key.
- * @param status the new lifecycle status.
- * @param errorMessage the provider's reason when `status` is `error`.
- */
-export const setStatus = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    reservationKey: v.string(),
-    status: sandboxInstancesFields.status,
-    observed: v.optional(v.boolean()),
-    errorMessage: sandboxInstancesFields.errorMessage,
-  },
-  returns: v.null(),
-  handler: async (
-    ctx,
-    { accountId, reservationKey, status, observed, errorMessage },
-  ): Promise<null> => {
-    const instance = await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_reservationKey", (q) =>
-        q.eq("reservationKey", reservationKey),
-      )
-      .unique();
-    if (!instance || instance.accountId !== accountId) return null;
-
-    const now = Date.now();
-    await ctx.db.patch(instance._id, {
-      status: status,
-      // `undefined` unsets the field, so a reason never outlives its error.
-      errorMessage: status === "error" ? errorMessage : undefined,
-      // Only a use moves "last used". Stamping every transition let a suspend --
-      // or a status read that merely observed one -- rewrite it to now, so a row
-      // untouched for a day still read as seconds old.
-      ...(status === "running" && !observed ? { lastUsedAt: now } : {}),
-      ...(status === "suspended" ? { suspendedAt: now } : {}),
-      ...(status === "terminating" ? { terminatedAt: now } : {}),
-    });
-
-    return null;
-  },
-});
-
-/**
- * Drops an instance row when broods terminates the sandbox or releases the
- * reservation. No-op when the key is unknown, belongs to another account, or
- * (when `externalId` is given) has since been repointed at another machine.
- * @param accountId the owning account.
- * @param reservationKey the broods reconnection key.
- * @param externalId the provider id the caller tore down, when the row must still name it.
- */
-export const remove = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    reservationKey: v.string(),
-    externalId: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: async (
-    ctx,
-    { accountId, reservationKey, externalId },
-  ): Promise<null> => {
-    const instance = await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_reservationKey", (q) =>
-        q.eq("reservationKey", reservationKey),
-      )
-      .unique();
-    if (
-      instance &&
-      instance.accountId === accountId &&
-      (externalId === undefined || instance.externalId === externalId)
-    ) {
-      await ctx.db.delete(instance._id);
-    }
 
     return null;
   },

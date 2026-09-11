@@ -28,46 +28,6 @@ interface GrepInput {
   workspace?: string;
 }
 
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-
-  return {
-    type: "object",
-    properties: {
-      pattern: {
-        type: "string",
-        description: "Regular expression to search for (ripgrep syntax).",
-      },
-      path: {
-        type: "string",
-        description:
-          "File or directory to search, relative to the workspace root. Defaults to the root.",
-      },
-      glob: {
-        type: "string",
-        description: "Glob to filter files, e.g. `*.ts` or `**/*.py`.",
-      },
-      output_mode: {
-        type: "string",
-        enum: ["content", "files_with_matches", "count"],
-        description:
-          "content: matching lines; files_with_matches: file paths (default); count: match counts.",
-      },
-      case_insensitive: {
-        type: "boolean",
-        description: "Case-insensitive search.",
-      },
-      line_numbers: {
-        type: "boolean",
-        description: "Include line numbers (content mode).",
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["pattern"],
-    additionalProperties: false,
-  };
-}
-
 export default function grepTool(context: SandboxToolContext): ToolSet {
   return {
     grep: tool({
@@ -139,5 +99,45 @@ Usage notes:
         }
       },
     }),
+  };
+}
+
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
+  return {
+    type: "object",
+    properties: {
+      pattern: {
+        type: "string",
+        description: "Regular expression to search for (ripgrep syntax).",
+      },
+      path: {
+        type: "string",
+        description:
+          "File or directory to search, relative to the workspace root. Defaults to the root.",
+      },
+      glob: {
+        type: "string",
+        description: "Glob to filter files, e.g. `*.ts` or `**/*.py`.",
+      },
+      output_mode: {
+        type: "string",
+        enum: ["content", "files_with_matches", "count"],
+        description:
+          "content: matching lines; files_with_matches: file paths (default); count: match counts.",
+      },
+      case_insensitive: {
+        type: "boolean",
+        description: "Case-insensitive search.",
+      },
+      line_numbers: {
+        type: "boolean",
+        description: "Include line numbers (content mode).",
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["pattern"],
+    additionalProperties: false,
   };
 }

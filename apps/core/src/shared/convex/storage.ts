@@ -51,17 +51,6 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 const DELETE_CONCURRENCY = 20;
 
-async function removeInBatches<T>(
-  docs: T[],
-  remove: (doc: T) => Promise<unknown>,
-): Promise<void> {
-  for (let offset = 0; offset < docs.length; offset += DELETE_CONCURRENCY) {
-    await Promise.all(
-      docs.slice(offset, offset + DELETE_CONCURRENCY).map(remove),
-    );
-  }
-}
-
 interface ConvexAccountDoc {
   _id: string;
   orgId: string;
@@ -830,3 +819,14 @@ export const convexStorage: Storage = {
   roleSessions: roleSessions,
   taskUsage: taskUsage,
 };
+
+async function removeInBatches<T>(
+  docs: T[],
+  remove: (doc: T) => Promise<unknown>,
+): Promise<void> {
+  for (let offset = 0; offset < docs.length; offset += DELETE_CONCURRENCY) {
+    await Promise.all(
+      docs.slice(offset, offset + DELETE_CONCURRENCY).map(remove),
+    );
+  }
+}

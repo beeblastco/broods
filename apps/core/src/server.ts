@@ -78,6 +78,12 @@ export async function toCoreRequest(
   };
 }
 
+export async function drainInFlight(): Promise<void> {
+  while (inFlight.size > 0) {
+    await Promise.allSettled(inFlight);
+  }
+}
+
 export function waitUntil(promise: Promise<unknown>): void {
   const tracked = Promise.resolve(promise)
     .then(() => undefined)
@@ -90,12 +96,6 @@ export function waitUntil(promise: Promise<unknown>): void {
       inFlight.delete(tracked);
     });
   inFlight.add(tracked);
-}
-
-export async function drainInFlight(): Promise<void> {
-  while (inFlight.size > 0) {
-    await Promise.allSettled(inFlight);
-  }
 }
 
 if (import.meta.main) {

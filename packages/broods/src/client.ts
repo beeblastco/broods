@@ -625,6 +625,18 @@ export function normalizeHttpServiceUrl(value: string): string {
   return stripTrailingSlash(withProtocol);
 }
 
+async function cronErrorDetails(response: Response): Promise<string> {
+  const text = await response.text();
+  if (text.includes("Request body must include eventId and conversationKey")) {
+    return (
+      `${text}. Cron job APIs must be served by the configured baseUrl. ` +
+      "Prefer defining stable cron jobs with defineCron(...) in broods/ and syncing with `broods dev` or `broods deploy`."
+    );
+  }
+
+  return text;
+}
+
 function directRunBody(
   input: AgentRunInput & { agentId: string; agentName?: string },
   prefix: "cli" | "async",
@@ -652,6 +664,32 @@ function directRunBody(
     ...(input.system !== undefined ? { system: input.system } : {}),
     ...(input.model !== undefined ? { model: input.model } : {}),
   };
+}
+
+/**
+ * Render a streamed `error` part into a single human-readable line. Handles the
+ * AI SDK's `APICallError` shape (a nested provider error under `data.error` or a
+ * raw `responseBody`) and falls back to `message`/JSON so no failure mode is lost.
+ */
+function formatStreamError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (!error || typeof error !== "object") return String(error);
+  const err = error as {
+    name?: string;
+    message?: string;
+    statusCode?: number;
+    responseBody?: string;
+    data?: { error?: { message?: string } };
+  };
+  const detail =
+    err.data?.error?.message ??
+    err.message ??
+    err.responseBody ??
+    JSON.stringify(error);
+  const prefix = err.name ? `${err.name}: ` : "";
+  const status = err.statusCode ? ` (HTTP ${err.statusCode})` : "";
+
+  return `${prefix}${detail}${status}`;
 }
 
 function normalizeAsyncAccepted(
@@ -709,12 +747,15 @@ function parseStatusUrl(statusUrl: string): {
   };
 }
 
-function statusUrlFor(
-  baseUrl: string,
-  statusId: string,
-  agentId: string,
-): string {
-  return `${normalizeHttpServiceUrl(baseUrl)}/status/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
+function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
+  if ("agentId" in input) return input;
+  const agent = input.agent;
+  const agentId = typeof agent === "string" ? agent : agent.id;
+  const { agent: _agent, ...rest } = input;
+
+  // Spreading erases the input|events discrimination; the caller already
+  // supplied a valid one-of, so re-assert the union shape.
+  return { ...rest, agentId: agentId } as CreateCronInput;
 }
 
 async function responseErrorDetails(
@@ -732,29 +773,6 @@ async function responseErrorDetails(
   if (text.length <= 2_000) return text;
 
   return `${text.slice(0, 2_000)}... [truncated ${text.length - 2_000} chars]`;
-}
-
-async function cronErrorDetails(response: Response): Promise<string> {
-  const text = await response.text();
-  if (text.includes("Request body must include eventId and conversationKey")) {
-    return (
-      `${text}. Cron job APIs must be served by the configured baseUrl. ` +
-      "Prefer defining stable cron jobs with defineCron(...) in broods/ and syncing with `broods dev` or `broods deploy`."
-    );
-  }
-
-  return text;
-}
-
-function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
-  if ("agentId" in input) return input;
-  const agent = input.agent;
-  const agentId = typeof agent === "string" ? agent : agent.id;
-  const { agent: _agent, ...rest } = input;
-
-  // Spreading erases the input|events discrimination; the caller already
-  // supplied a valid one-of, so re-assert the union shape.
-  return { ...rest, agentId: agentId } as CreateCronInput;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -776,28 +794,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/**
- * Render a streamed `error` part into a single human-readable line. Handles the
- * AI SDK's `APICallError` shape (a nested provider error under `data.error` or a
- * raw `responseBody`) and falls back to `message`/JSON so no failure mode is lost.
- */
-function formatStreamError(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (!error || typeof error !== "object") return String(error);
-  const err = error as {
-    name?: string;
-    message?: string;
-    statusCode?: number;
-    responseBody?: string;
-    data?: { error?: { message?: string } };
-  };
-  const detail =
-    err.data?.error?.message ??
-    err.message ??
-    err.responseBody ??
-    JSON.stringify(error);
-  const prefix = err.name ? `${err.name}: ` : "";
-  const status = err.statusCode ? ` (HTTP ${err.statusCode})` : "";
-
-  return `${prefix}${detail}${status}`;
+function statusUrlFor(
+  baseUrl: string,
+  statusId: string,
+  agentId: string,
+): string {
+  return `${normalizeHttpServiceUrl(baseUrl)}/status/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
 }

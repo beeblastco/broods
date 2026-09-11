@@ -25,25 +25,49 @@ interface GlobInput {
   workspace?: string;
 }
 
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-
+export default function globTool(context: SandboxToolContext): ToolSet {
   return {
-    type: "object",
-    properties: {
-      pattern: {
-        type: "string",
-        description: "Glob pattern, e.g. `**/*.ts` or `src/**/*.py`.",
+    glob: tool({
+      description: `Fast file pattern matching in the workspace. Supports glob patterns like \`**/*.ts\` or \`src/**/*.py\`.
+
+Usage notes:
+- Returns matching paths (relative to the search root) sorted by modification time, newest first.
+- path is the directory to search in, relative to the workspace root; it defaults to the root.
+- Prefer this over \`bash find\` for locating files by name.`,
+      inputSchema: jsonSchema(inputSchema(context)),
+      execute: async function (input) {
+        const { pattern, path, workspace } = input as GlobInput;
+        try {
+          if (typeof pattern !== "string" || pattern.trim().length === 0) {
+            return toolError("Error: pattern is required");
+          }
+          const ws = resolveWorkspace(context.workspaces, workspace);
+          if (!ws) {
+            return toolError("Error: no workspace attached");
+          }
+          const runner = ws.sandbox ?? ws.readMount;
+          if (!runner) {
+            return await s3Glob(ws, pattern, path);
+          }
+          const root = path ? toWorkspaceRelative(path) : ".";
+          const code = globScript(toBase64(pattern), toBase64(root));
+          const result = await runSandbox(runner, ws.namespace, code, {
+            metadata: sandboxRunMetadata(context, ws),
+          });
+          if (!result.ok) {
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() || "Error: glob failed",
+            );
+          }
+
+          return toolText(result.stdout);
+        } catch (cause) {
+          // toolError throws, so an in-try call already landed here. Feeding its
+          // message back through would prefix a fatal setup error a second time.
+          throw cause instanceof Error ? cause : new Error(String(cause));
+        }
       },
-      path: {
-        type: "string",
-        description:
-          "Directory to search in, relative to the workspace root. Defaults to the root.",
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["pattern"],
-    additionalProperties: false,
+    }),
   };
 }
 
@@ -97,48 +121,24 @@ function globScript(patternB64: string, rootB64: string): string {
   ].join("\n");
 }
 
-export default function globTool(context: SandboxToolContext): ToolSet {
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
-    glob: tool({
-      description: `Fast file pattern matching in the workspace. Supports glob patterns like \`**/*.ts\` or \`src/**/*.py\`.
-
-Usage notes:
-- Returns matching paths (relative to the search root) sorted by modification time, newest first.
-- path is the directory to search in, relative to the workspace root; it defaults to the root.
-- Prefer this over \`bash find\` for locating files by name.`,
-      inputSchema: jsonSchema(inputSchema(context)),
-      execute: async function (input) {
-        const { pattern, path, workspace } = input as GlobInput;
-        try {
-          if (typeof pattern !== "string" || pattern.trim().length === 0) {
-            return toolError("Error: pattern is required");
-          }
-          const ws = resolveWorkspace(context.workspaces, workspace);
-          if (!ws) {
-            return toolError("Error: no workspace attached");
-          }
-          const runner = ws.sandbox ?? ws.readMount;
-          if (!runner) {
-            return await s3Glob(ws, pattern, path);
-          }
-          const root = path ? toWorkspaceRelative(path) : ".";
-          const code = globScript(toBase64(pattern), toBase64(root));
-          const result = await runSandbox(runner, ws.namespace, code, {
-            metadata: sandboxRunMetadata(context, ws),
-          });
-          if (!result.ok) {
-            return toolError(
-              `${result.stderr}${result.stdout}`.trim() || "Error: glob failed",
-            );
-          }
-
-          return toolText(result.stdout);
-        } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
-          throw cause instanceof Error ? cause : new Error(String(cause));
-        }
+    type: "object",
+    properties: {
+      pattern: {
+        type: "string",
+        description: "Glob pattern, e.g. `**/*.ts` or `src/**/*.py`.",
       },
-    }),
+      path: {
+        type: "string",
+        description:
+          "Directory to search in, relative to the workspace root. Defaults to the root.",
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["pattern"],
+    additionalProperties: false,
   };
 }

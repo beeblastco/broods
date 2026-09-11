@@ -17,12 +17,6 @@ const SUBAGENT_TASK_ID = new RegExp(
   `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
 );
 
-export interface AccountAgentScopedKey {
-  accountId: string;
-  agentId: string;
-  key: string;
-}
-
 export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
 export const DIRECT_API_CONVERSATION_PREFIX = "api:";
@@ -69,6 +63,12 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
 ] as const;
+
+export interface AccountAgentScopedKey {
+  accountId: string;
+  agentId: string;
+  key: string;
+}
 
 export function normalizeFilesystemNamespace(conversationKey: string): string {
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hashScopedValue("filesystem-namespace", conversationKey)}`;
@@ -256,6 +256,15 @@ export function subagentParentEventId(taskId: string): string | null {
   }
 }
 
+function hashScopedValue(scope: string, value: string): string {
+  return createHash("sha256")
+    .update(scope)
+    .update("\0")
+    .update(value)
+    .digest("hex")
+    .slice(0, HASH_HEX_LENGTH);
+}
+
 function hasReservedConversationPrefix(value: string): boolean {
   return RESERVED_CONVERSATION_PREFIXES.some((prefix) =>
     value.startsWith(prefix),
@@ -275,13 +284,4 @@ function unscopedChannelConversationKey(conversationKey: string): string {
   }
 
   return conversationKey;
-}
-
-function hashScopedValue(scope: string, value: string): string {
-  return createHash("sha256")
-    .update(scope)
-    .update("\0")
-    .update(value)
-    .digest("hex")
-    .slice(0, HASH_HEX_LENGTH);
 }

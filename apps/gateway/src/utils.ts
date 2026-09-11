@@ -107,21 +107,6 @@ export function warnDeprecatedQueryToken(request: Request, url: URL): void {
   );
 }
 
-function offeredSubprotocols(request: Request): string[] {
-  return (request.headers.get("sec-websocket-protocol") ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function subprotocolToken(request: Request): string | null {
-  const entry = offeredSubprotocols(request).find((candidate) =>
-    candidate.startsWith(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX),
-  );
-
-  return entry ? entry.slice(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX.length) : null;
-}
-
 export function allowedOriginPatternsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -229,9 +214,24 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function offeredSubprotocols(request: Request): string[] {
+  return (request.headers.get("sec-websocket-protocol") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function positiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
 
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function subprotocolToken(request: Request): string | null {
+  const entry = offeredSubprotocols(request).find((candidate) =>
+    candidate.startsWith(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX),
+  );
+
+  return entry ? entry.slice(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX.length) : null;
 }

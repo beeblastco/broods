@@ -92,18 +92,6 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
-/**
- * Validates an update patch with the config plane's normalizer, then re-types
- * the events list to the ModelMessage[] core stores. The rule checks the
- * payload shape only (non-empty array), exactly as core's former copy did, so
- * the assertion adds no trust the caller did not already have.
- */
-export function normalizeUpdateCronInput(
-  input: UpdateCronInput,
-): NormalizedCronUpdate {
-  return normalizeUpdateCronInputRule(input) as NormalizedCronUpdate;
-}
-
 export function applyCronPatch(
   record: CronRecord,
   input: UpdateCronInput,
@@ -135,6 +123,18 @@ export function applyCronPatch(
         : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
   };
+}
+
+/**
+ * Validates an update patch with the config plane's normalizer, then re-types
+ * the events list to the ModelMessage[] core stores. The rule checks the
+ * payload shape only (non-empty array), exactly as core's former copy did, so
+ * the assertion adds no trust the caller did not already have.
+ */
+export function normalizeUpdateCronInput(
+  input: UpdateCronInput,
+): NormalizedCronUpdate {
+  return normalizeUpdateCronInputRule(input) as NormalizedCronUpdate;
 }
 
 /**

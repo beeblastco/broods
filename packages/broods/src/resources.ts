@@ -715,56 +715,107 @@ export const env: EnvAccessor = new Proxy(
  * sync/codegen pipeline switches on) and splits the flat authoring input back
  * into the `{ name, description?, config }` shape the manifest wire format uses.
  */
-function defineResource<
-  const Kind extends ResourceKind,
-  const Name extends string,
-  Config,
->(
-  kind: Kind,
-  name: Name,
-  description: string | undefined,
-  config: Config,
-): ResourceDefinition<Kind, Name, Config> {
-  return {
-    [RESOURCE_MARKER]: true,
-    kind: kind,
-    name: name,
-    ...(description ? { description: description } : {}),
-    config: config,
-  };
+export function defineAgent<const Name extends string>(
+  input: ResourceInput<Name, AgentDefinitionConfig>,
+): AgentResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "agent",
+    name,
+    description,
+    config as AgentDefinitionConfig,
+  );
 }
 
-function defineConnection<const Type extends ChannelType, Config>(
-  type: Type,
-  config: Config & ConnectionIdentityInput,
-): ConnectionDefinition<Type, Config> {
-  const { partition, ...rest } = config;
-
-  return {
-    [CONNECTION_MARKER]: true,
-    kind: "connection",
-    type: type,
-    ...(partition ? { partition: partition } : {}),
-    config: rest,
-  };
+export function defineBroods(
+  config: BroodsProjectConfig,
+): BroodsConfigDefinition {
+  return { [CONFIG_MARKER]: true, config: config };
 }
 
-// The per-platform id field is named for what the provider calls it, so the
-// value you paste is the value the field asks for. All of them normalize to the
-// `externalId` the backend stores, one row per id, and `platform` comes off the
-// connection.
-function defineChannelResource<const Name extends string>(
-  name: Name,
-  description: string | undefined,
-  externalId: string | readonly string[],
-  workspaceRef: string | undefined,
-  rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
-): ChannelResource<Name> {
-  return defineResource("channelRecord", name, description, {
-    ...rules,
-    externalId: externalId,
-    ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
-  });
+export function defineCron<const Name extends string>(
+  input: ResourceInput<Name, CronDefinitionConfig>,
+): CronResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "cron",
+    name,
+    description,
+    config as CronDefinitionConfig,
+  );
+}
+
+export function defineHarness<const Definition extends HarnessDefinition>(
+  definition: Definition,
+): Definition {
+  return definition;
+}
+
+export function defineMcp<const Name extends string>(
+  input: ResourceInput<Name, McpDefinitionConfig>,
+): McpResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "mcp",
+    name,
+    description,
+    config as McpDefinitionConfig,
+  );
+}
+
+export function definePolicy<const Name extends string>(
+  input: ResourceInput<Name, PolicyDefinitionConfig>,
+): PolicyResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "policy",
+    name,
+    description,
+    config as PolicyDefinitionConfig,
+  );
+}
+
+export function defineSandbox<const Name extends string>(
+  input: ResourceInput<Name, SandboxDefinitionConfig>,
+): SandboxResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "sandbox",
+    name,
+    description,
+    config as SandboxDefinitionConfig,
+  );
+}
+
+export function defineSkill<const Name extends string>(
+  input: ResourceInput<Name, SkillDefinitionConfig>,
+): SkillResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "skill",
+    name,
+    description,
+    config as SkillDefinitionConfig,
+  );
+}
+
+export function defineWorkspace<const Name extends string>(
+  input: ResourceInput<Name, WorkspaceDefinitionConfig>,
+): WorkspaceResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "workspace",
+    name,
+    description,
+    config as WorkspaceDefinitionConfig,
+  );
 }
 
 export function defineDiscordConnection(
@@ -865,114 +916,13 @@ export function defineZaloChannel<const Name extends string>(
   return defineChannelResource(name, description, chatId, undefined, rules);
 }
 
-export function defineBroods(
-  config: BroodsProjectConfig,
-): BroodsConfigDefinition {
-  return { [CONFIG_MARKER]: true, config: config };
-}
-
-export function defineAgent<const Name extends string>(
-  input: ResourceInput<Name, AgentDefinitionConfig>,
-): AgentResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "agent",
-    name,
-    description,
-    config as AgentDefinitionConfig,
-  );
-}
-
-export function defineHarness<const Definition extends HarnessDefinition>(
-  definition: Definition,
-): Definition {
-  return definition;
-}
-
-export function defineWorkspace<const Name extends string>(
-  input: ResourceInput<Name, WorkspaceDefinitionConfig>,
-): WorkspaceResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "workspace",
-    name,
-    description,
-    config as WorkspaceDefinitionConfig,
-  );
-}
-
-export function defineSandbox<const Name extends string>(
-  input: ResourceInput<Name, SandboxDefinitionConfig>,
-): SandboxResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "sandbox",
-    name,
-    description,
-    config as SandboxDefinitionConfig,
-  );
-}
-
-export function defineSkill<const Name extends string>(
-  input: ResourceInput<Name, SkillDefinitionConfig>,
-): SkillResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "skill",
-    name,
-    description,
-    config as SkillDefinitionConfig,
-  );
-}
-
-export function defineMcp<const Name extends string>(
-  input: ResourceInput<Name, McpDefinitionConfig>,
-): McpResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "mcp",
-    name,
-    description,
-    config as McpDefinitionConfig,
-  );
-}
-
-export function definePolicy<const Name extends string>(
-  input: ResourceInput<Name, PolicyDefinitionConfig>,
-): PolicyResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "policy",
-    name,
-    description,
-    config as PolicyDefinitionConfig,
-  );
-}
-
-export function defineCron<const Name extends string>(
-  input: ResourceInput<Name, CronDefinitionConfig>,
-): CronResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "cron",
-    name,
-    description,
-    config as CronDefinitionConfig,
-  );
-}
-
-export function isResource(value: unknown): value is AnyResource {
+export function isBroodsConfig(
+  value: unknown,
+): value is BroodsConfigDefinition {
   return Boolean(
     value &&
     typeof value === "object" &&
-    (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER],
+    (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER],
   );
 }
 
@@ -986,12 +936,62 @@ export function isConnectionDefinition(
   );
 }
 
-export function isBroodsConfig(
-  value: unknown,
-): value is BroodsConfigDefinition {
+export function isResource(value: unknown): value is AnyResource {
   return Boolean(
     value &&
     typeof value === "object" &&
-    (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER],
+    (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER],
   );
+}
+
+// The per-platform id field is named for what the provider calls it, so the
+// value you paste is the value the field asks for. All of them normalize to the
+// `externalId` the backend stores, one row per id, and `platform` comes off the
+// connection.
+function defineChannelResource<const Name extends string>(
+  name: Name,
+  description: string | undefined,
+  externalId: string | readonly string[],
+  workspaceRef: string | undefined,
+  rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
+): ChannelResource<Name> {
+  return defineResource("channelRecord", name, description, {
+    ...rules,
+    externalId: externalId,
+    ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
+  });
+}
+
+function defineConnection<const Type extends ChannelType, Config>(
+  type: Type,
+  config: Config & ConnectionIdentityInput,
+): ConnectionDefinition<Type, Config> {
+  const { partition, ...rest } = config;
+
+  return {
+    [CONNECTION_MARKER]: true,
+    kind: "connection",
+    type: type,
+    ...(partition ? { partition: partition } : {}),
+    config: rest,
+  };
+}
+
+function defineResource<
+  const Kind extends ResourceKind,
+  const Name extends string,
+  Config,
+>(
+  kind: Kind,
+  name: Name,
+  description: string | undefined,
+  config: Config,
+): ResourceDefinition<Kind, Name, Config> {
+  return {
+    [RESOURCE_MARKER]: true,
+    kind: kind,
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
+  };
 }

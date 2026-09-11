@@ -121,11 +121,6 @@ const PROVIDER = "lambda" as const;
 // Hex chars of the log stream name HMAC. Keep in step with the forwarder.
 const LOG_STREAM_MAC_LENGTH = 16;
 
-// A reservation whose VM cannot be reconnected because it reached a terminal state.
-// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
-// separates "recreate it" from a transient control-plane failure.
-class MicrovmGoneError extends Error {}
-
 // The sandbox serves these to mountpoint-s3, which re-fetches as its session ages.
 // Sessions last an hour and a persistent VM outlives that, so refresh on this
 // interval, comfortably inside the hour, and cheap (one STS call per VM per cycle).
@@ -185,6 +180,11 @@ export interface MicrovmHarnessReservation {
 interface AcquiredMicrovm extends MicrovmHarnessReservation {
   readonly ephemeralMirror?: Promise<void>;
 }
+
+// A reservation whose VM cannot be reconnected because it reached a terminal state.
+// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
+// separates "recreate it" from a transient control-plane failure.
+class MicrovmGoneError extends Error {}
 
 // The proxy never accepted the request inside the warm-up budget, so the exec
 // definitely did not run. That is the only failure safe to retry against another VM.
@@ -1322,15 +1322,6 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// AWS-managed ingress connectors live under a service-owned ARN namespace,
-// parameterized only by region and name (HTTP_INGRESS / SHELL_INGRESS / NO_INGRESS).
-function managedIngressConnectorArn(name: string): string {
-  const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
-  if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
-
-  return `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:${name}`;
-}
-
 /**
  * Mints the live-shell WebSocket target for a reserved MicroVM: the VM endpoint
  * plus a short-lived shell auth token. account-manage seals both into a terminal
@@ -1363,6 +1354,53 @@ export async function microvmShellConnection(
   };
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A run that dies before its teardown leaks one entry per VM, so drop the expired ones
+// whenever a cache reaches its cap, and the oldest entry too when they were all still
+// live, since the cap has to hold either way.
+function evictToCap<T extends { expiresAt: number }>(
+  cache: Map<string, T>,
+  now: number,
+): void {
+  if (cache.size < CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  if (cache.size < CACHE_MAX_ENTRIES) return;
+  const oldest = cache.keys().next().value;
+  if (oldest) cache.delete(oldest);
+}
+
+function isMicrovmGone(error: unknown): boolean {
+  if (error instanceof MicrovmGoneError) return true;
+  const name =
+    error && typeof error === "object"
+      ? (error as { name?: unknown }).name
+      : undefined;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    name === "ResourceNotFoundException" ||
+    /not found|does not exist|not exist/i.test(message)
+  );
+}
+
+function isTerminalMicrovmState(state: MicrovmState | undefined): boolean {
+  return state === "TERMINATED" || state === "TERMINATING";
+}
+
+// AWS-managed ingress connectors live under a service-owned ARN namespace,
+// parameterized only by region and name (HTTP_INGRESS / SHELL_INGRESS / NO_INGRESS).
+function managedIngressConnectorArn(name: string): string {
+  const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
+  if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
+
+  return `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:${name}`;
+}
+
 function mapMicrovmState(
   state: MicrovmState | undefined,
 ): SandboxInstanceInfo["state"] {
@@ -1379,6 +1417,19 @@ function mapMicrovmState(
     default:
       return "unknown";
   }
+}
+
+function markMountCredentialsFresh(key: string): void {
+  const now = Date.now();
+  evictToCap(mountCredentialRefreshes, now);
+  mountCredentialRefreshes.set(key, {
+    expiresAt: now + MOUNT_CREDENTIAL_REFRESH_MS,
+  });
+}
+
+// In-VM mount directory: one workspace per VM, so the base segment is enough.
+function microvmLocalNamespace(namespace: string): string {
+  return namespace.split("/")[0] ?? namespace;
 }
 
 function sandboxResult(
@@ -1404,55 +1455,4 @@ function sandboxResult(
       ? { cpuUsec: response.cpu_usec }
       : {}),
   };
-}
-
-// A run that dies before its teardown leaks one entry per VM, so drop the expired ones
-// whenever a cache reaches its cap, and the oldest entry too when they were all still
-// live, since the cap has to hold either way.
-function evictToCap<T extends { expiresAt: number }>(
-  cache: Map<string, T>,
-  now: number,
-): void {
-  if (cache.size < CACHE_MAX_ENTRIES) return;
-  for (const [key, entry] of cache) {
-    if (entry.expiresAt <= now) cache.delete(key);
-  }
-  if (cache.size < CACHE_MAX_ENTRIES) return;
-  const oldest = cache.keys().next().value;
-  if (oldest) cache.delete(oldest);
-}
-
-// In-VM mount directory: one workspace per VM, so the base segment is enough.
-function microvmLocalNamespace(namespace: string): string {
-  return namespace.split("/")[0] ?? namespace;
-}
-
-function markMountCredentialsFresh(key: string): void {
-  const now = Date.now();
-  evictToCap(mountCredentialRefreshes, now);
-  mountCredentialRefreshes.set(key, {
-    expiresAt: now + MOUNT_CREDENTIAL_REFRESH_MS,
-  });
-}
-
-function isTerminalMicrovmState(state: MicrovmState | undefined): boolean {
-  return state === "TERMINATED" || state === "TERMINATING";
-}
-
-function isMicrovmGone(error: unknown): boolean {
-  if (error instanceof MicrovmGoneError) return true;
-  const name =
-    error && typeof error === "object"
-      ? (error as { name?: unknown }).name
-      : undefined;
-  const message = error instanceof Error ? error.message : String(error);
-
-  return (
-    name === "ResourceNotFoundException" ||
-    /not found|does not exist|not exist/i.test(message)
-  );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

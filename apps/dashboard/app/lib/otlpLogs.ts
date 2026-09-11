@@ -32,21 +32,6 @@ type OtlpLogRecord = {
   attributes: OtlpAttribute[];
 };
 
-/** Parses core's `OTEL_EXPORTER_OTLP_HEADERS` form: `K=V,K2=V2`. */
-export function parseOtlpHeaders(
-  raw: string | undefined,
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (!raw) return headers;
-
-  for (const pair of raw.split(",")) {
-    const eq = pair.indexOf("=");
-    if (eq > 0) headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
-  }
-
-  return headers;
-}
-
 // `service.name` is the only resource attribute, carrying the stage as core does:
 // the collector promotes those to Loki labels, where per-project keys would blow up.
 export function buildOtlpLogPayload(
@@ -73,35 +58,6 @@ export function buildOtlpLogPayload(
       },
     ],
   };
-}
-
-function toLogRecord(event: PerfEvent): OtlpLogRecord {
-  const attributes: OtlpAttribute[] = [
-    { key: "metric", value: { stringValue: event.name } },
-    { key: "value", value: { doubleValue: event.value } },
-    { key: "unit", value: { stringValue: event.unit } },
-    { key: "route", value: { stringValue: event.route } },
-  ];
-  for (const [key, value] of Object.entries(event.attributes ?? {})) {
-    attributes.push({ key: key, value: toOtlpValue(value) });
-  }
-
-  return {
-    // BigInt, not string concatenation: a large `at` renders in exponential
-    // notation and would emit a malformed timestamp.
-    timeUnixNano: (BigInt(Math.round(event.at)) * BigInt(1_000_000)).toString(),
-    severityNumber: SEVERITY_INFO,
-    severityText: "INFO",
-    body: { stringValue: event.name },
-    attributes: attributes,
-  };
-}
-
-function toOtlpValue(value: string | number | boolean): OtlpValue {
-  if (typeof value === "number") return { doubleValue: value };
-  if (typeof value === "boolean") return { boolValue: value };
-
-  return { stringValue: value };
 }
 
 // Trust boundary: the beacon is client-supplied, so only this bounded shape is
@@ -143,6 +99,21 @@ export function parseBeaconEvents(body: unknown): PerfEvent[] {
   return events;
 }
 
+/** Parses core's `OTEL_EXPORTER_OTLP_HEADERS` form: `K=V,K2=V2`. */
+export function parseOtlpHeaders(
+  raw: string | undefined,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!raw) return headers;
+
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq > 0) headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+
+  return headers;
+}
+
 function parseAttributes(
   value: unknown,
 ): Record<string, string | number | boolean> | undefined {
@@ -158,4 +129,33 @@ function parseAttributes(
   }
 
   return attributes;
+}
+
+function toLogRecord(event: PerfEvent): OtlpLogRecord {
+  const attributes: OtlpAttribute[] = [
+    { key: "metric", value: { stringValue: event.name } },
+    { key: "value", value: { doubleValue: event.value } },
+    { key: "unit", value: { stringValue: event.unit } },
+    { key: "route", value: { stringValue: event.route } },
+  ];
+  for (const [key, value] of Object.entries(event.attributes ?? {})) {
+    attributes.push({ key: key, value: toOtlpValue(value) });
+  }
+
+  return {
+    // BigInt, not string concatenation: a large `at` renders in exponential
+    // notation and would emit a malformed timestamp.
+    timeUnixNano: (BigInt(Math.round(event.at)) * BigInt(1_000_000)).toString(),
+    severityNumber: SEVERITY_INFO,
+    severityText: "INFO",
+    body: { stringValue: event.name },
+    attributes: attributes,
+  };
+}
+
+function toOtlpValue(value: string | number | boolean): OtlpValue {
+  if (typeof value === "number") return { doubleValue: value };
+  if (typeof value === "boolean") return { boolValue: value };
+
+  return { stringValue: value };
 }

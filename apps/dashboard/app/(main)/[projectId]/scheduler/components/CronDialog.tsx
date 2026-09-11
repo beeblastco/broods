@@ -45,25 +45,6 @@ const STATUS_LABELS: Record<string, string> = {
 
 type Mode = "create" | "edit";
 
-/** The first user text message, which is the part the dialog lets you edit. */
-function eventsToText(events: Doc<"crons">["events"] | undefined): string {
-  if (!Array.isArray(events)) return "";
-  for (const message of events) {
-    if (message?.role !== "user") continue;
-    const content = message.content;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      const text = content
-        .filter((part) => part?.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-      if (text) return text;
-    }
-  }
-
-  return "";
-}
-
 interface Props {
   mode: Mode;
   /** Required when mode is "edit". */
@@ -362,4 +343,23 @@ export function CronDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** The first user text message, which is the part the dialog lets you edit. */
+function eventsToText(events: Doc<"crons">["events"] | undefined): string {
+  if (!Array.isArray(events)) return "";
+  for (const message of events) {
+    if (message?.role !== "user") continue;
+    const content = message.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const text = content
+        .filter((part) => part?.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      if (text) return text;
+    }
+  }
+
+  return "";
 }

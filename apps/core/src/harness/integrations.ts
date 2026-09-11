@@ -120,6 +120,9 @@ import {
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
+// Bound so one inbound webhook cannot fan out into an unbounded credential scan.
+const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
+
 type DirectIngressEvent =
   | UserModelMessage
   | ToolModelMessage
@@ -131,6 +134,20 @@ type PublicEndpointPath = {
   stageSlug?: string;
   mode: "sync" | "async";
 };
+
+// A lookup that failed is not the same as "no record": the first must not run.
+type ChannelTarget =
+  | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
+  | { kind: "unavailable" };
+
+// With no agent in the webhook URL, "nobody configures this channel", "nobody's
+// credentials verified" and "the scan broke" are the operator's whole diagnosis.
+type ChannelCredentialHolder =
+  | { kind: "holder"; agent: AgentRecord }
+  | { kind: "unconfigured"; configured: boolean }
+  | { kind: "unknown-stage" }
+  | { kind: "unverified" }
+  | { kind: "unavailable" };
 
 export interface DirectInboundEvent {
   accountId: string;
@@ -957,20 +974,6 @@ async function resolveChannelTarget(
   return { kind: "resolved", agent: bound, record: record };
 }
 
-// A lookup that failed is not the same as "no record": the first must not run.
-type ChannelTarget =
-  | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
-  | { kind: "unavailable" };
-
-// With no agent in the webhook URL, "nobody configures this channel", "nobody's
-// credentials verified" and "the scan broke" are the operator's whole diagnosis.
-type ChannelCredentialHolder =
-  | { kind: "holder"; agent: AgentRecord }
-  | { kind: "unconfigured"; configured: boolean }
-  | { kind: "unknown-stage" }
-  | { kind: "unverified" }
-  | { kind: "unavailable" };
-
 /** Attach the roles this actor holds in the channel so policies can read them. */
 function identityWithChannelRoles(
   identity: ChannelIdentity | undefined,
@@ -1073,9 +1076,6 @@ function channelRuntimeAgentConfig(
     ? applyChannelRecord(config, target.record, channelName)
     : config;
 }
-
-// Bound so one inbound webhook cannot fan out into an unbounded credential scan.
-const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 
 async function handleChannelWebhook(
   adapter: ChannelAdapter,

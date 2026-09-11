@@ -55,6 +55,12 @@ export interface UpdateAgentInput {
   config?: unknown;
 }
 
+export class AgentPolicyNotFoundError extends Error {
+  constructor(public readonly policyId: string) {
+    super(`Agent policy not found: ${policyId}`);
+  }
+}
+
 export class AgentSkillAuthorizationError extends Error {
   constructor(public readonly skillPath: string) {
     super(`Skill path belongs to another account: ${skillPath}`);
@@ -73,9 +79,18 @@ export class AgentSubagentNotFoundError extends Error {
   }
 }
 
-export class AgentPolicyNotFoundError extends Error {
-  constructor(public readonly policyId: string) {
-    super(`Agent policy not found: ${policyId}`);
+export async function validateAgentPolicyIds(
+  accountId: string,
+  config: AgentConfig,
+): Promise<void> {
+  for (const policyId of config.policies ?? []) {
+    const policy = await getStorage().agentPolicies.getById(
+      accountId,
+      policyId,
+    );
+    if (!policy || policy.status !== "active") {
+      throw new AgentPolicyNotFoundError(policyId);
+    }
   }
 }
 
@@ -104,21 +119,6 @@ export async function validateAgentSubagentIds(
     const agent = await getStorage().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
       throw new AgentSubagentNotFoundError(agentId);
-    }
-  }
-}
-
-export async function validateAgentPolicyIds(
-  accountId: string,
-  config: AgentConfig,
-): Promise<void> {
-  for (const policyId of config.policies ?? []) {
-    const policy = await getStorage().agentPolicies.getById(
-      accountId,
-      policyId,
-    );
-    if (!policy || policy.status !== "active") {
-      throw new AgentPolicyNotFoundError(policyId);
     }
   }
 }
@@ -179,6 +179,10 @@ export async function normalizeUpdateAgentInput(
   };
 }
 
+export function isAgentStatus(value: unknown): value is AgentStatus {
+  return value === "active" || value === "disabled";
+}
+
 export function toPublicAgent(agent: AgentRecord): PublicAgentRecord {
   return {
     accountId: agent.accountId,
@@ -192,8 +196,12 @@ export function toPublicAgent(agent: AgentRecord): PublicAgentRecord {
   };
 }
 
-export function isAgentStatus(value: unknown): value is AgentStatus {
-  return value === "active" || value === "disabled";
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function requireAgentStatus(value: unknown): AgentStatus {
@@ -209,12 +217,4 @@ function requireString(value: unknown, name: string): string {
   }
 
   return value.trim();
-}
-
-function optionalString(value: unknown, name: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-
-  return trimmed.length > 0 ? trimmed : undefined;
 }

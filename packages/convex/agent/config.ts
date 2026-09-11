@@ -503,15 +503,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** Returns true when the caller may read a project-scoped agent config. */
-async function canAccessAgentConfig(
-  ctx: Parameters<typeof getProjectForRole>[0],
-  authId: string,
-  config: { projectId: Id<"projects"> },
-): Promise<boolean> {
-  return Boolean(await getProjectForRole(ctx, authId, config.projectId));
-}
-
 /** Members read agent configs; every write needs the org admin role. */
 async function assertAgentConfigAdmin(
   ctx: Parameters<typeof getProjectForRole>[0],
@@ -521,6 +512,15 @@ async function assertAgentConfigAdmin(
   if (!(await getProjectForRole(ctx, authId, config.projectId, "admin"))) {
     throw new Error(AGENT_ADMIN_REQUIRED);
   }
+}
+
+/** Returns true when the caller may read a project-scoped agent config. */
+async function canAccessAgentConfig(
+  ctx: Parameters<typeof getProjectForRole>[0],
+  authId: string,
+  config: { projectId: Id<"projects"> },
+): Promise<boolean> {
+  return Boolean(await getProjectForRole(ctx, authId, config.projectId));
 }
 
 /** Hide secret values from browser reads while preserving variable names. */

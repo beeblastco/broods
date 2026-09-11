@@ -44,45 +44,6 @@ export interface ObservabilitySubscribeOptions {
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 
-function buildObservabilityUrl(
-  baseUrl: string,
-  project: string,
-  stage: string,
-): string {
-  const wsBase = toWebSocketBaseUrl(baseUrl);
-
-  return `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws`;
-}
-
-function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
-  if (typeof data !== "string") return null;
-  try {
-    const value = JSON.parse(data) as ObservabilityServerMessage;
-
-    return typeof value === "object" &&
-      value !== null &&
-      typeof (value as { type?: unknown }).type === "string"
-      ? value
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolveWebSocket(): new (
-  url: string,
-  protocols?: string[],
-) => WebSocket {
-  const impl = (
-    globalThis as {
-      WebSocket?: new (url: string, protocols?: string[]) => WebSocket;
-    }
-  ).WebSocket;
-  if (!impl) throw new Error("WebSocket is not available in this environment.");
-
-  return impl;
-}
-
 /**
  * Ask core which project/stage a runtime key reads. Null when the lookup fails,
  * so callers fall back to whatever they were configured with.
@@ -286,6 +247,31 @@ async function* subscribeObservabilityLogsOnce(
   }
 }
 
+function buildObservabilityUrl(
+  baseUrl: string,
+  project: string,
+  stage: string,
+): string {
+  const wsBase = toWebSocketBaseUrl(baseUrl);
+
+  return `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws`;
+}
+
+function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
+  if (typeof data !== "string") return null;
+  try {
+    const value = JSON.parse(data) as ObservabilityServerMessage;
+
+    return typeof value === "object" &&
+      value !== null &&
+      typeof (value as { type?: unknown }).type === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function reconnectDelay(
   ms: number,
   signal: AbortSignal | undefined,
@@ -302,4 +288,18 @@ function reconnectDelay(
       { once: true },
     );
   });
+}
+
+function resolveWebSocket(): new (
+  url: string,
+  protocols?: string[],
+) => WebSocket {
+  const impl = (
+    globalThis as {
+      WebSocket?: new (url: string, protocols?: string[]) => WebSocket;
+    }
+  ).WebSocket;
+  if (!impl) throw new Error("WebSocket is not available in this environment.");
+
+  return impl;
 }

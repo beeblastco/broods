@@ -12,6 +12,12 @@ import {
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
 
+export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
+export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const DEFAULT_INGRESS_MAX_COUNT = 100;
+export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
+export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
+
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type AppliedIngressMode = IngressMode;
 export type IngressStatus =
@@ -150,12 +156,6 @@ export interface IngressStatusRecord {
   publicDeploymentIngress?: PublicDeploymentIngress;
 }
 
-export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
-export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const DEFAULT_INGRESS_MAX_COUNT = 100;
-export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
-export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
-
 /** Atomically admits one candidate into the durable conversation coordinator. */
 export async function acceptIngress(
   candidate: IngressCandidate,
@@ -203,6 +203,35 @@ export async function acceptIngress(
     maxQueuedCount: DEFAULT_INGRESS_MAX_COUNT,
     maxQueuedBytes: DEFAULT_INGRESS_MAX_BYTES,
   });
+}
+
+/** Applies waiting steer envelopes at the current AI SDK step boundary. */
+export function applySteering(options: {
+  conversationKey: string;
+  ownerEventId: string;
+  ownerGeneration: number;
+}): Promise<AppliedIngress | null> {
+  return runtime.mutate("applyIngressSteering", {
+    ...options,
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  });
+}
+
+export function getConversationDispatchTarget(options: {
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+}): Promise<ConversationDispatchTarget | null> {
+  return runtime.query("getConversationTarget", options);
+}
+
+/** Reads one accepted ingress status after repeating account/agent authorization. */
+export function getIngressStatus(options: {
+  accountId: string;
+  agentId: string;
+  eventId: string;
+}): Promise<IngressStatusRecord | null> {
+  return runtime.query("getIngressStatus", options);
 }
 
 export async function prepareSessionMessage(options: {
@@ -280,35 +309,6 @@ export async function prepareSessionMessage(options: {
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
   };
-}
-
-/** Applies waiting steer envelopes at the current AI SDK step boundary. */
-export function applySteering(options: {
-  conversationKey: string;
-  ownerEventId: string;
-  ownerGeneration: number;
-}): Promise<AppliedIngress | null> {
-  return runtime.mutate("applyIngressSteering", {
-    ...options,
-    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
-  });
-}
-
-export function getConversationDispatchTarget(options: {
-  accountId: string;
-  agentId: string;
-  conversationKey: string;
-}): Promise<ConversationDispatchTarget | null> {
-  return runtime.query("getConversationTarget", options);
-}
-
-/** Reads one accepted ingress status after repeating account/agent authorization. */
-export function getIngressStatus(options: {
-  accountId: string;
-  agentId: string;
-  eventId: string;
-}): Promise<IngressStatusRecord | null> {
-  return runtime.query("getIngressStatus", options);
 }
 
 /** Settles every envelope applied to one active event under the fencing token. */

@@ -140,30 +140,6 @@ const PANEL_TITLES: Record<NodeType, string> = {
   skill: "Skill",
 };
 
-function inferProviderFromModelId(modelId: string): AgentProvider {
-  const normalized = modelId.trim().toLowerCase();
-
-  if (
-    normalized.startsWith("bedrock/") ||
-    normalized.startsWith("anthropic.") ||
-    normalized.startsWith("amazon.") ||
-    normalized.startsWith("cohere.") ||
-    normalized.startsWith("mistral.") ||
-    normalized.startsWith("meta.") ||
-    normalized.startsWith("us.")
-  ) {
-    return "bedrock";
-  }
-  if (normalized.startsWith("google/") || normalized.includes("gemini")) {
-    return "google";
-  }
-  if (normalized.startsWith("anthropic/") || normalized.includes("claude")) {
-    return "anthropic";
-  }
-
-  return "openai";
-}
-
 export const NodeSidePanel = memo(function NodeSidePanel({
   node,
   selectedAt,
@@ -1106,6 +1082,30 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     </div>
   );
 });
+
+function inferProviderFromModelId(modelId: string): AgentProvider {
+  const normalized = modelId.trim().toLowerCase();
+
+  if (
+    normalized.startsWith("bedrock/") ||
+    normalized.startsWith("anthropic.") ||
+    normalized.startsWith("amazon.") ||
+    normalized.startsWith("cohere.") ||
+    normalized.startsWith("mistral.") ||
+    normalized.startsWith("meta.") ||
+    normalized.startsWith("us.")
+  ) {
+    return "bedrock";
+  }
+  if (normalized.startsWith("google/") || normalized.includes("gemini")) {
+    return "google";
+  }
+  if (normalized.startsWith("anthropic/") || normalized.includes("claude")) {
+    return "anthropic";
+  }
+
+  return "openai";
+}
 
 /** Simple details tab for non-agent nodes showing only an editable name. */
 function ServiceDetailsTab({

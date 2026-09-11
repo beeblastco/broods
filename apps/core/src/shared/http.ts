@@ -61,6 +61,15 @@ export type PinnedFetchTransport = Pick<
   "allowAddresses" | "ca" | "lookup"
 >;
 
+export function errorResponse(
+  status: number,
+  error: string,
+  details: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
+): Response {
+  return jsonResponse(status, { error: error, ...details }, headers);
+}
+
 export function jsonResponse(
   status: number,
   body: unknown,
@@ -89,13 +98,8 @@ export function textResponse(
   });
 }
 
-export function errorResponse(
-  status: number,
-  error: string,
-  details: Record<string, unknown> = {},
-  headers: Record<string, string> = {},
-): Response {
-  return jsonResponse(status, { error: error, ...details }, headers);
+export function normalizePath(path: string): string {
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
 export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
@@ -110,10 +114,6 @@ export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
       `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-}
-
-export function normalizePath(path: string): string {
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
 /**
