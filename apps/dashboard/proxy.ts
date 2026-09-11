@@ -32,11 +32,14 @@ export default function proxy(
 }
 
 /**
- * Configure middleware to run on all routes except static assets.
+ * Configure middleware to run on every route except the files actually served
+ * from disk: the build output, `public/assets/`, and the favicon.
+ *
+ * Excluding every asset-looking path instead let `/x.png` past the proxy and
+ * into the router, where `/[projectId]` matches any single segment, dot
+ * included. A typo answered 200 with the app shell, so uptime checks and
+ * crawlers read it as a live page.
  */
 export const config = {
-  matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
+  matcher: ["/((?!_next|assets/|favicon\\.ico).*)", "/(api|trpc)(.*)"],
 };
