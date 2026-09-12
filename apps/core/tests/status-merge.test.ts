@@ -69,7 +69,7 @@ afterEach(() => {
 
 function statusRequest(): Promise<Response> {
   return handler(
-    coreRequest("GET", "/status/one?agentId=agent_1", {
+    coreRequest("GET", "/v1/runs/one?agentId=agent_1", {
       authorization: "Bearer fp_acct_known-secret",
     }),
   );

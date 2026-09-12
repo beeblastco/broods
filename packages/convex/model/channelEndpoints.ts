@@ -124,10 +124,10 @@ export function webhookPath(
   const account = encodeURIComponent(accountId);
   const name = encodeURIComponent(channel);
   if (stage.kind === "production") {
-    return `/webhooks/${account}/${name}`;
+    return `/v1/webhooks/${account}/${name}`;
   }
 
-  return `/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
+  return `/v1/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }
 
 async function desiredEndpoints(

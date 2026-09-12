@@ -15,12 +15,13 @@ const TARGETS: ForwardTarget[] = [
   {
     agentId: "agent-1",
     agentName: "support",
-    webhookUrl: "https://gateway.example.com/webhooks/account-1/discord",
+    webhookUrl: "https://gateway.example.com/v1/webhooks/account-1/discord",
   },
   {
     agentId: "agent-2",
     agentName: "triage",
-    webhookUrl: "https://gateway.example.com/webhooks/account-1/dev/e1/discord",
+    webhookUrl:
+      "https://gateway.example.com/v1/webhooks/account-1/dev/e1/discord",
   },
 ];
 

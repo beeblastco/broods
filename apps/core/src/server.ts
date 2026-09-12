@@ -29,10 +29,10 @@ export function routesToAccountManage(
   pathname: string,
 ): boolean {
   const upperMethod = method.toUpperCase();
-  if (pathname === "/accounts") {
+  if (pathname === "/v1/accounts") {
     return upperMethod === "POST";
   }
-  if (/^\/accounts\/[^/]+$/.test(pathname)) {
+  if (/^\/v1\/accounts\/[^/]+$/.test(pathname)) {
     return upperMethod === "DELETE";
   }
   if (pathname === "/v1/account") {

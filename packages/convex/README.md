@@ -71,14 +71,14 @@ the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
 `config/http.ts` serves the public config API on this deployment's
 `.convex.site` host, replacing core's former routes. The gateway forwards those
 paths here (`BROODS_CONFIG_URL`). It covers account metadata and rotation (`GET/PATCH /v1/account`,
-`POST /v1/account/rotate-secret`, `GET /accounts`,
-`GET/PATCH /accounts/{accountId}`, and
-`POST /accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
+`POST /v1/account/rotate-secret`, `GET /v1/accounts`,
+`GET/PATCH /v1/accounts/{accountId}`, and
+`POST /v1/accounts/{accountId}/rotate-secret`), `/v1/agents*`, `/v1/skills*`,
 `/v1/mcp*`, `/v1/hooks*`, `/v1/workspaces/{id}/files`, `/v1/crons*`, `/v1/workspaces*`,
 `/v1/sandboxes*` (CRUD only; lifecycle verbs stay in core), and
 `/v1/policies*`. Admin-gated account creation
-(`POST /accounts`) and account delete (`DELETE /v1/account`,
-`DELETE /accounts/{accountId}`) stay in core.
+(`POST /v1/accounts`) and account delete (`DELETE /v1/account`,
+`DELETE /v1/accounts/{accountId}`) stay in core.
 Cron execution stays in core: schedules invoke the configured target with
 `{kind: "cron", accountId, cronId}` and core's harness runs the agent.
 Sandbox config CRUD requires `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.

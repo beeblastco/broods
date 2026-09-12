@@ -17,7 +17,7 @@ import { isPlainObject } from "./object.ts";
 const TICKET_ALGORITHM = "aes-256-gcm";
 const TICKET_VERSION = "ml1";
 
-export const MEDIA_PATH_PREFIX = "/media/";
+export const MEDIA_PATH_PREFIX = "/v1/media/";
 
 export interface MediaTicket {
   accountId: string;

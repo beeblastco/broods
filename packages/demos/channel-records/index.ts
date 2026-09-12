@@ -5,7 +5,7 @@
  * agent ids in the same account. Point the Slack app's Event Subscriptions URL
  * at the account-scoped webhook so the records choose who answers:
  *
- *   {BROODS_BASE_URL}/webhooks/{accountId}/slack
+ *   {BROODS_BASE_URL}/v1/webhooks/{accountId}/slack
  */
 
 import { BroodsAccountClient, type AccountChannel } from "broods/account";
@@ -103,5 +103,5 @@ for (const channel of [eng, sales]) {
 }
 
 console.log(
-  "\nPoint the Slack app at /webhooks/{accountId}/slack. The record picks the agent.",
+  "\nPoint the Slack app at /v1/webhooks/{accountId}/slack. The record picks the agent.",
 );

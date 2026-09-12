@@ -1108,7 +1108,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function subagentStatusPath(task: ResolvedSubagentTask): string {
-  return `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
+  return `/v1/runs/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
 }
 
 function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {

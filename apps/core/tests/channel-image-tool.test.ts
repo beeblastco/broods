@@ -97,12 +97,14 @@ describe("sendImagesTool", () => {
     ]);
     // The whole set reaches the channel in one call, so the adapter can group it
     // the way its provider wants rather than posting one message per picture.
-    expect(sent[0]!.url.startsWith("https://gateway.test/media/")).toBe(true);
+    expect(sent[0]!.url.startsWith("https://gateway.test/v1/media/")).toBe(
+      true,
+    );
     // The link must survive on its own: everything the media route needs to find
     // the file again is sealed into the token, with no expiry to run out.
     expect(
       openMediaTicket(
-        sent[0]!.url.slice("https://gateway.test/media/".length),
+        sent[0]!.url.slice("https://gateway.test/v1/media/".length),
         SECRET,
       ),
     ).toEqual({
@@ -286,7 +288,9 @@ describe("sendFilesTool", () => {
       "application/pdf",
       "text/csv",
     ]);
-    expect(sent[0]!.url.startsWith("https://gateway.test/media/")).toBe(true);
+    expect(sent[0]!.url.startsWith("https://gateway.test/v1/media/")).toBe(
+      true,
+    );
     expect(sentCaption).toBe("[safe] here you go");
     expect(result).toContain("2 file(s) sent");
   });
@@ -317,7 +321,10 @@ describe("sendFilesTool", () => {
     // The fallback link is the same sealed ticket the attachment path hands over.
     const url = sentText.slice(sentText.indexOf("https://"));
     expect(
-      openMediaTicket(url.slice("https://gateway.test/media/".length), SECRET),
+      openMediaTicket(
+        url.slice("https://gateway.test/v1/media/".length),
+        SECRET,
+      ),
     ).toEqual({
       accountId: ACCOUNT,
       workspaceId: "ws_a",
@@ -352,7 +359,9 @@ describe("sendFilesTool", () => {
       file_paths: ["docs/declaration.pdf"],
     });
 
-    expect(sentText).toContain("declaration.pdf: https://gateway.test/media/");
+    expect(sentText).toContain(
+      "declaration.pdf: https://gateway.test/v1/media/",
+    );
     expect(result).toContain("could not attach documents");
   });
 

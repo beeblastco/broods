@@ -208,7 +208,7 @@ describe("account-manage sandbox endpoints", () => {
 
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const adminResponse = await handler(
-      createEvent("GET", "/accounts/acct_test/sandboxes", {
+      createEvent("GET", "/v1/accounts/acct_test/sandboxes", {
         authorization: "Bearer admin-secret",
       }),
     );
@@ -518,7 +518,7 @@ describe("account-manage workspace endpoints", () => {
 
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const adminResponse = await handler(
-      createEvent("GET", "/accounts/acct_test/workspaces", {
+      createEvent("GET", "/v1/accounts/acct_test/workspaces", {
         authorization: "Bearer admin-secret",
       }),
     );

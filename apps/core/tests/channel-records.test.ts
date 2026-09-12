@@ -126,7 +126,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: { "telegram:123": channelRecord() },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
     });
 
     expect(response.statusCode).toBe(200);
@@ -143,7 +143,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: {},
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
     });
 
     expect(response.statusCode).toBe(200);
@@ -155,7 +155,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: { "telegram:123": channelRecord() },
       runs: runs,
-      path: "/webhooks/acct_test/agent_support/telegram",
+      path: "/v1/webhooks/acct_test/agent_support/telegram",
     });
 
     // The agent-scoped shape is gone rather than redirected: a stale provider
@@ -173,7 +173,7 @@ describe("channel record resolution", () => {
         }),
       },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
     });
 
     expect(runs[0]!.agentId).toBe("agent_support");
@@ -184,7 +184,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: {},
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       channelRecordLoader: async () => {
         throw new Error("convex unreachable");
       },
@@ -202,7 +202,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: {},
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       // A partial storage stub makes `storage.channelRecords` undefined, so the
       // default loader throws before a promise exists, so `.catch` would miss it
       // and the webhook would 500 instead of refusing cleanly.
@@ -233,7 +233,7 @@ describe("channel record resolution", () => {
     const response = await router(
       coreRequest(
         "POST",
-        "/webhooks/acct_test/telegram",
+        "/v1/webhooks/acct_test/telegram",
         { "x-telegram-bot-api-secret-token": "telegram-secret" },
         {
           update_id: 7,
@@ -263,7 +263,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: {},
       runs: [],
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       headers: { "x-telegram-bot-api-secret-token": "wrong-secret" },
     });
 
@@ -286,7 +286,7 @@ describe("channel record resolution", () => {
     const response = await route({
       records: {},
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       agents: [...noise, SUPPORT_AGENT],
     });
 
@@ -311,7 +311,7 @@ describe("channel record resolution", () => {
         }),
       },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
     });
 
     const config = runs[0]!.agentConfig!;
@@ -337,7 +337,7 @@ describe("channel record resolution", () => {
         }),
       },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
     });
 
     expect(runs[0]!.identity?.userId).toBe("456");
@@ -357,7 +357,7 @@ describe("channel record resolution", () => {
         }),
       },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       policyDenies: true,
       replies: replies,
     });
@@ -380,7 +380,7 @@ describe("channel record resolution", () => {
         }),
       },
       runs: runs,
-      path: "/webhooks/acct_test/telegram",
+      path: "/v1/webhooks/acct_test/telegram",
       policyAudits: true,
     });
 
@@ -758,7 +758,7 @@ async function routeSlackMention(options: {
     },
     runs: options.runs ?? [],
     agents: [SLACK_AGENT],
-    path: "/webhooks/acct_test/slack",
+    path: "/v1/webhooks/acct_test/slack",
     headers: {
       "x-slack-request-timestamp": timestamp,
       "x-slack-signature": `v0=${signature}`,

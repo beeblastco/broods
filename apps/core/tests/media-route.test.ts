@@ -156,9 +156,9 @@ describe("routesToMedia", () => {
   it("claims media reads only", async (): Promise<void> => {
     const { routesToMedia } = await import("../src/media.ts");
 
-    expect(routesToMedia("GET", "/media/abc")).toBe(true);
-    expect(routesToMedia("HEAD", "/media/abc")).toBe(true);
-    expect(routesToMedia("POST", "/media/abc")).toBe(false);
+    expect(routesToMedia("GET", "/v1/media/abc")).toBe(true);
+    expect(routesToMedia("HEAD", "/v1/media/abc")).toBe(true);
+    expect(routesToMedia("POST", "/v1/media/abc")).toBe(false);
     expect(routesToMedia("GET", "/v1/agents")).toBe(false);
   });
 });
@@ -166,7 +166,7 @@ describe("routesToMedia", () => {
 function mediaRequest(token: string): CoreRequest {
   return {
     method: "GET",
-    path: `/media/${token}`,
+    path: `/v1/media/${token}`,
     search: "",
     query: new URLSearchParams(),
     headers: {},

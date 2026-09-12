@@ -99,7 +99,7 @@ describe("SubagentCoordinator", () => {
       expect(task.agentId).toBe(`virtual_subagent_${task.taskId}`);
       expect(task.conversationKey.startsWith("subagent-")).toBe(true);
       expect(task.statusPath).toBe(
-        `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
+        `/v1/runs/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
       );
       expect(timeline.slice(0, 3)).toEqual([
         "persist:createAsyncAgentResult",
@@ -497,7 +497,7 @@ describe("SubagentCoordinator", () => {
         kind: "async",
         publicEventId: "subagent~task_1",
         publicConversationKey: "subagent-persistent-1",
-        statusUrl: "/status/subagent~task_1?agentId=agent_child",
+        statusUrl: "/v1/runs/subagent~task_1?agentId=agent_child",
       });
     } finally {
       runtime.mutate = originalMutation;

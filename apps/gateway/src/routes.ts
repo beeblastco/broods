@@ -1,5 +1,15 @@
+/**
+ * The upstream split. `isConfigHttpPath` decides what reaches the Convex config
+ * plane and `isCoreHttpRoute` what reaches core; the config list is
+ * method-aware. Add a route on either side and add it here too, or it lands on
+ * the wrong upstream.
+ *
+ * Every public path is under `/v1/`, so `isCoreHttpRoute` is the catch-all and
+ * the config list is the exception table in front of it.
+ */
+
 const observabilityWebSocketPattern =
-  /^\/v1\/([^/]+)\/([^/]+)\/observability\/ws$/;
+  /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/observability\/ws$/;
 
 export function matchObservabilityWebSocketPath(
   pathname: string,
@@ -13,10 +23,10 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   if (pathname === "/v1/account")
     return upperMethod === "GET" || upperMethod === "PATCH";
   if (pathname.startsWith("/v1/account/")) return true;
-  if (pathname === "/accounts") return upperMethod === "GET";
-  if (/^\/accounts\/[^/]+$/.test(pathname))
+  if (pathname === "/v1/accounts") return upperMethod === "GET";
+  if (/^\/v1\/accounts\/[^/]+$/.test(pathname))
     return upperMethod === "GET" || upperMethod === "PATCH";
-  if (/^\/accounts\/[^/]+\/rotate-secret$/.test(pathname))
+  if (/^\/v1\/accounts\/[^/]+\/rotate-secret$/.test(pathname))
     return upperMethod === "POST";
   if (pathname === "/v1/agents")
     return upperMethod === "GET" || upperMethod === "POST";
@@ -62,7 +72,7 @@ export function matchAgentWebSocketPath(pathname: string): {
   stageSlug?: string;
 } | null {
   const scoped = pathname.match(
-    /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)\/ws$/,
+    /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/agents\/([^/]+)\/ws$/,
   );
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
@@ -80,18 +90,5 @@ export function matchAgentWebSocketPath(pathname: string): {
 }
 
 export function isCoreHttpRoute(pathname: string): boolean {
-  return (
-    pathname === "/" ||
-    pathname === "/async" ||
-    pathname.startsWith("/status/") ||
-    pathname === "/accounts" ||
-    pathname.startsWith("/accounts/") ||
-    pathname.startsWith("/webhooks/") ||
-    // Durable workspace media links handed to chat providers; the sealed ticket
-    // in the path is the only credential, so this stays unauthenticated.
-    pathname.startsWith("/media/") ||
-    pathname.startsWith("/sandbox-jobs/") ||
-    pathname === "/v1" ||
-    pathname.startsWith("/v1/")
-  );
+  return pathname === "/v1" || pathname.startsWith("/v1/");
 }

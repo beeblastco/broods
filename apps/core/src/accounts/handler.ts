@@ -178,7 +178,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       return errorResponse(403, "Forbidden");
     }
 
-    if (method === "POST" && rawPath === "/accounts") {
+    if (method === "POST" && rawPath === "/v1/accounts") {
       const body = parseJsonBody(request);
       const created = await getStorage().accounts.create(
         normalizeCreateAccountInput(body),
@@ -190,7 +190,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       });
     }
 
-    const accountMatch = rawPath.match(/^\/accounts\/([^/]+)$/);
+    const accountMatch = rawPath.match(/^\/v1\/accounts\/([^/]+)$/);
     if (accountMatch?.[1]) {
       const accountId = decodeURIComponent(accountMatch[1]);
       if (method === "DELETE") {

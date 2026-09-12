@@ -589,7 +589,7 @@ function createRequest(payload: Record<string, unknown>): {
 } {
   return {
     method: "POST",
-    rawPath: "/",
+    rawPath: "/v1/runs",
     rawQueryString: "",
     headers: {
       "x-signature-ed25519": "signature",
@@ -608,7 +608,7 @@ function createGatewayRequest(payload: Record<string, unknown>): {
 } {
   return {
     method: "POST",
-    rawPath: "/",
+    rawPath: "/v1/runs",
     rawQueryString: "",
     headers: {
       "x-discord-gateway-token": "bot-token",
