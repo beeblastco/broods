@@ -29,7 +29,11 @@ import {
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
 import { RateLimiter } from "./rate-limiter.ts";
-import { proxyHttp, resolveObservabilityScope } from "./upstream.ts";
+import {
+  proxyHttp,
+  resolveObservabilityScope,
+  type ProxyOptions,
+} from "./upstream.ts";
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
@@ -45,74 +49,48 @@ import {
   websocketToken,
   websocketUpgradeHeaders,
   withRequestId,
+  type GatewayLimits,
 } from "./utils.ts";
 
-type GatewayData =
+export type GatewayData =
   | AgentTestGatewayData
   | ObservabilityGatewayData
   | TerminalGatewayData;
 
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
-let activeSocketCount = 0;
 
-if (import.meta.main) {
-  const coreBaseUrls = normalizedCoreBaseUrls(
-    process.env.BROODS_CORE_URLS?.split(",") ?? [],
-  );
-  const configBaseUrl = process.env.BROODS_CONFIG_URL?.trim()
-    ? normalizeBaseUrl(process.env.BROODS_CONFIG_URL)
-    : undefined;
-  const limits = gatewayLimitsFromEnv();
-  const allowedOrigins = allowedOriginPatternsFromEnv();
-  const upgradeLimiter = new RateLimiter(
-    Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,
-    60_000,
-  );
-  const authFailureLimiter = new RateLimiter(
-    Number(process.env.GATEWAY_AUTH_FAILURES_PER_MINUTE ?? "") || 20,
-    60_000,
-  );
-  // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
-  // count of its own. Left off by default because channel webhooks arrive on
-  // this branch from a provider's egress addresses: one number chosen here
-  // would meter a whole retrying fleet as a single caller.
-  const httpRequestsPerMinute =
-    Number(process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE ?? "") || 0;
-  const httpLimiter =
-    httpRequestsPerMinute > 0
-      ? new RateLimiter(httpRequestsPerMinute, 60_000)
-      : undefined;
-  // Defaults on because Convex still reaches core through this gateway; flip
-  // to "false" once BROODS_ACCOUNT_MANAGE_URL points at core in-cluster.
-  const proxyOptions = {
-    forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID !== "false",
-  };
+/** Everything the router reads that the process environment decides. */
+export interface GatewayConfig {
+  allowedOrigins: string[];
+  authFailureLimiter: RateLimiter;
+  configBaseUrl: string | undefined;
+  coreBaseUrls: string[];
+  httpLimiter: RateLimiter | undefined;
+  limits: GatewayLimits;
+  proxyOptions: ProxyOptions;
+  upgradeLimiter: RateLimiter;
+}
 
-  const server = Bun.serve<GatewayData>({
-    port: Number(process.env.PORT ?? "3000"),
-    hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
-    idleTimeout: limits.idleTimeoutSeconds,
-    fetch: async function (request, server): Promise<Response | undefined> {
-      const requestId = resolveRequestId(request.headers.get("x-request-id"));
-      try {
-        const response = await route(request, server, requestId);
+/** The two halves `Bun.serve` needs, built over one resolved config. */
+export interface GatewayRuntime {
+  fetch: (
+    request: Request,
+    server: Bun.Server<GatewayData>,
+  ) => Promise<Response | undefined>;
+  websocket: Bun.WebSocketHandler<GatewayData>;
+}
 
-        // A WebSocket upgrade returns undefined; there is no response to stamp.
-        return response ? withRequestId(response, requestId) : response;
-      } catch (error) {
-        console.error("gateway request failed:", {
-          requestId: requestId,
-          error: error,
-        });
-
-        return withRequestId(
-          jsonError(500, "Internal gateway error"),
-          requestId,
-        );
-      }
-    },
-    websocket: websocketHandlers(),
-  });
+/**
+ * Build the router and socket handlers over one config.
+ *
+ * The security ordering lives here rather than inside the `import.meta.main`
+ * block so tests can drive it without binding a port: origin allowlist, upgrade
+ * rate limit, auth-failure rate limit, then the per-path token and scope checks.
+ * The open socket count is per gateway, so two of them in one test process do
+ * not share a capacity ceiling.
+ */
+export function createGateway(config: GatewayConfig): GatewayRuntime {
+  let activeSocketCount = 0;
 
   async function route(
     request: Request,
@@ -129,36 +107,38 @@ if (import.meta.main) {
         {
           status: "ok",
           activeWebSockets: activeSocketCount,
-          maxWebSockets: limits.maxConnections,
+          maxWebSockets: config.limits.maxConnections,
         },
         { headers: { "Access-Control-Allow-Origin": "*" } },
       );
     }
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
-      if (!isOriginAllowed(request.headers.get("origin"), allowedOrigins)) {
+      if (
+        !isOriginAllowed(request.headers.get("origin"), config.allowedOrigins)
+      ) {
         return jsonError(403, "Origin is not allowed");
       }
       const ip = clientIp(request, server.requestIP(request)?.address);
-      if (!upgradeLimiter.allow(ip)) {
+      if (!config.upgradeLimiter.allow(ip)) {
         return jsonError(
           429,
           "Too many connection attempts",
           {},
-          rateLimitHeaders(upgradeLimiter, ip),
+          rateLimitHeaders(config.upgradeLimiter, ip),
         );
       }
-      if (authFailureLimiter.blocked(ip)) {
+      if (config.authFailureLimiter.blocked(ip)) {
         return jsonError(
           429,
           "Too many failed authentication attempts",
           {},
-          rateLimitHeaders(authFailureLimiter, ip),
+          rateLimitHeaders(config.authFailureLimiter, ip),
         );
       }
 
       if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
-        if (activeSocketCount >= limits.maxConnections) {
+        if (activeSocketCount >= config.limits.maxConnections) {
           return jsonError(503, "Gateway is at capacity");
         }
 
@@ -168,7 +148,7 @@ if (import.meta.main) {
           terminalServiceSecretsFromEnv(),
         );
         if (!ticket) {
-          authFailureLimiter.allow(ip);
+          config.authFailureLimiter.allow(ip);
 
           return jsonError(401, "Invalid or expired terminal ticket", {
             code: "invalid_terminal_ticket",
@@ -190,7 +170,7 @@ if (import.meta.main) {
 
       const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
       if (observabilityPath) {
-        if (activeSocketCount >= limits.maxConnections) {
+        if (activeSocketCount >= config.limits.maxConnections) {
           return jsonError(503, "Gateway is at capacity");
         }
 
@@ -198,9 +178,12 @@ if (import.meta.main) {
         const token = websocketToken(request, url);
         if (!token) return jsonError(401, "Missing WebSocket token");
 
-        const resolved = await resolveObservabilityScope(token, coreBaseUrls);
+        const resolved = await resolveObservabilityScope(
+          token,
+          config.coreBaseUrls,
+        );
         if (!resolved) {
-          authFailureLimiter.allow(ip);
+          config.authFailureLimiter.allow(ip);
 
           return jsonError(401, "Invalid WebSocket token");
         }
@@ -234,7 +217,7 @@ if (import.meta.main) {
 
       const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
       if (agentWebSocketPath) {
-        if (activeSocketCount >= limits.maxConnections) {
+        if (activeSocketCount >= config.limits.maxConnections) {
           return jsonError(503, "Gateway is at capacity");
         }
 
@@ -242,9 +225,12 @@ if (import.meta.main) {
         const token = websocketToken(request, url);
         if (!token) return jsonError(401, "Missing WebSocket token");
 
-        const resolved = await resolveObservabilityScope(token, coreBaseUrls);
+        const resolved = await resolveObservabilityScope(
+          token,
+          config.coreBaseUrls,
+        );
         if (!resolved) {
-          authFailureLimiter.allow(ip);
+          config.authFailureLimiter.allow(ip);
 
           return jsonError(401, "Invalid WebSocket token");
         }
@@ -282,101 +268,174 @@ if (import.meta.main) {
     }
 
     const requestIp = clientIp(request, server.requestIP(request)?.address);
-    if (httpLimiter && !httpLimiter.allow(requestIp)) {
+    if (config.httpLimiter && !config.httpLimiter.allow(requestIp)) {
       return jsonError(
         429,
         "Too many requests",
         {},
-        rateLimitHeaders(httpLimiter, requestIp),
+        rateLimitHeaders(config.httpLimiter, requestIp),
       );
     }
 
     if (isConfigHttpPath(url.pathname, request.method)) {
-      if (!configBaseUrl)
+      if (!config.configBaseUrl)
         return jsonError(
           503,
           "Config plane is not configured (BROODS_CONFIG_URL)",
         );
 
-      return proxyHttp(request, [configBaseUrl], {
-        ...proxyOptions,
+      return proxyHttp(request, [config.configBaseUrl], {
+        ...config.proxyOptions,
         requestId: requestId,
       });
     }
 
     if (!isCoreHttpRoute(url.pathname)) return jsonError(404, "Not found");
 
-    return proxyHttp(request, coreBaseUrls, {
-      ...proxyOptions,
+    return proxyHttp(request, config.coreBaseUrls, {
+      ...config.proxyOptions,
       requestId: requestId,
     });
   }
 
-  function websocketHandlers(): Bun.WebSocketHandler<GatewayData> {
-    return {
-      maxPayloadLength: limits.maxPayloadBytes,
-      backpressureLimit: limits.backpressureBytes,
-      closeOnBackpressureLimit: true,
-      idleTimeout: limits.idleTimeoutSeconds,
-      open: function (socket): void {
-        activeSocketCount += 1;
-        if (socket.data.kind === "observability")
-          openObservabilitySocket(
-            socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
-          );
-        if (socket.data.kind === "terminal")
-          openTerminalUpstream(
-            socket as Bun.ServerWebSocket<TerminalGatewayData>,
-          );
-      },
-      message: async function (socket, rawMessage): Promise<void> {
-        if (socket.data.kind === "terminal") {
-          relayTerminalInput(
-            socket as Bun.ServerWebSocket<TerminalGatewayData>,
-            rawMessage,
-          );
+  async function handleRequest(
+    request: Request,
+    server: Bun.Server<GatewayData>,
+  ): Promise<Response | undefined> {
+    const requestId = resolveRequestId(request.headers.get("x-request-id"));
+    try {
+      const response = await route(request, server, requestId);
 
-          return;
-        }
+      // A WebSocket upgrade returns undefined; there is no response to stamp.
+      return response ? withRequestId(response, requestId) : response;
+    } catch (error) {
+      console.error("gateway request failed:", {
+        requestId: requestId,
+        error: error,
+      });
 
-        if (socket.data.kind === "observability") {
-          await handleObservabilityMessage(
-            socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
-            rawMessage,
-            getNatsConnection,
-          );
+      return withRequestId(jsonError(500, "Internal gateway error"), requestId);
+    }
+  }
 
-          return;
-        }
-
-        handleAgentMessage(
-          socket as Bun.ServerWebSocket<AgentTestGatewayData>,
+  const websocket: Bun.WebSocketHandler<GatewayData> = {
+    maxPayloadLength: config.limits.maxPayloadBytes,
+    backpressureLimit: config.limits.backpressureBytes,
+    closeOnBackpressureLimit: true,
+    idleTimeout: config.limits.idleTimeoutSeconds,
+    open: function (socket): void {
+      activeSocketCount += 1;
+      if (socket.data.kind === "observability")
+        openObservabilitySocket(
+          socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
+        );
+      if (socket.data.kind === "terminal")
+        openTerminalUpstream(
+          socket as Bun.ServerWebSocket<TerminalGatewayData>,
+        );
+    },
+    message: async function (socket, rawMessage): Promise<void> {
+      if (socket.data.kind === "terminal") {
+        relayTerminalInput(
+          socket as Bun.ServerWebSocket<TerminalGatewayData>,
           rawMessage,
-          limits,
+        );
+
+        return;
+      }
+
+      if (socket.data.kind === "observability") {
+        await handleObservabilityMessage(
+          socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
+          rawMessage,
           getNatsConnection,
         );
-      },
-      close: function (socket): void {
-        activeSocketCount = Math.max(0, activeSocketCount - 1);
-        if (socket.data.kind === "terminal") {
-          cleanupTerminalSocket(
-            socket as Bun.ServerWebSocket<TerminalGatewayData>,
-          );
 
-          return;
-        }
-        if (socket.data.kind === "observability") {
-          cleanupObservabilitySocket(
-            socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
-          );
+        return;
+      }
 
-          return;
-        }
+      handleAgentMessage(
+        socket as Bun.ServerWebSocket<AgentTestGatewayData>,
+        rawMessage,
+        config.limits,
+        getNatsConnection,
+      );
+    },
+    close: function (socket): void {
+      activeSocketCount = Math.max(0, activeSocketCount - 1);
+      if (socket.data.kind === "terminal") {
+        cleanupTerminalSocket(
+          socket as Bun.ServerWebSocket<TerminalGatewayData>,
+        );
 
-        stopActiveRun(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
-      },
-    };
-  }
+        return;
+      }
+      if (socket.data.kind === "observability") {
+        cleanupObservabilitySocket(
+          socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
+        );
+
+        return;
+      }
+
+      stopActiveRun(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
+    },
+  };
+
+  return {
+    fetch: handleRequest,
+    websocket: websocket,
+  };
+}
+
+/** Resolve the router's config from the process environment. */
+export function gatewayConfigFromEnv(): GatewayConfig {
+  const httpRequestsPerMinute =
+    Number(process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE ?? "") || 0;
+
+  return {
+    allowedOrigins: allowedOriginPatternsFromEnv(),
+    authFailureLimiter: new RateLimiter(
+      Number(process.env.GATEWAY_AUTH_FAILURES_PER_MINUTE ?? "") || 20,
+      60_000,
+    ),
+    configBaseUrl: process.env.BROODS_CONFIG_URL?.trim()
+      ? normalizeBaseUrl(process.env.BROODS_CONFIG_URL)
+      : undefined,
+    coreBaseUrls: normalizedCoreBaseUrls(
+      process.env.BROODS_CORE_URLS?.split(",") ?? [],
+    ),
+    // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
+    // count of its own. Left off by default because channel webhooks arrive on
+    // this branch from a provider's egress addresses: one number chosen here
+    // would meter a whole retrying fleet as a single caller.
+    httpLimiter:
+      httpRequestsPerMinute > 0
+        ? new RateLimiter(httpRequestsPerMinute, 60_000)
+        : undefined,
+    limits: gatewayLimitsFromEnv(),
+    // Defaults on because Convex still reaches core through this gateway; flip
+    // to "false" once BROODS_ACCOUNT_MANAGE_URL points at core in-cluster.
+    proxyOptions: {
+      forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID !== "false",
+    },
+    upgradeLimiter: new RateLimiter(
+      Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,
+      60_000,
+    ),
+  };
+}
+
+if (import.meta.main) {
+  const config = gatewayConfigFromEnv();
+  const gateway = createGateway(config);
+  const server = Bun.serve<GatewayData>({
+    port: Number(process.env.PORT ?? "3000"),
+    hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
+    idleTimeout: config.limits.idleTimeoutSeconds,
+    fetch: gateway.fetch,
+    websocket: gateway.websocket,
+  });
 
   process.stdout.write(
     `gateway listening on ${server.hostname}:${server.port}\n`,
