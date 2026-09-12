@@ -4,6 +4,11 @@ import {
   type ApiErrorInit,
 } from "../../../packages/convex/model/apiError.ts";
 
+export {
+  resolveRequestId,
+  withRequestId,
+} from "../../core/src/shared/request-id.ts";
+
 export type GatewayLimits = {
   maxConnections: number;
   maxPayloadBytes: number;
