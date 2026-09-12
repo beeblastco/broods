@@ -13,6 +13,7 @@ import {
   type RequestContext,
 } from "./shared/http.ts";
 import { optionalEnv, positiveIntegerEnv } from "./shared/env.ts";
+import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
 import { logError, logInfo } from "./shared/log.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
 
@@ -134,7 +135,10 @@ if (import.meta.main) {
     fetch: async (request, bunServer) => {
       const url = new URL(request.url);
       if (url.pathname === "/healthz" && request.method === "GET") {
-        return Response.json({ status: "ok" });
+        return withRequestId(
+          Response.json({ status: "ok" }),
+          resolveRequestId(request.headers.get("x-request-id")),
+        );
       }
 
       const coreRequest = await toCoreRequest(
@@ -142,27 +146,35 @@ if (import.meta.main) {
         url,
         bunServer.requestIP(request)?.address,
       );
+      const requestId = resolveRequestId(coreRequest.headers["x-request-id"]);
       const ctx: RequestContext = {
-        requestId: crypto.randomUUID(),
+        requestId: requestId,
         deadlineMs: Date.now() + requestBudgetMs,
         waitUntil: waitUntil,
       };
 
       try {
+        let response: Response;
         if (routesToMedia(request.method, url.pathname)) {
-          return await handleMediaRequest(coreRequest);
+          response = await handleMediaRequest(coreRequest);
+        } else if (routesToAccountManage(request.method, url.pathname)) {
+          response = await accountHandler(coreRequest);
+        } else {
+          response = await harnessHandler(coreRequest, ctx);
         }
 
-        return routesToAccountManage(request.method, url.pathname)
-          ? await accountHandler(coreRequest)
-          : await harnessHandler(coreRequest, ctx);
+        return withRequestId(response, requestId);
       } catch (err) {
         logError("Core server handler failed", {
           path: url.pathname,
+          requestId: requestId,
           error: err instanceof Error ? err.message : String(err),
         });
 
-        return errorResponse(500, "Internal server error");
+        return withRequestId(
+          errorResponse(500, "Internal server error"),
+          requestId,
+        );
       }
     },
   });

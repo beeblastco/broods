@@ -45,8 +45,10 @@ import {
   json,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
+  resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
+  withRequestId,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
@@ -3050,4 +3052,40 @@ test("proxyHttp forwards X-Account-Id by default and drops it when told to", asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("resolveRequestId reuses an inbound id only when it matches the issued shape", () => {
+  expect(resolveRequestId("a1b2-c3_d4.e5")).toBe("a1b2-c3_d4.e5");
+  // Anything else is unfiltered client input headed for the logs.
+  expect(resolveRequestId("has spaces")).not.toBe("has spaces");
+  expect(resolveRequestId("drop\ntable")).not.toContain("\n");
+  expect(resolveRequestId("x".repeat(129))).toHaveLength(36);
+  expect(resolveRequestId(null)).toHaveLength(36);
+  expect(resolveRequestId("")).toHaveLength(36);
+});
+
+test("withRequestId stamps the header without replacing one already set", async () => {
+  const stamped = withRequestId(new Response("body"), "req_1");
+  expect(stamped.headers.get("x-request-id")).toBe("req_1");
+  expect(await stamped.text()).toBe("body");
+
+  const upstream = new Response("x", {
+    headers: { "x-request-id": "req_upstream" },
+  });
+  expect(withRequestId(upstream, "req_2").headers.get("x-request-id")).toBe(
+    "req_upstream",
+  );
+});
+
+test("withRequestId preserves status and existing headers", () => {
+  const source = new Response("no", {
+    status: 429,
+    headers: { "Retry-After": "30", "Content-Type": "application/json" },
+  });
+  const stamped = withRequestId(source, "req_3");
+
+  expect(stamped.status).toBe(429);
+  expect(stamped.headers.get("Retry-After")).toBe("30");
+  expect(stamped.headers.get("Content-Type")).toBe("application/json");
+  expect(stamped.headers.get("x-request-id")).toBe("req_3");
 });
