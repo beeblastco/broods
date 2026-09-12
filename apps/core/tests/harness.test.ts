@@ -2035,7 +2035,7 @@ describe("runAgentLoop", () => {
           agentId: "virtual_subagent_1",
           name: "Virtual subagent",
           conversationKey: "subagent-subagent_1",
-          statusPath: "/status/subagent_1?agentId=virtual_subagent_1",
+          statusPath: "/v1/runs/subagent_1?agentId=virtual_subagent_1",
           status: "running" as const,
         },
       ],

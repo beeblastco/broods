@@ -8,7 +8,7 @@ info:
     - **Account Management.** Tenant configuration (accounts, agents, skills, secrets)
 
     > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) through `broods dev` and `broods deploy`. You do not need to call these account-management endpoints yourself. This reference is for:
-    > - Runtime invocation (`/`, `/async`, `/status/{eventId}`) from the TypeScript SDK, curl, or Python client
+    > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{eventId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
@@ -202,12 +202,15 @@ paths:
                   value:
                     error: Unauthorized
 
-  /async:
+  /v1/runs:
     post:
       tags:
         - Direct API
-      summary: Async direct API
-      description: Durably accept an async direct agent turn and return a status URL. Busy requests use the requested mode; omitted mode defaults to `steer` and joins the active run at its next model boundary.
+      summary: Run an agent
+      description: |
+        The single runtime entry point. Streams the turn back as SSE by default; send `background: true` in the body to get a 202 with a run id instead, then poll `GET /v1/runs/{eventId}`.
+
+        Busy requests use the requested mode; omitted mode defaults to `steer` and joins the active run at its next model boundary.
       requestBody:
         required: true
         content:
@@ -269,7 +272,7 @@ paths:
                   value:
                     error: Unauthorized
 
-  /status/{eventId}:
+  /v1/runs/{eventId}:
     get:
       tags:
         - Direct API
@@ -368,7 +371,7 @@ paths:
                   value:
                     error: Unauthorized
 
-  /sandbox-jobs/{resultId}/complete:
+  /v1/sandbox-jobs/{resultId}/complete:
     post:
       tags:
         - Direct API
@@ -399,7 +402,7 @@ paths:
         "404":
           description: Unknown resultId or invalid token
 
-  /media/{ticket}:
+  /v1/media/{ticket}:
     get:
       tags:
         - Direct API
@@ -419,12 +422,12 @@ paths:
         "413":
           description: File is larger than the 25 MB media limit
 
-  /webhooks/{accountId}/{channelName}:
+  /v1/webhooks/{accountId}/{channelName}:
     post:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -445,7 +448,7 @@ paths:
         "404":
           description: Unknown account or channel, or no agent holds credentials for it
 
-  /webhooks/{accountId}/dev/{endpointId}/{channelName}:
+  /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
     post:
       tags:
         - Direct API
@@ -477,7 +480,7 @@ paths:
         "404":
           description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
 
-  /accounts:
+  /v1/accounts:
     post:
       tags:
         - Accounts
@@ -569,7 +572,7 @@ paths:
                         createdAt: "2026-05-01T00:00:00.000Z"
                         updatedAt: "2026-05-01T00:00:00.000Z"
 
-  /accounts/{accountId}:
+  /v1/accounts/{accountId}:
     get:
       tags:
         - Accounts
@@ -664,7 +667,7 @@ paths:
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
 
-  /accounts/{accountId}/rotate-secret:
+  /v1/accounts/{accountId}/rotate-secret:
     post:
       tags:
         - Accounts
@@ -861,6 +864,9 @@ paths:
       description: Lists variable names and update timestamps for the authenticated account. The API never returns secret values.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: Write-only account environment variable metadata
@@ -875,6 +881,11 @@ paths:
                     items:
                       $ref: "#/components/schemas/AccountEnvVar"
 
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
   /v1/env/{name}:
     put:
       tags:
@@ -1027,6 +1038,9 @@ paths:
       description: List config-plane agents for the authenticated account. The server decrypts each config and redacts its secret-like fields before returning it.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: List of agents
@@ -1039,6 +1053,11 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Agent"
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 
   /v1/agents/{agentId}:
     get:
@@ -1284,8 +1303,26 @@ paths:
       summary: List sandboxes
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
-        "200": { description: List of sandboxes }
+        "200":
+          description: List of sandboxes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sandboxes:
+                    type: array
+                    items:
+                      type: object
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 
   /v1/sandboxes/{sandboxId}:
     get:
@@ -1567,8 +1604,26 @@ paths:
       summary: List workspaces
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
-        "200": { description: List of workspaces }
+        "200":
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaces:
+                    type: array
+                    items:
+                      type: object
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 
   /v1/workspaces/{workspaceId}:
     get:
@@ -1803,6 +1858,8 @@ paths:
       description: Lists the MCP servers of one project stage. Both query parameters are required.
       security: [{ BearerAuth: [] }]
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
         - { name: project, in: query, required: true, schema: { type: string } }
         - { name: stage, in: query, required: true, schema: { type: string } }
       responses:
@@ -1817,6 +1874,11 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Mcp"
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
         "400": { description: Missing project or stage }
         "404": { description: Project or stage not found }
 
@@ -1921,6 +1983,9 @@ paths:
       tags: [Policies]
       summary: List agent policies
       security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: Policy list
@@ -1934,6 +1999,11 @@ paths:
                     items:
                       $ref: "#/components/schemas/AgentPolicy"
 
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
   /v1/policies/{policyId}:
     get:
       tags: [Policies]
@@ -2004,6 +2074,9 @@ paths:
       tags: [Roles]
       summary: List roles
       security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: Role list
@@ -2017,6 +2090,11 @@ paths:
                     items:
                       $ref: "#/components/schemas/AccountRole"
 
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
   /v1/roles/{roleId}:
     get:
       tags: [Roles]
@@ -2089,6 +2167,9 @@ paths:
       tags: [Channels]
       summary: List channel records
       security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: Channel list
@@ -2102,6 +2183,11 @@ paths:
                     items:
                       $ref: "#/components/schemas/ChannelRecord"
 
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
   /v1/channels/{channelId}:
     get:
       tags: [Channels]
@@ -2235,6 +2321,9 @@ paths:
       summary: List skills
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: List of skills
@@ -2247,6 +2336,11 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Skill"
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 
   /v1/skills/{skillName}:
     get:
@@ -2383,6 +2477,9 @@ paths:
       summary: List cron jobs
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
       responses:
         "200":
           description: List of cron jobs
@@ -2395,6 +2492,11 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Cron"
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 
   /v1/crons/{cronId}:
     get:
@@ -2468,6 +2570,8 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
         - name: cronId
           in: path
           required: true
@@ -2492,6 +2596,11 @@ paths:
                     items:
                       $ref: "#/components/schemas/CronRun"
 
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
 components:
   securitySchemes:
     BearerAuth:
@@ -2509,6 +2618,23 @@ components:
       description: AdminAccountSecret from SST secrets
 
   parameters:
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: Rows per page, 1 to 1000. Omit to receive the whole collection.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+    PageCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a previous response's `nextCursor`.
+      schema:
+        type: string
+
     AccountEnvVarName:
       name: name
       in: path
@@ -2526,7 +2652,8 @@ components:
         name:
           type: string
         updatedAt:
-          type: number
+          type: string
+          format: date-time
 
     DirectApiRequest:
       type: object
@@ -2544,6 +2671,10 @@ components:
         conversationKey:
           type: string
           description: Selects the account-scoped persisted direct conversation
+        background:
+          type: boolean
+          default: false
+          description: When true the run answers 202 with a run id instead of streaming SSE. Poll `GET /v1/runs/{eventId}` for the result. A non-boolean is a 400.
         mode:
           type: string
           enum: [reject, followup, collect, steer]
@@ -2997,9 +3128,41 @@ components:
 
     Error:
       type: object
+      required:
+        - error
       properties:
         error:
-          type: string
+          type: object
+          required:
+            - message
+            - type
+            - code
+          properties:
+            message:
+              type: string
+              description: Human-readable prose. May change between releases; do not branch on it.
+              example: Agent not found
+            type:
+              type: string
+              description: The coarse family a caller retries or reports on.
+              enum:
+                - invalid_request_error
+                - authentication_error
+                - permission_error
+                - not_found_error
+                - conflict_error
+                - rate_limit_error
+                - api_error
+                - overloaded_error
+              example: not_found_error
+            code:
+              type: string
+              description: Stable machine-readable reason. Branch on this.
+              example: not_found
+            param:
+              type: string
+              description: The request field the error is about, when it is about one.
+              example: limit
 
     Account:
       type: object
@@ -4081,7 +4244,7 @@ components:
 
     ChannelsConfig:
       type: object
-      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{channel}` for a production stage, or `/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage.
+      description: Channel webhook configuration. Webhook URLs follow the pattern `/v1/webhooks/{accountId}/{channel}` for a production stage, or `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage.
       properties:
         telegram:
           type: object

@@ -114,19 +114,19 @@ Store the returned `secret` securely.
 Provider webhooks use the deployed gateway URL:
 
 ```text
-{BROODS_BASE_URL}/webhooks/{accountId}/telegram
-{BROODS_BASE_URL}/webhooks/{accountId}/github
-{BROODS_BASE_URL}/webhooks/{accountId}/slack
-{BROODS_BASE_URL}/webhooks/{accountId}/discord
-{BROODS_BASE_URL}/webhooks/{accountId}/pancake
-{BROODS_BASE_URL}/webhooks/{accountId}/zalo
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/telegram
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/github
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/slack
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/discord
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/pancake
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/zalo
 ```
 
 That form belongs to the account's production stage. Any other stage is
 addressed through its own endpoint id, which `broods dev` prints after a sync:
 
 ```text
-{BROODS_BASE_URL}/webhooks/{accountId}/dev/{endpointId}/zalo
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/dev/{endpointId}/zalo
 ```
 
 The distinction matters when two stages share one provider app. The bare URL

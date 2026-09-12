@@ -204,7 +204,7 @@ workflow and deployed from the infra repo
 ```mermaid
 flowchart LR
     Discord((Discord Gateway)) -->|MESSAGE_CREATE| Fwd[broods-discord-forwarder]
-    Fwd -->|POST /webhooks/…/discord| Gateway[broods gateway]
+    Fwd -->|POST /v1/webhooks/…/discord| Gateway[broods gateway]
     Convex[(Convex config plane)] -->|bot tokens + webhook paths| Fwd
     Gateway --> Pod[broods-core pod]
 ```

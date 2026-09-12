@@ -16,7 +16,7 @@ Slack install can drive a different agent in every channel.
 There is one webhook shape:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/{channel}
 ```
 
 The URL names no agent. Whichever of the account's agents holds credentials
@@ -31,7 +31,7 @@ which agent wins it.
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{channel\}"]
+  Provider["Provider webhook"] --> Url["/v1/webhooks/\{accountId\}/\{channel\}"]
   Url --> Holder["credential holder<br/>first agent whose credentials verify"]
   Holder --> Parse["adapter.parse → channel identity"]
   Parse --> Lookup["channel record by (platform, externalId)"]

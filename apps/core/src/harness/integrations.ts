@@ -123,6 +123,9 @@ import type { ConversationIngressEvent } from "./session.ts";
 
 // Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
+// The single runtime entry point; sync or background is a body field.
+const RUN_PATH = "/v1/runs";
+const RUN_PATH_PREFIX = `${RUN_PATH}/`;
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -133,7 +136,6 @@ type PublicEndpointPath = {
   endpointId: string;
   projectSlug?: string;
   stageSlug?: string;
-  mode: "sync" | "async";
 };
 
 // A lookup that failed is not the same as "no record": the first must not run.
@@ -170,6 +172,9 @@ export interface DirectInboundEvent {
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
+  /** 202 + run id instead of an SSE stream. Absent on internally-built
+   * events (cron, continuation, channel), which are never backgrounded. */
+  background?: boolean;
   requestedMode: IngressMode;
   idempotencyKey: string;
   // Server-issued fencing token added only after durable admission.
@@ -442,7 +447,7 @@ async function handleHttpRequest(
   const method = request.method;
   const headers = request.headers;
 
-  if (method === "GET" && isStatusPath(request.path)) {
+  if (method === "GET" && request.path.startsWith(RUN_PATH_PREFIX)) {
     const auth = await context.authResolver(headers);
     const account =
       auth?.kind === "account" || auth?.kind === "deployment"
@@ -494,7 +499,7 @@ async function handleHttpRequest(
   };
 
   const sandboxJobCompletionMatch = request.path.match(
-    /^\/sandbox-jobs\/([^/]+)\/complete$/,
+    /^\/v1\/sandbox-jobs\/([^/]+)\/complete$/,
   );
   if (sandboxJobCompletionMatch?.[1]) {
     if (!handlers.handleSandboxJobCompletionRequest) {
@@ -519,7 +524,7 @@ async function handleHttpRequest(
   // Answer a wrong webhook shape here rather than letting it fall through to
   // the generic 401, which reads as "bad credentials" to a provider that is
   // really just pointed at the retired /webhooks/{account}/{agent}/{channel}.
-  if (!webhookRoute && request.path.startsWith("/webhooks/")) {
+  if (!webhookRoute && request.path.startsWith("/v1/webhooks/")) {
     logWarn("Webhook path does not match a known webhook shape", {
       method: request.method,
       rawPath: request.path,
@@ -527,7 +532,7 @@ async function handleHttpRequest(
 
     return errorResponse(
       404,
-      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} for a production stage, or /webhooks/{accountId}/dev/{endpointId}/{channel} for any other stage. The agent is chosen by credentials and channel records, never named in the URL.",
+      "Unknown webhook URL. Provider webhooks are /v1/webhooks/{accountId}/{channel} for a production stage, or /v1/webhooks/{accountId}/dev/{endpointId}/{channel} for any other stage. The agent is chosen by credentials and channel records, never named in the URL.",
       { code: "unknown_webhook_url" },
     );
   }
@@ -676,12 +681,6 @@ async function handleHttpRequest(
   }
 
   const publicEndpoint = parsePublicEndpointPath(request.path);
-  if (
-    !context.directApiEnabled &&
-    (request.path === "/" || isAsyncPath(request.path) || publicEndpoint)
-  ) {
-    return directApiDisabledResponse();
-  }
 
   const auth = await context.authResolver(request.headers);
 
@@ -706,6 +705,10 @@ async function handleHttpRequest(
   // /v1/{project}/agents/{stage}/{endpointId} URL the dashboard advertises. When
   // the scoped path is present it must match the key's stage; the agent itself is
   // chosen by the request body's agentId and loaded against the key's account.
+  if (!context.directApiEnabled) {
+    return directApiDisabledResponse();
+  }
+
   if (auth?.kind === "deployment") {
     if (publicEndpoint && !deploymentMatchesPath(auth, publicEndpoint)) {
       return unauthorizedResponse();
@@ -728,7 +731,7 @@ async function handleHttpRequest(
           { code: "public_access_disabled", param: "agentId" },
         );
       }
-      if (publicEndpoint?.mode === "async" || isAsyncPath(request.path)) {
+      if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
         }
@@ -780,7 +783,7 @@ async function handleHttpRequest(
       account,
       context.agentLoader,
     );
-    if (isAsyncPath(request.path)) {
+    if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
       }
@@ -1845,25 +1848,22 @@ export async function sendChannelReply(options: {
   await adapter.actions(message).sendText(text);
 }
 
+/** The two invoke shapes: project/stage scoped, and bare agent id. */
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   const scoped = rawPath.match(
-    /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/,
+    /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/agents\/([^/]+)$/,
   );
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
       stageSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
-      mode: scoped[4] === "async" ? "async" : "sync",
     };
   }
 
-  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)(?:\/(async))?$/);
+  const unscoped = rawPath.match(/^\/v1\/agents\/([^/]+)$/);
   if (unscoped?.[1]) {
-    return {
-      endpointId: decodeURIComponent(unscoped[1]),
-      mode: unscoped[2] === "async" ? "async" : "sync",
-    };
+    return { endpointId: decodeURIComponent(unscoped[1]) };
   }
 
   return null;
@@ -1922,6 +1922,7 @@ async function parseDirectPayload(
   ) {
     throw new Error("Request body must include eventId and conversationKey");
   }
+  const background = parseBackgroundFlag(record.background);
 
   if (
     typeof record.agentId !== "string" ||
@@ -1994,6 +1995,7 @@ async function parseDirectPayload(
     ),
     publicConversationKey: rawConversationKey,
     events: events,
+    background: background,
     requestedMode: requestedMode,
     idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId: connectionId } : {}),
@@ -2124,7 +2126,7 @@ function parseStatusPath(
   rawQueryString: string,
   account: AccountRecord,
 ): StatusInboundEvent {
-  const match = rawPath.match(/^\/status\/([^/]+)$/);
+  const match = rawPath.match(/^\/v1\/runs\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
   const publicEventId = assertValidPublicStatusEventId(rawEventId);
 
@@ -2204,7 +2206,7 @@ function decodePathSegments(segments: string[]): string[] | null {
 // three-segment agent form still reaches its own 404 instead of a stage lookup.
 function matchWebhookPath(rawPath: string): WebhookRoute | null {
   const stageMatch = rawPath.match(
-    /^\/webhooks\/([^/]+)\/dev\/([^/]+)\/([^/]+)$/,
+    /^\/v1\/webhooks\/([^/]+)\/dev\/([^/]+)\/([^/]+)$/,
   );
   if (stageMatch?.[1] && stageMatch[2] && stageMatch[3]) {
     const decoded = decodePathSegments([
@@ -2222,7 +2224,7 @@ function matchWebhookPath(rawPath: string): WebhookRoute | null {
       : null;
   }
 
-  const accountMatch = rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)$/);
+  const accountMatch = rawPath.match(/^\/v1\/webhooks\/([^/]+)\/([^/]+)$/);
   if (accountMatch?.[1] && accountMatch[2]) {
     const decoded = decodePathSegments([accountMatch[1], accountMatch[2]]);
 
@@ -2256,21 +2258,21 @@ function notFoundResponse(): Response {
   return errorResponse(404, "Not found");
 }
 
-function isAsyncPath(rawPath: string): boolean {
-  return rawPath === "/async";
-}
-
-function isStatusPath(rawPath: string): boolean {
-  return rawPath.startsWith("/status/");
-}
-
 function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");
   }
 
-  return `${baseUrl}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
+  return `${baseUrl}/v1/runs/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
+}
+
+function parseBackgroundFlag(value: unknown): boolean {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error("Request body field 'background' must be a boolean");
+  }
+
+  return value === true;
 }
 
 function parseDirectIngressEvents(

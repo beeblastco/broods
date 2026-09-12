@@ -480,9 +480,11 @@ async function startWebSocketSseStream(options: {
     onSubagentResult,
   } = options;
 
-  const stagePrefix = stageSlug ? `/${stageSlug}` : "";
-  const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const wsUrl = `${websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${endpointId}/ws`;
+  const scopePrefix =
+    projectSlug && stageSlug
+      ? `/projects/${projectSlug}/stages/${stageSlug}`
+      : "";
+  const wsUrl = `${websocketBaseUrl}/v1${scopePrefix}/agents/${endpointId}/ws`;
 
   // The credential rides the subprotocol list, never the URL, so it stays out
   // of access logs; the gateway selects `broods.v1` to complete the handshake.

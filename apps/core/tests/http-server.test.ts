@@ -35,7 +35,7 @@ async function buildCoreRequest(
 describe("toCoreRequest", () => {
   it("builds the CoreRequest shape", async () => {
     const request = await buildCoreRequest({
-      url: "http://127.0.0.1/webhooks/acct/telegram?limit=2&q=a%20b",
+      url: "http://127.0.0.1/v1/webhooks/acct/telegram?limit=2&q=a%20b",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -45,7 +45,7 @@ describe("toCoreRequest", () => {
       body: JSON.stringify({ hello: "world" }),
     });
 
-    expect(request.path).toBe("/webhooks/acct/telegram");
+    expect(request.path).toBe("/v1/webhooks/acct/telegram");
     expect(request.search).toBe("limit=2&q=a%20b");
     expect(request.query.get("limit")).toBe("2");
     expect(request.query.get("q")).toBe("a b");
@@ -95,8 +95,8 @@ describe("toCoreRequest", () => {
 
 describe("routesToAccountManage", () => {
   it("routes signup, account delete, and sandbox lifecycle to account-manage", () => {
-    expect(routesToAccountManage("POST", "/accounts")).toBe(true);
-    expect(routesToAccountManage("DELETE", "/accounts/acct_1")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/accounts")).toBe(true);
+    expect(routesToAccountManage("DELETE", "/v1/accounts/acct_1")).toBe(true);
     expect(routesToAccountManage("DELETE", "/v1/account")).toBe(true);
     expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/exec")).toBe(true);
     expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(
@@ -122,7 +122,7 @@ describe("routesToAccountManage", () => {
       "/v1/sandboxes/sbx",
       "/v1/internal/observability-log",
       // Scoped invocation falls through even when the project slug shadows a resource name.
-      "/v1/skills/agents/prod/endpoint-1",
+      "/v1/projects/skills/stages/prod/agents/endpoint-1",
       "/v1/internal/observability-scope",
       "/",
       "/status",
@@ -130,11 +130,11 @@ describe("routesToAccountManage", () => {
     for (const path of configPlanePaths) {
       expect(routesToAccountManage("POST", path)).toBe(false);
     }
-    expect(routesToAccountManage("GET", "/accounts")).toBe(false);
-    expect(routesToAccountManage("GET", "/accounts/acct_1")).toBe(false);
-    expect(routesToAccountManage("PATCH", "/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("GET", "/v1/accounts")).toBe(false);
+    expect(routesToAccountManage("GET", "/v1/accounts/acct_1")).toBe(false);
+    expect(routesToAccountManage("PATCH", "/v1/accounts/acct_1")).toBe(false);
     expect(
-      routesToAccountManage("POST", "/accounts/acct_1/rotate-secret"),
+      routesToAccountManage("POST", "/v1/accounts/acct_1/rotate-secret"),
     ).toBe(false);
     expect(routesToAccountManage("GET", "/v1/account")).toBe(false);
     expect(routesToAccountManage("PATCH", "/v1/account")).toBe(false);

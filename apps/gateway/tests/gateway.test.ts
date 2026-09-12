@@ -180,7 +180,7 @@ test("attaches virtual and private child streams through durable parent deployme
         });
       }
       const taskId = decodeURIComponent(
-        new URL(String(input)).pathname.slice("/status/".length),
+        new URL(String(input)).pathname.slice("/v1/runs/".length),
       );
 
       return new Response(
@@ -281,7 +281,7 @@ test("rejects an attach whose durable status conversation does not own the reque
       requestId: "attach-wrong-subject",
       eventId: "subagent-task",
       status: "processing",
-      statusUrl: "/status/subagent-task?agentId=agent_private",
+      statusUrl: "/v1/runs/subagent-task?agentId=agent_private",
     });
   } finally {
     stopActiveRun(socket);
@@ -639,7 +639,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
       requestId: "attach-empty",
       eventId: "child-task",
       status: "completed",
-      statusUrl: "/status/child-task?agentId=agent_child",
+      statusUrl: "/v1/runs/child-task?agentId=agent_child",
     });
     expect(sent.some((message) => message.type === "error")).toBe(false);
   } finally {
@@ -756,7 +756,7 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
           eventId: "queued-task",
           conversationKey: "queued-conversation",
           status: "queued",
-          statusUrl: "/status/queued-task?agentId=agent_child",
+          statusUrl: "/v1/runs/queued-task?agentId=agent_child",
         }),
         {
           status: 202,
@@ -1106,19 +1106,22 @@ test("normalizes and de-duplicates unified gateway core upstreams", () => {
 });
 
 test("proxies runtime HTTP paths used by the SDK", () => {
-  expect(isCoreHttpRoute("/")).toBe(true);
-  expect(isCoreHttpRoute("/accounts")).toBe(true);
-  expect(isCoreHttpRoute("/async")).toBe(true);
-  expect(isCoreHttpRoute("/status/request-1")).toBe(true);
+  expect(isCoreHttpRoute("/v1/runs")).toBe(true);
+  expect(isCoreHttpRoute("/v1/runs/run_1")).toBe(true);
+  expect(isCoreHttpRoute("/v1/accounts")).toBe(true);
   // The one webhook shape reaches core, and so does a retired agent-scoped URL:
   // core answers that with a 404 naming the right one, which it cannot do if
   // the gateway swallows the path first.
-  expect(isCoreHttpRoute("/webhooks/acct_1/slack")).toBe(true);
-  expect(isCoreHttpRoute("/webhooks/acct_1/agent_1/slack")).toBe(true);
+  expect(isCoreHttpRoute("/v1/webhooks/acct_1/slack")).toBe(true);
+  expect(isCoreHttpRoute("/v1/webhooks/acct_1/agent_1/slack")).toBe(true);
   expect(isCoreHttpRoute("/v1/crons")).toBe(true);
-  expect(isCoreHttpRoute("/v1/demo/agents/development/env_123/async")).toBe(
-    true,
-  );
+  expect(
+    isCoreHttpRoute("/v1/projects/demo/stages/development/agents/env_123"),
+  ).toBe(true);
+  expect(isCoreHttpRoute("/")).toBe(false);
+  expect(isCoreHttpRoute("/async")).toBe(false);
+  expect(isCoreHttpRoute("/status/request-1")).toBe(false);
+  expect(isCoreHttpRoute("/accounts")).toBe(false);
   expect(isCoreHttpRoute("/healthz")).toBe(false);
 });
 
@@ -1135,10 +1138,12 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/account", "GET")).toBe(true);
   expect(isConfigHttpPath("/v1/account", "PATCH")).toBe(true);
   expect(isConfigHttpPath("/v1/account/rotate-secret", "POST")).toBe(true);
-  expect(isConfigHttpPath("/accounts", "GET")).toBe(true);
-  expect(isConfigHttpPath("/accounts/acct_1", "GET")).toBe(true);
-  expect(isConfigHttpPath("/accounts/acct_1", "PATCH")).toBe(true);
-  expect(isConfigHttpPath("/accounts/acct_1/rotate-secret", "POST")).toBe(true);
+  expect(isConfigHttpPath("/v1/accounts", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/accounts/acct_1", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/accounts/acct_1", "PATCH")).toBe(true);
+  expect(isConfigHttpPath("/v1/accounts/acct_1/rotate-secret", "POST")).toBe(
+    true,
+  );
   expect(isConfigHttpPath("/v1/agents", "GET")).toBe(true);
   expect(isConfigHttpPath("/v1/agents", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/agents/agent_1", "GET")).toBe(true);
@@ -1161,6 +1166,7 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/mcp/k57mcpserver00000000000000000000")).toBe(
     true,
   );
+  expect(isConfigHttpPath("/v1/mcp/uploads", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/hooks")).toBe(true);
   expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(
     true,
@@ -1238,22 +1244,34 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
     endpointId: "env_123",
   });
   expect(
-    matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
+    matchAgentWebSocketPath(
+      "/v1/projects/demo/stages/development/agents/env_123/ws",
+    ),
   ).toEqual({
     projectSlug: "demo",
     stageSlug: "development",
     endpointId: "env_123",
   });
   expect(
-    matchAgentWebSocketPath("/v1/demo/agents/dev%20stage/stage%20123/ws"),
+    matchAgentWebSocketPath(
+      "/v1/projects/demo/stages/dev%20stage/agents/stage%20123/ws",
+    ),
   ).toEqual({
     projectSlug: "demo",
     stageSlug: "dev stage",
     endpointId: "stage 123",
   });
   expect(matchAgentWebSocketPath("/v1/agents/env_123")).toBeNull();
-  expect(matchAgentWebSocketPath("/v1/demo/observability/ws")).toBeNull();
-  expect(matchAgentWebSocketPath("/v1/demo/agents/development/ws")).toBeNull();
+  expect(
+    matchAgentWebSocketPath("/v1/projects/demo/observability/ws"),
+  ).toBeNull();
+  expect(
+    matchAgentWebSocketPath("/v1/projects/demo/stages/development/ws"),
+  ).toBeNull();
+  // The retired slug-first shape must not still parse.
+  expect(
+    matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
+  ).toBeNull();
 });
 
 test("routes a runtime key to the matching core upstream", async () => {
@@ -3057,7 +3075,6 @@ test("proxyHttp forwards X-Account-Id by default and drops it when told to", asy
 
 test("resolveRequestId reuses an inbound id only when it matches the issued shape", () => {
   expect(resolveRequestId("a1b2-c3_d4.e5")).toBe("a1b2-c3_d4.e5");
-  // Anything else is unfiltered client input headed for the logs.
   expect(resolveRequestId("has spaces")).not.toBe("has spaces");
   expect(resolveRequestId("drop\ntable")).not.toContain("\n");
   expect(resolveRequestId("x".repeat(129))).toHaveLength(36);
