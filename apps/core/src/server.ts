@@ -7,7 +7,11 @@
  * proxy. There is no Lambda runtime.
  */
 
-import type { CoreRequest, RequestContext } from "./shared/http.ts";
+import {
+  errorResponse,
+  type CoreRequest,
+  type RequestContext,
+} from "./shared/http.ts";
 import { optionalEnv, positiveIntegerEnv } from "./shared/env.ts";
 import { logError, logInfo } from "./shared/log.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
@@ -158,10 +162,7 @@ if (import.meta.main) {
           error: err instanceof Error ? err.message : String(err),
         });
 
-        return Response.json(
-          { error: "Internal server error" },
-          { status: 500 },
-        );
+        return errorResponse(500, "Internal server error");
       }
     },
   });

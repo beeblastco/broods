@@ -23,6 +23,7 @@ import {
 import {
   configEncryptionSecret,
   json,
+  jsonError,
   methodNotAllowed,
   terminateReservedInstances,
   writeAudit,
@@ -113,7 +114,7 @@ export async function handleSandboxConfigRoute(
             await decryptSandboxConfig(record),
           ),
         )
-      : json({ error: "Sandbox not found" }, 404);
+      : jsonError(404, "Sandbox not found");
   }
   if (req.method === "PATCH") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
@@ -123,7 +124,7 @@ export async function handleSandboxConfigRoute(
         sandboxId: sandboxId,
       },
     );
-    if (!existing) return json({ error: "Sandbox not found" }, 404);
+    if (!existing) return jsonError(404, "Sandbox not found");
     const existingConfig = await decryptSandboxConfig(existing);
     const patch = normalizeUpdateSandboxConfigInput(
       existingConfig,
@@ -168,7 +169,7 @@ export async function handleSandboxConfigRoute(
             await decryptSandboxConfig(updated),
           ),
         )
-      : json({ error: "Sandbox not found" }, 404);
+      : jsonError(404, "Sandbox not found");
   }
   if (req.method === "DELETE") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
@@ -178,7 +179,7 @@ export async function handleSandboxConfigRoute(
         sandboxId: sandboxId,
       },
     );
-    if (!existing) return json({ error: "Sandbox not found" }, 404);
+    if (!existing) return jsonError(404, "Sandbox not found");
     await terminateReservedInstances(
       ctx,
       accountId,

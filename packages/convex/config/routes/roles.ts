@@ -25,6 +25,7 @@ import {
 import {
   bearerToken,
   json,
+  jsonError,
   methodNotAllowed,
   parseJsonRequest,
   unauthorizedResponse,
@@ -53,8 +54,8 @@ export async function handleAssumeRoleRoute(
     internal.account.roles.getByRoleId,
     { accountId: caller.accountId, roleId: input.roleId },
   );
-  if (!role) return json({ error: "Role not found" }, 404);
-  if (role.status !== "active") return json({ error: "Role is disabled" }, 403);
+  if (!role) return jsonError(404, "Role not found");
+  if (role.status !== "active") return jsonError(403, "Role is disabled");
   // A runtime key may only assume roles pinned to its own stage: a leaked
   // fp_agent_ must not widen past the stage it already controls.
   if (caller.deploymentScope) {
@@ -62,10 +63,7 @@ export async function handleAssumeRoleRoute(
       role.projectId !== caller.deploymentScope.projectId ||
       role.stageId !== caller.deploymentScope.stageId
     ) {
-      return json(
-        { error: "Role is not scoped to this deployment's stage" },
-        403,
-      );
+      return jsonError(403, "Role is not scoped to this deployment's stage");
     }
   }
 
@@ -152,7 +150,7 @@ export async function handleRoleRoute(
 
     return record
       ? json(toPublicRoleResponse(record))
-      : json({ error: "Role not found" }, 404);
+      : jsonError(404, "Role not found");
   }
   if (req.method === "PATCH") {
     const patch = normalizeUpdateRoleInput(await parseJsonRequest(req));
@@ -166,7 +164,7 @@ export async function handleRoleRoute(
         ...(patch.status !== undefined ? { status: patch.status } : {}),
       },
     );
-    if (!updated) return json({ error: "Role not found" }, 404);
+    if (!updated) return jsonError(404, "Role not found");
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: updated.projectId,
@@ -188,7 +186,7 @@ export async function handleRoleRoute(
       internal.account.roles.removeInternal,
       { accountId: accountId, roleId: roleId },
     );
-    if (!removed) return json({ error: "Role not found" }, 404);
+    if (!removed) return jsonError(404, "Role not found");
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: removed.projectId,

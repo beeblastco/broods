@@ -201,7 +201,9 @@ describe("account-manage sandbox endpoints", () => {
         createEvent(method, path, AUTH, method === "GET" ? undefined : {}),
       );
       expect(response.status).toBe(403);
-      expect(await responseJson(response)).toEqual({ error: "Forbidden" });
+      expect(await responseJson(response)).toMatchObject({
+        error: { message: "Forbidden" },
+      });
     }
 
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
@@ -211,7 +213,9 @@ describe("account-manage sandbox endpoints", () => {
       }),
     );
     expect(adminResponse.status).toBe(404);
-    expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
+    expect(await responseJson(adminResponse)).toMatchObject({
+      error: { message: "Not found" },
+    });
   });
 
   it("rejects unauthenticated sandbox requests", async () => {
@@ -242,8 +246,11 @@ describe("account-manage sandbox endpoints", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await responseJson(response)).toEqual({
-      error: "reservationKey does not belong to this account or sandbox config",
+    expect(await responseJson(response)).toMatchObject({
+      error: {
+        message:
+          "reservationKey does not belong to this account or sandbox config",
+      },
     });
   });
 
@@ -453,7 +460,10 @@ describe("account-manage sandbox endpoints", () => {
 
     expect(response.status).toBe(409);
     expect(
-      String(((await responseJson(response)) as { error: string }).error),
+      String(
+        ((await responseJson(response)) as { error: { message: string } }).error
+          .message,
+      ),
     ).toContain("terminate and re-reserve");
   });
 
@@ -478,7 +488,10 @@ describe("account-manage sandbox endpoints", () => {
 
     expect(response.status).toBe(409);
     expect(
-      String(((await responseJson(response)) as { error: string }).error),
+      String(
+        ((await responseJson(response)) as { error: { message: string } }).error
+          .message,
+      ),
     ).toContain("does not support a live terminal");
   });
 });
@@ -498,7 +511,9 @@ describe("account-manage workspace endpoints", () => {
         createEvent(method, path, AUTH, method === "GET" ? undefined : {}),
       );
       expect(response.status).toBe(403);
-      expect(await responseJson(response)).toEqual({ error: "Forbidden" });
+      expect(await responseJson(response)).toMatchObject({
+        error: { message: "Forbidden" },
+      });
     }
 
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
@@ -508,7 +523,9 @@ describe("account-manage workspace endpoints", () => {
       }),
     );
     expect(adminResponse.status).toBe(404);
-    expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
+    expect(await responseJson(adminResponse)).toMatchObject({
+      error: { message: "Not found" },
+    });
   });
 
   it("no longer serves workspace file routes (moved to the Convex config plane)", async () => {
@@ -523,7 +540,9 @@ describe("account-manage workspace endpoints", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await responseJson(response)).toEqual({ error: "Forbidden" });
+    expect(await responseJson(response)).toMatchObject({
+      error: { message: "Forbidden" },
+    });
   });
 });
 

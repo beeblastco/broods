@@ -59,6 +59,7 @@ import type { DirectQuestionAnswer } from "./questions.ts";
 import {
   errorResponse,
   jsonResponse,
+  methodNotAllowed,
   type CoreRequest,
 } from "../shared/http.ts";
 import {
@@ -462,7 +463,7 @@ async function handleHttpRequest(
         if (denial) {
           return errorResponse(403, denial.message, {
             code: denial.code,
-            agentId: parsed.agentId,
+            param: "agentId",
           });
         }
       }
@@ -481,10 +482,7 @@ async function handleHttpRequest(
   }
 
   if (method !== "POST") {
-    return errorResponse(405, "Method not allowed", {
-      method: method,
-      allowedMethods: ["GET", "POST"],
-    });
+    return methodNotAllowed(["GET", "POST"]);
   }
 
   const channelRequest: ChannelRequest = {
@@ -727,7 +725,7 @@ async function handleHttpRequest(
         return errorResponse(
           403,
           `Agent ${parsed.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
-          { code: "public_access_disabled", agentId: parsed.agentId },
+          { code: "public_access_disabled", param: "agentId" },
         );
       }
       if (publicEndpoint?.mode === "async" || isAsyncPath(request.path)) {
