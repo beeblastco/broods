@@ -37,6 +37,8 @@ import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields } from "../schema";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+// The newest runs a single listing can page over.
+const CRON_RUN_PAGE_WINDOW = 1000;
 const PRUNE_BATCH_SIZE = 100;
 
 const cronDoc = v.object({
@@ -301,31 +303,30 @@ export const listRuns = internalQuery({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
-    limit: v.optional(v.number()),
   },
   returns: v.array(cronRunDoc),
-  handler: async (
-    ctx,
-    { accountId, cronId, limit },
-  ): Promise<Doc<"cronRuns">[]> => {
+  handler: async (ctx, { accountId, cronId }): Promise<Doc<"cronRuns">[]> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return [];
 
+    // Newest first, capped: 30 days of a per-minute cron is tens of thousands
+    // of rows carrying full model results, and reading them all exceeds the
+    // per-transaction limit. Paging happens over this window.
     return await ctx.db
       .query("cronRuns")
       .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
         q.eq("accountId", accountId).eq("cronId", cronId),
       )
       .order("desc")
-      .take(limit ?? 20);
+      .take(CRON_RUN_PAGE_WINDOW);
   },
 });
 
 /**
  * Deletes cron run history older than the retention window, one bounded batch
- * per invocation. Run rows carry the full model result, and `listRuns` only
- * ever shows the newest handful, so old rows are pure storage growth. The
- * creation-index range reads nothing when nothing is due.
+ * per invocation. Run rows carry the full model result and a listing only ever
+ * pages over the newest `CRON_RUN_PAGE_WINDOW`, so older rows are pure storage
+ * growth. The creation-index range reads nothing when nothing is due.
  */
 export const pruneExpiredRuns = internalMutation({
   args: {},
