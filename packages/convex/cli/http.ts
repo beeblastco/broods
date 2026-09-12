@@ -18,24 +18,24 @@ import {
   handleMcpBundleUploadRoute,
   handleResourceDeleteRoute,
   handleRuntimeKeyRoute,
-  json,
   type CliAuth,
   type RouteParts,
 } from "./httpRoutes";
+import { jsonError } from "../model/httpJson";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
-      return json({ error: "Authorization Bearer token is required" }, 401);
+      return jsonError(401, "Authorization Bearer token is required");
     }
 
     const route = parseRoute(new URL(req.url).pathname);
-    if (!route) return json({ error: "Not found" }, 404);
+    if (!route) return jsonError(404, "Not found");
 
     const authResult = await resolveCliRequestAuth(ctx, auth.secretHash, route);
     if (!authResult)
-      return json({ error: "Invalid or out-of-scope deploy token" }, 401);
+      return jsonError(401, "Invalid or out-of-scope deploy token");
 
     switch (route.kind) {
       case "manifest":
@@ -56,15 +56,15 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
   } catch (error) {
     console.error("CLI request failed", error);
     if (error instanceof SyntaxError || error instanceof URIError) {
-      return json({ error: "Request body or path is invalid" }, 400);
+      return jsonError(400, "Request body or path is invalid");
     }
     // Most failures here are the caller's own manifest failing validation. Hand
     // the reason back or `broods dev` reports an unactionable 500.
     const detail = error instanceof Error ? error.message : "";
 
-    return json(
-      { error: "CLI request failed", ...(detail ? { detail: detail } : {}) },
+    return jsonError(
       500,
+      detail ? `CLI request failed: ${detail}` : "CLI request failed",
     );
   }
 });

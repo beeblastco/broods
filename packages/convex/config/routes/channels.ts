@@ -16,7 +16,7 @@ import {
   normalizeUpdateChannelRecordInput,
 } from "../../model/channelRules";
 import { toPublicChannelRecordResponse } from "../../model/responses";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 export async function handleChannelRecordRoute(
   ctx: ActionCtx,
@@ -85,14 +85,14 @@ export async function handleChannelRecordRoute(
 
     return record
       ? json(toPublicChannelRecordResponse(record))
-      : json({ error: "Channel not found" }, 404);
+      : jsonError(404, "Channel not found");
   }
   if (req.method === "PATCH") {
     const existing: Doc<"channelRecords"> | null = await ctx.runQuery(
       internal.channel.records.getById,
       { accountId: accountId, channelRecordId: channelId },
     );
-    if (!existing) return json({ error: "Channel not found" }, 404);
+    if (!existing) return jsonError(404, "Channel not found");
     const patch = normalizeUpdateChannelRecordInput(await req.json());
     await ctx.runMutation(internal.channel.records.update, {
       accountId: accountId,
@@ -126,14 +126,14 @@ export async function handleChannelRecordRoute(
 
     return updated
       ? json(toPublicChannelRecordResponse(updated))
-      : json({ error: "Channel not found" }, 404);
+      : jsonError(404, "Channel not found");
   }
   if (req.method === "DELETE") {
     const existing: Doc<"channelRecords"> | null = await ctx.runQuery(
       internal.channel.records.getById,
       { accountId: accountId, channelRecordId: channelId },
     );
-    if (!existing) return json({ error: "Channel not found" }, 404);
+    if (!existing) return jsonError(404, "Channel not found");
     await ctx.runMutation(internal.channel.records.remove, {
       accountId: accountId,
       channelRecordId: channelId,

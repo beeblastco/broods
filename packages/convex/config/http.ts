@@ -29,7 +29,7 @@ import { handleMcpRoute, handleMcpUploadsRoute } from "./routes/mcp";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
-import { auditActorForAuth, json, requireAccount } from "./routes/shared";
+import { auditActorForAuth, jsonError, requireAccount } from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
 import {
   handleDownloadRedeemRoute,
@@ -82,16 +82,13 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     const account = accountAuth.account;
     const actor = auditActorForAuth(accountAuth);
     const route = parseRoute(pathname);
-    if (!route) return json({ error: "Not found" }, 404);
+    if (!route) return jsonError(404, "Not found");
 
     // Role management stays with the master credential: a session that could
     // edit roles could grant itself anything.
     if (route.kind === "roles") {
       if (accountAuth.kind !== "account") {
-        return json(
-          { error: "Role management requires the account secret" },
-          403,
-        );
+        return jsonError(403, "Role management requires the account secret");
       }
 
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
@@ -103,17 +100,17 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
         req.method,
         apiResourceForRoute(route),
       );
-      if (denial) return json({ error: denial }, 403);
+      if (denial) return jsonError(403, denial);
     }
 
     return await dispatchResourceRoute(ctx, req, account._id, actor, route);
   } catch (err) {
     if (isClientInputError(err)) {
-      return json({ error: err.message }, clientErrorStatus(err));
+      return jsonError(clientErrorStatus(err), err.message);
     }
     console.error("config HTTP request failed", err);
 
-    return json({ error: "Internal server error" }, 500);
+    return jsonError(500, "Internal server error");
   }
 });
 

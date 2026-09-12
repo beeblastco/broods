@@ -20,9 +20,11 @@ import {
 import {
   decoder,
   errorMessage,
-  parseJson,
+  errorText,
   type GatewayLimits,
+  parseJson,
 } from "./utils.ts";
+import type { ApiError } from "../../../packages/convex/model/apiError.ts";
 
 export type AgentTestGatewayData = {
   kind: "agent-test";
@@ -57,7 +59,7 @@ type IngressHttpResponse = {
   appliedMode?: "reject" | "followup" | "collect" | "steer";
   appliedToEventId?: string;
   statusUrl?: string;
-  error?: string;
+  error?: string | ApiError;
 };
 // Derived from the NATS helpers rather than restated, so neither can drift.
 type ConversationScope = Omit<
@@ -460,7 +462,7 @@ async function followExecution(
     socket,
     execution.terminalLabel,
     isIngressStatus(terminal.status) ? terminal.status : "expired",
-    terminal.error,
+    errorText(terminal.error),
   );
 }
 
@@ -539,7 +541,7 @@ async function submitControl(
         eventId: message.eventId,
         status: payload.status ?? "not_found",
         error:
-          payload.error ??
+          errorText(payload.error) ??
           `Control input was rejected with HTTP ${response.status}`,
       });
 
@@ -594,7 +596,7 @@ async function pollControlStatus(
       payload.status,
       payload.appliedMode,
       payload.appliedToEventId,
-      payload.error,
+      errorText(payload.error),
     ]);
     if (fingerprint !== previous) {
       previous = fingerprint;
@@ -611,7 +613,9 @@ async function pollControlStatus(
           ? { appliedToEventId: payload.appliedToEventId }
           : {}),
         ...(statusUrl ? { statusUrl: statusUrl } : {}),
-        ...(payload.error ? { error: payload.error } : {}),
+        ...(errorText(payload.error)
+          ? { error: errorText(payload.error) }
+          : {}),
       });
     }
     if (

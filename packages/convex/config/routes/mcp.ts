@@ -16,7 +16,7 @@ import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
 import { uploadQuotaMessage } from "../../model/uploads";
 import type { ProjectStageScope } from "../../model/projectScope";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 type McpScope =
   | ({ ok: true } & ProjectStageScope)
@@ -40,7 +40,7 @@ export async function handleMcpRoute(
 
     return record
       ? json(toPublicMcp(record))
-      : json({ error: "MCP server not found" }, 404);
+      : jsonError(404, "MCP server not found");
   }
   if (req.method === "PATCH") {
     return await patchMcpRoute(ctx, req, accountId, actor, serverId);
@@ -50,7 +50,7 @@ export async function handleMcpRoute(
       accountId: accountId,
       serverId: serverId,
     });
-    if (!existing) return json({ error: "MCP server not found" }, 404);
+    if (!existing) return jsonError(404, "MCP server not found");
     await ctx.runMutation(internal.account.mcp.remove, {
       accountId: accountId,
       serverId: serverId,
@@ -89,7 +89,7 @@ export async function handleMcpUploadsRoute(
     kind: "mcp",
   });
   if ("retryAt" in grant) {
-    return json({ error: uploadQuotaMessage(grant.retryAt) }, 429);
+    return jsonError(429, uploadQuotaMessage(grant.retryAt));
   }
 
   return json({ uploadUrl: grant.uploadUrl });
@@ -175,7 +175,7 @@ async function patchMcpRoute(
     accountId: accountId,
     serverId: serverId,
   });
-  if (!existing) return json({ error: "MCP server not found" }, 404);
+  if (!existing) return jsonError(404, "MCP server not found");
   const input = await normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
@@ -226,7 +226,7 @@ async function patchMcpRoute(
 
   return updated
     ? json(toPublicMcp(updated))
-    : json({ error: "MCP server not found" }, 404);
+    : jsonError(404, "MCP server not found");
 }
 
 /** Resolve the `?project=&stage=` collection scope to project/stage ids. */
@@ -241,12 +241,9 @@ async function resolveMcpScope(
   if (!project || !stage) {
     return {
       ok: false,
-      response: json(
-        {
-          error:
-            "MCP servers are scoped to a stage: pass ?project=<slug>&stage=<name>",
-        },
+      response: jsonError(
         400,
+        "MCP servers are scoped to a stage: pass ?project=<slug>&stage=<name>",
       ),
     };
   }
@@ -259,7 +256,7 @@ async function resolveMcpScope(
   if (!scope) {
     return {
       ok: false,
-      response: json({ error: "Project or stage not found" }, 404),
+      response: jsonError(404, "Project or stage not found"),
     };
   }
 
