@@ -8,6 +8,7 @@ import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import {
   accountAgentScopedKey,
+  createRunId,
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
 } from "../shared/runtime-keys.ts";
@@ -98,6 +99,12 @@ export interface IngressCandidate {
   accountId: string;
   agentId: string;
   eventId: string;
+  /**
+   * The run's public id. Required, because the caller has usually already put
+   * it in this candidate's `delivery.statusUrl`; minting a second one here
+   * would store an envelope whose own status URL resolves to nothing.
+   */
+  runId: string;
   conversationKey: string;
   events: ModelMessage[];
   requestedMode: IngressMode;
@@ -132,6 +139,9 @@ export type IngressAdmission = {
     | "conflict"
     | "not_running";
   eventId?: string;
+  // The run's id as stored. On a duplicate this is the first admission's, so a
+  // retried POST keeps one run id rather than minting a second.
+  runId?: string;
   status?: IngressStatus;
   ownerGeneration?: number;
   sequence?: number;
@@ -142,6 +152,8 @@ export type IngressAdmission = {
 
 export interface IngressStatusRecord {
   eventId: string;
+  runId?: string;
+  agentId: string;
   conversationKey: string;
   requestedMode: IngressMode;
   appliedMode?: AppliedIngressMode;
@@ -225,13 +237,28 @@ export function getConversationDispatchTarget(options: {
   return runtime.query("getConversationTarget", options);
 }
 
-/** Reads one accepted ingress status after repeating account/agent authorization. */
+/**
+ * Reads one run's status by its public id. The lookup is account-scoped at the
+ * index, and the agent comes off the row, so the caller never names it.
+ */
 export function getIngressStatus(options: {
+  accountId: string;
+  runId: string;
+}): Promise<IngressStatusRecord | null> {
+  return runtime.query("getIngressStatus", options);
+}
+
+/**
+ * Reads one run's status by its scoped event id. Only the subagent-parent
+ * authorization check needs this: it knows the parent's scoped id, never its
+ * run id.
+ */
+export function getIngressStatusByEventId(options: {
   accountId: string;
   agentId: string;
   eventId: string;
 }): Promise<IngressStatusRecord | null> {
-  return runtime.query("getIngressStatus", options);
+  return runtime.query("getIngressStatusByEventId", options);
 }
 
 export async function prepareSessionMessage(options: {
@@ -287,6 +314,7 @@ export async function prepareSessionMessage(options: {
       agentId: options.agentId,
       agentConfig: target.agentConfig,
       eventId: eventId,
+      runId: createRunId(),
       conversationKey: conversationKey,
       events: [
         {

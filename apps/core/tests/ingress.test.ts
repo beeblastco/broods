@@ -20,6 +20,7 @@ function candidate(): IngressCandidate {
     accountId: "acct_1",
     agentId: "agent_1",
     eventId: "event-1",
+    runId: "run_" + "a".repeat(32),
     conversationKey: "acct:acct_1:agent:agent_1:api:conversation-1",
     events: [{ role: "user", content: "hello" }],
     requestedMode: "followup",

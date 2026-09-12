@@ -18,6 +18,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {
+  createRunId,
   createSubagentTaskId,
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -80,6 +81,9 @@ interface SubagentCompletion {
 interface ResolvedSubagentTask {
   taskId: string;
   eventId: string;
+  /** Minted here, not at admission, because the dispatch hands the parent this
+   * task's status URL before the child conversation is admitted. */
+  runId: string;
   agentId: string;
   agentConfig: AgentConfig;
   description?: string;
@@ -299,6 +303,7 @@ export class SubagentCoordinator {
       );
     }
     const taskId = createSubagentTaskId(this.parentSession.eventId);
+    const runId = createRunId();
     const resuming = persistent && task.conversationKey !== undefined;
     const publicConversationKey =
       task.conversationKey ??
@@ -312,6 +317,7 @@ export class SubagentCoordinator {
 
       return {
         taskId: taskId,
+        runId: runId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
         agentConfig: withoutNestedSubagents(agent.config),
@@ -335,6 +341,7 @@ export class SubagentCoordinator {
 
     return {
       taskId: taskId,
+      runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
       agentConfig: withoutNestedSubagents(this.parentAgentConfig),
@@ -738,6 +745,7 @@ export class SubagentCoordinator {
       accountId: requireParentAccountId(this.parentSession),
       agentId: task.agentId,
       eventId: task.eventId,
+      runId: task.runId,
       ownerTaskId: task.taskId,
       conversationKey: task.conversationKey,
       events: [promptMessage],
@@ -1108,7 +1116,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function subagentStatusPath(task: ResolvedSubagentTask): string {
-  return `/v1/runs/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
+  return `/v1/runs/${encodeURIComponent(task.runId)}`;
 }
 
 function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {

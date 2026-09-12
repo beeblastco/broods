@@ -22,6 +22,7 @@ export const runtimeQueries = {
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
   listPendingAsyncToolResults: internal.runtime.listPendingAsyncToolResults,
   getIngressStatus: internal.runtimeIngress.getStatus,
+  getIngressStatusByEventId: internal.runtimeIngress.getStatusByEventId,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
 } as const;
 

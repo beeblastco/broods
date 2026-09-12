@@ -64,7 +64,7 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
           status: "queued",
           requestedMode: "steer",
           statusUrl:
-            "https://gateway.broods.app/v1/runs/steer-2?agentId=agent_1",
+            "https://gateway.broods.app/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
         { status: 202 },
       ),
@@ -186,7 +186,7 @@ test("client reads apiKey from package-local .env.local", async () => {
   }
 });
 
-test("client starts async runs and exposes status id for polling", async () => {
+test("client starts async runs and exposes the run id for polling", async () => {
   const calls: Array<{ url: string; method?: string; body?: unknown }> = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
@@ -206,7 +206,10 @@ test("client starts async runs and exposes status id for polling", async () => {
 
         return Response.json(
           {
-            statusUrl: "https://core.example/v1/runs/request-1?agentId=agent_1",
+            runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            eventId: "request-1",
+            statusUrl:
+              "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
           { status: 202 },
         );
@@ -224,13 +227,13 @@ test("client starts async runs and exposes status id for polling", async () => {
   });
   const status = await run.poll();
 
-  expect(run.statusId).toBe("request-1");
+  expect(run.runId).toBe("run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   expect(run.eventId).toBe("request-1");
   expect(run.agentId).toBe("agent_1");
   expect(status).toEqual({ status: "completed", response: "done" });
   expect(calls.map((call) => call.url)).toEqual([
     "https://core.example/v1/runs",
-    "https://core.example/v1/runs/request-1?agentId=agent_1",
+    "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
   expect(calls[0]?.body).toMatchObject({
     agentId: "agent_1",
@@ -253,7 +256,7 @@ test("client starts async runs through generated scoped agent references", async
       return Response.json(
         {
           statusUrl:
-            "https://gateway.example/v1/runs/request-1?agentId=agent_1",
+            "https://gateway.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
         { status: 202 },
       );
@@ -297,7 +300,8 @@ test("client passes typed run overrides through async run bodies", async () => {
 
       return Response.json(
         {
-          statusUrl: "https://core.example/v1/runs/request-1?agentId=agent_1",
+          statusUrl:
+            "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
         { status: 202 },
       );
@@ -350,7 +354,8 @@ test("client defaults async conversation key to the generated event id", async (
 
       return Response.json(
         {
-          statusUrl: "https://core.example/v1/runs/async-123?agentId=agent_1",
+          statusUrl:
+            "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         },
         { status: 202 },
       );
@@ -399,7 +404,7 @@ test("client rejects misrouted async SSE responses without dumping stream intern
   ).rejects.not.toThrow("secret conversation");
 });
 
-test("client polls async status by status id when agentId is provided", async () => {
+test("client polls async status by run id", async () => {
   const urls: string[] = [];
   const client = new BroodsClient({
     baseUrl: "https://core.example",
@@ -411,13 +416,13 @@ test("client polls async status by status id when agentId is provided", async ()
     },
   });
 
-  const status = await client.getAsyncStatus("request-1", {
-    agentId: "agent_1",
-  });
+  const status = await client.getAsyncStatus(
+    "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  );
 
   expect(status).toEqual({ status: "completed", response: { ok: true } });
   expect(urls).toEqual([
-    "https://core.example/v1/runs/request-1?agentId=agent_1",
+    "https://core.example/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   ]);
 });
 

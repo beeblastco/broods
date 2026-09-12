@@ -8,7 +8,7 @@ info:
     - **Account Management.** Tenant configuration (accounts, agents, skills, secrets)
 
     > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) through `broods dev` and `broods deploy`. You do not need to call these account-management endpoints yourself. This reference is for:
-    > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{eventId}`) from the TypeScript SDK, curl, or Python client
+    > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{runId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
@@ -239,11 +239,12 @@ paths:
               examples:
                 accepted:
                   value:
+                    runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: async-unique-id
                     conversationKey: conversation-identifier
                     status: processing
                     requestedMode: steer
-                    statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
+                    statusUrl: https://gateway.broods.app/v1/runs/run_8c1d4a9e2f1b40d7a3c65e90b7412fda
         "409":
           description: Conversation busy in reject mode, or idempotency conflict
         "429":
@@ -272,23 +273,24 @@ paths:
                   value:
                     error: Unauthorized
 
-  /v1/runs/{eventId}:
+  /v1/runs/{runId}:
     get:
       tags:
         - Direct API
-      summary: Poll async status
-      description: Poll the durable, account-and-agent-scoped ingress envelope. Every accepted request reaches completed, failed, or expired.
+      summary: Poll a run
+      description: |
+        Poll one run by the `runId` the accepting response returned. A run id is
+        account-unique and resolves the owning agent from storage, so no agent
+        has to be named here. Every accepted request reaches completed, failed,
+        or expired.
       parameters:
-        - name: eventId
+        - name: runId
           in: path
           required: true
+          description: Server-issued run id, as returned in `runId` and named by `statusUrl`.
           schema:
             type: string
-        - name: agentId
-          in: query
-          required: true
-          schema:
-            type: string
+            pattern: "^run_[0-9a-f]{32}$"
       responses:
         "200":
           description: Current job status
@@ -300,12 +302,14 @@ paths:
                 processing:
                   summary: Job still running
                   value:
+                    runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: processing
                 awaitingApproval:
                   summary: Tool approval needed
                   value:
+                    runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: awaiting_approval
@@ -318,6 +322,7 @@ paths:
                 completed:
                   summary: Job finished
                   value:
+                    runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: completed
@@ -329,6 +334,7 @@ paths:
                 failed:
                   summary: Job failed
                   value:
+                    runId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: failed
@@ -2970,10 +2976,18 @@ components:
 
     IngressAccepted:
       type: object
-      required: [eventId, conversationKey, status, requestedMode, statusUrl]
+      required:
+        [runId, eventId, conversationKey, status, requestedMode, statusUrl]
       properties:
+        runId:
+          type: string
+          description: |
+            Server-issued, account-unique id for this run. Poll it at
+            `GET /v1/runs/{runId}`, or follow `statusUrl`. Retrying with the
+            same `eventId` returns the first run's id, never a second one.
         eventId:
           type: string
+          description: The caller's own id for the request, echoed back.
         conversationKey:
           type: string
         status:
@@ -2988,10 +3002,14 @@ components:
 
     IngressStatus:
       type: object
-      required: [eventId, conversationKey, status]
+      required: [runId, eventId, conversationKey, status]
       properties:
+        runId:
+          type: string
+          description: Server-issued, account-unique id for this run.
         eventId:
           type: string
+          description: The caller's own id for the request, echoed back.
         conversationKey:
           type: string
         status:

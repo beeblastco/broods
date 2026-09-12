@@ -37,7 +37,9 @@ import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
+  createRunId,
   publicConversationKeyFromScoped,
+  publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -76,7 +78,6 @@ import {
 import {
   acceptIngress,
   getConversationDispatchTarget,
-  getIngressStatus,
   prepareSessionMessage,
   type AppliedIngress,
   type IngressAdmission,
@@ -539,6 +540,7 @@ async function continueAfterAsyncToolSettlement(
   const continuationEvent: DirectInboundEvent = {
     accountId: scope.accountId,
     agentId: scope.agentId,
+    runId: createRunId(),
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async"
@@ -759,6 +761,7 @@ async function handleDirectRequest(
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
+    runId: event.runId,
     conversationKey: event.conversationKey,
     events: event.events,
     requestedMode: event.requestedMode,
@@ -862,6 +865,7 @@ async function handleAsyncRequest(
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
+    runId: event.runId,
     conversationKey: event.conversationKey,
     events: event.events,
     requestedMode: event.requestedMode,
@@ -1327,6 +1331,8 @@ async function handleChannelRequest(
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
+    // A channel turn is never polled by run id, but every envelope carries one.
+    runId: createRunId(),
     conversationKey: event.conversationKey,
     events: ingested.events,
     requestedMode: requestedMode,
@@ -1666,19 +1672,10 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 async function handleStatusRequest(
   event: StatusInboundEvent,
 ): Promise<Response> {
-  const [result, asyncResult] = await Promise.all([
-    getIngressStatus({
-      accountId: event.accountId,
-      agentId: event.agentId,
-      eventId: event.eventId,
-    }),
-    getAsyncAgentResult(event.eventId),
-  ]);
-  if (!result && !asyncResult) {
-    return errorResponse(404, `No run ${event.publicEventId}`, {
-      code: "run_not_found",
-    });
-  }
+  // The envelope is already resolved: the route looked it up by run id to
+  // learn which agent owns this run before authorizing the read.
+  const result = event.ingress;
+  const asyncResult = await getAsyncAgentResult(event.eventId);
 
   // The async agent record keeps the public approval contract: while it is
   // nonterminal its status (processing/awaiting_approval) overrides the
@@ -1688,13 +1685,13 @@ async function handleStatusRequest(
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
       asyncResult.status === "awaiting_input" ||
-      (asyncResult.status === "processing" && result?.status !== "failed"))
+      (asyncResult.status === "processing" && result.status !== "failed"))
       ? asyncResult.status
-      : (result?.status ?? asyncResult!.status);
-  const conversationKey =
-    result?.conversationKey ?? asyncResult!.conversationKey;
+      : result.status;
+  const conversationKey = result.conversationKey;
 
   return jsonResponse(200, {
+    runId: event.runId,
     eventId: event.publicEventId,
     conversationKey: eventPublicConversationKey(
       conversationKey,
@@ -1980,6 +1977,10 @@ async function dispatchAppliedIngress(
   const event: DirectInboundEvent = {
     accountId: base.accountId,
     agentId: base.agentId,
+    // This rebuild re-runs an envelope that was already admitted, and its
+    // delivery (status URL included) is the stored one, so this id is never
+    // published. It exists only because every direct event carries one.
+    runId: createRunId(),
     agentConfig: next.agentConfig ?? base.agentConfig,
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
@@ -2087,6 +2088,7 @@ async function dispatchSessionMessage(
   const event: DirectInboundEvent = {
     accountId: candidate.accountId,
     agentId: candidate.agentId,
+    runId: candidate.runId,
     agentConfig: candidate.agentConfig,
     eventId: candidate.eventId,
     publicEventId: publicEventId,
@@ -2147,6 +2149,7 @@ async function admitInternalContinuation(
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
+    runId: event.runId,
     conversationKey: event.conversationKey,
     events: event.events,
     requestedMode: event.requestedMode,
@@ -2187,8 +2190,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     };
   }
   const statusUrl =
-    directStatusUrl(event) ??
-    `/v1/runs/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
+    directStatusUrl(event) ?? `/v1/runs/${encodeURIComponent(event.runId)}`;
 
   return {
     kind: "async",
@@ -2313,6 +2315,7 @@ async function createCronDirectEvent(
   return {
     accountId: job.accountId,
     agentId: job.agentId,
+    runId: createRunId(),
     agentConfig: channelTarget
       ? channelTarget.agentConfig
       : toRuntimeAgentConfig(agent.config),
@@ -2991,12 +2994,12 @@ function acceptedAsyncResponse(
 }
 
 function directStatusUrl(
-  event: Pick<DirectInboundEvent, "publicEventId" | "agentId">,
+  event: Pick<DirectInboundEvent, "runId">,
 ): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) return null;
 
-  return `${baseUrl}/v1/runs/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
+  return `${baseUrl}/v1/runs/${encodeURIComponent(event.runId)}`;
 }
 
 function publicEventIdFromScoped(
@@ -3009,18 +3012,6 @@ function publicEventIdFromScoped(
     event.agentId,
     event.publicEventId,
   );
-}
-
-function publicEventIdForScope(
-  value: string | undefined,
-  accountId: string,
-  agentId: string,
-  fallback: string,
-): string {
-  if (!value) return fallback;
-  const prefix = `acct:${accountId}:agent:${agentId}:api:`;
-
-  return value.startsWith(prefix) ? value.slice(prefix.length) : fallback;
 }
 
 function directAdmissionResponse(
@@ -3049,12 +3040,13 @@ function directAdmissionResponse(
       : errorSseResponse(message, 409);
   }
   const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  const statusUrl = directStatusUrl({
-    publicEventId: publicEventId,
-    agentId: event.agentId,
-  });
+  // A duplicate answers with the first admission's run id, never the one this
+  // retry minted, so an idempotent POST keeps pointing at one run.
+  const runId = admission.runId ?? event.runId;
+  const statusUrl = directStatusUrl({ runId: runId });
 
   return jsonResponse(202, {
+    runId: runId,
     eventId: publicEventId,
     conversationKey: event.publicConversationKey,
     status: admission.status ?? "queued",
@@ -3085,9 +3077,8 @@ function asyncAdmissionResponse(
     );
   }
   const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  const statusUrl =
-    directStatusUrl({ publicEventId: publicEventId, agentId: event.agentId }) ??
-    event.statusUrl;
+  const runId = admission.runId ?? event.runId;
+  const statusUrl = directStatusUrl({ runId: runId }) ?? event.statusUrl;
 
   return acceptedAsyncResponse(
     statusUrl,
