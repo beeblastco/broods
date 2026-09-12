@@ -212,22 +212,6 @@ export function isOneTimeSchedule(expression: string): boolean {
 }
 
 /**
- * Parse the ?limit= query value for run listings.
- * @param value the raw query value
- * @returns the parsed limit, or undefined when absent
- * @throws when the value is not an integer between 1 and 100
- */
-export function parseCronRunsLimit(value: string | null): number | undefined {
-  if (value === null) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-    throw new Error("limit must be an integer between 1 and 100");
-  }
-
-  return parsed;
-}
-
-/**
  * Resolve an `at(yyyy-mm-ddThh:mm:ss)` expression to an epoch instant. The
  * wall-clock time is read in `timezone` when given, UTC otherwise, the same
  * semantics EventBridge Scheduler applied.
