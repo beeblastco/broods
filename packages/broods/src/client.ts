@@ -353,12 +353,11 @@ export class BroodsClient {
     };
   }
 
-  /** Fetch one async status snapshot by status URL or status id + agent id. */
+  /** Fetch one async status snapshot by status URL or run id. */
   async getAsyncStatus(
     status: AsyncRequestAccepted | string,
-    options: { agentId?: string } = {},
   ): Promise<AsyncStatus> {
-    const statusUrl = this.resolveStatusUrl(status, options);
+    const statusUrl = this.resolveStatusUrl(status);
     const response = await this.fetchJson(statusUrl, {
       method: "GET",
       headers: this.apiKeyHeaders(),
@@ -376,7 +375,7 @@ export class BroodsClient {
   /** Poll async status until it reaches completed, failed, awaiting_approval, awaiting_input, or timeout. */
   async waitForAsyncStatus(
     status: AsyncRequestAccepted | string,
-    options: AsyncPollOptions & { agentId?: string } = {},
+    options: AsyncPollOptions = {},
   ): Promise<AsyncStatus> {
     const deadline = Date.now() + (options.timeoutMs ?? 180_000);
     const intervalMs = options.intervalMs ?? 2_000;
@@ -384,7 +383,7 @@ export class BroodsClient {
     while (Date.now() < deadline) {
       if (options.signal?.aborted)
         throw new Error("Async status polling aborted.");
-      const payload = await this.getAsyncStatus(status, options);
+      const payload = await this.getAsyncStatus(status);
       if (
         payload.status === "awaiting_approval" ||
         payload.status === "awaiting_input" ||
@@ -605,16 +604,11 @@ export class BroodsClient {
     }
   }
 
-  private resolveStatusUrl(
-    status: AsyncRequestAccepted | string,
-    options: { agentId?: string },
-  ): string {
+  private resolveStatusUrl(status: AsyncRequestAccepted | string): string {
     if (typeof status !== "string") return status.statusUrl;
     if (/^https?:\/\//.test(status)) return status;
-    if (!options.agentId)
-      throw new Error("Polling by status id requires agentId.");
 
-    return statusUrlFor(this.baseUrl, status, options.agentId);
+    return statusUrlFor(this.baseUrl, status);
   }
 }
 
@@ -705,22 +699,26 @@ function normalizeAsyncAccepted(
   if (typeof statusUrl !== "string" || statusUrl.length === 0) {
     throw new Error("Async response missing statusUrl");
   }
-  const status = parseStatusUrl(statusUrl);
-  if (!status.statusId)
-    throw new Error("Async response statusUrl missing status id");
+  // The run id is a response field now; the URL is only a fallback for a core
+  // old enough to omit it.
+  const runId =
+    typeof (payload as { runId?: unknown }).runId === "string"
+      ? (payload as { runId: string }).runId
+      : runIdFromStatusUrl(statusUrl);
+  if (!runId) throw new Error("Async response missing runId");
 
   const eventId =
     typeof (payload as { eventId?: unknown }).eventId === "string"
       ? (payload as { eventId: string }).eventId
-      : status.statusId;
+      : runId;
   const acceptedStatus = (payload as { status?: unknown }).status;
   const requestedMode = (payload as { requestedMode?: unknown }).requestedMode;
 
   return {
     statusUrl: statusUrl,
-    statusId: status.statusId,
+    runId: runId,
     eventId: eventId,
-    agentId: status.agentId ?? requestBody.agentId,
+    agentId: requestBody.agentId,
     ...(acceptedStatus === "accepted" ||
     acceptedStatus === "queued" ||
     acceptedStatus === "applied" ||
@@ -736,17 +734,10 @@ function normalizeAsyncAccepted(
   };
 }
 
-function parseStatusUrl(statusUrl: string): {
-  statusId?: string;
-  agentId?: string;
-} {
-  const url = new URL(statusUrl);
-  const match = url.pathname.match(/\/v1\/runs\/([^/]+)$/);
+function runIdFromStatusUrl(statusUrl: string): string | undefined {
+  const match = new URL(statusUrl).pathname.match(/\/v1\/runs\/([^/]+)$/);
 
-  return {
-    statusId: match?.[1] ? decodeURIComponent(match[1]) : undefined,
-    agentId: url.searchParams.get("agentId") ?? undefined,
-  };
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
 function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
@@ -796,10 +787,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function statusUrlFor(
-  baseUrl: string,
-  statusId: string,
-  agentId: string,
-): string {
-  return `${normalizeHttpServiceUrl(baseUrl)}/v1/runs/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
+function statusUrlFor(baseUrl: string, runId: string): string {
+  return `${normalizeHttpServiceUrl(baseUrl)}/v1/runs/${encodeURIComponent(runId)}`;
 }

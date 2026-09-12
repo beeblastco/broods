@@ -914,6 +914,13 @@ export const runtimeIngressEnvelopesFields = {
   conversationKey: v.string(),
   sequence: v.number(),
   eventId: v.string(),
+  /**
+   * Public, account-unique id for this run: what `GET /v1/runs/{runId}`
+   * resolves on. `eventId` cannot serve that purpose because it embeds the
+   * agent, and the caller-supplied part of it is only unique per agent.
+   * Absent on rows admitted before run ids existed.
+   */
+  runId: v.optional(v.string()),
   identity: v.string(),
   idempotencyKey: v.string(),
   payloadDigest: v.string(),
@@ -1348,6 +1355,7 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_runId", ["accountId", "runId"])
     // Status leads so maintenance scans only nonterminal rows: terminal rows
     // keep their stale expiresAt for the whole status retention window, and a
     // bare expiresAt index would re-read every one of them each sweep.

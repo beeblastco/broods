@@ -40,6 +40,7 @@ function admission(options: {
   accountId: Id<"accounts">;
   conversationKey: string;
   eventId: string;
+  runId?: string;
   mode: "reject" | "followup" | "collect" | "steer";
   idempotencyKey?: string;
   payloadDigest?: string;
@@ -59,6 +60,7 @@ function admission(options: {
     agentId: "test-agent",
     conversationKey: options.conversationKey,
     eventId: options.eventId,
+    runId: options.runId ?? `run_${options.eventId}`,
     idempotencyKey: options.idempotencyKey ?? options.eventId,
     payloadDigest: options.payloadDigest ?? `digest:${options.eventId}`,
     events: [{ role: "user", content: options.eventId }],
@@ -134,8 +136,7 @@ describe("runtime ingress", () => {
       (
         await t.query(internal.runtimeIngress.getStatus, {
           accountId: accountId,
-          agentId: "test-agent",
-          eventId: "public-owner",
+          runId: "run_public-owner",
         })
       )?.publicDeploymentIngress,
     ).toEqual({
@@ -170,8 +171,7 @@ describe("runtime ingress", () => {
 
     const status = await t.query(internal.runtimeIngress.getStatus, {
       accountId: accountId,
-      agentId: "test-agent",
-      eventId: "channel-owner",
+      runId: "run_channel-owner",
     });
 
     // Assert the row was found first: the negative below holds for null too.
@@ -211,12 +211,46 @@ describe("runtime ingress", () => {
       expect(
         await t.query(internal.runtimeIngress.getStatus, {
           accountId: accountId,
-          agentId: "test-agent",
-          eventId: eventId,
+          runId: `run_${eventId}`,
         }),
       ).not.toHaveProperty("publicDeploymentIngress");
     });
   }
+
+  test("an idempotent retry keeps the first admission's run id", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const first = admission({
+      accountId: accountId,
+      conversationKey: conversationKey,
+      eventId: "retried",
+      runId: "run_first",
+      mode: "reject",
+    });
+    await t.mutation(internal.runtimeIngress.accept, first);
+
+    // Same identity and payload, freshly minted run id: the stored one wins, so
+    // the caller keeps polling one run rather than a second that never existed.
+    const retry = await t.mutation(internal.runtimeIngress.accept, {
+      ...first,
+      runId: "run_second",
+    });
+
+    expect(retry).toMatchObject({ outcome: "duplicate", runId: "run_first" });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_second",
+      }),
+    ).toBeNull();
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_first",
+      }),
+    ).toMatchObject({ agentId: "test-agent", status: "processing" });
+  });
 
   test("atomically owns, rejects, queues, and deduplicates candidates", async () => {
     const t = runtimeTest();
@@ -240,8 +274,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "owner",
+        runId: "run_owner",
       }),
     ).toMatchObject({
       requestedMode: "reject",
@@ -403,8 +436,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "after-drain-control",
+        runId: "run_after-drain-control",
       }),
     ).toBeNull();
   });
@@ -476,8 +508,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "late-control",
+        runId: "run_late-control",
       }),
     ).toBeNull();
   });
@@ -539,8 +570,7 @@ describe("runtime ingress", () => {
       expect(
         await t.query(internal.runtimeIngress.getStatus, {
           accountId: accountId,
-          agentId: "test-agent",
-          eventId: eventId,
+          runId: `run_${eventId}`,
         }),
       ).toMatchObject({ status: "completed", result: "done" });
     }
@@ -724,8 +754,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "owner",
+        runId: "run_owner",
       }),
     ).toMatchObject({
       status: "failed",
@@ -799,16 +828,14 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "owner",
+        runId: "run_owner",
       }),
     ).toMatchObject({ status: "failed" });
     expect(
       (
         await t.query(internal.runtimeIngress.getStatus, {
           accountId: accountId,
-          agentId: "test-agent",
-          eventId: "owner",
+          runId: "run_owner",
         })
       )?.stoppedByUser,
     ).toBeUndefined();
@@ -944,8 +971,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "queued",
+        runId: "run_queued",
       }),
     ).toMatchObject({ status: "expired" });
   });
@@ -1015,22 +1041,19 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "owner",
+        runId: "run_owner",
       }),
     ).toMatchObject({ status: "expired" });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "queued-first",
+        runId: "run_queued-first",
       }),
     ).toMatchObject({ status: "processing" });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "late-arrival",
+        runId: "run_late-arrival",
       }),
     ).toMatchObject({ status: "queued" });
   });
@@ -1159,6 +1182,7 @@ describe("runtime ingress", () => {
         conversationKey: conversationKey,
         sequence: 500,
         eventId: "overdue-queued",
+        runId: "run_overdue-queued",
         identity: "identity-overdue-queued",
         idempotencyKey: "overdue-queued",
         payloadDigest: "digest",
@@ -1180,8 +1204,7 @@ describe("runtime ingress", () => {
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
         accountId: accountId,
-        agentId: "test-agent",
-        eventId: "overdue-queued",
+        runId: "run_overdue-queued",
       }),
     ).toMatchObject({ status: "expired" });
   });
