@@ -353,6 +353,7 @@ export function SandboxInstancesTable({
                               instance.lastUsedTraceId ??
                                 instance.createdByTraceId!,
                             )}
+                            draggable={false}
                           />
                         }
                         variant="outline"

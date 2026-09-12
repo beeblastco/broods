@@ -99,7 +99,7 @@ export default function SettingsPage(): React.JSX.Element {
               <Button
                 key={t.id}
                 nativeButton={false}
-                render={<Link href={tabHref(t.id)} />}
+                render={<Link href={tabHref(t.id)} draggable={false} />}
                 variant="ghost"
                 size="sm"
                 className={cn(
@@ -119,7 +119,7 @@ export default function SettingsPage(): React.JSX.Element {
               <Button
                 key={t.id}
                 nativeButton={false}
-                render={<Link href={tabHref(t.id)} />}
+                render={<Link href={tabHref(t.id)} draggable={false} />}
                 variant="ghost"
                 size="sm"
                 className={cn(

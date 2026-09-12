@@ -678,7 +678,7 @@ function TraceLink({
   return (
     <Button
       nativeButton={false}
-      render={<Link href={href} />}
+      render={<Link href={href} draggable={false} />}
       variant="outline"
       size="xs"
       className="cursor-pointer"
