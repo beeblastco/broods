@@ -10,7 +10,6 @@ import type {
   AgentProviderSettings,
 } from "../../../shared/domain/agent-config.ts";
 import {
-  requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveGatewayAuthEnv,
@@ -22,7 +21,6 @@ export const PI_HARNESS_VERSION = VERSION;
 export function createConfiguredPiAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
-  const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
   const reasoning = agentConfig.model?.reasoning;
@@ -42,7 +40,6 @@ export function createConfiguredPiAdapter(
       providerName === "vercel"
         ? resolveGatewayAuthEnv(provider)
         : resolvePrefixedAuthEnv(providerName, provider),
-    model: model,
     thinkingLevel: thinkingLevel,
   });
 }

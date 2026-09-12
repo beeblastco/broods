@@ -10,7 +10,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveGatewayAuthEnv,
@@ -29,7 +28,6 @@ export function createConfiguredCodexAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
   const harness = agentConfig.harness!;
-  const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   if (
     providerName !== "custom" &&
@@ -56,7 +54,6 @@ export function createConfiguredCodexAdapter(
 
   return createCodex({
     auth: auth,
-    model: model,
     reasoningEffort: reasoningEffort,
     startupTimeoutMs: harness.startupTimeoutMs,
     webSearch: harness.webSearch,

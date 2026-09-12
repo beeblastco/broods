@@ -6,6 +6,10 @@ import { Daytona, Image } from "@daytona/sdk";
 
 const snapshotName = process.env.DAYTONA_S3_SNAPSHOT_NAME!;
 const baseImage = process.env.DAYTONA_S3_SNAPSHOT_BASE_IMAGE!;
+// Bun preloads `.env`, and since `@daytona/sdk` 0.211 the client refuses an
+// endpoint it cannot attribute to the caller rather than send the API key to a
+// host nobody chose. Naming it here is what makes it attributable.
+const apiUrl = process.env.DAYTONA_API_URL;
 const image = Image.base(baseImage).runCommands(
   "sudo apt-get update " +
     "&& sudo apt-get install -y --no-install-recommends libfuse2 ca-certificates wget",
@@ -19,7 +23,9 @@ const image = Image.base(baseImage).runCommands(
 console.log(`Creating Daytona snapshot ${snapshotName} from ${baseImage}`);
 
 try {
-  const snapshot = await new Daytona().snapshot.create(
+  const snapshot = await new Daytona(
+    apiUrl ? { apiUrl: apiUrl } : {},
+  ).snapshot.create(
     { name: snapshotName, image: image },
     {
       timeout: 0,

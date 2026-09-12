@@ -10,7 +10,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicOrVercelAuthEnv,
@@ -28,7 +27,6 @@ export function createConfiguredClaudeCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
   const harness = agentConfig.harness!;
-  const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   if (providerName !== "anthropic" && providerName !== "vercel") {
     throw new Error(
@@ -40,7 +38,6 @@ export function createConfiguredClaudeCodeAdapter(
   return createClaudeCode({
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
     maxTurns: agentConfig.agent?.maxTurn,
-    model: model,
     startupTimeoutMs: harness.startupTimeoutMs,
   });
 }

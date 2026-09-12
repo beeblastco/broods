@@ -23,6 +23,7 @@ import {
   type AiSdkHarnessSettings,
   type AiSdkHarnessType,
 } from "./adapters/index.ts";
+import { requireHarnessModelId } from "./provider.ts";
 import {
   createAiSdkHarnessSandbox,
   requireAiSdkHarnessCompute,
@@ -45,6 +46,11 @@ interface HarnessAgentCommonOptions {
   id?: string;
   inactiveTools?: string[];
   instructions?: string;
+  /**
+   * Model the harness runtime selects for every turn. `@ai-sdk/harness` 1.0.104
+   * dropped the per-adapter `model` setting, so it rides on the agent instead.
+   */
+  model?: string;
   permissionMode?: HarnessAgentPermissionMode;
   reservationKey: string;
   skills?: ReadonlyArray<HarnessAgentSkill>;
@@ -106,12 +112,14 @@ export function createConfiguredHarnessAgent(
     throw new Error("config.harness is required");
   }
   const compute = requireAiSdkHarnessCompute(options.compute);
+  const model = requireHarnessModelId(options.agentConfig);
   const common = {
     ...resolveHarnessToolFiltering(options.agentConfig),
     adapter: createConfiguredAiSdkHarnessAdapter(options.agentConfig),
     debug: harness.debug,
     id: options.id,
     instructions: options.instructions,
+    model: model,
     permissionMode: harness.permissionMode,
     reservationKey: options.reservationKey,
     skills: options.skills,
@@ -169,6 +177,7 @@ function createHarnessAgent(
     ...(options.instructions !== undefined
       ? { instructions: options.instructions }
       : {}),
+    ...(options.model !== undefined ? { model: options.model } : {}),
     onLog: logHarnessDiagnostic,
     ...(options.permissionMode !== undefined
       ? { permissionMode: options.permissionMode }

@@ -10,7 +10,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
   resolveAnthropicAuthEnv,
@@ -24,7 +23,6 @@ export function createConfiguredOpenCodeAdapter(
   agentConfig: AgentConfig,
 ): HarnessAgentAdapter {
   const harness = agentConfig.harness!;
-  const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
   // `custom` is absent on purpose: OpenCode discovers credentials by its own
@@ -47,7 +45,6 @@ export function createConfiguredOpenCodeAdapter(
 
   return createOpenCode({
     auth: auth,
-    model: model,
     provider: providerName,
     reasoningVariant: reasoning && reasoning !== "none" ? reasoning : undefined,
     startupTimeoutMs: harness.startupTimeoutMs,
