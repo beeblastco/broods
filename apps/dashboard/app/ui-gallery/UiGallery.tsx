@@ -24,6 +24,9 @@ const LEVEL_OPTIONS = [
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
+// Enough rows for the stand-in table to scroll, so its head really sticks.
+const STAND_IN_ROWS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
 /**
  * Six cards in two rows, the shape a small stage lands in after a tidy. Sized
  * explicitly so the bounds the canvas fits are the same on every machine, and
@@ -83,6 +86,7 @@ export function UiGallery(): React.JSX.Element {
           refreshTitle="Refresh"
           isError={false}
         />
+        <LogTableStandIn />
       </section>
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">
@@ -146,5 +150,39 @@ export function UiGallery(): React.JSX.Element {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * The piece of MonitoringPanel that broke the level select: a sticky, raised
+ * table head right under the toolbar. Without page chrome like this below it,
+ * a popup that fails to stack above the page still looks perfectly fine.
+ */
+function LogTableStandIn(): React.JSX.Element {
+  return (
+    <div className="flex h-50 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="min-w-0 flex-1 overflow-auto">
+        <table className="w-full table-fixed font-mono text-xs">
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2 font-medium">Time</th>
+              <th className="px-3 py-2 font-medium">Level</th>
+              <th className="px-3 py-2 font-medium">Service</th>
+              <th className="px-3 py-2 font-medium">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {STAND_IN_ROWS.map((row) => (
+              <tr key={row} className="border-b border-border/40">
+                <td className="px-3 py-1.5 text-muted-foreground">08:0{row}</td>
+                <td className="px-3 py-1.5">INFO</td>
+                <td className="px-3 py-1.5">gateway</td>
+                <td className="px-3 py-1.5">stand-in row {row}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
