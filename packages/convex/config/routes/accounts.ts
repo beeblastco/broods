@@ -17,6 +17,7 @@ import {
   auditActorForAuth,
   getAccountById,
   json,
+  jsonError,
   methodNotAllowed,
   parseJsonRequest,
   requireAdminAuth,
@@ -58,16 +59,16 @@ export async function handleAccountRoute(
       // Rotating the master secret from a session would be privilege
       // escalation, so no role policy can grant it.
       if (route.kind === "selfRotate") {
-        return json(
-          { error: "Role sessions may not rotate the account secret" },
+        return jsonError(
           403,
+          "Role sessions may not rotate the account secret",
         );
       }
       const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
         type: "account",
         id: account._id,
       });
-      if (denial) return json({ error: denial }, 403);
+      if (denial) return jsonError(403, denial);
     }
 
     if (route.kind === "self") {
@@ -93,7 +94,7 @@ export async function handleAccountRoute(
   const admin = await requireAdminAuth(ctx, req);
   if (admin instanceof Response) return admin;
 
-  if (route.kind === "adminUnknown") return json({ error: "Not found" }, 404);
+  if (route.kind === "adminUnknown") return jsonError(404, "Not found");
 
   if (route.kind === "adminList") {
     if (req.method !== "GET") return methodNotAllowed(["GET"]);
@@ -116,7 +117,7 @@ export async function handleAccountRoute(
 
       return account
         ? json({ account: toPublicAccount(account) })
-        : json({ error: "Account not found" }, 404);
+        : jsonError(404, "Account not found");
     }
     if (req.method === "PATCH")
       return await updateAccountResponse(
@@ -229,7 +230,7 @@ async function rotateAccountSecretResponse(
   actor: ConfigAuditActor,
 ): Promise<Response> {
   const existing = await getAccountById(ctx, accountId);
-  if (!existing) return json({ error: "Account not found" }, 404);
+  if (!existing) return jsonError(404, "Account not found");
   const secret = createAccountSecret();
   await ctx.runMutation(internal.account.accounts.update, {
     accountId: existing._id,
@@ -251,7 +252,7 @@ async function rotateAccountSecretResponse(
 
   return updated
     ? json({ account: toPublicAccount(updated), secret: secret })
-    : json({ error: "Account not found" }, 404);
+    : jsonError(404, "Account not found");
 }
 
 /**
@@ -282,7 +283,7 @@ async function updateAccountResponse(
   input: unknown,
 ): Promise<Response> {
   const existing = await getAccountById(ctx, accountId);
-  if (!existing) return json({ error: "Account not found" }, 404);
+  if (!existing) return jsonError(404, "Account not found");
   const patch = normalizeAccountUpdateInput(input);
   await ctx.runMutation(internal.account.accounts.update, {
     accountId: existing._id,
@@ -310,5 +311,5 @@ async function updateAccountResponse(
 
   return updated
     ? json({ account: toPublicAccount(updated) })
-    : json({ error: "Account not found" }, 404);
+    : jsonError(404, "Account not found");
 }

@@ -8,7 +8,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 /** Mirrors core's former handleSkillRoute contract. */
 export async function handleSkillRoute(
@@ -65,7 +65,7 @@ export async function handleSkillRoute(
       skillName: name,
     });
 
-    return skill ? json(skill) : json({ error: "Skill not found" }, 404);
+    return skill ? json(skill) : jsonError(404, "Skill not found");
   }
   if (req.method === "PUT") {
     const skill = await ctx.runAction(internal.aws.skills.createSkill, {
@@ -100,7 +100,7 @@ export async function handleSkillRoute(
 
     return deleted
       ? json({ deleted: true })
-      : json({ error: "Skill not found" }, 404);
+      : jsonError(404, "Skill not found");
   }
 
   return methodNotAllowed(["GET", "PUT", "DELETE"]);

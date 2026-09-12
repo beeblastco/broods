@@ -92,7 +92,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
   });
 
   it("returns 200 for GET probes without requiring direct API configuration", async () => {
@@ -124,10 +126,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(405);
-    expect(responseJson(response)).toEqual({
-      error: "Method not allowed",
-      method: "PUT",
-      allowedMethods: ["GET", "POST"],
+    expect(response.headers?.allow).toBe("GET, POST");
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "method_not_allowed" },
     });
   });
 
@@ -368,7 +369,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(403);
-    expect(responseJson(response).code).toBe("public_access_disabled");
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "public_access_disabled" },
+    });
   });
 
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
@@ -403,12 +406,12 @@ describe("direct API ingress", () => {
     );
 
     expect(syncResponse.statusCode).toBe(404);
-    expect(responseJson(syncResponse)).toEqual({
-      error: "Direct API is disabled",
+    expect(responseJson(syncResponse)).toMatchObject({
+      error: { message: "Direct API is disabled" },
     });
     expect(asyncResponse.statusCode).toBe(404);
-    expect(responseJson(asyncResponse)).toEqual({
-      error: "Direct API is disabled",
+    expect(responseJson(asyncResponse)).toMatchObject({
+      error: { message: "Direct API is disabled" },
     });
   });
 
@@ -433,7 +436,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
   });
 
   it("returns 401 when the bearer token does not match", async () => {
@@ -457,7 +462,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
   });
 
   it("returns 400 for invalid direct API JSON", async () => {
@@ -475,7 +482,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response).error).toContain("Invalid request JSON:");
+    expect(
+      (responseJson(response) as { error: { message: string } }).error.message,
+    ).toContain("Invalid request JSON:");
   });
 
   it("returns 400 when eventId or conversationKey is missing", async () => {
@@ -498,8 +507,10 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Request body must include eventId and conversationKey",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message: "Request body must include eventId and conversationKey",
+      },
     });
   });
 
@@ -528,8 +539,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Request body must include agentId",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Request body must include agentId" },
     });
   });
 
@@ -555,7 +566,9 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(404);
-    expect(responseJson(response)).toEqual({ error: "Agent not found" });
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Agent not found" },
+    });
   });
 
   it("rejects reserved direct event prefixes", async () => {
@@ -579,8 +592,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "eventId uses a reserved internal prefix",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "eventId uses a reserved internal prefix" },
     });
   });
 
@@ -625,8 +638,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "eventId uses a reserved internal prefix",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "eventId uses a reserved internal prefix" },
     });
   });
 
@@ -651,8 +664,10 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "conversationKey uses a reserved channel or internal prefix",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message: "conversationKey uses a reserved channel or internal prefix",
+      },
     });
   });
 
@@ -672,8 +687,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Request body field 'events' must be an array",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Request body field 'events' must be an array" },
     });
   });
 
@@ -693,8 +708,11 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Request body must include a non-empty events or answers array",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message:
+          "Request body must include a non-empty events or answers array",
+      },
     });
   });
 
@@ -714,8 +732,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Each direct event must be an object",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Each direct event must be an object" },
     });
   });
 
@@ -741,8 +759,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Only system-role events may set persist",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Only system-role events may set persist" },
     });
   });
 
@@ -772,8 +790,8 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error: "Direct API system events cannot be persisted",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Direct API system events cannot be persisted" },
     });
   });
 
@@ -1039,9 +1057,11 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error:
-        "Direct API tool events may include only tool-approval-response parts",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message:
+          "Direct API tool events may include only tool-approval-response parts",
+      },
     });
   });
 
@@ -1066,9 +1086,11 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error:
-        "Direct API tool events may include only tool-approval-response parts",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message:
+          "Direct API tool events may include only tool-approval-response parts",
+      },
     });
   });
 
@@ -1265,9 +1287,11 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({
-      error:
-        "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message:
+          "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+      },
     });
   });
 
@@ -1461,7 +1485,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "public_access_disabled",
+      error: { code: "public_access_disabled" },
     });
     expect(handledEvents).toEqual([]);
   });
@@ -1495,7 +1519,7 @@ describe("direct API ingress", () => {
 
       expect(response.statusCode).toBe(403);
       expect(responseJson(response)).toMatchObject({
-        code: "status_access_denied",
+        error: { code: "status_access_denied" },
       });
     });
   }
@@ -1530,7 +1554,7 @@ describe("direct API ingress", () => {
 
       expect(response.statusCode).toBe(403);
       expect(responseJson(response)).toMatchObject({
-        code: "status_access_denied",
+        error: { code: "status_access_denied" },
       });
     });
   }
@@ -1627,7 +1651,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "status_access_denied",
+      error: { code: "status_access_denied" },
     });
   });
 
@@ -1658,7 +1682,7 @@ describe("direct API ingress", () => {
 
       expect(response.statusCode).toBe(403);
       expect(responseJson(response)).toMatchObject({
-        code: "status_access_denied",
+        error: { code: "status_access_denied" },
       });
     });
   }
@@ -1688,7 +1712,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "status_access_denied",
+      error: { code: "status_access_denied" },
     });
   });
 
@@ -1720,7 +1744,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "status_access_denied",
+      error: { code: "status_access_denied" },
     });
   });
 
@@ -1744,7 +1768,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "status_access_denied",
+      error: { code: "status_access_denied" },
     });
   });
 
@@ -1777,7 +1801,7 @@ describe("direct API ingress", () => {
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response)).toMatchObject({
-      code: "status_access_denied",
+      error: { code: "status_access_denied" },
     });
   });
 });

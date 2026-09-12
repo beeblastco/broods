@@ -28,6 +28,7 @@ import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
 import {
   configEncryptionSecret,
   json,
+  jsonError,
   methodNotAllowed,
   writeAudit,
 } from "./shared";
@@ -71,14 +72,12 @@ export async function handleAgentChannelDirectoryRoute(
       agentId: agentId,
     },
   );
-  if (!record) return json({ error: "Agent not found" }, 404);
+  if (!record) return jsonError(404, "Agent not found");
   if (channelType !== "slack") {
-    return json(
-      {
-        error: `Channel directory is not supported for ${channelType}`,
-        reason: "unsupported_channel_type",
-      },
+    return jsonError(
       400,
+      `Channel directory is not supported for ${channelType}`,
+      { code: "unsupported_channel_type", param: "channelType" },
     );
   }
   // The resolved config (env placeholders substituted), not the public-read
@@ -90,21 +89,17 @@ export async function handleAgentChannelDirectoryRoute(
   const botToken =
     typeof slack?.botToken === "string" ? slack.botToken.trim() : "";
   if (!botToken) {
-    return json(
-      {
-        error: "config.channels.slack.botToken is not configured",
-        reason: "not_configured",
-      },
-      409,
-    );
+    return jsonError(409, "config.channels.slack.botToken is not configured", {
+      code: "not_configured",
+      param: "config.channels.slack.botToken",
+    });
   }
 
   const directory = await fetchSlackChannelDirectory(botToken);
   if (!directory.ok) {
-    return json(
-      { error: directory.error, reason: directory.reason },
-      directory.status,
-    );
+    return jsonError(directory.status, directory.error, {
+      code: directory.reason,
+    });
   }
 
   return json({ channels: directory.channels, truncated: directory.truncated });
@@ -137,7 +132,7 @@ export async function handleAgentConfigRoute(
             await decryptAgentConfigForPublicRead(record),
           ),
         )
-      : json({ error: "Agent not found" }, 404);
+      : jsonError(404, "Agent not found");
   }
   if (req.method === "PATCH") {
     return await patchAgentConfigRoute(ctx, req, accountId, actor, agentId);
@@ -150,7 +145,7 @@ export async function handleAgentConfigRoute(
         agentId: agentId,
       },
     );
-    if (!existing) return json({ error: "Agent not found" }, 404);
+    if (!existing) return jsonError(404, "Agent not found");
     await ctx.runMutation(internal.agent.agents.remove, {
       accountId: accountId,
       agentId: agentId,
@@ -257,12 +252,10 @@ async function handleAgentCollectionRoute(
       },
     );
     if (duplicate) {
-      return json(
-        {
-          error: `Agent name already exists: ${input.name}`,
-          agentId: duplicate._id,
-        },
+      return jsonError(
         409,
+        `Agent name already exists: ${input.name} (${duplicate._id})`,
+        { code: "agent_name_exists", param: "name" },
       );
     }
     // Before encryption: canonicalization must land in the persisted config.
@@ -336,7 +329,7 @@ async function patchAgentConfigRoute(
       agentId: agentId,
     },
   );
-  if (!existing) return json({ error: "Agent not found" }, 404);
+  if (!existing) return jsonError(404, "Agent not found");
   const existingConfig = await decryptAgentConfigForPublicRead(existing);
   const patch = normalizeUpdateAgentInput(existingConfig, await req.json());
   if (patch.name !== undefined && patch.name !== existing.name) {
@@ -348,12 +341,10 @@ async function patchAgentConfigRoute(
       },
     );
     if (collision) {
-      return json(
-        {
-          error: `Agent name already exists: ${patch.name}`,
-          agentId: collision._id,
-        },
+      return jsonError(
         409,
+        `Agent name already exists: ${patch.name} (${collision._id})`,
+        { code: "agent_name_exists", param: "name" },
       );
     }
   }
@@ -407,7 +398,7 @@ async function patchAgentConfigRoute(
           await decryptAgentConfigForPublicRead(updated),
         ),
       )
-    : json({ error: "Agent not found" }, 404);
+    : jsonError(404, "Agent not found");
 }
 
 async function prepareAccountAgentConfig(

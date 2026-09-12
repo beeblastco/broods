@@ -89,7 +89,13 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(404);
-    expect(responseJson(response)).toEqual({ error: "Not found" });
+    expect(responseJson(response)).toEqual({
+      error: {
+        message: "Not found",
+        type: "not_found_error",
+        code: "not_found",
+      },
+    });
   });
 
   it("returns 503 when the account has not configured the requested channel", async () => {
@@ -107,8 +113,8 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toEqual({
-      error: "telegram integration is not configured",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "telegram integration is not configured" },
     });
   });
 
@@ -127,7 +133,13 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(response)).toEqual({
+      error: {
+        message: "Unauthorized",
+        type: "authentication_error",
+        code: "unauthorized",
+      },
+    });
   });
 
   it("returns 401 when Zalo webhook authentication is missing or wrong", async () => {
@@ -142,7 +154,9 @@ describe("account webhook ingress", () => {
       createHandlers(),
     );
     expect(missing.statusCode).toBe(401);
-    expect(responseJson(missing)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(missing)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
 
     const wrong = await routeIncomingEvent(
       createZaloEvent(undefined, {
@@ -151,7 +165,9 @@ describe("account webhook ingress", () => {
       createHandlers(),
     );
     expect(wrong.statusCode).toBe(401);
-    expect(responseJson(wrong)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(wrong)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
   });
 
   it("normalizes account webhook events and schedules channel processing", async () => {
@@ -361,7 +377,7 @@ describe("account webhook ingress", () => {
 
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toMatchObject({
-      code: "unknown_webhook_stage",
+      error: { code: "unknown_webhook_stage" },
     });
   });
 
@@ -382,8 +398,12 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(404);
-    expect(responseJson(response)).toMatchObject({
-      code: "unknown_webhook_url",
+    expect(responseJson(response)).toEqual({
+      error: {
+        message: expect.any(String),
+        type: "not_found_error",
+        code: "unknown_webhook_url",
+      },
     });
   });
 
@@ -401,7 +421,7 @@ describe("account webhook ingress", () => {
 
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toMatchObject({
-      code: "unknown_webhook_url",
+      error: { code: "unknown_webhook_url" },
     });
   });
 
@@ -456,8 +476,8 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toEqual({
-      error: "zalo integration is not configured",
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "zalo integration is not configured" },
     });
   });
 
@@ -475,7 +495,9 @@ describe("account webhook ingress", () => {
     );
 
     expect(response.statusCode).toBe(401);
-    expect(responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Unauthorized" },
+    });
   });
 });
 

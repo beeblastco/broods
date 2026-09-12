@@ -19,6 +19,7 @@ import {
 } from "../../model/workspaceRules";
 import {
   json,
+  jsonError,
   methodNotAllowed,
   terminateReservedInstances,
   writeAudit,
@@ -92,7 +93,7 @@ export async function handleWorkspaceConfigRoute(
 
     return record
       ? json(toPublicWorkspaceConfigResponse(record))
-      : json({ error: "Workspace not found" }, 404);
+      : jsonError(404, "Workspace not found");
   }
   if (req.method === "PATCH") {
     const existing: Doc<"workspaceConfigs"> | null = await ctx.runQuery(
@@ -102,7 +103,7 @@ export async function handleWorkspaceConfigRoute(
         workspaceId: workspaceId,
       },
     );
-    if (!existing) return json({ error: "Workspace not found" }, 404);
+    if (!existing) return jsonError(404, "Workspace not found");
     const patch = normalizeUpdateWorkspaceConfigInput(
       existing.config ?? { storage: { provider: "s3" } },
       await req.json(),
@@ -138,7 +139,7 @@ export async function handleWorkspaceConfigRoute(
 
     return updated
       ? json(toPublicWorkspaceConfigResponse(updated))
-      : json({ error: "Workspace not found" }, 404);
+      : jsonError(404, "Workspace not found");
   }
   if (req.method === "DELETE") {
     const existing: Doc<"workspaceConfigs"> | null = await ctx.runQuery(
@@ -148,7 +149,7 @@ export async function handleWorkspaceConfigRoute(
         workspaceId: workspaceId,
       },
     );
-    if (!existing) return json({ error: "Workspace not found" }, 404);
+    if (!existing) return jsonError(404, "Workspace not found");
     if (!existing.config?.storage?.bucket) {
       // Only purge managed workspace files; bring-your-own buckets are
       // customer-owned. A purge failure fails the DELETE (matching core)

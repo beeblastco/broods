@@ -13,7 +13,7 @@ import {
 import { parseCronRunsLimit } from "../../model/cronRules";
 import { isPlainObject } from "../../model/objects";
 import { toCronResponse, toCronRunResponse } from "../../model/responses";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 /**
  * List/create on the collection, get/patch/delete by id. Mirrors core's former
@@ -42,7 +42,7 @@ export async function handleCronRoute(
 
     return record
       ? json(toCronResponse(record))
-      : json({ error: "Cron job not found" }, 404);
+      : jsonError(404, "Cron job not found");
   }
   if (req.method === "PATCH") {
     return await patchCronRoute(ctx, req, accountId, actor, cronId);
@@ -75,7 +75,7 @@ export async function handleCronRoute(
 
     return deleted
       ? json({ deleted: true })
-      : json({ error: "Cron job not found" }, 404);
+      : jsonError(404, "Cron job not found");
   }
 
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
@@ -170,5 +170,5 @@ async function patchCronRoute(
     });
   }
 
-  return cron ? json(cron) : json({ error: "Cron job not found" }, 404);
+  return cron ? json(cron) : jsonError(404, "Cron job not found");
 }

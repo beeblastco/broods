@@ -8,7 +8,7 @@
  */
 
 import { requireEnv } from "./shared/env.ts";
-import type { CoreRequest } from "./shared/http.ts";
+import { errorResponse, type CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
 import { MEDIA_PATH_PREFIX, openMediaTicket } from "./shared/media-ticket.ts";
 import { contentTypeForPath } from "./shared/media-types.ts";
@@ -81,7 +81,7 @@ export async function handleMediaRequest(
       contentLength: head.contentLength,
     });
 
-    return new Response("Payload too large", { status: 413 });
+    return errorResponse(413, "Payload too large");
   }
 
   // The extension is the only source. An account on a bring-your-own bucket sets
@@ -124,5 +124,5 @@ export async function handleMediaRequest(
 // One answer for a bad ticket, a deleted workspace and a missing file, so the
 // route never tells an anonymous caller which of the three it hit.
 function notFound(): Response {
-  return new Response("Not found", { status: 404 });
+  return errorResponse(404, "Not found");
 }

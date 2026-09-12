@@ -13,7 +13,7 @@ import {
   type ConfigAuditActor,
 } from "../../model/auditEvents";
 import { putHookBundle } from "../../model/bundles";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 export async function handleHookRoute(
   ctx: ActionCtx,
@@ -33,7 +33,7 @@ export async function handleHookRoute(
 
     return record && record.status === "active"
       ? json(toPublicAccountHook(record))
-      : json({ error: "Hook not found" }, 404);
+      : jsonError(404, "Hook not found");
   }
   if (req.method === "PATCH") {
     return await patchHookRoute(ctx, req, accountId, actor, hookId);
@@ -44,7 +44,7 @@ export async function handleHookRoute(
       hookId: hookId,
     });
     if (!existing || existing.status !== "active")
-      return json({ error: "Hook not found" }, 404);
+      return jsonError(404, "Hook not found");
     await ctx.runMutation(internal.account.hooks.remove, {
       accountId: accountId,
       hookId: hookId,
@@ -136,7 +136,7 @@ async function patchHookRoute(
     hookId: hookId,
   });
   if (!existing || existing.status !== "active")
-    return json({ error: "Hook not found" }, 404);
+    return jsonError(404, "Hook not found");
   const upload = await normalizeAccountHookUpload(await req.json(), {
     requireBundle: false,
   });
@@ -184,7 +184,7 @@ async function patchHookRoute(
 
   return updated
     ? json(toPublicAccountHook(updated))
-    : json({ error: "Hook not found" }, 404);
+    : jsonError(404, "Hook not found");
 }
 
 /**
