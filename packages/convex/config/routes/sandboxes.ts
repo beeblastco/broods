@@ -25,6 +25,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
+  paginated,
   terminateReservedInstances,
   writeAudit,
 } from "./shared";
@@ -51,7 +52,7 @@ export async function handleSandboxConfigRoute(
         ),
       );
 
-      return json({ sandboxes: sandboxes });
+      return paginated("sandboxes", sandboxes, req);
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());

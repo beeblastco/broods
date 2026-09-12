@@ -10,10 +10,15 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
-import { parseCronRunsLimit } from "../../model/cronRules";
 import { isPlainObject } from "../../model/objects";
 import { toCronResponse, toCronRunResponse } from "../../model/responses";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 /**
  * List/create on the collection, get/patch/delete by id. Mirrors core's former
@@ -92,7 +97,11 @@ async function handleCronCollectionRoute(
       accountId: accountId,
     });
 
-    return json({ crons: records.map((record) => toCronResponse(record)) });
+    return paginated(
+      "crons",
+      records.map((record) => toCronResponse(record)),
+      req,
+    );
   }
   if (req.method === "POST") {
     const cron = await ctx.runMutation(internal.agent.crons.create, {
@@ -130,16 +139,18 @@ async function handleCronRunsRoute(
   cronId: string,
 ): Promise<Response> {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
-  const limit = parseCronRunsLimit(new URL(req.url).searchParams.get("limit"));
   const records = await ctx
     .runQuery(internal.agent.crons.listRuns, {
       accountId: accountId,
       cronId: cronId as Id<"crons">,
-      ...(limit !== undefined ? { limit: limit } : {}),
     })
     .catch(() => []);
 
-  return json({ runs: records.map((record) => toCronRunResponse(record)) });
+  return paginated(
+    "runs",
+    records.map((record) => toCronRunResponse(record)),
+    req,
+  );
 }
 
 async function patchCronRoute(

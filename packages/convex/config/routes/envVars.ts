@@ -9,7 +9,7 @@ import type { Id } from "../../_generated/dataModel";
 import { ACCOUNT_ENV_VAR_NAME_PATTERN } from "../../model/agentConfigCodec";
 import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, methodNotAllowed, paginated, writeAudit } from "./shared";
 
 export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
@@ -25,12 +25,14 @@ export async function handleAccountEnvVarRoute(
         accountId: accountId,
       });
 
-    return json({
-      env: variables.map((variable) => ({
+    return paginated(
+      "env",
+      variables.map((variable) => ({
         name: variable.name,
-        updatedAt: variable.updatedAt,
+        updatedAt: new Date(variable.updatedAt).toISOString(),
       })),
-    });
+      req,
+    );
   }
   validateAccountEnvVarName(name);
   if (req.method === "PUT") {

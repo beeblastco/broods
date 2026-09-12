@@ -16,7 +16,13 @@ import {
   normalizeUpdateChannelRecordInput,
 } from "../../model/channelRules";
 import { toPublicChannelRecordResponse } from "../../model/responses";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 export async function handleChannelRecordRoute(
   ctx: ActionCtx,
@@ -32,11 +38,11 @@ export async function handleChannelRecordRoute(
         { accountId: accountId },
       );
 
-      return json({
-        channels: records.map((record) =>
-          toPublicChannelRecordResponse(record),
-        ),
-      });
+      return paginated(
+        "channels",
+        records.map((record) => toPublicChannelRecordResponse(record)),
+        req,
+      );
     }
     if (req.method === "POST") {
       const input = normalizeCreateChannelRecordInput(await req.json());
