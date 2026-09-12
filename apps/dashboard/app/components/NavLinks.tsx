@@ -44,6 +44,7 @@ function NavLinksInner(): React.JSX.Element {
               // and Next prefetches again under the new key, so the first
               // wave would be thrown away.
               prefetch={!isActive && Boolean(stageParam)}
+              draggable={false}
               className={cn(
                 "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                 isActive

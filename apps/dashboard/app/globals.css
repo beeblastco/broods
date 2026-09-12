@@ -130,4 +130,37 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Chrome, not content. A press that started in the gap beside a tab or a
+     button swept a selection across every label on the row, and the click
+     that followed landed on that selection instead of on the control. Content
+     panes and form fields stay selectable. */
+  header,
+  nav,
+  [data-slot="tabs-list"],
+  :where(
+    button,
+    summary,
+    [role="button"],
+    [role="tab"],
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"],
+    [role="radio"],
+    [role="switch"],
+    [role="combobox"]
+  ):not(input, textarea) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* The same press drags a link or an image out of the page as a ghost, which
+     eats the click. Firefox reads the `draggable` attribute instead of this
+     property, so chrome links carry `draggable={false}` as well. */
+  a,
+  img,
+  svg {
+    -webkit-user-drag: none;
+  }
 }

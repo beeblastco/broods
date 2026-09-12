@@ -10,7 +10,16 @@ import {
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { Button } from "@/app/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { ReactFlow, ReactFlowProvider, type Node } from "@xyflow/react";
+import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 
@@ -26,6 +35,9 @@ const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
 
 // Enough rows for the stand-in table to scroll, so its head really sticks.
 const STAND_IN_ROWS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/** Side-panel tab labels, the row a press most often wanders off. */
+const PRESS_TABS = ["Details", "Config", "Settings"];
 
 /**
  * Six cards in two rows, the shape a small stage lands in after a tidy. Sized
@@ -46,6 +58,10 @@ const subscribeNever = (): (() => void) => () => {};
 
 export function UiGallery(): React.JSX.Element {
   const [level, setLevel] = useState("INFO");
+  const [search, setSearch] = useState("");
+  const [pressLevel, setPressLevel] = useState("INFO");
+  const [pressTab, setPressTab] = useState(PRESS_TABS[0]);
+  const [pressCount, setPressCount] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   // False in the server HTML, true once React owns the page: a spec waits on
@@ -67,8 +83,8 @@ export function UiGallery(): React.JSX.Element {
       >
         <h2 className="text-sm font-medium">Observability toolbar</h2>
         <ObservabilityToolbar
-          search=""
-          onSearchChange={() => {}}
+          search={search}
+          onSearchChange={setSearch}
           searchPlaceholder="Search logs…"
           filterAriaLabel="Filter by log level"
           filterValue={level}
@@ -130,6 +146,62 @@ export function UiGallery(): React.JSX.Element {
             maxZoom={FIT_VIEW_OPTIONS.maxZoom}
           />
         </div>
+      </section>
+
+      <section data-fixture="press-drag" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Press that wanders</h2>
+        {/* One of each control a press lands on, with the state it changes
+            rendered next to it, so a spec can press with a few pixels of
+            travel and assert the press still counted. */}
+        <nav
+          aria-label="Press row"
+          className="flex flex-wrap items-center gap-3"
+        >
+          <Button size="sm" onClick={() => setPressCount(pressCount + 1)}>
+            Deploy the stage
+          </Button>
+          <Tabs value={pressTab} onValueChange={setPressTab}>
+            <TabsList variant="line">
+              {PRESS_TABS.map((tab) => (
+                <TabsTrigger key={tab} value={tab}>
+                  {tab}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <Select
+            items={LEVEL_OPTIONS}
+            value={pressLevel}
+            onValueChange={(value) => {
+              if (value !== null) {
+                setPressLevel(value);
+              }
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Press filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LEVEL_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Link
+            href="/ui-gallery"
+            draggable={false}
+            className="cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium hover:bg-accent"
+          >
+            Architecture
+          </Link>
+        </nav>
+        <p className="text-xs text-muted-foreground">
+          pressed <span data-press-count>{pressCount}</span>, tab{" "}
+          <span data-press-tab>{pressTab}</span>, level{" "}
+          <span data-press-level>{pressLevel}</span>
+        </p>
       </section>
 
       <section data-fixture="onboarding" className="flex flex-col gap-2">
