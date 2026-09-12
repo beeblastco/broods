@@ -104,11 +104,16 @@ function SelectContent({
         side={side}
         sideOffset={sideOffset}
         alignItemWithTrigger={alignItemWithTrigger}
+        // Base UI transforms the positioner, so it is the stacking context the
+        // page sees; a z-index on the popup inside it cannot lift the popup
+        // over page chrome. The Monitoring table's sticky z-10 head covered
+        // and swallowed clicks on whichever option it overlapped.
+        className="isolate z-50"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"
           className={cn(
-            "bg-popover text-popover-foreground relative isolate z-50 min-w-[max(8rem,var(--anchor-width))] origin-(--transform-origin) rounded-md border shadow-md transition-[transform,opacity] duration-150 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+            "bg-popover text-popover-foreground relative isolate min-w-[max(8rem,var(--anchor-width))] origin-(--transform-origin) rounded-md border shadow-md transition-[transform,opacity] duration-150 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
             className,
           )}
           {...props}
