@@ -14,7 +14,7 @@ import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
-import { uploadQuotaMessage } from "../model/uploads";
+import { uploadQuotaHeaders, uploadQuotaMessage } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -221,9 +221,12 @@ export async function handleMcpBundleUploadRoute(
     kind: "mcp",
   });
   if ("retryAt" in grant) {
-    return jsonError(429, uploadQuotaMessage(grant.retryAt), {
-      code: "upload_quota_exceeded",
-    });
+    return jsonError(
+      429,
+      uploadQuotaMessage(grant.retryAt),
+      { code: "upload_quota_exceeded" },
+      uploadQuotaHeaders(grant.retryAt),
+    );
   }
 
   return json({ uploadUrl: grant.uploadUrl });

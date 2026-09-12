@@ -3,6 +3,7 @@ import {
   type ApiError,
   type ApiErrorInit,
 } from "../../../packages/convex/model/apiError.ts";
+import type { RateLimiter } from "./rate-limiter.ts";
 
 export {
   resolveRequestId,
@@ -53,6 +54,20 @@ export function jsonError(
   });
 }
 
+/** RFC 6585 Retry-After plus the IETF RateLimit fields. */
+export function rateLimitHeaders(
+  limiter: RateLimiter,
+  key: string,
+): Record<string, string> {
+  const resetSeconds = limiter.retryAfterSeconds(key);
+
+  return {
+    "Retry-After": String(resetSeconds),
+    "RateLimit-Limit": String(limiter.limit),
+    "RateLimit-Remaining": "0",
+    "RateLimit-Reset": String(resetSeconds),
+  };
+}
 export function parseJson(value: string): unknown {
   try {
     return JSON.parse(value);
