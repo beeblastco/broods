@@ -19,7 +19,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -33,16 +33,16 @@ export async function handlePolicyConfigRoute(
 ): Promise<Response> {
   if (!policyId) {
     if (req.method === "GET") {
-      const records: Doc<"agentPolicies">[] = await ctx.runQuery(
-        internal.agent.policies.list,
-        { accountId: accountId },
-      );
-
-      return paginated(
-        "policies",
-        records.map((record) => toPublicAgentPolicyResponse(record)),
-        req,
-      );
+      return collectionPage("policies", req, {
+        all: () =>
+          ctx.runQuery(internal.agent.policies.list, { accountId: accountId }),
+        item: (record) => toPublicAgentPolicyResponse(record),
+        page: (options) =>
+          ctx.runQuery(internal.agent.policies.listPage, {
+            accountId: accountId,
+            paginationOpts: options,
+          }),
+      });
     }
     if (req.method === "POST") {
       const input = normalizeCreatePolicyInput(await req.json());

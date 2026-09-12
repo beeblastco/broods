@@ -20,7 +20,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -117,15 +117,18 @@ async function handleMcpCollectionRoute(
   if (!scope.ok) return scope.response;
 
   if (req.method === "GET") {
-    const records = await ctx.runQuery(internal.account.mcp.listForStage, {
-      stageId: scope.stageId,
-    });
+    const stageId = scope.stageId;
 
-    return paginated(
-      "servers",
-      records.map((record) => toPublicMcp(record)),
-      req,
-    );
+    return collectionPage("servers", req, {
+      all: () =>
+        ctx.runQuery(internal.account.mcp.listForStage, { stageId: stageId }),
+      item: (record) => toPublicMcp(record),
+      page: (options) =>
+        ctx.runQuery(internal.account.mcp.listForStagePage, {
+          stageId: stageId,
+          paginationOpts: options,
+        }),
+    });
   }
   if (req.method === "POST") {
     const input = await normalizeMcpInput(await req.json(), {

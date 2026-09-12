@@ -16,7 +16,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -93,15 +93,16 @@ async function handleCronCollectionRoute(
   actor: ConfigAuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
-    const records = await ctx.runQuery(internal.agent.crons.list, {
-      accountId: accountId,
+    return collectionPage("crons", req, {
+      all: () =>
+        ctx.runQuery(internal.agent.crons.list, { accountId: accountId }),
+      item: (record) => toCronResponse(record),
+      page: (options) =>
+        ctx.runQuery(internal.agent.crons.listPage, {
+          accountId: accountId,
+          paginationOpts: options,
+        }),
     });
-
-    return paginated(
-      "crons",
-      records.map((record) => toCronResponse(record)),
-      req,
-    );
   }
   if (req.method === "POST") {
     const cron = await ctx.runMutation(internal.agent.crons.create, {
@@ -139,18 +140,27 @@ async function handleCronRunsRoute(
   cronId: string,
 ): Promise<Response> {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
-  const records = await ctx
-    .runQuery(internal.agent.crons.listRuns, {
-      accountId: accountId,
-      cronId: cronId as Id<"crons">,
-    })
-    .catch(() => []);
+  const ownedCronId = cronId as Id<"crons">;
 
-  return paginated(
-    "runs",
-    records.map((record) => toCronRunResponse(record)),
-    req,
-  );
+  // A cron id that is not a real id reads as an empty list, not a 500.
+  return collectionPage("runs", req, {
+    all: () =>
+      ctx
+        .runQuery(internal.agent.crons.listRuns, {
+          accountId: accountId,
+          cronId: ownedCronId,
+        })
+        .catch(() => []),
+    item: (record) => toCronRunResponse(record),
+    page: (options) =>
+      ctx
+        .runQuery(internal.agent.crons.listRunsPage, {
+          accountId: accountId,
+          cronId: ownedCronId,
+          paginationOpts: options,
+        })
+        .catch(() => ({ page: [], isDone: true, continueCursor: "" })),
+  });
 }
 
 async function patchCronRoute(

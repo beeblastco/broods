@@ -17,7 +17,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -78,15 +78,16 @@ async function handleHookCollectionRoute(
   actor: ConfigAuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
-    const records = await ctx.runQuery(internal.account.hooks.list, {
-      accountId: accountId,
+    return collectionPage("hooks", req, {
+      all: () =>
+        ctx.runQuery(internal.account.hooks.list, { accountId: accountId }),
+      item: (record) => toPublicAccountHook(record),
+      page: (options) =>
+        ctx.runQuery(internal.account.hooks.listPage, {
+          accountId: accountId,
+          paginationOpts: options,
+        }),
     });
-
-    return paginated(
-      "hooks",
-      records.map((record) => toPublicAccountHook(record)),
-      req,
-    );
   }
   if (req.method === "POST") {
     const upload = await normalizeAccountHookUpload(await req.json(), {

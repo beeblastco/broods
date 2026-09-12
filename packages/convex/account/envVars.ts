@@ -5,6 +5,8 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
+import { paginationCursorFields } from "../schema";
 import type { Id } from "../_generated/dataModel";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import {
@@ -35,6 +37,36 @@ export const list = internalQuery({
       .collect();
 
     return rows.map((row) => ({ name: row.name, updatedAt: row.updatedAt }));
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    page: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
+    ...paginationCursorFields,
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<{ name: string; updatedAt: number }>> => {
+    const page = await ctx.db
+      .query("accountEnvVars")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .paginate(args.paginationOpts);
+
+    return {
+      ...page,
+      page: page.page.map((row) => ({
+        name: row.name,
+        updatedAt: row.updatedAt,
+      })),
+    };
   },
 });
 

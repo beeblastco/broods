@@ -20,7 +20,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -33,16 +33,18 @@ export async function handleChannelRecordRoute(
 ): Promise<Response> {
   if (!channelId) {
     if (req.method === "GET") {
-      const records: Doc<"channelRecords">[] = await ctx.runQuery(
-        internal.channel.records.listActive,
-        { accountId: accountId },
-      );
-
-      return paginated(
-        "channels",
-        records.map((record) => toPublicChannelRecordResponse(record)),
-        req,
-      );
+      return collectionPage("channels", req, {
+        all: () =>
+          ctx.runQuery(internal.channel.records.listActive, {
+            accountId: accountId,
+          }),
+        item: (record) => toPublicChannelRecordResponse(record),
+        page: (options) =>
+          ctx.runQuery(internal.channel.records.listActivePage, {
+            accountId: accountId,
+            paginationOpts: options,
+          }),
+      });
     }
     if (req.method === "POST") {
       const input = normalizeCreateChannelRecordInput(await req.json());

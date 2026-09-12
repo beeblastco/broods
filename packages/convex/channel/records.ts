@@ -7,10 +7,11 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { channelRecordsFields } from "../schema";
+import { channelRecordsFields, paginationCursorFields } from "../schema";
 
 const channelRecordDoc = v.object({
   ...channelRecordsFields,
@@ -139,6 +140,28 @@ export const list = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .collect();
+  },
+});
+
+export const listActivePage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    page: v.array(channelRecordDoc),
+    ...paginationCursorFields,
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Doc<"channelRecords">>> => {
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 

@@ -6,12 +6,13 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { assertOauthRow, type McpOauth } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
-import { mcpFields } from "../schema";
+import { mcpFields, paginationCursorFields } from "../schema";
 
 /** Full mcp row validator, shared with the dashboard-facing mcp service. */
 export const mcpDoc = v.object({
@@ -137,6 +138,22 @@ export const listForStage = internalQuery({
         q.eq("stageId", args.stageId).eq("status", "active"),
       )
       .collect();
+  },
+});
+
+export const listForStagePage = internalQuery({
+  args: {
+    stageId: v.id("stages"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(mcpDoc), ...paginationCursorFields }),
+  handler: async (ctx, args): Promise<PaginationResult<Doc<"mcp">>> => {
+    return await ctx.db
+      .query("mcp")
+      .withIndex("by_stageId_and_status", (q) =>
+        q.eq("stageId", args.stageId).eq("status", "active"),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 

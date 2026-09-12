@@ -3,6 +3,7 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalMutation,
@@ -16,7 +17,7 @@ import { getProjectForRole } from "../model/ownership/project";
 import { resolveActiveAccountForAuthId } from "../model/agentSync";
 import { isPlainObject } from "../model/objects";
 import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
-import { agentPoliciesFields } from "../schema";
+import { agentPoliciesFields, paginationCursorFields } from "../schema";
 
 // Sourced from the CRUD normalizer rather than restated: this copy had gone
 // stale and silently refused every `agent.invoke` rule the runtime supports.
@@ -177,6 +178,25 @@ export const list = internalQuery({
         q.eq("accountId", args.accountId).eq("status", "active"),
       )
       .collect();
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(policyDoc), ...paginationCursorFields }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Doc<"agentPolicies">>> => {
+    return await ctx.db
+      .query("agentPolicies")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 

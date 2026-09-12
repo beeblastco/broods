@@ -25,7 +25,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   terminateReservedInstances,
   writeAudit,
 } from "./shared";
@@ -39,20 +39,22 @@ export async function handleSandboxConfigRoute(
 ): Promise<Response> {
   if (!sandboxId) {
     if (req.method === "GET") {
-      const records: Doc<"sandboxConfigs">[] = await ctx.runQuery(
-        internal.sandbox.configs.list,
-        { accountId: accountId },
-      );
-      const sandboxes = await Promise.all(
-        records.map(async (record) =>
+      return collectionPage("sandboxes", req, {
+        all: () =>
+          ctx.runQuery(internal.sandbox.configs.list, {
+            accountId: accountId,
+          }),
+        item: async (record) =>
           toPublicSandboxConfigResponse(
             record,
             await decryptSandboxConfig(record),
           ),
-        ),
-      );
-
-      return paginated("sandboxes", sandboxes, req);
+        page: (options) =>
+          ctx.runQuery(internal.sandbox.configs.listPage, {
+            accountId: accountId,
+            paginationOpts: options,
+          }),
+      });
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());

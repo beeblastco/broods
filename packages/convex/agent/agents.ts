@@ -4,6 +4,7 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
@@ -20,7 +21,7 @@ import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
 import { agentsInProject, agentsInStage } from "../model/projectScope";
-import { agentsFields } from "../schema";
+import { agentsFields, paginationCursorFields } from "../schema";
 
 const agentDoc = v.object({
   ...agentsFields,
@@ -142,6 +143,22 @@ export const list = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .collect();
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(agentDoc), ...paginationCursorFields }),
+  handler: async (ctx, args): Promise<PaginationResult<Doc<"agents">>> => {
+    return await ctx.db
+      .query("agents")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 
