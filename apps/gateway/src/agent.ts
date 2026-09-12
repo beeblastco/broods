@@ -20,9 +20,11 @@ import {
 import {
   decoder,
   errorMessage,
-  parseJson,
+  errorText,
   type GatewayLimits,
+  parseJson,
 } from "./utils.ts";
+import type { ApiError } from "../../../packages/convex/model/apiError.ts";
 
 export type AgentTestGatewayData = {
   kind: "agent-test";
@@ -57,7 +59,7 @@ type IngressHttpResponse = {
   appliedMode?: "reject" | "followup" | "collect" | "steer";
   appliedToEventId?: string;
   statusUrl?: string;
-  error?: string;
+  error?: string | ApiError;
 };
 // Derived from the NATS helpers rather than restated, so neither can drift.
 type ConversationScope = Omit<
@@ -265,7 +267,7 @@ async function runCoreStream(
       sendAgentTest(socket, {
         type: "error",
         status: response.status,
-        error: await response.text(),
+        error: await responseErrorText(response),
       });
 
       return;
@@ -426,7 +428,9 @@ async function followExecution(
             ? { appliedToEventId: status.appliedToEventId }
             : {}),
           ...(execution.statusUrl ? { statusUrl: execution.statusUrl } : {}),
-          ...(status.error ? { error: status.error } : {}),
+          ...(errorText(status.error)
+            ? { error: errorText(status.error) }
+            : {}),
         });
       }
       if (
@@ -460,7 +464,7 @@ async function followExecution(
     socket,
     execution.terminalLabel,
     isIngressStatus(terminal.status) ? terminal.status : "expired",
-    terminal.error,
+    errorText(terminal.error),
   );
 }
 
@@ -539,7 +543,7 @@ async function submitControl(
         eventId: message.eventId,
         status: payload.status ?? "not_found",
         error:
-          payload.error ??
+          errorText(payload.error) ??
           `Control input was rejected with HTTP ${response.status}`,
       });
 
@@ -590,11 +594,12 @@ async function pollControlStatus(
       statusUrl,
     ).catch(() => null);
     if (!payload?.status) continue;
+    const statusError = errorText(payload.error);
     const fingerprint = JSON.stringify([
       payload.status,
       payload.appliedMode,
       payload.appliedToEventId,
-      payload.error,
+      statusError,
     ]);
     if (fingerprint !== previous) {
       previous = fingerprint;
@@ -611,7 +616,7 @@ async function pollControlStatus(
           ? { appliedToEventId: payload.appliedToEventId }
           : {}),
         ...(statusUrl ? { statusUrl: statusUrl } : {}),
-        ...(payload.error ? { error: payload.error } : {}),
+        ...(statusError ? { error: statusError } : {}),
       });
     }
     if (
@@ -943,7 +948,23 @@ function coreHeaders(
   };
 }
 
+/** Core's error envelope reduced to its message, or the raw body if it is not one. */
+async function responseErrorText(response: Response): Promise<string> {
+  const body = await response.text();
+  try {
+    const parsed = JSON.parse(body) as { error?: string | ApiError };
+
+    return errorText(parsed.error) ?? body;
+  } catch {
+    return body;
+  }
+}
+
 async function responseJson(response: Response): Promise<IngressHttpResponse> {
+  // An unknown run answers 404 with the error envelope, which carries no
+  // `status`. The status code is the signal; the body would leave the poll
+  // loops spinning on a payload they cannot read.
+  if (response.status === 404) return { status: "not_found" };
   const payload = await response.json().catch(() => ({}));
 
   return payload && typeof payload === "object"
@@ -1001,7 +1022,7 @@ function statusFingerprint(status: IngressHttpResponse): string {
     status.status,
     status.appliedMode,
     status.appliedToEventId,
-    status.error,
+    errorText(status.error),
   ]);
 }
 

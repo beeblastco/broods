@@ -43,6 +43,7 @@ import { requireEnv } from "../shared/env.ts";
 import {
   errorResponse,
   jsonResponse,
+  methodNotAllowed,
   normalizePath,
   parseJsonBody,
   type CoreRequest,
@@ -280,10 +281,7 @@ async function handleSandboxLifecycle(
   request: CoreRequest,
 ): Promise<Response> {
   if (method !== "POST") {
-    return errorResponse(405, "Method not allowed", {
-      method: method,
-      allowedMethods: ["POST"],
-    });
+    return methodNotAllowed(["POST"]);
   }
   const sandboxId = decodeURIComponent(rawSandboxId);
   const record = await getStorage().sandboxConfigs.getById(
@@ -635,7 +633,9 @@ async function deleteAccountResponse(
       ? account
       : await getStorage().accounts.disable(account.accountId);
   if (!disabled) {
-    return jsonResponse(404, { error: "Account not found" });
+    return errorResponse(404, "Account not found", {
+      code: "account_not_found",
+    });
   }
 
   // Cron rows and their registered schedules go with the Convex account

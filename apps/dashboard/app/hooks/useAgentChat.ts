@@ -418,10 +418,10 @@ async function startHttpSseStream(options: {
 
   if (!response.ok) {
     const responseBody = (await response.json().catch(() => ({}))) as {
-      error?: string;
+      error?: { message?: string };
     };
     throw new Error(
-      responseBody.error ??
+      responseBody.error?.message ??
         `HTTP stream request failed with status ${response.status}.`,
     );
   }

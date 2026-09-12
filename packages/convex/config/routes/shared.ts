@@ -14,6 +14,8 @@ import type {
   ConfigAuditResource,
 } from "../../model/auditEvents";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
+export { json, jsonError, methodNotAllowed } from "../../model/httpJson";
+import { jsonError } from "../../model/httpJson";
 
 export type ConfigAuth =
   | { kind: "admin" }
@@ -73,21 +75,6 @@ export async function getAccountById(
   }
 }
 
-export function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status: status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-/** 405 response naming the allowed methods, matching core's payload. */
-export function methodNotAllowed(allowedMethods: string[]): Response {
-  return json(
-    { error: "Method not allowed", allowedMethods: allowedMethods },
-    405,
-  );
-}
-
 /**
  * Read and parse a JSON request body with core's empty-body and syntax strings.
  * @param req incoming HTTP request
@@ -119,7 +106,7 @@ export async function requireAccount(
   if (auth.kind === "account" && auth.viaServiceToken !== true) return auth;
   if (auth.kind === "role") return auth;
 
-  return json({ error: "Unauthorized" }, 401);
+  return jsonError(401, "Unauthorized");
 }
 
 /**
@@ -134,7 +121,7 @@ export async function requireAdminAuth(
 ): Promise<true | Response> {
   const auth = await resolveBearerAuth(ctx, req);
   if (!auth) return await unauthorizedResponse(ctx, req);
-  if (auth.kind !== "admin") return json({ error: "Forbidden" }, 403);
+  if (auth.kind !== "admin") return jsonError(403, "Forbidden");
 
   return true;
 }
@@ -153,13 +140,13 @@ export async function requireSelfAccount(
   const auth = await resolveBearerAuth(ctx, req);
   if (!auth) return await unauthorizedResponse(ctx, req);
   if (auth.kind === "admin")
-    return json({ error: "Admin must use account-specific endpoints" }, 400);
-  if (auth.kind === "deployment") return json({ error: "Unauthorized" }, 401);
+    return jsonError(400, "Admin must use account-specific endpoints");
+  if (auth.kind === "deployment") return jsonError(401, "Unauthorized");
   if (auth.kind === "role") return auth;
   if (auth.viaServiceToken === true) {
-    return json(
-      { error: "Service token is not allowed for this account endpoint" },
+    return jsonError(
       400,
+      "Service token is not allowed for this account endpoint",
     );
   }
 
@@ -231,21 +218,17 @@ export async function unauthorizedResponse(
       maxFailures: 20,
       blockMs: 15 * 60 * 1000,
     });
-  if (!result.blocked) return json({ error: "Unauthorized" }, 401);
+  if (!result.blocked) return jsonError(401, "Unauthorized");
   const retryAfterSeconds = Math.max(
     1,
     Math.ceil((result.retryAfterMs ?? 0) / 1000),
   );
 
-  return new Response(
-    JSON.stringify({ error: "Too many unauthorized attempts" }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfterSeconds),
-      },
-    },
+  return jsonError(
+    429,
+    "Too many unauthorized attempts",
+    { code: "too_many_auth_failures" },
+    { "Retry-After": String(retryAfterSeconds) },
   );
 }
 

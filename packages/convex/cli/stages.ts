@@ -24,6 +24,7 @@ import { assertStageName } from "../lib/slug";
 import { sha256Hex } from "../model/accountSecrets";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
+import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 const CANONICAL_NAMES = {
   development: "Development",
@@ -134,23 +135,20 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
-      return json({ error: "Authorization Bearer token is required" }, 401);
+      return jsonError(401, "Authorization Bearer token is required");
     }
 
     const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
       tokenHash: auth.secretHash,
     });
     if (!resolved) {
-      return json(
-        { error: "Stage commands require a `broods login` token" },
-        401,
-      );
+      return jsonError(401, "Stage commands require a `broods login` token");
     }
 
     if (req.method === "GET") {
       const project = new URL(req.url).searchParams.get("project") ?? "";
       if (!project.trim()) {
-        return json({ error: "A project query parameter is required" }, 400);
+        return jsonError(400, "A project query parameter is required");
       }
       const stages = await ctx.runQuery(internal.cli.stages.listByAccount, {
         accountId: resolved.accountId,
@@ -159,7 +157,7 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
       return stages
         ? json({ stages: stages })
-        : json({ error: `Project ${project} was not found` }, 404);
+        : jsonError(404, `Project ${project} was not found`);
     }
 
     if (req.method === "POST") {
@@ -169,13 +167,13 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
         from?: unknown;
       };
       if (typeof body.project !== "string" || !body.project.trim()) {
-        return json({ error: "Request body must include a project" }, 400);
+        return jsonError(400, "Request body must include a project");
       }
       if (typeof body.name !== "string" || !body.name.trim()) {
-        return json({ error: "Request body must include a name" }, 400);
+        return jsonError(400, "Request body must include a name");
       }
       if (body.from !== undefined && typeof body.from !== "string") {
-        return json({ error: "`from` must be a stage name" }, 400);
+        return jsonError(400, "`from` must be a stage name");
       }
       const created = await ctx.runMutation(
         internal.cli.stages.createByAccount,
@@ -189,21 +187,19 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
       return created
         ? json(created)
-        : json({ error: `Project ${body.project} was not found` }, 404);
+        : jsonError(404, `Project ${body.project} was not found`);
     }
 
-    return json({ error: "Method not allowed" }, 405);
+    return methodNotAllowed(["GET", "POST"]);
   } catch (error) {
     console.error("CLI stage request failed", error);
     if (error instanceof SyntaxError) {
-      return json({ error: "Request body must be valid JSON" }, 400);
+      return jsonError(400, "Request body must be valid JSON");
     }
 
-    return json(
-      {
-        error: error instanceof Error ? error.message : "Stage request failed",
-      },
+    return jsonError(
       400,
+      error instanceof Error ? error.message : "Stage request failed",
     );
   }
 });
@@ -253,13 +249,6 @@ async function bearerAuth(
   return {
     secretHash: await sha256Hex(match[1]),
   };
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status: status,
-    headers: { "Content-Type": "application/json" },
-  });
 }
 
 async function projectForAccount(
