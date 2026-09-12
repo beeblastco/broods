@@ -45,7 +45,7 @@ to `gateway.broods.app`), so this swaps only the base URL. See
 `packages/demos/.env.example`.
 
 - `basic-stream`: stream an agent over SSE.
-- `basic-async`: start `/async`, then poll by the returned status id.
+- `basic-async`: start a run with `background: true`, then poll by the returned run id.
 - `cron`: create a scheduled agent run with the SDK cron helper.
 - `websocket`: stream a deployed endpoint and steer its active run with a correlated control message.
 - `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.

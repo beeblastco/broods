@@ -645,7 +645,7 @@ async function attachCoreStream(
     publicEventId: message.eventId,
   };
   activeRuns.set(socket, active);
-  const statusUrl = `/status/${encodeURIComponent(message.eventId)}?agentId=${encodeURIComponent(message.agentId)}`;
+  const statusUrl = `/v1/runs/${encodeURIComponent(message.eventId)}?agentId=${encodeURIComponent(message.agentId)}`;
   try {
     const status = await fetchStatus(
       socket,
@@ -930,7 +930,7 @@ async function fetchStatus(
   const target =
     statusUrl && /^https?:\/\//.test(statusUrl)
       ? statusUrl
-      : `${socket.data.coreBaseUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+      : `${socket.data.coreBaseUrl}/v1/runs/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
 
   return responseJson(
     await fetch(target, { headers: coreHeaders(socket), signal: signal }),

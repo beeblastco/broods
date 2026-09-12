@@ -14,7 +14,7 @@ Use the Chat SDK docs for provider capability details: [Platform Adapters](https
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. There is one webhook URL, per account and channel:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/{channel}
 ```
 
 ## Agent channel tools
@@ -157,7 +157,7 @@ no record, the agent whose credentials verified the request answers.
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{channel\}"]
+  Provider["Provider webhook"] --> Url["/v1/webhooks/\{accountId\}/\{channel\}"]
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
   Account --> Agent["find the agent whose<br/>credentials verify the request"]
@@ -325,7 +325,7 @@ The normalized `InboundMessage` contains:
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
 6. Import the channel factory in [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
-8. Document the webhook URL as `/webhooks/{accountId}/{channel}`.
+8. Document the webhook URL as `/v1/webhooks/{accountId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.

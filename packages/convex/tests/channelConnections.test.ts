@@ -174,7 +174,7 @@ describe("listConnections", () => {
         agentId: agentId,
         agentName: "tracy",
         botToken: "bot-token-1",
-        webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
+        webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
       },
     ]);
   });
@@ -188,7 +188,7 @@ describe("listConnections", () => {
     const connections = await listConnections(tt, "discord");
 
     expect(connections[0]?.webhookPath).toBe(
-      `/webhooks/${scope.accountId}/discord`,
+      `/v1/webhooks/${scope.accountId}/discord`,
     );
   });
 
@@ -299,7 +299,7 @@ describe("listConnections", () => {
           agentId: expect.any(String),
           agentName: "tracy",
           botToken: "token-1",
-          webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/${channel}`,
+          webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/${channel}`,
         },
       ]);
     },

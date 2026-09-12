@@ -7,7 +7,7 @@ Discord POSTs slash commands and button interactions to `interactions_endpoint_u
 It subscribes to every config plane it is given over a Convex websocket (the connections query re-runs only when a plane's rows change, so there is no standing poll), opens one socket per Discord bot token, and POSTs each `MESSAGE_CREATE` to that token's channel webhooks in the shape core's Discord adapter already accepts:
 
 ```text
-POST {plane webhookBaseUrl}/webhooks/{accountId}/dev/{endpointId}/discord
+POST {plane webhookBaseUrl}/v1/webhooks/{accountId}/dev/{endpointId}/discord
 x-discord-gateway-token: <bot token>
 
 { "type": "GATEWAY_MESSAGE_CREATE", "data": { ...MESSAGE_CREATE } }

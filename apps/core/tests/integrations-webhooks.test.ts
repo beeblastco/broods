@@ -392,7 +392,7 @@ describe("account webhook ingress", () => {
       createTelegramEvent(
         zaloUpdate(),
         { "x-bot-api-secret-token": "zalo-secret" },
-        "/webhooks/acct_test/agent_test/zalo",
+        "/v1/webhooks/acct_test/agent_test/zalo",
       ),
       createHandlers(),
     );
@@ -415,7 +415,7 @@ describe("account webhook ingress", () => {
     });
 
     const response = await routeIncomingEvent(
-      createTelegramEvent(zaloUpdate(), undefined, "/webhooks/%ZZ/zalo"),
+      createTelegramEvent(zaloUpdate(), undefined, "/v1/webhooks/%ZZ/zalo"),
       createHandlers(),
     );
 
@@ -590,7 +590,7 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
     {
       "content-type": "application/json",
     },
-    "/webhooks/acct_test/pancake",
+    "/v1/webhooks/acct_test/pancake",
     "secret=pancake-secret",
   );
 }
@@ -603,8 +603,8 @@ function createZaloEvent(
   endpointId?: string,
 ): ReturnType<typeof coreRequest> {
   const path = endpointId
-    ? `/webhooks/acct_test/dev/${endpointId}/zalo`
-    : "/webhooks/acct_test/zalo";
+    ? `/v1/webhooks/acct_test/dev/${endpointId}/zalo`
+    : "/v1/webhooks/acct_test/zalo";
 
   return createTelegramEvent(body, headers, path);
 }
@@ -614,7 +614,7 @@ function createTelegramEvent(
   headers: Record<string, string> = {
     "x-telegram-bot-api-secret-token": "telegram-secret",
   },
-  rawPath = "/webhooks/acct_test/telegram",
+  rawPath = "/v1/webhooks/acct_test/telegram",
   rawQueryString = "",
 ): ReturnType<typeof coreRequest> {
   return coreRequest(

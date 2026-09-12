@@ -124,8 +124,8 @@ function apiFile(
           const path =
             endpoint.stageKind === undefined ||
             endpoint.stageKind === "production"
-              ? `/webhooks/${account}/${encodeURIComponent(channel.type)}`
-              : `/webhooks/${account}/dev/${encodeURIComponent(endpoint.endpointId)}/${encodeURIComponent(channel.type)}`;
+              ? `/v1/webhooks/${account}/${encodeURIComponent(channel.type)}`
+              : `/v1/webhooks/${account}/dev/${encodeURIComponent(endpoint.endpointId)}/${encodeURIComponent(channel.type)}`;
 
           return `    ${propertyKey(channel.alias)}: { kind: "channel", type: ${JSON.stringify(channel.type)}, agentName: ${JSON.stringify(channel.agentName)}, agentId: ids.agents[${JSON.stringify(channel.agentName)}], accountId: ${JSON.stringify(endpoint.accountId)}, webhookPath: ${JSON.stringify(path)} },`;
         })

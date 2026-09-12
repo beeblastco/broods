@@ -236,7 +236,7 @@ durable child row is created before dispatch and JetStream retains the earliest
 frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
 immediately even if the child began publishing before the tool result arrived.
 A `done` stream part only closes the best-effort token tail. The existing
-`/status/{taskId}?agentId={agentId}` result remains the durable terminal truth
+`/v1/runs/{taskId}?agentId={agentId}` result remains the durable terminal truth
 after completion, failure, or JetStream expiry.
 
 An attach made before the first child frame remains open even when the replay
@@ -305,6 +305,6 @@ The subagent handoff is the bridge between parent passes:
 
 ## Async and channels
 
-`/async`, NATS WebSocket worker, and channel/webhook requests use the same coordinator loop without SSE comment heartbeats. They still wait for in-process subagents because child runs currently execute inside the same request or worker. When batched child results are injected, the parent model runs a continuation before the async result, WebSocket worker, or channel reply is settled.
+Background runs, the NATS WebSocket worker, and channel/webhook requests use the same coordinator loop without SSE comment heartbeats. They still wait for in-process subagents because child runs currently execute inside the same request or worker. When batched child results are injected, the parent model runs a continuation before the async result, WebSocket worker, or channel reply is settled.
 
 `AsyncAgentResult` still stores subagent task status for polling, but the SSE continuation path does not need separate child processors.

@@ -146,8 +146,8 @@ export async function handleAccountRoute(
 export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   if (pathname === "/v1/account") return { kind: "self" };
   if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
-  if (pathname === "/accounts") return { kind: "adminList" };
-  if (!pathname.startsWith("/accounts/")) return null;
+  if (pathname === "/v1/accounts") return { kind: "adminList" };
+  if (!pathname.startsWith("/v1/accounts/")) return null;
 
   const record = pathname.match(/^\/accounts\/([^/]+)$/);
   if (record?.[1])
