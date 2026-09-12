@@ -27,7 +27,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   parseJsonRequest,
   unauthorizedResponse,
   writeAudit,
@@ -105,16 +105,16 @@ export async function handleRoleRoute(
 ): Promise<Response> {
   if (!roleId) {
     if (req.method === "GET") {
-      const records: Doc<"accountRoles">[] = await ctx.runQuery(
-        internal.account.roles.list,
-        { accountId: accountId },
-      );
-
-      return paginated(
-        "roles",
-        records.map((record) => toPublicRoleResponse(record)),
-        req,
-      );
+      return collectionPage("roles", req, {
+        all: () =>
+          ctx.runQuery(internal.account.roles.list, { accountId: accountId }),
+        item: (record) => toPublicRoleResponse(record),
+        page: (options) =>
+          ctx.runQuery(internal.account.roles.listPage, {
+            accountId: accountId,
+            paginationOpts: options,
+          }),
+      });
     }
     if (req.method === "POST") {
       const input = normalizeCreateRoleInput(await parseJsonRequest(req));

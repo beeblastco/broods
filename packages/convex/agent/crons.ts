@@ -9,6 +9,7 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -34,7 +35,7 @@ import { getProjectForRole } from "../model/ownership/project";
 import { cronsInProject } from "../model/projectScope";
 import { toCronResponse } from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
-import { cronRunsFields, cronsFields } from "../schema";
+import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const PRUNE_BATCH_SIZE = 100;
@@ -265,6 +266,32 @@ export const list = internalQuery({
           .collect(),
 });
 
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.optional(v.id("agents")),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(cronDoc), ...paginationCursorFields }),
+  handler: (
+    ctx,
+    { accountId, agentId, paginationOpts },
+  ): Promise<PaginationResult<Doc<"crons">>> =>
+    agentId
+      ? ctx.db
+          .query("crons")
+          .withIndex("by_accountId_and_agentId", (q) =>
+            q.eq("accountId", accountId).eq("agentId", agentId),
+          )
+          .paginate(paginationOpts)
+      : ctx.db
+          .query("crons")
+          .withIndex("by_accountId_and_agentId", (q) =>
+            q.eq("accountId", accountId),
+          )
+          .paginate(paginationOpts),
+});
+
 /**
  * Lists the cron jobs whose agent belongs to `projectId`, for that project's
  * scheduler page.
@@ -314,6 +341,32 @@ export const listRuns = internalQuery({
       )
       .order("desc")
       .collect();
+  },
+});
+
+export const listRunsPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.id("crons"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(cronRunDoc), ...paginationCursorFields }),
+  handler: async (
+    ctx,
+    { accountId, cronId, paginationOpts },
+  ): Promise<PaginationResult<Doc<"cronRuns">>> => {
+    // A cron the caller does not own reads as an empty page, never as someone
+    // else's run history.
+    const cron = await getOwned(ctx, accountId, cronId);
+    if (!cron) return { page: [], isDone: true, continueCursor: "" };
+
+    return await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", accountId).eq("cronId", cronId),
+      )
+      .order("desc")
+      .paginate(paginationOpts);
   },
 });
 

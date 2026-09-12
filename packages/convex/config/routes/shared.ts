@@ -5,6 +5,7 @@
  * in `model/httpJson` so the CLI plane can answer the same way.
  */
 
+import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -81,13 +82,76 @@ export async function getAccountById(
 }
 
 /**
- * One page of a collection under the collection's own key. The key is
- * unchanged so existing readers of `body.agents` keep working.
+ * One page of a Convex-backed collection under the collection's own key, or the
+ * whole collection when the caller asked for no page.
  *
- * The cursor is an offset and the Convex query still reads the whole
- * collection, so this bounds response size, not backend reads. Moving to
- * keyset pagination later changes only the cursor encoding, with no second
- * break.
+ * `source.page` runs only when the caller supplies `limit` or `cursor`, and it
+ * walks the index rather than reading the collection and slicing it, so the
+ * cursor bounds the backend read and not just the response. `source.item` runs
+ * over the rows actually served, so a route that decrypts each row pays for the
+ * page instead of the collection.
+ *
+ * A cursor with no `limit` is a client continuing a walk without restating its
+ * page size; it gets the largest page these routes serve.
+ */
+export async function collectionPage<Row, Item>(
+  key: string,
+  req: Request,
+  source: {
+    all: () => Promise<Row[]>;
+    item: (row: Row) => Item | Promise<Item>;
+    page: (options: PaginationOptions) => Promise<PaginationResult<Row>>;
+  },
+): Promise<Response> {
+  const url = new URL(req.url);
+  const rawLimit = url.searchParams.get("limit")?.trim() ?? "";
+  const rawCursor = url.searchParams.get("cursor")?.trim() ?? "";
+
+  // No `limit` and no `cursor` means the whole collection, the way these routes
+  // answered before paging existed. A default page size would silently drop
+  // rows for every client that has not asked for a page yet.
+  if (rawLimit === "" && rawCursor === "") {
+    return json({
+      [key]: await Promise.all((await source.all()).map(source.item)),
+      hasMore: false,
+      nextCursor: null,
+    });
+  }
+
+  const limit = rawLimit === "" ? MAX_PAGE_SIZE : parsePageLimit(rawLimit);
+  if (limit === null) {
+    return jsonError(
+      400,
+      `limit must be an integer between 1 and ${MAX_PAGE_SIZE}.`,
+      { code: "invalid_limit", param: "limit" },
+    );
+  }
+
+  let cursor: string | null = null;
+  if (rawCursor !== "") {
+    cursor = decodePageCursor(key, rawCursor);
+    if (cursor === null) {
+      return jsonError(400, "cursor is not a valid page cursor.", {
+        code: "invalid_cursor",
+        param: "cursor",
+      });
+    }
+  }
+
+  const page = await source.page({ numItems: limit, cursor: cursor });
+
+  return json({
+    [key]: await Promise.all(page.page.map(source.item)),
+    hasMore: !page.isDone,
+    nextCursor: page.isDone ? null : encodePageCursor(key, page.continueCursor),
+  });
+}
+
+/**
+ * One page of an in-memory collection. Only for a collection that is not a
+ * Convex table walk: `skills` comes back from an AWS action with no index to
+ * key a cursor on, so its cursor stays an offset and the whole list is still
+ * materialized. Table-backed collections use `collectionPage`.
  */
 export function paginated<T>(key: string, items: T[], req: Request): Response {
   const url = new URL(req.url);
@@ -106,7 +170,7 @@ export function paginated<T>(key: string, items: T[], req: Request): Response {
     );
   }
 
-  const offset = rawCursor === "" ? 0 : decodePageCursor(rawCursor);
+  const offset = rawCursor === "" ? 0 : decodeOffsetCursor(key, rawCursor);
   if (offset === null) {
     return jsonError(400, "cursor is not a valid page cursor.", {
       code: "invalid_cursor",
@@ -121,7 +185,7 @@ export function paginated<T>(key: string, items: T[], req: Request): Response {
   return json({
     [key]: page,
     hasMore: hasMore,
-    nextCursor: hasMore ? encodePageCursor(nextOffset) : null,
+    nextCursor: hasMore ? encodePageCursor(key, String(nextOffset)) : null,
   });
 }
 
@@ -436,18 +500,35 @@ async function resolveBearerAuth(
     : null;
 }
 
-function decodePageCursor(cursor: string): number | null {
+/**
+ * Cursors carry the collection they were issued for, so one handed out by
+ * `agents` is refused by `roles` rather than walking the wrong table.
+ *
+ * Convex's cursor holds the index key it stopped at, which for most of these
+ * collections is a name the account chose, so it can hold any code point.
+ * `btoa` only takes Latin-1, hence the percent-encoding on the way in.
+ */
+function decodePageCursor(key: string, cursor: string): string | null {
   try {
-    const offset = Number(atob(cursor));
+    const decoded: unknown = JSON.parse(decodeURIComponent(atob(cursor)));
+    if (!Array.isArray(decoded) || decoded.length !== 2) return null;
+    const [cursorKey, value] = decoded;
 
-    return Number.isInteger(offset) && offset >= 0 ? offset : null;
+    return cursorKey === key && typeof value === "string" ? value : null;
   } catch {
     return null;
   }
 }
 
-function encodePageCursor(offset: number): string {
-  return btoa(String(offset));
+function decodeOffsetCursor(key: string, cursor: string): number | null {
+  const decoded = decodePageCursor(key, cursor);
+  const offset = decoded === null ? Number.NaN : Number(decoded);
+
+  return Number.isInteger(offset) && offset >= 0 ? offset : null;
+}
+
+function encodePageCursor(key: string, cursor: string): string {
+  return btoa(encodeURIComponent(JSON.stringify([key, cursor])));
 }
 
 /** Rejects hex, exponent and decimal forms that `Number` would accept. */

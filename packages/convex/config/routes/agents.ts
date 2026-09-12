@@ -30,7 +30,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   writeAudit,
 } from "./shared";
 
@@ -228,20 +228,20 @@ async function handleAgentCollectionRoute(
   actor: ConfigAuditActor,
 ): Promise<Response> {
   if (req.method === "GET") {
-    const records: Doc<"agents">[] = await ctx.runQuery(
-      internal.agent.agents.list,
-      { accountId: accountId },
-    );
-    const agents = await Promise.all(
-      records.map(async (record) =>
+    return collectionPage("agents", req, {
+      all: () =>
+        ctx.runQuery(internal.agent.agents.list, { accountId: accountId }),
+      item: async (record) =>
         toPublicAgentResponse(
           record,
           await decryptAgentConfigForPublicRead(record),
         ),
-      ),
-    );
-
-    return paginated("agents", agents, req);
+      page: (options) =>
+        ctx.runQuery(internal.agent.agents.listPage, {
+          accountId: accountId,
+          paginationOpts: options,
+        }),
+    });
   }
   if (req.method === "POST") {
     const input = normalizeCreateAgentInput(await req.json());
