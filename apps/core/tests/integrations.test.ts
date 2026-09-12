@@ -14,6 +14,9 @@ import {
 } from "../src/shared/runtime-keys.ts";
 import { coreRequest } from "./helpers/http.ts";
 
+const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
+const TEST_RUN_ID = `run_${"a".repeat(32)}`;
+
 const TEST_ACCOUNT = {
   accountId: "acct_test",
   username: "test-account",
@@ -1291,7 +1294,7 @@ describe("direct API ingress", () => {
       "acct:acct_test:agent:agent_test:api:one",
     );
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
+      `https://gateway.broods.app/v1/runs/${handledEvents[0]?.runId}`,
     );
     expect(handledEvents[0]?.publicDeploymentIngress).toBeUndefined();
   });
@@ -1353,7 +1356,7 @@ describe("direct API ingress", () => {
       "acct:acct_test:agent:agent_test:api:one",
     );
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
+      `https://gateway.broods.app/v1/runs/${handledEvents[0]?.runId}`,
     );
     expect(handledEvents[0]?.publicDeploymentIngress).toEqual(
       deploymentIngress(),
@@ -1417,7 +1420,7 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.projectSlug).toBe("demo");
     expect(handledEvents[0]?.stageSlug).toBe("development");
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
+      `https://gateway.broods.app/v1/runs/${handledEvents[0]?.runId}`,
     );
   });
 
@@ -1462,7 +1465,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/v1/runs/one",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
           rawQueryString: "agentId=agent_test",
         },
       ),
@@ -1480,7 +1483,7 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([
+    expect(handledEvents).toMatchObject([
       {
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1490,7 +1493,50 @@ describe("direct API ingress", () => {
     ]);
   });
 
-  it("keeps canonical server-issued task ids valid for internal status parsing", async () => {
+  it("answers 404 for a run id that resolves to nothing", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer secret" },
+        { method: "GET", rawPath: `/v1/runs/${TEST_RUN_ID}` },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("an unresolved run must not reach the handler");
+        },
+      }),
+      { ingressStatusLoader: async () => null },
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "run_not_found" },
+    });
+  });
+
+  it("refuses a run id this API did not issue", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer secret" },
+        { method: "GET", rawPath: "/v1/runs/one" },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("a malformed run id must not reach the handler");
+        },
+      }),
+      {
+        ingressStatusLoader: async () => {
+          throw new Error("a malformed run id must not reach storage");
+        },
+      },
+    );
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("resolves a subagent run to its child agent and scoped event id", async () => {
     const parentEventId = scopedDirectEventId(
       TEST_ACCOUNT.accountId,
       TEST_AGENT.agentId,
@@ -1510,8 +1556,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: `/v1/runs/${encodeURIComponent(taskId)}`,
-          rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
+          rawPath: `/v1/runs/${CHILD_RUN_ID}`,
         },
       ),
       createHandlers({
@@ -1525,13 +1570,23 @@ describe("direct API ingress", () => {
           };
         },
       }),
+      {
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            scopedDirectEventId(TEST_ACCOUNT.accountId, childAgentId, taskId),
+            "subagent-child",
+            childAgentId,
+            CHILD_RUN_ID,
+          ),
+      },
     );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([
+    expect(handledEvents).toMatchObject([
       {
         accountId: TEST_ACCOUNT.accountId,
         agentId: childAgentId,
+        runId: CHILD_RUN_ID,
         eventId: scopedDirectEventId(
           TEST_ACCOUNT.accountId,
           childAgentId,
@@ -1552,7 +1607,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/v1/runs/one",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
           rawQueryString: "agentId=agent_test",
         },
       ),
@@ -1591,7 +1646,7 @@ describe("direct API ingress", () => {
     );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([
+    expect(handledEvents).toMatchObject([
       {
         accountId: "acct_test",
         agentId: "agent_test",
@@ -1611,8 +1666,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/v1/runs/one",
-          rawQueryString: "agentId=agent_private",
+          rawPath: `/v1/runs/${TEST_RUN_ID}`,
         },
       ),
       createHandlers({
@@ -1637,6 +1691,16 @@ describe("direct API ingress", () => {
                 stageSlug: "development",
               }
             : null,
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            scopedDirectEventId(
+              TEST_ACCOUNT.accountId,
+              TEST_AGENT_PRIVATE.agentId,
+              "one",
+            ),
+            "alpha",
+            TEST_AGENT_PRIVATE.agentId,
+          ),
       },
     );
 
@@ -1659,8 +1723,7 @@ describe("direct API ingress", () => {
         "one",
       );
       const response = await deploymentStatusRequest(
-        "one",
-        TEST_AGENT.agentId,
+        TEST_RUN_ID,
         createHandlers({
           handleStatusRequest: async () => {
             throw new Error("unauthorized status must not reach the handler");
@@ -1694,8 +1757,7 @@ describe("direct API ingress", () => {
         "one",
       );
       const response = await deploymentStatusRequest(
-        "one",
-        TEST_AGENT.agentId,
+        TEST_RUN_ID,
         createHandlers({
           handleStatusRequest: async () => {
             throw new Error("unauthorized status must not reach the handler");
@@ -1744,8 +1806,7 @@ describe("direct API ingress", () => {
       const handledEvents: StatusInboundEvent[] = [];
 
       const response = await deploymentStatusRequest(
-        taskId,
-        childAgentId,
+        CHILD_RUN_ID,
         createHandlers({
           handleStatusRequest: async (event) => {
             handledEvents.push(event);
@@ -1771,12 +1832,19 @@ describe("direct API ingress", () => {
             expiresAt: 1,
           }),
           ingressStatusLoader: async () =>
+            ingressStatus(
+              childEventId,
+              "subagent-child",
+              childAgentId,
+              CHILD_RUN_ID,
+            ),
+          ingressStatusByEventIdLoader: async () =>
             ingressStatus(parentEventId, "parent-conversation"),
         },
       );
 
       expect(response.statusCode).toBe(200);
-      expect(handledEvents).toEqual([
+      expect(handledEvents).toMatchObject([
         {
           accountId: TEST_ACCOUNT.accountId,
           agentId: childAgentId,
@@ -1790,8 +1858,7 @@ describe("direct API ingress", () => {
   it("rejects subagent status when the durable parent lacks public deployment provenance", async () => {
     const fixture = subagentStatusFixture();
     const response = await deploymentStatusRequest(
-      fixture.taskId,
-      fixture.childAgentId,
+      CHILD_RUN_ID,
       createHandlers({
         handleStatusRequest: async () => {
           throw new Error("unauthorized status must not reach the handler");
@@ -1799,7 +1866,14 @@ describe("direct API ingress", () => {
       }),
       {
         asyncAgentResultLoader: async () => fixture.childResult,
-        ingressStatusLoader: async () => ({
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            fixture.childResult.eventId,
+            "subagent-child",
+            fixture.childAgentId,
+            CHILD_RUN_ID,
+          ),
+        ingressStatusByEventIdLoader: async () => ({
           ...ingressStatus(fixture.parentEventId, "parent-conversation"),
           publicDeploymentIngress: undefined,
         }),
@@ -1821,8 +1895,7 @@ describe("direct API ingress", () => {
     it(`rejects subagent status when the parent ingress ${field} does not match`, async () => {
       const fixture = subagentStatusFixture();
       const response = await deploymentStatusRequest(
-        fixture.taskId,
-        fixture.childAgentId,
+        CHILD_RUN_ID,
         createHandlers({
           handleStatusRequest: async () => {
             throw new Error("unauthorized status must not reach the handler");
@@ -1830,7 +1903,14 @@ describe("direct API ingress", () => {
         }),
         {
           asyncAgentResultLoader: async () => fixture.childResult,
-          ingressStatusLoader: async () => ({
+          ingressStatusLoader: async () =>
+            ingressStatus(
+              fixture.childResult.eventId,
+              "subagent-child",
+              fixture.childAgentId,
+              CHILD_RUN_ID,
+            ),
+          ingressStatusByEventIdLoader: async () => ({
             ...ingressStatus(fixture.parentEventId, "parent-conversation"),
             publicDeploymentIngress: deploymentIngress({ [field]: value }),
           }),
@@ -1847,8 +1927,7 @@ describe("direct API ingress", () => {
   it("rejects subagent status when the parent belongs to another endpoint", async () => {
     const fixture = subagentStatusFixture();
     const response = await deploymentStatusRequest(
-      fixture.taskId,
-      fixture.childAgentId,
+      CHILD_RUN_ID,
       createHandlers({
         handleStatusRequest: async () => {
           throw new Error("unauthorized status must not reach the handler");
@@ -1863,6 +1942,13 @@ describe("direct API ingress", () => {
           stageSlug: "development",
         }),
         ingressStatusLoader: async () =>
+          ingressStatus(
+            fixture.childResult.eventId,
+            "subagent-child",
+            fixture.childAgentId,
+            CHILD_RUN_ID,
+          ),
+        ingressStatusByEventIdLoader: async () =>
           ingressStatus(fixture.parentEventId, "parent-conversation"),
       },
     );
@@ -1882,8 +1968,7 @@ describe("direct API ingress", () => {
       ),
     });
     const response = await deploymentStatusRequest(
-      fixture.taskId,
-      fixture.childAgentId,
+      CHILD_RUN_ID,
       createHandlers({
         handleStatusRequest: async () => {
           throw new Error("unauthorized status must not reach the handler");
@@ -1891,9 +1976,16 @@ describe("direct API ingress", () => {
       }),
       {
         asyncAgentResultLoader: async () => fixture.childResult,
-        ingressStatusLoader: async () => {
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            fixture.childResult.eventId,
+            "subagent-child",
+            fixture.childAgentId,
+            CHILD_RUN_ID,
+          ),
+        ingressStatusByEventIdLoader: async () => {
           throw new Error(
-            "cross-account parent must be rejected before lookup",
+            "cross-account parent must be rejected before its lookup",
           );
         },
       },
@@ -1908,8 +2000,7 @@ describe("direct API ingress", () => {
   it("rejects a fabricated subagent task without its exact durable child row", async () => {
     const fixture = subagentStatusFixture();
     const response = await deploymentStatusRequest(
-      fixture.taskId,
-      fixture.childAgentId,
+      CHILD_RUN_ID,
       createHandlers({
         handleStatusRequest: async () => {
           throw new Error("unauthorized status must not reach the handler");
@@ -1917,8 +2008,17 @@ describe("direct API ingress", () => {
       }),
       {
         asyncAgentResultLoader: async () => null,
-        ingressStatusLoader: async () => {
-          throw new Error("missing child row must be rejected before lookup");
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            fixture.childResult.eventId,
+            "subagent-child",
+            fixture.childAgentId,
+            CHILD_RUN_ID,
+          ),
+        ingressStatusByEventIdLoader: async () => {
+          throw new Error(
+            "a missing child row must be rejected before the parent lookup",
+          );
         },
       },
     );
@@ -1932,16 +2032,15 @@ describe("direct API ingress", () => {
   it("rejects a child row whose conversation is scoped to another agent", async () => {
     const fixture = subagentStatusFixture();
     const response = await deploymentStatusRequest(
-      fixture.taskId,
-      fixture.childAgentId,
+      CHILD_RUN_ID,
       createHandlers({
         handleStatusRequest: async () => {
           throw new Error("unauthorized status must not reach the handler");
         },
       }),
       {
-        // Same task and account, but the row is another agent's conversation:
-        // otherwise the agentId query parameter alone picks which row is read.
+        // Same task and account, but the row is another agent's conversation,
+        // so the child cannot borrow this parent's authorization.
         asyncAgentResultLoader: async () => ({
           ...fixture.childResult,
           conversationKey: scopedDirectConversationKey(
@@ -1950,8 +2049,17 @@ describe("direct API ingress", () => {
             "subagent-child",
           ),
         }),
-        ingressStatusLoader: async () => {
-          throw new Error("foreign child scope must be rejected before lookup");
+        ingressStatusLoader: async () =>
+          ingressStatus(
+            fixture.childResult.eventId,
+            "subagent-child",
+            fixture.childAgentId,
+            CHILD_RUN_ID,
+          ),
+        ingressStatusByEventIdLoader: async () => {
+          throw new Error(
+            "a foreign child scope must be rejected before the parent lookup",
+          );
         },
       },
     );
@@ -2017,6 +2125,19 @@ async function routeIncomingEvent(
           : agentId === TEST_AGENT_PRIVATE.agentId
             ? TEST_AGENT_PRIVATE
             : null),
+    ingressStatusLoader:
+      options.ingressStatusLoader ??
+      (async ({ runId }) =>
+        ingressStatus(
+          scopedDirectEventId(
+            TEST_ACCOUNT.accountId,
+            TEST_AGENT.agentId,
+            "one",
+          ),
+          "alpha",
+          TEST_AGENT.agentId,
+          runId,
+        )),
     deploymentLoader:
       options.deploymentLoader ??
       (async () => ({
@@ -2033,8 +2154,7 @@ async function routeIncomingEvent(
 }
 
 async function deploymentStatusRequest(
-  taskId: string,
-  childAgentId: string,
+  runId: string,
   handlers: ReturnType<typeof createHandlers>,
   options: IntegrationRoutingOptions,
 ): Promise<ResponseShape> {
@@ -2044,8 +2164,7 @@ async function deploymentStatusRequest(
       { authorization: "Bearer fp_agent_test" },
       {
         method: "GET",
-        rawPath: `/v1/runs/${encodeURIComponent(taskId)}`,
-        rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
+        rawPath: `/v1/runs/${encodeURIComponent(runId)}`,
       },
     ),
     handlers,
@@ -2062,9 +2181,16 @@ async function deploymentStatusRequest(
   );
 }
 
-function ingressStatus(eventId: string, conversationKey: string) {
+function ingressStatus(
+  eventId: string,
+  conversationKey: string,
+  agentId: string = TEST_AGENT.agentId,
+  runId: string = TEST_RUN_ID,
+) {
   return {
     eventId: eventId,
+    runId: runId,
+    agentId: agentId,
     conversationKey: scopedDirectConversationKey(
       TEST_ACCOUNT.accountId,
       TEST_AGENT.agentId,

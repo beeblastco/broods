@@ -28,7 +28,7 @@ export interface StatusAccessContext {
     accountId: string,
     agentId: string,
   ): Promise<AgentDeploymentScope | null>;
-  ingressStatusLoader(options: {
+  ingressStatusByEventIdLoader(options: {
     accountId: string;
     agentId: string;
     eventId: string;
@@ -45,6 +45,8 @@ export interface StatusAccessRequest {
   agentId: string;
   eventId: string;
   publicEventId: string;
+  /** The run's envelope, already resolved by run id before this check runs. */
+  ingress: IngressStatusRecord;
 }
 
 export async function statusAccessDenial(
@@ -75,18 +77,17 @@ async function publicAgentDenial(
       message: `Agent ${request.agentId} is not publicly accessible.`,
     };
   }
-  const [deployment, status] = await Promise.all([
-    context.deploymentLoader(request.accountId, request.agentId),
-    context.ingressStatusLoader({
-      accountId: request.accountId,
-      agentId: request.agentId,
-      eventId: request.eventId,
-    }),
-  ]);
+  const deployment = await context.deploymentLoader(
+    request.accountId,
+    request.agentId,
+  );
 
   return deploymentScopeMatches(auth, deployment) &&
-    status?.eventId === request.eventId &&
-    deploymentScopeMatches(auth, status.publicDeploymentIngress ?? null)
+    request.ingress.eventId === request.eventId &&
+    deploymentScopeMatches(
+      auth,
+      request.ingress.publicDeploymentIngress ?? null,
+    )
     ? null
     : accessDenied();
 }
@@ -123,7 +124,7 @@ async function subagentDenial(
   const [parentAgent, parentDeployment, parentStatus] = await Promise.all([
     context.agentLoader(request.accountId, parentScope.agentId),
     context.deploymentLoader(request.accountId, parentScope.agentId),
-    context.ingressStatusLoader({
+    context.ingressStatusByEventIdLoader({
       accountId: request.accountId,
       agentId: parentScope.agentId,
       eventId: parentEventId,

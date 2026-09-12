@@ -12,7 +12,7 @@ const run = await client.runAsync(api.agents.structuredAssistant, {
     "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",
 });
 
-console.log("Async status id:", run.statusId);
+console.log("Run id:", run.runId);
 console.log("Status URL:", run.statusUrl);
 
 const status = await run.wait();

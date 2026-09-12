@@ -63,6 +63,9 @@ const admissionResultValidator = v.object({
     v.literal("not_running"),
   ),
   eventId: v.optional(v.string()),
+  // The run's own id. On a duplicate this is the first admission's, not the
+  // one the retry minted, so an idempotent POST keeps one run id.
+  runId: v.optional(v.string()),
   status: v.optional(ingressStatusValidator),
   ownerGeneration: v.optional(v.number()),
   sequence: v.optional(v.number()),
@@ -79,6 +82,8 @@ const channelTargetValidator = v.object({
 
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
+  runId: v.optional(v.string()),
+  agentId: v.string(),
   conversationKey: v.string(),
   requestedMode: ingressModeValidator,
   appliedMode: v.optional(appliedIngressModeValidator),
@@ -126,6 +131,7 @@ export const accept = internalMutation({
     agentId: v.string(),
     conversationKey: v.string(),
     eventId: v.string(),
+    runId: v.string(),
     idempotencyKey: v.string(),
     payloadDigest: v.string(),
     events: v.array(v.any()),
@@ -222,6 +228,7 @@ export const accept = internalMutation({
       return {
         outcome: "queued" as const,
         eventId: args.eventId,
+        runId: args.runId,
         status: "queued" as const,
         sequence: sequence,
         ...(recovered ? { recovered: recovered } : {}),
@@ -251,6 +258,7 @@ export const accept = internalMutation({
     return {
       outcome: "owner" as const,
       eventId: args.eventId,
+      runId: args.runId,
       status: "processing" as const,
       ownerGeneration: ownerGeneration,
       sequence: sequence,
@@ -476,6 +484,35 @@ export const getConversationTarget = internalQuery({
 export const getStatus = internalQuery({
   args: {
     accountId: v.id("accounts"),
+    runId: v.string(),
+  },
+  returns: v.union(ingressStatusResultValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof ingressStatusResultValidator> | null> => {
+    // Account-scoped at the index, so a guessed run id cannot read across
+    // accounts and the agent comes off the row rather than the query string.
+    const row = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_accountId_and_runId", (q) =>
+        q.eq("accountId", args.accountId).eq("runId", args.runId),
+      )
+      .unique();
+    if (!row) return null;
+
+    return ingressStatusResult(row);
+  },
+});
+
+/**
+ * Reads one run's status by its scoped event id, re-checking the account and
+ * agent the caller named. Only the subagent-parent authorization check uses
+ * this: it knows the parent's scoped id but not the parent's run id.
+ */
+export const getStatusByEventId = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
     agentId: v.string(),
     eventId: v.string(),
   },
@@ -495,31 +532,8 @@ export const getStatus = internalQuery({
     ) {
       return null;
     }
-    const publicDeploymentIngress = publicDeploymentIngressFromDelivery(
-      row.delivery,
-    );
 
-    return {
-      eventId: row.eventId,
-      conversationKey: row.conversationKey,
-      requestedMode: row.requestedMode,
-      ...(row.appliedMode !== undefined
-        ? { appliedMode: row.appliedMode }
-        : {}),
-      ...(row.appliedToEventId !== undefined
-        ? { appliedToEventId: row.appliedToEventId }
-        : {}),
-      status: row.status,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      expiresAt: row.expiresAt,
-      ...(row.error !== undefined ? { error: row.error } : {}),
-      ...(row.stoppedByUser ? { stoppedByUser: true } : {}),
-      ...(row.result !== undefined ? { result: row.result } : {}),
-      ...(publicDeploymentIngress
-        ? { publicDeploymentIngress: publicDeploymentIngress }
-        : {}),
-    };
+    return ingressStatusResult(row);
   },
 });
 
@@ -856,6 +870,7 @@ function buildAdmissionEnvelope(
     agentId: string;
     conversationKey: string;
     eventId: string;
+    runId: string;
     idempotencyKey: string;
     payloadDigest: string;
     events: unknown[];
@@ -878,6 +893,7 @@ function buildAdmissionEnvelope(
     conversationKey: args.conversationKey,
     sequence: sequence,
     eventId: args.eventId,
+    runId: args.runId,
     identity: identity,
     idempotencyKey: args.idempotencyKey,
     payloadDigest: args.payloadDigest,
@@ -948,6 +964,7 @@ async function checkDuplicateAdmission(
     return {
       outcome: "duplicate" as const,
       eventId: existing.eventId,
+      ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
       status: existing.status,
       ...(existing.ownerGeneration !== undefined
         ? { ownerGeneration: existing.ownerGeneration }
@@ -964,6 +981,37 @@ async function checkDuplicateAdmission(
   }
 
   return null;
+}
+
+/** One envelope row as the status shape the public status route answers with. */
+function ingressStatusResult(
+  row: Doc<"runtimeIngressEnvelopes">,
+): Infer<typeof ingressStatusResultValidator> {
+  const publicDeploymentIngress = publicDeploymentIngressFromDelivery(
+    row.delivery,
+  );
+
+  return {
+    eventId: row.eventId,
+    ...(row.runId !== undefined ? { runId: row.runId } : {}),
+    agentId: row.agentId,
+    conversationKey: row.conversationKey,
+    requestedMode: row.requestedMode,
+    ...(row.appliedMode !== undefined ? { appliedMode: row.appliedMode } : {}),
+    ...(row.appliedToEventId !== undefined
+      ? { appliedToEventId: row.appliedToEventId }
+      : {}),
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    expiresAt: row.expiresAt,
+    ...(row.error !== undefined ? { error: row.error } : {}),
+    ...(row.stoppedByUser ? { stoppedByUser: true } : {}),
+    ...(row.result !== undefined ? { result: row.result } : {}),
+    ...(publicDeploymentIngress
+      ? { publicDeploymentIngress: publicDeploymentIngress }
+      : {}),
+  };
 }
 
 /** The leading run of rows that share the first row's requestedMode. */

@@ -134,6 +134,26 @@ describe("handleScheduledCron", () => {
     ]);
   });
 
+  it("admits a run under the same id its own status URL names", async () => {
+    conversationKey = "nightly-maintenance";
+
+    await expect(invokeCron()).rejects.toThrow(
+      "Cron conversation is already processing another turn",
+    );
+
+    const candidate = admitted[0];
+    const delivery = candidate?.delivery as {
+      kind: string;
+      statusUrl?: string;
+    };
+    expect(delivery.kind).toBe("async");
+    // The envelope was once stored under an id minted at admission while its
+    // own statusUrl still named the one built before it, so a client following
+    // that URL resolved nothing.
+    expect(candidate?.runId).toMatch(/^run_[0-9a-f]{32}$/);
+    expect(delivery.statusUrl).toBe(`/v1/runs/${String(candidate?.runId)}`);
+  });
+
   it("keeps a cron with no live session on its own direct conversation", async () => {
     conversationKey = "nightly-maintenance";
 

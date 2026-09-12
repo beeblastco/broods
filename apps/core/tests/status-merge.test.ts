@@ -27,6 +27,7 @@ const ACCOUNT: AccountRecord = {
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
+const RUN_ID = `run_${"a".repeat(32)}`;
 const SCOPED_EVENT_ID = "acct:acct_1:agent:agent_1:api:one";
 const SCOPED_CONVERSATION_KEY = "acct:acct_1:agent:agent_1:api:conversation-1";
 const APPROVALS = [
@@ -69,7 +70,7 @@ afterEach(() => {
 
 function statusRequest(): Promise<Response> {
   return handler(
-    coreRequest("GET", "/v1/runs/one?agentId=agent_1", {
+    coreRequest("GET", `/v1/runs/${RUN_ID}`, {
       authorization: "Bearer fp_acct_known-secret",
     }),
   );
@@ -77,6 +78,8 @@ function statusRequest(): Promise<Response> {
 
 function ingress(overrides: Record<string, unknown> = {}): {
   eventId: string;
+  runId: string;
+  agentId: string;
   conversationKey: string;
   requestedMode: string;
   status: string;
@@ -86,6 +89,8 @@ function ingress(overrides: Record<string, unknown> = {}): {
 } {
   return {
     eventId: SCOPED_EVENT_ID,
+    runId: RUN_ID,
+    agentId: "agent_1",
     conversationKey: SCOPED_CONVERSATION_KEY,
     requestedMode: "reject",
     status: "completed",
@@ -162,7 +167,7 @@ describe("status route ingress/async merge", () => {
     expect(payload.requestedMode).toBe("reject");
   });
 
-  it("returns 404 when neither record exists", async () => {
+  it("returns 404 when the run id resolves to nothing", async () => {
     ingressRow = null;
     asyncRow = null;
 

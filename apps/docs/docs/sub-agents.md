@@ -235,9 +235,9 @@ account and child agent so conversations cannot cross those scopes. Because the
 durable child row is created before dispatch and JetStream retains the earliest
 frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
 immediately even if the child began publishing before the tool result arrived.
-A `done` stream part only closes the best-effort token tail. The existing
-`/v1/runs/{taskId}?agentId={agentId}` result remains the durable terminal truth
-after completion, failure, or JetStream expiry.
+A `done` stream part only closes the best-effort token tail. The dispatch also
+carries a `statusPath` of `/v1/runs/{runId}`, and that result remains the
+durable terminal truth after completion, failure, or JetStream expiry.
 
 An attach made before the first child frame remains open even when the replay
 buffer is empty. The gateway starts at the next subject sequence and tails

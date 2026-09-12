@@ -7,6 +7,7 @@ import { jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
 import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import { logError } from "../../shared/log.ts";
 import {
+  createRunId,
   publicConversationKeyFromScoped,
   scopedDirectEventId,
 } from "../../shared/runtime-keys.ts";
@@ -94,6 +95,8 @@ export default function updateSubagentTool(
           accountId: context.accountId,
           agentId: input.agentId,
           eventId: controlEventId,
+          // A steer control is never polled by run id of its own.
+          runId: createRunId(),
           expectedOwnerTaskId: input.taskId,
           ownerTaskId: input.taskId,
           conversationKey: record.conversationKey,

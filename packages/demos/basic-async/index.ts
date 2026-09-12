@@ -11,7 +11,7 @@ const run = await client.runAsync(api.agents.search, {
   input: "Search the web for the latest weather in Hanoi.",
 });
 
-console.log("Async status id:", run.statusId);
+console.log("Run id:", run.runId);
 console.log("Status URL:", run.statusUrl);
 
 const status = await run.wait();

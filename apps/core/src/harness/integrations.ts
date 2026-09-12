@@ -81,11 +81,13 @@ import {
   accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
-  assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
+  createRunId,
+  isRunId,
   normalizeDirectIdentifier,
   parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
+  publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -111,6 +113,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   getIngressStatus,
+  getIngressStatusByEventId,
   type AppliedIngress,
   type IngressMode,
   type IngressStatusRecord,
@@ -172,6 +175,8 @@ export interface DirectInboundEvent {
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
+  /** Account-unique public id for this run; what its status URL names. */
+  runId: string;
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
@@ -226,11 +231,21 @@ export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
 }
 
-export interface StatusInboundEvent {
+/** What `GET /v1/runs/{runId}` names before anything is resolved. */
+export interface StatusRunTarget {
   accountId: string;
+  runId: string;
+}
+
+/**
+ * One resolved run. Every field but `runId` comes off the envelope rather than
+ * the request, so the caller cannot name an agent it does not own.
+ */
+export interface StatusInboundEvent extends StatusRunTarget {
   agentId: string;
   eventId: string;
   publicEventId: string;
+  ingress: IngressStatusRecord;
 }
 
 // Background-job completion posted by the detached job itself. Authenticated by
@@ -327,6 +342,10 @@ export interface IntegrationRoutingOptions {
   ) => Promise<AsyncAgentResultRecord | null>;
   ingressStatusLoader?: (options: {
     accountId: string;
+    runId: string;
+  }) => Promise<IngressStatusRecord | null>;
+  ingressStatusByEventIdLoader?: (options: {
+    accountId: string;
     agentId: string;
     eventId: string;
   }) => Promise<IngressStatusRecord | null>;
@@ -357,6 +376,10 @@ interface HttpRoutingContext {
     eventId: string,
   ): Promise<AsyncAgentResultRecord | null>;
   ingressStatusLoader(options: {
+    accountId: string;
+    runId: string;
+  }): Promise<IngressStatusRecord | null>;
+  ingressStatusByEventIdLoader(options: {
     accountId: string;
     agentId: string;
     eventId: string;
@@ -427,6 +450,8 @@ export function createIncomingEventRouter(
   const asyncAgentResultLoader =
     options.asyncAgentResultLoader ?? getAsyncAgentResult;
   const ingressStatusLoader = options.ingressStatusLoader ?? getIngressStatus;
+  const ingressStatusByEventIdLoader =
+    options.ingressStatusByEventIdLoader ?? getIngressStatusByEventId;
   const directApiEnabled = options.directApiEnabled ?? true;
   const waitUntil = options.waitUntil ?? ((): void => {});
 
@@ -444,6 +469,7 @@ export function createIncomingEventRouter(
       deploymentLoader: deploymentLoader,
       asyncAgentResultLoader: asyncAgentResultLoader,
       ingressStatusLoader: ingressStatusLoader,
+      ingressStatusByEventIdLoader: ingressStatusByEventIdLoader,
       directApiEnabled: directApiEnabled,
       waitUntil: waitUntil,
     });
@@ -472,16 +498,31 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
-      const parsed = parseStatusPath(request.path, request.search, account);
+      const target = parseStatusPath(request.path, account);
+      const ingress = await context.ingressStatusLoader(target);
+      if (!ingress) {
+        return errorResponse(404, `No run ${target.runId}`, {
+          code: "run_not_found",
+        });
+      }
+      const parsed: StatusInboundEvent = {
+        ...target,
+        agentId: ingress.agentId,
+        eventId: ingress.eventId,
+        publicEventId: publicEventIdForScope(
+          ingress.eventId,
+          target.accountId,
+          ingress.agentId,
+          ingress.eventId,
+        ),
+        ingress: ingress,
+      };
       // A project+stage runtime key works on both /v1/runs and the scoped
       // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL.
       if (auth?.kind === "deployment") {
         const denial = await statusAccessDenial(auth, parsed, context);
         if (denial) {
-          return errorResponse(403, denial.message, {
-            code: denial.code,
-            param: "agentId",
-          });
+          return errorResponse(403, denial.message, { code: denial.code });
         }
       }
 
@@ -750,7 +791,7 @@ async function handleHttpRequest(
           return notFoundResponse();
         }
 
-        const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+        const statusUrl = buildStatusUrl(parsed.runId);
         if (!statusUrl) {
           return errorResponse(
             503,
@@ -802,7 +843,7 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
-      const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
+      const statusUrl = buildStatusUrl(parsed.runId);
       if (!statusUrl) {
         return errorResponse(
           503,
@@ -2001,6 +2042,7 @@ async function parseDirectPayload(
     ),
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
+    runId: createRunId(),
     ...conversation,
     events: events,
     background: background,
@@ -2194,25 +2236,17 @@ function parseSystemOverride(raw: unknown): SystemModelMessage[] {
 
 function parseStatusPath(
   rawPath: string,
-  rawQueryString: string,
   account: AccountRecord,
-): StatusInboundEvent {
+): StatusRunTarget {
   const match = rawPath.match(/^\/v1\/runs\/([^/]+)$/);
-  const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
-  const publicEventId = assertValidPublicStatusEventId(rawEventId);
-
-  const params = new URLSearchParams(rawQueryString);
-  const rawAgentId = params.get("agentId");
-  if (!rawAgentId) {
-    throw new Error("agentId query parameter is required");
+  const rawRunId = match?.[1] ? decodeURIComponent(match[1]) : "";
+  if (!isRunId(rawRunId)) {
+    throw new Error("Run id is not one this API issued");
   }
-  const agentId = normalizeDirectIdentifier("agentId", rawAgentId);
 
   return {
     accountId: account.accountId,
-    agentId: agentId,
-    eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
-    publicEventId: publicEventId,
+    runId: rawRunId,
   };
 }
 
@@ -2329,13 +2363,13 @@ function notFoundResponse(): Response {
   return errorResponse(404, "Not found");
 }
 
-function buildStatusUrl(publicEventId: string, agentId: string): string | null {
+function buildStatusUrl(runId: string): string | null {
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     throw new StatusUrlConfigError("PUBLIC_BASE_URL is not configured");
   }
 
-  return `${baseUrl}/v1/runs/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
+  return `${baseUrl}/v1/runs/${encodeURIComponent(runId)}`;
 }
 
 function parseBooleanField(value: unknown, name: string): boolean {

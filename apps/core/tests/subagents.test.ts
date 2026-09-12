@@ -98,9 +98,8 @@ describe("SubagentCoordinator", () => {
       expect(task.taskId.startsWith("subagent~")).toBe(true);
       expect(task.agentId).toBe(`virtual_subagent_${task.taskId}`);
       expect(task.conversationKey.startsWith("subagent-")).toBe(true);
-      expect(task.statusPath).toBe(
-        `/v1/runs/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
-      );
+      // The dispatch hands the parent a run id, not the task's own event id.
+      expect(task.statusPath).toMatch(/^\/v1\/runs\/run_[0-9a-f]{32}$/);
       expect(timeline.slice(0, 3)).toEqual([
         "persist:createAsyncAgentResult",
         "lifecycle:subagent.task.started",
@@ -497,7 +496,7 @@ describe("SubagentCoordinator", () => {
         kind: "async",
         publicEventId: "subagent~task_1",
         publicConversationKey: "subagent-persistent-1",
-        statusUrl: "/v1/runs/subagent~task_1?agentId=agent_child",
+        statusUrl: `/v1/runs/${CHILD_RUN_ID}`,
       });
     } finally {
       runtime.mutate = originalMutation;
@@ -998,9 +997,12 @@ function completion(taskId: string, response: unknown): TestCompletion {
   };
 }
 
+const CHILD_RUN_ID = `run_${"c".repeat(32)}`;
+
 function persistentChildTask() {
   return {
     taskId: "subagent~task_1",
+    runId: CHILD_RUN_ID,
     eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
     agentId: "agent_child",
     agentConfig: {},

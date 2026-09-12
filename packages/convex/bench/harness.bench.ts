@@ -54,6 +54,7 @@ export interface RuntimeFunctions {
         agentId: string;
         conversationKey: string;
         eventId: string;
+        runId: string;
         idempotencyKey: string;
         payloadDigest: string;
         events: unknown[];
