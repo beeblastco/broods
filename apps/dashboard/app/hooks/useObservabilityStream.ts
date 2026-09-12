@@ -200,8 +200,8 @@ export function useObservabilityStream(
     setError(null);
 
     const wsUrl =
-      `${wsBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
-      `/${encodeURIComponent(stageSlug)}/observability/ws`;
+      `${wsBaseUrl}/v1/projects/${encodeURIComponent(projectSlug)}` +
+      `/stages/${encodeURIComponent(stageSlug)}/observability/ws`;
 
     // Credential in the subprotocol list, never the URL (see useAgentChat).
     const socket = new WebSocket(wsUrl, [

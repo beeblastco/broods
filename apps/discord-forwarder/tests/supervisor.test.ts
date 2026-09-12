@@ -41,7 +41,7 @@ function connection(
     agentName: "support",
     botToken: "token-a",
     webhookUrl:
-      "https://gateway.example.com/webhooks/account-1/dev/endpoint-1/discord",
+      "https://gateway.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
     ...overrides,
   };
 }
@@ -72,7 +72,7 @@ describe("grouping connections", () => {
         agentId: "agent-1",
         agentName: "support",
         webhookUrl:
-          "https://gateway.example.com/webhooks/account-1/dev/endpoint-1/discord",
+          "https://gateway.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
       },
     ]);
   });
@@ -82,7 +82,7 @@ describe("grouping connections", () => {
       connection(),
       connection({
         agentId: "agent-2",
-        webhookUrl: "https://gateway.example.com/webhooks/a/discord",
+        webhookUrl: "https://gateway.example.com/v1/webhooks/a/discord",
       }),
     ]);
 
@@ -96,11 +96,11 @@ describe("grouping connections", () => {
   it("keeps a token deployed to two planes on a single socket", () => {
     const grouped = groupConnectionsByToken([
       connection({
-        webhookUrl: "https://gateway.dev.example.com/webhooks/a/discord",
+        webhookUrl: "https://gateway.dev.example.com/v1/webhooks/a/discord",
       }),
       connection({
         agentId: "agent-2",
-        webhookUrl: "https://gateway.example.com/webhooks/b/discord",
+        webhookUrl: "https://gateway.example.com/v1/webhooks/b/discord",
       }),
     ]);
 
@@ -158,7 +158,7 @@ describe("reconcile", () => {
       connection(),
       connection({
         agentId: "agent-2",
-        webhookUrl: "https://gateway.example.com/webhooks/a/discord",
+        webhookUrl: "https://gateway.example.com/v1/webhooks/a/discord",
       }),
     ]);
 
@@ -213,18 +213,22 @@ describe("reconcile", () => {
         return new StubSocket();
       });
       forwarder.reconcile([
-        connection({ webhookUrl: "https://gateway.example.com/webhooks/old" }),
+        connection({
+          webhookUrl: "https://gateway.example.com/v1/webhooks/old",
+        }),
       ]);
       deliver?.({ channel_id: "channel-1", id: "message-1" });
 
       await until(() => releaseLookup !== undefined);
       forwarder.reconcile([
-        connection({ webhookUrl: "https://gateway.example.com/webhooks/new" }),
+        connection({
+          webhookUrl: "https://gateway.example.com/v1/webhooks/new",
+        }),
       ]);
       releaseLookup?.();
       await until(() => posted.length > 0);
 
-      expect(posted).toEqual(["https://gateway.example.com/webhooks/new"]);
+      expect(posted).toEqual(["https://gateway.example.com/v1/webhooks/new"]);
     } finally {
       globalThis.fetch = realFetch;
     }

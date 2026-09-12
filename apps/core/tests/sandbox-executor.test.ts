@@ -1251,7 +1251,7 @@ describe("createSandboxExecutor", () => {
       outputLimitBytes: 4096,
       jobId: "job_test",
       callback: {
-        url: "https://fn.example/sandbox-jobs/job_test/complete",
+        url: "https://fn.example/v1/sandbox-jobs/job_test/complete",
         token: "tok-123",
       },
     });
@@ -1897,7 +1897,7 @@ describe("background job scripts", () => {
       {
         maxConcurrentJobs: 10,
         callback: {
-          url: "https://fn.example/sandbox-jobs/async_tool_1/complete",
+          url: "https://fn.example/v1/sandbox-jobs/async_tool_1/complete",
           token: "tok-123",
         },
       },
@@ -1909,7 +1909,7 @@ describe("background job scripts", () => {
     const wrapper = Buffer.from(encoded!, "base64").toString("utf8");
     expect(wrapper).toContain("x-job-token");
     expect(wrapper).toContain(
-      "https://fn.example/sandbox-jobs/async_tool_1/complete",
+      "https://fn.example/v1/sandbox-jobs/async_tool_1/complete",
     );
     expect(launch).not.toContain("tok-123");
     expect(wrapper).not.toContain("tok-123");

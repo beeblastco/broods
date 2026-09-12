@@ -213,19 +213,17 @@ export function DetailsTab({
   );
 
   const coreEndpoint = resolveCoreEndpoint();
-  const stagePrefix = activeDeployment?.stageSlug
-    ? `/${activeDeployment.stageSlug}`
-    : "";
-  const projectPrefix = activeDeployment?.projectSlug
-    ? `/${activeDeployment.projectSlug}`
-    : "";
+  const scopePrefix =
+    activeDeployment?.projectSlug && activeDeployment?.stageSlug
+      ? `/projects/${activeDeployment.projectSlug}/stages/${activeDeployment.stageSlug}`
+      : "";
   const endpointUrl =
     activeDeployment && coreEndpoint.ok
-      ? `${coreEndpoint.httpBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${activeDeployment.endpointId}`
+      ? `${coreEndpoint.httpBaseUrl}/v1${scopePrefix}/agents/${activeDeployment.endpointId}`
       : "";
   const websocketUrl =
     activeDeployment && coreEndpoint.ok
-      ? `${coreEndpoint.websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${activeDeployment.endpointId}/ws`
+      ? `${coreEndpoint.websocketBaseUrl}/v1${scopePrefix}/agents/${activeDeployment.endpointId}/ws`
       : "";
 
   // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar

@@ -51,10 +51,10 @@ Runtime boundary:
 ```mermaid
 flowchart TD
   Owner["Account owner"] -->|"agents + skills APIs"| Gateway["gateway"]
-  Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /accounts"| Gateway
+  Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /v1/accounts"| Gateway
   Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| Gateway
-  Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| Gateway
-  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{channel\}"| Gateway
+  Status["Status poller"] -->|"Bearer account secret<br/>GET /v1/runs/\{eventId\}"| Gateway
+  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/v1/webhooks/\{accountId\}/\{channel\}"| Gateway
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
   Gateway --> Core["Bun core container"]
   WSGateway --> Gateway
@@ -103,12 +103,12 @@ The diagrams show the logical ownership of runtime config. In code, `integration
 ```mermaid
 flowchart TD
   Direct["POST / or /async"] --> Bearer["Authorization: Bearer account secret"]
-  Status["GET /status/\{eventId\}"] --> Bearer
+  Status["GET /v1/runs/\{eventId\}"] --> Bearer
   Bearer --> Hash["hash secret"]
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
   Lookup --> Account["active AccountRecord"]
 
-  Webhook["POST /webhooks/\{accountId\}/\{channel\}"] --> Load["load account by accountId"]
+  Webhook["POST /v1/webhooks/\{accountId\}/\{channel\}"] --> Load["load account by accountId"]
   Load --> AgentLookup["scan the account's agents<br/>that configure \{channel\}"]
   AgentLookup --> ChannelConfig["read encrypted agent config<br/>channels.\{channel\}"]
   ChannelConfig --> Verify["verify provider-native signature/secret<br/>first match is the receiving agent"]
@@ -131,7 +131,7 @@ sequenceDiagram
   participant A as AccountConfig table
   participant S as Skills S3 bucket
 
-  U->>M: POST /accounts { username, description? } (Bearer AdminAccountSecret)
+  U->>M: POST /v1/accounts { username, description? } (Bearer AdminAccountSecret)
   M->>M: generate accountId + secret
   M->>A: store secretHash + metadata
   M-->>U: account + one-time secret
@@ -159,7 +159,7 @@ Deleting an account runs account-scoped cleanup before removing the account reco
 ```mermaid
 flowchart TD
   Caller["Caller"] -->|"POST /"| Sync["sync direct request"]
-  Caller -->|"POST /async"| Async["async direct request"]
+  Caller -->|"POST /v1/runs (background: true)"| Async["background run"]
 
   Sync --> Auth["account bearer auth"]
   Async --> Auth
@@ -192,12 +192,12 @@ flowchart TD
   Agent --> Complete["async-agent-result.ts<br/>completed / failed"]
   Complete --> AsyncTable
 
-  Caller -->|"GET /status/\{eventId\}"| Status["status poll"]
+  Caller -->|"GET /v1/runs/\{eventId\}"| Status["status poll"]
   Status --> Auth
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one tool-runner Lambda invoke for a hosted server.
+The background path starts inside `harness-processing`: `POST /v1/runs` with `background: true` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one tool-runner Lambda invoke for a hosted server.
 
 ```mermaid
 flowchart TD
@@ -211,7 +211,7 @@ flowchart TD
   Inject --> Continue["continue parent agent"]
 ```
 
-Direct sync and async POST access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false`. Set `ENABLE_DIRECT_API=true` to open `POST /` and `POST /async`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /sandbox-jobs/{resultId}/complete`.
+Direct run access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explicitly and default it to `false`. Set `ENABLE_DIRECT_API=true` to open `POST /v1/runs`. When disabled, channel webhooks and internal worker invocations remain available. Detached sandbox background jobs settle through the token-authenticated `POST /v1/sandbox-jobs/{resultId}/complete`.
 
 ## Cron jobs
 
@@ -234,7 +234,7 @@ Developers who need custom chaining, cleanup, polling, or external workflow beha
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{channel\}"| Url["gateway/core URL"]
+  Provider["Provider webhook"] -->|"POST /v1/webhooks/\{accountId\}/\{channel\}"| Url["gateway/core URL"]
   Url --> Load["load account + agent config"]
   Load --> Adapter["build channel adapter from agent config"]
   Adapter --> Auth["verify provider-native auth"]
@@ -344,7 +344,7 @@ identifier the next invocation can rebuild from.
 flowchart TD
   Turn["turn runs (Session.delivery)<br/>channel { name, source } /<br/>nats { connectionId, convKey } /<br/>async (poll)"] -->|"bash background:true"| Row["Convex: runtimeAsyncToolResults<br/>{ delivery, completionToken,<br/>conversationKey, parentEventId }"]
   Turn --> Job["detached job in sandbox"]
-  Job -->|"on exit: POST /sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)"| Settle["settle row"]
+  Job -->|"on exit: POST /v1/sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)"| Settle["settle row"]
   Settle -->|"reinvoke worker<br/>(inject result, continue conversation)"| Resume["agent resumes where it left off"]
   Resume --> Deliver{"delivery.kind"}
   Deliver -->|"channel"| Chan["rebuild adapter from config + source → sendText"]
@@ -415,7 +415,7 @@ Agents control model selection, channel credentials, optional skills, subagents,
 - `Crons`: scheduled agent runs managed by the Convex config plane.
 - `Conversations`: normalized model messages by account-scoped `conversationKey`.
 - `ProcessedEvents`: dedup markers and short-lived conversation lease records.
-- `AsyncAgentResult`: async direct API and subagent state for `/status/{eventId}` polling.
+- `AsyncAgentResult`: background run and subagent state for `GET /v1/runs/{eventId}` polling.
 - `AsyncToolResult`: async tool call state, same-table detached group rows for callback fan-in, delivery metadata for non-SSE continuations, and structured outputs for parent result injection.
 - `AccountSignupRateLimit`: TTL rows throttling public account creation per source IP.
 - `PersistentSandboxInstance`: reserved sandbox instances for persistent sandbox/lambda/daytona/e2b/vercel providers.

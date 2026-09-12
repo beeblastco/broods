@@ -75,7 +75,7 @@ export interface AgentReference<Name extends string = string> {
   /**
    * Authoritative scope of the stage's runtime key, embedded by codegen
    * from the deploy response. When present the client posts to the scoped URL
-   * `/v1/{projectSlug}/agents/{stageSlug}/{endpointId}` (matching the
+   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (matching the
    * dashboard); when absent it falls back to the base URL.
    */
   readonly endpointId?: string;
@@ -168,7 +168,7 @@ export class BroodsClient {
   ): string {
     const segments = [accountId, channelType].map(encodeURIComponent);
 
-    return `${this.baseUrl}/webhooks/${segments.join("/")}`;
+    return `${this.baseUrl}/v1/webhooks/${segments.join("/")}`;
   }
 
   /**
@@ -184,7 +184,7 @@ export class BroodsClient {
       encodeURIComponent,
     );
 
-    return `${this.baseUrl}/webhooks/${segments.join("/")}`;
+    return `${this.baseUrl}/v1/webhooks/${segments.join("/")}`;
   }
 
   agent<const Name extends string>(ref: AgentReference<Name>): AgentHandle;
@@ -275,7 +275,7 @@ export class BroodsClient {
     const body = directRunBody(input, "cli");
     const targetUrl = maybeInput
       ? this.scopedUrl(refOrInput as AgentReference)
-      : this.baseUrl;
+      : `${this.baseUrl}/v1/runs`;
 
     const response = await this.openStream(body, targetUrl);
     if (!response.ok)
@@ -327,10 +327,10 @@ export class BroodsClient {
           agentName: (refOrInput as AgentReference).name,
         }
       : (refOrInput as AgentRunInput & { agentId: string; agentName?: string });
-    const body = directRunBody(input, "async");
+    const body = { ...directRunBody(input, "async"), background: true };
     const targetUrl = maybeInput
-      ? this.scopedUrl(refOrInput as AgentReference, "/async")
-      : `${this.baseUrl}/async`;
+      ? this.scopedUrl(refOrInput as AgentReference)
+      : `${this.baseUrl}/v1/runs`;
     const response = await this.fetchJson(targetUrl, {
       method: "POST",
       headers: this.apiKeyHeaders(),
@@ -515,19 +515,21 @@ export class BroodsClient {
 
   /**
    * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
-   * key's scope, this is `/v1/{projectSlug}/agents/{stageSlug}/{endpointId}`
-   * (the same URL the dashboard shows, so core can validate the key against the
-   * path); otherwise it falls back to the base URL.
+   * key's scope, this is
+   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (the
+   * same URL the dashboard shows, so core can validate the key against the
+   * path); otherwise it falls back to the single run endpoint.
    */
-  private scopedUrl(ref: AgentReference, suffix = ""): string {
+  private scopedUrl(ref: AgentReference): string {
     if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
       return (
-        `${this.baseUrl}/v1/${encodeURIComponent(ref.projectSlug)}` +
-        `/agents/${encodeURIComponent(ref.stageSlug)}/${encodeURIComponent(ref.endpointId)}${suffix}`
+        `${this.baseUrl}/v1/projects/${encodeURIComponent(ref.projectSlug)}` +
+        `/stages/${encodeURIComponent(ref.stageSlug)}` +
+        `/agents/${encodeURIComponent(ref.endpointId)}`
       );
     }
 
-    return `${this.baseUrl}${suffix}`;
+    return `${this.baseUrl}/v1/runs`;
   }
 
   private async openStream(
@@ -739,7 +741,7 @@ function parseStatusUrl(statusUrl: string): {
   agentId?: string;
 } {
   const url = new URL(statusUrl);
-  const match = url.pathname.match(/\/status\/([^/]+)$/);
+  const match = url.pathname.match(/\/v1\/runs\/([^/]+)$/);
 
   return {
     statusId: match?.[1] ? decodeURIComponent(match[1]) : undefined,
@@ -766,7 +768,7 @@ async function responseErrorDetails(
   if (contentType.toLowerCase().includes("text/event-stream")) {
     await response.body?.cancel().catch(() => {});
 
-    return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment routed /async to the direct streaming runner instead of the async handler.`;
+    return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment ignored the background flag and ran the request on the direct streaming runner.`;
   }
 
   const text = await response.text();
@@ -799,5 +801,5 @@ function statusUrlFor(
   statusId: string,
   agentId: string,
 ): string {
-  return `${normalizeHttpServiceUrl(baseUrl)}/status/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
+  return `${normalizeHttpServiceUrl(baseUrl)}/v1/runs/${encodeURIComponent(statusId)}?agentId=${encodeURIComponent(agentId)}`;
 }

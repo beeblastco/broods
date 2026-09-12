@@ -13,7 +13,7 @@ const ROW = {
   agentId: "agent-1",
   agentName: "support",
   botToken: "token-a",
-  webhookPath: "/webhooks/account-1/dev/endpoint-1/discord",
+  webhookPath: "/v1/webhooks/account-1/dev/endpoint-1/discord",
 };
 
 describe("resolving a plane's rows", () => {
@@ -24,7 +24,7 @@ describe("resolving a plane's rows", () => {
         agentName: "support",
         botToken: "token-a",
         webhookUrl:
-          "https://gateway.dev.example.com/webhooks/account-1/dev/endpoint-1/discord",
+          "https://gateway.dev.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
       },
     ]);
   });
@@ -42,13 +42,13 @@ describe("resolving a plane's rows", () => {
     const paths = [
       ...planeConnections(PLANE, [ROW]),
       ...planeConnections(prod, [
-        { ...ROW, webhookPath: "/webhooks/account-1/discord" },
+        { ...ROW, webhookPath: "/v1/webhooks/account-1/discord" },
       ]),
     ].map((connection) => connection.webhookUrl);
 
     expect(paths).toEqual([
-      "https://gateway.dev.example.com/webhooks/account-1/dev/endpoint-1/discord",
-      "https://gateway.example.com/webhooks/account-1/discord",
+      "https://gateway.dev.example.com/v1/webhooks/account-1/dev/endpoint-1/discord",
+      "https://gateway.example.com/v1/webhooks/account-1/discord",
     ]);
   });
 });
@@ -58,7 +58,7 @@ describe("combining what the planes answered", () => {
     agentId: "agent-1",
     agentName: "support",
     botToken: "token-a",
-    webhookUrl: "https://gateway.dev.example.com/webhooks/a/discord",
+    webhookUrl: "https://gateway.dev.example.com/v1/webhooks/a/discord",
   };
 
   // The bug this pins: a plane whose backend was not live yet stopped every

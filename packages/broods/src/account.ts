@@ -491,7 +491,7 @@ export class BroodsAccountClient {
   webhookUrl(accountId: string, channelType: string): string {
     const segments = [accountId, channelType].map(encodeURIComponent);
 
-    return `${this.baseUrl}/webhooks/${segments.join("/")}`;
+    return `${this.baseUrl}/v1/webhooks/${segments.join("/")}`;
   }
 
   async listAgents(): Promise<AccountAgent[]> {

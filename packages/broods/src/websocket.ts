@@ -349,11 +349,14 @@ export class BroodsWebSocketClient {
     const endpointId = resolveEndpointId(input);
     const projectSlug = input.projectSlug ?? input.agent?.projectSlug;
     const stageSlug = input.stageSlug ?? input.agent?.stageSlug;
-    const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-    const stagePrefix = stageSlug ? `/${stageSlug}` : "";
+    const scopePrefix =
+      projectSlug && stageSlug
+        ? `/projects/${encodeURIComponent(projectSlug)}` +
+          `/stages/${encodeURIComponent(stageSlug)}`
+        : "";
     const wsBaseUrl = toWebSocketBaseUrl(this.baseUrl);
 
-    return `${wsBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${encodeURIComponent(endpointId)}/ws`;
+    return `${wsBaseUrl}/v1${scopePrefix}/agents/${encodeURIComponent(endpointId)}/ws`;
   }
 
   private resolveWebSocket(): WebSocketConstructorLike {

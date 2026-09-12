@@ -32,8 +32,8 @@ const REQUEST_MIX: ReadonlyArray<{ pathname: string; method: string }> = [
 
 const WEBSOCKET_MIX: readonly string[] = [
   "/v1/agents/agt_7f3c9d21/ws",
-  "/v1/acme/production/agents/agt_7f3c9d21/ws",
-  "/v1/acme/production/observability/ws",
+  "/v1/projects/acme/stages/production/agents/agt_7f3c9d21/ws",
+  "/v1/projects/acme/stages/production/observability/ws",
   "/v1/agents/agt_7f3c9d21/invoke",
 ];
 

@@ -11,7 +11,7 @@ import type { CompiledChannel } from "./manifest.ts";
 
 /**
  * The stage's deployment endpoint, used to embed the scoped invoke URL
- * (`/v1/{projectSlug}/agents/{stageSlug}/{endpointId}`) into each generated
+ * (`/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}`) into each generated
  * agent reference so the SDK posts to the same path the dashboard shows.
  */
 export type GeneratedEndpoint =
@@ -124,8 +124,8 @@ function apiFile(
           const path =
             endpoint.stageKind === undefined ||
             endpoint.stageKind === "production"
-              ? `/webhooks/${account}/${encodeURIComponent(channel.type)}`
-              : `/webhooks/${account}/dev/${encodeURIComponent(endpoint.endpointId)}/${encodeURIComponent(channel.type)}`;
+              ? `/v1/webhooks/${account}/${encodeURIComponent(channel.type)}`
+              : `/v1/webhooks/${account}/dev/${encodeURIComponent(endpoint.endpointId)}/${encodeURIComponent(channel.type)}`;
 
           return `    ${propertyKey(channel.alias)}: { kind: "channel", type: ${JSON.stringify(channel.type)}, agentName: ${JSON.stringify(channel.agentName)}, agentId: ids.agents[${JSON.stringify(channel.agentName)}], accountId: ${JSON.stringify(endpoint.accountId)}, webhookPath: ${JSON.stringify(path)} },`;
         })

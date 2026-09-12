@@ -149,7 +149,7 @@ describe("ingestInboundAttachments", () => {
     if (image?.type !== "image") throw new Error("expected an image part");
     // A sealed media link, never a base64 payload: the conversation is stored
     // as JSON and re-read on every later turn.
-    expect(String(image.image)).toStartWith("https://core.example/media/");
+    expect(String(image.image)).toStartWith("https://core.example/v1/media/");
     expect(image.mediaType).toBe("image/png");
 
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
@@ -223,7 +223,7 @@ describe("ingestInboundAttachments", () => {
 
     const file = parts.stored.find((part) => part.type === "file");
     if (file?.type !== "file") throw new Error("expected a file part");
-    expect(String(file.data)).toStartWith("https://core.example/media/");
+    expect(String(file.data)).toStartWith("https://core.example/v1/media/");
     expect(file.mediaType).toBe("audio/aac");
   });
 
@@ -506,7 +506,7 @@ describe("rehydrateStoredMedia", () => {
               type: "file",
               mediaType: "audio/ogg",
               filename: "voice.ogg",
-              data: "https://core.example/media/sealed-token",
+              data: "https://core.example/v1/media/sealed-token",
             },
           ],
         },
