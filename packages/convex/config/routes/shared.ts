@@ -1,7 +1,8 @@
 /**
  * Shared plumbing for the config-plane HTTP routes: Bearer auth resolution,
- * JSON request/response helpers, audit writes, and the reserved-sandbox
- * teardown used by workspace and sandbox deletes.
+ * collection paging, audit writes, and the reserved-sandbox teardown used by
+ * workspace and sandbox deletes. The JSON response helpers it re-exports live
+ * in `model/httpJson` so the CLI plane can answer the same way.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -15,9 +16,11 @@ import type {
 } from "../../model/auditEvents";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 export { json, jsonError, methodNotAllowed } from "../../model/httpJson";
-import { jsonError } from "../../model/httpJson";
+import { json, jsonError } from "../../model/httpJson";
 
 const AUTH_FAILURE_MAX = 20;
+
+const MAX_PAGE_SIZE = 1000;
 
 export type ConfigAuth =
   | { kind: "admin" }
@@ -75,6 +78,51 @@ export async function getAccountById(
   } catch {
     return null;
   }
+}
+
+/**
+ * One page of a collection under the collection's own key. The key is
+ * unchanged so existing readers of `body.agents` keep working.
+ *
+ * The cursor is an offset and the Convex query still reads the whole
+ * collection, so this bounds response size, not backend reads. Moving to
+ * keyset pagination later changes only the cursor encoding, with no second
+ * break.
+ */
+export function paginated<T>(key: string, items: T[], req: Request): Response {
+  const url = new URL(req.url);
+  const rawLimit = url.searchParams.get("limit")?.trim() ?? "";
+  const rawCursor = url.searchParams.get("cursor")?.trim() ?? "";
+
+  // No `limit` means the whole collection, the way these routes answered
+  // before paging existed. A default page size would silently drop rows for
+  // every client that has not asked for a page yet.
+  const limit = rawLimit === "" ? items.length : parsePageLimit(rawLimit);
+  if (limit === null) {
+    return jsonError(
+      400,
+      `limit must be an integer between 1 and ${MAX_PAGE_SIZE}.`,
+      { code: "invalid_limit", param: "limit" },
+    );
+  }
+
+  const offset = rawCursor === "" ? 0 : decodePageCursor(rawCursor);
+  if (offset === null) {
+    return jsonError(400, "cursor is not a valid page cursor.", {
+      code: "invalid_cursor",
+      param: "cursor",
+    });
+  }
+
+  const page = items.slice(offset, offset + limit);
+  const nextOffset = offset + page.length;
+  const hasMore = nextOffset < items.length;
+
+  return json({
+    [key]: page,
+    hasMore: hasMore,
+    nextCursor: hasMore ? encodePageCursor(nextOffset) : null,
+  });
 }
 
 /**
@@ -386,4 +434,26 @@ async function resolveBearerAuth(
   return account && account.status === "active"
     ? { kind: "account", account: account }
     : null;
+}
+
+function decodePageCursor(cursor: string): number | null {
+  try {
+    const offset = Number(atob(cursor));
+
+    return Number.isInteger(offset) && offset >= 0 ? offset : null;
+  } catch {
+    return null;
+  }
+}
+
+function encodePageCursor(offset: number): string {
+  return btoa(String(offset));
+}
+
+/** Rejects hex, exponent and decimal forms that `Number` would accept. */
+function parsePageLimit(raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const limit = Number(raw);
+
+  return limit >= 1 && limit <= MAX_PAGE_SIZE ? limit : null;
 }

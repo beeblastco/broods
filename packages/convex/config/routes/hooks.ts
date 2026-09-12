@@ -13,7 +13,13 @@ import {
   type ConfigAuditActor,
 } from "../../model/auditEvents";
 import { putHookBundle } from "../../model/bundles";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 export async function handleHookRoute(
   ctx: ActionCtx,
@@ -76,9 +82,11 @@ async function handleHookCollectionRoute(
       accountId: accountId,
     });
 
-    return json({
-      hooks: records.map((record) => toPublicAccountHook(record)),
-    });
+    return paginated(
+      "hooks",
+      records.map((record) => toPublicAccountHook(record)),
+      req,
+    );
   }
   if (req.method === "POST") {
     const upload = await normalizeAccountHookUpload(await req.json(), {

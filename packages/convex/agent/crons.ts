@@ -301,13 +301,9 @@ export const listRuns = internalQuery({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
-    limit: v.optional(v.number()),
   },
   returns: v.array(cronRunDoc),
-  handler: async (
-    ctx,
-    { accountId, cronId, limit },
-  ): Promise<Doc<"cronRuns">[]> => {
+  handler: async (ctx, { accountId, cronId }): Promise<Doc<"cronRuns">[]> => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return [];
 
@@ -317,7 +313,7 @@ export const listRuns = internalQuery({
         q.eq("accountId", accountId).eq("cronId", cronId),
       )
       .order("desc")
-      .take(limit ?? 20);
+      .collect();
   },
 });
 

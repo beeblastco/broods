@@ -16,7 +16,13 @@ import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
 import { uploadQuotaHeaders, uploadQuotaMessage } from "../../model/uploads";
 import type { ProjectStageScope } from "../../model/projectScope";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 type McpScope =
   | ({ ok: true } & ProjectStageScope)
@@ -115,9 +121,11 @@ async function handleMcpCollectionRoute(
       stageId: scope.stageId,
     });
 
-    return json({
-      servers: records.map((record) => toPublicMcp(record)),
-    });
+    return paginated(
+      "servers",
+      records.map((record) => toPublicMcp(record)),
+      req,
+    );
   }
   if (req.method === "POST") {
     const input = await normalizeMcpInput(await req.json(), {
