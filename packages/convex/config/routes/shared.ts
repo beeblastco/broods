@@ -17,6 +17,8 @@ import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
 export { json, jsonError, methodNotAllowed } from "../../model/httpJson";
 import { jsonError } from "../../model/httpJson";
 
+const AUTH_FAILURE_MAX = 20;
+
 export type ConfigAuth =
   | { kind: "admin" }
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
@@ -215,7 +217,7 @@ export async function unauthorizedResponse(
       key: await authFailureKey(req),
       now: Date.now(),
       windowMs: 5 * 60 * 1000,
-      maxFailures: 20,
+      maxFailures: AUTH_FAILURE_MAX,
       blockMs: 15 * 60 * 1000,
     });
   if (!result.blocked) return jsonError(401, "Unauthorized");
@@ -228,7 +230,12 @@ export async function unauthorizedResponse(
     429,
     "Too many unauthorized attempts",
     { code: "too_many_auth_failures" },
-    { "Retry-After": String(retryAfterSeconds) },
+    {
+      "Retry-After": String(retryAfterSeconds),
+      "RateLimit-Limit": String(AUTH_FAILURE_MAX),
+      "RateLimit-Remaining": "0",
+      "RateLimit-Reset": String(retryAfterSeconds),
+    },
   );
 }
 
