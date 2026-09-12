@@ -8,6 +8,10 @@ export class RateLimiter {
     this.#windowMs = windowMs;
   }
 
+  get limit(): number {
+    return this.#limit;
+  }
+
   allow(key: string): boolean {
     const now = Date.now();
     const window = this.#windows.get(key);
@@ -29,6 +33,14 @@ export class RateLimiter {
     if (!window || Date.now() - window.start >= this.#windowMs) return false;
 
     return window.count >= this.#limit;
+  }
+
+  retryAfterSeconds(key: string): number {
+    const window = this.#windows.get(key);
+    if (!window) return 0;
+    const remainingMs = this.#windowMs - (Date.now() - window.start);
+
+    return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
   }
 
   #removeExpiredWindows(now: number): void {

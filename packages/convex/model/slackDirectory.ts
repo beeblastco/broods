@@ -21,6 +21,8 @@ export type SlackDirectoryResult =
       status: number;
       error: string;
       reason: "ratelimited" | "missing_scope" | "invalid_auth" | "slack_error";
+      /** Slack's own backoff, relayed so the caller does not have to guess. */
+      retryAfterSeconds?: number;
     };
 
 type SlackDirectoryPage =
@@ -119,12 +121,17 @@ async function fetchSlackDirectoryPage(
     };
   }
   if (response.status === 429) {
+    const retryAfter = Number(response.headers.get("retry-after"));
+
     return {
       failure: {
         ok: false,
         status: 429,
         error: "Slack rate limit hit; retry shortly",
         reason: "ratelimited",
+        ...(Number.isInteger(retryAfter) && retryAfter > 0
+          ? { retryAfterSeconds: retryAfter }
+          : {}),
       },
     };
   }

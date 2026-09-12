@@ -39,6 +39,7 @@ import {
   jsonError,
   normalizeBaseUrl,
   normalizedCoreBaseUrls,
+  rateLimitHeaders,
   resolveRequestId,
   warnDeprecatedQueryToken,
   websocketToken,
@@ -140,10 +141,20 @@ if (import.meta.main) {
       }
       const ip = clientIp(request, server.requestIP(request)?.address);
       if (!upgradeLimiter.allow(ip)) {
-        return jsonError(429, "Too many connection attempts");
+        return jsonError(
+          429,
+          "Too many connection attempts",
+          {},
+          rateLimitHeaders(upgradeLimiter, ip),
+        );
       }
       if (authFailureLimiter.blocked(ip)) {
-        return jsonError(429, "Too many failed authentication attempts");
+        return jsonError(
+          429,
+          "Too many failed authentication attempts",
+          {},
+          rateLimitHeaders(authFailureLimiter, ip),
+        );
       }
 
       if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
@@ -270,11 +281,14 @@ if (import.meta.main) {
       }
     }
 
-    if (
-      httpLimiter &&
-      !httpLimiter.allow(clientIp(request, server.requestIP(request)?.address))
-    ) {
-      return jsonError(429, "Too many requests");
+    const requestIp = clientIp(request, server.requestIP(request)?.address);
+    if (httpLimiter && !httpLimiter.allow(requestIp)) {
+      return jsonError(
+        429,
+        "Too many requests",
+        {},
+        rateLimitHeaders(httpLimiter, requestIp),
+      );
     }
 
     if (isConfigHttpPath(url.pathname, request.method)) {

@@ -71,6 +71,17 @@ export async function grantUpload(
   return { uploadUrl: await ctx.storage.generateUploadUrl() };
 }
 
+export function uploadQuotaHeaders(retryAt: number): Record<string, string> {
+  const seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+
+  return {
+    "Retry-After": String(seconds),
+    "RateLimit-Limit": String(OPEN_UPLOADS_PER_HOUR),
+    "RateLimit-Remaining": "0",
+    "RateLimit-Reset": String(seconds),
+  };
+}
+
 export function uploadQuotaMessage(retryAt: number): string {
   return `upload quota: ${OPEN_UPLOADS_PER_HOUR} uploads per hour; retry after ${new Date(retryAt).toISOString()}`;
 }
