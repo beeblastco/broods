@@ -97,9 +97,14 @@ export async function handleAgentChannelDirectoryRoute(
 
   const directory = await fetchSlackChannelDirectory(botToken);
   if (!directory.ok) {
-    return jsonError(directory.status, directory.error, {
-      code: directory.reason,
-    });
+    return jsonError(
+      directory.status,
+      directory.error,
+      { code: directory.reason },
+      directory.retryAfterSeconds === undefined
+        ? {}
+        : { "Retry-After": String(directory.retryAfterSeconds) },
+    );
   }
 
   return json({ channels: directory.channels, truncated: directory.truncated });
