@@ -12,6 +12,8 @@ type FetchLike = (
 ) => Promise<Response>;
 
 export type ProxyOptions = {
+  /** Request id forwarded to core so both hops log the same one. */
+  requestId?: string;
   /**
    * Whether `X-Account-Id` is forwarded. Only the service token reads it, and
    * that token should reach core in-cluster; once it does, set
@@ -35,6 +37,7 @@ export async function proxyHttp(
   let response: Response | null = null;
   let unreachable = false;
 
+  if (options.requestId) headers.set("x-request-id", options.requestId);
   headers.delete("host");
   headers.delete("connection");
   headers.delete("upgrade");

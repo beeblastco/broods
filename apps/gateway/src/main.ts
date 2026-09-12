@@ -39,9 +39,11 @@ import {
   jsonError,
   normalizeBaseUrl,
   normalizedCoreBaseUrls,
+  resolveRequestId,
   warnDeprecatedQueryToken,
   websocketToken,
   websocketUpgradeHeaders,
+  withRequestId,
 } from "./utils.ts";
 
 type GatewayData =
@@ -90,12 +92,22 @@ if (import.meta.main) {
     hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: limits.idleTimeoutSeconds,
     fetch: async function (request, server): Promise<Response | undefined> {
+      const requestId = resolveRequestId(request.headers.get("x-request-id"));
       try {
-        return await route(request, server);
-      } catch (error) {
-        console.error("gateway request failed:", error);
+        const response = await route(request, server, requestId);
 
-        return jsonError(500, "Internal gateway error");
+        // A WebSocket upgrade returns undefined; there is no response to stamp.
+        return response ? withRequestId(response, requestId) : response;
+      } catch (error) {
+        console.error("gateway request failed:", {
+          requestId: requestId,
+          error: error,
+        });
+
+        return withRequestId(
+          jsonError(500, "Internal gateway error"),
+          requestId,
+        );
       }
     },
     websocket: websocketHandlers(),
@@ -104,6 +116,7 @@ if (import.meta.main) {
   async function route(
     request: Request,
     server: Bun.Server<GatewayData>,
+    requestId: string,
   ): Promise<Response | undefined> {
     const url = new URL(request.url);
 
@@ -271,12 +284,18 @@ if (import.meta.main) {
           "Config plane is not configured (BROODS_CONFIG_URL)",
         );
 
-      return proxyHttp(request, [configBaseUrl], proxyOptions);
+      return proxyHttp(request, [configBaseUrl], {
+        ...proxyOptions,
+        requestId: requestId,
+      });
     }
 
     if (!isCoreHttpRoute(url.pathname)) return jsonError(404, "Not found");
 
-    return proxyHttp(request, coreBaseUrls, proxyOptions);
+    return proxyHttp(request, coreBaseUrls, {
+      ...proxyOptions,
+      requestId: requestId,
+    });
   }
 
   function websocketHandlers(): Bun.WebSocketHandler<GatewayData> {
