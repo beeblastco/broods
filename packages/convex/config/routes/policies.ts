@@ -15,7 +15,7 @@ import {
   normalizeUpdatePolicyInput,
 } from "../../model/policyRules";
 import { toPublicAgentPolicyResponse } from "../../model/responses";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 /** Mirrors core's former handlePolicyRoute contract. */
 export async function handlePolicyConfigRoute(
@@ -83,7 +83,7 @@ export async function handlePolicyConfigRoute(
 
     return record
       ? json(toPublicAgentPolicyResponse(record))
-      : json({ error: "Policy not found" }, 404);
+      : jsonError(404, "Policy not found");
   }
   if (req.method === "PATCH") {
     const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(
@@ -93,7 +93,7 @@ export async function handlePolicyConfigRoute(
         policyId: policyId,
       },
     );
-    if (!existing) return json({ error: "Policy not found" }, 404);
+    if (!existing) return jsonError(404, "Policy not found");
     const patch = normalizeUpdatePolicyInput(await req.json());
     await ctx.runMutation(internal.agent.policies.updateInternal, {
       accountId: accountId,
@@ -127,7 +127,7 @@ export async function handlePolicyConfigRoute(
 
     return updated
       ? json(toPublicAgentPolicyResponse(updated))
-      : json({ error: "Policy not found" }, 404);
+      : jsonError(404, "Policy not found");
   }
   if (req.method === "DELETE") {
     const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(
@@ -137,7 +137,7 @@ export async function handlePolicyConfigRoute(
         policyId: policyId,
       },
     );
-    if (!existing) return json({ error: "Policy not found" }, 404);
+    if (!existing) return jsonError(404, "Policy not found");
     await ctx.runMutation(internal.agent.policies.removeInternal, {
       accountId: accountId,
       policyId: policyId,

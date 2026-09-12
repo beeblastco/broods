@@ -15,6 +15,7 @@ import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaMessage } from "../model/uploads";
+import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
 export type CliAuth =
@@ -94,7 +95,7 @@ export async function handleEnvListRoute(
   route: Extract<RouteParts, { kind: "envList" }>,
   auth: CliAuth,
 ): Promise<Response> {
-  if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "GET") return methodNotAllowed(["GET"]);
   const variables = await ctx.runQuery(internal.cli.sync.listEnvBySecretHash, {
     secretHash: auth.secretHash,
     project: route.project,
@@ -115,12 +116,9 @@ export async function handleEnvRoute(
     // A deploy key deploys; it does not carry the stage's secrets out. Reveal
     // stays with a person (`broods login`) or the org secret.
     if ("deployKeyId" in auth) {
-      return json(
-        {
-          error:
-            "Deploy keys cannot read environment values; use `broods login` or the org secret",
-        },
+      return jsonError(
         403,
+        "Deploy keys cannot read environment values; use `broods login` or the org secret",
       );
     }
     const result = await ctx.runMutation(internal.cli.sync.getEnvBySecretHash, {
@@ -136,7 +134,7 @@ export async function handleEnvRoute(
 
     return result
       ? json(result)
-      : json({ error: "Environment variable not found" }, 404);
+      : jsonError(404, "Environment variable not found");
   }
 
   if (req.method === "DELETE") {
@@ -156,7 +154,7 @@ export async function handleEnvRoute(
   if (req.method === "PUT") {
     const body = (await req.json()) as { value?: unknown };
     if (typeof body.value !== "string") {
-      return json({ error: "Request body must include string value" }, 400);
+      return jsonError(400, "Request body must include string value");
     }
     await ctx.runMutation(internal.cli.sync.setEnvBySecretHash, {
       secretHash: auth.secretHash,
@@ -169,19 +167,17 @@ export async function handleEnvRoute(
     return json({ ok: true });
   }
 
-  return json({ error: "Method not allowed" }, 405);
+  return methodNotAllowed(["GET", "DELETE", "PUT"]);
 }
 
 export function handleLogsRoute(req: Request): Response {
-  if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
   // Logs now stream via the gateway (NATS live tail + Loki backfill).
   // Use wss://gateway.broods.app/v1/<project>/<stage>/observability/ws instead.
-  return json(
-    {
-      error: "Log streaming has moved to the gateway observability WebSocket",
-    },
+  return jsonError(
     410,
+    "Log streaming has moved to the gateway observability WebSocket",
   );
 }
 
@@ -201,12 +197,12 @@ export async function handleManifestRoute(
       },
     );
 
-    return result ? json(result) : json({ error: "Manifest not found" }, 404);
+    return result ? json(result) : jsonError(404, "Manifest not found");
   }
   if (req.method === "PUT")
     return await handleManifestSync(ctx, req, route, auth);
 
-  return json({ error: "Method not allowed" }, 405);
+  return methodNotAllowed(["GET", "PUT"]);
 }
 
 /**
@@ -219,13 +215,15 @@ export async function handleMcpBundleUploadRoute(
   req: Request,
   auth: CliAuth,
 ): Promise<Response> {
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
   const grant = await ctx.runMutation(internal.account.uploads.grant, {
     accountId: auth.accountId,
     kind: "mcp",
   });
   if ("retryAt" in grant) {
-    return json({ error: uploadQuotaMessage(grant.retryAt) }, 429);
+    return jsonError(429, uploadQuotaMessage(grant.retryAt), {
+      code: "upload_quota_exceeded",
+    });
   }
 
   return json({ uploadUrl: grant.uploadUrl });
@@ -237,8 +235,7 @@ export async function handleResourceDeleteRoute(
   route: Extract<RouteParts, { kind: "resource" }>,
   auth: CliAuth,
 ): Promise<Response> {
-  if (req.method !== "DELETE")
-    return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "DELETE") return methodNotAllowed(["DELETE"]);
   if (route.resourceKind === "cron") {
     await deleteCronByName(ctx, auth.accountId, route.name);
   } else {
@@ -260,7 +257,7 @@ export async function handleRuntimeKeyRoute(
   route: Extract<RouteParts, { kind: "runtimeKey" }>,
   auth: CliAuth,
 ): Promise<Response> {
-  if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
   // Reconnect path: recover the existing runtime key (minting one if the
   // stage has none yet) so the CLI can write BROODS_API_KEY
@@ -282,14 +279,7 @@ export async function handleRuntimeKeyRoute(
         projectSlug: deployment.projectSlug,
         stageSlug: deployment.stageSlug,
       })
-    : json({ error: "Project or stage not found" }, 404);
-}
-
-export function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status: status,
-    headers: { "Content-Type": "application/json" },
-  });
+    : jsonError(404, "Project or stage not found");
 }
 
 /**
@@ -445,13 +435,10 @@ async function handleManifestSync(
   };
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
-    return json({ error: "Request body must include manifest" }, 400);
+    return jsonError(400, "Request body must include manifest");
   }
   if (!manifestMatchesRoute(manifest, route)) {
-    return json(
-      { error: "Manifest project/stage must match the request path" },
-      400,
-    );
+    return jsonError(400, "Manifest project/stage must match the request path");
   }
   const prune = body.prune === true;
   const originalManifest = manifest as CliManifest;

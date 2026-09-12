@@ -36,6 +36,7 @@ import {
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
+  jsonError,
   normalizeBaseUrl,
   normalizedCoreBaseUrls,
   warnDeprecatedQueryToken,
@@ -94,7 +95,7 @@ if (import.meta.main) {
       } catch (error) {
         console.error("gateway request failed:", error);
 
-        return json({ error: "Internal gateway error" }, { status: 500 });
+        return jsonError(500, "Internal gateway error");
       }
     },
     websocket: websocketHandlers(),
@@ -122,22 +123,19 @@ if (import.meta.main) {
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       if (!isOriginAllowed(request.headers.get("origin"), allowedOrigins)) {
-        return json({ error: "Origin is not allowed" }, { status: 403 });
+        return jsonError(403, "Origin is not allowed");
       }
       const ip = clientIp(request, server.requestIP(request)?.address);
       if (!upgradeLimiter.allow(ip)) {
-        return json({ error: "Too many connection attempts" }, { status: 429 });
+        return jsonError(429, "Too many connection attempts");
       }
       if (authFailureLimiter.blocked(ip)) {
-        return json(
-          { error: "Too many failed authentication attempts" },
-          { status: 429 },
-        );
+        return jsonError(429, "Too many failed authentication attempts");
       }
 
       if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
         if (activeSocketCount >= limits.maxConnections) {
-          return json({ error: "Gateway is at capacity" }, { status: 503 });
+          return jsonError(503, "Gateway is at capacity");
         }
 
         const token = websocketToken(request, url);
@@ -148,10 +146,9 @@ if (import.meta.main) {
         if (!ticket) {
           authFailureLimiter.allow(ip);
 
-          return json(
-            { error: "Invalid or expired terminal ticket" },
-            { status: 401 },
-          );
+          return jsonError(401, "Invalid or expired terminal ticket", {
+            code: "invalid_terminal_ticket",
+          });
         }
 
         const upgraded = server.upgrade(request, {
@@ -164,37 +161,34 @@ if (import.meta.main) {
 
         return upgraded
           ? undefined
-          : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+          : jsonError(400, "WebSocket upgrade failed");
       }
 
       const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
       if (observabilityPath) {
         if (activeSocketCount >= limits.maxConnections) {
-          return json({ error: "Gateway is at capacity" }, { status: 503 });
+          return jsonError(503, "Gateway is at capacity");
         }
 
         warnDeprecatedQueryToken(request, url);
         const token = websocketToken(request, url);
-        if (!token)
-          return json({ error: "Missing WebSocket token" }, { status: 401 });
+        if (!token) return jsonError(401, "Missing WebSocket token");
 
         const resolved = await resolveObservabilityScope(token, coreBaseUrls);
         if (!resolved) {
           authFailureLimiter.allow(ip);
 
-          return json({ error: "Invalid WebSocket token" }, { status: 401 });
+          return jsonError(401, "Invalid WebSocket token");
         }
         if (
           resolved.scope.projectSlug !==
             decodeURIComponent(observabilityPath[1]) ||
           resolved.scope.stageSlug !== decodeURIComponent(observabilityPath[2])
         ) {
-          return json(
-            {
-              error:
-                "WebSocket scope does not match the requested project/stage",
-            },
-            { status: 403 },
+          return jsonError(
+            403,
+            "WebSocket scope does not match the requested project/stage",
+            { code: "scope_mismatch" },
           );
         }
 
@@ -211,25 +205,24 @@ if (import.meta.main) {
 
         return upgraded
           ? undefined
-          : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+          : jsonError(400, "WebSocket upgrade failed");
       }
 
       const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
       if (agentWebSocketPath) {
         if (activeSocketCount >= limits.maxConnections) {
-          return json({ error: "Gateway is at capacity" }, { status: 503 });
+          return jsonError(503, "Gateway is at capacity");
         }
 
         warnDeprecatedQueryToken(request, url);
         const token = websocketToken(request, url);
-        if (!token)
-          return json({ error: "Missing WebSocket token" }, { status: 401 });
+        if (!token) return jsonError(401, "Missing WebSocket token");
 
         const resolved = await resolveObservabilityScope(token, coreBaseUrls);
         if (!resolved) {
           authFailureLimiter.allow(ip);
 
-          return json({ error: "Invalid WebSocket token" }, { status: 401 });
+          return jsonError(401, "Invalid WebSocket token");
         }
         // Bind the socket to the key's own endpoint scope: attach never posts
         // through the core run path, so the door check must happen here.
@@ -240,11 +233,10 @@ if (import.meta.main) {
           (agentWebSocketPath.stageSlug !== undefined &&
             resolved.scope.stageSlug !== agentWebSocketPath.stageSlug)
         ) {
-          return json(
-            {
-              error: "WebSocket scope does not match the requested endpoint",
-            },
-            { status: 403 },
+          return jsonError(
+            403,
+            "WebSocket scope does not match the requested endpoint",
+            { code: "scope_mismatch" },
           );
         }
 
@@ -261,7 +253,7 @@ if (import.meta.main) {
 
         return upgraded
           ? undefined
-          : json({ error: "WebSocket upgrade failed" }, { status: 400 });
+          : jsonError(400, "WebSocket upgrade failed");
       }
     }
 
@@ -269,21 +261,20 @@ if (import.meta.main) {
       httpLimiter &&
       !httpLimiter.allow(clientIp(request, server.requestIP(request)?.address))
     ) {
-      return json({ error: "Too many requests" }, { status: 429 });
+      return jsonError(429, "Too many requests");
     }
 
     if (isConfigHttpPath(url.pathname, request.method)) {
       if (!configBaseUrl)
-        return json(
-          { error: "Config plane is not configured (BROODS_CONFIG_URL)" },
-          { status: 503 },
+        return jsonError(
+          503,
+          "Config plane is not configured (BROODS_CONFIG_URL)",
         );
 
       return proxyHttp(request, [configBaseUrl], proxyOptions);
     }
 
-    if (!isCoreHttpRoute(url.pathname))
-      return json({ error: "Not found" }, { status: 404 });
+    if (!isCoreHttpRoute(url.pathname)) return jsonError(404, "Not found");
 
     return proxyHttp(request, coreBaseUrls, proxyOptions);
   }

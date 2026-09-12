@@ -360,8 +360,12 @@ describe("deploy keys and environment values", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({
-      error: expect.stringMatching(/Deploy keys cannot read/),
+    expect(await response.json()).toEqual({
+      error: {
+        message: expect.stringMatching(/Deploy keys cannot read/),
+        type: "permission_error",
+        code: "forbidden",
+      },
     });
   });
 });

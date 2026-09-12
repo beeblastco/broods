@@ -1,5 +1,5 @@
 import type { ObservabilityScope } from "./observability.ts";
-import { json } from "./utils.ts";
+import { jsonError } from "./utils.ts";
 
 type ResolvedObservabilityScope = {
   scope: ObservabilityScope;
@@ -57,10 +57,9 @@ export async function proxyHttp(
   }
 
   if (response) return responseWithoutEncoding(response);
-  if (unreachable)
-    return json({ error: "Upstream is unreachable" }, { status: 502 });
+  if (unreachable) return jsonError(502, "Upstream is unreachable");
 
-  return json({ error: "No core upstream is configured" }, { status: 503 });
+  return jsonError(503, "No core upstream is configured");
 }
 
 export async function resolveObservabilityScope(
