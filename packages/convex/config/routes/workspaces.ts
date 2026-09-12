@@ -21,6 +21,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
+  paginated,
   terminateReservedInstances,
   writeAudit,
 } from "./shared";
@@ -40,11 +41,11 @@ export async function handleWorkspaceConfigRoute(
         { accountId: accountId },
       );
 
-      return json({
-        workspaces: records.map((record) =>
-          toPublicWorkspaceConfigResponse(record),
-        ),
-      });
+      return paginated(
+        "workspaces",
+        records.map((record) => toPublicWorkspaceConfigResponse(record)),
+        req,
+      );
     }
     if (req.method === "POST") {
       const input = normalizeCreateWorkspaceConfigInput(await req.json());
