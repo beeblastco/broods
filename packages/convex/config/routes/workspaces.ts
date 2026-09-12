@@ -21,7 +21,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
-  paginated,
+  collectionPage,
   terminateReservedInstances,
   writeAudit,
 } from "./shared";
@@ -36,16 +36,18 @@ export async function handleWorkspaceConfigRoute(
 ): Promise<Response> {
   if (!workspaceId) {
     if (req.method === "GET") {
-      const records: Doc<"workspaceConfigs">[] = await ctx.runQuery(
-        internal.workspace.configs.list,
-        { accountId: accountId },
-      );
-
-      return paginated(
-        "workspaces",
-        records.map((record) => toPublicWorkspaceConfigResponse(record)),
-        req,
-      );
+      return collectionPage("workspaces", req, {
+        all: () =>
+          ctx.runQuery(internal.workspace.configs.list, {
+            accountId: accountId,
+          }),
+        item: (record) => toPublicWorkspaceConfigResponse(record),
+        page: (options) =>
+          ctx.runQuery(internal.workspace.configs.listPage, {
+            accountId: accountId,
+            paginationOpts: options,
+          }),
+      });
     }
     if (req.method === "POST") {
       const input = normalizeCreateWorkspaceConfigInput(await req.json());
