@@ -6,6 +6,7 @@
 import type { SystemDataModel } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { jsonError, rateLimitHeaders } from "./httpJson";
 
 export const OPEN_UPLOADS_PER_HOUR = 20;
 export const UPLOAD_GRANT_WINDOW_MS = 60 * 60 * 1000;
@@ -71,17 +72,16 @@ export async function grantUpload(
   return { uploadUrl: await ctx.storage.generateUploadUrl() };
 }
 
-export function uploadQuotaHeaders(retryAt: number): Record<string, string> {
-  const seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
-
-  return {
-    "Retry-After": String(seconds),
-    "RateLimit-Limit": String(OPEN_UPLOADS_PER_HOUR),
-    "RateLimit-Remaining": "0",
-    "RateLimit-Reset": String(seconds),
-  };
-}
-
 export function uploadQuotaMessage(retryAt: number): string {
   return `upload quota: ${OPEN_UPLOADS_PER_HOUR} uploads per hour; retry after ${new Date(retryAt).toISOString()}`;
+}
+
+/** The 429 both upload routes answer once the hourly grant budget is spent. */
+export function uploadQuotaResponse(retryAt: number): Response {
+  return jsonError(
+    429,
+    uploadQuotaMessage(retryAt),
+    { code: "upload_quota_exceeded" },
+    rateLimitHeaders(OPEN_UPLOADS_PER_HOUR, (retryAt - Date.now()) / 1000),
+  );
 }

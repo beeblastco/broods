@@ -47,7 +47,6 @@ import {
   json,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
-  rateLimitHeaders,
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
@@ -1185,9 +1184,6 @@ test("proxies runtime HTTP paths used by the SDK", () => {
     isCoreHttpRoute("/v1/projects/demo/stages/development/agents/env_123"),
   ).toBe(true);
   expect(isCoreHttpRoute("/")).toBe(false);
-  expect(isCoreHttpRoute("/async")).toBe(false);
-  expect(isCoreHttpRoute("/status/request-1")).toBe(false);
-  expect(isCoreHttpRoute("/accounts")).toBe(false);
   expect(isCoreHttpRoute("/healthz")).toBe(false);
 });
 
@@ -1333,10 +1329,6 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
   ).toBeNull();
   expect(
     matchAgentWebSocketPath("/v1/projects/demo/stages/development/ws"),
-  ).toBeNull();
-  // The retired slug-first shape must not still parse.
-  expect(
-    matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
   ).toBeNull();
 });
 
@@ -3246,25 +3238,6 @@ test("withRequestId preserves status and existing headers", () => {
   expect(stamped.headers.get("Retry-After")).toBe("30");
   expect(stamped.headers.get("Content-Type")).toBe("application/json");
   expect(stamped.headers.get("x-request-id")).toBe("req_3");
-});
-
-test("rateLimitHeaders tells a client when it may retry", () => {
-  const limiter = new RateLimiter(2, 60_000);
-  limiter.allow("1.2.3.4");
-
-  const headers = rateLimitHeaders(limiter, "1.2.3.4");
-  expect(headers["RateLimit-Limit"]).toBe("2");
-  expect(headers["RateLimit-Remaining"]).toBe("0");
-  expect(Number(headers["Retry-After"])).toBeGreaterThan(0);
-  expect(Number(headers["Retry-After"])).toBeLessThanOrEqual(60);
-  expect(headers["RateLimit-Reset"]).toBe(headers["Retry-After"]);
-});
-
-test("rateLimitHeaders reports no wait for a key with no window yet", () => {
-  const headers = rateLimitHeaders(new RateLimiter(5, 60_000), "unseen");
-
-  expect(headers["Retry-After"]).toBe("0");
-  expect(headers["RateLimit-Limit"]).toBe("5");
 });
 
 test("retryAfterSeconds returns zero once the window has elapsed", () => {

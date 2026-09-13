@@ -25,7 +25,7 @@ const REQUEST_MIX: ReadonlyArray<{ pathname: string; method: string }> = [
   { pathname: "/v1/workspaces/ws_main/files", method: "GET" },
   { pathname: "/v1/agents/agt_7f3c9d21/invoke", method: "POST" },
   { pathname: "/v1/agents/agt_7f3c9d21/messages", method: "POST" },
-  { pathname: "/v1/runs/run_2a91/status", method: "GET" },
+  { pathname: "/v1/runs/run_2a91", method: "GET" },
   { pathname: "/health", method: "GET" },
   { pathname: "/v1/media/med_8812", method: "GET" },
 ];

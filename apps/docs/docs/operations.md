@@ -261,7 +261,7 @@ When self-hosting, the CLI still handles tenant configuration. After `broods dep
 If you need to create an account manually (e.g. for automated testing), use the admin `AdminAccountSecret`:
 
 ```bash
-curl -X POST "$BROODS_BASE_URL/accounts" \
+curl -X POST "$BROODS_BASE_URL/v1/accounts" \
   -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"username": "company-a"}'

@@ -2,7 +2,6 @@
 
 CLI and TypeScript SDK for the Broods agent platform.
 
-> [!WARNING]
 > **Pre-release.**
 >
 > This package has not reached 1.0. Method names, HTTP paths, error shapes and

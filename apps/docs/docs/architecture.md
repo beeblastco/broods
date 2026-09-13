@@ -52,7 +52,7 @@ Runtime boundary:
 flowchart TD
   Owner["Account owner"] -->|"agents + skills APIs"| Gateway["gateway"]
   Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /v1/accounts"| Gateway
-  Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| Gateway
+  Direct["Direct API client"] -->|"Bearer account secret<br/>POST /v1/runs"| Gateway
   Status["Status poller"] -->|"Bearer account secret<br/>GET /v1/runs/\{eventId\}"| Gateway
   Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/v1/webhooks/\{accountId\}/\{channel\}"| Gateway
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
@@ -102,7 +102,7 @@ The diagrams show the logical ownership of runtime config. In code, `integration
 
 ```mermaid
 flowchart TD
-  Direct["POST / or /async"] --> Bearer["Authorization: Bearer account secret"]
+  Direct["POST /v1/runs"] --> Bearer["Authorization: Bearer account secret"]
   Status["GET /v1/runs/\{eventId\}"] --> Bearer
   Bearer --> Hash["hash secret"]
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
@@ -158,7 +158,7 @@ Deleting an account runs account-scoped cleanup before removing the account reco
 
 ```mermaid
 flowchart TD
-  Caller["Caller"] -->|"POST /"| Sync["sync direct request"]
+  Caller["Caller"] -->|"POST /v1/runs"| Sync["sync direct request"]
   Caller -->|"POST /v1/runs (background: true)"| Async["background run"]
 
   Sync --> Auth["account bearer auth"]

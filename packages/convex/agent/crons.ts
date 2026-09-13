@@ -38,7 +38,6 @@ import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
-// The newest runs a single listing can page over.
 const CRON_RUN_PAGE_WINDOW = 1000;
 const PRUNE_BATCH_SIZE = 100;
 

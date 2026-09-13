@@ -4,7 +4,9 @@ import {
   jsonError,
   methodNotAllowed,
   paginated,
+  rateLimitHeaders,
 } from "../config/routes/shared";
+import { uploadQuotaResponse } from "../model/uploads";
 
 describe("api error envelope", () => {
   it("derives type and code from the status", () => {
@@ -60,6 +62,30 @@ describe("api error envelope", () => {
     expect(response.headers.get("Allow")).toBe("GET, POST");
     expect(await response.json()).toMatchObject({
       error: { code: "method_not_allowed" },
+    });
+  });
+});
+
+describe("rateLimitHeaders", () => {
+  it("sends Retry-After and the RateLimit fields, never a zero wait", () => {
+    expect(rateLimitHeaders(20, 0.2)).toEqual({
+      "Retry-After": "1",
+      "RateLimit-Limit": "20",
+      "RateLimit-Remaining": "0",
+      "RateLimit-Reset": "1",
+    });
+    expect(rateLimitHeaders(5, 0)["Retry-After"]).toBe("1");
+  });
+
+  it("answers the upload quota as a 429 the client can time", async () => {
+    const response = uploadQuotaResponse(Date.now() + 65_000);
+    const retryAfter = Number(response.headers.get("Retry-After"));
+
+    expect(response.status).toBe(429);
+    expect(retryAfter).toBeGreaterThanOrEqual(64);
+    expect(retryAfter).toBeLessThanOrEqual(66);
+    expect(await response.json()).toMatchObject({
+      error: { code: "upload_quota_exceeded", type: "rate_limit_error" },
     });
   });
 });

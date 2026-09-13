@@ -1,5 +1,6 @@
 import { dns } from "bun";
 import { apiErrorBody, type ApiErrorInit } from "@broods/convex/model/apiError";
+export { methodNotAllowed } from "@broods/convex/model/httpJson";
 import {
   isDeniedAddress,
   type GuardedFetchOptions,
@@ -83,16 +84,6 @@ export function jsonResponse(
       ...headers,
     },
   });
-}
-
-/** 405 with the `Allow` header RFC 9110 requires. */
-export function methodNotAllowed(allowedMethods: string[]): Response {
-  return errorResponse(
-    405,
-    `Method not allowed. Allowed: ${allowedMethods.join(", ")}.`,
-    {},
-    { allow: allowedMethods.join(", ") },
-  );
 }
 
 export function textResponse(

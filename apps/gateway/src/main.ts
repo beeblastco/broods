@@ -140,7 +140,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           429,
           "Too many connection attempts",
           {},
-          rateLimitHeaders(config.upgradeLimiter, ip),
+          rateLimitHeaders(
+            config.upgradeLimiter.limit,
+            config.upgradeLimiter.retryAfterSeconds(ip),
+          ),
         );
       }
       if (config.authFailureLimiter.blocked(ip)) {
@@ -148,7 +151,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           429,
           "Too many failed authentication attempts",
           {},
-          rateLimitHeaders(config.authFailureLimiter, ip),
+          rateLimitHeaders(
+            config.authFailureLimiter.limit,
+            config.authFailureLimiter.retryAfterSeconds(ip),
+          ),
         );
       }
 
@@ -284,7 +290,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         429,
         "Too many requests",
         {},
-        rateLimitHeaders(config.httpLimiter, requestIp),
+        rateLimitHeaders(
+          config.httpLimiter.limit,
+          config.httpLimiter.retryAfterSeconds(requestIp),
+        ),
       );
     }
 

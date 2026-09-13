@@ -1,14 +1,13 @@
-import {
-  apiErrorBody,
-  type ApiError,
-  type ApiErrorInit,
-} from "../../../packages/convex/model/apiError.ts";
-import type { RateLimiter } from "./rate-limiter.ts";
+import type { ApiError } from "../../../packages/convex/model/apiError.ts";
 
 export {
   resolveRequestId,
   withRequestId,
 } from "../../core/src/shared/request-id.ts";
+export {
+  jsonError,
+  rateLimitHeaders,
+} from "../../../packages/convex/model/httpJson.ts";
 
 export type GatewayLimits = {
   maxConnections: number;
@@ -40,33 +39,6 @@ export function json(payload: unknown, init: ResponseInit = {}): Response {
       ...init.headers,
     },
   });
-}
-
-export function jsonError(
-  status: number,
-  message: string,
-  init: ApiErrorInit = {},
-  headers: Record<string, string> = {},
-): Response {
-  return json(apiErrorBody(status, message, init), {
-    status: status,
-    headers: headers,
-  });
-}
-
-/** RFC 6585 Retry-After plus the IETF RateLimit fields. */
-export function rateLimitHeaders(
-  limiter: RateLimiter,
-  key: string,
-): Record<string, string> {
-  const resetSeconds = limiter.retryAfterSeconds(key);
-
-  return {
-    "Retry-After": String(resetSeconds),
-    "RateLimit-Limit": String(limiter.limit),
-    "RateLimit-Remaining": "0",
-    "RateLimit-Reset": String(resetSeconds),
-  };
 }
 
 export function parseJson(value: string): unknown {

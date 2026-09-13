@@ -121,6 +121,20 @@ describe("slack channel directory", () => {
     }
   });
 
+  it("relays Slack's Retry-After on a 429", async () => {
+    const { impl } = fetchStub([
+      () => new Response("", { status: 429, headers: { "retry-after": "30" } }),
+    ]);
+    const result = await fetchSlackChannelDirectory("xoxb-token", impl);
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 429,
+      reason: "ratelimited",
+      retryAfterSeconds: 30,
+    });
+  });
+
   it("maps HTTP 429 to a ratelimited result", async () => {
     const { impl } = fetchStub([() => new Response("", { status: 429 })]);
     const result = await fetchSlackChannelDirectory("xoxb-test", impl);

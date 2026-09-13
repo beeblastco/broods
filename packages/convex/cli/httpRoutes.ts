@@ -14,7 +14,7 @@ import { normalizeMcpInput } from "../model/mcp";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
-import { uploadQuotaHeaders, uploadQuotaMessage } from "../model/uploads";
+import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
@@ -174,7 +174,7 @@ export function handleLogsRoute(req: Request): Response {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
   // Logs now stream via the gateway (NATS live tail + Loki backfill).
-  // Use wss://gateway.broods.app/v1/<project>/<stage>/observability/ws instead.
+  // Use wss://gateway.broods.app/v1/projects/<project>/stages/<stage>/observability/ws instead.
   return jsonError(
     410,
     "Log streaming has moved to the gateway observability WebSocket",
@@ -221,12 +221,7 @@ export async function handleMcpBundleUploadRoute(
     kind: "mcp",
   });
   if ("retryAt" in grant) {
-    return jsonError(
-      429,
-      uploadQuotaMessage(grant.retryAt),
-      { code: "upload_quota_exceeded" },
-      uploadQuotaHeaders(grant.retryAt),
-    );
+    return uploadQuotaResponse(grant.retryAt);
   }
 
   return json({ uploadUrl: grant.uploadUrl });

@@ -16,9 +16,14 @@ import type {
   ConfigAuditResource,
 } from "../../model/auditEvents";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
-import { json, jsonError, methodNotAllowed } from "../../model/httpJson";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  rateLimitHeaders,
+} from "../../model/httpJson";
 
-export { json, jsonError, methodNotAllowed };
+export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
 const AUTH_FAILURE_MAX = 20;
 
@@ -159,9 +164,9 @@ export function paginated<T>(key: string, items: T[], req: Request): Response {
   const rawLimit = url.searchParams.get("limit")?.trim() ?? "";
   const rawCursor = url.searchParams.get("cursor")?.trim() ?? "";
 
-  // No `limit` means the whole collection, the way these routes answered
-  // before paging existed. A default page size would silently drop rows for
-  // every client that has not asked for a page yet.
+  // No `limit` means the whole collection. A default page size would silently
+  // drop rows for every client that has not asked for a page. The cursor is an
+  // offset, so moving to keyset paging later changes only its encoding.
   const limit = rawLimit === "" ? items.length : parsePageLimit(rawLimit);
   if (limit === null) {
     return jsonError(
@@ -334,21 +339,11 @@ export async function unauthorizedResponse(
       blockMs: 15 * 60 * 1000,
     });
   if (!result.blocked) return jsonError(401, "Unauthorized");
-  const retryAfterSeconds = Math.max(
-    1,
-    Math.ceil((result.retryAfterMs ?? 0) / 1000),
-  );
-
   return jsonError(
     429,
     "Too many unauthorized attempts",
     { code: "too_many_auth_failures" },
-    {
-      "Retry-After": String(retryAfterSeconds),
-      "RateLimit-Limit": String(AUTH_FAILURE_MAX),
-      "RateLimit-Remaining": "0",
-      "RateLimit-Reset": String(retryAfterSeconds),
-    },
+    rateLimitHeaders(AUTH_FAILURE_MAX, (result.retryAfterMs ?? 0) / 1000),
   );
 }
 

@@ -517,8 +517,6 @@ async function handleHttpRequest(
         ),
         ingress: ingress,
       };
-      // A project+stage runtime key works on both /v1/runs and the scoped
-      // /v1/projects/{project}/stages/{stage}/agents/{endpointId} URL.
       if (auth?.kind === "deployment") {
         const denial = await statusAccessDenial(auth, parsed, context);
         if (denial) {
