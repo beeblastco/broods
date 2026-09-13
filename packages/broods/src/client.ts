@@ -342,21 +342,8 @@ export class BroodsClient {
     const targetUrl = maybeInput
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
-    const response = await this.fetchJson(targetUrl, {
-      method: "POST",
-      headers: this.apiKeyHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (response.status !== 202) {
-      throw new Error(
-        `Async run failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
-      );
-    }
 
-    return this.asyncAgentRun(
-      normalizeAsyncAccepted(await response.json(), body),
-      body.conversationKey,
-    );
+    return this.postAcceptedRun(targetUrl, body, "Async run");
   }
 
   /**
@@ -375,33 +362,17 @@ export class BroodsClient {
     refOrInput: AgentReference | (AgentContinueInput & { agentId: string }),
     maybeInput?: AgentContinueInput,
   ): Promise<AsyncAgentRun> {
+    const ref = maybeInput ? (refOrInput as AgentReference) : null;
     const input = maybeInput ?? (refOrInput as AgentContinueInput);
     const body = {
-      agentId: maybeInput
-        ? (refOrInput as AgentReference).id
-        : (refOrInput as { agentId: string }).agentId,
-      eventId: input.eventId ?? `continue-${Date.now()}`,
+      agentId: ref ? ref.id : (refOrInput as { agentId: string }).agentId,
+      eventId: input.eventId ?? `continue-${crypto.randomUUID()}`,
       conversationKey: input.conversationKey,
       continue: true,
     };
-    const targetUrl = maybeInput
-      ? this.scopedUrl(refOrInput as AgentReference)
-      : `${this.baseUrl}/v1/runs`;
-    const response = await this.fetchJson(targetUrl, {
-      method: "POST",
-      headers: this.apiKeyHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (response.status !== 202) {
-      throw new Error(
-        `Continue failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
-      );
-    }
+    const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.asyncAgentRun(
-      normalizeAsyncAccepted(await response.json(), body),
-      body.conversationKey,
-    );
+    return this.postAcceptedRun(targetUrl, body, "Continue");
   }
 
   /** Fetch one async status snapshot by status URL or status id + agent id. */
@@ -571,6 +542,18 @@ export class BroodsClient {
    * same URL the dashboard shows, so core can validate the key against the
    * path); otherwise it falls back to the single run endpoint.
    */
+  private scopedUrl(ref: AgentReference): string {
+    if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
+      return (
+        `${this.baseUrl}/v1/projects/${encodeURIComponent(ref.projectSlug)}` +
+        `/stages/${encodeURIComponent(ref.stageSlug)}` +
+        `/agents/${encodeURIComponent(ref.endpointId)}`
+      );
+    }
+
+    return `${this.baseUrl}/v1/runs`;
+  }
+
   private asyncAgentRun(
     accepted: AsyncRequestAccepted,
     conversationKey: string,
@@ -584,16 +567,27 @@ export class BroodsClient {
     };
   }
 
-  private scopedUrl(ref: AgentReference): string {
-    if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
-      return (
-        `${this.baseUrl}/v1/projects/${encodeURIComponent(ref.projectSlug)}` +
-        `/stages/${encodeURIComponent(ref.stageSlug)}` +
-        `/agents/${encodeURIComponent(ref.endpointId)}`
+  /** POST a run body that must answer 202 and wrap the accepted run for polling. */
+  private async postAcceptedRun(
+    targetUrl: string,
+    body: { agentId: string; conversationKey: string },
+    label: string,
+  ): Promise<AsyncAgentRun> {
+    const response = await this.fetchJson(targetUrl, {
+      method: "POST",
+      headers: this.apiKeyHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (response.status !== 202) {
+      throw new Error(
+        `${label} failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
       );
     }
 
-    return `${this.baseUrl}/v1/runs`;
+    return this.asyncAgentRun(
+      normalizeAsyncAccepted(await response.json(), body),
+      body.conversationKey,
+    );
   }
 
   private async openStream(

@@ -84,6 +84,7 @@ import {
   assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
+  parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -1960,7 +1961,6 @@ async function parseDirectPayload(
 
   const events = parseDirectIngressEvents(record);
   const answers = parseDirectQuestionAnswers(record.answers);
-  assertOneDirectPayloadShape(continuation, events.length, answers.length);
   if (
     record.webhookUrl !== undefined ||
     headers["x-webhook-secret"] !== undefined
@@ -1971,6 +1971,11 @@ async function parseDirectPayload(
   }
 
   const overrides = parseRunOverrides(record);
+  assertOneDirectPayloadShape(continuation, {
+    eventCount: events.length,
+    answerCount: answers.length,
+    hasOverrides: overrides !== undefined,
+  });
   const connectionId =
     typeof record.connectionId === "string" &&
     record.connectionId.trim().length > 0
@@ -1999,7 +2004,7 @@ async function parseDirectPayload(
     ...conversation,
     events: events,
     background: background,
-    ...(continuation ? { continuation: true } : {}),
+    continuation: continuation,
     requestedMode: requestedMode,
     idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId: connectionId } : {}),
@@ -2009,8 +2014,9 @@ async function parseDirectPayload(
 }
 
 /**
- * A continuation may name the scoped key a trace row shows; the handler
- * resolves it to the session it names. Every other request names a public key.
+ * A continuation may name the scoped key a trace row shows, which must parse
+ * and name this agent; the handler then resolves it to the session it names.
+ * Every other request names a public key.
  */
 function directConversationKeys(
   requested: string,
@@ -2018,30 +2024,43 @@ function directConversationKeys(
   accountId: string,
   agentId: string,
 ): Pick<DirectInboundEvent, "conversationKey" | "publicConversationKey"> {
-  const scoped = continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX);
-  const raw = scoped ? requested : assertValidPublicConversationKey(requested);
+  if (continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX)) {
+    const scope = parseAccountAgentScopedKey(requested);
+    if (!scope || scope.accountId !== accountId || scope.agentId !== agentId) {
+      throw new DirectNotFoundError("Conversation not found");
+    }
+
+    return {
+      conversationKey: requested,
+      publicConversationKey: publicConversationKeyFromScoped(
+        requested,
+        accountId,
+        agentId,
+      ),
+    };
+  }
+  const raw = assertValidPublicConversationKey(requested);
 
   return {
-    conversationKey: scoped
-      ? raw
-      : scopedDirectConversationKey(accountId, agentId, raw),
-    publicConversationKey: publicConversationKeyFromScoped(
-      raw,
-      accountId,
-      agentId,
-    ),
+    conversationKey: scopedDirectConversationKey(accountId, agentId, raw),
+    publicConversationKey: raw,
   };
 }
 
-/** A body is exactly one of: events, answers, or continue. */
+/** A body is exactly one of: events, answers, or a bare continue. */
 function assertOneDirectPayloadShape(
   continuation: boolean,
-  eventCount: number,
-  answerCount: number,
+  body: { eventCount: number; answerCount: number; hasOverrides: boolean },
 ): void {
-  if (continuation && eventCount + answerCount > 0) {
+  const { eventCount, answerCount, hasOverrides } = body;
+  if (continuation && (eventCount > 0 || answerCount > 0)) {
     throw new Error(
       "Request body cannot combine continue with events or answers",
+    );
+  }
+  if (continuation && hasOverrides) {
+    throw new Error(
+      "Request body cannot combine continue with system or model overrides",
     );
   }
   if (!continuation && eventCount === 0 && answerCount === 0) {

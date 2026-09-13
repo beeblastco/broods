@@ -2582,7 +2582,8 @@ components:
             mode, always answering 202 with a run id. A live channel session
             answers in its channel. `conversationKey` may be the scoped
             `acct:...` key a Tracing row shows; it must name this agent, or the
-            request is a 404. Cannot be combined with `events` or `answers`.
+            request is a 404. Cannot be combined with `events`, `answers`, or
+            the `system` / `model` overrides.
         system:
           oneOf:
             - $ref: "#/components/schemas/SystemRunEvent"
@@ -3850,7 +3851,7 @@ components:
       properties:
         maxTurn:
           type: integer
-          description: Maximum model/tool loop steps per conversation turn, any positive integer. 0 lifts the cap and the loop runs until the model stops calling tools. Unset uses the harness default of 30.
+          description: Maximum model/tool loop steps per conversation turn, any non-negative integer. 0 lifts the cap and the loop runs until the model stops calling tools. Unset uses the harness default of 30.
         system:
           oneOf:
             - type: string

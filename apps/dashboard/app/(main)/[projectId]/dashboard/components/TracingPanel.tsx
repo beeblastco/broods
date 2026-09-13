@@ -8,7 +8,7 @@ import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
-import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatTime } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -35,9 +35,14 @@ interface Props {
 
 // Task groups rendered before the "Load more" pager.
 const PAGE_SIZE = 50;
-const CONTINUE_PENDING = "Continuing…";
 
 type StatusFilter = "all" | ObservabilitySpanRow["status"];
+
+// Outcome of one Continue click: in flight, or its result text.
+interface ContinueNote {
+  pending: boolean;
+  text: string;
+}
 
 const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "All statuses" },
@@ -216,71 +221,6 @@ export function TracingPanel({
 
     return null;
   }, [groups, selectedKey]);
-
-  // Outcome of the side panel's Continue, per trace: pending, accepted, or the
-  // error text. The continued run shows up as its own new task.
-  const [continued, setContinued] = useState<Record<string, string>>({});
-  const continueTask = useCallback(
-    async (root: ObservabilitySpanRow) => {
-      const endpoint = resolveCoreEndpoint();
-      const note = (text: string) =>
-        setContinued((prev) => ({ ...prev, [root.traceId]: text }));
-      if (!endpoint.ok) {
-        note(endpoint.message);
-
-        return;
-      }
-      if (
-        !apiKey ||
-        !projectSlug ||
-        !stageSlug ||
-        !root.endpointId ||
-        !root.agentId ||
-        !root.conversationKey
-      ) {
-        note(
-          "Cannot continue: the task has no endpoint, agent, or conversation",
-        );
-
-        return;
-      }
-      note(CONTINUE_PENDING);
-      try {
-        const response = await fetch(
-          `${endpoint.httpBaseUrl}/v1/projects/${encodeURIComponent(projectSlug)}/stages/${encodeURIComponent(stageSlug)}/agents/${encodeURIComponent(root.endpointId)}`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              agentId: root.agentId,
-              eventId: `continue-${crypto.randomUUID()}`,
-              conversationKey: root.conversationKey,
-              continue: true,
-            }),
-          },
-        );
-        const payload = (await response.json()) as {
-          status?: string;
-          error?: string | { message?: string };
-        };
-        const error =
-          typeof payload.error === "string"
-            ? payload.error
-            : payload.error?.message;
-        note(
-          response.ok
-            ? `Continued: ${payload.status ?? "accepted"}`
-            : (error ?? `Continue failed (${response.status})`),
-        );
-      } catch (err) {
-        note(err instanceof Error ? err.message : "Continue failed");
-      }
-    },
-    [apiKey, projectSlug, stageSlug],
-  );
 
   // Deliberately no auto-expand: new tasks arrive collapsed, since the row
   // already shows live status and a tree popping open on every task is noisy.
@@ -497,29 +437,13 @@ export function TracingPanel({
                     · {formatDateTime(selected.span.startTimeMs)}
                   </span>
                   {canContinue(selected.span) && (
-                    <>
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        className={
-                          continued[selected.span.traceId] === CONTINUE_PENDING
-                            ? "cursor-not-allowed"
-                            : "cursor-pointer"
-                        }
-                        disabled={
-                          continued[selected.span.traceId] === CONTINUE_PENDING
-                        }
-                        onClick={() => continueTask(selected.span)}
-                      >
-                        Continue
-                      </Button>
-                      {continued[selected.span.traceId] && (
-                        <span className="text-muted-foreground">
-                          {continued[selected.span.traceId]}
-                        </span>
-                      )}
-                    </>
+                    <ContinueTaskButton
+                      key={selected.span.traceId}
+                      apiKey={apiKey}
+                      projectSlug={projectSlug}
+                      root={selected.span}
+                      stageSlug={stageSlug}
+                    />
                   )}
                 </div>
               }
@@ -650,17 +574,17 @@ function toEpochMs(value: string): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** A live "running" span under a task that already finished never reported its end. */
-function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
-  return span.status === "running" && !taskRunning;
-}
-
 // Only a failed top-level run can be continued: a subtask belongs to its
 // parent's run, and a task that finished has nothing to pick up.
 function canContinue(span: ObservabilitySpanRow): boolean {
   return (
     (span.kind === "task" || span.kind === "cron") && span.status === "error"
   );
+}
+
+/** A live "running" span under a task that already finished never reported its end. */
+function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
+  return span.status === "running" && !taskRunning;
 }
 
 function isTaskRunning(root: ObservabilitySpanRow): boolean {
@@ -922,6 +846,98 @@ function TimingChip({
         {formatDuration(ms)}
       </span>
     </span>
+  );
+}
+
+/**
+ * Re-enters the failed task's conversation with `continue: true` on the stage's
+ * run endpoint. State lives here so a click never re-renders the task list;
+ * the parent keys it by trace so the note resets when the selection moves.
+ */
+function ContinueTaskButton({
+  apiKey,
+  projectSlug,
+  root,
+  stageSlug,
+}: {
+  apiKey: string | undefined;
+  projectSlug: string | undefined;
+  root: ObservabilitySpanRow;
+  stageSlug: string | undefined;
+}): React.JSX.Element {
+  const [note, setNote] = useState<ContinueNote | null>(null);
+  const continueTask = async (): Promise<void> => {
+    const endpoint = resolveCoreEndpoint();
+    if (!endpoint.ok) {
+      setNote({ pending: false, text: endpoint.message });
+
+      return;
+    }
+    if (!apiKey || !root.endpointId || !root.agentId || !root.conversationKey) {
+      setNote({
+        pending: false,
+        text: "Cannot continue: the task has no endpoint, agent, or conversation",
+      });
+
+      return;
+    }
+    setNote({ pending: true, text: "Continuing…" });
+    try {
+      const response = await fetch(
+        `${endpoint.httpBaseUrl}${agentEndpointPath({
+          endpointId: root.endpointId,
+          projectSlug: projectSlug,
+          stageSlug: stageSlug,
+        })}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            agentId: root.agentId,
+            eventId: `continue-${crypto.randomUUID()}`,
+            conversationKey: root.conversationKey,
+            continue: true,
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        status?: string;
+        error?: string | { message?: string };
+      };
+      const error =
+        typeof payload.error === "string"
+          ? payload.error
+          : payload.error?.message;
+      setNote({
+        pending: false,
+        text: response.ok
+          ? `Continued: ${payload.status ?? "accepted"}`
+          : (error ?? `Continue failed (${response.status})`),
+      });
+    } catch (err) {
+      setNote({
+        pending: false,
+        text: err instanceof Error ? err.message : "Continue failed",
+      });
+    }
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        disabled={note?.pending === true}
+        onClick={continueTask}
+      >
+        Continue
+      </Button>
+      {note && <span className="text-muted-foreground">{note.text}</span>}
+    </>
   );
 }
 

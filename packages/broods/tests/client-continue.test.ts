@@ -14,7 +14,7 @@ function mockClient(
   const client = new BroodsClient({
     baseUrl: "https://gateway.example.com",
     apiKey: "key-1",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       calls.push({ url: String(input), body: String(init?.body) });
 
       return new Response(JSON.stringify(payload), { status: status });

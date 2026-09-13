@@ -37,7 +37,6 @@ import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
-  parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -574,7 +573,7 @@ async function continueAfterAsyncToolSettlement(
     idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
   };
 
-  const ownedContinuation = await admitInternalContinuation(
+  const { owned: ownedContinuation } = await admitInternalContinuation(
     continuationEvent,
     continuationDelivery(continuationEvent),
   );
@@ -897,30 +896,10 @@ async function handleAsyncRequest(
   if (admission.outcome !== "owner") {
     return asyncAdmissionResponse(event, admission);
   }
-  const ownedEvent = {
+  await startOwnedAsyncRun({
     ...event,
     ownerGeneration: admission.ownerGeneration,
-  };
-
-  const created = await createPendingAsyncAgentResult({
-    eventId: event.eventId,
-    conversationKey: event.conversationKey,
   });
-
-  if (created) {
-    try {
-      await invokeAsyncWorker(ownedEvent);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to start async worker";
-      logError("Failed to invoke async worker", {
-        eventId: event.eventId,
-        error: message,
-      });
-      await settleAsyncFailure(event, message);
-      await failOwnedIngress(ownedEvent, message);
-    }
-  }
 
   return acceptedAsyncResponse(event.statusUrl, event, "processing");
 }
@@ -935,121 +914,40 @@ async function handleAsyncRequest(
 async function handleContinueRequest(
   event: DirectInboundEvent,
 ): Promise<Response> {
-  const scoped = parseAccountAgentScopedKey(event.conversationKey);
-  if (
-    scoped &&
-    (scoped.accountId !== event.accountId || scoped.agentId !== event.agentId)
-  ) {
-    return conversationNotFoundResponse();
-  }
-  const sessionConversationKey = accountAgentScopedKey(
-    event.accountId,
-    event.agentId,
-    event.publicConversationKey,
-  );
-  const directConversationKey = scopedDirectConversationKey(
-    event.accountId,
-    event.agentId,
-    event.publicConversationKey,
-  );
-  const [channelTarget, deployment] = await Promise.all([
-    getConversationDispatchTarget({
-      accountId: event.accountId,
-      agentId: event.agentId,
-      conversationKey: sessionConversationKey,
-    }),
-    event.endpointId
-      ? undefined
-      : getStorage().agentDeployments.getByAgentId?.(
-          event.accountId,
-          event.agentId,
-        ),
-  ]);
-  // A scoped key names one exact session. Without a live channel row behind
-  // it, only the direct-run form exists to continue.
-  if (
-    !channelTarget &&
-    scoped &&
-    event.conversationKey !== directConversationKey
-  ) {
-    return conversationNotFoundResponse();
+  const target = await resolveReentryTarget({
+    accountId: event.accountId,
+    agentId: event.agentId,
+    publicConversationKey: event.publicConversationKey,
+    agentConfig: event.agentConfig,
+  });
+  // The key the caller named must be the session it resolves to: a scoped
+  // channel key with no live session behind it is not something to continue.
+  if (event.conversationKey !== target.conversationKey) {
+    return errorResponse(404, "Conversation not found", {
+      code: "conversation_not_found",
+      param: "conversationKey",
+    });
   }
 
   const continuation: DirectInboundEvent = {
     ...event,
-    agentConfig: channelTarget ? channelTarget.agentConfig : event.agentConfig,
-    conversationKey: channelTarget
-      ? sessionConversationKey
-      : directConversationKey,
+    ...target,
     events: [{ role: "user", content: CONTINUE_TURN_TEXT }],
     requestedMode: "followup",
-    ...(channelTarget
-      ? {
-          replyTarget: {
-            channelName: channelTarget.channelName,
-            source: channelTarget.source,
-          },
-        }
-      : {}),
-    ...(deployment
-      ? {
-          endpointId: deployment.endpointId,
-          projectSlug: deployment.projectSlug,
-          stageSlug: deployment.stageSlug,
-        }
-      : {}),
   };
-  const admission = await acceptIngress({
-    accountId: continuation.accountId,
-    agentId: continuation.agentId,
-    eventId: continuation.eventId,
-    conversationKey: continuation.conversationKey,
-    events: continuation.events,
-    requestedMode: continuation.requestedMode,
-    idempotencyKey: continuation.idempotencyKey,
-    delivery: continuationDelivery(continuation),
-    agentConfig: continuation.agentConfig,
-  });
-  await dispatchRecoveredIngress(continuation, admission);
-  if (admission.outcome !== "owner") {
-    return directAdmissionResponse(continuation, admission, true);
+  const { admission, owned } = await admitInternalContinuation(
+    continuation,
+    continuationDelivery(continuation),
+  );
+  if (owned) {
+    await startOwnedAsyncRun(owned);
   }
-  const ownedEvent = {
-    ...continuation,
-    ownerGeneration: admission.ownerGeneration,
-  };
-  await createPendingAsyncAgentResult({
-    eventId: continuation.eventId,
-    conversationKey: continuation.conversationKey,
-  });
-  try {
-    await invokeAsyncWorker(ownedEvent);
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to start async worker";
-    logError("Failed to invoke continue worker", {
-      eventId: continuation.eventId,
-      error: message,
-    });
-    await settleAsyncFailure(continuation, message);
-    await failOwnedIngress(ownedEvent, message);
-  }
-  const statusUrl = directStatusUrl(continuation);
 
-  return jsonResponse(202, {
-    eventId: continuation.publicEventId,
-    conversationKey: continuation.publicConversationKey,
-    status: "processing",
-    requestedMode: continuation.requestedMode,
-    ...(statusUrl ? { statusUrl: statusUrl } : {}),
-  });
-}
-
-function conversationNotFoundResponse(): Response {
-  return errorResponse(404, "Conversation not found", {
-    code: "conversation_not_found",
-    param: "conversationKey",
-  });
+  return directAdmissionResponse(
+    continuation,
+    owned ? { ...admission, status: "processing" } : admission,
+    true,
+  );
 }
 
 /** Run an in-process async worker request and publish its final result to storage. */
@@ -2282,7 +2180,7 @@ async function dispatchSessionMessage(
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
-): Promise<DirectInboundEvent | null> {
+): Promise<{ admission: IngressAdmission; owned: DirectInboundEvent | null }> {
   const admission = await acceptIngress({
     accountId: event.accountId,
     agentId: event.agentId,
@@ -2298,14 +2196,19 @@ async function admitInternalContinuation(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
-  if (admission.outcome !== "owner") return null;
+  if (admission.outcome !== "owner") {
+    return { admission: admission, owned: null };
+  }
   if (admission.ownerGeneration === undefined) {
     throw new Error(
       "Continuation admission did not return an owner generation",
     );
   }
 
-  return { ...event, ownerGeneration: admission.ownerGeneration };
+  return {
+    admission: admission,
+    owned: { ...event, ownerGeneration: admission.ownerGeneration },
+  };
 }
 
 /** Maps an existing run's delivery target onto the durable ingress envelope. */
@@ -2349,6 +2252,35 @@ function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
 
+/**
+ * Creates the pending result row and hands the owned event to the worker. A
+ * replayed event whose row already exists is a no-op, so a retried request
+ * never starts a second run.
+ */
+async function startOwnedAsyncRun(
+  ownedEvent: DirectInboundEvent,
+): Promise<void> {
+  const created = await createPendingAsyncAgentResult({
+    eventId: ownedEvent.eventId,
+    conversationKey: ownedEvent.conversationKey,
+  });
+  if (!created) {
+    return;
+  }
+  try {
+    await invokeAsyncWorker(ownedEvent);
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to start async worker";
+    logError("Failed to invoke async worker", {
+      eventId: ownedEvent.eventId,
+      error: message,
+    });
+    await settleAsyncFailure(ownedEvent, message);
+    await failOwnedIngress(ownedEvent, message);
+  }
+}
+
 async function startScheduledAgentRun(
   job: CronRecord,
   firedAt: Date,
@@ -2366,7 +2298,7 @@ async function startScheduledAgentRun(
     ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
   };
   try {
-    const ownedEvent = await admitInternalContinuation(
+    const { owned: ownedEvent } = await admitInternalContinuation(
       event,
       continuationDelivery(event),
     );
@@ -2429,42 +2361,22 @@ async function createCronDirectEvent(
 ): Promise<DirectInboundEvent> {
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
-  // A cron whose conversationKey names an existing channel session resumes that
-  // session and answers where it answers; the config it stored carries any
-  // channel-record narrowing. Anything else stays a direct api: conversation.
-  const sessionConversationKey = accountAgentScopedKey(
-    job.accountId,
-    job.agentId,
-    publicConversationKey,
-  );
-  const [agent, deployment, channelTarget] = await Promise.all([
-    getStorage().agents.getById(job.accountId, job.agentId),
-    getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId),
-    getConversationDispatchTarget({
-      accountId: job.accountId,
-      agentId: job.agentId,
-      conversationKey: sessionConversationKey,
-    }),
-  ]);
+  const agent = await getStorage().agents.getById(job.accountId, job.agentId);
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
+  const target = await resolveReentryTarget({
+    accountId: job.accountId,
+    agentId: job.agentId,
+    publicConversationKey: publicConversationKey,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+  });
 
   return {
     accountId: job.accountId,
     agentId: job.agentId,
-    agentConfig: channelTarget
-      ? channelTarget.agentConfig
-      : toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
     publicEventId: publicEventId,
-    conversationKey: channelTarget
-      ? sessionConversationKey
-      : scopedDirectConversationKey(
-          job.accountId,
-          job.agentId,
-          publicConversationKey,
-        ),
     publicConversationKey: publicConversationKey,
     events: withScheduledRunContext(
       job,
@@ -2472,6 +2384,60 @@ async function createCronDirectEvent(
     ) as DirectInboundEvent["events"],
     requestedMode: "reject",
     idempotencyKey: publicEventId,
+    ...target,
+  };
+}
+
+/**
+ * Where a re-entered conversation (cron, continue) runs and answers. A live
+ * channel session keeps its key, its record-narrowed config and its reply
+ * target; anything else is the direct `api:` conversation on the given config.
+ * The deployment scope is what puts the run's trace on the dashboard stream.
+ */
+async function resolveReentryTarget(options: {
+  accountId: string;
+  agentId: string;
+  publicConversationKey: string;
+  agentConfig: AgentConfig;
+}): Promise<
+  Pick<
+    DirectInboundEvent,
+    | "agentConfig"
+    | "conversationKey"
+    | "replyTarget"
+    | "endpointId"
+    | "projectSlug"
+    | "stageSlug"
+  >
+> {
+  const sessionConversationKey = accountAgentScopedKey(
+    options.accountId,
+    options.agentId,
+    options.publicConversationKey,
+  );
+  const [deployment, channelTarget] = await Promise.all([
+    getStorage().agentDeployments.getByAgentId?.(
+      options.accountId,
+      options.agentId,
+    ),
+    getConversationDispatchTarget({
+      accountId: options.accountId,
+      agentId: options.agentId,
+      conversationKey: sessionConversationKey,
+    }),
+  ]);
+
+  return {
+    agentConfig: channelTarget
+      ? channelTarget.agentConfig
+      : options.agentConfig,
+    conversationKey: channelTarget
+      ? sessionConversationKey
+      : scopedDirectConversationKey(
+          options.accountId,
+          options.agentId,
+          options.publicConversationKey,
+        ),
     ...(channelTarget
       ? {
           replyTarget: {

@@ -650,12 +650,14 @@ export function toChannelRuntimeAgentConfig(
   };
 }
 
-// The step cap an external harness (claude-code, deepagents) is handed: unset
-// and 0 both fall back to that harness's own default.
+// The step cap an external harness (claude-code, deepagents) is handed. Unset
+// falls back to that harness's own default; 0 lifts it there too.
 export function configuredMaxTurn(config: AgentConfig): number | undefined {
   const maxTurn = config.agent?.maxTurn;
 
-  return maxTurn === AGENT_MAX_TURN_UNLIMITED ? undefined : maxTurn;
+  return maxTurn === AGENT_MAX_TURN_UNLIMITED
+    ? Number.MAX_SAFE_INTEGER
+    : maxTurn;
 }
 
 // Off by default: only an explicit `trace: "enabled"` on the channel appends
@@ -883,7 +885,9 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
 // Any non-negative integer; 0 lifts the cap. No ceiling: a long tool job can
 // legitimately take hundreds of steps.
 function assertOptionalMaxTurn(value: unknown): void {
-  if (value === undefined) return;
+  if (value === undefined) {
+    return;
+  }
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new Error(
       "config.agent.maxTurn must be a non-negative integer (0 lifts the cap)",

@@ -304,6 +304,46 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("refuses a scoped continue key that is malformed or names another agent", async () => {
+    const handlers = createHandlers({
+      handleDirectRequest: async () => ({ statusCode: 202, body: "{}" }),
+    });
+    for (const conversationKey of [
+      "acct:acct_test:agent:agent_test:",
+      "acct:acct_test:agent:agent_other:tg:42",
+      "acct:acct_other:agent:agent_test:tg:42",
+    ]) {
+      const response = await routeIncomingEvent(
+        createEvent(
+          {
+            eventId: "continue-1",
+            conversationKey: conversationKey,
+            continue: true,
+          },
+          { authorization: "Bearer secret" },
+          { rawPath: "/v1/runs" },
+        ),
+        handlers,
+      );
+      expect(response.statusCode).toBe(404);
+    }
+
+    const withOverrides = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "continue-1",
+          conversationKey: "chat_1",
+          continue: true,
+          system: "be brief",
+        },
+        { authorization: "Bearer secret" },
+        { rawPath: "/v1/runs" },
+      ),
+      handlers,
+    );
+    expect(withOverrides.statusCode).toBe(400);
+  });
+
   it("scopes a public continue key like a run and refuses continue with events", async () => {
     const handledEvents: DirectInboundEvent[] = [];
     const handlers = createHandlers({
