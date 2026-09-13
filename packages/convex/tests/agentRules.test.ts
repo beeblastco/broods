@@ -112,6 +112,9 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ agent: { maxTurn: 101 } })).toThrow(
       "config.agent.maxTurn must be an integer from 1 to 100",
     );
+    expect(normalizeAgentConfig({ agent: { maxTurn: 0 } })).toEqual({
+      agent: { maxTurn: 0 },
+    });
     expect(() =>
       normalizeAgentConfig({
         session: { compaction: { maxContextLength: 500_001 } },

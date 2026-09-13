@@ -2571,6 +2571,18 @@ components:
             it cannot also carry `events`.
           items:
             $ref: "#/components/schemas/QuestionAnswer"
+        continue:
+          type: boolean
+          default: false
+          description: >-
+            Re-enter this conversation with no new content, for a turn that
+            stopped short on the step cap or a provider fault. Core appends one
+            "continue" user turn to the persisted history (which already ends
+            in the tool results of the cut-off step) and runs it in `followup`
+            mode, always answering 202 with a run id. A live channel session
+            answers in its channel. `conversationKey` may be the scoped
+            `acct:...` key a Tracing row shows; it must name this agent, or the
+            request is a 404. Cannot be combined with `events` or `answers`.
         system:
           oneOf:
             - $ref: "#/components/schemas/SystemRunEvent"
@@ -3838,7 +3850,7 @@ components:
       properties:
         maxTurn:
           type: integer
-          description: Maximum model/tool loop steps per conversation turn
+          description: Maximum model/tool loop steps per conversation turn, 1 to 100. 0 lifts the cap and the loop runs until the model stops calling tools. Unset uses the harness default of 30.
         system:
           oneOf:
             - type: string

@@ -133,7 +133,9 @@ export const agent = defineAgent({
   },
   agent: {
     system: instructions,
-    maxTurn: 100,
+    // 0 = no step cap. Tracy runs long multi-tool jobs; a cut-off turn can be
+    // resumed from the dashboard Tracing tab, but better not to cut it.
+    maxTurn: 0,
   },
   connections: [slack, telegram, github],
   sandbox: sandbox,

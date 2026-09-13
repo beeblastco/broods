@@ -77,12 +77,14 @@ import {
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
 import {
+  ACCOUNT_NAMESPACE_PREFIX,
   accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
   assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
+  publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -177,6 +179,11 @@ export interface DirectInboundEvent {
    * (cron, continuation, channel), which are never backgrounded.
    */
   background?: boolean;
+  /**
+   * `continue: true`: re-enter this conversation with no new content, for a
+   * turn that stopped short. The key may be the scoped one a trace row shows.
+   */
+  continuation?: boolean;
   requestedMode: IngressMode;
   idempotencyKey: string;
   // Server-issued fencing token added only after durable admission.
@@ -1928,7 +1935,8 @@ async function parseDirectPayload(
   ) {
     throw new Error("Request body must include eventId and conversationKey");
   }
-  const background = parseBackgroundFlag(record.background);
+  const background = parseBooleanField(record.background, "background");
+  const continuation = parseBooleanField(record.continue, "continue");
 
   if (
     typeof record.agentId !== "string" ||
@@ -1943,22 +1951,16 @@ async function parseDirectPayload(
   }
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
-  const rawConversationKey = assertValidPublicConversationKey(
-    record.conversationKey as string,
+  const conversation = directConversationKeys(
+    record.conversationKey,
+    continuation,
+    account.accountId,
+    agent.agentId,
   );
 
   const events = parseDirectIngressEvents(record);
   const answers = parseDirectQuestionAnswers(record.answers);
-  if (events.length === 0 && answers.length === 0) {
-    throw new Error(
-      "Request body must include a non-empty events or answers array",
-    );
-  }
-  if (events.length > 0 && answers.length > 0) {
-    throw new Error(
-      "Request body cannot combine events with answers; send the answers first",
-    );
-  }
+  assertOneDirectPayloadShape(continuation, events.length, answers.length);
   if (
     record.webhookUrl !== undefined ||
     headers["x-webhook-secret"] !== undefined
@@ -1994,20 +1996,64 @@ async function parseDirectPayload(
     ),
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
-    conversationKey: scopedDirectConversationKey(
-      account.accountId,
-      agent.agentId,
-      rawConversationKey,
-    ),
-    publicConversationKey: rawConversationKey,
+    ...conversation,
     events: events,
     background: background,
+    ...(continuation ? { continuation: true } : {}),
     requestedMode: requestedMode,
     idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId: connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
     ...(answers.length > 0 ? { answers: answers } : {}),
   };
+}
+
+/**
+ * A continuation may name the scoped key a trace row shows; the handler
+ * resolves it to the session it names. Every other request names a public key.
+ */
+function directConversationKeys(
+  requested: string,
+  continuation: boolean,
+  accountId: string,
+  agentId: string,
+): Pick<DirectInboundEvent, "conversationKey" | "publicConversationKey"> {
+  const scoped = continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX);
+  const raw = scoped ? requested : assertValidPublicConversationKey(requested);
+
+  return {
+    conversationKey: scoped
+      ? raw
+      : scopedDirectConversationKey(accountId, agentId, raw),
+    publicConversationKey: publicConversationKeyFromScoped(
+      raw,
+      accountId,
+      agentId,
+    ),
+  };
+}
+
+/** A body is exactly one of: events, answers, or continue. */
+function assertOneDirectPayloadShape(
+  continuation: boolean,
+  eventCount: number,
+  answerCount: number,
+): void {
+  if (continuation && eventCount + answerCount > 0) {
+    throw new Error(
+      "Request body cannot combine continue with events or answers",
+    );
+  }
+  if (!continuation && eventCount === 0 && answerCount === 0) {
+    throw new Error(
+      "Request body must include a non-empty events or answers array",
+    );
+  }
+  if (eventCount > 0 && answerCount > 0) {
+    throw new Error(
+      "Request body cannot combine events with answers; send the answers first",
+    );
+  }
 }
 
 /** One entry per open prompt, labels keyed by question id. */
@@ -2273,9 +2319,9 @@ function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   return `${baseUrl}/v1/runs/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
 }
 
-function parseBackgroundFlag(value: unknown): boolean {
+function parseBooleanField(value: unknown, name: string): boolean {
   if (value !== undefined && typeof value !== "boolean") {
-    throw new Error("Request body field 'background' must be a boolean");
+    throw new Error(`Request body field '${name}' must be a boolean`);
   }
 
   return value === true;

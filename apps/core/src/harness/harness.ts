@@ -32,7 +32,10 @@ import {
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  AGENT_MAX_TURN_UNLIMITED,
+  type AgentConfig,
+} from "../shared/domain/agent-config.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   collectSecretValues,
@@ -940,6 +943,7 @@ export async function runAgentLoop(
     ),
   });
 
+  const maxTurn = agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS;
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -963,7 +967,7 @@ export async function runAgentLoop(
     // A blocking ask_questions call ends the turn after its step; the answer
     // resumes the conversation through the async-tool continuation.
     stopWhen: [
-      isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
+      ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
     ],
     prepareStep: async ({ messages }) => {

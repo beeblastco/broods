@@ -64,6 +64,8 @@ export interface AgentWorkspaceRef {
 }
 
 const AGENT_MAX_TURN_LIMIT = 100;
+// `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
+const AGENT_MAX_TURN_UNLIMITED = 0;
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 // Harness vocabulary mirrors core's apps/core/src/shared/domain/agent-config.ts
@@ -328,11 +330,13 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value)) throw new Error("config.agent must be an object");
   const config = value as Record<string, unknown>;
-  assertOptionalPositiveInteger(
-    config.maxTurn,
-    "config.agent.maxTurn",
-    AGENT_MAX_TURN_LIMIT,
-  );
+  if (config.maxTurn !== AGENT_MAX_TURN_UNLIMITED) {
+    assertOptionalPositiveInteger(
+      config.maxTurn,
+      "config.agent.maxTurn",
+      AGENT_MAX_TURN_LIMIT,
+    );
+  }
   validateAgentSystemConfig(config.system);
 }
 

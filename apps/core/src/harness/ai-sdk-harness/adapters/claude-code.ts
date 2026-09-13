@@ -8,7 +8,10 @@ import {
   type ClaudeCodeHarnessSettings,
 } from "@ai-sdk/harness-claude-code";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
+import {
+  configuredMaxTurn,
+  type AgentConfig,
+} from "../../../shared/domain/agent-config.ts";
 import {
   requireHarnessProviderName,
   requireHarnessProviderSettings,
@@ -37,7 +40,7 @@ export function createConfiguredClaudeCodeAdapter(
 
   return createClaudeCode({
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
-    maxTurns: agentConfig.agent?.maxTurn,
+    maxTurns: configuredMaxTurn(agentConfig),
     startupTimeoutMs: harness.startupTimeoutMs,
   });
 }

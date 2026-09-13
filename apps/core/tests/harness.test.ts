@@ -1902,7 +1902,52 @@ describe("runAgentLoop", () => {
 
     await stream.consumeStream();
 
-    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toBeDefined();
+    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(2);
+  });
+
+  it("drops the step-count stop when maxTurn is 0", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        agentSandbox: () => undefined,
+        agentSandboxPermissionMode: () => "ask",
+        persistModelMessages: async () => [],
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "hello" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        agent: {
+          maxTurn: 0,
+        },
+        provider: {
+          google: {
+            apiKey: "google-key",
+          },
+        },
+        model: {
+          provider: "google",
+          modelId: "gemini-test",
+        },
+      },
+    );
+
+    await stream.consumeStream();
+
+    expect(streamTextMock.mock.calls[0]?.[0].stopWhen).toHaveLength(1);
   });
 
   it("exposes skill tools only when skills are enabled", async () => {

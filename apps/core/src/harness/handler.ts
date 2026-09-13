@@ -37,6 +37,7 @@ import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
+  parseAccountAgentScopedKey,
   publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -118,6 +119,10 @@ import { SubagentCoordinator } from "./subagents.ts";
 // A queue at capacity drains on the order of seconds, not minutes.
 const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
+// The one user turn a "Continue" adds; the history it lands on already ends
+// in the tool results of the cut-off step.
+const CONTINUE_TURN_TEXT =
+  "Your previous turn was cut off before it finished. Continue the task from where you left off.";
 const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON =
@@ -729,6 +734,9 @@ async function handleDirectRequest(
   if (event.answers?.length) {
     return handleDirectAnswers(event);
   }
+  if (event.continuation) {
+    return handleContinueRequest(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return emptySseResponse();
   }
@@ -853,6 +861,9 @@ async function handleAsyncRequest(
   if (event.answers?.length) {
     return handleDirectAnswers(event);
   }
+  if (event.continuation) {
+    return handleContinueRequest(event);
+  }
   if (!hasRunnableDirectEvents(event)) {
     return errorResponse(
       400,
@@ -912,6 +923,133 @@ async function handleAsyncRequest(
   }
 
   return acceptedAsyncResponse(event.statusUrl, event, "processing");
+}
+
+/**
+ * Re-enter a conversation whose last turn stopped short (step cap, provider
+ * fault) with one nudge turn on top of the persisted history, which already
+ * ends in the tool results of the cut-off step. Replies where the conversation
+ * replies: a live channel session answers in its channel, anything else is an
+ * async run polled by its status URL. Always 202, whatever `background` said.
+ */
+async function handleContinueRequest(
+  event: DirectInboundEvent,
+): Promise<Response> {
+  const scoped = parseAccountAgentScopedKey(event.conversationKey);
+  if (
+    scoped &&
+    (scoped.accountId !== event.accountId || scoped.agentId !== event.agentId)
+  ) {
+    return conversationNotFoundResponse();
+  }
+  const sessionConversationKey = accountAgentScopedKey(
+    event.accountId,
+    event.agentId,
+    event.publicConversationKey,
+  );
+  const directConversationKey = scopedDirectConversationKey(
+    event.accountId,
+    event.agentId,
+    event.publicConversationKey,
+  );
+  const [channelTarget, deployment] = await Promise.all([
+    getConversationDispatchTarget({
+      accountId: event.accountId,
+      agentId: event.agentId,
+      conversationKey: sessionConversationKey,
+    }),
+    event.endpointId
+      ? undefined
+      : getStorage().agentDeployments.getByAgentId?.(
+          event.accountId,
+          event.agentId,
+        ),
+  ]);
+  // A scoped key names one exact session. Without a live channel row behind
+  // it, only the direct-run form exists to continue.
+  if (
+    !channelTarget &&
+    scoped &&
+    event.conversationKey !== directConversationKey
+  ) {
+    return conversationNotFoundResponse();
+  }
+
+  const continuation: DirectInboundEvent = {
+    ...event,
+    agentConfig: channelTarget ? channelTarget.agentConfig : event.agentConfig,
+    conversationKey: channelTarget
+      ? sessionConversationKey
+      : directConversationKey,
+    events: [{ role: "user", content: CONTINUE_TURN_TEXT }],
+    requestedMode: "followup",
+    ...(channelTarget
+      ? {
+          replyTarget: {
+            channelName: channelTarget.channelName,
+            source: channelTarget.source,
+          },
+        }
+      : {}),
+    ...(deployment
+      ? {
+          endpointId: deployment.endpointId,
+          projectSlug: deployment.projectSlug,
+          stageSlug: deployment.stageSlug,
+        }
+      : {}),
+  };
+  const admission = await acceptIngress({
+    accountId: continuation.accountId,
+    agentId: continuation.agentId,
+    eventId: continuation.eventId,
+    conversationKey: continuation.conversationKey,
+    events: continuation.events,
+    requestedMode: continuation.requestedMode,
+    idempotencyKey: continuation.idempotencyKey,
+    delivery: continuationDelivery(continuation),
+    agentConfig: continuation.agentConfig,
+  });
+  await dispatchRecoveredIngress(continuation, admission);
+  if (admission.outcome !== "owner") {
+    return directAdmissionResponse(continuation, admission, true);
+  }
+  const ownedEvent = {
+    ...continuation,
+    ownerGeneration: admission.ownerGeneration,
+  };
+  await createPendingAsyncAgentResult({
+    eventId: continuation.eventId,
+    conversationKey: continuation.conversationKey,
+  });
+  try {
+    await invokeAsyncWorker(ownedEvent);
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to start async worker";
+    logError("Failed to invoke continue worker", {
+      eventId: continuation.eventId,
+      error: message,
+    });
+    await settleAsyncFailure(continuation, message);
+    await failOwnedIngress(ownedEvent, message);
+  }
+  const statusUrl = directStatusUrl(continuation);
+
+  return jsonResponse(202, {
+    eventId: continuation.publicEventId,
+    conversationKey: continuation.publicConversationKey,
+    status: "processing",
+    requestedMode: continuation.requestedMode,
+    ...(statusUrl ? { statusUrl: statusUrl } : {}),
+  });
+}
+
+function conversationNotFoundResponse(): Response {
+  return errorResponse(404, "Conversation not found", {
+    code: "conversation_not_found",
+    param: "conversationKey",
+  });
 }
 
 /** Run an in-process async worker request and publish its final result to storage. */

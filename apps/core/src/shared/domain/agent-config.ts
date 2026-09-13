@@ -45,6 +45,8 @@ export type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
 const AGENT_MAX_TURN_LIMIT = 100;
+// `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
+export const AGENT_MAX_TURN_UNLIMITED = 0;
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
@@ -153,6 +155,7 @@ export interface AgentConfig {
 }
 
 export interface AgentBehaviorConfig {
+  // Model/tool loop steps per turn, 1..100. 0 lifts the cap; unset is the harness default.
   maxTurn?: number;
   system?: string | SystemModelMessage | SystemModelMessage[];
   [key: string]: unknown;
@@ -648,6 +651,14 @@ export function toChannelRuntimeAgentConfig(
   };
 }
 
+// The step cap an external harness (claude-code, deepagents) is handed: unset
+// and 0 both fall back to that harness's own default.
+export function configuredMaxTurn(config: AgentConfig): number | undefined {
+  const maxTurn = config.agent?.maxTurn;
+
+  return maxTurn === AGENT_MAX_TURN_UNLIMITED ? undefined : maxTurn;
+}
+
 // Off by default: only an explicit `trace: "enabled"` on the channel appends
 // the dashboard trace link to replies. Trace collection is unaffected.
 export function isChannelTraceEnabled(
@@ -866,11 +877,13 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalPositiveInteger(
-    config.maxTurn,
-    "config.agent.maxTurn",
-    AGENT_MAX_TURN_LIMIT,
-  );
+  if (config.maxTurn !== AGENT_MAX_TURN_UNLIMITED) {
+    assertOptionalPositiveInteger(
+      config.maxTurn,
+      "config.agent.maxTurn",
+      AGENT_MAX_TURN_LIMIT,
+    );
+  }
   validateAgentSystemConfig(config.system);
 }
 

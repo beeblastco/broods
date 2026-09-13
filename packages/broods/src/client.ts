@@ -45,6 +45,13 @@ export interface AgentRunResult {
   events: TextStreamPart<ToolSet>[];
 }
 
+/** Input for `continueRun`: the conversation to re-enter. */
+export interface AgentContinueInput {
+  /** The key given to `run`, or the scoped key a dashboard trace row shows. */
+  conversationKey: string;
+  eventId?: string;
+}
+
 export class IngressAcceptedError extends Error {
   constructor(public readonly accepted: AsyncRequestAccepted) {
     super(
@@ -125,6 +132,7 @@ export type AgentHandle = {
   id: string;
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
+  continueRun: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
   stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
 };
 
@@ -204,6 +212,8 @@ export class BroodsClient {
           this.run({ ...input, agentName: name, agentId: id }),
         runAsync: (input: AgentRunInput) =>
           this.runAsync({ ...input, agentName: name, agentId: id }),
+        continueRun: (input: AgentContinueInput) =>
+          this.continueRun({ ...input, agentId: id }),
         stream: (input: AgentRunInput) =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
@@ -219,6 +229,7 @@ export class BroodsClient {
       id: ref.id,
       run: (input: AgentRunInput) => this.run(ref, input),
       runAsync: (input: AgentRunInput) => this.runAsync(ref, input),
+      continueRun: (input: AgentContinueInput) => this.continueRun(ref, input),
       stream: (input: AgentRunInput) => this.stream(ref, input),
     };
   }
@@ -342,15 +353,55 @@ export class BroodsClient {
       );
     }
 
-    const accepted = normalizeAsyncAccepted(await response.json(), body);
+    return this.asyncAgentRun(
+      normalizeAsyncAccepted(await response.json(), body),
+      body.conversationKey,
+    );
+  }
 
-    return {
-      ...accepted,
-      conversationKey: body.conversationKey,
-      poll: () => this.getAsyncStatus(accepted),
-      wait: (options?: AsyncPollOptions) =>
-        this.waitForAsyncStatus(accepted, options),
+  /**
+   * Re-enter a conversation whose last turn stopped short (step cap, provider
+   * fault). Core adds one "continue" user turn on the persisted history and
+   * runs it like a background run; a live channel session answers in its channel.
+   */
+  async continueRun(
+    ref: AgentReference,
+    input: AgentContinueInput,
+  ): Promise<AsyncAgentRun>;
+  async continueRun(
+    input: AgentContinueInput & { agentId: string },
+  ): Promise<AsyncAgentRun>;
+  async continueRun(
+    refOrInput: AgentReference | (AgentContinueInput & { agentId: string }),
+    maybeInput?: AgentContinueInput,
+  ): Promise<AsyncAgentRun> {
+    const input = maybeInput ?? (refOrInput as AgentContinueInput);
+    const body = {
+      agentId: maybeInput
+        ? (refOrInput as AgentReference).id
+        : (refOrInput as { agentId: string }).agentId,
+      eventId: input.eventId ?? `continue-${Date.now()}`,
+      conversationKey: input.conversationKey,
+      continue: true,
     };
+    const targetUrl = maybeInput
+      ? this.scopedUrl(refOrInput as AgentReference)
+      : `${this.baseUrl}/v1/runs`;
+    const response = await this.fetchJson(targetUrl, {
+      method: "POST",
+      headers: this.apiKeyHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (response.status !== 202) {
+      throw new Error(
+        `Continue failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
+      );
+    }
+
+    return this.asyncAgentRun(
+      normalizeAsyncAccepted(await response.json(), body),
+      body.conversationKey,
+    );
   }
 
   /** Fetch one async status snapshot by status URL or status id + agent id. */
@@ -520,6 +571,19 @@ export class BroodsClient {
    * same URL the dashboard shows, so core can validate the key against the
    * path); otherwise it falls back to the single run endpoint.
    */
+  private asyncAgentRun(
+    accepted: AsyncRequestAccepted,
+    conversationKey: string,
+  ): AsyncAgentRun {
+    return {
+      ...accepted,
+      conversationKey: conversationKey,
+      poll: () => this.getAsyncStatus(accepted),
+      wait: (options?: AsyncPollOptions) =>
+        this.waitForAsyncStatus(accepted, options),
+    };
+  }
+
   private scopedUrl(ref: AgentReference): string {
     if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
       return (

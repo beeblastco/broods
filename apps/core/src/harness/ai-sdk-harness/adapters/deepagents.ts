@@ -8,7 +8,10 @@ import {
   type DeepAgentsHarnessSettings,
 } from "@ai-sdk/harness-deepagents";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
+import {
+  configuredMaxTurn,
+  type AgentConfig,
+} from "../../../shared/domain/agent-config.ts";
 import {
   requireHarnessProviderName,
   requireHarnessProviderSettings,
@@ -31,7 +34,7 @@ export function createConfiguredDeepAgentsAdapter(
 
   return createDeepAgents({
     auth: resolveAnthropicOrVercelAuthEnv(providerName, provider),
-    recursionLimit: agentConfig.agent?.maxTurn,
+    recursionLimit: configuredMaxTurn(agentConfig),
     startupTimeoutMs: harness.startupTimeoutMs,
   });
 }
