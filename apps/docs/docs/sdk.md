@@ -188,12 +188,12 @@ curl "https://gateway.broods.app/status/req-003?agentId=agent_..." \
 ### Continue a run that stopped short
 
 A turn that hits `agent.maxTurn` (default 30, `0` lifts the cap) or a provider fault
-ends as `failed` with its history intact. `continueRun` re-enters that conversation:
+ends as `failed` with its history intact. `continue` re-enters that conversation:
 core appends one "continue" user turn and runs it like an async run. The dashboard
 Tracing tab has the same action on a failed task.
 
 ```ts
-const resumed = await client.continueRun(api.agents.myAgent, {
+const resumed = await client.continue(api.agents.myAgent, {
   conversationKey: "my-conversation", // or the scoped key a trace row shows
 });
 const status = await resumed.wait();

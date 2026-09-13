@@ -35,7 +35,7 @@ const ref: AgentReference = {
   stageSlug: "development",
 };
 
-test("continueRun posts continue: true to the scoped run route", async () => {
+test("continue posts continue: true to the scoped run route", async () => {
   const { client, calls } = mockClient(202, {
     eventId: "continue-1",
     conversationKey: "tg:42",
@@ -43,7 +43,7 @@ test("continueRun posts continue: true to the scoped run route", async () => {
     statusUrl: "https://gateway.example.com/v1/runs/continue-1?agentId=agent_1",
   });
 
-  const run = await client.continueRun(ref, {
+  const run = await client.continue(ref, {
     eventId: "continue-1",
     conversationKey: "acct:a1:agent:agent_1:tg:42",
   });
@@ -61,12 +61,12 @@ test("continueRun posts continue: true to the scoped run route", async () => {
   expect(run.status).toBe("processing");
 });
 
-test("continueRun surfaces a non-202 answer as an error", async () => {
+test("continue surfaces a non-202 answer as an error", async () => {
   const { client } = mockClient(404, {
     error: { message: "Conversation not found" },
   });
 
   await expect(
-    client.continueRun({ agentId: "agent_1", conversationKey: "chat_1" }),
+    client.continue({ agentId: "agent_1", conversationKey: "chat_1" }),
   ).rejects.toThrow("Continue failed: 404");
 });

@@ -44,7 +44,6 @@ export type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
-const AGENT_MAX_TURN_LIMIT = 100;
 // `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
 export const AGENT_MAX_TURN_UNLIMITED = 0;
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
@@ -155,7 +154,7 @@ export interface AgentConfig {
 }
 
 export interface AgentBehaviorConfig {
-  // Model/tool loop steps per turn, 1..100. 0 lifts the cap; unset is the harness default.
+  // Model/tool loop steps per turn. 0 lifts the cap; unset is the harness default.
   maxTurn?: number;
   system?: string | SystemModelMessage | SystemModelMessage[];
   [key: string]: unknown;
@@ -877,14 +876,19 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  if (config.maxTurn !== AGENT_MAX_TURN_UNLIMITED) {
-    assertOptionalPositiveInteger(
-      config.maxTurn,
-      "config.agent.maxTurn",
-      AGENT_MAX_TURN_LIMIT,
+  assertOptionalMaxTurn(config.maxTurn);
+  validateAgentSystemConfig(config.system);
+}
+
+// Any non-negative integer; 0 lifts the cap. No ceiling: a long tool job can
+// legitimately take hundreds of steps.
+function assertOptionalMaxTurn(value: unknown): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(
+      "config.agent.maxTurn must be a non-negative integer (0 lifts the cap)",
     );
   }
-  validateAgentSystemConfig(config.system);
 }
 
 function validateAgentSystemConfig(value: unknown): void {

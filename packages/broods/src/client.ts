@@ -45,7 +45,7 @@ export interface AgentRunResult {
   events: TextStreamPart<ToolSet>[];
 }
 
-/** Input for `continueRun`: the conversation to re-enter. */
+/** Input for `continue`: the conversation to re-enter. */
 export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
@@ -132,7 +132,7 @@ export type AgentHandle = {
   id: string;
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
-  continueRun: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
+  continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
   stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
 };
 
@@ -212,8 +212,8 @@ export class BroodsClient {
           this.run({ ...input, agentName: name, agentId: id }),
         runAsync: (input: AgentRunInput) =>
           this.runAsync({ ...input, agentName: name, agentId: id }),
-        continueRun: (input: AgentContinueInput) =>
-          this.continueRun({ ...input, agentId: id }),
+        continue: (input: AgentContinueInput) =>
+          this.continue({ ...input, agentId: id }),
         stream: (input: AgentRunInput) =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
@@ -229,7 +229,7 @@ export class BroodsClient {
       id: ref.id,
       run: (input: AgentRunInput) => this.run(ref, input),
       runAsync: (input: AgentRunInput) => this.runAsync(ref, input),
-      continueRun: (input: AgentContinueInput) => this.continueRun(ref, input),
+      continue: (input: AgentContinueInput) => this.continue(ref, input),
       stream: (input: AgentRunInput) => this.stream(ref, input),
     };
   }
@@ -364,14 +364,14 @@ export class BroodsClient {
    * fault). Core adds one "continue" user turn on the persisted history and
    * runs it like a background run; a live channel session answers in its channel.
    */
-  async continueRun(
+  async continue(
     ref: AgentReference,
     input: AgentContinueInput,
   ): Promise<AsyncAgentRun>;
-  async continueRun(
+  async continue(
     input: AgentContinueInput & { agentId: string },
   ): Promise<AsyncAgentRun>;
-  async continueRun(
+  async continue(
     refOrInput: AgentReference | (AgentContinueInput & { agentId: string }),
     maybeInput?: AgentContinueInput,
   ): Promise<AsyncAgentRun> {

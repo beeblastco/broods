@@ -3850,7 +3850,7 @@ components:
       properties:
         maxTurn:
           type: integer
-          description: Maximum model/tool loop steps per conversation turn, 1 to 100. 0 lifts the cap and the loop runs until the model stops calling tools. Unset uses the harness default of 30.
+          description: Maximum model/tool loop steps per conversation turn, any positive integer. 0 lifts the cap and the loop runs until the model stops calling tools. Unset uses the harness default of 30.
         system:
           oneOf:
             - type: string
