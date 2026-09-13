@@ -45,6 +45,7 @@ import {
   json,
   mapWithConcurrency,
   normalizedCoreBaseUrls,
+  rateLimitHeaders,
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
@@ -3088,4 +3089,31 @@ test("withRequestId preserves status and existing headers", () => {
   expect(stamped.headers.get("Retry-After")).toBe("30");
   expect(stamped.headers.get("Content-Type")).toBe("application/json");
   expect(stamped.headers.get("x-request-id")).toBe("req_3");
+});
+
+test("rateLimitHeaders tells a client when it may retry", () => {
+  const limiter = new RateLimiter(2, 60_000);
+  limiter.allow("1.2.3.4");
+
+  const headers = rateLimitHeaders(limiter, "1.2.3.4");
+  expect(headers["RateLimit-Limit"]).toBe("2");
+  expect(headers["RateLimit-Remaining"]).toBe("0");
+  expect(Number(headers["Retry-After"])).toBeGreaterThan(0);
+  expect(Number(headers["Retry-After"])).toBeLessThanOrEqual(60);
+  expect(headers["RateLimit-Reset"]).toBe(headers["Retry-After"]);
+});
+
+test("rateLimitHeaders reports no wait for a key with no window yet", () => {
+  const headers = rateLimitHeaders(new RateLimiter(5, 60_000), "unseen");
+
+  expect(headers["Retry-After"]).toBe("0");
+  expect(headers["RateLimit-Limit"]).toBe("5");
+});
+
+test("retryAfterSeconds returns zero once the window has elapsed", () => {
+  const limiter = new RateLimiter(1, 1);
+  limiter.allow("k");
+  Bun.sleepSync(5);
+
+  expect(limiter.retryAfterSeconds("k")).toBe(0);
 });

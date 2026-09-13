@@ -115,6 +115,8 @@ import {
 } from "./questions.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
+// A queue at capacity drains on the order of seconds, not minutes.
+const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
 const CONVERSATION_BUSY =
   "Conversation is already processing another turn. Try again when the current turn finishes.";
@@ -3037,7 +3039,12 @@ function directAdmissionResponse(
     const message = "Conversation ingress queue is at capacity";
 
     return jsonOnly
-      ? errorResponse(429, message, { code: "ingress_capacity" })
+      ? errorResponse(
+          429,
+          message,
+          { code: "ingress_capacity" },
+          INGRESS_RETRY_HEADERS,
+        )
       : errorSseResponse(message, 429);
   }
   if (admission.outcome === "conflict") {
@@ -3071,9 +3078,12 @@ function asyncAdmissionResponse(
     return errorResponse(409, CONVERSATION_BUSY, { code: "conversation_busy" });
   }
   if (admission.outcome === "capacity") {
-    return errorResponse(429, "Conversation ingress queue is at capacity", {
-      code: "ingress_capacity",
-    });
+    return errorResponse(
+      429,
+      "Conversation ingress queue is at capacity",
+      { code: "ingress_capacity" },
+      INGRESS_RETRY_HEADERS,
+    );
   }
   if (admission.outcome === "conflict") {
     return errorResponse(
