@@ -7,8 +7,19 @@ export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 
 export type TerminalGatewayData = {
   kind: "terminal";
-  ticket: TerminalTicket;
+  /** Null when the ticket did not verify: the socket is closed on open with `TERMINAL_TICKET_REJECTED`. */
+  ticket: TerminalTicket | null;
 };
+
+/**
+ * Application close code for a ticket the gateway could not open. A refused
+ * HTTP upgrade reaches the browser as a bare 1006 with no reason, so the
+ * rejection is delivered on the socket instead, where the client can read it.
+ */
+export const TERMINAL_TICKET_REJECTED = {
+  code: 4401,
+  reason: "Invalid or expired terminal ticket",
+} as const;
 
 type TerminalSocketState = {
   upstream: WebSocket | null;
@@ -70,6 +81,15 @@ export function isSessionInitFrame(frame: string): boolean {
 export function openTerminalUpstream(
   socket: Bun.ServerWebSocket<TerminalGatewayData>,
 ): void {
+  const ticket = socket.data.ticket;
+  if (!ticket) {
+    socket.close(
+      TERMINAL_TICKET_REJECTED.code,
+      TERMINAL_TICKET_REJECTED.reason,
+    );
+
+    return;
+  }
   const state: TerminalSocketState = {
     upstream: null,
     pending: [],
@@ -79,10 +99,9 @@ export function openTerminalUpstream(
 
   let upstream: WebSocket;
   try {
-    upstream = new WebSocket(socket.data.ticket.url, {
+    upstream = new WebSocket(ticket.url, {
       headers: {
-        [socket.data.ticket.authorizationHeader ?? "authorization"]:
-          socket.data.ticket.authorization,
+        [ticket.authorizationHeader ?? "authorization"]: ticket.authorization,
       },
     } as unknown as string[]);
   } catch {

@@ -167,13 +167,9 @@ if (import.meta.main) {
           token,
           terminalServiceSecretsFromEnv(),
         );
-        if (!ticket) {
-          authFailureLimiter.allow(ip);
-
-          return jsonError(401, "Invalid or expired terminal ticket", {
-            code: "invalid_terminal_ticket",
-          });
-        }
+        // A bad ticket still upgrades: the open handler closes it with a code
+        // and reason the browser can show, where a 401 here would be a mute 1006.
+        if (!ticket) authFailureLimiter.allow(ip);
 
         const upgraded = server.upgrade(request, {
           headers: websocketUpgradeHeaders(request),
