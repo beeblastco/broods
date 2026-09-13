@@ -289,7 +289,7 @@ export function SandboxInstancesTable({
           )
         }
       >
-        <table className="w-full min-w-230 text-sm">
+        <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2 text-left font-medium">Name</th>

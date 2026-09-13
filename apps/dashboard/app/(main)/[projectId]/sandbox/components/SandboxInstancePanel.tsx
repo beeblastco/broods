@@ -34,6 +34,14 @@ import {
   type SandboxObservabilityScope,
 } from "./SandboxLogTail";
 
+/** Actor source as shown on an activity row; core calls itself "service". */
+const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
+  dashboard: "dashboard",
+  agent: "agent",
+  service: "runtime",
+  unknown: "unknown",
+};
+
 interface Props {
   instance: Doc<"sandboxInstances">;
   /** Builds the trace deep links. */
@@ -63,14 +71,6 @@ type TerminalEntry = {
 };
 
 type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
-
-/** Actor source as shown on an activity row; core calls itself "service". */
-const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
-  dashboard: "dashboard",
-  agent: "agent",
-  service: "runtime",
-  unknown: "unknown",
-};
 
 export function SandboxInstancePanel({
   instance,

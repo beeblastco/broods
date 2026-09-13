@@ -16,7 +16,7 @@ import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxInstancesFields } from "../schema";
-import { recordReserve } from "./auditEvents";
+import { recordRuntimeAction } from "./auditEvents";
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -188,8 +188,9 @@ export const setStatus = internalMutation({
  * reservationKey. Called by broods when it reserves a persistent instance so the
  * dashboard sees it live. Idempotent: refreshes the existing row (back to
  * `running`) on reconnect/re-reserve. No-op when the key belongs to another account.
- * The insert path also writes the `reserve` audit row, so the one real
- * reservation is audited and a reconnect adds nothing.
+ * Writes the `reserve` audit row on insert and when a replacement machine takes
+ * over the key, and `resume` when a reconnect brings a suspended one back; a
+ * plain reconnect adds nothing.
  * @param accountId the owning account.
  * @param provider the sandbox compute backend.
  * @param reservationKey the broods reconnection key (globally unique).
@@ -239,20 +240,33 @@ export const upsert = internalMutation({
     const now = Date.now();
     const fields = upsertRefreshFields(args, now);
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      // A new externalId under the same key is a replacement: the executor
+      // found the old machine gone at the provider and launched another, so
+      // this is a fresh reservation with its own creating trace.
+      const replaced = existing.externalId !== args.externalId;
+      const patch = {
         ...fields,
-        ...(!existing.createdByTraceId && args.createdByTraceId
+        ...(replaced || !existing.createdByTraceId
           ? { createdByTraceId: args.createdByTraceId }
           : {}),
-        ...(!existing.createdByTaskId && args.createdByTaskId
+        ...(replaced || !existing.createdByTaskId
           ? { createdByTaskId: args.createdByTaskId }
           : {}),
-      });
+      };
+      await ctx.db.patch(existing._id, patch);
+      const action = replaced
+        ? "reserve"
+        : existing.status === "suspended"
+          ? "resume"
+          : null;
+      if (action) {
+        await recordRuntimeAction(ctx, { ...existing, ...patch }, action);
+      }
 
       return null;
     }
 
-    const id = await ctx.db.insert("sandboxInstances", {
+    const row = {
       accountId: args.accountId,
       ...(args.projectId ? { projectId: args.projectId } : {}),
       ...(args.stageId ? { stageId: args.stageId } : {}),
@@ -266,9 +280,9 @@ export const upsert = internalMutation({
         ? { createdByTaskId: args.createdByTaskId }
         : {}),
       ...fields,
-    });
-    const inserted = await ctx.db.get(id);
-    if (inserted) await recordReserve(ctx, inserted);
+    };
+    await ctx.db.insert("sandboxInstances", row);
+    await recordRuntimeAction(ctx, row, "reserve");
 
     return null;
   },

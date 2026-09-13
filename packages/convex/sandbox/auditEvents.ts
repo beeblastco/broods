@@ -4,6 +4,7 @@
  * recent events for one reservation key.
  */
 
+import type { WithoutSystemFields } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import {
@@ -13,6 +14,9 @@ import {
 } from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxAuditEventsFields } from "../schema";
+
+/** A registry row as inserted or as read back; the audit needs no system fields. */
+type SandboxInstanceRow = WithoutSystemFields<Doc<"sandboxInstances">>;
 
 const sandboxAuditEventDoc = v.object({
   ...sandboxAuditEventsFields,
@@ -86,14 +90,18 @@ export const listForInstance = query({
 });
 
 /**
- * The `reserve` audit row for a registry row that was just inserted, written in
- * the same transaction so a reconnect can never find the instance without it.
- * Skipped for ephemeral instances: one row per bash call would drown the
- * sandbox's own history.
+ * The audit row for a lifecycle step the runtime took on its own while
+ * mirroring an instance: `reserve` when the registry row is inserted or a
+ * replacement machine takes over its key, `resume` when a reconnect brings a
+ * suspended machine back. Written in the same transaction as the registry
+ * write, so a reconnect can never find the instance without it. Skipped for
+ * ephemeral instances: one row per bash call would drown the sandbox's own
+ * history.
  */
-export async function recordReserve(
+export async function recordRuntimeAction(
   ctx: MutationCtx,
-  instance: Doc<"sandboxInstances">,
+  instance: SandboxInstanceRow,
+  action: "reserve" | "resume",
 ): Promise<void> {
   if (instance.ephemeral) return;
 
@@ -103,7 +111,7 @@ export async function recordReserve(
         accountId: instance.accountId,
         reservationKey: instance.reservationKey,
         provider: instance.provider,
-        action: "reserve",
+        action: action,
         result: "ok",
       },
       instance,
@@ -112,12 +120,16 @@ export async function recordReserve(
       {
         actorSource: instance.agentId ? "agent" : "service",
         actorId: instance.agentId,
-        traceId: instance.createdByTraceId,
-        taskId: instance.createdByTaskId,
+        ...(action === "reserve"
+          ? {
+              traceId: instance.createdByTraceId,
+              taskId: instance.createdByTaskId,
+            }
+          : {}),
       },
       instance,
     ),
-    createdAt: instance.createdAt,
+    createdAt: Date.now(),
   });
 }
 
@@ -128,7 +140,7 @@ function auditEventHeadFields(
     "accountId" | "reservationKey" | "provider" | "action" | "result"
   > &
     Partial<Pick<Doc<"sandboxAuditEvents">, "sandboxConfigId" | "status">>,
-  instance: Doc<"sandboxInstances"> | null,
+  instance: SandboxInstanceRow | null,
 ): Partial<
   Pick<
     Doc<"sandboxAuditEvents">,
@@ -172,7 +184,7 @@ function auditEventTailFields(
         | "truncated"
       >
     >,
-  instance: Doc<"sandboxInstances"> | null,
+  instance: SandboxInstanceRow | null,
 ): Pick<Doc<"sandboxAuditEvents">, "actorSource"> &
   Partial<
     Pick<

@@ -53,6 +53,9 @@ export default function SandboxPage(): React.JSX.Element {
   const [view, setView] = useState<SandboxView>("instances");
   const activeLabel =
     VIEWS.find((tab) => tab.id === view)?.label ?? "Sandboxes";
+  // The instances view carries a detail column beside a wide table, so it
+  // gets the full width the observability tabs get; the rest stay readable.
+  const contentWidth = view === "instances" ? "max-w-none" : "max-w-7xl";
 
   const loading =
     stages === undefined ||
@@ -87,12 +90,22 @@ export default function SandboxPage(): React.JSX.Element {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-auto">
-        <div className="px-6 pt-9.25 pb-5 mx-auto w-full max-w-7xl shrink-0">
+        <div
+          className={cn(
+            "mx-auto w-full shrink-0 px-6 pt-9.25 pb-5",
+            contentWidth,
+          )}
+        >
           <h2 className="text-xl font-semibold text-foreground">
             {activeLabel}
           </h2>
         </div>
-        <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-3 px-6 pb-12">
+        <div
+          className={cn(
+            "mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-6 pb-12",
+            contentWidth,
+          )}
+        >
           <p className="shrink-0 text-xs text-muted-foreground">
             Live persistent sandbox instances and their snapshots. broods owns
             the runtime; the dashboard drives suspend, resume, terminate, and
