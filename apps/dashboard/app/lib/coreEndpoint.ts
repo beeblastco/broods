@@ -6,6 +6,23 @@ export type CoreEndpoint =
   | { ok: true; httpBaseUrl: string; websocketBaseUrl: string }
   | { ok: false; message: string };
 
+/**
+ * Path of a deployed agent's run endpoint: stage scoped when both slugs are
+ * known, bare otherwise. Append `/ws` for its socket.
+ */
+export function agentEndpointPath(scope: {
+  endpointId: string;
+  projectSlug?: string;
+  stageSlug?: string;
+}): string {
+  const prefix =
+    scope.projectSlug && scope.stageSlug
+      ? `/projects/${encodeURIComponent(scope.projectSlug)}/stages/${encodeURIComponent(scope.stageSlug)}`
+      : "";
+
+  return `/v1${prefix}/agents/${encodeURIComponent(scope.endpointId)}`;
+}
+
 /** Resolve the configured core HTTP/WebSocket base URLs without throwing during render. */
 export function resolveCoreEndpoint(): CoreEndpoint {
   const candidates = [

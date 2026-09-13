@@ -257,6 +257,135 @@ describe("direct API ingress", () => {
     );
   });
 
+  it("passes a continue request through with the scoped key as given and no events", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "continue-1",
+          conversationKey: "acct:acct_test:agent:agent_test:tg:42",
+          continue: true,
+        },
+        { authorization: "Bearer fp_agent_test" },
+        {
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+
+          return { statusCode: 202, body: "{}" };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                stageSlug: "development",
+              }
+            : null,
+      },
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents[0]).toMatchObject({
+      continuation: true,
+      conversationKey: "acct:acct_test:agent:agent_test:tg:42",
+      publicConversationKey: "tg:42",
+      events: [],
+      endpointId: "env-endpoint",
+    });
+  });
+
+  it("refuses a scoped continue key that is malformed or names another agent", async () => {
+    const handlers = createHandlers({
+      handleDirectRequest: async () => ({ statusCode: 202, body: "{}" }),
+    });
+    for (const conversationKey of [
+      "acct:acct_test:agent:agent_test:",
+      "acct:acct_test:agent:agent_other:tg:42",
+      "acct:acct_other:agent:agent_test:tg:42",
+    ]) {
+      const response = await routeIncomingEvent(
+        createEvent(
+          {
+            eventId: "continue-1",
+            conversationKey: conversationKey,
+            continue: true,
+          },
+          { authorization: "Bearer secret" },
+          { rawPath: "/v1/runs" },
+        ),
+        handlers,
+      );
+      expect(response.statusCode).toBe(404);
+    }
+
+    const withOverrides = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "continue-1",
+          conversationKey: "chat_1",
+          continue: true,
+          system: "be brief",
+        },
+        { authorization: "Bearer secret" },
+        { rawPath: "/v1/runs" },
+      ),
+      handlers,
+    );
+    expect(withOverrides.statusCode).toBe(400);
+  });
+
+  it("scopes a public continue key like a run and refuses continue with events", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const handlers = createHandlers({
+      handleDirectRequest: async (event) => {
+        handledEvents.push(event);
+
+        return { statusCode: 202, body: "{}" };
+      },
+    });
+
+    const accepted = await routeIncomingEvent(
+      createEvent(
+        { eventId: "continue-1", conversationKey: "chat_1", continue: true },
+        { authorization: "Bearer secret" },
+        { rawPath: "/v1/runs" },
+      ),
+      handlers,
+    );
+    expect(accepted.statusCode).toBe(202);
+    expect(handledEvents[0]).toMatchObject({
+      continuation: true,
+      conversationKey: "acct:acct_test:agent:agent_test:api:chat_1",
+      publicConversationKey: "chat_1",
+    });
+
+    const rejected = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "continue-2",
+          conversationKey: "chat_1",
+          continue: true,
+          events: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        },
+        { authorization: "Bearer secret" },
+        { rawPath: "/v1/runs" },
+      ),
+      handlers,
+    );
+    expect(rejected.statusCode).toBe(400);
+    expect(handledEvents).toHaveLength(1);
+  });
+
   it("does not accept public deployment provenance from an account-auth request body", async () => {
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(

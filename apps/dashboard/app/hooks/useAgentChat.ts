@@ -4,7 +4,7 @@
  * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
-import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import type { UIMessage } from "ai";
 import {
   parseJsonEventStream,
@@ -390,11 +390,11 @@ async function startHttpSseStream(options: {
     signal,
   } = options;
 
-  const scopePrefix =
-    projectSlug && stageSlug
-      ? `/projects/${projectSlug}/stages/${stageSlug}`
-      : "";
-  const endpointUrl = `${baseUrl.replace(/\/+$/, "")}/v1${scopePrefix}/agents/${endpointId}`;
+  const endpointUrl = `${baseUrl.replace(/\/+$/, "")}${agentEndpointPath({
+    endpointId: endpointId,
+    projectSlug: projectSlug,
+    stageSlug: stageSlug,
+  })}`;
   const conversationKey = sessionId || `chat-${crypto.randomUUID()}`;
 
   const response = await fetch(endpointUrl, {
@@ -482,11 +482,11 @@ async function startWebSocketSseStream(options: {
     onSubagentResult,
   } = options;
 
-  const scopePrefix =
-    projectSlug && stageSlug
-      ? `/projects/${projectSlug}/stages/${stageSlug}`
-      : "";
-  const wsUrl = `${websocketBaseUrl}/v1${scopePrefix}/agents/${endpointId}/ws`;
+  const wsUrl = `${websocketBaseUrl}${agentEndpointPath({
+    endpointId: endpointId,
+    projectSlug: projectSlug,
+    stageSlug: stageSlug,
+  })}/ws`;
 
   // The credential rides the subprotocol list, never the URL, so it stays out
   // of access logs; the gateway selects `broods.v1` to complete the handshake.
