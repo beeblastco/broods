@@ -6,7 +6,11 @@
 
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, query } from "../_generated/server";
+import {
+  internalMutation,
+  type MutationCtx,
+  query,
+} from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxAuditEventsFields } from "../schema";
 
@@ -80,6 +84,42 @@ export const listForInstance = query({
       .take(limit);
   },
 });
+
+/**
+ * The `reserve` audit row for a registry row that was just inserted, written in
+ * the same transaction so a reconnect can never find the instance without it.
+ * Skipped for ephemeral instances: one row per bash call would drown the
+ * sandbox's own history.
+ */
+export async function recordReserve(
+  ctx: MutationCtx,
+  instance: Doc<"sandboxInstances">,
+): Promise<void> {
+  if (instance.ephemeral) return;
+
+  await ctx.db.insert("sandboxAuditEvents", {
+    ...auditEventHeadFields(
+      {
+        accountId: instance.accountId,
+        reservationKey: instance.reservationKey,
+        provider: instance.provider,
+        action: "reserve",
+        result: "ok",
+      },
+      instance,
+    ),
+    ...auditEventTailFields(
+      {
+        actorSource: instance.agentId ? "agent" : "service",
+        actorId: instance.agentId,
+        traceId: instance.createdByTraceId,
+        taskId: instance.createdByTaskId,
+      },
+      instance,
+    ),
+    createdAt: instance.createdAt,
+  });
+}
 
 /** Audit-row identity/outcome columns, enriched from the instance row when the caller omitted them. */
 function auditEventHeadFields(

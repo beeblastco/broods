@@ -14,7 +14,6 @@ import type {
   SandboxRunMetadata,
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
-import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 export type SandboxInstanceStatus =
   | "running"
@@ -28,10 +27,9 @@ export type SandboxInstanceStatus =
  * (synthetic/stateless configs). Idempotent, so it is safe on reconnect.
  *
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
- * it is flagged uncontrollable for the dashboard and skips the audit event a real
- * reservation writes. The `reserve` audit row is written once, when the row is first
- * inserted: a reconnect refreshes the row's last-used trace instead of adding a row
- * per tool call.
+ * it is flagged uncontrollable for the dashboard. The `reserve` audit row is written
+ * by the mutation, in the same transaction as the insert; a reconnect refreshes the
+ * row's last-used trace instead of adding a row per tool call.
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
  */
@@ -49,48 +47,29 @@ export async function upsertSandboxInstance(
   try {
     // The Convex client drops undefined object fields, so an unset optional
     // stays absent on the row rather than becoming null.
-    const created: boolean = await getConvexClient().mutation(
-      internal.sandbox.instances.upsert,
-      {
-        accountId: controlPlane.accountId as any,
-        projectId: controlPlane.projectId as any,
-        stageId: controlPlane.stageId as any,
-        provider: provider,
-        reservationKey: reservationKey,
-        externalId: externalId,
-        name: controlPlane.name,
-        specs: controlPlane.specs,
-        sandboxConfigId: controlPlane.sandboxConfigId as any,
-        snapshotId: controlPlane.snapshotId,
-        egress: controlPlane.egress,
-        permissionMode: controlPlane.permissionMode,
-        lastUsedTraceId: meta.traceId,
-        createdByTraceId: meta.traceId,
-        lastUsedTaskId: meta.taskId,
-        createdByTaskId: meta.taskId,
-        agentId: meta.agentId,
-        conversationKey: meta.conversationKey,
-        workspaceName: meta.workspaceName,
-        workspaceId: meta.workspaceId,
-        logStream: options?.logStream,
-        ephemeral: ephemeral ? true : undefined,
-      },
-    );
-    if (ephemeral || !created) return;
-    void recordSandboxAuditEvent({
-      accountId: controlPlane.accountId,
-      sandboxConfigId: controlPlane.sandboxConfigId,
-      reservationKey: reservationKey,
+    await getConvexClient().mutation(internal.sandbox.instances.upsert, {
+      accountId: controlPlane.accountId as any,
+      projectId: controlPlane.projectId as any,
+      stageId: controlPlane.stageId as any,
       provider: provider,
-      action: "reserve",
-      result: "ok",
-      status: "running",
-      actor: {
-        source: meta.agentId ? "agent" : "service",
-        id: meta.agentId,
-      },
-      traceId: meta.traceId,
-      taskId: meta.taskId,
+      reservationKey: reservationKey,
+      externalId: externalId,
+      name: controlPlane.name,
+      specs: controlPlane.specs,
+      sandboxConfigId: controlPlane.sandboxConfigId as any,
+      snapshotId: controlPlane.snapshotId,
+      egress: controlPlane.egress,
+      permissionMode: controlPlane.permissionMode,
+      lastUsedTraceId: meta.traceId,
+      createdByTraceId: meta.traceId,
+      lastUsedTaskId: meta.taskId,
+      createdByTaskId: meta.taskId,
+      agentId: meta.agentId,
+      conversationKey: meta.conversationKey,
+      workspaceName: meta.workspaceName,
+      workspaceId: meta.workspaceId,
+      logStream: options?.logStream,
+      ephemeral: ephemeral ? true : undefined,
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {

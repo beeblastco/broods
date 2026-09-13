@@ -279,6 +279,7 @@ export function SandboxInstancesTable({
         detail={
           selected && (
             <SandboxInstancePanel
+              key={selected._id}
               instance={selected}
               projectId={projectId}
               observability={observability}

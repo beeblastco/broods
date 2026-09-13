@@ -16,6 +16,7 @@ import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxInstancesFields } from "../schema";
+import { recordReserve } from "./auditEvents";
 
 const sandboxInstanceDoc = v.object({
   ...sandboxInstancesFields,
@@ -187,8 +188,8 @@ export const setStatus = internalMutation({
  * reservationKey. Called by broods when it reserves a persistent instance so the
  * dashboard sees it live. Idempotent: refreshes the existing row (back to
  * `running`) on reconnect/re-reserve. No-op when the key belongs to another account.
- * @returns true when this call inserted the row, so the caller can audit the
- * one real reservation and stay quiet on every reconnect.
+ * The insert path also writes the `reserve` audit row, so the one real
+ * reservation is audited and a reconnect adds nothing.
  * @param accountId the owning account.
  * @param provider the sandbox compute backend.
  * @param reservationKey the broods reconnection key (globally unique).
@@ -225,15 +226,15 @@ export const upsert = internalMutation({
     logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
         q.eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (existing && existing.accountId !== args.accountId) return false;
+    if (existing && existing.accountId !== args.accountId) return null;
 
     const now = Date.now();
     const fields = upsertRefreshFields(args, now);
@@ -248,10 +249,10 @@ export const upsert = internalMutation({
           : {}),
       });
 
-      return false;
+      return null;
     }
 
-    await ctx.db.insert("sandboxInstances", {
+    const id = await ctx.db.insert("sandboxInstances", {
       accountId: args.accountId,
       ...(args.projectId ? { projectId: args.projectId } : {}),
       ...(args.stageId ? { stageId: args.stageId } : {}),
@@ -266,8 +267,10 @@ export const upsert = internalMutation({
         : {}),
       ...fields,
     });
+    const inserted = await ctx.db.get(id);
+    if (inserted) await recordReserve(ctx, inserted);
 
-    return true;
+    return null;
   },
 });
 
