@@ -1,5 +1,6 @@
 "use client";
 
+import { DetailSplit } from "@/app/components/DetailSplit";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
@@ -33,8 +34,9 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
+import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
+  dashboardHref,
   formatProvider,
   formatSpecs,
   instanceStatusBadge,
@@ -47,7 +49,7 @@ interface Props {
   instances: Array<Doc<"sandboxInstances">>;
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs, handed to the sheet's Logs tab. */
+  /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
   observability: SandboxObservabilityScope | null;
 }
 
@@ -75,9 +77,12 @@ export function SandboxInstancesTable({
   const searchParams = useSearchParams();
   const now = useNow();
 
-  const [selected, setSelected] = useState<Doc<"sandboxInstances"> | null>(
+  // Only the id is held, so the open panel follows the live row instead of a
+  // stale copy once a refresh or suspend moves its status.
+  const [selectedId, setSelectedId] = useState<Id<"sandboxInstances"> | null>(
     null,
   );
+  const selected = instances.find((instance) => instance._id === selectedId);
   const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
     null,
   );
@@ -171,16 +176,6 @@ export function SandboxInstancesTable({
     void refreshVisible();
   }, [refreshKey, refreshVisible]);
 
-  function traceHref(traceId: string): string {
-    const next = new URLSearchParams();
-    const stage = searchParams.get("stage");
-    if (stage) next.set("stage", stage);
-    next.set("tab", "tracing");
-    next.set("trace", traceId);
-
-    return `/${projectId}/dashboard?${next.toString()}`;
-  }
-
   /** Resets pagination whenever a filter changes so results stay visible. */
   function setSearchAndReset(value: string): void {
     setSearch(value);
@@ -205,7 +200,7 @@ export function SandboxInstancesTable({
   }
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-50 flex-1">
           <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -280,8 +275,21 @@ export function SandboxInstancesTable({
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-230 text-sm">
+      <DetailSplit
+        detail={
+          selected && (
+            <SandboxInstancePanel
+              key={selected._id}
+              instance={selected}
+              projectId={projectId}
+              observability={observability}
+              now={now}
+              onClose={() => setSelectedId(null)}
+            />
+          )
+        }
+      >
+        <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2 text-left font-medium">Name</th>
@@ -308,7 +316,7 @@ export function SandboxInstancesTable({
                 <tr
                   key={instance._id}
                   className="cursor-pointer border-t border-border hover:bg-muted/30"
-                  onClick={() => setSelected(instance)}
+                  onClick={() => setSelectedId(instance._id)}
                 >
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-foreground">
@@ -349,9 +357,15 @@ export function SandboxInstancesTable({
                         nativeButton={false}
                         render={
                           <Link
-                            href={traceHref(
-                              instance.lastUsedTraceId ??
-                                instance.createdByTraceId!,
+                            href={dashboardHref(
+                              projectId,
+                              searchParams.get("stage"),
+                              {
+                                tab: "tracing",
+                                trace:
+                                  instance.lastUsedTraceId ??
+                                  instance.createdByTraceId!,
+                              },
                             )}
                             draggable={false}
                           />
@@ -380,6 +394,7 @@ export function SandboxInstancesTable({
                     <Switch
                       checked={running}
                       disabled={!toggleable || !canWrite}
+                      className="cursor-pointer disabled:cursor-not-allowed"
                       onCheckedChange={(next) =>
                         next ? toggle(instance, true) : setConfirming(instance)
                       }
@@ -401,7 +416,7 @@ export function SandboxInstancesTable({
             )}
           </tbody>
         </table>
-      </div>
+      </DetailSplit>
 
       {filtered.length > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
@@ -487,17 +502,7 @@ export function SandboxInstancesTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {selected && (
-        <SandboxInstanceSheet
-          instance={selected}
-          projectId={projectId}
-          observability={observability}
-          now={now}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </>
+    </div>
   );
 }
 

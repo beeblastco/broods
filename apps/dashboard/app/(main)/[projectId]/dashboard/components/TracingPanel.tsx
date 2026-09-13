@@ -1,5 +1,6 @@
 "use client";
 
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { Badge } from "@/app/components/ui/badge";
 import {
   isRootSpanKind,
@@ -18,7 +19,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -394,111 +394,112 @@ export function TracingPanel({
         </p>
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-          <table className="w-full text-xs font-mono table-fixed">
-            <colgroup>
-              <col className="w-37" />
-              <col className="w-[26%]" />
-              <col className="w-21" />
-              <col className="w-18" />
-              <col className="w-18" />
-              <col />
-            </colgroup>
-            <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Started</th>
-                <th className="px-3 py-2 font-medium">Task / Span</th>
-                <th className="px-3 py-2 font-medium">Kind</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Duration</th>
-                <th className="px-3 py-2 font-medium">Timeline</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleGroups.flatMap((group) =>
-                renderSpanRows(
-                  group.root,
-                  0,
-                  group,
-                  scaleMaxMs,
-                  expanded,
-                  toggle,
-                  selectedKey,
-                  setSelectedKey,
-                  focusTraceId,
-                  isTaskRunning(group.root),
-                  focusTrace,
-                ),
-              )}
-              {groups.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="h-32 text-center text-xs text-muted-foreground"
+      <DetailSplit
+        detail={
+          selected && (
+            <DetailPanel
+              title={spanLabel(selected.span)}
+              meta={
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                  <Badge
+                    className={cn(
+                      "px-1.5 py-0 text-[10px] uppercase tracking-wide",
+                      kindTheme(selected.span.kind).badgeBg,
+                      kindTheme(selected.span.kind).text,
+                    )}
                   >
-                    {entries.length === 0
-                      ? emptyStreamMessage(history, error, "traces", "7 days")
-                      : "No tasks match the current filters."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          {remaining > 0 && (
-            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
-              <button
-                type="button"
-                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-              >
-                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-                {remaining.toLocaleString()} older task
-                {remaining === 1 ? "" : "s"}
-              </button>
-            </div>
-          )}
-        </div>
-        {selected && (
-          <ObservabilityDetailPanel
-            title={spanLabel(selected.span)}
-            meta={
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                <Badge
-                  className={cn(
-                    "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-                    kindTheme(selected.span.kind).badgeBg,
-                    kindTheme(selected.span.kind).text,
-                  )}
+                    {selected.span.kind}
+                  </Badge>
+                  <span
+                    className={cn(
+                      "font-medium",
+                      isStale(selected.span, isTaskRunning(selected.group.root))
+                        ? "text-muted-foreground"
+                        : statusColor(selected.span.status),
+                    )}
+                  >
+                    {isStale(selected.span, isTaskRunning(selected.group.root))
+                      ? "ended"
+                      : selected.span.status}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {selected.span.durationMs > 0
+                      ? formatDuration(selected.span.durationMs)
+                      : "—"}{" "}
+                    · {formatDateTime(selected.span.startTimeMs)}
+                  </span>
+                </div>
+              }
+              onClose={() => setSelectedKey(null)}
+            >
+              <SpanDetails span={selected.span} />
+            </DetailPanel>
+          )
+        }
+      >
+        <table className="w-full text-xs font-mono table-fixed">
+          <colgroup>
+            <col className="w-37" />
+            <col className="w-[26%]" />
+            <col className="w-21" />
+            <col className="w-18" />
+            <col className="w-18" />
+            <col />
+          </colgroup>
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2 font-medium">Started</th>
+              <th className="px-3 py-2 font-medium">Task / Span</th>
+              <th className="px-3 py-2 font-medium">Kind</th>
+              <th className="px-3 py-2 font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Duration</th>
+              <th className="px-3 py-2 font-medium">Timeline</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleGroups.flatMap((group) =>
+              renderSpanRows(
+                group.root,
+                0,
+                group,
+                scaleMaxMs,
+                expanded,
+                toggle,
+                selectedKey,
+                setSelectedKey,
+                focusTraceId,
+                isTaskRunning(group.root),
+                focusTrace,
+              ),
+            )}
+            {groups.length === 0 && (
+              <tr>
+                <td
+                  colSpan={6}
+                  className="h-32 text-center text-xs text-muted-foreground"
                 >
-                  {selected.span.kind}
-                </Badge>
-                <span
-                  className={cn(
-                    "font-medium",
-                    isStale(selected.span, isTaskRunning(selected.group.root))
-                      ? "text-muted-foreground"
-                      : statusColor(selected.span.status),
-                  )}
-                >
-                  {isStale(selected.span, isTaskRunning(selected.group.root))
-                    ? "ended"
-                    : selected.span.status}
-                </span>
-                <span className="text-muted-foreground">
-                  {selected.span.durationMs > 0
-                    ? formatDuration(selected.span.durationMs)
-                    : "—"}{" "}
-                  · {formatDateTime(selected.span.startTimeMs)}
-                </span>
-              </div>
-            }
-            onClose={() => setSelectedKey(null)}
-          >
-            <SpanDetails span={selected.span} />
-          </ObservabilityDetailPanel>
+                  {entries.length === 0
+                    ? emptyStreamMessage(history, error, "traces", "7 days")
+                    : "No tasks match the current filters."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {remaining > 0 && (
+          <div className="border-t border-border/40 bg-card/60 p-2 text-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+              className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+            >
+              Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+              {remaining.toLocaleString()} older task
+              {remaining === 1 ? "" : "s"}
+            </button>
+          </div>
         )}
-      </div>
+      </DetailSplit>
     </div>
   );
 }

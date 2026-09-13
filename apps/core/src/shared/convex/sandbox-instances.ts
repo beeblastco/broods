@@ -14,7 +14,6 @@ import type {
   SandboxRunMetadata,
 } from "../sandbox-sizes.ts";
 import { getConvexClient } from "./client.ts";
-import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 export type SandboxInstanceStatus =
   | "running"
@@ -28,8 +27,9 @@ export type SandboxInstanceStatus =
  * (synthetic/stateless configs). Idempotent, so it is safe on reconnect.
  *
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
- * it is flagged uncontrollable for the dashboard and skips the audit event a real
- * reservation writes (one per bash call would drown the sandbox's own history).
+ * it is flagged uncontrollable for the dashboard. The `reserve` audit row is written
+ * by the mutation, in the same transaction as the insert; a reconnect refreshes the
+ * row's last-used trace instead of adding a row per tool call.
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
  */
@@ -70,22 +70,6 @@ export async function upsertSandboxInstance(
       workspaceId: meta.workspaceId,
       logStream: options?.logStream,
       ephemeral: ephemeral ? true : undefined,
-    });
-    if (ephemeral) return;
-    await recordSandboxAuditEvent({
-      accountId: controlPlane.accountId,
-      sandboxConfigId: controlPlane.sandboxConfigId,
-      reservationKey: reservationKey,
-      provider: provider,
-      action: "reserve",
-      result: "ok",
-      status: "running",
-      actor: {
-        source: meta.agentId ? "agent" : "service",
-        id: meta.agentId,
-      },
-      traceId: meta.traceId,
-      taskId: meta.taskId,
     });
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {

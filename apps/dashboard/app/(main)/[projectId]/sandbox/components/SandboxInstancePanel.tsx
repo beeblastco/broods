@@ -1,16 +1,9 @@
 "use client";
 
+import { DetailPanel } from "@/app/components/DetailSplit";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/app/components/ui/sheet";
 import {
   Tabs,
   TabsContent,
@@ -18,6 +11,8 @@ import {
   TabsTrigger,
 } from "@/app/components/ui/tabs";
 import { Textarea } from "@/app/components/ui/textarea";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -27,6 +22,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import {
+  dashboardHref,
   formatProvider,
   formatSpecs,
   instanceStatusBadge,
@@ -37,6 +33,14 @@ import {
   SandboxLogTail,
   type SandboxObservabilityScope,
 } from "./SandboxLogTail";
+
+/** Actor source as shown on an activity row; core calls itself "service". */
+const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
+  dashboard: "dashboard",
+  agent: "agent",
+  service: "runtime",
+  unknown: "unknown",
+};
 
 interface Props {
   instance: Doc<"sandboxInstances">;
@@ -68,7 +72,7 @@ type TerminalEntry = {
 
 type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
 
-export function SandboxInstanceSheet({
+export function SandboxInstancePanel({
   instance,
   projectId,
   observability,
@@ -117,13 +121,9 @@ export function SandboxInstanceSheet({
     ? sandboxLogId(instance.logStream)
     : undefined;
 
-  function dashboardHref(params: Record<string, string>): string {
-    const next = new URLSearchParams();
-    const stage = searchParams.get("stage");
-    if (stage) next.set("stage", stage);
-    for (const [key, value] of Object.entries(params)) next.set(key, value);
-
-    return `/${projectId}/dashboard?${next.toString()}`;
+  const stage = searchParams.get("stage");
+  function traceHref(traceId: string): string {
+    return dashboardHref(projectId, stage, { tab: "tracing", trace: traceId });
   }
 
   async function handleSnapshot(): Promise<void> {
@@ -206,163 +206,162 @@ export function SandboxInstanceSheet({
   }
 
   return (
-    <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            {instance.name}
-            {instanceStatusBadge(instance.status)}
-          </SheetTitle>
-          <SheetDescription>
-            {formatProvider(instance.provider)} sandbox instance
-          </SheetDescription>
-        </SheetHeader>
+    <DetailPanel
+      title={
+        <span className="flex items-center gap-2">
+          {instance.name}
+          {instanceStatusBadge(instance.status)}
+        </span>
+      }
+      meta={
+        <div className="mt-0.5 text-[11px] text-muted-foreground">
+          {formatProvider(instance.provider)} sandbox instance
+        </div>
+      }
+      onClose={onClose}
+    >
+      <Tabs defaultValue="detail">
+        <TabsList>
+          <TabsTrigger value="detail">Detail</TabsTrigger>
+          {logSandboxId && <TabsTrigger value="logs">Logs</TabsTrigger>}
+          <TabsTrigger value="terminal">Terminal</TabsTrigger>
+        </TabsList>
 
-        <Tabs defaultValue="detail" className="px-4 pb-4">
-          <TabsList>
-            <TabsTrigger value="detail">Detail</TabsTrigger>
-            {logSandboxId && <TabsTrigger value="logs">Logs</TabsTrigger>}
-            <TabsTrigger value="terminal">Terminal</TabsTrigger>
-          </TabsList>
+        <TabsContent value="detail" className="mt-4">
+          <InstanceDetailFields
+            instance={instance}
+            now={now}
+            traceHref={traceHref}
+          />
 
-          <TabsContent value="detail" className="mt-4">
-            <InstanceDetailFields
-              instance={instance}
-              now={now}
-              traceHref={(traceId) =>
-                dashboardHref({ tab: "tracing", trace: traceId })
-              }
-            />
+          <div className="mt-4">
+            {canWrite && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="cursor-pointer disabled:cursor-not-allowed"
+                disabled={!controllable || refreshing}
+                onClick={handleRefresh}
+              >
+                <RefreshCw className="mr-1 size-3.5" />
+                Refresh status
+              </Button>
+            )}
+            {refreshMessage && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {refreshMessage}
+              </p>
+            )}
+          </div>
 
-            <div className="mt-4">
-              {canWrite && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="cursor-pointer disabled:cursor-not-allowed"
-                  disabled={!controllable || refreshing}
-                  onClick={handleRefresh}
-                >
-                  <RefreshCw className="mr-1 size-3.5" />
-                  Refresh status
-                </Button>
-              )}
-              {refreshMessage && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {refreshMessage}
-                </p>
-              )}
-            </div>
+          <ActivityList events={auditEvents} now={now} traceHref={traceHref} />
 
-            <ActivityList events={auditEvents} now={now} />
-
-            <div className="mt-5">
-              <h4 className="text-sm font-medium text-foreground">Snapshot</h4>
-              {supportsSnapshot ? (
-                <>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Capture the current sandbox state as a reusable image.
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <Input
-                      value={snapName}
-                      onChange={(e) => setSnapName(e.target.value)}
-                      placeholder="snapshot name"
-                      disabled={!controllable || snapPending}
-                      className="h-8"
-                    />
-                    {canWrite && (
-                      <Button
-                        size="sm"
-                        className="cursor-pointer disabled:cursor-not-allowed"
-                        disabled={
-                          !controllable || snapPending || !snapName.trim()
-                        }
-                        onClick={handleSnapshot}
-                      >
-                        <Camera className="mr-1 size-3.5" />
-                        Snapshot
-                      </Button>
-                    )}
-                  </div>
-                  {snapMessage && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {snapMessage}
-                    </p>
-                  )}
-                </>
-              ) : (
+          <div className="mt-5">
+            <h4 className="text-sm font-medium text-foreground">Snapshot</h4>
+            {supportsSnapshot ? (
+              <>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {formatProvider(instance.provider)} sandboxes have no runtime
-                  image-capture API, so snapshots aren&apos;t created here.
-                  State is preserved across idle via suspend/resume, and the
-                  launch image is managed as versioned image builds.
+                  Capture the current sandbox state as a reusable image.
                 </p>
-              )}
-            </div>
-
-            <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-              <h4 className="text-sm font-medium text-destructive">
-                Danger zone
-              </h4>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Terminate the instance, releasing its reservation and compute.
-              </p>
-              {canWrite && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="mt-3 cursor-pointer disabled:cursor-not-allowed"
-                  disabled={!controllable}
-                  onClick={() => setConfirmOpen(true)}
-                >
-                  Terminate
-                </Button>
-              )}
-            </div>
-
-            {!controllable && (
-              <p className="mt-3 text-xs text-muted-foreground">
-                {instance.ephemeral
-                  ? "This instance exists only for the call that created it, so it can be watched but not controlled here. Make the sandbox persistent to reserve one you can suspend, resume, and shell into."
-                  : "This instance predates the config link, so it can be viewed but not controlled here."}
-              </p>
-            )}
-          </TabsContent>
-
-          {logSandboxId && (
-            <TabsContent value="logs" className="mt-4">
-              <SandboxLogTail
-                logSandboxId={logSandboxId}
-                scope={observability}
-                monitoringHref={dashboardHref({ tab: "monitoring" })}
-              />
-            </TabsContent>
-          )}
-
-          <TabsContent value="terminal" className="mt-4">
-            {supportsLiveTerminal &&
-            controllable &&
-            instance.sandboxConfigId ? (
-              <LiveSandboxTerminal
-                sandboxId={instance.sandboxConfigId}
-                reservationKey={instance.reservationKey}
-                disabled={!commandRunnable}
-              />
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    value={snapName}
+                    onChange={(e) => setSnapName(e.target.value)}
+                    placeholder="snapshot name"
+                    disabled={!controllable || snapPending}
+                    className="h-8"
+                  />
+                  {canWrite && (
+                    <Button
+                      size="sm"
+                      className="cursor-pointer disabled:cursor-not-allowed"
+                      disabled={
+                        !controllable || snapPending || !snapName.trim()
+                      }
+                      onClick={handleSnapshot}
+                    >
+                      <Camera className="mr-1 size-3.5" />
+                      Snapshot
+                    </Button>
+                  )}
+                </div>
+                {snapMessage && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {snapMessage}
+                  </p>
+                )}
+              </>
             ) : (
-              <CommandRunner
-                command={command}
-                entries={terminalEntries}
-                pending={commandPending}
-                runnable={commandRunnable}
-                onCommandChange={setCommand}
-                onRun={handleCommand}
-                canRun={canWrite}
-              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatProvider(instance.provider)} sandboxes have no runtime
+                image-capture API, so snapshots aren&apos;t created here. State
+                is preserved across idle via suspend/resume, and the launch
+                image is managed as versioned image builds.
+              </p>
             )}
+          </div>
+
+          <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+            <h4 className="text-sm font-medium text-destructive">
+              Danger zone
+            </h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Terminate the instance, releasing its reservation and compute.
+            </p>
+            {canWrite && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="mt-3 cursor-pointer disabled:cursor-not-allowed"
+                disabled={!controllable}
+                onClick={() => setConfirmOpen(true)}
+              >
+                Terminate
+              </Button>
+            )}
+          </div>
+
+          {!controllable && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {instance.ephemeral
+                ? "This instance exists only for the call that created it, so it can be watched but not controlled here. Make the sandbox persistent to reserve one you can suspend, resume, and shell into."
+                : "This instance predates the config link, so it can be viewed but not controlled here."}
+            </p>
+          )}
+        </TabsContent>
+
+        {logSandboxId && (
+          <TabsContent value="logs" className="mt-4">
+            <SandboxLogTail
+              logSandboxId={logSandboxId}
+              scope={observability}
+              monitoringHref={dashboardHref(projectId, stage, {
+                tab: "monitoring",
+              })}
+            />
           </TabsContent>
-        </Tabs>
-      </SheetContent>
+        )}
+
+        <TabsContent value="terminal" className="mt-4">
+          {supportsLiveTerminal && controllable && instance.sandboxConfigId ? (
+            <LiveSandboxTerminal
+              sandboxId={instance.sandboxConfigId}
+              reservationKey={instance.reservationKey}
+              disabled={!commandRunnable}
+            />
+          ) : (
+            <CommandRunner
+              command={command}
+              entries={terminalEntries}
+              pending={commandPending}
+              runnable={commandRunnable}
+              onCommandChange={setCommand}
+              onRun={handleCommand}
+              canRun={canWrite}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
 
       <DeleteConfirmDialog
         open={confirmOpen}
@@ -373,17 +372,22 @@ export function SandboxInstanceSheet({
         onConfirm={handleTerminate}
         isDeleting={terminating}
       />
-    </Sheet>
+    </DetailPanel>
   );
 }
 
-/** Expects `events` newest first. */
+/**
+ * Expects `events` newest first. Each row names the actor, links the trace the
+ * action ran under, and shows the task it belonged to.
+ */
 function ActivityList({
   events,
   now,
+  traceHref,
 }: {
   events: SandboxAuditEvent[] | undefined;
   now: number;
+  traceHref: (traceId: string) => string;
 }): React.JSX.Element {
   return (
     <div className="mt-5">
@@ -401,30 +405,44 @@ function ActivityList({
           events.map((event) => (
             <div
               key={event._id}
-              className="flex items-start justify-between gap-3 border-b border-border px-3 py-2 last:border-0"
+              className="border-b border-border px-3 py-2 last:border-0"
             >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
                   <span className="text-xs font-medium text-foreground">
                     {event.action}
                   </span>
                   <span
-                    className={
+                    className={cn(
+                      "truncate text-xs",
                       event.result === "ok"
-                        ? "text-xs text-emerald-500"
-                        : "text-xs text-red-500"
-                    }
+                        ? "text-emerald-500"
+                        : "text-red-500",
+                    )}
                   >
                     {auditDetail(event)}
                   </span>
                 </div>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {actorLabel(event)}
-                </p>
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {relativeTime(event.createdAt, now)}
+                </span>
               </div>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {relativeTime(event.createdAt, now)}
-              </span>
+              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                {actorLabel(event)}
+              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground empty:hidden">
+                {event.traceId && (
+                  <TraceLink
+                    traceId={event.traceId}
+                    href={traceHref(event.traceId)}
+                  />
+                )}
+                {event.taskId && (
+                  <code className="max-w-45 truncate font-mono">
+                    task {event.taskId}
+                  </code>
+                )}
+              </div>
             </div>
           ))
         )}
@@ -434,11 +452,10 @@ function ActivityList({
 }
 
 function actorLabel(event: SandboxAuditEvent): string {
-  if (event.actorEmail) return event.actorEmail;
-  if (event.actorName) return event.actorName;
-  if (event.actorId) return event.actorId;
+  const label = ACTOR_LABEL[event.actorSource];
+  const who = event.actorEmail ?? event.actorName ?? event.actorId;
 
-  return event.actorSource;
+  return who ? `${label} · ${who}` : label;
 }
 
 function auditDetail(event: SandboxAuditEvent): string {

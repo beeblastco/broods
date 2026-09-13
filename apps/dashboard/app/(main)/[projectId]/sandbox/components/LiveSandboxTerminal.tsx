@@ -94,7 +94,15 @@ export function LiveSandboxTerminal({
       term.loadAddon(fit);
       term.open(container);
       fit.fit();
-      termRef.current = term;
+      // The detail column is user-resizable, so the grid has to follow it.
+      const observer = new ResizeObserver(() => fit.fit());
+      observer.observe(container);
+      termRef.current = {
+        dispose: (): void => {
+          observer.disconnect();
+          term.dispose();
+        },
+      };
 
       const socket = new WebSocket(
         `${endpoint.websocketBaseUrl}${ticket.websocketPath}?token=${encodeURIComponent(ticket.token)}`,

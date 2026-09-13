@@ -16,7 +16,7 @@ const BACKFILL = 200;
 const UNSCOPED = "-";
 
 /**
- * A guest log stream id. Branded because the sheet also holds an
+ * A guest log stream id. Branded because the panel also holds an
  * `Id<"sandboxConfigs">` that Convex names `sandboxId`, and a plain string type
  * lets the two swap silently: the tail would then subscribe with a config id,
  * fail the gateway's UUID check, and render empty with nothing to point at.
@@ -24,7 +24,7 @@ const UNSCOPED = "-";
  */
 export type SandboxLogId = string & { readonly __brand: "sandboxLogId" };
 
-/** The stage-scoped WS inputs the Sandbox page resolves once for every sheet. */
+/** The stage-scoped WS inputs the Sandbox page resolves once for every panel. */
 export interface SandboxObservabilityScope {
   projectSlug: string;
   stageSlug: string;

@@ -4,11 +4,19 @@
  * recent events for one reservation key.
  */
 
+import type { WithoutSystemFields } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, query } from "../_generated/server";
+import {
+  internalMutation,
+  type MutationCtx,
+  query,
+} from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxAuditEventsFields } from "../schema";
+
+/** A registry row as inserted or as read back; the audit needs no system fields. */
+type SandboxInstanceRow = WithoutSystemFields<Doc<"sandboxInstances">>;
 
 const sandboxAuditEventDoc = v.object({
   ...sandboxAuditEventsFields,
@@ -81,6 +89,50 @@ export const listForInstance = query({
   },
 });
 
+/**
+ * The audit row for a lifecycle step the runtime took on its own while
+ * mirroring an instance: `reserve` when the registry row is inserted or a
+ * replacement machine takes over its key, `resume` when a reconnect brings a
+ * suspended machine back. Written in the same transaction as the registry
+ * write, so a reconnect can never find the instance without it. Skipped for
+ * ephemeral instances: one row per bash call would drown the sandbox's own
+ * history.
+ */
+export async function recordRuntimeAction(
+  ctx: MutationCtx,
+  instance: SandboxInstanceRow,
+  action: "reserve" | "resume",
+): Promise<void> {
+  if (instance.ephemeral) return;
+
+  await ctx.db.insert("sandboxAuditEvents", {
+    ...auditEventHeadFields(
+      {
+        accountId: instance.accountId,
+        reservationKey: instance.reservationKey,
+        provider: instance.provider,
+        action: action,
+        result: "ok",
+      },
+      instance,
+    ),
+    ...auditEventTailFields(
+      {
+        actorSource: instance.agentId ? "agent" : "service",
+        actorId: instance.agentId,
+        ...(action === "reserve"
+          ? {
+              traceId: instance.createdByTraceId,
+              taskId: instance.createdByTaskId,
+            }
+          : {}),
+      },
+      instance,
+    ),
+    createdAt: Date.now(),
+  });
+}
+
 /** Audit-row identity/outcome columns, enriched from the instance row when the caller omitted them. */
 function auditEventHeadFields(
   args: Pick<
@@ -88,7 +140,7 @@ function auditEventHeadFields(
     "accountId" | "reservationKey" | "provider" | "action" | "result"
   > &
     Partial<Pick<Doc<"sandboxAuditEvents">, "sandboxConfigId" | "status">>,
-  instance: Doc<"sandboxInstances"> | null,
+  instance: SandboxInstanceRow | null,
 ): Partial<
   Pick<
     Doc<"sandboxAuditEvents">,
@@ -132,7 +184,7 @@ function auditEventTailFields(
         | "truncated"
       >
     >,
-  instance: Doc<"sandboxInstances"> | null,
+  instance: SandboxInstanceRow | null,
 ): Pick<Doc<"sandboxAuditEvents">, "actorSource"> &
   Partial<
     Pick<

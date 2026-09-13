@@ -66,6 +66,7 @@ import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js
 import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_apiAuthorization from "../model/apiAuthorization.js";
 import type * as model_apiCanvasSync from "../model/apiCanvasSync.js";
+import type * as model_apiError from "../model/apiError.js";
 import type * as model_auditEvents from "../model/auditEvents.js";
 import type * as model_aws from "../model/aws.js";
 import type * as model_bundles from "../model/bundles.js";
@@ -83,6 +84,7 @@ import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_cronSchedules from "../model/cronSchedules.js";
 import type * as model_envRefs from "../model/envRefs.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
+import type * as model_httpJson from "../model/httpJson.js";
 import type * as model_isolateSafety from "../model/isolateSafety.js";
 import type * as model_mcp from "../model/mcp.js";
 import type * as model_modelPricing from "../model/modelPricing.js";
@@ -196,6 +198,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentSync": typeof model_agentSync;
   "model/apiAuthorization": typeof model_apiAuthorization;
   "model/apiCanvasSync": typeof model_apiCanvasSync;
+  "model/apiError": typeof model_apiError;
   "model/auditEvents": typeof model_auditEvents;
   "model/aws": typeof model_aws;
   "model/bundles": typeof model_bundles;
@@ -213,6 +216,7 @@ declare const fullApi: ApiFromModules<{
   "model/cronSchedules": typeof model_cronSchedules;
   "model/envRefs": typeof model_envRefs;
   "model/environmentValues": typeof model_environmentValues;
+  "model/httpJson": typeof model_httpJson;
   "model/isolateSafety": typeof model_isolateSafety;
   "model/mcp": typeof model_mcp;
   "model/modelPricing": typeof model_modelPricing;
