@@ -67,7 +67,6 @@ describe("tidyCanvasLayout", () => {
     edge("a2", "w1"),
     edge("a2", "s2"),
     edge("a2", "k1"),
-    edge("s1", "w1", "mount"),
     edge("a1", "a2", "subagent"),
   ];
   // The layout is pure, so one run covers every assertion below.
@@ -130,6 +129,42 @@ describe("tidyCanvasLayout", () => {
       expect(position.x % CELL_WIDTH).toBe(0);
       expect(position.y % CELL_HEIGHT).toBe(0);
     }
+  });
+
+  it("keeps a mounted pair together: beside its agent, or in the shared lane", () => {
+    // `tracy` reaches `browser-sandbox` only through the workspace that mounts
+    // it, so the sandbox belongs in tracy's cluster, not the unwired lane.
+    const cluster = tidyCanvasLayout(
+      [
+        node("a1", "agent", "tracy"),
+        node("s1", "sandbox", "browser-sandbox"),
+        node("s2", "sandbox", "internal-sandbox"),
+        node("w1", "workspace", "browser-workspace"),
+      ],
+      [edge("a1", "s2"), edge("a1", "w1"), edge("s1", "w1", "mount")],
+    );
+    // A sandbox mounted into a workspace two agents reach is reached by both,
+    // so the pair drops to the shared lane side by side.
+    const shared = tidyCanvasLayout(
+      [
+        node("a1", "agent", "support"),
+        node("a2", "agent", "triage"),
+        node("s1", "sandbox", "py-sbx"),
+        node("w1", "workspace", "shared-docs"),
+      ],
+      [
+        edge("a1", "s1"),
+        edge("a1", "w1"),
+        edge("a2", "w1"),
+        edge("s1", "w1", "mount"),
+      ],
+    );
+
+    expect(cluster.get("s1")).toEqual({ x: 0, y: CELL_HEIGHT });
+    expect(cluster.get("w1")).toEqual({ x: CELL_WIDTH, y: CELL_HEIGHT });
+    expect(shared.get("s1")!.y).toBe(shared.get("w1")!.y);
+    expect(shared.get("s1")!.y).toBeGreaterThan(CELL_HEIGHT);
+    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBe(CELL_WIDTH);
   });
 
   it("survives a sub-agent cycle without dropping an agent", () => {
