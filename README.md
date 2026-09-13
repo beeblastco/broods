@@ -8,6 +8,14 @@ A serverless, multi-account AI agent harness built on Bun and AWS data-plane ser
 
 This is the open-source engine behind [Broods](https://github.com/beeblastco). The whole stack is self-hostable, so the data, the AWS account, and the API keys stay yours.
 
+> [!WARNING]
+> **Pre-release.**
+>
+> Broods has not cut a 1.0 release. The HTTP API, the CLI flags and the SDK all
+> still change between versions, and an upgrade can break your code without a
+> major version bump. Pin an exact version and read the release notes before
+> upgrading.
+
 ---
 
 ## What it is
