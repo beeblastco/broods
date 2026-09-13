@@ -1,16 +1,19 @@
 /**
- * server.ts is a flat Bun.serve script; its logic lives in exported pure
- * helpers: CoreRequest synthesis, path routing, and waitUntil draining. These
- * tests cover them without starting a server.
+ * server.ts keeps its logic in exported functions rather than inside the
+ * `import.meta.main` block: CoreRequest synthesis, path routing, waitUntil
+ * draining, and the router that dispatches between the handlers. These tests
+ * cover them without starting a server.
  */
 
 import { describe, expect, it } from "bun:test";
-import type { CoreRequest } from "../src/shared/http.ts";
+import type { CoreRequest, RequestContext } from "../src/shared/http.ts";
 import {
+  createRoute,
   drainInFlight,
   routesToAccountManage,
   toCoreRequest,
   waitUntil,
+  type CoreRouteHandlers,
 } from "../src/server.ts";
 
 async function buildCoreRequest(
@@ -168,5 +171,137 @@ describe("waitUntil drain", () => {
     release();
     await drained;
     expect(afterDone).toBe(true);
+  });
+});
+
+describe("createRoute", () => {
+  const REQUEST_BUDGET_MS = 60_000;
+
+  function routeWith(overrides: Partial<CoreRouteHandlers> = {}): {
+    route: ReturnType<typeof createRoute>;
+    calls: string[];
+    contexts: RequestContext[];
+  } {
+    const calls: string[] = [];
+    const contexts: RequestContext[] = [];
+    const route = createRoute(
+      {
+        accountHandler: async () => {
+          calls.push("account");
+
+          return new Response("account");
+        },
+        handleMediaRequest: async () => {
+          calls.push("media");
+
+          return new Response("media");
+        },
+        harnessHandler: async (_request, ctx) => {
+          calls.push("harness");
+          contexts.push(ctx);
+
+          return new Response("harness");
+        },
+        routesToMedia: () => false,
+        ...overrides,
+      },
+      REQUEST_BUDGET_MS,
+    );
+
+    return { route: route, calls: calls, contexts: contexts };
+  }
+
+  it("answers the health check before any handler runs", async () => {
+    const { route, calls } = routeWith();
+
+    const response = await route(new Request("http://core/healthz"), undefined);
+
+    expect(await response.json()).toEqual({ status: "ok" });
+    expect(calls).toEqual([]);
+  });
+
+  it("sends a media path to the media handler", async () => {
+    const { route, calls } = routeWith({ routesToMedia: () => true });
+
+    await route(new Request("http://core/v1/media/file"), undefined);
+
+    expect(calls).toEqual(["media"]);
+  });
+
+  it("sends an account-manage verb to the account handler", async () => {
+    const { route, calls } = routeWith();
+
+    await route(
+      new Request("http://core/v1/accounts", { method: "POST" }),
+      undefined,
+    );
+
+    expect(calls).toEqual(["account"]);
+  });
+
+  it("sends everything else to the harness", async () => {
+    const { route, calls } = routeWith();
+
+    await route(
+      new Request("http://core/v1/runs", { method: "POST" }),
+      undefined,
+    );
+
+    expect(calls).toEqual(["harness"]);
+  });
+
+  it("gives the harness the request id and a deadline from the budget", async () => {
+    const { route, contexts } = routeWith();
+    const before = Date.now();
+
+    await route(
+      new Request("http://core/v1/runs", {
+        method: "POST",
+        headers: { "x-request-id": "req-1" },
+      }),
+      undefined,
+    );
+
+    expect(contexts[0]!.requestId).toBe("req-1");
+    expect(contexts[0]!.deadlineMs).toBeGreaterThanOrEqual(
+      before + REQUEST_BUDGET_MS,
+    );
+  });
+
+  it("replaces an inbound request id that is not one we would issue", async () => {
+    const { route } = routeWith();
+
+    const response = await route(
+      new Request("http://core/v1/runs", {
+        method: "POST",
+        headers: { "x-request-id": "not a valid id" },
+      }),
+      undefined,
+    );
+
+    expect(response.headers.get("x-request-id")).toBeTruthy();
+    expect(response.headers.get("x-request-id")).not.toBe("not a valid id");
+  });
+
+  it("turns a handler failure into a stamped 500 envelope", async () => {
+    const { route } = routeWith({
+      harnessHandler: async () => {
+        throw new Error("boom");
+      },
+    });
+
+    const response = await route(
+      new Request("http://core/v1/runs", {
+        method: "POST",
+        headers: { "x-request-id": "req-boom" },
+      }),
+      undefined,
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("x-request-id")).toBe("req-boom");
+    expect(await response.json()).toMatchObject({
+      error: { message: "Internal server error", type: "api_error" },
+    });
   });
 });

@@ -24,6 +24,76 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
 ];
 const inFlight = new Set<Promise<void>>();
 
+/**
+ * The handlers the entry point imports lazily, passed in so the router can be
+ * built without them. Keeping those imports out of module scope is deliberate:
+ * a static import of the harness drags the whole runtime into anything that
+ * loads this file.
+ */
+export interface CoreRouteHandlers {
+  accountHandler: (request: CoreRequest) => Promise<Response>;
+  handleMediaRequest: (request: CoreRequest) => Promise<Response>;
+  harnessHandler: (
+    request: CoreRequest,
+    ctx: RequestContext,
+  ) => Promise<Response>;
+  routesToMedia: (method: string, pathname: string) => boolean;
+}
+
+/**
+ * Build the request router over one set of handlers.
+ *
+ * Dispatch order is the contract: health check, then media, then the
+ * account-manage verbs, then the harness. It takes the client address rather
+ * than a `Bun.Server` so a test can call it with nothing but a `Request`.
+ */
+export function createRoute(
+  handlers: CoreRouteHandlers,
+  requestBudgetMs: number,
+): (request: Request, socketAddress: string | undefined) => Promise<Response> {
+  return async function (request, socketAddress): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/healthz" && request.method === "GET") {
+      return withRequestId(
+        Response.json({ status: "ok" }),
+        resolveRequestId(request.headers.get("x-request-id")),
+      );
+    }
+
+    const coreRequest = await toCoreRequest(request, url, socketAddress);
+    const requestId = resolveRequestId(coreRequest.headers["x-request-id"]);
+    const ctx: RequestContext = {
+      requestId: requestId,
+      deadlineMs: Date.now() + requestBudgetMs,
+      waitUntil: waitUntil,
+    };
+
+    try {
+      let response: Response;
+      if (handlers.routesToMedia(request.method, url.pathname)) {
+        response = await handlers.handleMediaRequest(coreRequest);
+      } else if (routesToAccountManage(request.method, url.pathname)) {
+        response = await handlers.accountHandler(coreRequest);
+      } else {
+        response = await handlers.harnessHandler(coreRequest, ctx);
+      }
+
+      return withRequestId(response, requestId);
+    } catch (err) {
+      logError("Core server handler failed", {
+        path: url.pathname,
+        requestId: requestId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+
+      return withRequestId(
+        errorResponse(500, "Internal server error"),
+        requestId,
+      );
+    }
+  };
+}
+
 export function routesToAccountManage(
   method: string,
   pathname: string,
@@ -108,10 +178,6 @@ if (import.meta.main) {
     "SHUTDOWN_DEADLINE_MS",
     25_000,
   );
-  const requestBudgetMs = positiveIntegerEnv(
-    "REQUEST_TIMEOUT_BUDGET_MS",
-    DEFAULT_REQUEST_BUDGET_MS,
-  );
   const { handler: accountHandler } = await import("./accounts/handler.ts");
   const { handleMediaRequest, routesToMedia } = await import("./media.ts");
   const { drainInProcessWorkers, handler: harnessHandler } =
@@ -127,56 +193,23 @@ if (import.meta.main) {
   void prewarmIsolatePool().catch(() => undefined);
   startSandboxSweeper();
 
+  const route = createRoute(
+    {
+      accountHandler: accountHandler,
+      handleMediaRequest: handleMediaRequest,
+      harnessHandler: harnessHandler,
+      routesToMedia: routesToMedia,
+    },
+    positiveIntegerEnv("REQUEST_TIMEOUT_BUDGET_MS", DEFAULT_REQUEST_BUDGET_MS),
+  );
+
   const server = Bun.serve({
     port: positiveIntegerEnv("PORT", 3000),
     hostname: optionalEnv("HOSTNAME") ?? "0.0.0.0",
     idleTimeout: 255,
     maxRequestBodySize: 10 * 1024 * 1024,
-    fetch: async (request, bunServer) => {
-      const url = new URL(request.url);
-      if (url.pathname === "/healthz" && request.method === "GET") {
-        return withRequestId(
-          Response.json({ status: "ok" }),
-          resolveRequestId(request.headers.get("x-request-id")),
-        );
-      }
-
-      const coreRequest = await toCoreRequest(
-        request,
-        url,
-        bunServer.requestIP(request)?.address,
-      );
-      const requestId = resolveRequestId(coreRequest.headers["x-request-id"]);
-      const ctx: RequestContext = {
-        requestId: requestId,
-        deadlineMs: Date.now() + requestBudgetMs,
-        waitUntil: waitUntil,
-      };
-
-      try {
-        let response: Response;
-        if (routesToMedia(request.method, url.pathname)) {
-          response = await handleMediaRequest(coreRequest);
-        } else if (routesToAccountManage(request.method, url.pathname)) {
-          response = await accountHandler(coreRequest);
-        } else {
-          response = await harnessHandler(coreRequest, ctx);
-        }
-
-        return withRequestId(response, requestId);
-      } catch (err) {
-        logError("Core server handler failed", {
-          path: url.pathname,
-          requestId: requestId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-
-        return withRequestId(
-          errorResponse(500, "Internal server error"),
-          requestId,
-        );
-      }
-    },
+    fetch: (request, bunServer) =>
+      route(request, bunServer.requestIP(request)?.address),
   });
 
   logInfo("Core server listening", { port: server.port });
