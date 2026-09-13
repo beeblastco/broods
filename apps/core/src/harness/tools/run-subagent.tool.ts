@@ -31,6 +31,8 @@ export type RunSubagentTaskDispatch = {
   agentId: string;
   description?: string;
   conversationKey: string;
+  /** The child's run id; what an `attach` names and `statusPath` resolves. */
+  runId: string;
   statusPath: string;
   status: "running";
 };

@@ -25,7 +25,9 @@ export interface Agent {
 
 export interface AsyncRequestAccepted {
   statusUrl: string;
-  statusId: string;
+  /** Account-unique id for this run; what the status URL names. */
+  runId: string;
+  /** The eventId sent with the request, echoed back. */
   eventId: string;
   agentId: string;
   status?: "accepted" | "queued" | "applied" | "processing";

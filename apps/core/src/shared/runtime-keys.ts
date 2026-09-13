@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
+const RUN_ID_PREFIX = "run_";
 const SUBAGENT_TASK_ID_PREFIX = "subagent~";
 const UUID_PATTERN =
   "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -16,6 +17,7 @@ const UUID_EXACT = new RegExp(`^${UUID_PATTERN}$`);
 const SUBAGENT_TASK_ID = new RegExp(
   `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
 );
+const RUN_ID = new RegExp(`^${RUN_ID_PREFIX}[0-9a-f]{32}$`);
 
 export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
@@ -129,18 +131,6 @@ export function assertValidPublicEventId(value: string): string {
   return normalized;
 }
 
-export function assertValidPublicStatusEventId(value: string): string {
-  const normalized = normalizeDirectIdentifier("eventId", value);
-  if (
-    hasReservedEventIdPrefix(normalized) &&
-    !subagentParentEventId(normalized)
-  ) {
-    throw new Error("eventId uses a reserved internal prefix");
-  }
-
-  return normalized;
-}
-
 export function assertValidPublicConversationKey(value: string): string {
   const normalized = normalizeDirectIdentifier("conversationKey", value);
   if (hasReservedConversationPrefix(normalized)) {
@@ -195,6 +185,22 @@ export function accountScopedKey(accountId: string, key: string): string {
   return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
 }
 
+/**
+ * The caller-supplied part of a scoped direct event id, or `fallback` when the
+ * value is absent or not scoped the way this account and agent scope it.
+ */
+export function publicEventIdForScope(
+  value: string | undefined,
+  accountId: string,
+  agentId: string,
+  fallback: string,
+): string {
+  if (!value) return fallback;
+  const prefix = `acct:${accountId}:agent:${agentId}:${DIRECT_API_EVENT_ID_PREFIX}`;
+
+  return value.startsWith(prefix) ? value.slice(prefix.length) : fallback;
+}
+
 export function accountAgentScopedKey(
   accountId: string,
   agentId: string,
@@ -205,6 +211,20 @@ export function accountAgentScopedKey(
 
 export function accountScopedPrefix(accountId: string): string {
   return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:`;
+}
+
+/**
+ * Mint the public id for one run. Account-unique by construction, unlike the
+ * caller-supplied `eventId`, which is only unique per agent because the stored
+ * key scopes it by agent. This is what `GET /v1/runs/{runId}` resolves on.
+ */
+export function createRunId(): string {
+  return `${RUN_ID_PREFIX}${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+/** Whether a path segment looks like a run id we issued. */
+export function isRunId(value: string): boolean {
+  return RUN_ID.test(value);
 }
 
 export function createSubagentTaskId(

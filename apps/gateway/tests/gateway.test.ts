@@ -141,6 +141,7 @@ test("reuses attach and stream contracts for subagent task identities", () => {
         agentId: "agent_child",
         conversationKey: "subagent-persistent-abc",
         eventId: "subagent_task_123",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
     ),
   ).toEqual({
@@ -149,6 +150,7 @@ test("reuses attach and stream contracts for subagent task identities", () => {
     agentId: "agent_child",
     conversationKey: "subagent-persistent-abc",
     eventId: "subagent_task_123",
+    runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   });
   expect(
     [
@@ -203,6 +205,7 @@ test("attaches virtual and private child streams through durable parent deployme
           agentId: fixture.childAgentId,
           conversationKey: fixture.publicConversationKey,
           eventId: fixture.taskId,
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         }),
         gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
         async () => connection as never,
@@ -237,6 +240,56 @@ test("attaches virtual and private child streams through durable parent deployme
   }
 });
 
+test("an attach polls core by run id, with no agent in the query", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const runId = "run_44444444444444444444444444444444";
+  const polled: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    polled.push(String(input));
+
+    return new Response(
+      JSON.stringify({
+        eventId: "attach-event",
+        runId: runId,
+        conversationKey: "someone-elses-conversation",
+        status: "processing",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-by-run-id",
+        agentId: "agent_child",
+        conversationKey: "requested-conversation",
+        eventId: "attach-event",
+        runId: runId,
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => {
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "replay_unavailable",
+    );
+    const polledUrl = new URL(String(polled[0]));
+    expect(polledUrl.pathname).toBe(`/v1/runs/${runId}`);
+    expect(polledUrl.search).toBe("");
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("rejects an attach whose durable status conversation does not own the requested subject", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
@@ -264,6 +317,7 @@ test("rejects an attach whose durable status conversation does not own the reque
         agentId: "agent_private",
         conversationKey: "requested-conversation",
         eventId: "subagent-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
       async () => {
@@ -282,7 +336,7 @@ test("rejects an attach whose durable status conversation does not own the reque
       requestId: "attach-wrong-subject",
       eventId: "subagent-task",
       status: "processing",
-      statusUrl: "/v1/runs/subagent-task?agentId=agent_private",
+      statusUrl: "/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
   } finally {
     stopActiveRun(socket);
@@ -354,6 +408,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
       async () => connection as never,
@@ -465,6 +520,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "4000" }),
       async () => connection as never,
@@ -559,6 +615,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "4000" }),
       async () => connection as never,
@@ -623,6 +680,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
       async () => connection as never,
@@ -640,7 +698,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
       requestId: "attach-empty",
       eventId: "child-task",
       status: "completed",
-      statusUrl: "/v1/runs/child-task?agentId=agent_child",
+      statusUrl: "/v1/runs/run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
     expect(sent.some((message) => message.type === "error")).toBe(false);
   } finally {
@@ -710,6 +768,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
       async () => connection as never,
@@ -757,7 +816,8 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
           eventId: "queued-task",
           conversationKey: "queued-conversation",
           status: "queued",
-          statusUrl: "/v1/runs/queued-task?agentId=agent_child",
+          runId: "run_3333333333333333333333333333cccc",
+          statusUrl: "/v1/runs/run_3333333333333333333333333333cccc",
         }),
         {
           status: 202,
@@ -840,6 +900,7 @@ test("falls back to durable attach status when NATS consumer creation fails", as
         agentId: "agent_child",
         conversationKey: "child-conversation",
         eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
       async () => connection as never,
@@ -872,6 +933,7 @@ test("falls back to durable queued status when NATS consumer creation fails", as
           eventId: "queued-task",
           conversationKey: "queued-conversation",
           status: "queued",
+          runId: "run_3333333333333333333333333333cccc",
         }),
         {
           status: 202,
@@ -967,6 +1029,7 @@ test("parses only valid gateway websocket messages", () => {
         agentId: "agent_123",
         conversationKey: "conversation-1",
         eventId: "event-1",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         afterCursor: "ws-responses:generation:42",
       }),
     ),

@@ -37,10 +37,12 @@ const ref: AgentReference = {
 
 test("continue posts continue: true to the scoped run route", async () => {
   const { client, calls } = mockClient(202, {
+    runId: "run_cccccccccccccccccccccccccccc0001",
     eventId: "continue-1",
     conversationKey: "tg:42",
     status: "processing",
-    statusUrl: "https://gateway.example.com/v1/runs/continue-1?agentId=agent_1",
+    statusUrl:
+      "https://gateway.example.com/v1/runs/run_cccccccccccccccccccccccccccc0001",
   });
 
   const run = await client.continue(ref, {
@@ -57,7 +59,8 @@ test("continue posts continue: true to the scoped run route", async () => {
     conversationKey: "acct:a1:agent:agent_1:tg:42",
     continue: true,
   });
-  expect(run.statusId).toBe("continue-1");
+  expect(run.runId).toBe("run_cccccccccccccccccccccccccccc0001");
+  expect(run.eventId).toBe("continue-1");
   expect(run.status).toBe("processing");
 });
 

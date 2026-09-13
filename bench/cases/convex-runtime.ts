@@ -45,6 +45,7 @@ export const convexRuntimeCases: readonly BenchCase[] = [
         agentId: "bench-agent",
         conversationKey: conversationKey,
         eventId: eventId,
+        runId: `run_${eventId}`,
         idempotencyKey: eventId,
         payloadDigest: `digest:${eventId}`,
         events: USER_TURN,

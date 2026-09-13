@@ -180,8 +180,8 @@ curl -X POST "https://gateway.broods.app/async" \
     ]
   }'
 
-# Poll status
-curl "https://gateway.broods.app/status/req-003?agentId=agent_..." \
+# Poll the run, using the runId the accepting response returned
+curl "https://gateway.broods.app/v1/runs/run_8c1d4a9e2f1b40d7a3c65e90b7412fda" \
   -H "Authorization: Bearer $BROODS_API_KEY"
 ```
 

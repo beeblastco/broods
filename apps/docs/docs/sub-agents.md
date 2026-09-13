@@ -181,7 +181,8 @@ Ephemeral children cannot be controlled. They hold no durable conversation and t
 
 When `subagent.stream` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
 
-- `taskId` becomes the attach `eventId` and the durable status id
+- `taskId` becomes the attach `eventId`
+- `runId` names the child's run; it is what core resolves and what `statusPath` polls
 - `agentId` identifies the child agent
 - `conversationKey` is the returned child conversation key
 
@@ -191,7 +192,8 @@ When `subagent.stream` is `true`, every child publishes its reasoning, text, too
   "requestId": "attach-child-1",
   "agentId": "agent_child",
   "conversationKey": "subagent-persistent-abc123",
-  "eventId": "subagent~base64url-parent-event~task-uuid"
+  "eventId": "subagent~base64url-parent-event~task-uuid",
+  "runId": "run_8c1d4a9e2f0b4c7d9e1f2a3b4c5d6e7f"
 }
 ```
 
@@ -235,9 +237,9 @@ account and child agent so conversations cannot cross those scopes. Because the
 durable child row is created before dispatch and JetStream retains the earliest
 frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
 immediately even if the child began publishing before the tool result arrived.
-A `done` stream part only closes the best-effort token tail. The existing
-`/v1/runs/{taskId}?agentId={agentId}` result remains the durable terminal truth
-after completion, failure, or JetStream expiry.
+A `done` stream part only closes the best-effort token tail. The dispatch also
+carries a `statusPath` of `/v1/runs/{runId}`, and that result remains the
+durable terminal truth after completion, failure, or JetStream expiry.
 
 An attach made before the first child frame remains open even when the replay
 buffer is empty. The gateway starts at the next subject sequence and tails

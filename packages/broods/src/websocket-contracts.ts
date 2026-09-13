@@ -118,6 +118,8 @@ export type WebSocketClientAttachMessage = {
   agentId: string;
   conversationKey: string;
   eventId: string;
+  /** The run id the accepting response returned; how core resolves the run. */
+  runId: string;
   afterCursor?: string;
 };
 
