@@ -11,7 +11,14 @@ import { cn } from "@/app/lib/utils";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
+import {
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
+import {
+  ObservabilityDetailPanel,
+  TABLE_MIN_WIDTH,
+} from "./ObservabilityDetailPanel";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -148,8 +155,12 @@ export function MonitoringPanel({
         isError={status === "error"}
       />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+      <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <ResizablePanel
+          id="table"
+          minSize={TABLE_MIN_WIDTH}
+          className="min-h-0 min-w-0 overflow-auto"
+        >
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
               <col className="w-42.5" />
@@ -200,7 +211,7 @@ export function MonitoringPanel({
               </button>
             </div>
           )}
-        </div>
+        </ResizablePanel>
         {selected && (
           <ObservabilityDetailPanel
             title={selectedSummary}
@@ -222,7 +233,7 @@ export function MonitoringPanel({
             <LogDetails entry={selected} onViewTrace={viewTrace} />
           </ObservabilityDetailPanel>
         )}
-      </div>
+      </ResizablePanelGroup>
     </div>
   );
 }

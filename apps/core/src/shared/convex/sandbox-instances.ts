@@ -29,7 +29,9 @@ export type SandboxInstanceStatus =
  *
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
  * it is flagged uncontrollable for the dashboard and skips the audit event a real
- * reservation writes (one per bash call would drown the sandbox's own history).
+ * reservation writes. The `reserve` audit row is written once, when the row is first
+ * inserted: a reconnect refreshes the row's last-used trace instead of adding a row
+ * per tool call.
  * `logStream` is the provider-side guest log stream the dashboard tails. Only the
  * call that launched the VM knows it; reconnects leave the stored value alone.
  */
@@ -47,31 +49,34 @@ export async function upsertSandboxInstance(
   try {
     // The Convex client drops undefined object fields, so an unset optional
     // stays absent on the row rather than becoming null.
-    await getConvexClient().mutation(internal.sandbox.instances.upsert, {
-      accountId: controlPlane.accountId as any,
-      projectId: controlPlane.projectId as any,
-      stageId: controlPlane.stageId as any,
-      provider: provider,
-      reservationKey: reservationKey,
-      externalId: externalId,
-      name: controlPlane.name,
-      specs: controlPlane.specs,
-      sandboxConfigId: controlPlane.sandboxConfigId as any,
-      snapshotId: controlPlane.snapshotId,
-      egress: controlPlane.egress,
-      permissionMode: controlPlane.permissionMode,
-      lastUsedTraceId: meta.traceId,
-      createdByTraceId: meta.traceId,
-      lastUsedTaskId: meta.taskId,
-      createdByTaskId: meta.taskId,
-      agentId: meta.agentId,
-      conversationKey: meta.conversationKey,
-      workspaceName: meta.workspaceName,
-      workspaceId: meta.workspaceId,
-      logStream: options?.logStream,
-      ephemeral: ephemeral ? true : undefined,
-    });
-    if (ephemeral) return;
+    const created: boolean = await getConvexClient().mutation(
+      internal.sandbox.instances.upsert,
+      {
+        accountId: controlPlane.accountId as any,
+        projectId: controlPlane.projectId as any,
+        stageId: controlPlane.stageId as any,
+        provider: provider,
+        reservationKey: reservationKey,
+        externalId: externalId,
+        name: controlPlane.name,
+        specs: controlPlane.specs,
+        sandboxConfigId: controlPlane.sandboxConfigId as any,
+        snapshotId: controlPlane.snapshotId,
+        egress: controlPlane.egress,
+        permissionMode: controlPlane.permissionMode,
+        lastUsedTraceId: meta.traceId,
+        createdByTraceId: meta.traceId,
+        lastUsedTaskId: meta.taskId,
+        createdByTaskId: meta.taskId,
+        agentId: meta.agentId,
+        conversationKey: meta.conversationKey,
+        workspaceName: meta.workspaceName,
+        workspaceId: meta.workspaceId,
+        logStream: options?.logStream,
+        ephemeral: ephemeral ? true : undefined,
+      },
+    );
+    if (ephemeral || !created) return;
     await recordSandboxAuditEvent({
       accountId: controlPlane.accountId,
       sandboxConfigId: controlPlane.sandboxConfigId,

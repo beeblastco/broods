@@ -92,7 +92,7 @@ export default function SandboxPage(): React.JSX.Element {
             {activeLabel}
           </h2>
         </div>
-        <div className="flex flex-col gap-3 mx-auto w-full max-w-7xl px-6 pb-12">
+        <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-3 px-6 pb-12">
           <p className="shrink-0 text-xs text-muted-foreground">
             Live persistent sandbox instances and their snapshots. broods owns
             the runtime; the dashboard drives suspend, resume, terminate, and

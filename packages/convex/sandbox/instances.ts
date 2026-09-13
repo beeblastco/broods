@@ -187,6 +187,8 @@ export const setStatus = internalMutation({
  * reservationKey. Called by broods when it reserves a persistent instance so the
  * dashboard sees it live. Idempotent: refreshes the existing row (back to
  * `running`) on reconnect/re-reserve. No-op when the key belongs to another account.
+ * @returns true when this call inserted the row, so the caller can audit the
+ * one real reservation and stay quiet on every reconnect.
  * @param accountId the owning account.
  * @param provider the sandbox compute backend.
  * @param reservationKey the broods reconnection key (globally unique).
@@ -223,15 +225,15 @@ export const upsert = internalMutation({
     logStream: sandboxInstancesFields.logStream,
     ephemeral: sandboxInstancesFields.ephemeral,
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const existing = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
         q.eq("reservationKey", args.reservationKey),
       )
       .unique();
-    if (existing && existing.accountId !== args.accountId) return null;
+    if (existing && existing.accountId !== args.accountId) return false;
 
     const now = Date.now();
     const fields = upsertRefreshFields(args, now);
@@ -246,7 +248,7 @@ export const upsert = internalMutation({
           : {}),
       });
 
-      return null;
+      return false;
     }
 
     await ctx.db.insert("sandboxInstances", {
@@ -265,7 +267,7 @@ export const upsert = internalMutation({
       ...fields,
     });
 
-    return null;
+    return true;
   },
 });
 

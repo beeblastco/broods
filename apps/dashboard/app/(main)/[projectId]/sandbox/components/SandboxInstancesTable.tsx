@@ -1,5 +1,6 @@
 "use client";
 
+import { TABLE_MIN_WIDTH } from "@/app/(main)/[projectId]/dashboard/components/ObservabilityDetailPanel";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
@@ -11,6 +12,10 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
+import {
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
 import {
   Select,
   SelectContent,
@@ -33,7 +38,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SandboxInstanceSheet } from "./SandboxInstanceSheet";
+import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   formatProvider,
   formatSpecs,
@@ -75,9 +80,13 @@ export function SandboxInstancesTable({
   const searchParams = useSearchParams();
   const now = useNow();
 
-  const [selected, setSelected] = useState<Doc<"sandboxInstances"> | null>(
+  // Only the id is held, so the open panel follows the live row instead of a
+  // stale copy once a refresh or suspend moves its status.
+  const [selectedId, setSelectedId] = useState<Id<"sandboxInstances"> | null>(
     null,
   );
+  const selected =
+    instances.find((instance) => instance._id === selectedId) ?? null;
   const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
     null,
   );
@@ -205,7 +214,7 @@ export function SandboxInstancesTable({
   }
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-50 flex-1">
           <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -280,128 +289,145 @@ export function SandboxInstancesTable({
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-230 text-sm">
-          <thead className="bg-muted/40 text-xs text-muted-foreground">
-            <tr>
-              <th className="px-4 py-2 text-left font-medium">Name</th>
-              <th className="px-4 py-2 text-left font-medium">Provider</th>
-              <th className="px-4 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-left font-medium">Size</th>
-              <th className="px-4 py-2 text-left font-medium">Image</th>
-              <th className="px-4 py-2 text-left font-medium">Trace</th>
-              <th className="px-4 py-2 text-left font-medium">Created</th>
-              <th className="px-4 py-2 text-left font-medium">Last used</th>
-              <th className="px-4 py-2 text-right font-medium">Running</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((instance) => {
-              const running = instance.status === "running";
-              const toggleable =
-                controllable(instance) &&
-                (instance.status === "running" ||
-                  instance.status === "suspended") &&
-                pendingId !== instance._id;
+      <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <ResizablePanel
+          id="table"
+          minSize={TABLE_MIN_WIDTH}
+          className="min-h-0 min-w-0 overflow-auto"
+        >
+          <table className="w-full min-w-230 text-sm">
+            <thead className="bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium">Name</th>
+                <th className="px-4 py-2 text-left font-medium">Provider</th>
+                <th className="px-4 py-2 text-left font-medium">Status</th>
+                <th className="px-4 py-2 text-left font-medium">Size</th>
+                <th className="px-4 py-2 text-left font-medium">Image</th>
+                <th className="px-4 py-2 text-left font-medium">Trace</th>
+                <th className="px-4 py-2 text-left font-medium">Created</th>
+                <th className="px-4 py-2 text-left font-medium">Last used</th>
+                <th className="px-4 py-2 text-right font-medium">Running</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((instance) => {
+                const running = instance.status === "running";
+                const toggleable =
+                  controllable(instance) &&
+                  (instance.status === "running" ||
+                    instance.status === "suspended") &&
+                  pendingId !== instance._id;
 
-              return (
-                <tr
-                  key={instance._id}
-                  className="cursor-pointer border-t border-border hover:bg-muted/30"
-                  onClick={() => setSelected(instance)}
-                >
-                  <td className="px-4 py-2.5">
-                    <div className="font-medium text-foreground">
-                      {instance.name}
-                    </div>
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {instance.externalId}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs">
-                    {instance.ephemeral
-                      ? `${formatProvider(instance.provider)} · per-call`
-                      : formatProvider(instance.provider)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {instanceStatusBadge(instance.status)}
-                    {instance.errorMessage && (
-                      <div
-                        className="mt-1 max-w-xs truncate text-xs text-destructive"
-                        title={instance.errorMessage}
-                      >
-                        {instance.errorMessage}
+                return (
+                  <tr
+                    key={instance._id}
+                    className="cursor-pointer border-t border-border hover:bg-muted/30"
+                    onClick={() => setSelectedId(instance._id)}
+                  >
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-foreground">
+                        {instance.name}
                       </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {formatSpecs(instance.specs)}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                    {instance.snapshotId ?? "—"}
-                  </td>
-                  <td
-                    className="px-4 py-2.5"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {instance.lastUsedTraceId || instance.createdByTraceId ? (
-                      <Button
-                        nativeButton={false}
-                        render={
-                          <Link
-                            href={traceHref(
-                              instance.lastUsedTraceId ??
-                                instance.createdByTraceId!,
-                            )}
-                            draggable={false}
-                          />
+                      <div className="font-mono text-xs text-muted-foreground">
+                        {instance.externalId}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {instance.ephemeral
+                        ? `${formatProvider(instance.provider)} · per-call`
+                        : formatProvider(instance.provider)}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {instanceStatusBadge(instance.status)}
+                      {instance.errorMessage && (
+                        <div
+                          className="mt-1 max-w-xs truncate text-xs text-destructive"
+                          title={instance.errorMessage}
+                        >
+                          {instance.errorMessage}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                      {formatSpecs(instance.specs)}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                      {instance.snapshotId ?? "—"}
+                    </td>
+                    <td
+                      className="px-4 py-2.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {instance.lastUsedTraceId || instance.createdByTraceId ? (
+                        <Button
+                          nativeButton={false}
+                          render={
+                            <Link
+                              href={traceHref(
+                                instance.lastUsedTraceId ??
+                                  instance.createdByTraceId!,
+                              )}
+                              draggable={false}
+                            />
+                          }
+                          variant="outline"
+                          size="xs"
+                          className="cursor-pointer"
+                        >
+                          <ExternalLink className="size-3" />
+                          Trace
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                      {relativeTime(instance.createdAt, now)}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                      {relativeTime(instance.lastUsedAt, now)}
+                    </td>
+                    <td
+                      className="px-4 py-2.5 text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Switch
+                        checked={running}
+                        disabled={!toggleable || !canWrite}
+                        onCheckedChange={(next) =>
+                          next
+                            ? toggle(instance, true)
+                            : setConfirming(instance)
                         }
-                        variant="outline"
-                        size="xs"
-                        className="cursor-pointer"
-                      >
-                        <ExternalLink className="size-3" />
-                        Trace
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.createdAt, now)}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.lastUsedAt, now)}
-                  </td>
+                        aria-label={running ? "Suspend" : "Resume"}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+              {pageRows.length === 0 && (
+                <tr>
                   <td
-                    className="px-4 py-2.5 text-right"
-                    onClick={(e) => e.stopPropagation()}
+                    colSpan={9}
+                    className="px-4 py-10 text-center text-xs text-muted-foreground"
                   >
-                    <Switch
-                      checked={running}
-                      disabled={!toggleable || !canWrite}
-                      onCheckedChange={(next) =>
-                        next ? toggle(instance, true) : setConfirming(instance)
-                      }
-                      aria-label={running ? "Suspend" : "Resume"}
-                    />
+                    No instances match the current filters.
                   </td>
                 </tr>
-              );
-            })}
-            {pageRows.length === 0 && (
-              <tr>
-                <td
-                  colSpan={9}
-                  className="px-4 py-10 text-center text-xs text-muted-foreground"
-                >
-                  No instances match the current filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </ResizablePanel>
+        {selected && (
+          <SandboxInstancePanel
+            instance={selected}
+            projectId={projectId}
+            observability={observability}
+            now={now}
+            onClose={() => setSelectedId(null)}
+          />
+        )}
+      </ResizablePanelGroup>
 
       {filtered.length > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
@@ -487,17 +513,7 @@ export function SandboxInstancesTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {selected && (
-        <SandboxInstanceSheet
-          instance={selected}
-          projectId={projectId}
-          observability={observability}
-          now={now}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </>
+    </div>
   );
 }
 

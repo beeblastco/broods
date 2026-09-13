@@ -18,7 +18,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ObservabilityDetailPanel } from "./ObservabilityDetailPanel";
+import {
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/app/components/ui/resizable";
+import {
+  ObservabilityDetailPanel,
+  TABLE_MIN_WIDTH,
+} from "./ObservabilityDetailPanel";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -394,8 +401,12 @@ export function TracingPanel({
         </p>
       )}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+      <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
+        <ResizablePanel
+          id="table"
+          minSize={TABLE_MIN_WIDTH}
+          className="min-h-0 min-w-0 overflow-auto"
+        >
           <table className="w-full text-xs font-mono table-fixed">
             <colgroup>
               <col className="w-37" />
@@ -458,7 +469,7 @@ export function TracingPanel({
               </button>
             </div>
           )}
-        </div>
+        </ResizablePanel>
         {selected && (
           <ObservabilityDetailPanel
             title={spanLabel(selected.span)}
@@ -498,7 +509,7 @@ export function TracingPanel({
             <SpanDetails span={selected.span} />
           </ObservabilityDetailPanel>
         )}
-      </div>
+      </ResizablePanelGroup>
     </div>
   );
 }
