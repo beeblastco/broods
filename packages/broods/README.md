@@ -120,7 +120,7 @@ await account.createCron({
   scheduleExpression: "cron(0 8 * * ? *)",
 });
 const { accountId } = await account.getAccount();
-const url = account.webhookUrl(accountId, created.agentId, "slack");
+const url = account.webhookUrl(accountId, "slack");
 
 // The same client covers the rest of the config plane: standalone sandboxes and
 // workspaces, uploaded tools, reusable policies, skills, and cron run history.

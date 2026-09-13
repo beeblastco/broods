@@ -8,7 +8,11 @@
  *   {BROODS_BASE_URL}/v1/webhooks/{accountId}/slack
  */
 
-import { BroodsAccountClient, type AccountChannel } from "broods/account";
+import {
+  BroodsAccountClient,
+  type AccountChannel,
+  type ChannelRecordConfig,
+} from "broods/account";
 
 const ENG_CHANNEL_ID = process.env.SLACK_ENG_CHANNEL_ID ?? "C042PRODENG";
 const SALES_CHANNEL_ID = process.env.SLACK_SALES_CHANNEL_ID ?? "C042SALES";
@@ -29,7 +33,7 @@ async function upsertChannel(input: {
   name: string;
   agentId: string;
   instructions: string;
-  extra?: Record<string, unknown>;
+  extra?: Partial<ChannelRecordConfig>;
 }): Promise<AccountChannel> {
   const existing = (await client.listChannels()).find(
     (channel) =>
@@ -70,11 +74,11 @@ const eng = await upsertChannel({
   instructions:
     "You are the engineering on-call assistant. Prefer logs and diffs over guesses.",
   extra: {
-    // Roles are readable from policy conditions as `actorRoles`.
+    // Roles are readable from policy conditions as `userRoles`.
     tagRoles: [
       {
         roleId: "oncall",
-        actorIds: (process.env.ONCALL_SLACK_IDS ?? "")
+        userIds: (process.env.ONCALL_SLACK_IDS ?? "")
           .split(",")
           .filter(Boolean),
       },
