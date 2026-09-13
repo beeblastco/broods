@@ -876,6 +876,26 @@ export const appliedIngressModeValidator = v.union(
   v.literal("steer"),
 );
 /** Durable lifecycle for accepted ingress. */
+/**
+ * The cursor half of Convex's `PaginationResult`, so a paginated internal
+ * query declares its `returns` as `v.object({ page: v.array(doc),
+ * ...paginationCursorFields })` instead of restating four fields each time.
+ * The shape has to match what `.paginate()` returns, optional fields included,
+ * or Convex rejects the value at runtime.
+ */
+export const paginationCursorFields = {
+  isDone: v.boolean(),
+  continueCursor: v.string(),
+  splitCursor: v.optional(v.union(v.string(), v.null())),
+  pageStatus: v.optional(
+    v.union(
+      v.literal("SplitRecommended"),
+      v.literal("SplitRequired"),
+      v.null(),
+    ),
+  ),
+};
+
 export const ingressStatusValidator = v.union(
   v.literal("accepted"),
   v.literal("queued"),

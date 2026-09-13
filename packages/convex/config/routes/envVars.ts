@@ -9,7 +9,7 @@ import type { Id } from "../../_generated/dataModel";
 import { ACCOUNT_ENV_VAR_NAME_PATTERN } from "../../model/agentConfigCodec";
 import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
-import { json, methodNotAllowed, paginated, writeAudit } from "./shared";
+import { collectionPage, json, methodNotAllowed, writeAudit } from "./shared";
 
 export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
@@ -20,19 +20,19 @@ export async function handleAccountEnvVarRoute(
 ): Promise<Response> {
   if (!name) {
     if (req.method !== "GET") return methodNotAllowed(["GET"]);
-    const variables: Array<{ name: string; updatedAt: number }> =
-      await ctx.runQuery(internal.account.envVars.list, {
-        accountId: accountId,
-      });
-
-    return paginated(
-      "env",
-      variables.map((variable) => ({
+    return collectionPage("env", req, {
+      all: () =>
+        ctx.runQuery(internal.account.envVars.list, { accountId: accountId }),
+      item: (variable) => ({
         name: variable.name,
         updatedAt: new Date(variable.updatedAt).toISOString(),
-      })),
-      req,
-    );
+      }),
+      page: (options) =>
+        ctx.runQuery(internal.account.envVars.listPage, {
+          accountId: accountId,
+          paginationOpts: options,
+        }),
+    });
   }
   validateAccountEnvVarName(name);
   if (req.method === "PUT") {

@@ -6,6 +6,7 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -20,7 +21,7 @@ import {
   normalizePolicyDocument,
 } from "../model/policyRules";
 import { createRoleId } from "../model/roleRules";
-import { accountRolesFields } from "../schema";
+import { accountRolesFields, paginationCursorFields } from "../schema";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -121,6 +122,23 @@ export const list = internalQuery({
       .query("accountRoles")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .collect();
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({ page: v.array(roleDoc), ...paginationCursorFields }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Doc<"accountRoles">>> => {
+    return await ctx.db
+      .query("accountRoles")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .paginate(args.paginationOpts);
   },
 });
 

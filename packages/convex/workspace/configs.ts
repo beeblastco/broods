@@ -6,9 +6,10 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { workspaceConfigsFields } from "../schema";
+import { workspaceConfigsFields, paginationCursorFields } from "../schema";
 
 const workspaceConfigDoc = v.object({
   ...workspaceConfigsFields,
@@ -46,6 +47,28 @@ export const list = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .collect();
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    page: v.array(workspaceConfigDoc),
+    ...paginationCursorFields,
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Doc<"workspaceConfigs">>> => {
+    return await ctx.db
+      .query("workspaceConfigs")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 

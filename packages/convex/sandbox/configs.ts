@@ -6,9 +6,10 @@
  */
 
 import { v } from "convex/values";
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { sandboxConfigsFields } from "../schema";
+import { sandboxConfigsFields, paginationCursorFields } from "../schema";
 
 const sandboxConfigDoc = v.object({
   ...sandboxConfigsFields,
@@ -47,6 +48,28 @@ export const list = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .collect();
+  },
+});
+
+export const listPage = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.object({
+    page: v.array(sandboxConfigDoc),
+    ...paginationCursorFields,
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Doc<"sandboxConfigs">>> => {
+    return await ctx.db
+      .query("sandboxConfigs")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId),
+      )
+      .paginate(args.paginationOpts);
   },
 });
 
