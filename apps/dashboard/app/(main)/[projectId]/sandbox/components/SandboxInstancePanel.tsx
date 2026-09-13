@@ -1,6 +1,7 @@
 "use client";
 
 import { DetailPanel } from "@/app/components/DetailSplit";
+import { CopyButton } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -16,7 +17,7 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
-import { Camera, ExternalLink, Play, RefreshCw, Terminal } from "lucide-react";
+import { Camera, ExternalLink, Play, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -81,7 +82,6 @@ export function SandboxInstancePanel({
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const createSnapshot = useAction(api.sandbox.public.createSnapshot);
-  const refresh = useAction(api.sandbox.public.refreshSandbox);
   const runCommand = useAction(api.sandbox.public.runSandboxCommand);
   const terminate = useAction(api.sandbox.public.terminateSandbox);
   const auditEvents = useQuery(api.sandbox.auditEvents.listForInstance, {
@@ -94,8 +94,6 @@ export function SandboxInstancePanel({
   const [snapPending, setSnapPending] = useState(false);
   const [snapMessage, setSnapMessage] = useState<string | null>(null);
   const [terminating, setTerminating] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [command, setCommand] = useState("pwd && ls -la");
   const [commandPending, setCommandPending] = useState(false);
@@ -160,23 +158,6 @@ export function SandboxInstancePanel({
     }
   }
 
-  async function handleRefresh(): Promise<void> {
-    if (!instance.sandboxConfigId) return;
-    setRefreshing(true);
-    setRefreshMessage(null);
-    try {
-      await refresh({
-        sandboxId: instance.sandboxConfigId,
-        reservationKey: instance.reservationKey,
-      });
-      setRefreshMessage("Status refreshed.");
-    } catch (err) {
-      setRefreshMessage(err instanceof Error ? err.message : "Refresh failed");
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
   async function handleCommand(): Promise<void> {
     if (!instance.sandboxConfigId || !command.trim()) return;
     const code = command.trim();
@@ -223,6 +204,7 @@ export function SandboxInstancePanel({
       <Tabs defaultValue="detail">
         <TabsList>
           <TabsTrigger value="detail">Detail</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
           {logSandboxId && <TabsTrigger value="logs">Logs</TabsTrigger>}
           <TabsTrigger value="terminal">Terminal</TabsTrigger>
         </TabsList>
@@ -233,28 +215,6 @@ export function SandboxInstancePanel({
             now={now}
             traceHref={traceHref}
           />
-
-          <div className="mt-4">
-            {canWrite && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="cursor-pointer disabled:cursor-not-allowed"
-                disabled={!controllable || refreshing}
-                onClick={handleRefresh}
-              >
-                <RefreshCw className="mr-1 size-3.5" />
-                Refresh status
-              </Button>
-            )}
-            {refreshMessage && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {refreshMessage}
-              </p>
-            )}
-          </div>
-
-          <ActivityList events={auditEvents} now={now} traceHref={traceHref} />
 
           <div className="mt-5">
             <h4 className="text-sm font-medium text-foreground">Snapshot</h4>
@@ -330,6 +290,10 @@ export function SandboxInstancePanel({
           )}
         </TabsContent>
 
+        <TabsContent value="activity" className="mt-4">
+          <ActivityList events={auditEvents} now={now} traceHref={traceHref} />
+        </TabsContent>
+
         {logSandboxId && (
           <TabsContent value="logs" className="mt-4">
             <SandboxLogTail
@@ -390,63 +354,58 @@ function ActivityList({
   traceHref: (traceId: string) => string;
 }): React.JSX.Element {
   return (
-    <div className="mt-5">
-      <h4 className="text-sm font-medium text-foreground">Activity</h4>
-      <div className="mt-2 rounded-lg border border-border bg-card">
-        {events === undefined ? (
-          <div className="px-3 py-4 text-xs text-muted-foreground">
-            Loading activity...
-          </div>
-        ) : events.length === 0 ? (
-          <div className="px-3 py-4 text-xs text-muted-foreground">
-            No activity recorded.
-          </div>
-        ) : (
-          events.map((event) => (
-            <div
-              key={event._id}
-              className="border-b border-border px-3 py-2 last:border-0"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    {event.action}
-                  </span>
-                  <span
-                    className={cn(
-                      "truncate text-xs",
-                      event.result === "ok"
-                        ? "text-emerald-500"
-                        : "text-red-500",
-                    )}
-                  >
-                    {auditDetail(event)}
-                  </span>
-                </div>
-                <span className="shrink-0 text-[11px] text-muted-foreground">
-                  {relativeTime(event.createdAt, now)}
+    <div className="rounded-lg border border-border bg-card">
+      {events === undefined ? (
+        <div className="px-3 py-4 text-xs text-muted-foreground">
+          Loading activity...
+        </div>
+      ) : events.length === 0 ? (
+        <div className="px-3 py-4 text-xs text-muted-foreground">
+          No activity recorded.
+        </div>
+      ) : (
+        events.map((event) => (
+          <div
+            key={event._id}
+            className="border-b border-border px-3 py-2 last:border-0"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="text-xs font-medium text-foreground">
+                  {event.action}
+                </span>
+                <span
+                  className={cn(
+                    "truncate text-xs",
+                    event.result === "ok" ? "text-emerald-500" : "text-red-500",
+                  )}
+                >
+                  {auditDetail(event)}
                 </span>
               </div>
-              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                {actorLabel(event)}
-              </p>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground empty:hidden">
-                {event.traceId && (
-                  <TraceLink
-                    traceId={event.traceId}
-                    href={traceHref(event.traceId)}
-                  />
-                )}
-                {event.taskId && (
-                  <code className="max-w-45 truncate font-mono">
-                    task {event.taskId}
-                  </code>
-                )}
-              </div>
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {relativeTime(event.createdAt, now)}
+              </span>
             </div>
-          ))
-        )}
-      </div>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {actorLabel(event)}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground empty:hidden">
+              {event.traceId && (
+                <TraceLink
+                  traceId={event.traceId}
+                  href={traceHref(event.traceId)}
+                />
+              )}
+              {event.taskId && (
+                <code className="max-w-45 truncate font-mono">
+                  task {event.taskId}
+                </code>
+              )}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -623,7 +582,15 @@ function InstanceDetailFields({
       <Field
         label="Reservation key"
         value={
-          <code className="font-mono break-all">{instance.reservationKey}</code>
+          <span className="inline-flex items-center gap-1">
+            <code className="font-mono break-all">
+              {instance.reservationKey}
+            </code>
+            <CopyButton
+              value={instance.reservationKey}
+              label="reservation key"
+            />
+          </span>
         }
       />
       {instance.agentId && (

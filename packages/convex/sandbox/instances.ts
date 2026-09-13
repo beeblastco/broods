@@ -153,18 +153,18 @@ export const setStatus = internalMutation({
     observed: v.optional(v.boolean()),
     errorMessage: sandboxInstancesFields.errorMessage,
   },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (
     ctx,
     { accountId, reservationKey, status, observed, errorMessage },
-  ): Promise<null> => {
+  ): Promise<boolean> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
         q.eq("reservationKey", reservationKey),
       )
       .unique();
-    if (!instance || instance.accountId !== accountId) return null;
+    if (!instance || instance.accountId !== accountId) return false;
 
     const now = Date.now();
     await ctx.db.patch(instance._id, {
@@ -179,7 +179,7 @@ export const setStatus = internalMutation({
       ...(status === "terminating" ? { terminatedAt: now } : {}),
     });
 
-    return null;
+    return instance.status !== status;
   },
 });
 

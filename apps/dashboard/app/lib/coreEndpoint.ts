@@ -1,6 +1,12 @@
 "use client";
 
-const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
+// Only a production build falls back to the production gateway. A dev
+// server with the variable unset used to dial it silently, and every ticket
+// its stage's core minted was then refused by a gateway with other secrets.
+const DEFAULT_CORE_BASE_URL =
+  process.env.NODE_ENV === "production"
+    ? "https://gateway.broods.app"
+    : undefined;
 
 export type CoreEndpoint =
   | { ok: true; httpBaseUrl: string; websocketBaseUrl: string }
@@ -45,7 +51,8 @@ export function resolveCoreEndpoint(): CoreEndpoint {
 
   return {
     ok: false,
-    message: "Core endpoint is not configured with a valid absolute URL.",
+    message:
+      "Set NEXT_PUBLIC_BROODS_BASE_URL to the gateway in front of this stage's core.",
   };
 }
 

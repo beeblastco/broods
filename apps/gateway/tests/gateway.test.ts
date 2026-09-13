@@ -35,6 +35,7 @@ import {
   openTerminalTicketWithSecrets,
   openTerminalUpstream,
   relayTerminalInput,
+  TERMINAL_TICKET_REJECTED,
   terminalServiceSecretsFromEnv,
 } from "../src/terminal.ts";
 import {
@@ -2479,6 +2480,40 @@ test("terminal relay closes sockets that exceed the pending input buffer", () =>
     relayTerminalInput(socket, Buffer.alloc(MAX_PENDING_TERMINAL_BYTES + 1));
 
     expect(closes).toEqual([[1009, "terminal input buffer exceeded"]]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("a terminal socket whose ticket did not verify is closed with a reason, and never dials upstream", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const closes: Array<[number, string]> = [];
+  let dialed = 0;
+
+  class FakeWebSocket {
+    constructor(_url: string, _options?: unknown) {
+      dialed += 1;
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  try {
+    const socket = {
+      readyState: 1,
+      data: { kind: "terminal", ticket: null },
+      send: () => {},
+      close: (code: number, reason: string) => closes.push([code, reason]),
+    } as unknown as Bun.ServerWebSocket<
+      import("../src/terminal.ts").TerminalGatewayData
+    >;
+
+    openTerminalUpstream(socket);
+    relayTerminalInput(socket, "ls\n");
+
+    expect(closes).toEqual([
+      [TERMINAL_TICKET_REJECTED.code, TERMINAL_TICKET_REJECTED.reason],
+    ]);
+    expect(dialed).toBe(0);
   } finally {
     globalThis.WebSocket = originalWebSocket;
   }
