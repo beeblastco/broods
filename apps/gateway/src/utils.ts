@@ -150,6 +150,48 @@ export function warnDeprecatedQueryToken(request: Request, url: URL): void {
   );
 }
 
+/**
+ * CORS headers for a browser request, scoped to the same allowlist that gates
+ * WebSocket upgrades. Empty when the request carries no `Origin` (a server
+ * caller, e.g. Convex or a channel webhook) or the origin is not allowed, so a
+ * disallowed cross-origin call gets no `Access-Control-Allow-Origin` and the
+ * browser blocks it. Credentials are never allowed: the dashboard authenticates
+ * with a bearer token, not a cookie.
+ */
+export function corsHeaders(
+  origin: string | null,
+  allowedPatterns: string[],
+): Record<string, string> {
+  if (!origin?.trim() || !isOriginAllowed(origin, allowedPatterns)) return {};
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "authorization, content-type, x-request-id, x-account-id",
+    "Access-Control-Max-Age": "600",
+    Vary: "Origin",
+  };
+}
+
+/** Stamp a response with the CORS headers for its origin, overwriting any it set. */
+export function withCors(
+  response: Response,
+  origin: string | null,
+  allowedPatterns: string[],
+): Response {
+  const cors = corsHeaders(origin, allowedPatterns);
+  if (Object.keys(cors).length === 0) return response;
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(cors)) headers.set(name, value);
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: headers,
+  });
+}
+
 export function allowedOriginPatternsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {

@@ -41,6 +41,7 @@ import {
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
+  corsHeaders,
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
@@ -50,6 +51,7 @@ import {
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
+  withCors,
   withRequestId,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
@@ -2658,6 +2660,46 @@ test("origin allow-list: defaults cover broods.app, wildcards, and non-browser c
   expect(isOriginAllowed("https://x.internal.example.com", custom)).toBe(true);
   expect(isOriginAllowed("https://dashboard.broods.app", custom)).toBe(false);
   expect(isOriginAllowed("https://anything.example", ["*"])).toBe(true);
+});
+
+test("CORS: an allowed origin gets reflected headers, a disallowed or absent one gets none", () => {
+  const patterns = allowedOriginPatternsFromEnv({});
+
+  const allowed = corsHeaders("https://dashboard.dev.broods.app", patterns);
+  expect(allowed["Access-Control-Allow-Origin"]).toBe(
+    "https://dashboard.dev.broods.app",
+  );
+  expect(allowed["Access-Control-Allow-Methods"]).toContain("POST");
+  expect(allowed["Access-Control-Allow-Headers"]).toContain("authorization");
+  expect(allowed["Vary"]).toBe("Origin");
+  // No credentials: the dashboard sends a bearer token, not a cookie.
+  expect(allowed["Access-Control-Allow-Credentials"]).toBeUndefined();
+
+  expect(corsHeaders("https://evil.example.com", patterns)).toEqual({});
+  expect(corsHeaders(null, patterns)).toEqual({});
+});
+
+test("withCors stamps a proxied response for an allowed origin and leaves others untouched", () => {
+  const patterns = allowedOriginPatternsFromEnv({});
+
+  const stamped = withCors(
+    json({ ok: true }, { status: 200 }),
+    "https://dashboard.dev.broods.app",
+    patterns,
+  );
+  expect(stamped.headers.get("access-control-allow-origin")).toBe(
+    "https://dashboard.dev.broods.app",
+  );
+
+  const bare = withCors(
+    json({ ok: true }),
+    "https://evil.example.com",
+    patterns,
+  );
+  expect(bare.headers.get("access-control-allow-origin")).toBeNull();
+
+  const serverCaller = withCors(json({ ok: true }), null, patterns);
+  expect(serverCaller.headers.get("access-control-allow-origin")).toBeNull();
 });
 
 test("rate limiter: bounds a window, probes without counting, and resets", async () => {

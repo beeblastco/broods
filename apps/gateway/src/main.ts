@@ -33,6 +33,7 @@ import { proxyHttp, resolveObservabilityScope } from "./upstream.ts";
 import {
   allowedOriginPatternsFromEnv,
   clientIp,
+  corsHeaders,
   gatewayLimitsFromEnv,
   isOriginAllowed,
   json,
@@ -44,6 +45,7 @@ import {
   warnDeprecatedQueryToken,
   websocketToken,
   websocketUpgradeHeaders,
+  withCors,
   withRequestId,
 } from "./utils.ts";
 
@@ -98,7 +100,16 @@ if (import.meta.main) {
         const response = await route(request, server, requestId);
 
         // A WebSocket upgrade returns undefined; there is no response to stamp.
-        return response ? withRequestId(response, requestId) : response;
+        // A browser reads the response only when it carries the CORS headers for
+        // its origin, so a cross-origin POST (the Continue button, the test chat)
+        // sees the result instead of a bare "Failed to fetch".
+        if (!response) return response;
+        const origin = request.headers.get("origin");
+
+        return withRequestId(
+          withCors(response, origin, allowedOrigins),
+          requestId,
+        );
       } catch (error) {
         console.error("gateway request failed:", {
           requestId: requestId,
@@ -133,6 +144,16 @@ if (import.meta.main) {
         },
         { headers: { "Access-Control-Allow-Origin": "*" } },
       );
+    }
+
+    // Answer the browser's CORS preflight before the rate limiters and routing:
+    // a preflight is not the real request and never reaches an upstream. A
+    // disallowed origin gets no CORS headers, so the browser blocks it.
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(request.headers.get("origin"), allowedOrigins),
+      });
     }
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
