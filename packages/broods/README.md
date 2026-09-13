@@ -2,7 +2,6 @@
 
 CLI and TypeScript SDK for the Broods agent platform.
 
-> [!WARNING]
 > **Pre-release.**
 >
 > This package has not reached 1.0. Method names, HTTP paths, error shapes and
@@ -121,7 +120,7 @@ await account.createCron({
   scheduleExpression: "cron(0 8 * * ? *)",
 });
 const { accountId } = await account.getAccount();
-const url = account.webhookUrl(accountId, created.agentId, "slack");
+const url = account.webhookUrl(accountId, "slack");
 
 // The same client covers the rest of the config plane: standalone sandboxes and
 // workspaces, uploaded tools, reusable policies, skills, and cron run history.

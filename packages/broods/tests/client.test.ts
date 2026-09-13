@@ -198,7 +198,7 @@ test("client starts async runs and exposes the run id for polling", async () => 
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
 
-      // Start and poll share the /v1/runs prefix now, so dispatch on method.
+      // Start and poll share the /v1/runs prefix, so dispatch on method.
       if (init?.method === "POST") {
         expect(init?.headers).toMatchObject({
           Authorization: "Bearer runtime-key",
@@ -505,25 +505,4 @@ test("client sends cron job APIs to the configured base URL", async () => {
     "https://app.example/v1/crons",
     "https://app.example/v1/crons/cron_1/runs?limit=5",
   ]);
-});
-
-test("client explains cron job calls routed to the runtime harness", async () => {
-  const client = new BroodsClient({
-    baseUrl: "https://runtime.example",
-    apiKey: "runtime-key",
-    fetch: async () =>
-      Response.json(
-        { error: "Request body must include eventId and conversationKey" },
-        { status: 400 },
-      ),
-  });
-
-  await expect(
-    client.createCron({
-      name: "daily",
-      agentId: "agent_1",
-      input: "run",
-      scheduleExpression: "rate(1 day)",
-    }),
-  ).rejects.toThrow("Cron job APIs must be served by the configured baseUrl");
 });

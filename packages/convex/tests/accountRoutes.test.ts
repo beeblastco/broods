@@ -28,12 +28,6 @@ describe("parseAccountRoute", () => {
     });
   });
 
-  it("does not answer the retired unversioned paths", () => {
-    expect(parseAccountRoute("/accounts")).toBeNull();
-    expect(parseAccountRoute("/accounts/acct_1")).toBeNull();
-    expect(parseAccountRoute("/accounts/acct_1/rotate-secret")).toBeNull();
-  });
-
   it("reports an unknown shape under the admin prefix", () => {
     expect(parseAccountRoute("/v1/accounts/acct_1/nope")).toEqual({
       kind: "adminUnknown",

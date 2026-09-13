@@ -9,6 +9,10 @@ info:
 
     > **For daily development, use the `broods` CLI and TypeScript SDK.** The CLI handles tenant configuration (agents, sandboxes, workspaces, skills, crons, MCP servers) through `broods dev` and `broods deploy`. You do not need to call these account-management endpoints yourself. This reference is for:
     > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{runId}`) from the TypeScript SDK, curl, or Python client
+
+    Every response carries `X-Request-Id`. Every non-2xx body is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and the gateway and config-plane 429s also carry the IETF `RateLimit-*` fields.
+
+    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws` and `/v1/sandboxes/terminal/ws`; the credential rides the `broods.token.<key>` subprotocol.
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
@@ -98,19 +102,59 @@ paths:
               $ref: "#/components/schemas/DirectApiRequest"
             examples:
               basic:
-                summary: Basic async request
+                summary: Basic request, streamed back as SSE
                 value:
                   agentId: agent_abc123
-                  eventId: async-unique-id
+                  eventId: unique-id
                   conversationKey: conversation-identifier
                   events:
                     - role: user
                       content:
                         - type: text
                           text: Generate a summary of today's news
+              background:
+                summary: Background run, answered with a 202 and a run id
+                value:
+                  agentId: agent_abc123
+                  eventId: async-unique-id
+                  conversationKey: conversation-identifier
+                  background: true
+                  events:
+                    - role: user
+                      content:
+                        - type: text
+                          text: Generate a summary of today's news
       responses:
+        "200":
+          description: SSE stream of the turn. The default when `background` is absent or false.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+              examples:
+                streamEvents:
+                  summary: Common SSE events
+                  value: |
+                    event: 0
+                    data: {"type":"step-start","messageId":"msg_123"}
+
+                    event: 0
+                    data: {"type":"text","text":"Hello"}
+
+                    event: 0
+                    data: {"type":"tool-call","toolCallId":"tc_1","toolName":"bash","input":{"shell":"ls"}}
+
+                    event: 0
+                    data: {"type":"tool-result","toolCallId":"tc_1","toolName":"bash","output":"file.txt"}
+
+                    event: 0
+                    data: {"type":"step-finish","finishReason":"stop","usage":{"promptTokens":100,"completionTokens":50}}
+
+                    event: 0
+                    data: {"type":"finish","finishReason":"stop"}
         "202":
-          description: Async ingress durably accepted
+          description: "Run accepted. Sent for `background: true`, and for a busy conversation whose input was queued rather than streamed."
           content:
             application/json:
               schema:
@@ -125,9 +169,20 @@ paths:
                     requestedMode: steer
                     statusUrl: https://gateway.broods.app/v1/runs/run_8c1d4a9e2f1b40d7a3c65e90b7412fda
         "409":
-          description: Conversation busy in reject mode, or idempotency conflict
+          description: Conversation busy in reject mode (`conversation_busy`), or the idempotency key is bound to a different payload (`idempotency_conflict`). JSON envelope on a background run; on a streamed run the same message arrives as the first SSE `error` frame.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
-          description: Per-conversation FIFO capacity exceeded
+          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           description: Agent has not opted into public access (secure by default)
           content:
@@ -143,7 +198,11 @@ paths:
                       code: public_access_disabled
                       param: agentId
         "404":
-          description: Direct API disabled (ENABLE_DIRECT_API=false)
+          description: Direct API disabled on this deployment (`ENABLE_DIRECT_API=false`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Unauthorized
           content:
@@ -223,10 +282,7 @@ paths:
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: failed
-                    error:
-                      message: Model provider returned 503
-                      type: api_error
-                      code: internal_error
+                    error: Model provider returned 503
         "403":
           description: Deployment-key caller polling an agent that has not opted into public access
           content:
@@ -240,7 +296,6 @@ paths:
                       message: "Agent agent_... is not publicly accessible."
                       type: permission_error
                       code: public_access_disabled
-                    code: public_access_disabled
         "404":
           description: Unknown run id
           content:
@@ -267,6 +322,63 @@ paths:
                       message: Unauthorized
                       type: authentication_error
                       code: unauthorized
+
+  /v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}:
+    post:
+      tags:
+        - Direct API
+      summary: Run an agent through its project and stage scoped endpoint
+      description: The scoped form of `POST /v1/agents/{endpointId}`, and the URL the dashboard advertises. The project and stage must match the runtime key's scope or the request is refused with 401.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: projectSlug
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stageSlug
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: endpointId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectApiRequest"
+      responses:
+        "200":
+          description: SSE stream of the turn, as for `POST /v1/runs`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+        "202":
+          description: Run accepted, as for `POST /v1/runs`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressAccepted"
+        "401":
+          description: The runtime key does not match this project and stage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Agent has not opted into public access (`public_access_disabled`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/sandbox-jobs/{resultId}/complete:
     post:
@@ -1035,6 +1147,116 @@ paths:
       responses:
         "200":
           description: Agent deleted
+    post:
+      tags:
+        - Direct API
+      summary: Run an agent through its public endpoint
+      description: |
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and is loaded against the key's account. The agent must have `publicAccess: true`.
+
+        Do not confuse `{endpointId}` here with the `{agentId}` that `GET`, `PATCH` and `DELETE /v1/agents/{agentId}` take: they are different identifiers. Prefer `/v1/runs` unless the caller only holds a runtime key.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DirectApiRequest"
+      responses:
+        "200":
+          description: SSE stream of the turn, as for `POST /v1/runs`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                format: binary
+        "202":
+          description: Run accepted, as for `POST /v1/runs`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngressAccepted"
+        "401":
+          description: The runtime key does not match the endpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Agent has not opted into public access (`public_access_disabled`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agents/{agentId}/channels/{channelType}/directory:
+    get:
+      tags:
+        - Agents
+      summary: List the channels the agent's provider credentials can see
+      description: Reads the agent's resolved channel credentials and asks the provider for its channel directory. Slack only today; any other `channelType` is a 400 with `unsupported_channel_type`. Provider rate limits are relayed as a 429 with the provider's own `Retry-After`.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [slack]
+      responses:
+        "200":
+          description: Provider channel directory
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                  truncated:
+                    type: boolean
+                    description: True when the provider had more channels than one listing returns.
+        "400":
+          description: Unsupported channel type (`unsupported_channel_type`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The agent has no bot token for this channel (`not_configured`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: The provider rate-limited the lookup; `Retry-After` is the provider's
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/sandboxes:
     post:
@@ -1795,15 +2017,27 @@ paths:
                   uploadUrl:
                     type: string
         "429":
-          description: Upload quota reached for this account
+          description: Upload quota reached for this account (`upload_quota_exceeded`)
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: "upload quota: 20 uploads per hour; retry after 2026-09-03T11:20:00.000Z"
+                $ref: "#/components/schemas/Error"
+              examples:
+                quota:
+                  value:
+                    error:
+                      message: "upload quota: 20 uploads per hour; retry after 2026-09-03T11:20:00.000Z"
+                      type: rate_limit_error
+                      code: upload_quota_exceeded
 
   /v1/mcp/{serverId}:
     get:
@@ -1846,6 +2080,168 @@ paths:
         - { name: serverId, in: path, required: true, schema: { type: string } }
       responses:
         "200": { description: Deleted }
+
+  /v1/hooks:
+    get:
+      tags:
+        - Hooks
+      summary: List account hooks
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageCursor"
+      responses:
+        "200":
+          description: List of hooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hooks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Hook"
+                  hasMore:
+                    type: boolean
+                  nextCursor:
+                    type: string
+                    nullable: true
+    post:
+      tags:
+        - Hooks
+      summary: Create a hook
+      description: Uploads a hook bundle and registers it for the named lifecycle events. The bundle is stored by digest; `sha256` in the response is that digest.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - events
+                - bundle
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                events:
+                  type: array
+                  items:
+                    type: string
+                bundle:
+                  type: string
+                  description: Base64 hook bundle.
+      responses:
+        "201":
+          description: Hook created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hook"
+
+  /v1/hooks/{hookId}:
+    get:
+      tags:
+        - Hooks
+      summary: Get a hook
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hookId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hook
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hook"
+        "404":
+          description: Hook not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - Hooks
+      summary: Update a hook
+      description: Any of `name`, `description`, `events` or `bundle`; omitted fields are unchanged.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hookId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                events:
+                  type: array
+                  items:
+                    type: string
+                bundle:
+                  type: string
+      responses:
+        "200":
+          description: Hook updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Hook"
+        "404":
+          description: Hook not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Hooks
+      summary: Delete a hook
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hookId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Hook deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "404":
+          description: Hook not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/policies:
     post:
@@ -2498,6 +2894,33 @@ components:
       scheme: bearer
       description: AdminAccountSecret from SST secrets
 
+  headers:
+    XRequestId:
+      description: Correlation id for this request. Generated at the gateway, or reused from an inbound `X-Request-Id` that matches `[A-Za-z0-9._-]{1,128}`. Quote it when reporting a problem.
+      schema:
+        type: string
+    RetryAfter:
+      description: Seconds to wait before retrying (RFC 6585).
+      schema:
+        type: integer
+    RateLimitLimit:
+      description: Request budget for the window (IETF RateLimit fields).
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Budget left in the window; `0` on a 429.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Seconds until the window resets.
+      schema:
+        type: integer
+    Allow:
+      description: Methods the resource supports (RFC 9110), sent on every 405.
+      schema:
+        type: string
+        example: GET, POST
+
   parameters:
     PageLimit:
       name: limit
@@ -3031,6 +3454,32 @@ components:
           type: string
         error:
           type: string
+
+    Hook:
+      type: object
+      properties:
+        accountId:
+          type: string
+        hookId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        sha256:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     Error:
       type: object

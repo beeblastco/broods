@@ -431,7 +431,7 @@ export class BroodsClient {
 
     if (response.status !== 201)
       throw new Error(
-        `Create cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `Create cron job failed: ${response.status} ${await response.text()}`,
       );
 
     return (await response.json()) as Cron;
@@ -445,7 +445,7 @@ export class BroodsClient {
 
     if (!response.ok)
       throw new Error(
-        `List cron jobs failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `List cron jobs failed: ${response.status} ${await response.text()}`,
       );
 
     const payload = (await response.json()) as { crons: Cron[] };
@@ -465,7 +465,7 @@ export class BroodsClient {
     if (response.status === 404) return null;
     if (!response.ok)
       throw new Error(
-        `Get cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `Get cron job failed: ${response.status} ${await response.text()}`,
       );
 
     return (await response.json()) as Cron;
@@ -488,7 +488,7 @@ export class BroodsClient {
 
     if (!response.ok)
       throw new Error(
-        `List cron job runs failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `List cron job runs failed: ${response.status} ${await response.text()}`,
       );
 
     const payload = (await response.json()) as { runs: CronRun[] };
@@ -508,7 +508,7 @@ export class BroodsClient {
 
     if (!response.ok)
       throw new Error(
-        `Update cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `Update cron job failed: ${response.status} ${await response.text()}`,
       );
 
     return (await response.json()) as Cron;
@@ -526,7 +526,7 @@ export class BroodsClient {
     if (response.status === 404) return false;
     if (!response.ok)
       throw new Error(
-        `Delete cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
+        `Delete cron job failed: ${response.status} ${await response.text()}`,
       );
 
     const payload = (await response.json()) as { deleted: boolean };
@@ -677,18 +677,6 @@ export function normalizeHttpServiceUrl(value: string): string {
     : `https://${trimmed}`;
 
   return stripTrailingSlash(withProtocol);
-}
-
-async function cronErrorDetails(response: Response): Promise<string> {
-  const text = await response.text();
-  if (text.includes("Request body must include eventId and conversationKey")) {
-    return (
-      `${text}. Cron job APIs must be served by the configured baseUrl. ` +
-      "Prefer defining stable cron jobs with defineCron(...) in broods/ and syncing with `broods dev` or `broods deploy`."
-    );
-  }
-
-  return text;
 }
 
 function directRunBody(

@@ -24,6 +24,7 @@ COPY packages/broods ./packages/broods
 COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
 COPY apps/core/src/shared/request-id.ts ./apps/core/src/shared/request-id.ts
 COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
+COPY packages/convex/model/httpJson.ts ./packages/convex/model/httpJson.ts
 COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway

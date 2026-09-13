@@ -103,7 +103,7 @@ broods deploy
 Create an account through the gateway with the admin secret:
 
 ```bash
-curl -X POST "$BROODS_BASE_URL/accounts" \
+curl -X POST "$BROODS_BASE_URL/v1/accounts" \
   -H "Authorization: Bearer $ADMIN_ACCOUNT_SECRET" \
   -H "Content-Type: application/json" \
   -d '{ "username": "company-a", "description": "Company A account" }'

@@ -507,6 +507,29 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("rejects a non-boolean background flag instead of coercing it", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          background: "yes",
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        },
+        { authorization: "Bearer secret" },
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toMatchObject({
+      error: {
+        message: expect.stringMatching(/background/),
+        type: "invalid_request_error",
+      },
+    });
+  });
+
   it("keeps direct API disabled for a path that matches no run shape", async () => {
     // The retired slug-first URL no longer parses as a public endpoint, so a
     // gate keyed on the recognized shapes would have let it dispatch a run.
@@ -532,7 +555,6 @@ describe("direct API ingress", () => {
 
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
     const body = {
-      background: true,
       eventId: "one",
       conversationKey: "alpha",
       events: [
@@ -544,19 +566,14 @@ describe("direct API ingress", () => {
     };
 
     const syncResponse = await routeIncomingEvent(
-      createEvent(body, {
-        authorization: "Bearer secret",
-      }),
+      createEvent(body, { authorization: "Bearer secret" }),
       createHandlers(),
       { directApiEnabled: false },
     );
     const asyncResponse = await routeIncomingEvent(
       createEvent(
-        body,
-        {
-          authorization: "Bearer secret",
-        },
-        { rawPath: "/v1/runs" },
+        { ...body, background: true },
+        { authorization: "Bearer secret" },
       ),
       createHandlers(),
       { directApiEnabled: false },

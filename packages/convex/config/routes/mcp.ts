@@ -14,7 +14,7 @@ import {
 } from "../../model/auditEvents";
 import { normalizeMcpInput } from "../../model/mcp";
 import { storeMcpBundle } from "../../model/bundles";
-import { uploadQuotaHeaders, uploadQuotaMessage } from "../../model/uploads";
+import { uploadQuotaResponse } from "../../model/uploads";
 import type { ProjectStageScope } from "../../model/projectScope";
 import {
   json,
@@ -95,12 +95,7 @@ export async function handleMcpUploadsRoute(
     kind: "mcp",
   });
   if ("retryAt" in grant) {
-    return jsonError(
-      429,
-      uploadQuotaMessage(grant.retryAt),
-      { code: "upload_quota_exceeded" },
-      uploadQuotaHeaders(grant.retryAt),
-    );
+    return uploadQuotaResponse(grant.retryAt);
   }
 
   return json({ uploadUrl: grant.uploadUrl });

@@ -34,3 +34,22 @@ export function methodNotAllowed(allowedMethods: string[]): Response {
     { Allow: allowedMethods.join(", ") },
   );
 }
+
+/**
+ * RFC 6585 `Retry-After` plus the IETF RateLimit fields for a window with no
+ * budget left. Floors at one second: a 429 that says retry in zero seconds
+ * tells the client to hammer.
+ */
+export function rateLimitHeaders(
+  limit: number,
+  resetSeconds: number,
+): Record<string, string> {
+  const seconds = String(Math.max(1, Math.ceil(resetSeconds)));
+
+  return {
+    "Retry-After": seconds,
+    "RateLimit-Limit": String(limit),
+    "RateLimit-Remaining": "0",
+    "RateLimit-Reset": seconds,
+  };
+}
