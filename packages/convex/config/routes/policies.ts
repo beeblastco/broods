@@ -15,7 +15,13 @@ import {
   normalizeUpdatePolicyInput,
 } from "../../model/policyRules";
 import { toPublicAgentPolicyResponse } from "../../model/responses";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 /** Mirrors core's former handlePolicyRoute contract. */
 export async function handlePolicyConfigRoute(
@@ -32,9 +38,11 @@ export async function handlePolicyConfigRoute(
         { accountId: accountId },
       );
 
-      return json({
-        policies: records.map((record) => toPublicAgentPolicyResponse(record)),
-      });
+      return paginated(
+        "policies",
+        records.map((record) => toPublicAgentPolicyResponse(record)),
+        req,
+      );
     }
     if (req.method === "POST") {
       const input = normalizeCreatePolicyInput(await req.json());

@@ -85,7 +85,8 @@ export interface CreateAgentResult {
 /** Write-only account environment variable metadata. */
 export interface AccountEnvVar {
   name: string;
-  updatedAt: number;
+  /** ISO 8601, like every other timestamp in the API. */
+  updatedAt: string;
 }
 
 /** Fields accepted by `PATCH /v1/agents/{id}`. `config` is deep-merged; `null` values delete keys. */

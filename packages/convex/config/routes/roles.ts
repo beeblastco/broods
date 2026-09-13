@@ -27,6 +27,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
+  paginated,
   parseJsonRequest,
   unauthorizedResponse,
   writeAudit,
@@ -109,9 +110,11 @@ export async function handleRoleRoute(
         { accountId: accountId },
       );
 
-      return json({
-        roles: records.map((record) => toPublicRoleResponse(record)),
-      });
+      return paginated(
+        "roles",
+        records.map((record) => toPublicRoleResponse(record)),
+        req,
+      );
     }
     if (req.method === "POST") {
       const input = normalizeCreateRoleInput(await parseJsonRequest(req));

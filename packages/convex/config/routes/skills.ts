@@ -8,7 +8,13 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
-import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
+import {
+  json,
+  jsonError,
+  methodNotAllowed,
+  paginated,
+  writeAudit,
+} from "./shared";
 
 /** Mirrors core's former handleSkillRoute contract. */
 export async function handleSkillRoute(
@@ -24,7 +30,7 @@ export async function handleSkillRoute(
         accountId: accountId,
       });
 
-      return json({ skills: skills });
+      return paginated("skills", skills, req);
     }
     if (req.method === "POST") {
       const skill = await ctx.runAction(internal.aws.skills.createSkill, {

@@ -30,6 +30,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
+  paginated,
   writeAudit,
 } from "./shared";
 
@@ -243,7 +244,7 @@ async function handleAgentCollectionRoute(
       ),
     );
 
-    return json({ agents: agents });
+    return paginated("agents", agents, req);
   }
   if (req.method === "POST") {
     const input = normalizeCreateAgentInput(await req.json());
