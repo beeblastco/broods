@@ -8,6 +8,7 @@ import {
   CanvasSaveStatus,
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -64,6 +65,7 @@ export function UiGallery(): React.JSX.Element {
   const [pressCount, setPressCount] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   // False in the server HTML, true once React owns the page: a spec waits on
   // it so its first interaction lands on a listener, not on static markup.
   const hydrated = useSyncExternalStore(
@@ -204,6 +206,41 @@ export function UiGallery(): React.JSX.Element {
         </p>
       </section>
 
+      <section data-fixture="detail-split" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Detail split</h2>
+        {/* The split every observability table sits in, at a fixed frame so a
+            spec can measure the panel's width and where the handle drags to. */}
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-fit cursor-pointer"
+          onClick={() => setDetailOpen(true)}
+        >
+          Open details
+        </Button>
+        <div className="flex h-64 w-[64rem]">
+          <DetailSplit
+            detail={
+              detailOpen && (
+                <DetailPanel
+                  title="stand-in row 3"
+                  meta={
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      INFO · gateway
+                    </div>
+                  }
+                  onClose={() => setDetailOpen(false)}
+                >
+                  <p className="text-xs">Detail body</p>
+                </DetailPanel>
+              )
+            }
+          >
+            <StandInTable />
+          </DetailSplit>
+        </div>
+      </section>
+
       <section data-fixture="onboarding" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Onboarding</h2>
         <Button
@@ -234,27 +271,34 @@ function LogTableStandIn(): React.JSX.Element {
   return (
     <div className="flex h-50 overflow-hidden rounded-lg border border-border bg-card">
       <div className="min-w-0 flex-1 overflow-auto">
-        <table className="w-full table-fixed font-mono text-xs">
-          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-2 font-medium">Time</th>
-              <th className="px-3 py-2 font-medium">Level</th>
-              <th className="px-3 py-2 font-medium">Service</th>
-              <th className="px-3 py-2 font-medium">Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {STAND_IN_ROWS.map((row) => (
-              <tr key={row} className="border-b border-border/40">
-                <td className="px-3 py-1.5 text-muted-foreground">08:0{row}</td>
-                <td className="px-3 py-1.5">INFO</td>
-                <td className="px-3 py-1.5">gateway</td>
-                <td className="px-3 py-1.5">stand-in row {row}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <StandInTable />
       </div>
     </div>
+  );
+}
+
+/** The log table's shape, sticky head included, for any fixture that needs rows. */
+function StandInTable(): React.JSX.Element {
+  return (
+    <table className="w-full table-fixed font-mono text-xs">
+      <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+        <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+          <th className="px-3 py-2 font-medium">Time</th>
+          <th className="px-3 py-2 font-medium">Level</th>
+          <th className="px-3 py-2 font-medium">Service</th>
+          <th className="px-3 py-2 font-medium">Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        {STAND_IN_ROWS.map((row) => (
+          <tr key={row} className="border-b border-border/40">
+            <td className="px-3 py-1.5 text-muted-foreground">08:0{row}</td>
+            <td className="px-3 py-1.5">INFO</td>
+            <td className="px-3 py-1.5">gateway</td>
+            <td className="px-3 py-1.5">stand-in row {row}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

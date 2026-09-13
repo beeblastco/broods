@@ -1,6 +1,6 @@
 "use client";
 
-import { ObservabilityDetailPanel } from "@/app/(main)/[projectId]/dashboard/components/ObservabilityDetailPanel";
+import { DetailPanel } from "@/app/components/DetailSplit";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -11,9 +11,10 @@ import {
   TabsTrigger,
 } from "@/app/components/ui/tabs";
 import { Textarea } from "@/app/components/ui/textarea";
+import { useOrgRole } from "@/app/hooks/useOrgRole";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { useAction, useQuery } from "convex/react";
 import { Camera, ExternalLink, Play, RefreshCw, Terminal } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +22,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import {
+  dashboardHref,
   formatProvider,
   formatSpecs,
   instanceStatusBadge,
@@ -61,6 +63,14 @@ type TerminalEntry = {
 };
 
 type SandboxAuditEvent = Doc<"sandboxAuditEvents">;
+
+/** Actor source as shown on an activity row; core calls itself "service". */
+const ACTOR_LABEL: Record<SandboxAuditEvent["actorSource"], string> = {
+  dashboard: "dashboard",
+  agent: "agent",
+  service: "runtime",
+  unknown: "unknown",
+};
 
 export function SandboxInstancePanel({
   instance,
@@ -111,13 +121,9 @@ export function SandboxInstancePanel({
     ? sandboxLogId(instance.logStream)
     : undefined;
 
-  function dashboardHref(params: Record<string, string>): string {
-    const next = new URLSearchParams();
-    const stage = searchParams.get("stage");
-    if (stage) next.set("stage", stage);
-    for (const [key, value] of Object.entries(params)) next.set(key, value);
-
-    return `/${projectId}/dashboard?${next.toString()}`;
+  const stage = searchParams.get("stage");
+  function traceHref(traceId: string): string {
+    return dashboardHref(projectId, stage, { tab: "tracing", trace: traceId });
   }
 
   async function handleSnapshot(): Promise<void> {
@@ -199,11 +205,8 @@ export function SandboxInstancePanel({
     }
   }
 
-  const traceHref = (traceId: string): string =>
-    dashboardHref({ tab: "tracing", trace: traceId });
-
   return (
-    <ObservabilityDetailPanel
+    <DetailPanel
       title={
         <span className="flex items-center gap-2">
           {instance.name}
@@ -332,7 +335,9 @@ export function SandboxInstancePanel({
             <SandboxLogTail
               logSandboxId={logSandboxId}
               scope={observability}
-              monitoringHref={dashboardHref({ tab: "monitoring" })}
+              monitoringHref={dashboardHref(projectId, stage, {
+                tab: "monitoring",
+              })}
             />
           </TabsContent>
         )}
@@ -367,7 +372,7 @@ export function SandboxInstancePanel({
         onConfirm={handleTerminate}
         isDeleting={terminating}
       />
-    </ObservabilityDetailPanel>
+    </DetailPanel>
   );
 }
 
@@ -408,11 +413,12 @@ function ActivityList({
                     {event.action}
                   </span>
                   <span
-                    className={
+                    className={cn(
+                      "truncate text-xs",
                       event.result === "ok"
-                        ? "truncate text-xs text-emerald-500"
-                        : "truncate text-xs text-red-500"
-                    }
+                        ? "text-emerald-500"
+                        : "text-red-500",
+                    )}
                   >
                     {auditDetail(event)}
                   </span>
@@ -424,21 +430,19 @@ function ActivityList({
               <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                 {actorLabel(event)}
               </p>
-              {(event.traceId || event.taskId) && (
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                  {event.traceId && (
-                    <TraceLink
-                      traceId={event.traceId}
-                      href={traceHref(event.traceId)}
-                    />
-                  )}
-                  {event.taskId && (
-                    <code className="max-w-45 truncate font-mono">
-                      task {event.taskId}
-                    </code>
-                  )}
-                </div>
-              )}
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground empty:hidden">
+                {event.traceId && (
+                  <TraceLink
+                    traceId={event.traceId}
+                    href={traceHref(event.traceId)}
+                  />
+                )}
+                {event.taskId && (
+                  <code className="max-w-45 truncate font-mono">
+                    task {event.taskId}
+                  </code>
+                )}
+              </div>
             </div>
           ))
         )}
@@ -447,15 +451,11 @@ function ActivityList({
   );
 }
 
-/** Who drove the action: the signed-in operator, the agent by id, or the runtime with no agent on the run. */
 function actorLabel(event: SandboxAuditEvent): string {
+  const label = ACTOR_LABEL[event.actorSource];
   const who = event.actorEmail ?? event.actorName ?? event.actorId;
-  if (event.actorSource === "dashboard")
-    return who ? `dashboard · ${who}` : "dashboard";
-  if (event.actorSource === "agent") return who ? `agent ${who}` : "agent";
-  if (event.actorSource === "service") return "runtime · no agent on the run";
 
-  return "unknown caller";
+  return who ? `${label} · ${who}` : label;
 }
 
 function auditDetail(event: SandboxAuditEvent): string {

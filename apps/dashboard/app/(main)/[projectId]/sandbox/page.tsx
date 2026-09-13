@@ -127,7 +127,7 @@ export default function SandboxPage(): React.JSX.Element {
 }
 
 /**
- * The instance sheet's Logs tab streams over the same gateway socket as the
+ * The instance panel's Logs tab streams over the same gateway socket as the
  * Monitoring tab: the stage's slugs from its deployment plus a short-lived
  * stage session any member can mint, so the permanent runtime key never has to
  * reach this page.

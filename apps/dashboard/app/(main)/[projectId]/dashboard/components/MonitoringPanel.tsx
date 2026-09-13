@@ -1,5 +1,6 @@
 "use client";
 
+import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { Badge } from "@/app/components/ui/badge";
 import {
   entryKey,
@@ -11,14 +12,6 @@ import { cn } from "@/app/lib/utils";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import {
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/app/components/ui/resizable";
-import {
-  ObservabilityDetailPanel,
-  TABLE_MIN_WIDTH,
-} from "./ObservabilityDetailPanel";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -155,85 +148,84 @@ export function MonitoringPanel({
         isError={status === "error"}
       />
 
-      <ResizablePanelGroup className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-card">
-        <ResizablePanel
-          id="table"
-          minSize={TABLE_MIN_WIDTH}
-          className="min-h-0 min-w-0 overflow-auto"
-        >
-          <table className="w-full text-xs font-mono table-fixed">
-            <colgroup>
-              <col className="w-42.5" />
-              <col className="w-22.5" />
-              <col className="w-50" />
-              <col />
-            </colgroup>
-            <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
-              <tr className="text-left text-muted-foreground text-[11px] uppercase tracking-wide">
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Level</th>
-                <th className="px-3 py-2 font-medium">Service</th>
-                <th className="px-3 py-2 font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((entry) => (
-                <LogRow
-                  key={entryKey(entry)}
-                  entry={entry}
-                  isSelected={selected === entry}
-                  onSelect={() => setSelected(entry)}
-                />
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="h-32 text-center text-xs text-muted-foreground"
+      <DetailSplit
+        detail={
+          selected && (
+            <DetailPanel
+              title={selectedSummary}
+              meta={
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                  <span
+                    className={cn("font-medium", levelColor(selected.level))}
                   >
-                    {entries.length === 0
-                      ? emptyStreamMessage(history, error, "logs", "30 days")
-                      : "No logs match the current filters."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          {remaining > 0 && (
-            <div className="border-t border-border/40 bg-card/60 p-2 text-center">
-              <button
-                type="button"
-                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-              >
-                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
-                {remaining.toLocaleString()} older
-              </button>
-            </div>
-          )}
-        </ResizablePanel>
-        {selected && (
-          <ObservabilityDetailPanel
-            title={selectedSummary}
-            meta={
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                <span className={cn("font-medium", levelColor(selected.level))}>
-                  {selected.level}
-                </span>
-                <span className="text-muted-foreground">
-                  {formatDateTime(selected.ts).date}{" "}
-                  {formatDateTime(selected.ts).time}
-                  {selected.service &&
-                    ` · ${shortFunctionName(selected.service)}`}
-                </span>
-              </div>
-            }
-            onClose={() => setSelected(null)}
-          >
-            <LogDetails entry={selected} onViewTrace={viewTrace} />
-          </ObservabilityDetailPanel>
+                    {selected.level}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {formatDateTime(selected.ts).date}{" "}
+                    {formatDateTime(selected.ts).time}
+                    {selected.service &&
+                      ` · ${shortFunctionName(selected.service)}`}
+                  </span>
+                </div>
+              }
+              onClose={() => setSelected(null)}
+            >
+              <LogDetails entry={selected} onViewTrace={viewTrace} />
+            </DetailPanel>
+          )
+        }
+      >
+        <table className="w-full text-xs font-mono table-fixed">
+          <colgroup>
+            <col className="w-42.5" />
+            <col className="w-22.5" />
+            <col className="w-50" />
+            <col />
+          </colgroup>
+          <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
+            <tr className="text-left text-muted-foreground text-[11px] uppercase tracking-wide">
+              <th className="px-3 py-2 font-medium">Time</th>
+              <th className="px-3 py-2 font-medium">Level</th>
+              <th className="px-3 py-2 font-medium">Service</th>
+              <th className="px-3 py-2 font-medium">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((entry) => (
+              <LogRow
+                key={entryKey(entry)}
+                entry={entry}
+                isSelected={selected === entry}
+                onSelect={() => setSelected(entry)}
+              />
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="h-32 text-center text-xs text-muted-foreground"
+                >
+                  {entries.length === 0
+                    ? emptyStreamMessage(history, error, "logs", "30 days")
+                    : "No logs match the current filters."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        {remaining > 0 && (
+          <div className="border-t border-border/40 bg-card/60 p-2 text-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+              className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+            >
+              Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+              {remaining.toLocaleString()} older
+            </button>
+          </div>
         )}
-      </ResizablePanelGroup>
+      </DetailSplit>
     </div>
   );
 }

@@ -77,7 +77,7 @@ export async function upsertSandboxInstance(
       },
     );
     if (ephemeral || !created) return;
-    await recordSandboxAuditEvent({
+    void recordSandboxAuditEvent({
       accountId: controlPlane.accountId,
       sandboxConfigId: controlPlane.sandboxConfigId,
       reservationKey: reservationKey,

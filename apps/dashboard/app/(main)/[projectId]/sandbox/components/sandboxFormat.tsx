@@ -1,12 +1,25 @@
 "use client";
 
 import { Badge } from "@/app/components/ui/badge";
-import type { Doc } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
 
 // A sandbox row changes state on the minute scale, so re-read the clock often
 // enough that the displayed age is never more than a minute stale.
 const CLOCK_TICK_MS = 30_000;
+
+/** Deep link into the project dashboard, keeping the stage the page is on. */
+export function dashboardHref(
+  projectId: Id<"projects">,
+  stage: string | null,
+  params: Record<string, string>,
+): string {
+  const next = new URLSearchParams();
+  if (stage) next.set("stage", stage);
+  for (const [key, value] of Object.entries(params)) next.set(key, value);
+
+  return `/${projectId}/dashboard?${next.toString()}`;
+}
 
 /**
  * Badge variant tracks how open the policy is, from deny-all locked down to
