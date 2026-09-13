@@ -181,7 +181,8 @@ Ephemeral children cannot be controlled. They hold no durable conversation and t
 
 When `subagent.stream` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
 
-- `taskId` becomes the attach `eventId` and the durable status id
+- `taskId` becomes the attach `eventId`
+- `runId` names the child's run; it is what core resolves and what `statusPath` polls
 - `agentId` identifies the child agent
 - `conversationKey` is the returned child conversation key
 
@@ -191,7 +192,8 @@ When `subagent.stream` is `true`, every child publishes its reasoning, text, too
   "requestId": "attach-child-1",
   "agentId": "agent_child",
   "conversationKey": "subagent-persistent-abc123",
-  "eventId": "subagent~base64url-parent-event~task-uuid"
+  "eventId": "subagent~base64url-parent-event~task-uuid",
+  "runId": "run_8c1d4a9e2f0b4c7d9e1f2a3b4c5d6e7f"
 }
 ```
 

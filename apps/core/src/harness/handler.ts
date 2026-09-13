@@ -905,7 +905,12 @@ async function handleAsyncRequest(
     ownerGeneration: admission.ownerGeneration,
   });
 
-  return acceptedAsyncResponse(event.statusUrl, event, "processing");
+  return acceptedAsyncResponse(
+    event.runId,
+    event.statusUrl,
+    event,
+    "processing",
+  );
 }
 
 /**
@@ -3083,6 +3088,7 @@ function createChannelApprovalDenial(
 }
 
 function acceptedAsyncResponse(
+  runId: string,
   statusUrl: string,
   event: Pick<
     DirectInboundEvent,
@@ -3091,6 +3097,7 @@ function acceptedAsyncResponse(
   status: string,
 ): Response {
   return jsonResponse(202, {
+    runId: runId,
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
     status: status,
@@ -3195,6 +3202,7 @@ function asyncAdmissionResponse(
   const statusUrl = directStatusUrl({ runId: runId }) ?? event.statusUrl;
 
   return acceptedAsyncResponse(
+    runId,
     statusUrl,
     {
       publicEventId: publicEventId,

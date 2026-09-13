@@ -53,6 +53,7 @@ type NatsStartResponse = {
 };
 type IngressHttpResponse = {
   eventId?: string;
+  runId?: string;
   conversationKey?: string;
   status?: IngressStatus | "not_found";
   requestedMode?: "reject" | "followup" | "collect" | "steer";
@@ -81,6 +82,7 @@ type FollowedExecution = {
   initialConsumedSequence: number;
   isReplay: (sequence: number) => boolean;
   statusRequestId: string;
+  runId?: string;
   statusUrl?: string;
   // Seeds the terminal state and the status fingerprint, so an attach that is
   // already terminal neither re-sends its seed frame nor polls again.
@@ -307,6 +309,7 @@ async function runCoreStream(
         {
           eventId: payload.eventId,
           status: payload.status,
+          ...(payload.runId ? { runId: payload.runId } : {}),
           ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
         },
         getNatsConnection,
@@ -409,8 +412,7 @@ async function followExecution(
       if (signal.aborted || sawDone) break;
       const status = await fetchStatus(
         socket,
-        execution.scope.agentId,
-        execution.eventId,
+        execution.runId,
         signal,
         execution.statusUrl,
       ).catch(() => null);
@@ -471,7 +473,12 @@ async function followExecution(
 async function followQueuedExecution(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   active: ActiveRun,
-  accepted: { eventId: string; status: IngressStatus; statusUrl?: string },
+  accepted: {
+    eventId: string;
+    status: IngressStatus;
+    runId?: string;
+    statusUrl?: string;
+  },
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   if (TERMINAL_STATUSES.has(accepted.status)) {
@@ -502,6 +509,7 @@ async function followQueuedExecution(
     // A queued run starts after the snapshot, so nothing it emits is a replay.
     isReplay: () => false,
     statusRequestId: accepted.eventId,
+    ...(accepted.runId ? { runId: accepted.runId } : {}),
     ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
     seedStatus: null,
     terminalLabel: "Queued",
@@ -561,6 +569,7 @@ async function submitControl(
       active,
       message.requestId,
       payload.eventId,
+      payload.runId,
       payload.statusUrl,
     );
   } catch (error) {
@@ -581,6 +590,7 @@ async function pollControlStatus(
   active: ActiveRun,
   requestId: string,
   eventId: string,
+  runId?: string,
   statusUrl?: string,
 ): Promise<void> {
   let previous = "";
@@ -588,8 +598,7 @@ async function pollControlStatus(
     await Bun.sleep(500);
     const payload = await fetchStatus(
       socket,
-      active.agentId,
-      eventId,
+      runId,
       active.abort.signal,
       statusUrl,
     ).catch(() => null);
@@ -646,14 +655,9 @@ async function attachCoreStream(
     publicEventId: message.eventId,
   };
   activeRuns.set(socket, active);
-  const statusUrl = `/v1/runs/${encodeURIComponent(message.eventId)}?agentId=${encodeURIComponent(message.agentId)}`;
+  const statusUrl = `/v1/runs/${encodeURIComponent(message.runId)}`;
   try {
-    const status = await fetchStatus(
-      socket,
-      message.agentId,
-      message.eventId,
-      abort.signal,
-    );
+    const status = await fetchStatus(socket, message.runId, abort.signal);
     if (!status.status || status.status === "not_found") {
       sendAgentTest(socket, {
         type: "replay_unavailable",
@@ -827,6 +831,7 @@ async function followAttachedExecution(
     // Only frames at or below the snapshot existed before the attach.
     isReplay: (sequence) => buffered && sequence <= snapshot.lastSequence,
     statusRequestId: message.requestId,
+    runId: message.runId,
     statusUrl: statusUrl,
     seedStatus: initialStatus,
     terminalLabel: "Attached",
@@ -923,15 +928,19 @@ async function streamNatsResponses(
 
 async function fetchStatus(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
-  agentId: string,
-  eventId: string,
+  runId: string | undefined,
   signal: AbortSignal,
   statusUrl?: string,
 ): Promise<IngressHttpResponse> {
   const target =
     statusUrl && /^https?:\/\//.test(statusUrl)
       ? statusUrl
-      : `${socket.data.coreBaseUrl}/v1/runs/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+      : runId
+        ? `${socket.data.coreBaseUrl}/v1/runs/${encodeURIComponent(runId)}`
+        : null;
+  // Without a run id and without an absolute URL from core there is nothing to
+  // poll; callers treat a status-less answer as "nothing new yet".
+  if (!target) return {};
 
   return responseJson(
     await fetch(target, { headers: coreHeaders(socket), signal: signal }),
@@ -1072,6 +1081,7 @@ function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
     agentId?: unknown;
     conversationKey?: unknown;
     eventId?: unknown;
+    runId?: unknown;
     afterCursor?: unknown;
   };
 
@@ -1085,6 +1095,8 @@ function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
     record.conversationKey.length > 0 &&
     typeof record.eventId === "string" &&
     record.eventId.length > 0 &&
+    typeof record.runId === "string" &&
+    record.runId.length > 0 &&
     (record.afterCursor === undefined || typeof record.afterCursor === "string")
   );
 }

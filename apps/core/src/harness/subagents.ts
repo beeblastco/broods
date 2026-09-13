@@ -1125,6 +1125,7 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
     agentId: task.agentId,
     ...(task.description ? { description: task.description } : {}),
     conversationKey: task.publicConversationKey,
+    runId: task.runId,
     statusPath: subagentStatusPath(task),
     status: "running",
   };

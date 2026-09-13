@@ -757,8 +757,8 @@ function normalizeAsyncAccepted(
   if (typeof statusUrl !== "string" || statusUrl.length === 0) {
     throw new Error("Async response missing statusUrl");
   }
-  // The run id is a response field now; the URL is only a fallback for a core
-  // old enough to omit it.
+  // Older cores answer without a `runId` field, but the id is still in the
+  // status URL they return, so read it back out of there.
   const runId =
     typeof (payload as { runId?: unknown }).runId === "string"
       ? (payload as { runId: string }).runId

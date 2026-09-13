@@ -83,7 +83,6 @@ async function publicAgentDenial(
   );
 
   return deploymentScopeMatches(auth, deployment) &&
-    request.ingress.eventId === request.eventId &&
     deploymentScopeMatches(
       auth,
       request.ingress.publicDeploymentIngress ?? null,

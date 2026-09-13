@@ -346,7 +346,7 @@ A reconnecting client attaches to one active event with the last output cursor
 it fully processed:
 
 ```json
-{ "type": "attach", "requestId": "a1", "agentId": "agent-1", "conversationKey": "conversation-1", "eventId": "event-1", "afterCursor": "ws-responses:4:1234" }
+{ "type": "attach", "requestId": "a1", "agentId": "agent-1", "conversationKey": "conversation-1", "eventId": "event-1", "runId": "run_8c1d4a9e2f0b4c7d9e1f2a3b4c5d6e7f", "afterCursor": "ws-responses:4:1234" }
 { "type": "attached", "requestId": "a1", "eventId": "event-1", "status": "processing", "replayFromCursor": "ws-responses:4:1235", "replayThroughCursor": "ws-responses:4:1270" }
 { "type": "output", "eventId": "event-1", "cursor": "ws-responses:4:1235", "replay": true, "data": { "type": "text-delta", "text": "..." } }
 ```
