@@ -51,7 +51,13 @@ describe("account management HTTP handler", () => {
     const response = await handler(createEvent("DELETE", "/v1/account"));
 
     expect(response.status).toBe(401);
-    expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(await responseJson(response)).toEqual({
+      error: {
+        message: "Unauthorized",
+        type: "authentication_error",
+        code: "unauthorized",
+      },
+    });
   });
 
   it("requires bearer auth to create an account", async () => {
@@ -76,7 +82,13 @@ describe("account management HTTP handler", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
+    expect(await responseJson(response)).toEqual({
+      error: {
+        message: "Unauthorized",
+        type: "authentication_error",
+        code: "unauthorized",
+      },
+    });
   });
 
   it("rejects account-secret auth when creating an account", async () => {
@@ -112,7 +124,13 @@ describe("account management HTTP handler", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await responseJson(response)).toEqual({ error: "Forbidden" });
+    expect(await responseJson(response)).toEqual({
+      error: {
+        message: "Forbidden",
+        type: "permission_error",
+        code: "forbidden",
+      },
+    });
   });
 
   it("returns create account one-time secret as secret for admin auth", async () => {
@@ -169,7 +187,13 @@ describe("account management HTTP handler", () => {
         }),
       );
       expect(adminResponse.status).toBe(404);
-      expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
+      expect(await responseJson(adminResponse)).toEqual({
+        error: {
+          message: "Not found",
+          type: "not_found_error",
+          code: "not_found",
+        },
+      });
     }
 
     const adminPatchResponse = await handler(
@@ -184,7 +208,11 @@ describe("account management HTTP handler", () => {
     );
     expect(adminPatchResponse.status).toBe(404);
     expect(await responseJson(adminPatchResponse)).toEqual({
-      error: "Not found",
+      error: {
+        message: "Not found",
+        type: "not_found_error",
+        code: "not_found",
+      },
     });
 
     for (const path of ["/v1/account", "/v1/account/rotate-secret"]) {
@@ -196,7 +224,11 @@ describe("account management HTTP handler", () => {
       );
       expect(serviceResponse.status).toBe(403);
       expect(await responseJson(serviceResponse)).toEqual({
-        error: "Forbidden",
+        error: {
+          message: "Forbidden",
+          type: "permission_error",
+          code: "forbidden",
+        },
       });
     }
   });
@@ -210,7 +242,13 @@ describe("account management HTTP handler", () => {
     );
 
     expect(response.status).toBe(404);
-    expect(await responseJson(response)).toEqual({ error: "Not found" });
+    expect(await responseJson(response)).toEqual({
+      error: {
+        message: "Not found",
+        type: "not_found_error",
+        code: "not_found",
+      },
+    });
   });
 
   it("leaves cron CRUD to the Convex config plane", async () => {
@@ -225,7 +263,13 @@ describe("account management HTTP handler", () => {
       }),
     );
     expect(adminResponse.status).toBe(404);
-    expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
+    expect(await responseJson(adminResponse)).toEqual({
+      error: {
+        message: "Not found",
+        type: "not_found_error",
+        code: "not_found",
+      },
+    });
 
     // Account-authenticated config-plane CRUD routes fall through to the admin gate.
     for (const path of [
@@ -242,7 +286,11 @@ describe("account management HTTP handler", () => {
       );
       expect(serviceResponse.status).toBe(403);
       expect(await responseJson(serviceResponse)).toEqual({
-        error: "Forbidden",
+        error: {
+          message: "Forbidden",
+          type: "permission_error",
+          code: "forbidden",
+        },
       });
     }
 
@@ -260,7 +308,11 @@ describe("account management HTTP handler", () => {
       );
       expect(removedAdminResponse.status).toBe(404);
       expect(await responseJson(removedAdminResponse)).toEqual({
-        error: "Not found",
+        error: {
+          message: "Not found",
+          type: "not_found_error",
+          code: "not_found",
+        },
       });
     }
   });
@@ -273,14 +325,16 @@ describe("account management HTTP handler", () => {
       "x-account-id": "acct_test",
     };
     const serviceTokenRejection = {
-      error: "Service token is not allowed for this account endpoint",
+      error: {
+        message: "Service token is not allowed for this account endpoint",
+      },
     };
 
     const response = await handler(
       createEvent("DELETE", "/v1/account", serviceHeaders),
     );
     expect(response.status).toBe(400);
-    expect(await responseJson(response)).toEqual(serviceTokenRejection);
+    expect(await responseJson(response)).toMatchObject(serviceTokenRejection);
   });
 
   it("lets a disabled owner retry self-delete without reopening other routes", async () => {
@@ -382,8 +436,8 @@ describe("account management HTTP handler", () => {
         createEvent("POST", "/v1/sandboxes/sbx_1/suspend", headers, body),
       );
       expect(response.status).toBe(400);
-      expect(await responseJson(response)).toEqual({
-        error: "reservationKey is required",
+      expect(await responseJson(response)).toMatchObject({
+        error: { message: "reservationKey is required" },
       });
     }
   });

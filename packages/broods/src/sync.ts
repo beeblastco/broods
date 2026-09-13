@@ -679,17 +679,17 @@ function stripArtifactContent(value: unknown): unknown {
 
 /**
  * Turns a failed response into an error carrying the server's own reason. The
- * config plane answers with `{ error, detail? }`, and `detail` is where manifest
- * validation failures (an unset `env()` ref, an unsupported mount) explain
- * themselves. Printing the raw JSON instead buries them.
+ * config plane answers with the error envelope, whose `message` is where
+ * manifest validation failures (an unset `env()` ref, an unsupported mount)
+ * explain themselves. Printing the raw JSON instead buries them.
  */
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;
   const body = await response.text();
   let reason = body;
   try {
-    const parsed = JSON.parse(body) as { error?: string; detail?: string };
-    reason = parsed.detail ?? parsed.error ?? body;
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    reason = parsed.error?.message ?? body;
   } catch {
     // Not JSON: the raw body is the best reason available.
   }

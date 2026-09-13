@@ -21,7 +21,7 @@ import {
   DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS,
   MAX_DOWNLOAD_TOKEN_TTL_SECONDS,
 } from "../../workspace/files";
-import { json, methodNotAllowed, writeAudit } from "./shared";
+import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 export const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
@@ -43,13 +43,13 @@ export async function handleDownloadRedeemRoute(
     tokenHash: await sha256Hex(token),
     now: now,
   });
-  if (!resolved) return json({ error: "Not found" }, 404);
+  if (!resolved) return jsonError(404, "Not found");
 
   const workspace = await ctx.runQuery(internal.workspace.configs.getById, {
     accountId: resolved.accountId,
     workspaceId: resolved.workspaceId,
   });
-  if (!workspace) return json({ error: "Not found" }, 404);
+  if (!workspace) return jsonError(404, "Not found");
 
   let url: string;
   try {
@@ -60,7 +60,7 @@ export async function handleDownloadRedeemRoute(
       path: resolved.path,
     });
   } catch {
-    return json({ error: "Not found" }, 404);
+    return jsonError(404, "Not found");
   }
 
   return new Response(null, {
@@ -92,14 +92,13 @@ export async function handleWorkspaceDownloadLinkRoute(
     accountId: accountId,
     workspaceId: workspaceId,
   });
-  if (!workspace) return json({ error: "Workspace not found" }, 404);
+  if (!workspace) return jsonError(404, "Workspace not found");
 
   const body = (await req.json()) as {
     path?: unknown;
     expiresInSeconds?: unknown;
   };
-  if (typeof body.path !== "string")
-    return json({ error: "path is required" }, 400);
+  if (typeof body.path !== "string") return jsonError(400, "path is required");
   const ttl = parseDownloadTtlSeconds(body.expiresInSeconds);
   if (ttl instanceof Response) return ttl;
   const path = normalizeFilePath(body.path);
@@ -114,7 +113,7 @@ export async function handleWorkspaceDownloadLinkRoute(
       path: path,
     });
   } catch {
-    return json({ error: "Workspace file not found" }, 404);
+    return jsonError(404, "Workspace file not found");
   }
 
   const now = Date.now();
@@ -166,7 +165,7 @@ export async function handleWorkspaceFilesRoute(
     accountId: accountId,
     workspaceId: workspaceId,
   });
-  if (!workspace) return json({ error: "Workspace not found" }, 404);
+  if (!workspace) return jsonError(404, "Workspace not found");
   const target = {
     accountId: accountId,
     workspaceId: workspace._id,
@@ -198,7 +197,7 @@ export async function handleWorkspaceFilesRoute(
       typeof body.path !== "string" ||
       typeof body.contentBase64 !== "string"
     ) {
-      return json({ error: "path and contentBase64 are required" }, 400);
+      return jsonError(400, "path and contentBase64 are required");
     }
     const file = await ctx.runAction(internal.aws.workspaceFiles.upload, {
       ...target,
@@ -227,7 +226,7 @@ export async function handleWorkspaceFilesRoute(
   if (req.method === "PATCH") {
     const body = (await req.json()) as { path?: unknown; newPath?: unknown };
     if (typeof body.path !== "string" || typeof body.newPath !== "string") {
-      return json({ error: "path and newPath are required" }, 400);
+      return jsonError(400, "path and newPath are required");
     }
     const renamed = await ctx.runAction(
       internal.aws.workspaceFiles.renamePath,
@@ -261,7 +260,7 @@ export async function handleWorkspaceFilesRoute(
   if (req.method === "DELETE") {
     const body = (await req.json()) as { path?: unknown };
     if (typeof body.path !== "string")
-      return json({ error: "path is required" }, 400);
+      return jsonError(400, "path is required");
     const deleted = await ctx.runAction(
       internal.aws.workspaceFiles.removePath,
       {
@@ -332,11 +331,9 @@ function parseDownloadTtlSeconds(value: unknown): number | Response {
     value < 1 ||
     value > MAX_DOWNLOAD_TOKEN_TTL_SECONDS
   ) {
-    return json(
-      {
-        error: `expiresInSeconds must be an integer between 1 and ${MAX_DOWNLOAD_TOKEN_TTL_SECONDS}`,
-      },
+    return jsonError(
       400,
+      `expiresInSeconds must be an integer between 1 and ${MAX_DOWNLOAD_TOKEN_TTL_SECONDS}`,
     );
   }
 

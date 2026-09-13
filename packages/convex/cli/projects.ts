@@ -24,6 +24,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { sha256Hex } from "../model/accountSecrets";
 import { purgeProject } from "../model/cascade";
 import { getProjectForRole } from "../model/ownership/project";
+import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 // Counts stop at this many rows per table so an org full of large projects
 // cannot push `listByAccount` past Convex's per-transaction read limits. A
@@ -50,17 +51,14 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
-      return json({ error: "Authorization Bearer token is required" }, 401);
+      return jsonError(401, "Authorization Bearer token is required");
     }
 
     const resolved = await ctx.runMutation(internal.cli.auth.resolveCliToken, {
       tokenHash: auth.secretHash,
     });
     if (!resolved) {
-      return json(
-        { error: "Project commands require a `broods login` token" },
-        401,
-      );
+      return jsonError(401, "Project commands require a `broods login` token");
     }
 
     if (req.method === "GET") {
@@ -70,14 +68,14 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
       return projects
         ? json({ projects: projects })
-        : json({ error: "Account is not active" }, 403);
+        : jsonError(403, "Account is not active");
     }
 
     if (req.method === "DELETE") {
       const projectId =
         new URL(req.url).searchParams.get("projectId")?.trim() ?? "";
       if (!projectId) {
-        return json({ error: "A projectId query parameter is required" }, 400);
+        return jsonError(400, "A projectId query parameter is required");
       }
       const deleted = await ctx.runMutation(
         internal.cli.projects.removeByAccount,
@@ -88,31 +86,25 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
         },
       );
       if (deleted === "forbidden") {
-        return json(
-          { error: "Deleting a project requires an org admin role" },
-          403,
-        );
+        return jsonError(403, "Deleting a project requires an org admin role");
       }
 
       return deleted
         ? json({ deleted: deleted })
-        : json({ error: "Project was not found" }, 404);
+        : jsonError(404, "Project was not found");
     }
 
-    return json({ error: "Method not allowed" }, 405);
+    return methodNotAllowed(["GET", "DELETE"]);
   } catch (error) {
     console.error("CLI project request failed", error);
     if (error instanceof SyntaxError || error instanceof URIError) {
-      return json({ error: "Request body or path is invalid" }, 400);
+      return jsonError(400, "Request body or path is invalid");
     }
     const detail = error instanceof Error ? error.message : "";
 
-    return json(
-      {
-        error: "Project request failed",
-        ...(detail ? { detail: detail } : {}),
-      },
+    return jsonError(
       500,
+      detail ? `Project request failed: ${detail}` : "Project request failed",
     );
   }
 });
@@ -122,7 +114,7 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
-      return json({ error: "Authorization Bearer token is required" }, 401);
+      return jsonError(401, "Authorization Bearer token is required");
     }
 
     if (req.method === "GET") {
@@ -132,7 +124,7 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
           tokenHash: auth.secretHash,
         },
       );
-      if (!context) return json({ error: "Invalid CLI token" }, 401);
+      if (!context) return jsonError(401, "Invalid CLI token");
 
       return json(context);
     }
@@ -150,14 +142,14 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
             name: body.createOrgName,
           },
         );
-        if (!context) return json({ error: "Invalid CLI token" }, 401);
+        if (!context) return jsonError(401, "Invalid CLI token");
 
         return json(context);
       }
       if (typeof body.orgId !== "string" || !body.orgId.trim()) {
-        return json(
-          { error: "Request body must include orgId or createOrgName" },
+        return jsonError(
           400,
+          "Request body must include orgId or createOrgName",
         );
       }
       const context = await ctx.runMutation(
@@ -167,19 +159,19 @@ export const httpOnboarding = httpAction(async (ctx, req) => {
           orgId: body.orgId as Id<"orgs">,
         },
       );
-      if (!context) return json({ error: "Invalid CLI token" }, 401);
+      if (!context) return jsonError(401, "Invalid CLI token");
 
       return json(context);
     }
 
-    return json({ error: "Method not allowed" }, 405);
+    return methodNotAllowed(["GET", "POST"]);
   } catch (error) {
     console.error("CLI onboarding request failed", error);
     if (error instanceof SyntaxError) {
-      return json({ error: "Request body must be valid JSON" }, 400);
+      return jsonError(400, "Request body must be valid JSON");
     }
 
-    return json({ error: "Onboarding request failed" }, 500);
+    return jsonError(500, "Onboarding request failed");
   }
 });
 
@@ -273,13 +265,6 @@ async function bearerAuth(
   return {
     secretHash: await sha256Hex(match[1]),
   };
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status: status,
-    headers: { "Content-Type": "application/json" },
-  });
 }
 
 async function summarize(

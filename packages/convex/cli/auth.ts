@@ -21,6 +21,7 @@ import {
   orgRoleMeets,
   requireOrgMember,
 } from "../model/ownership/org";
+import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 
 const CLI_CODE_PREFIX = "fp_code_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -206,18 +207,18 @@ export const createOnboardingOrg = internalMutation({
 /** HTTP exchange endpoint: swap a one-time WorkOS-backed login code for a CLI token. */
 export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (req.method !== "POST") {
-    return json({ error: "Method not allowed" }, 405);
+    return methodNotAllowed(["POST"]);
   }
 
   let body: { code?: unknown; code_verifier?: unknown };
   try {
     body = (await req.json()) as { code?: unknown; code_verifier?: unknown };
   } catch {
-    return json({ error: "Request body must be valid JSON" }, 400);
+    return jsonError(400, "Request body must be valid JSON");
   }
 
   if (typeof body.code !== "string" || !body.code.trim()) {
-    return json({ error: "Request body must include code" }, 400);
+    return jsonError(400, "Request body must include code");
   }
 
   try {
@@ -238,10 +239,10 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
       error instanceof Error &&
       error.message.includes("CLI login code is invalid or expired")
     ) {
-      return json({ error: "Login code is invalid or expired" }, 400);
+      return jsonError(400, "Login code is invalid or expired");
     }
 
-    return json({ error: "Login exchange failed" }, 500);
+    return jsonError(500, "Login exchange failed");
   }
 });
 
@@ -442,13 +443,6 @@ export async function pkceChallenge(verifier: string): Promise<string> {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status: status,
-    headers: { "Content-Type": "application/json" },
-  });
 }
 
 async function onboardingContext(

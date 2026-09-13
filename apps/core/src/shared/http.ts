@@ -1,4 +1,5 @@
 import { dns } from "bun";
+import { apiErrorBody, type ApiErrorInit } from "@broods/convex/model/apiError";
 import {
   isDeniedAddress,
   type GuardedFetchOptions,
@@ -63,11 +64,11 @@ export type PinnedFetchTransport = Pick<
 
 export function errorResponse(
   status: number,
-  error: string,
-  details: Record<string, unknown> = {},
+  message: string,
+  init: ApiErrorInit = {},
   headers: Record<string, string> = {},
 ): Response {
-  return jsonResponse(status, { error: error, ...details }, headers);
+  return jsonResponse(status, apiErrorBody(status, message, init), headers);
 }
 
 export function jsonResponse(
@@ -82,6 +83,16 @@ export function jsonResponse(
       ...headers,
     },
   });
+}
+
+/** 405 with the `Allow` header RFC 9110 requires. */
+export function methodNotAllowed(allowedMethods: string[]): Response {
+  return errorResponse(
+    405,
+    `Method not allowed. Allowed: ${allowedMethods.join(", ")}.`,
+    {},
+    { allow: allowedMethods.join(", ") },
+  );
 }
 
 export function textResponse(

@@ -27,6 +27,7 @@ import {
 import {
   errorResponse,
   jsonResponse,
+  methodNotAllowed,
   parseJsonBody,
   type CoreRequest,
   type RequestContext,
@@ -361,10 +362,7 @@ async function handleRequest(
 
 async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
   if (request.method !== "POST") {
-    return errorResponse(405, "Method not allowed", {
-      method: request.method,
-      allowedMethods: ["POST"],
-    });
+    return methodNotAllowed(["POST"]);
   }
 
   const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
@@ -458,18 +456,21 @@ async function handleSandboxJobCompletionRequest(
 ): Promise<Response> {
   const existing = await getAsyncToolResult(event.resultId);
   if (!existing) {
-    return jsonResponse(404, { error: "Background job result not found" });
+    return errorResponse(404, "Background job result not found", {
+      code: "job_result_not_found",
+    });
   }
   if (existing.status !== "processing") {
-    return jsonResponse(409, {
-      error: "Background job result is already settled",
-      status: existing.status,
+    return errorResponse(409, "Background job result is already settled", {
+      code: "job_result_settled",
     });
   }
 
   // Missing/mismatched token reads as not-found so the endpoint is not a token oracle.
   if (!(await verifyAsyncToolCompletionToken(event.resultId, event.token))) {
-    return jsonResponse(404, { error: "Background job result not found" });
+    return errorResponse(404, "Background job result not found", {
+      code: "job_result_not_found",
+    });
   }
 
   const settled = await settleAsyncToolResultFromCallback({
@@ -479,8 +480,8 @@ async function handleSandboxJobCompletionRequest(
     ...(event.error ? { error: event.error } : {}),
   });
   if (!settled) {
-    return jsonResponse(409, {
-      error: "Background job result is already settled",
+    return errorResponse(409, "Background job result is already settled", {
+      code: "job_result_settled",
     });
   }
 
@@ -635,9 +636,11 @@ async function handleDirectAnswers(
   );
   const missing = open.findIndex((question) => question === undefined);
   if (missing >= 0) {
-    return jsonResponse(404, {
-      error: `No open question ${answers[missing]!.statusId} on this conversation`,
-    });
+    return errorResponse(
+      404,
+      `No open question ${answers[missing]!.statusId} on this conversation`,
+      { code: "question_not_found", param: "statusId" },
+    );
   }
   const settled = await Promise.all(
     open.map((question, index) =>
@@ -658,18 +661,18 @@ async function handleDirectAnswers(
     .filter((_question, index) => settled[index] === null)
     .map((question) => question!.record.resultId);
   if (alreadyAnswered.length > 0) {
-    return jsonResponse(409, {
-      error: "Some questions were already answered",
-      alreadyAnswered: alreadyAnswered,
-      answered: settled
-        .filter((row): row is AsyncToolResultRecord => row !== null)
-        .map((row) => row.resultId),
-    });
+    return errorResponse(
+      409,
+      `Questions already answered: ${alreadyAnswered.join(", ")}`,
+      { code: "question_already_answered", param: "answers" },
+    );
   }
 
   return last
     ? continuationResponse(last, outcome)
-    : jsonResponse(400, { error: "Request body must include answers" });
+    : errorResponse(400, "Request body must include answers", {
+        param: "answers",
+      });
 }
 
 /**
@@ -1672,9 +1675,8 @@ async function handleStatusRequest(
     getAsyncAgentResult(event.eventId),
   ]);
   if (!result && !asyncResult) {
-    return jsonResponse(404, {
-      eventId: event.publicEventId,
-      status: "not_found",
+    return errorResponse(404, `No run ${event.publicEventId}`, {
+      code: "run_not_found",
     });
   }
 

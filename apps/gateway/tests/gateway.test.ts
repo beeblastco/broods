@@ -2599,7 +2599,9 @@ test("proxyHttp returns 502 when every upstream is unreachable", async () => {
     ["http://127.0.0.1:9", "http://127.0.0.1:1"],
   );
   expect(response.status).toBe(502);
-  expect(await response.json()).toEqual({ error: "Upstream is unreachable" });
+  expect(await response.json()).toMatchObject({
+    error: { message: "Upstream is unreachable" },
+  });
 });
 
 test("observability relay sheds droppable frames when the socket buffer is backed up", async () => {

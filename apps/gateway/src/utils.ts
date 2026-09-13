@@ -1,3 +1,9 @@
+import {
+  apiErrorBody,
+  type ApiError,
+  type ApiErrorInit,
+} from "../../../packages/convex/model/apiError.ts";
+
 export type GatewayLimits = {
   maxConnections: number;
   maxPayloadBytes: number;
@@ -13,16 +19,32 @@ export const WEBSOCKET_SUBPROTOCOL = "broods.v1";
 export const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
 const maxBunIdleTimeoutSeconds = 255;
 
-export function json(
-  payload: Record<string, unknown>,
-  init: ResponseInit = {},
-): Response {
+/** The message from either shape core puts in `error`: envelope or plain text. */
+export function errorText(
+  error: string | ApiError | undefined,
+): string | undefined {
+  return typeof error === "string" ? error : error?.message;
+}
+
+export function json(payload: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(payload), {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...init.headers,
     },
+  });
+}
+
+export function jsonError(
+  status: number,
+  message: string,
+  init: ApiErrorInit = {},
+  headers: Record<string, string> = {},
+): Response {
+  return json(apiErrorBody(status, message, init), {
+    status: status,
+    headers: headers,
   });
 }
 
