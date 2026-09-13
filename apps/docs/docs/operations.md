@@ -123,7 +123,7 @@ Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable product
 
 Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, per-tool credentials are configured per agent under `config.tools.<tool>`, and MCP server credentials ride the registered server's headers as account env-var references. That way each account uses its own API keys.
 
-Manual account creation through `POST /accounts` requires `AdminAccountSecret` and creates a standalone Convex account with an admin-owned synthetic org id. Normal hosted onboarding continues to use the dashboard-authenticated Convex config plane and a real WorkOS organization.
+Manual account creation through `POST /v1/accounts` requires `AdminAccountSecret` and creates a standalone Convex account with an admin-owned synthetic org id. Normal hosted onboarding continues to use the dashboard-authenticated Convex config plane and a real WorkOS organization.
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
@@ -204,7 +204,7 @@ workflow and deployed from the infra repo
 ```mermaid
 flowchart LR
     Discord((Discord Gateway)) -->|MESSAGE_CREATE| Fwd[broods-discord-forwarder]
-    Fwd -->|POST /webhooks/…/discord| Gateway[broods gateway]
+    Fwd -->|POST /v1/webhooks/…/discord| Gateway[broods gateway]
     Convex[(Convex config plane)] -->|bot tokens + webhook paths| Fwd
     Gateway --> Pod[broods-core pod]
 ```
@@ -285,7 +285,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` (`{"error": "...", "code": "public_access_disabled"}`). Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
+When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` whose body is `{"error": {"message": "...", "type": "permission_error", "code": "public_access_disabled"}}`. Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
 
 The stage runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `broods login` or `broods deploy` writes it to `BROODS_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
 

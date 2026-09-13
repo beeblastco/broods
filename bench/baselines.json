@@ -14,7 +14,7 @@
       "gate": "blocking"
     },
     "gateway/websocket-path-match": {
-      "nsPerOp": 140.8,
+      "nsPerOp": 196.3,
       "ceilingNs": 700,
       "gate": "blocking"
     },

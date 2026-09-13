@@ -3,7 +3,7 @@
  * deploy-key admin auth header.
  *
  * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
- * core POST /accounts path remains supported for standalone accounts.
+ * core POST /v1/accounts path remains supported for standalone accounts.
  */
 
 import type { ModelMessage } from "ai";

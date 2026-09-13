@@ -301,7 +301,7 @@ stream. Once durably accepted it returns `202 application/json`:
   "conversationKey": "conversation-1",
   "status": "queued",
   "requestedMode": "steer",
-  "statusUrl": "/status/event-2"
+  "statusUrl": "/v1/runs/event-2"
 }
 ```
 

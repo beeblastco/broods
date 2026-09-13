@@ -212,7 +212,7 @@ async function dispatchBackground(
   const baseUrl = getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
     ? {
-        url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`,
+        url: `${baseUrl}/v1/sandbox-jobs/${encodeURIComponent(resultId)}/complete`,
         token: completionToken,
       }
     : undefined;

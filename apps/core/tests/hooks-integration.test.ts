@@ -259,7 +259,7 @@ describe("channel.message.received rewrite reaches the session", () => {
         await route(
           coreRequest(
             "POST",
-            "/webhooks/acct_test/telegram",
+            "/v1/webhooks/acct_test/telegram",
             { "x-telegram-bot-api-secret-token": "telegram-secret" },
             {
               update_id: 7,

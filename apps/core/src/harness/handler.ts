@@ -2190,7 +2190,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   }
   const statusUrl =
     directStatusUrl(event) ??
-    `/status/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
+    `/v1/runs/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
 
   return {
     kind: "async",
@@ -2998,7 +2998,7 @@ function directStatusUrl(
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) return null;
 
-  return `${baseUrl}/status/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
+  return `${baseUrl}/v1/runs/${encodeURIComponent(event.publicEventId)}?agentId=${encodeURIComponent(event.agentId)}`;
 }
 
 function publicEventIdFromScoped(

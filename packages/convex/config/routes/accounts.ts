@@ -1,6 +1,6 @@
 /**
  * Account self-management (`/v1/account*`) and admin account routes
- * (`/accounts*`): metadata reads/patches and secret rotation.
+ * (`/v1/accounts*`): metadata reads/patches and secret rotation.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -146,14 +146,14 @@ export async function handleAccountRoute(
 export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
   if (pathname === "/v1/account") return { kind: "self" };
   if (pathname === "/v1/account/rotate-secret") return { kind: "selfRotate" };
-  if (pathname === "/accounts") return { kind: "adminList" };
-  if (!pathname.startsWith("/accounts/")) return null;
+  if (pathname === "/v1/accounts") return { kind: "adminList" };
+  if (!pathname.startsWith("/v1/accounts/")) return null;
 
-  const record = pathname.match(/^\/accounts\/([^/]+)$/);
+  const record = pathname.match(/^\/v1\/accounts\/([^/]+)$/);
   if (record?.[1])
     return { kind: "adminRecord", accountId: decodeURIComponent(record[1]) };
 
-  const rotate = pathname.match(/^\/accounts\/([^/]+)\/rotate-secret$/);
+  const rotate = pathname.match(/^\/v1\/accounts\/([^/]+)\/rotate-secret$/);
   if (rotate?.[1])
     return { kind: "adminRotate", accountId: decodeURIComponent(rotate[1]) };
 

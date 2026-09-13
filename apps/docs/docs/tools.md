@@ -53,12 +53,12 @@ Tool registry path:
 
 Provider-defined tools are executed by the provider during the model call, not by core. MCP server tools are request/response: `tools/call` has no streaming analog, so each call is one POST to the external server, or one tool-runner Lambda invoke for a hosted server (see [MCP Servers](#connected-mcp-servers)).
 
-The async coordination subsystem creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results into the same active agent loop. Detached completions settle through `POST /sandbox-jobs/{resultId}/complete` (token-authenticated, `bash` background jobs).
+The async coordination subsystem creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results into the same active agent loop. Detached completions settle through `POST /v1/sandbox-jobs/{resultId}/complete` (token-authenticated, `bash` background jobs).
 
 Notes:
 
 - The continuation loop waits only for in-memory pending work.
-- The original `/async` status row is settled through `asyncResultEventId`; the internal continuation uses a separate event id for dedupe.
+- The original background-run status row is settled through `asyncResultEventId`; the internal continuation uses a separate event id for dedupe.
 - Future: when NATS uses JetStream, missed WebSocket stream chunks can be replayed from persisted stream/consumer state. Until then, NATS continuation reaches the client only while the gateway/client remains subscribed.
 
 > Warning: Provider-defined tools have no local `execute`, so they cannot use this wrapper. If `async: true` is configured for one of those tools, the runtime logs a warning and leaves the tool in its normal provider-defined behavior.

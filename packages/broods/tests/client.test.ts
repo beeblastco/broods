@@ -48,7 +48,7 @@ test("client streams directly from core with apiKey auth", async () => {
     input: "hello",
   });
 
-  expect(urls).toEqual([DEFAULT_CORE_BASE_URL]);
+  expect(urls).toEqual([`${DEFAULT_CORE_BASE_URL}/v1/runs`]);
   expect(bodies[0]?.mode).toBeUndefined();
   expect(result.text).toBe("hi");
 });
@@ -64,7 +64,7 @@ test("stream reports a busy accepted ingress without treating JSON as SSE", asyn
           status: "queued",
           requestedMode: "steer",
           statusUrl:
-            "https://gateway.broods.app/status/steer-2?agentId=agent_1",
+            "https://gateway.broods.app/v1/runs/steer-2?agentId=agent_1",
         },
         { status: 202 },
       ),
@@ -101,7 +101,7 @@ test("client accepts host as a shorthand for https baseUrl", async () => {
     input: "hello",
   });
 
-  expect(urls).toEqual(["https://core.example"]);
+  expect(urls).toEqual(["https://core.example/v1/runs"]);
 });
 
 test("client resolves generated channel webhook paths against its configured host", () => {
@@ -113,19 +113,19 @@ test("client resolves generated channel webhook paths against its configured hos
       agentName: "support",
       agentId: "agent_1",
       accountId: "account_1",
-      webhookPath: "/webhooks/account_1/github",
+      webhookPath: "/v1/webhooks/account_1/github",
     }),
-  ).toBe("https://hooks.example.com/webhooks/account_1/github");
+  ).toBe("https://hooks.example.com/v1/webhooks/account_1/github");
 });
 
 test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
   const client = new BroodsClient({ host: "hooks.example.com" });
 
   expect(client.accountWebhookUrl("account_1", "zalo")).toBe(
-    "https://hooks.example.com/webhooks/account_1/zalo",
+    "https://hooks.example.com/v1/webhooks/account_1/zalo",
   );
   expect(client.stageWebhookUrl("account_1", "stage-abcd1234", "zalo")).toBe(
-    "https://hooks.example.com/webhooks/account_1/dev/stage-abcd1234/zalo",
+    "https://hooks.example.com/v1/webhooks/account_1/dev/stage-abcd1234/zalo",
   );
 });
 
@@ -198,14 +198,15 @@ test("client starts async runs and exposes status id for polling", async () => {
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
 
-      if (String(input).endsWith("/async")) {
+      // Start and poll share the /v1/runs prefix now, so dispatch on method.
+      if (init?.method === "POST") {
         expect(init?.headers).toMatchObject({
           Authorization: "Bearer runtime-key",
         });
 
         return Response.json(
           {
-            statusUrl: "https://core.example/status/request-1?agentId=agent_1",
+            statusUrl: "https://core.example/v1/runs/request-1?agentId=agent_1",
           },
           { status: 202 },
         );
@@ -228,8 +229,8 @@ test("client starts async runs and exposes status id for polling", async () => {
   expect(run.agentId).toBe("agent_1");
   expect(status).toEqual({ status: "completed", response: "done" });
   expect(calls.map((call) => call.url)).toEqual([
-    "https://core.example/async",
-    "https://core.example/status/request-1?agentId=agent_1",
+    "https://core.example/v1/runs",
+    "https://core.example/v1/runs/request-1?agentId=agent_1",
   ]);
   expect(calls[0]?.body).toMatchObject({
     agentId: "agent_1",
@@ -251,7 +252,8 @@ test("client starts async runs through generated scoped agent references", async
 
       return Response.json(
         {
-          statusUrl: "https://gateway.example/status/request-1?agentId=agent_1",
+          statusUrl:
+            "https://gateway.example/v1/runs/request-1?agentId=agent_1",
         },
         { status: 202 },
       );
@@ -276,11 +278,12 @@ test("client starts async runs through generated scoped agent references", async
   );
 
   expect(calls[0]?.url).toBe(
-    "https://gateway.example/v1/demo/agents/development/env_123/async",
+    "https://gateway.example/v1/projects/demo/stages/development/agents/env_123",
   );
   expect(calls[0]?.body).toMatchObject({
     agentId: "agent_1",
     eventId: "request-1",
+    background: true,
   });
 });
 
@@ -294,7 +297,7 @@ test("client passes typed run overrides through async run bodies", async () => {
 
       return Response.json(
         {
-          statusUrl: "https://core.example/status/request-1?agentId=agent_1",
+          statusUrl: "https://core.example/v1/runs/request-1?agentId=agent_1",
         },
         { status: 202 },
       );
@@ -347,7 +350,7 @@ test("client defaults async conversation key to the generated event id", async (
 
       return Response.json(
         {
-          statusUrl: "https://core.example/status/async-123?agentId=agent_1",
+          statusUrl: "https://core.example/v1/runs/async-123?agentId=agent_1",
         },
         { status: 202 },
       );
@@ -414,7 +417,7 @@ test("client polls async status by status id when agentId is provided", async ()
 
   expect(status).toEqual({ status: "completed", response: { ok: true } });
   expect(urls).toEqual([
-    "https://core.example/status/request-1?agentId=agent_1",
+    "https://core.example/v1/runs/request-1?agentId=agent_1",
   ]);
 });
 
