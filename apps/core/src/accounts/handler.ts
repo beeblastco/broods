@@ -517,17 +517,20 @@ async function refreshSandboxStatus(
     (info.state === "unknown"
       ? "provider reported an unrecognised state"
       : undefined);
-  // A refresh reads the provider's state; it does not use the sandbox.
-  await setSandboxInstanceStatus(
+  // A refresh reads the provider's state; it does not use the sandbox, and
+  // it earns an activity row only when the provider disagreed with the mirror.
+  const changed = await setSandboxInstanceStatus(
     context.accountId,
     context.reservationKey,
     status,
     { observed: true, errorMessage: errorMessage },
   );
-  await context.audit(status === "error" ? "error" : "ok", {
-    status: status,
-    errorMessage: errorMessage,
-  });
+  if (changed) {
+    await context.audit(status === "error" ? "error" : "ok", {
+      status: status,
+      errorMessage: errorMessage,
+    });
+  }
 
   return jsonResponse(200, { status: status, externalId: info.externalId });
 }

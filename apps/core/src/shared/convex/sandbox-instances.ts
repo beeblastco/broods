@@ -84,25 +84,33 @@ export async function upsertSandboxInstance(
  * @param options.observed the status was read off the provider, not caused by a
  * use, so it must not move the row's "last used" clock.
  * @param options.errorMessage the provider's reason for an "error" status.
+ * @returns whether the row's status moved; false when there was no row or the mirror failed.
  */
 export async function setSandboxInstanceStatus(
   accountId: string,
   reservationKey: string,
   status: SandboxInstanceStatus,
   options?: { observed?: boolean; errorMessage?: string },
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await getConvexClient().mutation(internal.sandbox.instances.setStatus, {
-      accountId: accountId as any,
-      reservationKey: reservationKey,
-      status: status,
-      observed: options?.observed === true,
-      errorMessage: options?.errorMessage,
-    });
+    const changed: boolean = await getConvexClient().mutation(
+      internal.sandbox.instances.setStatus,
+      {
+        accountId: accountId as any,
+        reservationKey: reservationKey,
+        status: status,
+        observed: options?.observed === true,
+        errorMessage: options?.errorMessage,
+      },
+    );
+
+    return changed;
   } catch (err) {
     logError("Sandbox instance status mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    return false;
   }
 }
 
