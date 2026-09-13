@@ -10,7 +10,9 @@
  * typed columns holding the services only that agent uses. Sub-agents follow
  * their parent, so the side-handle link between them stays short. Services
  * more than one agent reaches drop to a shared lane under the clusters, and
- * services no agent reaches to an unconnected lane below that.
+ * services no agent reaches to an unconnected lane below that. A mount edge
+ * ties its two cards together: an agent that reaches one reaches the other, so
+ * a mounted pair always lands in the same cluster or lane.
  */
 
 import type { CanvasNode } from "../canvas";
@@ -243,10 +245,16 @@ function indexGraph(
   const agentIds = new Set(agents.map((agent) => agent.id));
   const parentAgentId = new Map<string, string>();
   const ownersByService = new Map<string, Set<string>>();
+  const mountPairs: [string, string][] = [];
 
   for (const edge of edges) {
     const kind = edgeKind(edge);
-    if (kind === "mount") continue;
+    if (kind === "mount") {
+      if (!agentIds.has(edge.source) && !agentIds.has(edge.target)) {
+        mountPairs.push([edge.source, edge.target]);
+      }
+      continue;
+    }
     if (kind === "subagent") {
       if (agentIds.has(edge.source) && agentIds.has(edge.target)) {
         parentAgentId.set(edge.target, edge.source);
@@ -268,6 +276,8 @@ function indexGraph(
     if (owners) owners.add(agentId);
     else ownersByService.set(serviceId, new Set([agentId]));
   }
+
+  spreadOwnersOverMounts(ownersByService, mountPairs);
 
   const exclusiveServices = new Map<string, LayoutNode[]>();
   const orphanServices: LayoutNode[] = [];
@@ -396,4 +406,29 @@ function snapToGrid(position: LayoutPosition): LayoutPosition {
     x: Math.round(position.x / GRID) * GRID,
     y: Math.round(position.y / GRID) * GRID,
   };
+}
+
+/**
+ * Give both ends of every mount every owner either end has. Repeats until
+ * nothing changes, so a chain of mounts settles on one owner set too.
+ */
+function spreadOwnersOverMounts(
+  ownersByService: Map<string, Set<string>>,
+  mountPairs: readonly (readonly [string, string])[],
+): void {
+  let spread = true;
+  while (spread) {
+    spread = false;
+    for (const [a, b] of mountPairs) {
+      const ownersA = ownersByService.get(a) ?? new Set<string>();
+      const ownersB = ownersByService.get(b) ?? new Set<string>();
+      const merged = new Set([...ownersA, ...ownersB]);
+      if (merged.size === ownersA.size && merged.size === ownersB.size) {
+        continue;
+      }
+      ownersByService.set(a, merged);
+      ownersByService.set(b, new Set(merged));
+      spread = true;
+    }
+  }
 }
