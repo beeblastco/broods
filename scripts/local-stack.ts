@@ -275,7 +275,7 @@ async function verify(): Promise<void> {
   });
 
   const accountSecret = await measureStep(perf, "create account", async () => {
-    const response = await httpJson(`${gatewayUrl}/accounts`, {
+    const response = await httpJson(`${gatewayUrl}/v1/accounts`, {
       method: "POST",
       token: state.secrets.adminAccount,
       body: { username: `smoke-${runId}` },
@@ -320,13 +320,14 @@ async function verify(): Promise<void> {
 
   const eventId = `smoke-${runId}`;
   await measureStep(perf, "start async run", async () => {
-    const response = await httpJson(`${gatewayUrl}/async`, {
+    const response = await httpJson(`${gatewayUrl}/v1/runs`, {
       method: "POST",
       token: accountSecret,
       body: {
         agentId: agentId,
         eventId: eventId,
         conversationKey: `smoke-${runId}`,
+        background: true,
         events: [
           { role: "user", content: [{ type: "text", text: "Say OK." }] },
         ],
@@ -340,7 +341,7 @@ async function verify(): Promise<void> {
   });
 
   await measureStep(perf, "run to terminal state", async () => {
-    const statusUrl = `${gatewayUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+    const statusUrl = `${gatewayUrl}/v1/runs/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
     const finalStatus = await pollRunStatus(statusUrl, accountSecret);
     const expected = modelKey
       ? finalStatus.status === "completed"

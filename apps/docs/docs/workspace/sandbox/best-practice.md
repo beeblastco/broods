@@ -110,7 +110,7 @@ accurate.
 flowchart LR
   Launch["bash background:true<br/>(mint resultId + per-job token<br/>+ record origin delivery)"] --> Row["AsyncToolResult row<br/>(processing, sealed group)"]
   Launch --> Job["detached job in sandbox"]
-  Job -- "on exit, POST /sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)" --> Settle["settle row → resume conversation"]
+  Job -- "on exit, POST /v1/sandbox-jobs/&lt;id&gt;/complete<br/>(x-job-token)" --> Settle["settle row → resume conversation"]
   Settle --> Deliver{"origin delivery"}
   Deliver -- "chat channel" --> Chan["rebuild adapter → sendText<br/>(Telegram / Slack / …)"]
   Deliver -- "websocket" --> WS["publish to durable stream"]
@@ -120,7 +120,7 @@ flowchart LR
 ```
 
 **Auto-delivery.** When the job finishes it POSTs its result to the harness
-`/sandbox-jobs/<resultId>/complete` endpoint, authenticated by a per-job token, not the
+`/v1/sandbox-jobs/<resultId>/complete` endpoint, authenticated by a per-job token, not the
 account key. No account secret ever enters the sandbox. The harness settles the row and
 **resumes the conversation** with the result injected, so the model does not have to poll.
 The follow-up is then delivered back to wherever the turn came from:

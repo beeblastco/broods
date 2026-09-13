@@ -32,7 +32,7 @@ export const myAgent = defineAgent({
 Register the webhook URL in Pancake with the secret as a query parameter. A request without a matching `secret` gets a `401`:
 
 ```text
-https://<agent-service-url>/webhooks/<accountId>/pancake?secret=<webhookSecret>
+https://<agent-service-url>/v1/webhooks/<accountId>/pancake?secret=<webhookSecret>
 ```
 
 ---

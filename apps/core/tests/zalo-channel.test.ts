@@ -489,7 +489,7 @@ function createZaloRequest(
 } {
   return {
     method: "POST",
-    rawPath: "/",
+    rawPath: "/v1/runs",
     rawQueryString: "",
     headers: headers,
     body: JSON.stringify(body),

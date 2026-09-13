@@ -32,7 +32,7 @@ export const run = internalAction({
       for (const accountId of accountIds) {
         try {
           const response = await fetch(
-            `${url}/accounts/${encodeURIComponent(accountId)}`,
+            `${url}/v1/accounts/${encodeURIComponent(accountId)}`,
             {
               method: "DELETE",
               headers: { Authorization: `Bearer ${secret}` },

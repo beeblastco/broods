@@ -157,7 +157,7 @@ describe("direct API ingress", () => {
           authorization: "Bearer fp_agent_test",
         },
         {
-          rawPath: "/v1/demo/agents/development/env-endpoint",
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
         },
       ),
@@ -221,7 +221,7 @@ describe("direct API ingress", () => {
           authorization: "Bearer fp_agent_test",
         },
         {
-          rawPath: "/v1/demo/agents/development/env-endpoint",
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
         },
       ),
@@ -309,7 +309,8 @@ describe("direct API ingress", () => {
           authorization: "Bearer fp_agent_test",
         },
         {
-          rawPath: "/v1/demo/agents/development/some-other-endpoint",
+          rawPath:
+            "/v1/projects/demo/stages/development/agents/some-other-endpoint",
           addDefaultAgentId: false,
         },
       ),
@@ -349,7 +350,7 @@ describe("direct API ingress", () => {
           authorization: "Bearer fp_agent_test",
         },
         {
-          rawPath: "/v1/demo/agents/development/env-endpoint",
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
         },
       ),
@@ -374,8 +375,32 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("keeps direct API disabled for a path that matches no run shape", async () => {
+    // The retired slug-first URL no longer parses as a public endpoint, so a
+    // gate keyed on the recognized shapes would have let it dispatch a run.
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        },
+        { authorization: "Bearer secret" },
+        { rawPath: "/v1/demo/agents/development/env_123" },
+      ),
+      createHandlers(),
+      { directApiEnabled: false },
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Direct API is disabled" },
+    });
+  });
+
   it("returns 404 for direct sync and async POST when direct API is disabled", async () => {
     const body = {
+      background: true,
       eventId: "one",
       conversationKey: "alpha",
       events: [
@@ -399,7 +424,7 @@ describe("direct API ingress", () => {
         {
           authorization: "Bearer secret",
         },
-        { rawPath: "/async" },
+        { rawPath: "/v1/runs" },
       ),
       createHandlers(),
       { directApiEnabled: false },
@@ -1099,6 +1124,7 @@ describe("direct API ingress", () => {
     const response = await routeIncomingEvent(
       createEvent(
         {
+          background: true,
           eventId: "one",
           conversationKey: "alpha",
           events: [
@@ -1114,7 +1140,7 @@ describe("direct API ingress", () => {
           "x-forwarded-proto": "https",
         },
         {
-          rawPath: "/async",
+          rawPath: "/v1/runs",
         },
       ),
       createHandlers({
@@ -1136,7 +1162,7 @@ describe("direct API ingress", () => {
       "acct:acct_test:agent:agent_test:api:one",
     );
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/status/one?agentId=agent_test",
+      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
     );
     expect(handledEvents[0]?.publicDeploymentIngress).toBeUndefined();
   });
@@ -1147,6 +1173,7 @@ describe("direct API ingress", () => {
       createEvent(
         {
           agentId: "agent_test",
+          background: true,
           eventId: "one",
           conversationKey: "alpha",
           events: [
@@ -1162,7 +1189,7 @@ describe("direct API ingress", () => {
           "x-forwarded-proto": "https",
         },
         {
-          rawPath: "/async",
+          rawPath: "/v1/runs",
           addDefaultAgentId: false,
         },
       ),
@@ -1197,7 +1224,7 @@ describe("direct API ingress", () => {
       "acct:acct_test:agent:agent_test:api:one",
     );
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/status/one?agentId=agent_test",
+      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
     );
     expect(handledEvents[0]?.publicDeploymentIngress).toEqual(
       deploymentIngress(),
@@ -1210,6 +1237,7 @@ describe("direct API ingress", () => {
       createEvent(
         {
           agentId: "agent_test",
+          background: true,
           eventId: "one",
           conversationKey: "alpha",
           events: [
@@ -1225,7 +1253,7 @@ describe("direct API ingress", () => {
           "x-forwarded-proto": "https",
         },
         {
-          rawPath: "/v1/demo/agents/development/env-endpoint/async",
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
           addDefaultAgentId: false,
         },
       ),
@@ -1260,7 +1288,7 @@ describe("direct API ingress", () => {
     expect(handledEvents[0]?.projectSlug).toBe("demo");
     expect(handledEvents[0]?.stageSlug).toBe("development");
     expect(handledEvents[0]?.statusUrl).toBe(
-      "https://gateway.broods.app/status/one?agentId=agent_test",
+      "https://gateway.broods.app/v1/runs/one?agentId=agent_test",
     );
   });
 
@@ -1305,7 +1333,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/status/one",
+          rawPath: "/v1/runs/one",
           rawQueryString: "agentId=agent_test",
         },
       ),
@@ -1353,7 +1381,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: `/status/${encodeURIComponent(taskId)}`,
+          rawPath: `/v1/runs/${encodeURIComponent(taskId)}`,
           rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
         },
       ),
@@ -1395,7 +1423,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/status/one",
+          rawPath: "/v1/runs/one",
           rawQueryString: "agentId=agent_test",
         },
       ),
@@ -1454,7 +1482,7 @@ describe("direct API ingress", () => {
         },
         {
           method: "GET",
-          rawPath: "/status/one",
+          rawPath: "/v1/runs/one",
           rawQueryString: "agentId=agent_private",
         },
       ),
@@ -1887,7 +1915,7 @@ async function deploymentStatusRequest(
       { authorization: "Bearer fp_agent_test" },
       {
         method: "GET",
-        rawPath: `/status/${encodeURIComponent(taskId)}`,
+        rawPath: `/v1/runs/${encodeURIComponent(taskId)}`,
         rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
       },
     ),
@@ -1995,7 +2023,7 @@ function createEvent(
     addDefaultAgentId: boolean;
   }> = {},
 ): ReturnType<typeof coreRequest> {
-  const rawPath = options.rawPath ?? "/";
+  const rawPath = options.rawPath ?? "/v1/runs";
   const normalizedBody =
     options.addDefaultAgentId !== false &&
     body &&

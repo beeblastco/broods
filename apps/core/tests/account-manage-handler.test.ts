@@ -72,7 +72,7 @@ describe("account management HTTP handler", () => {
     const response = await handler(
       createEvent(
         "POST",
-        "/accounts",
+        "/v1/accounts",
         {},
         {
           username: "company-a",
@@ -112,7 +112,7 @@ describe("account management HTTP handler", () => {
     const response = await handler(
       createEvent(
         "POST",
-        "/accounts",
+        "/v1/accounts",
         {
           authorization: `Bearer ${accountSecret}`,
         },
@@ -149,7 +149,7 @@ describe("account management HTTP handler", () => {
     const response = await handler(
       createEvent(
         "POST",
-        "/accounts",
+        "/v1/accounts",
         {
           authorization: "Bearer admin-secret",
         },
@@ -177,9 +177,9 @@ describe("account management HTTP handler", () => {
     setStorageForTests(createFakeStorage({}));
 
     for (const path of [
-      "/accounts",
-      "/accounts/acct_test",
-      "/accounts/acct_test/rotate-secret",
+      "/v1/accounts",
+      "/v1/accounts/acct_test",
+      "/v1/accounts/acct_test/rotate-secret",
     ]) {
       const adminResponse = await handler(
         createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
@@ -199,7 +199,7 @@ describe("account management HTTP handler", () => {
     const adminPatchResponse = await handler(
       createEvent(
         "PATCH",
-        "/accounts/acct_test",
+        "/v1/accounts/acct_test",
         {
           authorization: "Bearer admin-secret",
         },
@@ -258,7 +258,7 @@ describe("account management HTTP handler", () => {
 
     // Admin cron routes were removed with the rest of the cron plane.
     const adminResponse = await handler(
-      createEvent("GET", "/accounts/acct_test/crons", {
+      createEvent("GET", "/v1/accounts/acct_test/crons", {
         authorization: "Bearer admin-secret",
       }),
     );
@@ -295,11 +295,11 @@ describe("account management HTTP handler", () => {
     }
 
     for (const path of [
-      "/accounts/acct_test/agents",
-      "/accounts/acct_test/agents/agent_1",
-      "/accounts/acct_test/policies",
-      "/accounts/acct_test/sandboxes",
-      "/accounts/acct_test/workspaces",
+      "/v1/accounts/acct_test/agents",
+      "/v1/accounts/acct_test/agents/agent_1",
+      "/v1/accounts/acct_test/policies",
+      "/v1/accounts/acct_test/sandboxes",
+      "/v1/accounts/acct_test/workspaces",
     ]) {
       const removedAdminResponse = await handler(
         createEvent("GET", path, {
@@ -404,7 +404,7 @@ describe("account management HTTP handler", () => {
     );
 
     const response = await handler(
-      createEvent("DELETE", `/accounts/${disabledAccount.accountId}`, {
+      createEvent("DELETE", `/v1/accounts/${disabledAccount.accountId}`, {
         authorization: "Bearer admin-secret",
       }),
     );

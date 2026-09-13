@@ -14,7 +14,7 @@ Use the Chat SDK docs for provider capability details: [Platform Adapters](https
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. There is one webhook URL, per account and channel:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
+{BROODS_BASE_URL}/v1/webhooks/{accountId}/{channel}
 ```
 
 ## Agent channel tools
@@ -38,7 +38,7 @@ Channel tools are automatic; do not add them to `config.tools`.
 
 `send-files` takes `file_paths`, a list of workspace documents, and is for anything that is not a picture: PDFs, spreadsheets, text files. Pictures go through `send-images`, because a picture the recipient sees inline and a file they download are different messages.
 
-Sending files requires an attached workspace. A file leaves as a sealed `/media/{ticket}` link minted per workspace and account, and a file written in a bare agent sandbox has no such address, so there is nothing to hand the provider. An agent with `sandbox` but no `workspaces` therefore gets no `send-files` at all, and its `send-images` accepts `urls` only. The harness logs a warning naming that cause when it happens, so a run that improvises is traceable to the missing workspace rather than to the model.
+Sending files requires an attached workspace. A file leaves as a sealed `/v1/media/{ticket}` link minted per workspace and account, and a file written in a bare agent sandbox has no such address, so there is nothing to hand the provider. An agent with `sandbox` but no `workspaces` therefore gets no `send-files` at all, and its `send-images` accepts `urls` only. The harness logs a warning naming that cause when it happens, so a run that improvises is traceable to the missing workspace rather than to the model.
 
 The two split at the channel boundary, not in the prompt. A provider declares what it can do by implementing `sendImages` or `sendFiles`, the model only ever names workspace paths, and the adapter spends the batch the way its provider wants. A caption rides the first message only.
 
@@ -57,14 +57,14 @@ Where a provider has no document endpoint at all, `send-files` posts the same se
 
 `send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead, as documents where the provider has them, as download links where it does not. Core logs the reason for the rejection and does not show it to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 
-Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
+Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/v1/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
 
 ## Inbound attachments
 
 Media arriving on a channel is the mirror of the same path. A picture, document,
 voice note, video or sticker sent to the agent is read once while the turn runs,
 stored in the agent's default workspace under `media/`, and handed to the model
-as the same durable `/media/{ticket}` link the outbound tools mint. Nothing is
+as the same durable `/v1/media/{ticket}` link the outbound tools mint. Nothing is
 inlined as base64: the conversation is persisted as JSON, so a link is what
 still resolves when the turn is replayed months later.
 
@@ -157,7 +157,7 @@ no record, the agent whose credentials verified the request answers.
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{channel\}"]
+  Provider["Provider webhook"] --> Url["/v1/webhooks/\{accountId\}/\{channel\}"]
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
   Account --> Agent["find the agent whose<br/>credentials verify the request"]
@@ -325,7 +325,7 @@ The normalized `InboundMessage` contains:
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
 6. Import the channel factory in [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
-8. Document the webhook URL as `/webhooks/{accountId}/{channel}`.
+8. Document the webhook URL as `/v1/webhooks/{accountId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.

@@ -221,7 +221,7 @@ function telegramActions(apiUrl?: string): ChannelActions {
 function telegramRequest(update: unknown): ChannelRequest {
   return {
     method: "POST",
-    rawPath: "/webhooks/acct/telegram",
+    rawPath: "/v1/webhooks/acct/telegram",
     rawQueryString: "",
     headers: { "x-telegram-bot-api-secret-token": WEBHOOK_SECRET },
     body: JSON.stringify(update),

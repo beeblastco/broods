@@ -13,11 +13,14 @@ import type { BenchCase } from "../runner.ts";
 
 const REQUEST_MIX: ReadonlyArray<{ method: string; pathname: string }> = [
   { method: "POST", pathname: "/v1/agents/agt_7f3c9d21" },
-  { method: "POST", pathname: "/v1/acme/production/agents/agt_7f3c9d21" },
-  { method: "GET", pathname: "/v1/runs/run_2a91/status" },
-  { method: "POST", pathname: "/webhooks/acc_5f21c9/slack" },
+  {
+    method: "POST",
+    pathname: "/v1/projects/acme/stages/production/agents/agt_7f3c9d21",
+  },
+  { method: "GET", pathname: "/v1/runs/run_2a91" },
+  { method: "POST", pathname: "/v1/webhooks/acc_5f21c9/slack" },
   { method: "POST", pathname: "/v1/sandboxes/sbx_11/exec" },
-  { method: "DELETE", pathname: "/accounts/acc_5f21c9" },
+  { method: "DELETE", pathname: "/v1/accounts/acc_5f21c9" },
   { method: "POST", pathname: "/v1/mcp-service/rpc" },
   { method: "POST", pathname: "/v1/cron-runs" },
 ];

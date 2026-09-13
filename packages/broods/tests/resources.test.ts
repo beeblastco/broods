@@ -1731,7 +1731,7 @@ export const support = defineAgent({ name: "support", connections: [github] });
     "utf8",
   );
   expect(api).toContain('github: { kind: "channel", type: "github"');
-  expect(api).toContain('webhookPath: "/webhooks/account%2F123/github"');
+  expect(api).toContain('webhookPath: "/v1/webhooks/account%2F123/github"');
   // client.ts and websocket.ts build the scoped invoke URL from this field.
   expect(api).toContain('stageSlug: "development"');
 });
@@ -1777,7 +1777,7 @@ export const support = defineAgent({ name: "support", connections: [github] });
     "utf8",
   );
   expect(api).toContain(
-    'webhookPath: "/webhooks/account%2F123/dev/stage-abcd1234/github"',
+    'webhookPath: "/v1/webhooks/account%2F123/dev/stage-abcd1234/github"',
   );
 });
 

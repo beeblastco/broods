@@ -70,7 +70,7 @@ Production takes the bare form:
 curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "'"$BROODS_BASE_URL"'/webhooks/<ACCOUNT_ID>/zalo",
+    "url": "'"$BROODS_BASE_URL"'/v1/webhooks/<ACCOUNT_ID>/zalo",
     "secret_token": "YOUR_WEBHOOK_SECRET"
   }'
 ```
@@ -79,7 +79,7 @@ A stage other than production registers through its own endpoint id, so two
 stages sharing one bot never receive each other's messages:
 
 ```text
-{BROODS_BASE_URL}/webhooks/<ACCOUNT_ID>/dev/<ENDPOINT_ID>/zalo
+{BROODS_BASE_URL}/v1/webhooks/<ACCOUNT_ID>/dev/<ENDPOINT_ID>/zalo
 ```
 
 Zalo stores one webhook URL per bot, so registering a stage URL moves that bot's

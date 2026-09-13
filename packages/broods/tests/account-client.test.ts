@@ -154,7 +154,7 @@ test("webhookUrl builds the per-account channel path", () => {
   const { client } = mockClient([]);
 
   expect(client.webhookUrl("acc 1", "slack")).toBe(
-    "https://gateway.example.com/webhooks/acc%201/slack",
+    "https://gateway.example.com/v1/webhooks/acc%201/slack",
   );
 });
 
@@ -420,7 +420,7 @@ test("baseUrl defaults to the managed gateway when option and env var are absent
   try {
     const client = new BroodsAccountClient({ accountSecret: "fp_acct_test" });
     expect(client.webhookUrl("acc1", "slack")).toBe(
-      "https://gateway.broods.app/webhooks/acc1/slack",
+      "https://gateway.broods.app/v1/webhooks/acc1/slack",
     );
   } finally {
     if (savedBaseUrl !== undefined) process.env.BROODS_BASE_URL = savedBaseUrl;

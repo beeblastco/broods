@@ -254,7 +254,10 @@ function buildObservabilityUrl(
 ): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
 
-  return `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws`;
+  return (
+    `${wsBase}/v1/projects/${encodeURIComponent(project)}` +
+    `/stages/${encodeURIComponent(stage)}/observability/ws`
+  );
 }
 
 function parseServerMessage(data: unknown): ObservabilityServerMessage | null {

@@ -40,7 +40,7 @@ import {
 import { handleWorkspaceConfigRoute } from "./routes/workspaces";
 
 type ConfigRoute =
-  | { kind: "skills"; name?: string }
+  | { kind: "skills"; skillName?: string }
   | { kind: "hooks"; hookId?: string }
   | { kind: "mcp"; serverId?: string }
   | { kind: "mcpBundleUpload" }
@@ -130,7 +130,7 @@ function apiResource(
 function apiResourceForRoute(route: ResourceRoute): ApiResource {
   switch (route.kind) {
     case "skills":
-      return apiResource("skills", route.name);
+      return apiResource("skills", route.skillName);
     case "hooks":
       return apiResource("hooks", route.hookId);
     case "mcp":
@@ -190,7 +190,13 @@ async function dispatchResourceRoute(
 ): Promise<Response> {
   switch (route.kind) {
     case "skills":
-      return await handleSkillRoute(ctx, req, accountId, actor, route.name);
+      return await handleSkillRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.skillName,
+      );
     case "hooks":
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
     case "mcp":
@@ -390,7 +396,7 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
   if (skills)
     return {
       kind: "skills",
-      ...(skills[1] ? { name: decodeURIComponent(skills[1]) } : {}),
+      ...(skills[1] ? { skillName: decodeURIComponent(skills[1]) } : {}),
     };
 
   // Before the generic mcp match: `uploads` is a route, not a server id.

@@ -169,7 +169,7 @@ test("websocket client subscribes to the core service and forwards server messag
   );
 
   expect(subscription.url).toBe(
-    "wss://app.example/v1/demo/agents/development/agent_1/ws",
+    "wss://app.example/v1/projects/demo/stages/development/agents/agent_1/ws",
   );
   // The credential never lands in the URL; it rides the subprotocol list.
   expect(FakeWebSocket.instances[0]?.protocols).toEqual([
@@ -343,7 +343,7 @@ test("websocket client can build scoped URLs from generated agent references", a
   });
 
   expect(subscription.url).toBe(
-    "wss://app.example/v1/demo/agents/development/env_123/ws",
+    "wss://app.example/v1/projects/demo/stages/development/agents/env_123/ws",
   );
 
   await Promise.resolve();
