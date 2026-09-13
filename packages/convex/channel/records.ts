@@ -143,6 +143,23 @@ export const list = internalQuery({
   },
 });
 
+/**
+ * Active records only, so listing a long-churned account does not read its
+ * pile of tombstones. Same shape as `list`.
+ */
+export const listActive = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(channelRecordDoc),
+  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
 export const listActivePage = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -162,23 +179,6 @@ export const listActivePage = internalQuery({
         q.eq("accountId", args.accountId).eq("status", "active"),
       )
       .paginate(args.paginationOpts);
-  },
-});
-
-/**
- * Active records only, so listing a long-churned account does not read its
- * pile of tombstones. Same shape as `list`.
- */
-export const listActive = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(channelRecordDoc),
-  handler: async (ctx, args): Promise<Doc<"channelRecords">[]> => {
-    return await ctx.db
-      .query("channelRecords")
-      .withIndex("by_accountId_and_status", (q) =>
-        q.eq("accountId", args.accountId).eq("status", "active"),
-      )
-      .collect();
   },
 });
 
