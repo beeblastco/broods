@@ -53,7 +53,8 @@ const SURFACES: Array<{
   {
     path: "/v1/mcp",
     collection: ["GET", "POST"],
-    item: ["GET", "PATCH", "DELETE"],
+    // POST on the item path is /v1/mcp/uploads, not a per-server write.
+    item: ["GET", "POST", "PATCH", "DELETE"],
   },
   {
     path: "/v1/workspaces",

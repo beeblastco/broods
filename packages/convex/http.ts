@@ -156,6 +156,12 @@ http.route({
 });
 http.route({ path: "/v1/mcp", method: "GET", handler: configHttp });
 http.route({ path: "/v1/mcp", method: "POST", handler: configHttp });
+// The POST prefix is what /v1/mcp/uploads matches; path: "/v1/mcp" does not.
+http.route({
+  pathPrefix: "/v1/mcp/",
+  method: "POST",
+  handler: configHttp,
+});
 http.route({
   pathPrefix: "/v1/mcp/",
   method: "GET",
