@@ -285,6 +285,7 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     "BROODS_CONFIG_URL",
     "GATEWAY_UPGRADES_PER_MINUTE",
     "GATEWAY_HTTP_REQUESTS_PER_MINUTE",
+    "GATEWAY_FORWARD_ACCOUNT_ID",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   try {
@@ -292,6 +293,7 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     process.env.BROODS_CONFIG_URL = "config.internal";
     process.env.GATEWAY_UPGRADES_PER_MINUTE = "7";
     delete process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE;
+    delete process.env.GATEWAY_FORWARD_ACCOUNT_ID;
 
     const config = gatewayConfigFromEnv();
 
