@@ -142,11 +142,12 @@ Two agents can reach the same workspace through different arrangements, and the
 difference decides how much of the machine the agent gets. What matters is whether the
 workspace's effective sandbox **is the one the agent itself references**:
 
-| Arrangement                                                 | What the agent gets                                                                                                                                                            |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.             |
-| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true`. No workspace is mounted there, so nothing reaches durable storage. |
+| Arrangement                                                 | What the agent gets                                                                                                                                                                                               |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.                                                |
+| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                                                   |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true`. No workspace is mounted there, so nothing reaches durable storage.                                    |
+| `config.sandboxes: [sb_c]`                                  | Extra machines beside the default. `bash` reaches each by name with `sandbox: "<name>"`, and each keeps its own image, network and `permissionMode`. No workspace is mounted, so nothing reaches durable storage. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
 resolves both to the same record, so both land in the first row. An agent that references
@@ -164,7 +165,8 @@ in which case its filesystem survives between calls until the reservation ends. 
 no workspace has no filesystem namespace to key that reservation on, so the harness derives
 one from `accountId:agentId:sandboxId`: each agent gets its own reserved machine, and
 re-pointing an agent at a different sandbox record gives it that record's machine rather
-than one built from the old record's image.
+than one built from the old record's image. Each record in `config.sandboxes` gets its own
+reservation the same way.
 
 Set `options.reservationKey` to name the reservation yourself. Two sandboxes carrying the
 same key share one machine, which is the way to put several agents on one deliberately.

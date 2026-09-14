@@ -417,6 +417,13 @@ export function rewriteIdsToNames(
   if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
     result.sandbox = sandboxNames[result.sandbox];
   }
+  if (Array.isArray(result.sandboxes)) {
+    result.sandboxes = result.sandboxes.map((entry) =>
+      typeof entry === "string" && sandboxNames[entry]
+        ? sandboxNames[entry]
+        : entry,
+    );
+  }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
       if (!isPlainObject(entry)) return entry;
@@ -509,6 +516,13 @@ export function rewriteResourceRefs(
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
     result.sandbox = sandboxIds[result.sandbox];
+  }
+  if (Array.isArray(result.sandboxes)) {
+    result.sandboxes = result.sandboxes.map((entry) =>
+      typeof entry === "string" && sandboxIds[entry]
+        ? sandboxIds[entry]
+        : entry,
+    );
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {

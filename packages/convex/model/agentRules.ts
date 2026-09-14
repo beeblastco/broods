@@ -36,6 +36,7 @@ export type AgentConfig = Record<string, unknown> & {
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandbox?: string;
+  sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: Record<string, unknown>;
   hooks?: Record<string, unknown>;
@@ -185,6 +186,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
+  normalizeSandboxRefs(config.sandboxes, config.sandbox);
   if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
     throw new Error(
       `config.sandbox is required for the ${String(config.harness.type)} harness`,
@@ -579,6 +581,25 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
 
 function normalizeSandboxRef(value: unknown): void {
   assertOptionalNonEmptyString(value, "config.sandbox");
+}
+
+// Extra sandboxes are bash targets beside the default, so repeating the default
+// would name the same machine twice under two names.
+function normalizeSandboxRefs(value: unknown, defaultSandbox: unknown): void {
+  assertOptionalStringArray(value, "config.sandboxes");
+  if (value === undefined) return;
+  const seen = new Set<string>();
+  (value as string[]).forEach((sandboxId, index) => {
+    if (sandboxId === defaultSandbox)
+      throw new Error(
+        `config.sandboxes[${index}] repeats the default config.sandbox`,
+      );
+    if (seen.has(sandboxId))
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+      );
+    seen.add(sandboxId);
+  });
 }
 
 function normalizeWorkspaceRefs(value: unknown): void {

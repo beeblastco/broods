@@ -16,6 +16,30 @@ import {
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 
 describe("agent rules", () => {
+  it("validates extra sandboxes", () => {
+    expect(
+      normalizeAgentConfig({
+        sandbox: "sb_default",
+        sandboxes: ["sb_offline", "sb_browser"],
+      }),
+    ).toEqual({
+      sandbox: "sb_default",
+      sandboxes: ["sb_offline", "sb_browser"],
+    });
+    expect(() => normalizeAgentConfig({ sandboxes: "sb_offline" })).toThrow(
+      "config.sandboxes must be an array of non-empty strings",
+    );
+    expect(() =>
+      normalizeAgentConfig({ sandboxes: ["sb_offline", "sb_offline"] }),
+    ).toThrow('config.sandboxes[1] "sb_offline" is used more than once');
+    expect(() =>
+      normalizeAgentConfig({
+        sandbox: "sb_default",
+        sandboxes: ["sb_default"],
+      }),
+    ).toThrow("config.sandboxes[0] repeats the default config.sandbox");
+  });
+
   it("validates config.mcp entries", () => {
     const serverId = "k57mcpserver00000000000000000000";
     expect(
