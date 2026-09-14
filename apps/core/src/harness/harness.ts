@@ -31,6 +31,7 @@ import {
 } from "ai";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
+import { extractText } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
@@ -1951,13 +1952,8 @@ export function latestUserText(messages: ModelMessage[]): string {
   const message = messages.findLast(
     (candidate): candidate is UserModelMessage => candidate.role === "user",
   );
-  if (!message) return "";
-  if (typeof message.content === "string") return message.content.trim();
 
-  return message.content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n")
-    .trim();
+  return message ? extractText(message.content).trim() : "";
 }
 
 // The system prompt is assembled per turn from the agent config plus every

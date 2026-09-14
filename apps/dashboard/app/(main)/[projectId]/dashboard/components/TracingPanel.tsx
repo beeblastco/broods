@@ -9,6 +9,7 @@ import {
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { formatNumber } from "@/app/lib/formatNumber";
 import { formatTime } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -50,6 +51,11 @@ interface DetailRow {
   key: string;
   label: string;
   value: string;
+}
+
+// One collapsible payload section, with the count line on its header.
+interface PayloadSection extends DetailRow {
+  summary: string;
 }
 
 const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
@@ -107,44 +113,46 @@ const PREPARE_TIMINGS: ReadonlyArray<{ key: string; label: string }> = [
   { key: "prepare.media_ms", label: "media" },
 ];
 
-// Labeled Details rows, shown when the span carries `key`; `extraKey` adds a
-// second value after it. Model steps carry model.* token keys where the task
-// root carries usage.*, so both spellings are listed.
-const DETAIL_FIELDS: ReadonlyArray<{
+interface DetailField {
   extraKey?: string;
   extraLabel?: string;
   key: string;
   label: string;
-}> = [
+}
+
+// Token rows come in two spellings: the task root writes usage.*, a model step
+// writes model.*.
+const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
+  {
+    key: "input_tokens",
+    label: "Input tokens",
+    extraKey: "cached_input_tokens",
+    extraLabel: "cached",
+  },
+  {
+    key: "output_tokens",
+    label: "Output tokens",
+    extraKey: "reasoning_tokens",
+    extraLabel: "reasoning",
+  },
+];
+
+// Labeled Details rows, shown when the span carries `key`; `extraKey` adds a
+// second value after it.
+const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
   { key: "model.id", label: "Model" },
   { key: "model.provider", label: "Provider" },
   { key: "task.delivery", label: "Delivery" },
   { key: "agent.step_count", label: "Steps" },
   { key: "agent.tool_call_count", label: "Tool call count" },
-  {
-    key: "usage.input_tokens",
-    label: "Input tokens",
-    extraKey: "usage.cached_input_tokens",
-    extraLabel: "cached",
-  },
-  {
-    key: "usage.output_tokens",
-    label: "Output tokens",
-    extraKey: "usage.reasoning_tokens",
-    extraLabel: "reasoning",
-  },
-  {
-    key: "model.input_tokens",
-    label: "Input tokens",
-    extraKey: "model.cached_input_tokens",
-    extraLabel: "cached",
-  },
-  {
-    key: "model.output_tokens",
-    label: "Output tokens",
-    extraKey: "model.reasoning_tokens",
-    extraLabel: "reasoning",
-  },
+  ...["usage", "model"].flatMap((prefix) =>
+    TOKEN_FIELDS.map((field): DetailField => ({
+      key: `${prefix}.${field.key}`,
+      label: field.label,
+      extraKey: `${prefix}.${field.extraKey}`,
+      extraLabel: field.extraLabel,
+    })),
+  ),
   { key: "model.finish_reason", label: "Finish reason" },
   { key: "tool.success", label: "Succeeded" },
   { key: "task.id", label: "Task id" },
@@ -184,12 +192,6 @@ const SHOWN_KEYS: ReadonlySet<string> = new Set([
   "tool.state",
   "usage.total_tokens",
 ]);
-
-// Total tokens in the panel header, e.g. 48.8K.
-const COMPACT_NUMBER = new Intl.NumberFormat("en", {
-  maximumFractionDigits: 1,
-  notation: "compact",
-});
 
 // Search text per span object, built on first search. See spanSearchText.
 const SPAN_SEARCH_TEXT = new WeakMap<ObservabilitySpanRow, string>();
@@ -246,6 +248,8 @@ const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 interface SpanGroup {
   root: ObservabilitySpanRow;
   childrenByParent: Map<string, ObservabilitySpanRow[]>;
+  // Root first, then every child, for search and selection.
+  spans: ObservabilitySpanRow[];
   // Absolute time window the waterfall bars are scaled against (covers spans like
   // cold start that begin before the root task span).
   windowStart: number;
@@ -301,15 +305,14 @@ export function TracingPanel({
     const needle = deferredFilter.trim().toLowerCase();
 
     return allGroups.filter((group) => {
-      const { root, childrenByParent } = group;
+      const { root, spans } = group;
       if (statusFilter !== "all" && root.status !== statusFilter) return false;
       if (fromMs !== null && root.startTimeMs < fromMs) return false;
       if (toMs !== null && root.startTimeMs > toMs) return false;
-      if (!needle) return true;
 
-      const allSpans = [root, ...[...childrenByParent.values()].flat()];
-
-      return allSpans.some((span) => spanSearchText(span).includes(needle));
+      return (
+        !needle || spans.some((span) => spanSearchText(span).includes(needle))
+      );
     });
   }, [allGroups, deferredFilter, statusFilter, fromMs, toMs]);
 
@@ -325,11 +328,7 @@ export function TracingPanel({
   const selected = useMemo(() => {
     if (!selectedKey) return null;
     for (const group of groups) {
-      const spans = [
-        group.root,
-        ...[...group.childrenByParent.values()].flat(),
-      ];
-      const span = spans.find(
+      const span = group.spans.find(
         (candidate) => spanKey(candidate) === selectedKey,
       );
       if (span) return { span: span, group: group };
@@ -634,7 +633,6 @@ export function TracingPanel({
   );
 }
 
-/** An attribute as display text, or undefined when there is nothing to show. */
 function attributeText(value: unknown): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value.toLocaleString();
@@ -727,6 +725,31 @@ function numericAttribute(
   return typeof value === "number" ? value : undefined;
 }
 
+// A section shows the count that describes it; the char count is added when
+// the span reports one, or stands in when there is no count at all.
+function payloadSections(span: ObservabilitySpanRow): PayloadSection[] {
+  return PAYLOAD_SECTIONS.flatMap(
+    ({ charsKey, countKey, countLabel, key, label }): PayloadSection[] => {
+      const value = displayAttribute(span.attributes?.[key]);
+      if (!value) return [];
+      const count = countKey ? numericAttribute(span, countKey) : undefined;
+      const reportedChars = charsKey
+        ? numericAttribute(span, charsKey)
+        : undefined;
+      const chars =
+        reportedChars ?? (count === undefined ? value.length : undefined);
+      const summary = [
+        ...(count === undefined
+          ? []
+          : [`${count.toLocaleString()} ${countLabel}`]),
+        ...(chars === undefined ? [] : [`${chars.toLocaleString()} chars`]),
+      ].join(" · ");
+
+      return [{ key: key, label: label, summary: summary, value: value }];
+    },
+  );
+}
+
 function spanKey(span: ObservabilitySpanRow): string {
   return `${span.traceId}:${span.spanId}`;
 }
@@ -739,9 +762,7 @@ function spanMetaLine(span: ObservabilitySpanRow): string {
 
   return [
     span.durationMs > 0 ? formatDuration(span.durationMs) : "—",
-    ...(tokens === undefined
-      ? []
-      : [`${COMPACT_NUMBER.format(tokens)} tokens`]),
+    ...(tokens === undefined ? [] : [`${formatNumber(tokens)} tokens`]),
     formatDateTime(span.startTimeMs),
   ].join(" · ");
 }
@@ -849,11 +870,11 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
         siblings.sort((left, right) => left.startTimeMs - right.startTimeMs);
       }
 
-      const allSpans = [root, ...children];
+      const spans = [root, ...children];
       const taskRunning = isTaskRunning(root);
-      const windowStart = Math.min(...allSpans.map((span) => span.startTimeMs));
+      const windowStart = Math.min(...spans.map((span) => span.startTimeMs));
       const windowEnd = Math.max(
-        ...allSpans.map((span) =>
+        ...spans.map((span) =>
           isStale(span, taskRunning) ? span.startTimeMs : span.endTimeMs,
         ),
       );
@@ -863,6 +884,7 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
       return {
         root: root,
         childrenByParent: childrenByParent,
+        spans: spans,
         windowStart: windowStart,
         windowSpan: windowSpan,
         taskDurationMs: Math.max(
@@ -1153,27 +1175,13 @@ function SpanDetails({
 }: {
   span: ObservabilitySpanRow;
 }): React.JSX.Element {
-  const attributes = span.attributes ?? {};
-  const sections = PAYLOAD_SECTIONS.flatMap(
-    ({ charsKey, countKey, countLabel, key, label }) => {
-      const value = displayAttribute(attributes[key]);
-      if (!value) return [];
-      const count = countKey ? numericAttribute(span, countKey) : undefined;
-      const chars = charsKey ? numericAttribute(span, charsKey) : undefined;
-      const summary = [
-        ...(count === undefined
-          ? []
-          : [`${count.toLocaleString()} ${countLabel}`]),
-        ...(count === undefined || chars !== undefined
-          ? [`${(chars ?? value.length).toLocaleString()} chars`]
-          : []),
-      ].join(" · ");
-
-      return [{ key: key, label: label, summary: summary, value: value }];
-    },
+  // Pretty-printing a large payload is the expensive part, and the parent
+  // re-renders on every stream message while a run is live.
+  const { sections, rows } = useMemo(
+    () => ({ sections: payloadSections(span), rows: detailRows(span) }),
+    [span],
   );
-  const rows = detailRows(span);
-  const modelId = attributes["model.id"];
+  const modelId = span.attributes?.["model.id"];
 
   // minmax(0,1fr) lets the grid track shrink below its content's min-content
   // width; without it a long unbroken run in a payload widens the track past
@@ -1199,7 +1207,6 @@ function SpanDetails({
               </pre>
             </details>
           ))}
-          {/* Closed by default: the run facts are one click away, not a board. */}
           {rows.length > 0 && (
             <details className="group/detail">
               <SectionSummary

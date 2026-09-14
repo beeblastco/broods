@@ -25,6 +25,8 @@ const accessClients = new WeakMap<S3Access, AwsS3Client>();
 // Per-call S3 access for reads against a bring-your-own bucket: short-lived
 // assume-role credentials plus the bucket's region/endpoint. Omitted (the common
 // case) => the default client on the harness's own role against the managed bucket.
+// Pass the object a read target hands out as is: the client is cached by its
+// identity, so a copy pays for a new client.
 export interface S3Access {
   credentials?: {
     accessKeyId: string;

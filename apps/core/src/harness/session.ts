@@ -131,6 +131,11 @@ interface MemoryFile {
   workspace: ResolvedWorkspace;
 }
 
+interface TurnHistory {
+  entries: StoredConversationEntry[];
+  messages: ModelMessage[];
+}
+
 export interface SystemContextSnapshot {
   // Highest conversation row already folded into the dynamic system-context view.
   // `loadRefreshedSystemPromptParts` uses this as a Convex cursor so each
@@ -207,7 +212,7 @@ interface StoredConversationEntry {
   event: StoredConversationEvent;
 }
 
-interface StoredConversationEventPage {
+export interface StoredConversationEventPage {
   page: Array<{ cursor: string; event: StoredConversationEvent }>;
   isDone: boolean;
   continueCursor: string | null;
@@ -279,7 +284,9 @@ export class Session {
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
   // Read once per run. prepareStep rebuilds the system prompt before every step
-  // and would otherwise go back to S3 each time.
+  // and would otherwise go back to S3 each time. No re-read after memory_save
+  // either: it writes through the sandbox mount, which reaches S3 a minute or
+  // two later, so the run would get the same index back.
   private memoryFilesPromise: Promise<MemoryFile[]> | undefined;
   private skillMetadataPromise: Promise<SkillMetadata[]> | undefined;
   // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
@@ -522,51 +529,29 @@ export class Session {
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
-    // Every load behind the turn starts at once. Memory waits only on the
-    // runtime, which names the workspaces; skills and subagents need neither.
-    // buildSystemPromptParts below reads the memoized results.
-    const [
-      [, runtimeMs],
-      [entries, historyMs],
-      [, memoryMs],
-      [, skillsMs],
-      [, subagentsMs],
-    ] = await Promise.all([
-      withElapsedMs(() => this.ensureResolvedRuntime()),
-      withElapsedMs(() => this.loadConversationEntries()),
-      this.ensureResolvedRuntime().then(() =>
-        withElapsedMs(() => this.loadMemoryFiles()),
-      ),
-      withElapsedMs(() => this.loadSkillMetadata()),
-      withElapsedMs(() => this.loadSubagentMetadata()),
+    const phases: ContextPreparePhases = {
+      historyMs: 0,
+      historyRows: 0,
+      mediaMs: 0,
+      memoryMs: 0,
+      runtimeMs: 0,
+      skillsMs: 0,
+      subagentsMs: 0,
+    };
+    // Every load behind the turn starts at once; buildSystemPromptParts below
+    // reads the memoized results.
+    const [history] = await Promise.all([
+      this.loadTurnHistory(phases),
+      timePhase(phases, "runtimeMs", () => this.ensureResolvedRuntime()),
+      timePhase(phases, "memoryMs", () => this.loadMemoryFiles()),
+      timePhase(phases, "skillsMs", () => this.loadSkillMetadata()),
+      timePhase(phases, "subagentsMs", () => this.loadSubagentMetadata()),
     ]);
-    const activeEntries = projectActiveConversationEntries(entries);
     // Snapshot persisted system context separately from chat messages. The
     // harness passes this through prepareStep so long-running tool loops can
     // refresh system prompt parts without duplicating old system rows.
-    const systemContextSnapshot = createSystemContextSnapshot(entries);
-    // Media the row only points at is read back before anything else looks at
-    // the history: compaction, the system prompt and the model all see the
-    // same messages, and none of them should have to know how it got there.
-    const [rehydratedMessages, mediaMs] = await withElapsedMs(() =>
-      rehydrateStoredMedia(
-        projectEntriesToMessages(
-          activeEntries,
-          modelIdentityFromModelConfig(this.agentConfig),
-        ),
-        this.agentConfig,
-      ),
-    );
-    let messages = rehydratedMessages;
-    const phases: ContextPreparePhases = {
-      historyMs: historyMs,
-      historyRows: entries.length,
-      mediaMs: mediaMs,
-      memoryMs: memoryMs,
-      runtimeMs: runtimeMs,
-      skillsMs: skillsMs,
-      subagentsMs: subagentsMs,
-    };
+    const systemContextSnapshot = createSystemContextSnapshot(history.entries);
+    let messages = history.messages;
     const system = await this.buildSystemPromptParts(
       systemContextSnapshot.messages,
       ephemeralSystem,
@@ -960,9 +945,10 @@ export class Session {
     return null;
   }
 
-  // No re-read after memory_save: it writes through the sandbox mount, which
-  // reaches S3 a minute or two later, so the run would get the same index back.
   private async loadMemoryFiles(): Promise<MemoryFile[]> {
+    // The runtime names the workspaces, so this waits on it and its phase time
+    // includes that wait.
+    await this.ensureResolvedRuntime();
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
@@ -1022,6 +1008,29 @@ export class Session {
     }
 
     return this.subagentMetadataPromise;
+  }
+
+  // Media the rows only point at is read back here, before anything else looks
+  // at the history: compaction, the system prompt and the model all see the
+  // same messages, and none of them should have to know how it got there.
+  private async loadTurnHistory(
+    phases: ContextPreparePhases,
+  ): Promise<TurnHistory> {
+    const entries = await timePhase(phases, "historyMs", () =>
+      this.loadConversationEntries(),
+    );
+    phases.historyRows = entries.length;
+    const messages = await timePhase(phases, "mediaMs", () =>
+      rehydrateStoredMedia(
+        projectEntriesToMessages(
+          projectActiveConversationEntries(entries),
+          modelIdentityFromModelConfig(this.agentConfig),
+        ),
+        this.agentConfig,
+      ),
+    );
+
+    return { entries: entries, messages: messages };
   }
 
   private nextCreatedAt(): string {
@@ -1646,6 +1655,18 @@ function sanitizeUserMessage(
     : null;
 }
 
+async function timePhase<T>(
+  phases: ContextPreparePhases,
+  key: Exclude<keyof ContextPreparePhases, "historyRows">,
+  load: () => Promise<T>,
+): Promise<T> {
+  const startedMs = Date.now();
+  const result = await load();
+  phases[key] = Date.now() - startedMs;
+
+  return result;
+}
+
 function toStoredConversationEvent<
   TMessage extends StoredConversationEvent["message"],
 >(
@@ -1663,14 +1684,6 @@ function toStoredConversationEvent<
         message: message,
       }
     : null;
-}
-
-// Runs one load and reports its own wall time next to the result.
-async function withElapsedMs<T>(load: () => Promise<T>): Promise<[T, number]> {
-  const startedMs = Date.now();
-  const result = await load();
-
-  return [result, Date.now() - startedMs];
 }
 
 /**

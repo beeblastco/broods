@@ -41,6 +41,7 @@ const STATE_ROOT = join(homedir(), ".broods-local");
 interface ContextPreparedLog {
   durationMs: number;
   eventId: string;
+  eventType: string;
   historyMs: number;
   historyRows: number;
   mediaMs: number;
@@ -335,11 +336,7 @@ async function verify(): Promise<void> {
   });
 
   // The 202 names the run by a server-issued id; polling follows its statusUrl.
-  const startRun = async (
-    eventId: string,
-    text: string,
-    step: string,
-  ): Promise<string> => {
+  const startRun = async (eventId: string, text: string): Promise<string> => {
     const response = await httpJson(`${gatewayUrl}/v1/runs`, {
       method: "POST",
       token: accountSecret,
@@ -353,7 +350,7 @@ async function verify(): Promise<void> {
     });
     const statusUrl = (response.body as { statusUrl?: string }).statusUrl;
     assertStep(
-      step,
+      `start run ${eventId} (core via gateway)`,
       response.status === 202 && typeof statusUrl === "string",
       `status ${response.status}: ${JSON.stringify(response.body)}`,
     );
@@ -363,7 +360,7 @@ async function verify(): Promise<void> {
 
   const eventId = `smoke-${runId}`;
   const statusUrl = await measureStep(perf, "start async run", () =>
-    startRun(eventId, "Say OK.", "start async run (core via gateway)"),
+    startRun(eventId, "Say OK."),
   );
 
   await measureStep(perf, "run to terminal state", async () => {
@@ -381,11 +378,7 @@ async function verify(): Promise<void> {
   // core is warm and the history already has rows.
   const warmEventId = `${eventId}-warm`;
   await measureStep(perf, "warm run to terminal state", async () => {
-    const warmStatusUrl = await startRun(
-      warmEventId,
-      "Say OK again.",
-      "start warm run (core via gateway)",
-    );
+    const warmStatusUrl = await startRun(warmEventId, "Say OK again.");
     const finalStatus = await pollRunStatus(warmStatusUrl, accountSecret);
     assertStep(
       "warm run reached a terminal state",
@@ -701,31 +694,6 @@ function dockerContainerState(name: string): string | null {
 
 // --- http ---------------------------------------------------------------
 
-// The prepare timings core logged for one run, from the instance's core log.
-// Core writes one JSON object per line and scopes the event id under the
-// account and agent, so the public id is matched as a suffix. The last match
-// wins, since a retried run prepares again.
-function contextPreparedLog(
-  instanceId: string,
-  eventId: string,
-): ContextPreparedLog | null {
-  const logPath = join(instanceDir(instanceId), "logs", "core.log");
-  if (!existsSync(logPath)) return null;
-  const lines = readFileSync(logPath, "utf8").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index] as string;
-    if (!line.includes('"session.context.prepared"')) continue;
-    try {
-      const parsed = JSON.parse(line) as ContextPreparedLog;
-      if (parsed.eventId.endsWith(`:${eventId}`)) return parsed;
-    } catch {
-      // A partial line from a log that is still being written.
-    }
-  }
-
-  return null;
-}
-
 function assertStep(step: string, ok: boolean, detail: string): asserts ok {
   if (ok) {
     console.log(`  ok  ${step}`);
@@ -853,37 +821,58 @@ async function waitForHttp(
 
 // --- perf recording -----------------------------------------------------
 
-// The log is append-only, so walk from the end and stop at the first record
-// of each command instead of parsing the whole file.
+// The prepare timings core logged for one run. Core scopes the event id under
+// the account and agent, so the public id is matched as a suffix. The last
+// match wins, since a retried run prepares again.
+function contextPreparedLog(
+  instanceId: string,
+  eventId: string,
+): ContextPreparedLog | null {
+  return lastJsonLine<ContextPreparedLog>(
+    join(instanceDir(instanceId), "logs", "core.log"),
+    (record) =>
+      record.eventType === "session.context.prepared" &&
+      record.eventId.endsWith(`:${eventId}`),
+  );
+}
+
+// The logs are append-only, one JSON object per line, so walk from the end and
+// stop at the first match instead of parsing the whole file.
+function lastJsonLine<T>(
+  path: string,
+  matches: (record: T) => boolean,
+): T | null {
+  if (!existsSync(path)) return null;
+  const lines = readFileSync(path, "utf8").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] as string;
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line) as T;
+      if (matches(record)) return record;
+    } catch {
+      // A partial line from a log that is still being written.
+    }
+  }
+
+  return null;
+}
+
 function lastPerfSummaries(instanceId: string): string[] {
   const path = perfLogPath(instanceId);
-  if (!existsSync(path)) return [];
 
-  const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-  const commands = ["up", "verify"];
-  const latest = new Map<string, PerfRecord>();
-  for (
-    let index = lines.length - 1;
-    index >= 0 && latest.size < commands.length;
-    index -= 1
-  ) {
-    const record = JSON.parse(lines[index] as string) as PerfRecord;
-    if (commands.includes(record.command) && !latest.has(record.command)) {
-      latest.set(record.command, record);
-    }
-  }
+  return ["up", "verify"].flatMap((command) => {
+    const record = lastJsonLine<PerfRecord>(
+      path,
+      (candidate) => candidate.command === command,
+    );
 
-  const summaries: string[] = [];
-  for (const command of commands) {
-    const record = latest.get(command);
-    if (record) {
-      summaries.push(
-        `last ${command} ${(record.totalMs / 1000).toFixed(1)}s (${record.at})`,
-      );
-    }
-  }
-
-  return summaries;
+    return record
+      ? [
+          `last ${command} ${(record.totalMs / 1000).toFixed(1)}s (${record.at})`,
+        ]
+      : [];
+  });
 }
 
 async function measureStep<T>(

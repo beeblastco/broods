@@ -27,6 +27,12 @@ const {
 } = await import("../src/harness/sandbox/s3-mount.ts");
 
 const NS = "fs-abc";
+const BYO_STORAGE = {
+  provider: "s3" as const,
+  bucket: "acme-cached",
+  prefix: "agents/",
+  auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
+};
 
 beforeEach(() => {
   lastAssumeRoleInput = undefined;
@@ -260,12 +266,6 @@ describe("resolveS3ReadTarget", () => {
   });
 
   it("reuses an assumed session across reads until it nears expiry", async () => {
-    const byoStorage = {
-      provider: "s3" as const,
-      bucket: "acme-cached",
-      prefix: "agents/",
-      auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
-    };
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000);
     assumeRoleSendMock.mockResolvedValueOnce({
       Credentials: {
@@ -277,11 +277,11 @@ describe("resolveS3ReadTarget", () => {
     } as never);
 
     const first = await resolveS3ReadTarget({
-      storage: byoStorage,
+      storage: BYO_STORAGE,
       namespace: NS,
     });
     const second = await resolveS3ReadTarget({
-      storage: byoStorage,
+      storage: BYO_STORAGE,
       namespace: NS,
     });
 
@@ -291,19 +291,14 @@ describe("resolveS3ReadTarget", () => {
 
     // A different prefix is a different session policy: never shared.
     await resolveS3ReadTarget({
-      storage: { ...byoStorage, prefix: "other/" },
+      storage: { ...BYO_STORAGE, prefix: "other/" },
       namespace: NS,
     });
     expect(assumeRoleSendMock).toHaveBeenCalledTimes(2);
   });
 
   it("assumes again when the cached session is about to expire", async () => {
-    const byoStorage = {
-      provider: "s3" as const,
-      bucket: "acme-expiring",
-      prefix: "agents/",
-      auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
-    };
+    const byoStorage = { ...BYO_STORAGE, bucket: "acme-expiring" };
     assumeRoleSendMock.mockResolvedValueOnce({
       Credentials: {
         AccessKeyId: "ASIA_TEMP",

@@ -2576,9 +2576,9 @@ describe("task input trace attribute", () => {
       {
         role: "user",
         content: [
-          { type: "text", text: "why did the deploy fail?" },
+          { type: "text", text: "why did the deploy fail? " },
           { type: "image", image: new URL("https://example.com/log.png") },
-          { type: "text", text: "post it in #eng" },
+          { type: "text", text: "post it in #eng\n" },
         ],
       },
       { role: "assistant", content: "Checking the logs." },
@@ -2586,7 +2586,7 @@ describe("task input trace attribute", () => {
     ];
 
     expect(latestUserText(messages)).toBe(
-      "why did the deploy fail?\npost it in #eng",
+      "why did the deploy fail? post it in #eng",
     );
     expect(latestUserText([{ role: "assistant", content: "hi" }])).toBe("");
   });

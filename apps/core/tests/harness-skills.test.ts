@@ -157,7 +157,6 @@ describe("listConfiguredSkillMetadata", () => {
   it("returns skill metadata for configured skills", async () => {
     const skillContent = createSkillMarkdown("my-skill", "A test skill");
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
     const { listConfiguredSkillMetadata } =
@@ -191,8 +190,6 @@ describe("listConfiguredSkillMetadata", () => {
   });
 
   it("throws when skill path belongs to another account", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
-
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
@@ -550,7 +547,6 @@ describe("listSkillMetadataForConfig", () => {
       "# Instructions\nFollow these steps.",
     );
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
     const { listSkillMetadataForConfig } =
@@ -584,8 +580,6 @@ describe("listSkillMetadataForConfig", () => {
   });
 
   it("throws when skill path belongs to another account", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
-
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
@@ -609,7 +603,6 @@ describe("listSkillMetadataForConfig", () => {
     const skill1Content = createSkillMarkdown("alpha-skill", "Alpha skill");
     const skill2Content = createSkillMarkdown("beta-skill", "Beta skill");
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.includes("alpha")) return skill1Content;
       if (key.includes("beta")) return skill2Content;
@@ -681,7 +674,6 @@ describe("loadConfiguredHarnessSkills", () => {
       "Review a code change",
       "Read the diff and report correctness risks.",
     );
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.endsWith("SKILL.md")) return skillContent;
       if (key.endsWith("references/checklist.md")) return "Check tests.";
@@ -722,7 +714,6 @@ describe("loadConfiguredHarnessSkills", () => {
   });
 
   it("rejects an oversized SKILL.md before building a harness skill", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue("x".repeat(5 * 1024 * 1024 + 1));
 
     const { loadConfiguredHarnessSkills } =

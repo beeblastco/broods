@@ -16,7 +16,6 @@ import {
 } from "../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
-  assertAccountOwnsSkillPath,
   contentTypeForSkillPath,
   isExecutableSkillPath,
   MAX_SKILL_BUNDLE_BYTES,
@@ -25,7 +24,6 @@ import {
   parseOwnedSkillPath,
   parseSkillMarkdown,
   parseSkillPath,
-  readSkillMarkdown,
   readSkillText,
   SKILL_FILE,
   skillInstructionsFromMarkdown,
@@ -46,6 +44,11 @@ interface SkillBundleSandboxStage {
   stagedPath: string;
   mirrorPaths: string[];
   files: string[];
+}
+
+interface LoadedHarnessSkill {
+  bytes: number;
+  skill: HarnessAgentSkill;
 }
 
 interface SkillSourceFile {
@@ -69,35 +72,30 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
-// Runs every turn, so every SKILL.md is read at once and the read doubles as the
-// existence check: a 404 fails the turn as a missing skill, like the HEAD it
-// replaces, and any other read error skips that skill.
+// Runs every turn, so every SKILL.md is read at once.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
 ): Promise<SkillMetadata[]> {
   const metadata = await Promise.all(
     skillPaths.map(async (skillPath): Promise<SkillMetadata | null> => {
-      parseOwnedSkillPath(accountId, skillPath);
-      let skillText: string;
-      try {
-        skillText = await readSkillText(skillPath, SKILL_FILE);
-      } catch (error) {
-        if (isMissingS3Error(error)) {
-          throw new SkillNotFoundError(skillPath);
-        }
+      const skillText = await readOwnedSkillFile(
+        accountId,
+        skillPath,
+        SKILL_FILE,
+      );
 
-        return null;
-      }
-      if (!skillText) return null;
-
-      return { ...parseSkillMarkdown(skillText), path: skillPath };
+      return skillText
+        ? { ...parseSkillMarkdown(skillText), path: skillPath }
+        : null;
     }),
   );
 
   return metadata.filter((entry): entry is SkillMetadata => entry !== null);
 }
 
+// Every skill and every bundled file is read at once; the bundle budget is
+// checked over the result.
 export async function loadConfiguredHarnessSkills(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -106,57 +104,52 @@ export async function loadConfiguredHarnessSkills(
     return [];
   }
 
-  const skills: HarnessAgentSkill[] = [];
-  let totalBytes = 0;
-  for (const skillPath of agentConfig.skills.allowed ?? []) {
-    await assertAccountOwnsSkillPath(accountId, skillPath);
-    const parsed = parseSkillPath(skillPath)!;
-    const skillText = await readSkillMarkdown(accountId, parsed.skillName);
-    if (!skillText) {
-      throw new Error(`Skill does not exist: ${skillPath}`);
-    }
-    const skillBytes = Buffer.byteLength(skillText, "utf-8");
-    if (skillBytes > MAX_SKILL_FILE_BYTES) {
-      throw new Error(
-        `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${SKILL_FILE}`,
-      );
-    }
-    totalBytes += skillBytes;
-    if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-      throw new Error(
-        `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
-      );
-    }
-    const skill = parseSkillMarkdown(skillText);
-    const sourceFiles = await listSkillSourceFiles(skillPath);
-    const files: Array<{ path: string; content: string }> = [];
-    for (const file of sourceFiles.filter(
-      (sourceFile) => sourceFile.path !== SKILL_FILE,
-    )) {
-      const content = await readSkillText(skillPath, file.path);
-      const fileBytes = Buffer.byteLength(content, "utf-8");
-      if (fileBytes > MAX_SKILL_FILE_BYTES) {
-        throw new Error(
-          `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${file.path}`,
+  const loaded = await Promise.all(
+    (agentConfig.skills.allowed ?? []).map(
+      async (skillPath): Promise<LoadedHarnessSkill> => {
+        const skillText = await readOwnedSkillFile(
+          accountId,
+          skillPath,
+          SKILL_FILE,
         );
-      }
-      totalBytes += fileBytes;
-      if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-        throw new Error(
-          `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
+        if (!skillText) {
+          throw new SkillNotFoundError(skillPath);
+        }
+        let bytes = skillFileBytes(skillPath, SKILL_FILE, skillText);
+        const sourceFiles = await listSkillSourceFiles(skillPath);
+        const files = await Promise.all(
+          sourceFiles
+            .filter((sourceFile) => sourceFile.path !== SKILL_FILE)
+            .map(async (file): Promise<{ path: string; content: string }> => ({
+              path: file.path,
+              content: await readSkillText(skillPath, file.path),
+            })),
         );
-      }
-      files.push({ path: file.path, content: content });
-    }
-    skills.push({
-      name: skill.name,
-      description: skill.description,
-      content: skillInstructionsFromMarkdown(skillText),
-      ...(files.length > 0 ? { files: files } : {}),
-    });
+        for (const file of files) {
+          bytes += skillFileBytes(skillPath, file.path, file.content);
+        }
+        const skill = parseSkillMarkdown(skillText);
+
+        return {
+          bytes: bytes,
+          skill: {
+            name: skill.name,
+            description: skill.description,
+            content: skillInstructionsFromMarkdown(skillText),
+            ...(files.length > 0 ? { files: files } : {}),
+          },
+        };
+      },
+    ),
+  );
+  const totalBytes = loaded.reduce((sum, entry) => sum + entry.bytes, 0);
+  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+    throw new Error(
+      `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
+    );
   }
 
-  return skills;
+  return loaded.map((entry) => entry.skill);
 }
 
 export async function loadConfiguredSkillPrompt(
@@ -334,6 +327,39 @@ function mirrorStagePrefixes(
     (dir) =>
       `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
   );
+}
+
+// The read doubles as the existence check: a 404 fails the turn as a missing
+// skill, like the HEAD it replaces, and any other read error skips the skill.
+async function readOwnedSkillFile(
+  accountId: string,
+  skillPath: string,
+  filePath: string,
+): Promise<string | null> {
+  parseOwnedSkillPath(accountId, skillPath);
+
+  return readSkillText(skillPath, filePath).catch((error: unknown) => {
+    if (isMissingS3Error(error)) {
+      throw new SkillNotFoundError(skillPath);
+    }
+
+    return null;
+  });
+}
+
+function skillFileBytes(
+  skillPath: string,
+  filePath: string,
+  content: string,
+): number {
+  const bytes = Buffer.byteLength(content, "utf-8");
+  if (bytes > MAX_SKILL_FILE_BYTES) {
+    throw new Error(
+      `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${filePath}`,
+    );
+  }
+
+  return bytes;
 }
 
 async function stageSkillBundleForSandbox(

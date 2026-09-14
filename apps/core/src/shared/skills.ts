@@ -216,17 +216,6 @@ export function parseSkillPath(
   };
 }
 
-export async function readSkillMarkdown(
-  accountId: string,
-  skillName: string,
-): Promise<string | null> {
-  validateSkillName(skillName);
-
-  return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(
-    () => null,
-  );
-}
-
 export async function readSkillText(
   skillPath: string,
   resourcePath: string,
