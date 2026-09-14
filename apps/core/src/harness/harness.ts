@@ -129,6 +129,9 @@ export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // truncate further on its side, but that only affects history older than the
 // JetStream replay window.
 const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
+// Tracing labels a run with its request. The whole text is already in
+// model.input, so this only has to fill one row.
+const MAX_TASK_INPUT_CHARS = 500;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -372,6 +375,10 @@ export async function runAgentLoop(
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
+    "task.input": traceAttribute(latestUserText(turnContext.messages)).slice(
+      0,
+      MAX_TASK_INPUT_CHARS,
+    ),
     "agent.message_count": turnContext.messages.length,
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
@@ -1916,6 +1923,21 @@ export async function runAgentLoop(
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
   });
+}
+
+// Tracing labels a run with this and its search matches on it. Only text parts
+// count, and a tool continuation keeps the request that started the run.
+export function latestUserText(messages: ModelMessage[]): string {
+  const message = messages.findLast(
+    (candidate): candidate is UserModelMessage => candidate.role === "user",
+  );
+  if (!message) return "";
+  if (typeof message.content === "string") return message.content.trim();
+
+  return message.content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n")
+    .trim();
 }
 
 // The system prompt is assembled per turn from the agent config plus every

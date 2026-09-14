@@ -358,8 +358,8 @@ export function TracingPanel({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Task bars scaled by duration. Expand a task for its step waterfall;
-        click any row to inspect input, reasoning, and output in the side panel.
+        Task bars scaled by duration. Click a row to open its steps and inspect
+        input, reasoning, and output in the side panel.
       </p>
 
       <ObservabilityToolbar
@@ -716,6 +716,8 @@ function spanLabel(span: ObservabilitySpanRow): string {
       ? `Subagent: ${agentId}`
       : "Subagent task";
   }
+  const input = span.attributes?.["task.input"];
+  if (typeof input === "string" && input) return input;
   const taskId = span.attributes?.["task.id"];
 
   return typeof taskId === "string" ? taskId : span.traceId;
@@ -1096,7 +1098,10 @@ function SpanRow({
   return (
     <tr
       id={isRoot ? `task-${span.traceId}` : undefined}
-      onClick={onSelect}
+      onClick={() => {
+        onSelect();
+        if (hasChildren) onToggle();
+      }}
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isSelected && "bg-accent/30",
