@@ -12,6 +12,18 @@ export type TerminalGatewayData = {
 };
 
 /**
+ * The daemon side of a machine sandbox (`broods machine`). Same relay as a
+ * terminal, but the upstream is core, which authenticates the bearer itself,
+ * so the "ticket" is just the daemon's own credential aimed at core.
+ */
+export type MachineGatewayData = {
+  kind: "machine";
+  ticket: TerminalTicket;
+};
+
+export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
+
+/**
  * Application close code for a ticket the gateway could not open. A refused
  * HTTP upgrade reaches the browser as a bare 1006 with no reason, so the
  * rejection is delivered on the socket instead, where the client can read it.
@@ -27,8 +39,14 @@ type TerminalSocketState = {
   pendingBytes: number;
 };
 
+/** Core refused the daemon's upgrade: bad key, or no core reachable. */
+export const MACHINE_UPSTREAM_REJECTED = {
+  code: 4401,
+  reason: "Core refused the machine socket; check BROODS_API_KEY",
+} as const;
+
 const terminalState = new WeakMap<
-  Bun.ServerWebSocket<TerminalGatewayData>,
+  Bun.ServerWebSocket<RelayGatewayData>,
   TerminalSocketState
 >();
 
@@ -79,7 +97,7 @@ export function isSessionInitFrame(frame: string): boolean {
 }
 
 export function openTerminalUpstream(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
 ): void {
   const ticket = socket.data.ticket;
   if (!ticket) {
@@ -113,7 +131,9 @@ export function openTerminalUpstream(
   upstream.binaryType = "arraybuffer";
   state.upstream = upstream;
 
+  let opened = false;
   upstream.onopen = () => {
+    opened = true;
     for (const chunk of state.pending) upstream.send(chunk);
     state.pending = [];
     state.pendingBytes = 0;
@@ -139,19 +159,33 @@ export function openTerminalUpstream(
     }
   };
 
-  upstream.onclose = () => {
-    if (socket.readyState === WebSocket.OPEN)
-      socket.close(1000, "terminal session ended");
+  upstream.onclose = (event) => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    if (socket.data.kind === "machine") {
+      // Core's own close code (4404 unknown sandbox, 4409 replaced) is the
+      // daemon's only explanation, so it passes through untouched. A refused
+      // upgrade never opens and arrives as a bare 1006.
+      if (opened) socket.close(event.code, event.reason);
+      else
+        socket.close(
+          MACHINE_UPSTREAM_REJECTED.code,
+          MACHINE_UPSTREAM_REJECTED.reason,
+        );
+
+      return;
+    }
+    socket.close(1000, "terminal session ended");
   };
 
   upstream.onerror = () => {
-    if (socket.readyState === WebSocket.OPEN)
-      socket.close(1011, "sandbox terminal transport error");
+    if (socket.readyState !== WebSocket.OPEN || socket.data.kind === "machine")
+      return;
+    socket.close(1011, "sandbox terminal transport error");
   };
 }
 
 export function relayTerminalInput(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
   rawMessage: string | Buffer,
 ): void {
   const state = terminalState.get(socket);
@@ -179,7 +213,7 @@ export function relayTerminalInput(
 }
 
 export function cleanupTerminalSocket(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
 ): void {
   const state = terminalState.get(socket);
   if (!state) return;

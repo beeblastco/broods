@@ -22,7 +22,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 
 const CONVEX_IMAGE =
@@ -35,6 +35,7 @@ const PORT_BLOCK_SIZE = 10;
 // prepare work that grows or goes serial, not network latency.
 const PREPARE_BUDGET_MS = 100;
 const RUN_POLL_TIMEOUT_MS = 120_000;
+const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
 
 // The "Context prepared" line core logs once per run (apps/core harness.ts).
@@ -336,12 +337,16 @@ async function verify(): Promise<void> {
   });
 
   // The 202 names the run by a server-issued id; polling follows its statusUrl.
-  const startRun = async (eventId: string, text: string): Promise<string> => {
+  const startRun = async (
+    eventId: string,
+    text: string,
+    runAgentId: string = agentId,
+  ): Promise<string> => {
     const response = await httpJson(`${gatewayUrl}/v1/runs`, {
       method: "POST",
       token: accountSecret,
       body: {
-        agentId: agentId,
+        agentId: runAgentId,
         eventId: eventId,
         conversationKey: `smoke-${runId}`,
         background: true,
@@ -399,6 +404,113 @@ async function verify(): Promise<void> {
     console.log(
       `prepare   ${prepared.durationMs}ms: history ${prepared.historyMs}ms over ${prepared.historyRows} rows, runtime ${prepared.runtimeMs}ms, memory ${prepared.memoryMs}ms, skills ${prepared.skillsMs}ms, subagents ${prepared.subagentsMs}ms, media ${prepared.mediaMs}ms`,
     );
+  });
+
+  // This computer as the sandbox: the CLI daemon dials the gateway and core
+  // resolves the record it claims. With a model key the agent's bash then runs
+  // here and the reply carries this host's name.
+  await measureStep(perf, "machine sandbox", async () => {
+    const sandboxName = `machine-${runId}`;
+    const created = await httpJson(`${gatewayUrl}/v1/sandboxes`, {
+      method: "POST",
+      token: accountSecret,
+      body: {
+        name: sandboxName,
+        config: {
+          provider: "machine",
+          permissionMode: "bypass",
+          network: { mode: "allow-all" },
+        },
+      },
+    });
+    const sandboxId = (created.body as { sandboxId?: string }).sandboxId;
+    assertStep(
+      "create machine sandbox (config plane via gateway)",
+      created.status === 201 && typeof sandboxId === "string",
+      `status ${created.status}: ${JSON.stringify(created.body)}`,
+    );
+
+    let daemonOutput = "";
+    const daemon = spawn(
+      "bun",
+      ["packages/broods/src/cli/index.ts", "machine", sandboxName],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          BROODS_API_KEY: accountSecret,
+          BROODS_BASE_URL: gatewayUrl,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    daemon.stdout.on("data", (chunk: Buffer) => (daemonOutput += chunk));
+    daemon.stderr.on("data", (chunk: Buffer) => (daemonOutput += chunk));
+    try {
+      const connected = await pollUntil(
+        {
+          initialIntervalMs: 100,
+          maxIntervalMs: 500,
+          timeoutMs: MACHINE_CONNECT_TIMEOUT_MS,
+        },
+        async () =>
+          daemonOutput.includes(`connected as ${sandboxName}`) ? true : null,
+      );
+      assertStep(
+        "broods machine connected through the gateway",
+        connected === true,
+        daemonOutput,
+      );
+      if (!modelKey) {
+        console.log(
+          "  skip agent bash on this machine (set ANTHROPIC_API_KEY for the full run)",
+        );
+
+        return;
+      }
+
+      const agent = await httpJson(`${gatewayUrl}/v1/agents`, {
+        method: "POST",
+        token: accountSecret,
+        body: {
+          name: sandboxName,
+          config: {
+            model: {
+              provider: "anthropic",
+              modelId: "claude-haiku-4-5-20251001",
+            },
+            provider: { anthropic: { apiKey: modelKey } },
+            instructions:
+              "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
+            sandbox: sandboxId,
+          },
+        },
+      });
+      const machineAgentId = (agent.body as { agentId?: string }).agentId;
+      assertStep(
+        "create agent on the machine sandbox",
+        agent.status === 201 && typeof machineAgentId === "string",
+        `status ${agent.status}: ${JSON.stringify(agent.body)}`,
+      );
+      const statusUrl = await startRun(
+        `${eventId}-machine`,
+        "Run hostname.",
+        machineAgentId,
+      );
+      const finalStatus = (await pollRunStatus(statusUrl, accountSecret)) as {
+        status?: string;
+        response?: unknown;
+      };
+      assertStep(
+        "agent bash ran on this machine and the reply names this host",
+        finalStatus.status === "completed" &&
+          JSON.stringify(finalStatus.response ?? "").includes(hostname()) &&
+          daemonOutput.includes("$ "),
+        `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
+      );
+    } finally {
+      daemon.kill("SIGINT");
+    }
   });
 
   const totalMs = Date.now() - startedAt;

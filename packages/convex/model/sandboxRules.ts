@@ -13,6 +13,7 @@ export const SANDBOX_PROVIDERS = [
   "e2b",
   "daytona",
   "vercel",
+  "machine",
 ] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
@@ -178,6 +179,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
+  assertMachineFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -277,13 +279,32 @@ function assertEnvVarsAndOptions(
   }
 }
 
+// A machine is the user's own computer: always on, sized by whatever it is,
+// and nothing between it and the network. The record cannot claim otherwise.
+function assertMachineFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (provider !== "machine") return;
+  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    if (config[field] !== undefined) {
+      throw new Error(
+        `config.${field} does not apply to the machine provider; the user's computer is always on and sized by itself`,
+      );
+    }
+  }
+}
+
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
 ): void {
-  if (provider === "e2b" && network.mode !== "allow-all") {
+  if (
+    (provider === "e2b" || provider === "machine") &&
+    network.mode !== "allow-all"
+  ) {
     throw new Error(
-      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+      `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
   if (
@@ -585,6 +606,11 @@ function validateProviderOptions(
     throw new Error(
       "config.options.functionNames is not supported in account sandbox config",
     );
+  }
+  if (provider === "machine" && "cwd" in options) {
+    if (typeof options.cwd !== "string" || options.cwd.trim().length === 0) {
+      throw new Error("config.options.cwd must be a non-empty string");
+    }
   }
   if (provider === "vercel") {
     if ("image" in options && typeof options.image !== "string") {

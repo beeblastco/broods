@@ -5,6 +5,7 @@
 
 import { DaytonaSandboxExecutor } from "./daytona-executor.ts";
 import { E2BSandboxExecutor } from "./e2b-executor.ts";
+import { MachineSandboxExecutor } from "./machine-executor.ts";
 import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
 import type {
   SandboxExecutor,
@@ -20,6 +21,7 @@ export const SANDBOX_PROVIDERS = [
   "e2b",
   "daytona",
   "vercel",
+  "machine",
 ] as const satisfies readonly SandboxProvider[];
 
 export function createSandboxExecutor(
@@ -43,6 +45,9 @@ export function createSandboxExecutor(
   }
   if (provider === "vercel") {
     return new VercelSandboxExecutor(config);
+  }
+  if (provider === "machine") {
+    return new MachineSandboxExecutor(config);
   }
 
   throw new Error(`sandbox provider ${provider} is not supported`);

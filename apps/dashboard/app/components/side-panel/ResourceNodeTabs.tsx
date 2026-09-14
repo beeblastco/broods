@@ -140,6 +140,7 @@ export function SandboxResourceDetailsTab({
             { value: "lambda", label: "Managed VM" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
+            { value: "machine", label: "Your computer" },
           ]}
         />
         <SelectField

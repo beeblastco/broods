@@ -481,6 +481,7 @@ export const sandboxProviderValidator = v.union(
   v.literal("daytona"),
   v.literal("e2b"),
   v.literal("vercel"),
+  v.literal("machine"),
 );
 
 /**

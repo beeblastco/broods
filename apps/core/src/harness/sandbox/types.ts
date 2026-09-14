@@ -21,7 +21,8 @@ export type SandboxProvider =
   | "lambda"
   | "e2b"
   | "daytona"
-  | "vercel";
+  | "vercel"
+  | "machine";
 export type SandboxRuntime = "bash" | "python" | "node";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 

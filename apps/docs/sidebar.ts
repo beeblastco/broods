@@ -147,6 +147,11 @@ const sidebars: SidebarsConfig = {
                       id: "workspace/sandbox/vercel",
                       label: "Vercel",
                     },
+                    {
+                      type: "doc",
+                      id: "workspace/sandbox/machine",
+                      label: "Machine",
+                    },
                   ],
                 },
               ],

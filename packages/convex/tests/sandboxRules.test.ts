@@ -243,6 +243,42 @@ describe("sandbox config defaults & validation", () => {
     ).toEqual({ mode: "allow-all" });
   });
 
+  it("accepts a machine sandbox only as the always-on, unrestricted thing it is", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "machine",
+        network: { mode: "allow-all" },
+        options: { cwd: "/Users/me/app" },
+      }),
+    ).toMatchObject({ provider: "machine", options: { cwd: "/Users/me/app" } });
+    expect(() => normalizeSandboxConfig({ provider: "machine" })).toThrow(
+      "machine cannot enforce egress restrictions",
+    );
+    for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+      expect(() =>
+        normalizeSandboxConfig({
+          provider: "machine",
+          network: { mode: "allow-all" },
+          [field]:
+            field === "size"
+              ? "small"
+              : field === "snapshot"
+                ? "img"
+                : field === "memoryLimit"
+                  ? 512
+                  : true,
+        }),
+      ).toThrow(`config.${field} does not apply to the machine provider`);
+    }
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "machine",
+        network: { mode: "allow-all" },
+        options: { cwd: " " },
+      }),
+    ).toThrow("config.options.cwd must be a non-empty string");
+  });
+
   it("round-trips runtimes/network/envVars and trims name/description through create input", () => {
     expect(
       normalizeCreateSandboxConfigInput({

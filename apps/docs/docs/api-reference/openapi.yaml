@@ -1283,7 +1283,7 @@ paths:
                     provider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        enum: [sandbox, lambda, e2b, daytona, vercel, machine],
                         default: sandbox,
                         description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
                       }
@@ -1324,7 +1324,7 @@ paths:
                     fallbackProvider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        enum: [sandbox, lambda, e2b, daytona, vercel, machine],
                         description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. options and snapshot are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:

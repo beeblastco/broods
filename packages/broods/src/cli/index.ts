@@ -77,6 +77,7 @@ import {
   printReadyLine,
   printWarning,
 } from "./output.ts";
+import { runMachineDaemon } from "./machine.ts";
 import { runAgentTui, streamAgentText } from "./tui.ts";
 import {
   isNewerVersion,
@@ -129,6 +130,7 @@ Runtime:
   run <agent> [prompt] Chat with an agent in a terminal UI
   logs                 Backfill recent logs then live-tail
   stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
+  machine <sandbox>    Make this computer the sandbox behind a "machine" record
 
 CLI:
   mcp                  Serve the account config plane to an agent over MCP (stdio)
@@ -226,6 +228,19 @@ Options:
   --sandbox <id>        Tail one sandbox instance's guest output instead. The id
                         is the last segment of the instance's log stream
                         (dashboard Instances sheet).
+
+${GLOBAL_OPTIONS}`,
+  machine: `Usage: broods machine <sandbox> [options]
+
+Makes this computer the sandbox behind a sandbox record whose provider is
+"machine". The agent keeps running in the cloud; its bash tool runs here, as
+you, with your PATH and environment. Stays connected until Ctrl+C and
+reconnects on its own after a network drop.
+
+Authenticates with BROODS_API_KEY from .env.local, like \`broods logs\`.
+
+Options:
+  --cwd <dir>           Working directory for commands (default: current directory)
 
 ${GLOBAL_OPTIONS}`,
   org: `Usage: broods org <list|use|create> [name]
@@ -384,6 +399,10 @@ async function main(): Promise<void> {
       return;
     case "logs":
       await logs(args);
+
+      return;
+    case "machine":
+      await machine(args);
 
       return;
     case "agent":
@@ -2183,6 +2202,43 @@ async function streamLogs(args: string[]): Promise<void> {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     }
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
+}
+
+// `broods machine <sandbox>` serves bash execs for one machine sandbox record
+// until Ctrl-C. A refusal from core (bad key, unknown record, replaced by a
+// newer daemon) ends it with that reason; anything else reconnects.
+async function machine(args: string[]): Promise<void> {
+  const sandbox = positionalArgs(args)[0];
+  if (!sandbox) {
+    console.log(COMMAND_HELP.machine);
+    process.exitCode = 1;
+
+    return;
+  }
+  const { apiKey, baseUrl } = resolveObservabilityCredentials();
+  const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
+  const controller = new AbortController();
+  const onSigint = (): void => controller.abort();
+  process.on("SIGINT", onSigint);
+  console.log(
+    `Connecting ${sandbox} to ${baseUrl} (cwd ${cwd}), Ctrl+C to stop`,
+  );
+
+  try {
+    await runMachineDaemon({
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      cwd: cwd,
+      log: (line) => console.log(line),
+      sandbox: sandbox,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   } finally {
     process.off("SIGINT", onSigint);
   }
