@@ -54,12 +54,11 @@ function sandboxObject(id: string, state: string): Record<string, unknown> {
 // The mount check is the one mountpoint probe that carries no credentials; the
 // remount runs the same probe with AWS keys in its env.
 function isMountCheck(body: Record<string, unknown> | undefined): boolean {
-  const env = body?.env as Record<string, string> | undefined;
+  const env = body?.env;
+  const carriesCredentials =
+    typeof env === "object" && env !== null && "AWS_ACCESS_KEY_ID" in env;
 
-  return (
-    String(body?.cmd).includes("mountpoint -q") &&
-    env?.AWS_ACCESS_KEY_ID === undefined
-  );
+  return String(body?.cmd).includes("mountpoint -q") && !carriesCredentials;
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -209,8 +208,20 @@ mock.module("@aws-sdk/client-sts", () => ({
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const BASE = "https://workdir.test";
 
+// One macrotask, so work the run left off its clock (a delete, its catch) settles.
+function tick(): Promise<void> {
+  return new Promise((resolve): void => {
+    setTimeout(resolve, 0);
+  });
+}
+
 function execCalls(): FetchCall[] {
   return fetchCalls.filter((c) => c.path.endsWith("/exec"));
+}
+
+// The exec bodies in order, so a test can assert the whole probe/mount/command sequence.
+function execCommands(): string[] {
+  return execCalls().map((c): string => String(c.body?.cmd));
 }
 
 // The parsed body of the most recent create call.
@@ -372,13 +383,11 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(result).toMatchObject({ ok: true, stdout: "workdir ok\n" });
-    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+    expect(fetchCalls.some((c): boolean => c.method === "DELETE")).toBe(true);
     // Shutdown still waits for it: the drain stays open until the delete settles.
     const drained = drainInFlight().then((): "drained" => "drained");
-    const tick = new Promise<"pending">((resolve): void => {
-      setTimeout(() => resolve("pending"), 0);
-    });
-    expect(await Promise.race([drained, tick])).toBe("pending");
+    const pending = tick().then((): "pending" => "pending");
+    expect(await Promise.race([drained, pending])).toBe("pending");
     settleDelete();
     expect(await drained).toBe("drained");
   });
@@ -407,15 +416,13 @@ describe("WorkdirSandboxExecutor.run", () => {
         outputLimitBytes: 4096,
       });
       expect(result).toMatchObject({ ok: true, stdout: "workdir ok\n" });
-      // The delete settles off the run's clock; fail it, then drain before reading.
+      // The delete settles off the run's clock: fail it, let its catch log.
       failDelete(new Error("host busy"));
-      await new Promise((resolve): void => {
-        setTimeout(resolve, 0);
-      });
+      await tick();
 
       expect(
         lines.some(
-          (line) =>
+          (line): boolean =>
             line.includes("workdir sandbox delete failed") &&
             line.includes('"sandboxId":"sbx_new"') &&
             line.includes("host busy"),
@@ -827,7 +834,7 @@ describe("WorkdirSandboxExecutor.run", () => {
   it("still deletes an ephemeral sandbox when minting its mount credentials fails", async (): Promise<void> => {
     process.env.SANDBOX_MOUNT_ROLE_ARN =
       "arn:aws:iam::123456789012:role/sandbox-mount";
-    assumeRoleSendMock.mockImplementationOnce(async () => {
+    assumeRoleSendMock.mockImplementationOnce(async (): Promise<never> => {
       throw new Error("sts down");
     });
     const executor = await newExecutor({
@@ -846,7 +853,8 @@ describe("WorkdirSandboxExecutor.run", () => {
     ).rejects.toThrow("sts down");
     expect(
       fetchCalls.some(
-        (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_new",
+        (c): boolean =>
+          c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_new",
       ),
     ).toBe(true);
     expect(execCalls()).toHaveLength(0);
@@ -856,7 +864,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN =
       "arn:aws:iam::123456789012:role/sandbox-mount";
     createRefusal = 503;
-    assumeRoleSendMock.mockImplementationOnce(async () => {
+    assumeRoleSendMock.mockImplementationOnce(async (): Promise<never> => {
       throw new Error("sts down");
     });
     const unhandled: unknown[] = [];
@@ -879,9 +887,7 @@ describe("WorkdirSandboxExecutor.run", () => {
           outputLimitBytes: 4096,
         }),
       ).rejects.toThrow("admission ceiling");
-      await new Promise((resolve): void => {
-        setTimeout(resolve, 0);
-      });
+      await tick();
 
       expect(unhandled).toEqual([]);
       expect(assumeRoleSendMock).toHaveBeenCalledTimes(1);
@@ -908,7 +914,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(assumeRoleSendMock).toHaveBeenCalledTimes(1);
-    const commands = execCalls().map((c) => String(c.body?.cmd));
+    const commands = execCommands();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toContain("mount-s3");
     expect(commands[1]).toBe("ls");
@@ -933,7 +939,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
-    const commands = execCalls().map((c) => String(c.body?.cmd));
+    const commands = execCommands();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toContain(`mountpoint -q '/mnt/workspaces/${NS}'`);
     expect(commands[1]).toBe("ls");
@@ -959,7 +965,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
 
     expect(assumeRoleSendMock).toHaveBeenCalledTimes(1);
-    const commands = execCalls().map((c) => String(c.body?.cmd));
+    const commands = execCommands();
     expect(commands).toHaveLength(3);
     expect(commands[1]).toContain("mount-s3");
     expect(commands[2]).toBe("ls");
@@ -1230,7 +1236,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
     });
 
     expect(assumeRoleSendMock).not.toHaveBeenCalled();
-    const commands = execCalls().map((c) => String(c.body?.cmd));
+    const commands = execCommands();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toContain(`mountpoint -q '/mnt/workspaces/${NS}'`);
     expect(commands[1]).toContain("setsid bash -c");

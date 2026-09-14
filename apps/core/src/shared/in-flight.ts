@@ -6,6 +6,7 @@
  * importing the entry point.
  */
 
+import { toErrorMessage } from "./errors.ts";
 import { logError } from "./log.ts";
 
 const inFlight = new Set<Promise<void>>();
@@ -19,10 +20,8 @@ export async function drainInFlight(): Promise<void> {
 export function waitUntil(promise: Promise<unknown>): void {
   const tracked = Promise.resolve(promise)
     .then((): undefined => undefined)
-    .catch((err: unknown): void => {
-      logError("Post-response work failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+    .catch((error: unknown): void => {
+      logError("Post-response work failed", { error: toErrorMessage(error) });
     })
     .finally((): void => {
       inFlight.delete(tracked);
