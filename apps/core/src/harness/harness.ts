@@ -106,6 +106,7 @@ import {
 import type { PendingQuestionSummary } from "./questions.ts";
 import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
+import type { SandboxRunMetadata } from "../shared/sandbox-sizes.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
@@ -338,6 +339,15 @@ export async function runAgentLoop(
     otelContextApi.active(),
     otelRootSpan,
   );
+  // The invoking run's identity, mirrored onto any sandbox it reserves so the
+  // dashboard activity links back to this trace and task. Shared by the tool
+  // registry and the resident-harness reservation.
+  const sandboxMetadata: SandboxRunMetadata = {
+    traceId: traceId,
+    taskId: session.eventId,
+    ...(session.agentId ? { agentId: session.agentId } : {}),
+    conversationKey: session.conversationKey,
+  };
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
@@ -537,12 +547,7 @@ export async function runAgentLoop(
         },
         approvalRequirements: configuredApprovals,
         policyMcpIdsByName: policyMcpIdsByName,
-        sandboxMetadata: {
-          traceId: traceId,
-          taskId: session.eventId,
-          ...(session.agentId ? { agentId: session.agentId } : {}),
-          conversationKey: session.conversationKey,
-        },
+        sandboxMetadata: sandboxMetadata,
         ...(channelDelivery && session.channelActions
           ? {
               channel: {
@@ -1794,6 +1799,7 @@ export async function runAgentLoop(
           instructions: turnContext.system
             .map((message) => message.content)
             .join("\n\n"),
+          metadata: sandboxMetadata,
           reservationKey: session.conversationKey,
           skills: await session.loadHarnessSkills(),
           toolApproval:
