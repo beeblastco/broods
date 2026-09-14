@@ -1,7 +1,8 @@
 "use client";
 
+import { CopyRow } from "@/app/components/CopyButton";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
-import { Badge } from "@/app/components/ui/badge";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
   isRootSpanKind,
@@ -46,11 +47,13 @@ interface ContinueNote {
   text: string;
 }
 
-// One line in a span's Details section.
+// One line in a span's Details section. Values read in mono (ids, counts,
+// model ids) unless the row is `words`.
 interface DetailRow {
   key: string;
   label: string;
   value: string;
+  words?: true;
 }
 
 // One collapsible payload section, with the count line on its header.
@@ -118,6 +121,7 @@ interface DetailField {
   extraLabel?: string;
   key: string;
   label: string;
+  words?: true;
 }
 
 // Token rows come in two spellings: the task root writes usage.*, a model step
@@ -141,8 +145,8 @@ const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
 // second value after it.
 const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
   { key: "model.id", label: "Model" },
-  { key: "model.provider", label: "Provider" },
-  { key: "task.delivery", label: "Delivery" },
+  { key: "model.provider", label: "Provider", words: true },
+  { key: "task.delivery", label: "Delivery", words: true },
   { key: "agent.step_count", label: "Steps" },
   { key: "agent.tool_call_count", label: "Tool call count" },
   ...["usage", "model"].flatMap((prefix) =>
@@ -153,8 +157,8 @@ const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
       extraLabel: field.extraLabel,
     })),
   ),
-  { key: "model.finish_reason", label: "Finish reason" },
-  { key: "tool.success", label: "Succeeded" },
+  { key: "model.finish_reason", label: "Finish reason", words: true },
+  { key: "tool.success", label: "Succeeded", words: true },
   { key: "task.id", label: "Task id" },
 ];
 
@@ -197,47 +201,23 @@ const SHOWN_KEYS: ReadonlySet<string> = new Set([
 const SPAN_SEARCH_TEXT = new WeakMap<ObservabilitySpanRow, string>();
 
 interface KindTheme {
-  badgeBg: string;
   bar: string;
-  text: string;
+  // The muted word after a child span's name and in the detail header.
+  word: string;
 }
 
-// One hue per span kind, checked for colorblind (protan/deutan) separation on
-// both surfaces, including against the error-bar red that can replace a root
-// bar. Badge text keeps the 700-on-light / 300-on-dark convention; bars step
-// deeper where a hue would wash out on one surface (task keeps violet-500 on
-// dark: violet-400 collapses into model.step's blue-400 under deuteranopia).
+// One bar hue per span kind, checked for colorblind (protan/deutan) separation
+// on both surfaces, including against the error red that can replace a root
+// bar. Bars step deeper where a hue would wash out on one surface (task keeps
+// violet-500 on dark: violet-400 collapses into model.step's blue-400 under
+// deuteranopia).
 const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
-  task: {
-    badgeBg: "bg-violet-500/15",
-    bar: "bg-violet-500/70",
-    text: "text-violet-700 dark:text-violet-300",
-  },
-  cron: {
-    badgeBg: "bg-amber-500/15",
-    bar: "bg-amber-500/70 dark:bg-amber-300/70",
-    text: "text-amber-700 dark:text-amber-300",
-  },
-  subtask: {
-    badgeBg: "bg-cyan-500/15",
-    bar: "bg-cyan-500/70 dark:bg-cyan-300/70",
-    text: "text-cyan-700 dark:text-cyan-300",
-  },
-  "model.step": {
-    badgeBg: "bg-blue-500/15",
-    bar: "bg-blue-700/70 dark:bg-blue-400/70",
-    text: "text-blue-700 dark:text-blue-300",
-  },
-  "tool.call": {
-    badgeBg: "bg-orange-500/15",
-    bar: "bg-orange-600/70 dark:bg-orange-500/70",
-    text: "text-orange-700 dark:text-orange-300",
-  },
-  phase: {
-    badgeBg: "bg-teal-500/15",
-    bar: "bg-teal-700/70 dark:bg-teal-500/70",
-    text: "text-teal-700 dark:text-teal-300",
-  },
+  task: { bar: "bg-violet-500/70", word: "task" },
+  cron: { bar: "bg-amber-500/70 dark:bg-amber-300/70", word: "cron" },
+  subtask: { bar: "bg-cyan-500/70 dark:bg-cyan-300/70", word: "subagent" },
+  "model.step": { bar: "bg-blue-700/70 dark:bg-blue-400/70", word: "model" },
+  "tool.call": { bar: "bg-orange-600/70 dark:bg-orange-500/70", word: "tool" },
+  phase: { bar: "bg-teal-700/70 dark:bg-teal-500/70", word: "phase" },
 };
 
 // A root task/subtask still "running" past this likely never reported its
@@ -472,11 +452,6 @@ export function TracingPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <p className="shrink-0 text-xs text-muted-foreground">
-        Task bars scaled by duration. Click a row to open its steps and inspect
-        input, reasoning, and output in the side panel.
-      </p>
-
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
@@ -521,31 +496,19 @@ export function TracingPanel({
         detail={
           selected && (
             <DetailPanel
-              title={spanLabel(selected.span)}
+              title={spanLabel(selected.group.root)}
               meta={
-                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                  <Badge
-                    className={cn(
-                      "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-                      kindTheme(selected.span.kind).badgeBg,
-                      kindTheme(selected.span.kind).text,
-                    )}
-                  >
-                    {selected.span.kind}
-                  </Badge>
-                  <span
-                    className={cn(
-                      "font-medium",
-                      isStale(selected.span, isTaskRunning(selected.group.root))
-                        ? "text-muted-foreground"
-                        : statusColor(selected.span.status),
-                    )}
-                  >
-                    {isStale(selected.span, isTaskRunning(selected.group.root))
-                      ? "ended"
-                      : selected.span.status}
+                <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
+                  <span>
+                    {isRootSpanKind(selected.span.kind)
+                      ? kindTheme(selected.span.kind).word
+                      : `${spanLabel(selected.span)} ${kindTheme(selected.span.kind).word}`}
                   </span>
-                  <span className="text-muted-foreground">
+                  <SpanStatus
+                    span={selected.span}
+                    taskRunning={isTaskRunning(selected.group.root)}
+                  />
+                  <span className="font-mono">
                     {spanMetaLine(selected.span)}
                   </span>
                   {canContinue(selected.span) && (
@@ -566,22 +529,20 @@ export function TracingPanel({
           )
         }
       >
-        <table className="w-full text-xs font-mono table-fixed">
+        <table className="w-full table-fixed text-xs">
           <colgroup>
-            <col className="w-37" />
-            <col className="w-[26%]" />
-            <col className="w-21" />
-            <col className="w-18" />
-            <col className="w-18" />
+            <col className="w-33" />
             <col />
+            <col className="w-24" />
+            <col className="w-19" />
+            <col className="w-[26%]" />
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+            <tr className="text-left text-muted-foreground">
               <th className="px-3 py-2 font-medium">Started</th>
-              <th className="px-3 py-2 font-medium">Task / Span</th>
-              <th className="px-3 py-2 font-medium">Kind</th>
+              <th className="px-3 py-2 font-medium">Request</th>
               <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Duration</th>
+              <th className="px-3 py-2 text-right font-medium">Duration</th>
               <th className="px-3 py-2 font-medium">Timeline</th>
             </tr>
           </thead>
@@ -604,7 +565,7 @@ export function TracingPanel({
             {groups.length === 0 && (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={5}
                   className="h-32 text-center text-xs text-muted-foreground"
                 >
                   {entries.length === 0
@@ -644,7 +605,7 @@ function attributeText(value: unknown): string | undefined {
 function detailRows(span: ObservabilitySpanRow): DetailRow[] {
   const attributes = span.attributes ?? {};
   const labeled = DETAIL_FIELDS.flatMap(
-    ({ extraKey, extraLabel, key, label }): DetailRow[] => {
+    ({ extraKey, extraLabel, key, label, words }): DetailRow[] => {
       const value = attributeText(attributes[key]);
       if (value === undefined) return [];
       const extra = extraKey ? attributeText(attributes[extraKey]) : undefined;
@@ -655,6 +616,7 @@ function detailRows(span: ObservabilitySpanRow): DetailRow[] {
           label: label,
           value:
             extra === undefined ? value : `${value} · ${extra} ${extraLabel}`,
+          words: words,
         },
       ];
     },
@@ -826,15 +788,6 @@ function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
   return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
 }
 
-// The hue carries meaning here, so each tone needs both themes: the 300/400
-// shades only clear WCAG AA on the dark card, the 700 shades only on the light.
-function statusColor(status: ObservabilitySpanRow["status"]): string {
-  if (status === "running") return "text-sky-700 dark:text-sky-400";
-  if (status === "error") return "text-red-700 dark:text-red-400";
-
-  return "text-emerald-700 dark:text-emerald-400";
-}
-
 /** Newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   const tasks = spans.filter((span) => isRootSpanKind(span.kind));
@@ -897,39 +850,40 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
 }
 
-// Only a running span gets an icon (the spinner). Finished/errored/stale state is
-// already carried by the Status column, so a static tick/cross would just be
-// redundant chrome. Keep the tree minimal.
-function SpanStatusIcon({
+/**
+ * Status as a dot and a word. A static dot, not a spinner: a long run keeps
+ * many spans "running" at once and per-row spin animations repaint the whole
+ * tree continuously. The hue only clears WCAG AA as a dot next to plain text,
+ * so the word itself stays the row color.
+ */
+function SpanStatus({
   span,
   taskRunning,
 }: {
   span: ObservabilitySpanRow;
   taskRunning: boolean;
-}): React.JSX.Element | null {
-  // Static dot, not a spinner: a long run keeps many spans "running" at once and
-  // per-row spin animations repaint the whole tree continuously.
-  if (span.status === "running" && !isStale(span, taskRunning)) {
-    return (
-      <span className="size-2 shrink-0 rounded-full bg-sky-700 dark:bg-sky-400" />
-    );
-  }
+}): React.JSX.Element {
+  const stale = isStale(span, taskRunning);
 
-  return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <StatusDot tone={stale ? "stale" : span.status} />
+      {stale ? "ended" : span.status}
+    </span>
+  );
 }
 
+/** The span's own name: the request for a root, the tool or step for a child. */
 function spanLabel(span: ObservabilitySpanRow): string {
   if (span.kind === "tool.call") {
     const toolName = span.attributes?.["tool.name"];
 
-    return typeof toolName === "string" ? `Tool: ${toolName}` : "Tool call";
+    return typeof toolName === "string" ? toolName : "tool call";
   }
   if (span.kind === "model.step") {
     const stepNumber = span.attributes?.["agent.step_number"];
 
-    return typeof stepNumber === "number"
-      ? `Model step ${stepNumber + 1}`
-      : "Model step";
+    return typeof stepNumber === "number" ? `step ${stepNumber + 1}` : "step";
   }
   if (span.kind === "phase") {
     const label = span.attributes?.["phase.name"];
@@ -1058,22 +1012,18 @@ function TimelineBar({
 function TimingChip({
   label,
   ms,
-  tone,
 }: {
   label: string;
   ms: number | undefined;
-  tone?: string;
 }): React.JSX.Element | null {
   if (ms === undefined) {
     return null;
   }
 
   return (
-    <span>
+    <span className="whitespace-nowrap">
       {label}{" "}
-      <span className={tone ?? "text-sky-700 dark:text-sky-300"}>
-        {formatDuration(ms)}
-      </span>
+      <span className="font-mono text-foreground/80">{formatDuration(ms)}</span>
     </span>
   );
 }
@@ -1217,16 +1167,27 @@ function SpanDetails({
                     : `${rows.length} fields`
                 }
               />
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 px-3 pb-3 text-[11px] font-mono">
-                {rows.map(({ key, label, value }) => (
-                  <div key={key} className="contents">
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd className="wrap-anywhere text-foreground/80">
+              <div className="grid px-1 pb-2 text-xs">
+                {rows.map(({ key, label, value, words }) => (
+                  <CopyRow
+                    key={key}
+                    value={value}
+                    className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
+                  >
+                    <span className="truncate text-muted-foreground">
+                      {label}
+                    </span>
+                    <span
+                      className={cn(
+                        "truncate text-foreground/80",
+                        !words && "font-mono",
+                      )}
+                    >
                       {value}
-                    </dd>
-                  </div>
+                    </span>
+                  </CopyRow>
                 ))}
-              </dl>
+              </div>
             </details>
           )}
         </div>
@@ -1243,10 +1204,12 @@ function SectionSummary({
   summary: string;
 }): React.JSX.Element {
   return (
-    <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground">
-      <ChevronRight className="size-3 shrink-0 transition-transform group-open/detail:rotate-90" />
+    <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-xs text-foreground/80 transition-colors hover:text-foreground">
+      <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open/detail:rotate-90" />
       <span className="flex-1">{label}</span>
-      <span className="font-mono text-[10px] font-normal">{summary}</span>
+      <span className="truncate font-mono text-muted-foreground">
+        {summary}
+      </span>
     </summary>
   );
 }
@@ -1260,7 +1223,7 @@ function SpanTimings({
   const historyRows = numericAttribute(span, "prepare.history_rows");
   if (historyRows !== undefined) {
     return (
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {PREPARE_TIMINGS.map(({ key, label }) => (
           <TimingChip
             key={key}
@@ -1268,7 +1231,12 @@ function SpanTimings({
             ms={numericAttribute(span, key)}
           />
         ))}
-        <span>{historyRows.toLocaleString()} history rows</span>
+        <span className="whitespace-nowrap">
+          history rows{" "}
+          <span className="font-mono text-foreground/80">
+            {historyRows.toLocaleString()}
+          </span>
+        </span>
       </div>
     );
   }
@@ -1281,38 +1249,31 @@ function SpanTimings({
   const toolInputMs = numericAttribute(span, "model.tool_input_stream_ms") ?? 0;
 
   return (
-    <div className="grid gap-1.5 text-[11px] font-mono text-muted-foreground">
+    <div className="grid gap-1.5 text-xs text-muted-foreground">
       {/* Step time, split so a slow step shows where it went. "Streaming" is
           ONLY model token generation. Tool execution is the separate "tool
           wait" (and the child tool spans), never folded into streaming. */}
       <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <TimingChip label="time to first token" ms={ttftMs} />
+        <TimingChip label="first token" ms={ttftMs} />
         <TimingChip label="streaming" ms={streamMs} />
         <TimingChip
           label="tool wait"
           ms={
             toolWaitMs !== undefined && toolWaitMs > 0 ? toolWaitMs : undefined
           }
-          tone="text-amber-700 dark:text-amber-300"
         />
       </div>
       {(reasoningMs > 0 || textMs > 0 || toolInputMs > 0) && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-          <span className="text-muted-foreground">streamed:</span>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <span>streamed</span>
           <TimingChip
             label="reasoning"
             ms={reasoningMs > 0 ? reasoningMs : undefined}
-            tone="text-teal-700 dark:text-teal-300"
           />
-          <TimingChip
-            label="text"
-            ms={textMs > 0 ? textMs : undefined}
-            tone="text-teal-700 dark:text-teal-300"
-          />
+          <TimingChip label="text" ms={textMs > 0 ? textMs : undefined} />
           <TimingChip
             label="tool input"
             ms={toolInputMs > 0 ? toolInputMs : undefined}
-            tone="text-teal-700 dark:text-teal-300"
           />
         </div>
       )}
@@ -1349,7 +1310,7 @@ function SpanRow({
 }): React.JSX.Element {
   // Every root gets its own duration bar, anchor id, and subtitle.
   const isRoot = isRootSpanKind(span.kind);
-  const stale = isStale(span, taskRunning);
+  const label = spanLabel(span);
   const parentTraceId =
     span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
 
@@ -1365,15 +1326,17 @@ function SpanRow({
       className={cn(
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isSelected && "bg-accent/30",
-        isRoot && "font-medium",
+        !isRoot && "text-foreground/80",
         highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
     >
       <td
-        className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground"
+        className="px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground"
         title={new Date(span.startTimeMs).toLocaleString()}
       >
-        {formatDateTime(span.startTimeMs)}
+        {isRoot
+          ? formatDateTime(span.startTimeMs)
+          : formatTime(span.startTimeMs)}
       </td>
       <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
         <span className="flex min-w-0 items-center gap-2">
@@ -1396,60 +1359,40 @@ function SpanRow({
           ) : (
             <span className="size-3.5 shrink-0" />
           )}
-          <SpanStatusIcon span={span} taskRunning={taskRunning} />
-          <span className="min-w-0">
-            <span className="block truncate" title={spanLabel(span)}>
-              {spanLabel(span)}
-            </span>
-            {isRoot && (
-              <span className="block truncate text-[11px] font-normal text-muted-foreground">
-                {span.agentId ?? "Unknown agent"} ·{" "}
-                {span.conversationKey ?? "No conversation"}
-                {typeof parentTraceId === "string" && parentTraceId && (
-                  <>
-                    {" · "}
-                    <button
-                      type="button"
-                      // Parent links render on subtask rows, so they wear the subtask hue.
-                      className={cn(
-                        "cursor-pointer hover:underline",
-                        KIND_THEME.subtask.text,
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onFocusTrace(parentTraceId);
-                      }}
-                      title="Jump to the parent task"
-                    >
-                      ↳ from parent
-                    </button>
-                  </>
-                )}
+          <span className="min-w-0 truncate" title={label}>
+            {label}
+            {isRoot ? (
+              <span className="text-muted-foreground">
+                {" · "}
+                {span.agentId ?? "unknown agent"}
+                {" · "}
+                {span.conversationKey ?? "no conversation"}
+              </span>
+            ) : (
+              <span className="ml-2 text-muted-foreground">
+                {kindTheme(span.kind).word}
               </span>
             )}
           </span>
+          {typeof parentTraceId === "string" && parentTraceId && (
+            <button
+              type="button"
+              className="shrink-0 cursor-pointer whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline"
+              onClick={(event) => {
+                event.stopPropagation();
+                onFocusTrace(parentTraceId);
+              }}
+              title="Jump to the parent task"
+            >
+              ↳ from parent
+            </button>
+          )}
         </span>
       </td>
-      <td className="px-3 py-1.5 whitespace-nowrap">
-        <Badge
-          className={cn(
-            "px-1.5 py-0 text-[10px] uppercase tracking-wide",
-            kindTheme(span.kind).badgeBg,
-            kindTheme(span.kind).text,
-          )}
-        >
-          {span.kind}
-        </Badge>
+      <td className="px-3 py-1.5">
+        <SpanStatus span={span} taskRunning={taskRunning} />
       </td>
-      <td
-        className={cn(
-          "px-3 py-1.5 whitespace-nowrap font-medium",
-          stale ? "text-muted-foreground" : statusColor(span.status),
-        )}
-      >
-        {stale ? "ended" : span.status}
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground">
+      <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
       </td>
       <td className="px-3 py-1.5">

@@ -1,0 +1,27 @@
+import { cn } from "@/app/lib/utils";
+
+export type StatusTone = "ok" | "error" | "running" | "stale";
+
+// The hue carries the meaning, so each tone needs both themes: the 400 shades
+// only clear WCAG AA on the dark card, the 600 shades only on the light.
+const TONE_BG: Record<StatusTone, string> = {
+  ok: "bg-emerald-600 dark:bg-emerald-400",
+  error: "bg-red-600 dark:bg-red-400",
+  running: "bg-sky-600 dark:bg-sky-400",
+  stale: "bg-muted-foreground/50",
+};
+
+/** Status as a small colored dot. The word beside it keeps the text color. */
+export function StatusDot({
+  tone,
+  className,
+}: {
+  tone: StatusTone;
+  className?: string;
+}): React.JSX.Element {
+  return (
+    <span
+      className={cn("size-1.5 shrink-0 rounded-full", TONE_BG[tone], className)}
+    />
+  );
+}
