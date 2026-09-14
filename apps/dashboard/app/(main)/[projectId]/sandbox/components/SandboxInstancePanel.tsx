@@ -1,7 +1,7 @@
 "use client";
 
 import { DetailPanel } from "@/app/components/DetailSplit";
-import { CopyButton } from "@/app/components/CopyButton";
+import { CopyButton, CopyRow } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -341,8 +341,9 @@ export function SandboxInstancePanel({
 }
 
 /**
- * Expects `events` newest first. Each row names the actor, links the trace the
- * action ran under, and shows the task it belonged to.
+ * Expects `events` newest first. One row per event: outcome dot, action,
+ * outcome, actor, a fixed "View trace" column so the link sits in the same
+ * place on every row, and the time. The ids under it copy on click.
  */
 function ActivityList({
   events,
@@ -353,59 +354,71 @@ function ActivityList({
   now: number;
   traceHref: (traceId: string) => string;
 }): React.JSX.Element {
+  if (events === undefined || events.length === 0) {
+    return (
+      <p className="py-4 text-xs text-muted-foreground">
+        {events === undefined ? "Loading activity..." : "No activity recorded."}
+      </p>
+    );
+  }
+
   return (
-    <div className="rounded-lg border border-border bg-card">
-      {events === undefined ? (
-        <div className="px-3 py-4 text-xs text-muted-foreground">
-          Loading activity...
-        </div>
-      ) : events.length === 0 ? (
-        <div className="px-3 py-4 text-xs text-muted-foreground">
-          No activity recorded.
-        </div>
-      ) : (
-        events.map((event) => (
-          <div
-            key={event._id}
-            className="border-b border-border px-3 py-2 last:border-0"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-xs font-medium text-foreground">
-                  {event.action}
-                </span>
-                <span
-                  className={cn(
-                    "truncate text-xs",
-                    event.result === "ok" ? "text-emerald-500" : "text-red-500",
-                  )}
-                >
-                  {auditDetail(event)}
-                </span>
-              </div>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {relativeTime(event.createdAt, now)}
-              </span>
-            </div>
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+    <div className="divide-y divide-border/40 text-xs">
+      {events.map((event) => (
+        <div
+          key={event._id}
+          className="grid grid-cols-[14px_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 px-2 py-1.5 transition-colors hover:bg-accent/20"
+        >
+          <span
+            className={cn(
+              "size-1.5 justify-self-center rounded-full",
+              event.result === "ok"
+                ? "bg-emerald-600 dark:bg-emerald-400"
+                : "bg-red-600 dark:bg-red-400",
+            )}
+          />
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="font-medium whitespace-nowrap text-foreground">
+              {event.action}
+            </span>
+            <span
+              className={cn(
+                "truncate",
+                event.result === "ok"
+                  ? "text-muted-foreground"
+                  : "text-red-700 dark:text-red-400",
+              )}
+            >
+              {auditDetail(event)}
+            </span>
+            <span className="ml-auto truncate text-muted-foreground/70">
               {actorLabel(event)}
-            </p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground empty:hidden">
+            </span>
+          </div>
+          {event.traceId ? (
+            <TraceLink href={traceHref(event.traceId)}>View trace</TraceLink>
+          ) : (
+            <span />
+          )}
+          <span className="w-16 text-right font-mono whitespace-nowrap text-muted-foreground">
+            {relativeTime(event.createdAt, now)}
+          </span>
+          {(event.traceId || event.taskId) && (
+            <div className="col-span-3 col-start-2 flex min-w-0 gap-3 font-mono text-muted-foreground">
               {event.traceId && (
-                <TraceLink
-                  traceId={event.traceId}
-                  href={traceHref(event.traceId)}
-                />
+                <CopyRow value={event.traceId} label="trace id">
+                  <span className="truncate">trace {event.traceId}</span>
+                </CopyRow>
               )}
               {event.taskId && (
-                <code className="max-w-45 truncate font-mono">
-                  task {event.taskId}
-                </code>
+                <CopyRow value={event.taskId} label="task id">
+                  <span className="truncate">task {event.taskId}</span>
+                </CopyRow>
               )}
             </div>
-          </div>
-        ))
-      )}
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -616,10 +629,11 @@ function InstanceDetailFields({
         <Field
           label="Created trace"
           value={
-            <TraceLink
-              traceId={instance.createdByTraceId}
-              href={traceHref(instance.createdByTraceId)}
-            />
+            <TraceLink href={traceHref(instance.createdByTraceId)}>
+              <code className="max-w-45 truncate font-mono">
+                {instance.createdByTraceId}
+              </code>
+            </TraceLink>
           }
         />
       )}
@@ -627,10 +641,11 @@ function InstanceDetailFields({
         <Field
           label="Last trace"
           value={
-            <TraceLink
-              traceId={instance.lastUsedTraceId}
-              href={traceHref(instance.lastUsedTraceId)}
-            />
+            <TraceLink href={traceHref(instance.lastUsedTraceId)}>
+              <code className="max-w-45 truncate font-mono">
+                {instance.lastUsedTraceId}
+              </code>
+            </TraceLink>
           }
         />
       )}
@@ -652,23 +667,22 @@ function InstanceDetailFields({
   );
 }
 
+/** Opens the Tracing tab focused on one trace. `children` is the link text. */
 function TraceLink({
-  traceId,
   href,
+  children,
 }: {
-  traceId: string;
   href: string;
+  children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <Button
-      nativeButton={false}
-      render={<Link href={href} draggable={false} />}
-      variant="outline"
-      size="xs"
-      className="cursor-pointer"
+    <Link
+      href={href}
+      draggable={false}
+      className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-foreground/80 transition-colors hover:text-foreground hover:underline"
     >
-      <code className="max-w-45 truncate font-mono">{traceId}</code>
-      <ExternalLink className="size-3" />
-    </Button>
+      {children}
+      <ExternalLink className="size-3 shrink-0" />
+    </Link>
   );
 }
