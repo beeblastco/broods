@@ -27,6 +27,10 @@ let execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
 // HTTP status the next POST /v1/sandboxes answers with; null means created.
 let createRefusal: number | null = null;
 let execRefusal: number | null = null;
+// Exit code of the credential-free mount check; 0 means live and fresh.
+let mountCheckExitCode = 0;
+// When set, DELETE requests hang until the test settles it.
+let pendingDelete: Promise<void> | null = null;
 
 // The documented sandbox object shape (docs/API.md:124-152), trimmed.
 function sandboxObject(id: string, state: string): Record<string, unknown> {
@@ -91,6 +95,9 @@ const fetchMock = mock(
           execRefusal,
         );
       }
+      // Only the credential-free mount check opens on the stamp read.
+      if (String(body?.cmd).startsWith("stamp="))
+        return jsonResponse({ exit_code: mountCheckExitCode, stdout: "" });
 
       return jsonResponse(execResult);
     }
@@ -100,7 +107,11 @@ const fetchMock = mock(
       return jsonResponse(sandboxObject("sbx_stored", "stopped"));
     if (method === "POST" && path.endsWith("/resume"))
       return jsonResponse(sandboxObject("sbx_stored", "running"));
-    if (method === "DELETE") return jsonResponse({});
+    if (method === "DELETE") {
+      await pendingDelete;
+
+      return jsonResponse({});
+    }
 
     return jsonResponse({ error: { code: "not_found", message: path } }, 404);
   },
@@ -226,6 +237,8 @@ beforeEach(() => {
   execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
   createRefusal = null;
   execRefusal = null;
+  mountCheckExitCode = 0;
+  pendingDelete = null;
   storedSandboxExternalId = null;
   storedReservedAt = Date.now();
   process.env.AWS_REGION = "us-east-1";
@@ -328,6 +341,28 @@ describe("WorkdirSandboxExecutor.run", () => {
     });
     // Ephemeral sandboxes are torn down after the call.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("returns an ephemeral result without waiting for the sandbox delete", async (): Promise<void> => {
+    let settleDelete = (): void => {};
+    pendingDelete = new Promise((resolve): void => {
+      settleDelete = resolve;
+    });
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+    });
+
+    // A run that awaited the delete would hang here until the test times out.
+    const result = await executor.run({
+      code: "echo hi",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, stdout: "workdir ok\n" });
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+    settleDelete();
   });
 
   it("reads the base URL and bearer key from env when options omit them", async () => {
@@ -577,7 +612,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(String(mount!.body?.cmd)).toContain("fusermount -u");
     expect(String(mount!.body?.cmd)).toContain("umount -l");
     expect(String(mount!.body?.cmd)).toContain(".mounted-at");
-    expect(String(mount!.body?.cmd)).toContain(`-ge ${45 * 60}`);
+    expect(String(mount!.body?.cmd)).toContain(`-lt ${45 * 60}`);
     // The stamp sits on disk the agent can write, so a non-numeric value must fall
     // back to "unknown age" instead of reaching the arithmetic, which would abort
     // the mount and strand the workspace.
@@ -725,6 +760,57 @@ describe("WorkdirSandboxExecutor.run", () => {
       "arn:aws:iam::222222222222:role/byo",
     );
     expect(lastAssumeRoleInput?.ExternalId).toBe("ext-7");
+  });
+
+  it("checks a reserved sandbox's live mount without minting credentials", async (): Promise<void> => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN =
+      "arn:aws:iam::123456789012:role/sandbox-mount";
+    storedSandboxExternalId = "sbx_stored";
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
+    });
+
+    await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
+    const commands = execCalls().map((c) => String(c.body?.cmd));
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toContain(`mountpoint -q '/mnt/workspaces/${NS}'`);
+    expect(commands[1]).toBe("ls");
+  });
+
+  it("mints credentials and remounts when a reserved sandbox's mount is missing or stale", async (): Promise<void> => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN =
+      "arn:aws:iam::123456789012:role/sandbox-mount";
+    storedSandboxExternalId = "sbx_stored";
+    mountCheckExitCode = 1;
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
+    });
+
+    await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(assumeRoleSendMock).toHaveBeenCalledTimes(1);
+    const commands = execCalls().map((c) => String(c.body?.cmd));
+    expect(commands).toHaveLength(3);
+    expect(commands[1]).toContain("mount-s3");
+    expect(commands[2]).toBe("ls");
   });
 
   it("reserves a persistent sandbox, reconnects by stored id, and never deletes it", async () => {
