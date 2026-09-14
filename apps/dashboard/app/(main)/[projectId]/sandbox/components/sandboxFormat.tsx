@@ -15,7 +15,7 @@ const CLOCK_TICK_MS = 30_000;
 const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
   running: "ok",
   suspending: "running",
-  suspended: "stale",
+  suspended: "ended",
   terminating: "running",
   error: "error",
 };
@@ -25,7 +25,7 @@ const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
   building: "running",
   pulling: "running",
   active: "ok",
-  inactive: "stale",
+  inactive: "ended",
   error: "error",
   build_failed: "error",
 };

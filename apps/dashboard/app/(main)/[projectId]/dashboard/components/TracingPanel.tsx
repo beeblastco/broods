@@ -507,7 +507,7 @@ export function TracingPanel({
                   <StatusDot
                     tone={
                       isStale(selected.span, isTaskRunning(selected.group.root))
-                        ? "stale"
+                        ? "ended"
                         : selected.span.status
                     }
                   />
@@ -1370,7 +1370,7 @@ function SpanRow({
         </span>
       </td>
       <td className="px-3 py-1.5">
-        <StatusDot tone={isStale(span, taskRunning) ? "stale" : span.status} />
+        <StatusDot tone={isStale(span, taskRunning) ? "ended" : span.status} />
       </td>
       <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
