@@ -40,3 +40,7 @@ defineCron({
 ```
 
 The fired run reads `maintain/references/dreaming.md`: review the window, extract one lesson, patch its own instructions or skills, log the diff.
+
+## Repo maintenance
+
+`bump-deps/` is for agents working on this repo, not a product bundle. It lands the weekly Dependabot bumps end to end. Codex, OpenCode, Cursor, Gemini CLI, Copilot, Windsurf, Amp and Factory read `.agents/skills` directly. Claude Code does not, so it gets a per-skill symlink under `.claude/skills/`. Add one there for each new repo skill.
