@@ -10,9 +10,18 @@
 import { requireEnv } from "./shared/env.ts";
 import { errorResponse, type CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
-import { MEDIA_PATH_PREFIX, openMediaTicket } from "./shared/media-ticket.ts";
+import {
+  MEDIA_PATH_PREFIX,
+  openMediaTicket,
+  type MediaTicket,
+} from "./shared/media-ticket.ts";
 import { contentTypeForPath } from "./shared/media-types.ts";
-import { headS3Object, readS3Bytes } from "./shared/s3.ts";
+import {
+  headS3Object,
+  readS3Bytes,
+  type S3Access,
+  type S3ObjectHead,
+} from "./shared/s3.ts";
 import { getStorage } from "./shared/storage.ts";
 import {
   resolveS3ReadTarget,
@@ -23,6 +32,13 @@ import {
 // to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
+interface MediaObject {
+  bucket: string;
+  key: string;
+  access: S3Access | undefined;
+  head: S3ObjectHead;
+}
+
 export function routesToMedia(method: string, pathname: string): boolean {
   const upperMethod = method.toUpperCase();
 
@@ -32,19 +48,15 @@ export function routesToMedia(method: string, pathname: string): boolean {
   );
 }
 
-export async function handleMediaRequest(
-  request: CoreRequest,
-): Promise<Response> {
-  const token = request.path.slice(MEDIA_PATH_PREFIX.length);
-  const ticket = token
-    ? openMediaTicket(token, requireEnv("SERVICE_AUTH_SECRET"))
-    : null;
-  if (!ticket) {
-    logWarn("media.ticket rejected", { path: request.path });
-
-    return notFound();
-  }
-
+/**
+ * The S3 object a ticket names, with its head. Null when the workspace record
+ * or the file is gone. The harness asks this before replaying a sealed link to
+ * the model, so a file the agent deleted turns into a note rather than a
+ * provider-side 404 that fails the whole turn.
+ */
+export async function locateMediaObject(
+  ticket: MediaTicket,
+): Promise<MediaObject | null> {
   const record = await getStorage().workspaceConfigs.getById(
     ticket.accountId,
     ticket.workspaceId,
@@ -55,7 +67,7 @@ export async function handleMediaRequest(
       workspaceId: ticket.workspaceId,
     });
 
-    return notFound();
+    return null;
   }
 
   const target = await resolveS3ReadTarget(
@@ -72,13 +84,34 @@ export async function handleMediaRequest(
       path: ticket.path,
     });
 
+    return null;
+  }
+
+  return { bucket: target.bucket, key: key, access: target.access, head: head };
+}
+
+export async function handleMediaRequest(
+  request: CoreRequest,
+): Promise<Response> {
+  const token = request.path.slice(MEDIA_PATH_PREFIX.length);
+  const ticket = token
+    ? openMediaTicket(token, requireEnv("SERVICE_AUTH_SECRET"))
+    : null;
+  if (!ticket) {
+    logWarn("media.ticket rejected", { path: request.path });
+
     return notFound();
   }
-  if ((head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
+
+  const object = await locateMediaObject(ticket);
+  if (!object) {
+    return notFound();
+  }
+  if ((object.head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
     logWarn("media.object too large", {
       accountId: ticket.accountId,
       path: ticket.path,
-      contentLength: head.contentLength,
+      contentLength: object.head.contentLength,
     });
 
     return errorResponse(413, "Payload too large");
@@ -98,8 +131,8 @@ export async function handleMediaRequest(
       : {}),
     // The ticket names one immutable file, so a provider CDN may hold it forever.
     "cache-control": "public, max-age=31536000, immutable",
-    ...(head.contentLength !== undefined
-      ? { "content-length": String(head.contentLength) }
+    ...(object.head.contentLength !== undefined
+      ? { "content-length": String(object.head.contentLength) }
       : {}),
   };
   logDebug("media.serve", {
@@ -107,16 +140,16 @@ export async function handleMediaRequest(
     workspaceId: ticket.workspaceId,
     path: ticket.path,
     contentType: contentType,
-    contentLength: head.contentLength,
+    contentLength: object.head.contentLength,
     method: request.method,
   });
   if (request.method.toUpperCase() === "HEAD") {
     return new Response(null, { status: 200, headers: headers });
   }
 
-  const bytes = target.access
-    ? await readS3Bytes(target.bucket, key, target.access)
-    : await readS3Bytes(target.bucket, key);
+  const bytes = object.access
+    ? await readS3Bytes(object.bucket, object.key, object.access)
+    : await readS3Bytes(object.bucket, object.key);
 
   return new Response(bytes, { status: 200, headers: headers });
 }

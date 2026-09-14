@@ -31,7 +31,13 @@ import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
-import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
+import { locateMediaObject } from "../media.ts";
+import {
+  MEDIA_PATH_PREFIX,
+  openMediaTicket,
+  sealMediaTicket,
+  type MediaTicket,
+} from "../shared/media-ticket.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
@@ -290,6 +296,10 @@ export async function readAttachmentBytes(
  * channel's own credentials. One the channel no longer serves becomes a line of
  * text saying so: a photo the sender deleted must cost that message its picture,
  * not cost the conversation every turn from here on.
+ *
+ * A sealed workspace link is checked the same way. The provider fetches that
+ * URL itself, and a file the agent has since deleted from the workspace comes
+ * back 404, which Gemini and OpenAI answer by failing the whole turn.
  */
 export async function rehydrateStoredMedia(
   messages: ModelMessage[],
@@ -300,7 +310,10 @@ export async function rehydrateStoredMedia(
       message.role === "user" &&
       typeof message.content !== "string" &&
       message.content.some(
-        (part) => isStoredMediaPart(part) || mediaReferenceOf(part) !== null,
+        (part) =>
+          isStoredMediaPart(part) ||
+          mediaReferenceOf(part) !== null ||
+          sealedMediaToken(part) !== null,
       ),
   );
   if (!carriesMedia) {
@@ -646,6 +659,27 @@ async function rehydrateMessage(
           text: unreadableMediaNote(part.filename, part.mediaType),
         };
       }
+      const token = sealedMediaToken(part);
+      if (token !== null) {
+        const ticket = openMediaTicket(
+          token,
+          requireEnv("SERVICE_AUTH_SECRET"),
+        );
+        if (ticket && (await sealedMediaServed(ticket))) {
+          return part;
+        }
+        // A ticket that no longer opens is as dead as a missing file: the media
+        // route answers both with a 404.
+        const name =
+          ticket?.path ??
+          (part.type === "file" ? part.filename : undefined) ??
+          "attachment";
+
+        return {
+          type: "text",
+          text: `[${name} is no longer in the workspace]`,
+        };
+      }
       const reference = mediaReferenceOf(part);
       if (!reference) {
         return part;
@@ -707,6 +741,40 @@ async function resolveMediaReference(
 
     return null;
   }
+}
+
+// Whether the media route would still serve this ticket. A lookup that throws
+// (a tenant bucket that refuses a HEAD, say) proves nothing either way, so the
+// link is kept and the provider gets to try it.
+async function sealedMediaServed(ticket: MediaTicket): Promise<boolean> {
+  try {
+    return (await locateMediaObject(ticket)) !== null;
+  } catch (err) {
+    logWarn("Stored workspace media could not be checked", {
+      path: ticket.path,
+      workspaceId: ticket.workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return true;
+  }
+}
+
+// The ticket token behind a sealed workspace link, or null for bytes, a
+// channel reference, or a URL the provider reads on its own.
+function sealedMediaToken(part: UserContentPart): string | null {
+  const source =
+    part.type === "image"
+      ? part.image
+      : part.type === "file"
+        ? part.data
+        : null;
+  if (typeof source !== "string") {
+    return null;
+  }
+  const at = source.indexOf(MEDIA_PATH_PREFIX);
+
+  return at === -1 ? null : source.slice(at + MEDIA_PATH_PREFIX.length);
 }
 
 // Read the bytes, put them in the workspace, and seal the link. Every failure
