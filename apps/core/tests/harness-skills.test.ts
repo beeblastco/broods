@@ -713,6 +713,32 @@ describe("loadConfiguredHarnessSkills", () => {
     ]);
   });
 
+  it("leaves out a skill it cannot read and still fails on a missing one", async () => {
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
+      if (key.includes("locked")) throw new Error("AccessDenied");
+      if (key.includes("missing")) throw new Error("NoSuchKey");
+
+      return createSkillMarkdown("open-skill", "Readable");
+    });
+    listS3PrefixMock.mockResolvedValue([]);
+
+    const { loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+    const skills = await loadConfiguredHarnessSkills("acct_test", {
+      skills: {
+        enabled: true,
+        allowed: ["acct_test/locked-skill", "acct_test/open-skill"],
+      },
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["open-skill"]);
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
+      }),
+    ).rejects.toThrow("Skill not found: acct_test/missing-skill");
+  });
+
   it("rejects an oversized SKILL.md before building a harness skill", async () => {
     readS3TextMock.mockResolvedValue("x".repeat(5 * 1024 * 1024 + 1));
 

@@ -95,7 +95,8 @@ export async function listSkillMetadataForConfig(
 }
 
 // Every skill and every bundled file is read at once; the bundle budget is
-// checked over the result.
+// checked over the result. A skill that cannot be read is left out, as in the
+// metadata list; only a missing one fails the run.
 export async function loadConfiguredHarnessSkills(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -106,15 +107,13 @@ export async function loadConfiguredHarnessSkills(
 
   const loaded = await Promise.all(
     (agentConfig.skills.allowed ?? []).map(
-      async (skillPath): Promise<LoadedHarnessSkill> => {
+      async (skillPath): Promise<LoadedHarnessSkill | null> => {
         const skillText = await readOwnedSkillFile(
           accountId,
           skillPath,
           SKILL_FILE,
         );
-        if (!skillText) {
-          throw new SkillNotFoundError(skillPath);
-        }
+        if (!skillText) return null;
         let bytes = skillFileBytes(skillPath, SKILL_FILE, skillText);
         const sourceFiles = await listSkillSourceFiles(skillPath);
         const files = await Promise.all(
@@ -142,14 +141,17 @@ export async function loadConfiguredHarnessSkills(
       },
     ),
   );
-  const totalBytes = loaded.reduce((sum, entry) => sum + entry.bytes, 0);
+  const readable = loaded.filter(
+    (entry): entry is LoadedHarnessSkill => entry !== null,
+  );
+  const totalBytes = readable.reduce((sum, entry) => sum + entry.bytes, 0);
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
     throw new Error(
       `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
     );
   }
 
-  return loaded.map((entry) => entry.skill);
+  return readable.map((entry) => entry.skill);
 }
 
 export async function loadConfiguredSkillPrompt(
