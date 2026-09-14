@@ -222,7 +222,7 @@ const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
 
 // A root task/subtask still "running" past this likely never reported its
 // terminal span (crash/freeze or a lost publish), so we treat it as finished.
-// Otherwise the spinner spins forever.
+// Otherwise it reads as running forever.
 const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
 interface SpanGroup {
@@ -504,9 +504,12 @@ export function TracingPanel({
                       ? kindTheme(selected.span.kind).word
                       : `${spanLabel(selected.span)} ${kindTheme(selected.span.kind).word}`}
                   </span>
-                  <SpanStatus
-                    span={selected.span}
-                    taskRunning={isTaskRunning(selected.group.root)}
+                  <StatusDot
+                    tone={
+                      isStale(selected.span, isTaskRunning(selected.group.root))
+                        ? "stale"
+                        : selected.span.status
+                    }
                   />
                   <span className="font-mono">
                     {spanMetaLine(selected.span)}
@@ -848,23 +851,6 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
       };
     })
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
-}
-
-/**
- * Status as a dot only. A static dot, not a spinner: a long run keeps many
- * spans "running" at once and per-row spin animations repaint the whole tree
- * continuously.
- */
-function SpanStatus({
-  span,
-  taskRunning,
-}: {
-  span: ObservabilitySpanRow;
-  taskRunning: boolean;
-}): React.JSX.Element {
-  return (
-    <StatusDot tone={isStale(span, taskRunning) ? "stale" : span.status} />
-  );
 }
 
 /** The span's own name: the request for a root, the tool or step for a child. */
@@ -1384,7 +1370,7 @@ function SpanRow({
         </span>
       </td>
       <td className="px-3 py-1.5">
-        <SpanStatus span={span} taskRunning={taskRunning} />
+        <StatusDot tone={isStale(span, taskRunning) ? "stale" : span.status} />
       </td>
       <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap tabular-nums">
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}

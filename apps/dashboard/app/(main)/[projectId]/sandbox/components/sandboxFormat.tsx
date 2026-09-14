@@ -10,7 +10,8 @@ import { useEffect, useState } from "react";
 const CLOCK_TICK_MS = 30_000;
 
 // Same four tones as the tracing panel: sky while the provider is still moving
-// (suspending, terminating, building), grey once nothing runs.
+// (suspending, terminating, building), grey once nothing runs. Tables and
+// titles show the dot only; the detail view spells the word out.
 const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
   running: "ok",
   suspending: "running",
@@ -89,7 +90,6 @@ export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
 }
 
-/** Dot only; the status word is on hover. The detail panel spells it out. */
 export function instanceStatusDot(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
@@ -141,7 +141,6 @@ export function relativeTime(ts: number | undefined, now = Date.now()): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h ago`;
 }
 
-/** Dot only; the status word is on hover. The snapshot sheet spells it out. */
 export function snapshotStatusDot(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {

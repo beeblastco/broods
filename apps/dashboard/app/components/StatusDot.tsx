@@ -1,3 +1,4 @@
+import type { ObservabilityStreamStatus } from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
 
 export type StatusTone = "ok" | "error" | "running" | "stale";
@@ -11,10 +12,22 @@ const TONE_BG: Record<StatusTone, string> = {
   stale: "bg-muted-foreground/50",
 };
 
+/** Socket state as a tone, shared by the log tail and the live terminal. */
+export const CONNECTION_TONE: Record<
+  ObservabilityStreamStatus | "ended",
+  StatusTone
+> = {
+  idle: "stale",
+  connecting: "running",
+  live: "ok",
+  ended: "stale",
+  error: "error",
+};
+
 /**
- * Status as a colored dot with no word. `label` is what hover and screen
- * readers get, since the color is the only visible signal; pass the real state
- * when several states share a tone (suspending and terminating both run sky).
+ * Status as a colored dot with no visible word. `label` is what hover and
+ * screen readers get; pass the real state when several states share a tone
+ * (suspending and terminating both run sky).
  */
 export function StatusDot({
   tone,
@@ -27,9 +40,10 @@ export function StatusDot({
 }): React.JSX.Element {
   return (
     <span
-      aria-label={label}
       title={label}
       className={cn("size-2 shrink-0 rounded-full", TONE_BG[tone], className)}
-    />
+    >
+      <span className="sr-only">{label}</span>
+    </span>
   );
 }

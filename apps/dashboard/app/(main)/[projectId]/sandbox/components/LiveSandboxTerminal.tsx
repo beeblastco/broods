@@ -5,7 +5,7 @@
  * gateway's terminal WebSocket. Raw bytes both ways, no resize protocol.
  */
 
-import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
+import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
@@ -16,7 +16,7 @@ import { useAction } from "convex/react";
 import { Plug, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
+type TerminalStatus = keyof typeof CONNECTION_TONE;
 
 interface Props {
   sandboxId: Id<"sandboxConfigs">;
@@ -24,22 +24,6 @@ interface Props {
   /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
 }
-
-const STATUS_LABEL: Record<TerminalStatus, string> = {
-  idle: "Not connected",
-  connecting: "Connecting…",
-  live: "Live",
-  ended: "Session ended",
-  error: "Connection error",
-};
-
-const STATUS_TONE: Record<TerminalStatus, StatusTone> = {
-  idle: "stale",
-  connecting: "running",
-  live: "ok",
-  ended: "stale",
-  error: "error",
-};
 
 export function LiveSandboxTerminal({
   sandboxId,
@@ -186,10 +170,8 @@ export function LiveSandboxTerminal({
         <div ref={containerRef} className="h-80 w-full" />
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <StatusDot tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} />
-        {error && (
-          <span className="text-red-700 dark:text-red-400">{error}</span>
-        )}
+        <StatusDot tone={CONNECTION_TONE[status]} label={status} />
+        {error && <span className="text-destructive">{error}</span>}
       </p>
     </div>
   );
