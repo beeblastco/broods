@@ -1,6 +1,9 @@
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
-import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
+import {
+  agentSandboxReservationKeys,
+  deleteAccountRuntimeData,
+} from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
   resetConvexClientForTests,
@@ -11,6 +14,7 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import { agentSandboxReservationKey } from "../src/shared/workspaces.ts";
 
 const originalRuntimeMutate = runtime.mutate;
 
@@ -58,6 +62,9 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
       },
     },
     sandboxConfigs: {
+      list: async function () {
+        return [];
+      },
       removeAllForAccount: async function () {
         return 0;
       },
@@ -115,63 +122,48 @@ it("registers agent/crons.remove as an internal mutation", () => {
 });
 
 // A reserved extra sandbox is a machine per agent and record, so cleanup has to
-// ask about every id the agent attaches, not only config.sandbox.
+// release every id the agent attaches, not only config.sandbox. One list serves
+// every agent; a record nobody references, or an id no record answers, is skipped.
 it("collects reservation keys from an agent's default and extra sandboxes", async () => {
-  const requested: string[] = [];
+  let listed = 0;
   setStorageForTests({
-    workspaceConfigs: {
-      list: async function () {
-        return [];
-      },
-      removeAllForAccount: async function () {
-        return 0;
-      },
-    },
     agents: {
       list: async function () {
         return [
           {
             agentId: "ag_1",
-            config: { sandbox: "sb_default", sandboxes: ["sb_browser"] },
+            config: {
+              sandbox: "sb_default",
+              sandboxes: ["sb_browser", "sb_missing"],
+            },
           },
+          { agentId: "ag_2", config: { sandbox: "sb_default" } },
         ];
       },
     },
     sandboxConfigs: {
-      getById: async function (_accountId: string, sandboxId: string) {
-        requested.push(sandboxId);
+      list: async function () {
+        listed += 1;
 
-        return {
+        return ["sb_default", "sb_browser", "sb_unused"].map((sandboxId) => ({
           sandboxId: sandboxId,
           name: sandboxId,
-          config: { provider: "lambda" },
-        };
-      },
-      removeAllForAccount: async function () {
-        return 0;
+          config: { provider: "lambda", persistent: true },
+        }));
       },
     },
   } as never);
-  runtime.mutate = (async () => ({
-    conversationsDeleted: 0,
-    processedEventsDeleted: 0,
-    asyncAgentResultDeleted: 0,
-    asyncToolResultDeleted: 0,
-    asyncToolGroupDeleted: 0,
-    sandboxReservationDeleted: 0,
-    totalDeleted: 0,
-  })) as never;
 
-  await deleteAccountRuntimeData({
-    accountId: "acct_test",
-    username: "test",
-    secretHash: "hash",
-    status: "disabled",
-    createdAt: "2026-07-13T00:00:00.000Z",
-    updatedAt: "2026-07-13T00:00:00.000Z",
-  });
+  const keys = await agentSandboxReservationKeys("acct_test");
 
-  expect(requested.sort()).toEqual(["sb_browser", "sb_default"]);
+  expect(keys.sort()).toEqual(
+    [
+      agentSandboxReservationKey("acct_test", "ag_1", "sb_browser"),
+      agentSandboxReservationKey("acct_test", "ag_1", "sb_default"),
+      agentSandboxReservationKey("acct_test", "ag_2", "sb_default"),
+    ].sort(),
+  );
+  expect(listed).toBe(1);
 });
 
 // The adapter reaches this reference through an any-typed require, so nothing

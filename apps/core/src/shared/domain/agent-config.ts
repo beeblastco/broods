@@ -711,13 +711,17 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  normalizeSandboxRefs(config.sandbox, config.sandboxes);
   if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
     throw new Error(
       `config.sandbox is required for the ${String(config.harness.type)} harness`,
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
+  normalizeSandboxRefs(
+    config.sandbox,
+    config.sandboxes,
+    config.workspaces as AgentWorkspaceRef[] | undefined,
+  );
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -1102,30 +1106,36 @@ function baseUrlTypoHint(config: Record<string, unknown>): string {
 // The concrete sandbox/workspace configs live in their own account-scoped tables;
 // the agent config only carries references. Validation of the referenced records
 // themselves lives in sandbox-config.ts / workspace-config.ts.
-function normalizeSandboxRefs(sandbox: unknown, sandboxes: unknown): void {
+// Extra sandboxes are bash targets beside the default, so repeating the default
+// or a workspace's sandbox would name one machine twice, once with a mount and
+// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+function normalizeSandboxRefs(
+  sandbox: unknown,
+  sandboxes: unknown,
+  workspaces: AgentWorkspaceRef[] | undefined,
+): void {
   assertOptionalNonEmptyString(sandbox, "config.sandbox");
-  if (sandboxes == null) {
+  assertOptionalStringArray(sandboxes, "config.sandboxes");
+  if (sandboxes === undefined) {
     return;
-  }
-  if (!Array.isArray(sandboxes)) {
-    throw new Error("config.sandboxes must be an array");
   }
 
   const seen = new Set<string>();
-  sandboxes.forEach((sandboxId: unknown, index: number) => {
-    if (typeof sandboxId !== "string" || sandboxId.trim().length === 0) {
-      throw new Error(`config.sandboxes[${index}] must be a non-empty string`);
-    }
-    // The default sandbox is already reachable, and listing it twice would give
-    // the model two names for one machine.
+  (sandboxes as string[]).forEach((sandboxId, index) => {
     if (sandboxId === sandbox) {
       throw new Error(
-        `config.sandboxes[${index}] repeats config.sandbox "${sandboxId}"`,
+        `config.sandboxes[${index}] repeats the default config.sandbox`,
       );
     }
     if (seen.has(sandboxId)) {
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
+        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+      );
+    }
+    const mounted = workspaces?.find((ref) => ref.sandbox === sandboxId);
+    if (mounted) {
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
       );
     }
     seen.add(sandboxId);

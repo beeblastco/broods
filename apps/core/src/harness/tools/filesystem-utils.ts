@@ -373,6 +373,9 @@ export function bashNeedsApproval(
   selection: BashTarget = {},
 ): boolean {
   try {
+    // An unknown name throws here, so the gate stays closed on a call the tool
+    // will refuse anyway.
+    const agentSandbox = resolveAgentSandbox(context, selection.sandbox);
     if (!targetsAgentSandbox(context, selection)) {
       const workspace = resolveWorkspace(
         context.workspaces,
@@ -387,25 +390,27 @@ export function bashNeedsApproval(
       return permissionModeFor(workspace) !== "bypass";
     }
 
-    return (
-      resolveAgentSandbox(context, selection.sandbox).permissionMode !==
-      "bypass"
-    );
+    return agentSandbox.permissionMode !== "bypass";
   } catch {
     return true;
   }
 }
 
 /**
- * The `sandbox` field of a bash call, normalized: `true` or a sandbox name selects
- * a run with no workspace mounted, anything else is a workspace run. The tool and
- * the policy layer read the field through this one function so they never disagree
- * about where a call lands.
+ * The `sandbox` field of a bash call, normalized: `true` selects the agent's own
+ * sandbox, and a name selects one of the agent-level sandboxes. The name form only
+ * exists once extras are attached, so without them a string is ignored the way it
+ * always was. The tool and the policy layer read the field through this one function
+ * so they never disagree about where a call lands.
  */
 export function bashSandboxTarget(
   value: unknown,
+  sandboxes: ResolvedAgentSandbox[] | undefined,
 ): boolean | string | undefined {
-  if (value === true || typeof value === "string") {
+  if (value === true) {
+    return true;
+  }
+  if (typeof value === "string" && (sandboxes?.length ?? 0) > 0) {
     return value;
   }
 
@@ -415,8 +420,9 @@ export function bashSandboxTarget(
 /**
  * Whether this call runs on an agent-level sandbox with no workspace mounted: the
  * agent has no workspaces at all, it named one of its extra sandboxes, or it asked
- * for its own sandbox and that one is standalone. `sandbox` wins over `workspace`;
- * the two never both apply.
+ * for its own sandbox and that one is standalone. A name that is neither is a
+ * workspace run here; the tool refuses it. `sandbox` wins over `workspace`; the
+ * two never both apply.
  */
 export function targetsAgentSandbox(
   context: SandboxToolContext,
@@ -434,7 +440,10 @@ export function targetsAgentSandbox(
     selection.sandbox !== true &&
     selection.sandbox !== context.agentSandbox?.controlPlane?.name
   ) {
-    return true;
+    return (
+      context.sandboxes?.some((extra) => extra.name === selection.sandbox) ??
+      false
+    );
   }
 
   return hasStandaloneSandbox(context.workspaces, context.agentSandbox);

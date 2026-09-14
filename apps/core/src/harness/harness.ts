@@ -603,6 +603,7 @@ export async function runAgentLoop(
     {
       mcpIdsByName: policyMcpIdsByName,
       ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
+      ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
     },
   );
   const toolApproval = createRuntimeToolApproval({

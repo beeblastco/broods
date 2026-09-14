@@ -219,18 +219,25 @@ describe("agent config validation", () => {
       normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_browser"] }),
     ).toEqual({ sandbox: "sb_1", sandboxes: ["sb_browser"] });
     expect(() => normalizeAgentConfig({ sandboxes: "sb_1" })).toThrow(
-      "config.sandboxes must be an array",
+      "config.sandboxes must be an array of non-empty strings",
     );
     expect(() => normalizeAgentConfig({ sandboxes: [""] })).toThrow(
-      "config.sandboxes[0] must be a non-empty string",
+      "config.sandboxes must be an array of non-empty strings",
     );
     // Two names for one machine: the default is already reachable on its own.
     expect(() =>
       normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_1"] }),
-    ).toThrow('config.sandboxes[0] repeats config.sandbox "sb_1"');
+    ).toThrow("config.sandboxes[0] repeats the default config.sandbox");
     expect(() => normalizeAgentConfig({ sandboxes: ["sb_a", "sb_a"] })).toThrow(
-      'config.sandboxes[1] "sb_a" is listed more than once',
+      'config.sandboxes[1] "sb_a" is used more than once',
     );
+    // An extra never mounts a workspace, so a workspace's sandbox cannot be one.
+    expect(() =>
+      normalizeAgentConfig({
+        sandboxes: ["sb_a"],
+        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_a" }],
+      }),
+    ).toThrow('config.sandboxes[0] "sb_a" also backs workspace "repo"');
   });
 
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {

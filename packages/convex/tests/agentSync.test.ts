@@ -400,6 +400,42 @@ describe("syncApiAgentCanvasWiring", () => {
     expect(edges).toHaveLength(1);
   });
 
+  test("keeps a sandbox the config only references through sandboxes", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+    const { sandboxId } = await seedWiringFixtures(tt, accountId);
+
+    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const seed = (config: Record<string, unknown>) =>
+      tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+        agentId: agentId,
+        config: config,
+      });
+    await seed({ sandbox: sandboxId });
+    // A PATCH that turns the default into an extra still declares the sandbox,
+    // so the node survives the prune. It draws no edge: the canvas has no shape
+    // for that link yet.
+    await seed({ sandboxes: [sandboxId] });
+
+    const config = await configFor(tt, agentId);
+    const layout = await layoutFor(tt, config!);
+    const nodes = layout!.nodes as Array<{
+      id: string;
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
+    expect(sandboxNode.data.resourceId).toBe(sandboxId);
+    const edges = layout!.edges as Array<{ source: string; target: string }>;
+    expect(edges.some((e) => e.target === sandboxNode.id)).toBe(false);
+  });
+
   test("preserves an agent's wiring while its blob cannot be decrypted", async () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const tt = t();

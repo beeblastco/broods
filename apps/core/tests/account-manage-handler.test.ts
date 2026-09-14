@@ -569,6 +569,9 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
     sandboxConfigs: {
+      list: async function () {
+        return [];
+      },
       removeAllForAccount: async function () {
         return 0;
       },

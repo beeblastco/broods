@@ -38,6 +38,15 @@ describe("agent rules", () => {
         sandboxes: ["sb_default"],
       }),
     ).toThrow("config.sandboxes[0] repeats the default config.sandbox");
+    // An extra never mounts a workspace, so a workspace's sandbox cannot be one.
+    expect(() =>
+      normalizeAgentConfig({
+        sandboxes: ["sb_browser"],
+        workspaces: [
+          { name: "repo", workspaceId: "ws_1", sandbox: "sb_browser" },
+        ],
+      }),
+    ).toThrow('config.sandboxes[0] "sb_browser" also backs workspace "repo"');
   });
 
   it("validates config.mcp entries", () => {

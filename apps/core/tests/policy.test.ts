@@ -115,18 +115,46 @@ describe("agent policy input", () => {
   });
 
   // An extra sandbox mounts no workspace, so a workspace-scoped rule must not be
-  // handed a workspace the run never touches.
-  it("drops workspace identity when a bash call names an extra sandbox", () => {
+  // handed a workspace the run never touches. Its own permissionMode is what lets
+  // a policy tell one extra from another.
+  it("describes a bash call on an extra sandbox by that sandbox, not a workspace", () => {
+    const sandboxes = [
+      {
+        name: "browser-sandbox",
+        sandbox: {
+          provider: "lambda" as const,
+          permissionMode: "bypass" as const,
+        },
+      },
+    ];
     const onExtra = policyInputForTool(
       "bash",
       { command: "chromium --version", sandbox: "browser-sandbox" },
       workspaces,
+      { sandboxes: sandboxes },
     );
 
     expect(onExtra.action).toBe("workspace.exec");
     expect(onExtra.workspaceId).toBeUndefined();
     expect(onExtra.workspaceName).toBeUndefined();
-    expect(onExtra.sandboxPermissionMode).toBeUndefined();
+    expect(onExtra.sandboxPermissionMode).toBe("bypass");
+
+    // A name that is no extra is a workspace run to the policy, the same as the
+    // tool sees it before refusing the call.
+    const unknown = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: "nope" },
+      workspaces,
+      { sandboxes: sandboxes },
+    );
+    expect(unknown.workspaceId).toBe("ws_123");
+    // Without extras the string form does not exist, so it is ignored as before.
+    const withoutExtras = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: "browser-sandbox" },
+      workspaces,
+    );
+    expect(withoutExtras.workspaceId).toBe("ws_123");
   });
 
   it("defaults unknown tools to generic tool calls", () => {

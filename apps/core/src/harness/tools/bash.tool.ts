@@ -44,6 +44,10 @@ import {
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
+// What every no-mount run has in common, so the schema and the notes never drift.
+const THROWAWAY_NOTE =
+  "Nothing written there reaches durable storage, so use it for throwaway work";
+
 interface BashInput {
   command: string;
   workspace?: string;
@@ -72,7 +76,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           return toolError("Error: command is required");
         }
         try {
-          const selected = bashSandboxTarget(onSandbox);
+          const selected = bashSandboxTarget(onSandbox, context.sandboxes);
           // Silently preferring one would let the policy layer be told a workspace
           // that the run never touches, so an incoherent selection is refused.
           if (workspace !== undefined && selected !== undefined) {
@@ -80,6 +84,9 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
               "Error: pass either workspace or sandbox, not both — they select different places to run",
             );
           }
+          // Resolved before the workspace fallback so an unknown name is refused
+          // instead of quietly landing in the default workspace.
+          const agentSandbox = resolveAgentSandbox(context, selected);
           const target = {
             ...(workspace ? { workspace: workspace } : {}),
             ...(selected !== undefined ? { sandbox: selected } : {}),
@@ -87,8 +94,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const ws = targetsAgentSandbox(context, target)
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const sandbox =
-            ws?.sandbox ?? resolveAgentSandbox(context, selected).sandbox;
+          const sandbox = ws?.sandbox ?? agentSandbox.sandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
@@ -164,6 +170,15 @@ function backgroundNote(context: SandboxToolContext): string {
 }
 
 function description(context: SandboxToolContext): string {
+  if (extrasOnly(context)) {
+    return `Executes a bash command on one of your sandboxes (bash, python3, and node on PATH).
+
+Usage notes:
+- Every call names the sandbox to run on with \`sandbox\`.
+- Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
+- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
+- Shell state (working directory, environment variables, background processes) resets every call. Keep the whole task in a single command, chaining steps with && or ;.${sandboxesNote(context)}`;
+  }
   if (context.workspaces.length === 0) {
     const runtimes = runtimeDescription(context.agentSandbox);
 
@@ -330,9 +345,19 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
           }
         : {}),
     },
-    required: ["command"],
+    required: extrasOnly(context) ? ["command", "sandbox"] : ["command"],
     additionalProperties: false,
   };
+}
+
+// An agent whose only sandboxes are extras has no default place to run, so a call
+// that names none would fail after approval. The schema makes the name mandatory.
+function extrasOnly(context: SandboxToolContext): boolean {
+  return (
+    context.workspaces.length === 0 &&
+    !context.agentSandbox &&
+    (context.sandboxes?.length ?? 0) > 0
+  );
 }
 
 // Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
@@ -404,7 +429,9 @@ function sandboxesNote(context: SandboxToolContext): string {
   }
   const ownName = standaloneSandboxName(context);
   const entries = [
-    ...(ownName ? [`${ownName}: your own sandbox.`] : []),
+    ...(ownName
+      ? [`${ownName}: your own sandbox.${reservedStandaloneNote(context)}`]
+      : []),
     ...extras.map(
       (extra) =>
         `${extra.name}${extra.description ? `: ${extra.description}` : ""}`,
@@ -412,7 +439,7 @@ function sandboxesNote(context: SandboxToolContext): string {
   ];
 
   return `
-- sandbox:"<name>" runs on that sandbox with no workspace mounted, and nothing written there reaches durable storage:
+- sandbox:"<name>" runs on that sandbox with no workspace mounted. ${THROWAWAY_NOTE}:
 ${entries.map((entry) => `  - ${entry}`).join("\n")}`;
 }
 
@@ -426,8 +453,7 @@ function sandboxParamSchema(
     return hasStandaloneSandbox(context.workspaces, context.agentSandbox)
       ? {
           type: "boolean",
-          description:
-            "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
+          description: `Run on your own sandbox with no workspace mounted, instead of in a workspace. ${THROWAWAY_NOTE}. Mutually exclusive with \`workspace\`.`,
         }
       : undefined;
   }
@@ -440,7 +466,7 @@ function sandboxParamSchema(
   return {
     type: "string",
     enum: [...(ownName ? [ownName] : []), ...extras.map((extra) => extra.name)],
-    description: `Sandbox to run on, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work.${mutuallyExclusive}`,
+    description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
   };
 }
 
@@ -456,7 +482,7 @@ function sandboxTargetNote(context: SandboxToolContext): string {
   }
 
   return `
-- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
+- sandbox:true runs on your own sandbox instead, with no workspace mounted. ${THROWAWAY_NOTE} and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
 }
 
 // The agent's own sandbox as the model names it, when a call can still pick it with

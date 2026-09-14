@@ -699,6 +699,7 @@ function assertExportedAgentSandboxes(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const references: Array<{ field: string; sandbox: unknown }> = [
+      { field: "sandbox", sandbox: resource.config.sandbox },
       { field: "harness", sandbox: resource.config.harness?.sandbox },
       ...(resource.config.sandboxes ?? []).map((sandbox) => ({
         field: "sandboxes",
@@ -1373,9 +1374,22 @@ function normalizeAgentConfig(
     );
   }
   if (Array.isArray(config.workspaces)) {
-    config.workspaces = config.workspaces.map((workspace) =>
+    const workspaces = config.workspaces.map((workspace) =>
       normalizeWorkspaceRef(workspace, resource.name),
     );
+    // An extra never mounts a workspace, so one that also backs a workspace would
+    // be the same machine reachable with and without the mount.
+    for (const workspace of workspaces) {
+      if (
+        Array.isArray(config.sandboxes) &&
+        config.sandboxes.includes(workspace.sandbox)
+      ) {
+        throw new Error(
+          `Agent "${resource.name}" sandboxes references sandbox "${String(workspace.sandbox)}", which also backs workspace "${String(workspace.name)}"`,
+        );
+      }
+    }
+    config.workspaces = workspaces;
   }
   if (config.policies !== undefined) {
     const policies = normalizePolicyRefs(config.policies, resource.name);

@@ -233,6 +233,50 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject rejects an unexported default sandbox on defineAgent", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+const runner = defineSandbox({ name: "runner", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandbox: runner,
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandbox references sandbox "runner", but that sandbox is not exported from broods/',
+  );
+});
+
+test("compileProject rejects an extra sandbox that also backs a workspace", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" } });
+export const browser = defineSandbox({ name: "browser", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: [browser],
+  workspaces: [{ workspace: repo, sandbox: browser }],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandboxes references sandbox "browser", which also backs workspace "repo"',
+  );
+});
+
 test("compileProject defaults to the Broods harness when harness is omitted", async () => {
   const cwd = await fixtureProject(
     "",

@@ -839,11 +839,48 @@ describe("sandbox tool set", () => {
         ctx as never,
       ),
     ).resolves.toBe("user-approval");
-    // Nothing answers to `true` when the agent has no default sandbox.
+    // With no default sandbox there is nowhere to land without a name, so the
+    // schema makes the name mandatory instead of promising an ephemeral sandbox.
+    const bash = await tool("bash", ctx as never);
+    const schema = bash.inputSchema as unknown as {
+      jsonSchema: { required: string[] };
+    };
+    expect(schema.jsonSchema.required).toEqual(["command", "sandbox"]);
+    expect(bash.description).not.toContain("ephemeral Linux sandbox");
+    expect(bash.description).toContain("browser-sandbox: Headless Chromium.");
+    await bash.execute({
+      command: "chromium --version",
+      sandbox: "browser-sandbox",
+    });
+    const run = microvmCommandsOfType("RunMicrovm").at(-1) as {
+      input: { imageIdentifier: string };
+    };
+    expect(run.input.imageIdentifier).toContain("microvm-image:browser");
+  });
+
+  it("only a known extra name leaves the workspace; anything else stays a workspace run", async () => {
+    // No extras: the name form does not exist, so a string is ignored as before.
+    const borrowed = await tool("bash", borrowedSandboxCtx());
+    await borrowed.execute({ command: "ls", sandbox: "true" });
+    expect(lastSandboxExec().payload.namespace).toBe(NS);
+
+    // Extras present: an unknown name is refused before any workspace default
+    // could absorb it, and the approval gate stays closed on it.
+    const ctx = {
+      ...(borrowedSandboxCtx() as unknown as Record<string, unknown>),
+      sandboxes: (
+        extraSandboxCtx({ permissionMode: "bypass" }) as unknown as {
+          sandboxes: unknown[];
+        }
+      ).sandboxes,
+    };
     const bash = await tool("bash", ctx as never);
     await expect(
-      bash.execute({ command: "ls", sandbox: true }),
-    ).rejects.toThrow("no sandbox available");
+      bash.execute({ command: "ls", sandbox: "nope" }),
+    ).rejects.toThrow("unknown sandbox nope");
+    await expect(
+      approvalStatus("bash", { command: "ls", sandbox: "nope" }, ctx as never),
+    ).resolves.toBe("user-approval");
   });
 
   it("background jobs stay a workspace feature on an extra sandbox", async () => {

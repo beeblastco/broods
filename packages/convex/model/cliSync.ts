@@ -418,11 +418,7 @@ export function rewriteIdsToNames(
     result.sandbox = sandboxNames[result.sandbox];
   }
   if (Array.isArray(result.sandboxes)) {
-    result.sandboxes = result.sandboxes.map((entry) =>
-      typeof entry === "string" && sandboxNames[entry]
-        ? sandboxNames[entry]
-        : entry,
-    );
+    result.sandboxes = rewriteRefList(result.sandboxes, sandboxNames);
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
@@ -518,11 +514,7 @@ export function rewriteResourceRefs(
     result.sandbox = sandboxIds[result.sandbox];
   }
   if (Array.isArray(result.sandboxes)) {
-    result.sandboxes = result.sandboxes.map((entry) =>
-      typeof entry === "string" && sandboxIds[entry]
-        ? sandboxIds[entry]
-        : entry,
-    );
+    result.sandboxes = rewriteRefList(result.sandboxes, sandboxIds);
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
@@ -611,6 +603,16 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   }
 
   return value;
+}
+
+// Swap each string entry for its table value; anything else passes through.
+function rewriteRefList(
+  entries: unknown[],
+  table: Record<string, string>,
+): unknown[] {
+  return entries.map((entry) =>
+    typeof entry === "string" && table[entry] ? table[entry] : entry,
+  );
 }
 
 function sandboxProvider(sandbox: CliResource): string {

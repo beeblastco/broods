@@ -98,7 +98,7 @@ export function compatibilityApprovalStatus(
       : {};
   const workspace =
     typeof record.workspace === "string" ? record.workspace : undefined;
-  const onSandbox = bashSandboxTarget(record.sandbox);
+  const onSandbox = bashSandboxTarget(record.sandbox, options.sandboxes);
 
   if (toolName === "bash") {
     return bashNeedsApproval(
@@ -143,6 +143,7 @@ export async function createPolicyToolApproval(
   options: {
     mcpIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
+    sandboxes?: ResolvedAgentSandbox[];
   } = {},
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
@@ -360,6 +361,7 @@ export function policyInputForTool(
   options: {
     mcpIdsByName?: ReadonlyMap<string, string>;
     agentSandbox?: SandboxExecutorConfig;
+    sandboxes?: ResolvedAgentSandbox[];
   } = {},
 ): Pick<
   PolicyDecisionInput,
@@ -378,7 +380,7 @@ export function policyInputForTool(
     input && typeof input === "object"
       ? (input as Record<string, unknown>)
       : {};
-  const sandboxTarget = bashSandboxTarget(record.sandbox);
+  const sandboxTarget = bashSandboxTarget(record.sandbox, options.sandboxes);
   // A bash call that runs on an agent-level sandbox touches no workspace, so it must
   // not be described to the policy as if it did. A workspace-scoped rule would then
   // authorize a run that never lands there. Resolve the same target execution will.
@@ -388,6 +390,7 @@ export function policyInputForTool(
       {
         workspaces: workspaces,
         ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
       },
       {
         ...(typeof record.workspace === "string"
@@ -402,6 +405,11 @@ export function policyInputForTool(
         workspaces,
         typeof record.workspace === "string" ? record.workspace : undefined,
       );
+  // An extra carries its own permissionMode, and that is the one fact a policy
+  // can use to tell one extra from another.
+  const extra = onAgentSandbox
+    ? options.sandboxes?.find((entry) => entry.name === sandboxTarget)
+    : undefined;
   const filePath =
     typeof record.file_path === "string"
       ? record.file_path
@@ -420,6 +428,9 @@ export function policyInputForTool(
           workspaceName: workspace.name,
           sandboxPermissionMode: workspace.sandbox?.permissionMode,
         }
+      : {}),
+    ...(extra?.sandbox.permissionMode
+      ? { sandboxPermissionMode: extra.sandbox.permissionMode }
       : {}),
     ...(filePath ? { filePath: filePath } : {}),
   };

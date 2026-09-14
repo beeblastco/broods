@@ -305,6 +305,7 @@ function session(): Session {
     resolvedWorkspaces: (): never[] => [],
     agentSandbox: (): undefined => undefined,
     agentSandboxPermissionMode: (): "ask" => "ask",
+    sandboxes: (): never[] => [],
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",
     applySteeringIngress: async (): Promise<null> => null,

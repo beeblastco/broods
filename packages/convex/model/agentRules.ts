@@ -186,13 +186,13 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
-  normalizeSandboxRefs(config.sandboxes, config.sandbox);
   if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
     throw new Error(
       `config.sandbox is required for the ${String(config.harness.type)} harness`,
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
+  normalizeSandboxRefs(config.sandboxes, config.sandbox, config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -584,8 +584,13 @@ function normalizeSandboxRef(value: unknown): void {
 }
 
 // Extra sandboxes are bash targets beside the default, so repeating the default
-// would name the same machine twice under two names.
-function normalizeSandboxRefs(value: unknown, defaultSandbox: unknown): void {
+// or a workspace's sandbox would name one machine twice, once with a mount and
+// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+function normalizeSandboxRefs(
+  value: unknown,
+  defaultSandbox: unknown,
+  workspaces: AgentWorkspaceRef[] | undefined,
+): void {
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
@@ -597,6 +602,11 @@ function normalizeSandboxRefs(value: unknown, defaultSandbox: unknown): void {
     if (seen.has(sandboxId))
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+      );
+    const mounted = workspaces?.find((ref) => ref.sandbox === sandboxId);
+    if (mounted)
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
       );
     seen.add(sandboxId);
   });
