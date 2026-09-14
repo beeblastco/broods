@@ -377,7 +377,7 @@ function ActivityList({
             </span>
             <span
               className={cn(
-                "truncate",
+                "truncate empty:hidden",
                 event.result === "ok"
                   ? "text-muted-foreground"
                   : "text-red-700 dark:text-red-400",
@@ -422,13 +422,14 @@ function actorLabel(event: SandboxAuditEvent): string {
   return who ? `${label} · ${who}` : label;
 }
 
+/** Empty for a plain success: the dot already says ok. */
 function auditDetail(event: SandboxAuditEvent): string {
   if (event.result === "error") return event.errorMessage ?? "failed";
   if (event.action === "exec" && event.exitCode !== undefined)
     return `exit ${event.exitCode}`;
   if (event.status) return event.status;
 
-  return "ok";
+  return "";
 }
 
 function CommandRunner({

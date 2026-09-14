@@ -851,10 +851,9 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 }
 
 /**
- * Status as a dot and a word. A static dot, not a spinner: a long run keeps
- * many spans "running" at once and per-row spin animations repaint the whole
- * tree continuously. The hue only clears WCAG AA as a dot next to plain text,
- * so the word itself stays the row color.
+ * Status as a dot only. A static dot, not a spinner: a long run keeps many
+ * spans "running" at once and per-row spin animations repaint the whole tree
+ * continuously.
  */
 function SpanStatus({
   span,
@@ -863,13 +862,8 @@ function SpanStatus({
   span: ObservabilitySpanRow;
   taskRunning: boolean;
 }): React.JSX.Element {
-  const stale = isStale(span, taskRunning);
-
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <StatusDot tone={stale ? "stale" : span.status} />
-      {stale ? "ended" : span.status}
-    </span>
+    <StatusDot tone={isStale(span, taskRunning) ? "stale" : span.status} />
   );
 }
 

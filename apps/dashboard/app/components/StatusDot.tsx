@@ -11,7 +11,8 @@ const TONE_BG: Record<StatusTone, string> = {
   stale: "bg-muted-foreground/50",
 };
 
-/** Status as a small colored dot. The word beside it keeps the text color. */
+/** Status as a colored dot with no word. The tone is exposed on hover and to
+ * screen readers, since the color is the only visible signal. */
 export function StatusDot({
   tone,
   className,
@@ -21,7 +22,9 @@ export function StatusDot({
 }): React.JSX.Element {
   return (
     <span
-      className={cn("size-1.5 shrink-0 rounded-full", TONE_BG[tone], className)}
+      aria-label={tone}
+      title={tone}
+      className={cn("size-2 shrink-0 rounded-full", TONE_BG[tone], className)}
     />
   );
 }
