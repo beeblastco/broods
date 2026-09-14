@@ -30,6 +30,7 @@ import {
   removeSandboxInstance,
   upsertSandboxInstance,
 } from "../../shared/convex/sandbox-instances.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -206,6 +207,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<MicrovmHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -214,7 +216,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
     }
     const reservation = await this.#acquire(
-      this.#harnessRequest(request.reservationKey),
+      this.#harnessRequest(request.reservationKey, request.metadata),
     );
     try {
       await this.#runLifecycle(
@@ -236,6 +238,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async resumeHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<Omit<MicrovmHarnessReservation, "isFirstCreate">> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -262,6 +265,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       reservation.microvmId,
       this.#config.controlPlane?.accountId,
     ).catch(() => {});
+    // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
+    // row; recoverable on the next call, so it never holds up the session.
+    void upsertSandboxInstance(
+      this.#config.controlPlane,
+      PROVIDER,
+      request.reservationKey,
+      reservation.microvmId,
+      request.metadata,
+    );
     request.abortSignal?.throwIfAborted();
 
     return reservation;
@@ -549,12 +561,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${key}`;
   }
 
-  #harnessRequest(reservationKey: string): SandboxRunRequest {
+  #harnessRequest(
+    reservationKey: string,
+    metadata?: SandboxRunMetadata,
+  ): SandboxRunRequest {
     return {
       code: "true",
       reservationKey: reservationKey,
       timeoutSeconds: this.#config.timeout ?? 120,
       outputLimitBytes: this.#config.outputLimitBytes ?? 64 * 1024,
+      ...(metadata ? { metadata: metadata } : {}),
     };
   }
 

@@ -17,6 +17,7 @@ import type {
 } from "../../shared/domain/agent-config.ts";
 import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import {
   createAiSdkHarnessAdapter,
   createConfiguredAiSdkHarnessAdapter,
@@ -46,6 +47,8 @@ interface HarnessAgentCommonOptions {
   id?: string;
   inactiveTools?: string[];
   instructions?: string;
+  /** The invoking run's identity, mirrored onto the reserved sandbox. */
+  metadata?: SandboxRunMetadata;
   /**
    * Model the harness runtime selects for every turn. `@ai-sdk/harness` 1.0.104
    * dropped the per-adapter `model` setting, so it rides on the agent instead.
@@ -98,6 +101,8 @@ export interface ConfiguredHarnessAgentOptions {
   compute: SandboxExecutorConfig;
   id?: string;
   instructions: string;
+  /** The invoking run's identity, mirrored onto the reserved sandbox. */
+  metadata?: SandboxRunMetadata;
   reservationKey: string;
   skills?: ReadonlyArray<HarnessAgentSkill>;
   toolApproval?: HarnessAgentToolApprovalConfiguration;
@@ -119,6 +124,7 @@ export function createConfiguredHarnessAgent(
     debug: harness.debug,
     id: options.id,
     instructions: options.instructions,
+    metadata: options.metadata,
     model: model,
     permissionMode: harness.permissionMode,
     reservationKey: options.reservationKey,
@@ -217,6 +223,7 @@ function createHarnessRuntime(
   const provisioned = createAiSdkHarnessSandbox({
     bridgePort: options.bridgePort,
     compute: options.compute,
+    metadata: options.metadata,
     reservationKey: options.reservationKey,
     type: options.type,
   });

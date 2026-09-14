@@ -26,6 +26,7 @@ import {
   readHarnessStream,
 } from "./harness-shell-process.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { configString, shellQuote, stringRecord } from "./utils.ts";
 import type { WorkdirHarnessReservation } from "./workdir-executor.ts";
 
@@ -38,6 +39,8 @@ export interface WorkdirHarnessDriverOptions {
   bootstrapIdentity?: string;
   config: SandboxExecutorConfig & { provider: "sandbox"; persistent: true };
   defaultWorkingDirectory?: string;
+  /** The invoking run's identity, mirrored onto the reserved sandbox. */
+  metadata?: SandboxRunMetadata;
   ports?: ReadonlyArray<number>;
 }
 
@@ -45,10 +48,12 @@ interface WorkdirHarnessExecutor {
   acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<WorkdirHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<Sandbox>;
   suspend?(request: SandboxReservationRef): Promise<void>;
   release?(request: SandboxReservationRef): Promise<void>;
@@ -101,6 +106,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       reservation = await this.#executor.acquireHarnessReservation({
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
       });
       options.abortSignal?.throwIfAborted();
 
@@ -125,6 +131,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
     const sandbox = await this.#executor.resumeHarnessReservation({
       reservationKey: this.#options.reservationKey,
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
     });
     options.abortSignal?.throwIfAborted();
 

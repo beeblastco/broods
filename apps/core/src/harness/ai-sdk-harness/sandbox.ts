@@ -6,6 +6,7 @@ import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import { createMicrovmHarnessDriver } from "../sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../sandbox/types.ts";
 import { createWorkdirHarnessDriver } from "../sandbox/workdir-harness-driver.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import {
   harnessAdapterVersion,
   type AiSdkHarnessType,
@@ -29,6 +30,8 @@ export interface AiSdkHarnessSandbox {
 export interface AiSdkHarnessSandboxOptions {
   bridgePort?: number;
   compute: AiSdkHarnessCompute;
+  /** The invoking run's identity, mirrored onto the reserved sandbox. */
+  metadata?: SandboxRunMetadata;
   reservationKey: string;
   type: AiSdkHarnessType;
 }
@@ -88,6 +91,7 @@ function createMicrovmHarnessSandbox(
     driver: createMicrovmHarnessDriver({
       reservationKey: reservationKey,
       config: compute,
+      metadata: options.metadata,
       ports: [bridgePort],
     }),
     providerId: `broods-microvm-${options.type}`,
@@ -119,6 +123,7 @@ function createWorkdirHarnessSandbox(
     driver: createWorkdirHarnessDriver({
       reservationKey: reservationKey,
       config: compute,
+      metadata: options.metadata,
       ports: [bridgePort],
     }),
     providerId: `broods-workdir-${options.type}`,

@@ -25,6 +25,7 @@ import {
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
 import { MicrovmWebSocketProxy } from "./microvm-websocket-proxy.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
+import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { shellQuote, stringRecord } from "./utils.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
@@ -36,6 +37,8 @@ export interface MicrovmHarnessDriverOptions {
   bootstrapIdentity?: string;
   config: SandboxExecutorConfig & { provider: "lambda"; persistent: true };
   defaultWorkingDirectory?: string;
+  /** The invoking run's identity, mirrored onto the reserved sandbox. */
+  metadata?: SandboxRunMetadata;
   ports?: ReadonlyArray<number>;
 }
 
@@ -43,10 +46,12 @@ interface MicrovmHarnessExecutor {
   acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<MicrovmHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<Omit<MicrovmHarnessReservation, "isFirstCreate">>;
   runHarnessCommand(request: {
     microvmId: string;
@@ -107,6 +112,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
       reservation = await this.#executor.acquireHarnessReservation({
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
       });
       options.abortSignal?.throwIfAborted();
 
@@ -131,6 +137,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
     const reservation = await this.#executor.resumeHarnessReservation({
       reservationKey: this.#options.reservationKey,
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      ...(this.#options.metadata ? { metadata: this.#options.metadata } : {}),
     });
     options.abortSignal?.throwIfAborted();
 

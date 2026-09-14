@@ -73,6 +73,30 @@ describe("WorkdirHarnessDriver", () => {
     ]);
   });
 
+  test("threads the invoking run's metadata into acquire and resume", async () => {
+    const fake = fakeWorkdir();
+    const executor = fakeExecutor(fake.sandbox, true);
+    const options = driverOptions();
+    delete options.bootstrapIdentity;
+    options.metadata = {
+      traceId: "trace-abc",
+      taskId: "task-1",
+      agentId: "agent-9",
+      conversationKey: "conv-7",
+    };
+    const driver = new WorkdirHarnessDriver(options, executor.value as never);
+
+    await driver.createSession({ identity: "bootstrap-v1" });
+    await driver.resumeSession?.({ sessionId: "session-1" });
+
+    expect(executor.acquisitions).toEqual([
+      { reservationKey: "acct:agent:harness", metadata: options.metadata },
+    ]);
+    expect(executor.resumptions).toEqual([
+      { reservationKey: "acct:agent:harness", metadata: options.metadata },
+    ]);
+  });
+
   test("resumes the same reservation and rejects a mismatched bootstrap identity", async () => {
     const fake = fakeWorkdir();
     const executor = fakeExecutor(fake.sandbox, false);

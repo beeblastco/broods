@@ -21,7 +21,10 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import { workdirSizeResources } from "../../shared/sandbox-sizes.ts";
+import {
+  type SandboxRunMetadata,
+  workdirSizeResources,
+} from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
   resolveSandboxLifecycle,
@@ -111,6 +114,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   async acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<WorkdirHarnessReservation> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -138,6 +142,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   async resumeHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
+    metadata?: SandboxRunMetadata;
   }): Promise<Sandbox> {
     request.abortSignal?.throwIfAborted();
     if (!this.#persistent(request)) {
@@ -160,6 +165,15 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       externalId,
       this.#config.controlPlane?.accountId,
     ).catch(() => {});
+    // Refresh the dashboard mirror so a resumed turn's trace/task lands on the
+    // row; recoverable on the next call, so it never holds up the session.
+    void upsertSandboxInstance(
+      this.#config.controlPlane,
+      "sandbox",
+      request.reservationKey,
+      externalId,
+      request.metadata,
+    );
     request.abortSignal?.throwIfAborted();
 
     return sandbox;
