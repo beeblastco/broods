@@ -644,6 +644,7 @@ function successfulDeletionResponse() {
       agentsDeleted: 0,
       skillObjectsDeleted: 0,
       bundleObjectsDeleted: 0,
+      attachmentObjectsDeleted: 0,
       accountHooksDeleted: 0,
       mcpDeleted: 0,
       channelRecordsDeleted: 0,

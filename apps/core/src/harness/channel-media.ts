@@ -1,14 +1,19 @@
 /**
  * Inbound channel media, the mirror of the outbound `send-files` / `send-images` path.
  *
- * Media is read once, stored in the agent's workspace, and handed to the model
- * as the same sealed ticket the outbound tools mint: storage stays private, the
+ * Media is read once and written twice. The copy the model is handed lives in
+ * the attachment store, a managed-bucket prefix no sandbox mounts, sealed as
+ * the same kind of ticket the outbound tools mint: storage stays private, the
  * ticket is the only credential, and it never expires, so the turn still
- * resolves when the conversation is replayed months later. A presigned S3 URL
+ * resolves when the conversation is replayed months later. The provider fetches
+ * that link on every turn, so it has to outlive the workspace. An agent told to
+ * tidy its files would otherwise take the conversation's pictures with it, and
+ * every later turn would fail on the provider's 404. A presigned S3 URL
  * expires, and base64 bloats a conversation that is stored as JSON.
  *
- * What the model cannot read natively becomes a workspace file the agent opens
- * with `read` or `bash`, so a voice note is a transcription job, not a failed turn.
+ * The second copy is the agent's, under `media/` in its default workspace.
+ * What the model cannot read natively is a workspace file the agent opens with
+ * `read` or `bash`, so a voice note is a transcription job, not a failed turn.
  *
  * With no workspace the message row holds a reference to the file the channel
  * still hosts, and the bytes are read again whenever a later turn replays that
@@ -31,7 +36,12 @@ import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
-import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
+import {
+  attachmentStoreKey,
+  MEDIA_PATH_PREFIX,
+  sealMediaTicket,
+  type AttachmentMediaTicket,
+} from "../shared/media-ticket.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
@@ -825,11 +835,12 @@ function whereItLanded(
 // Straight to S3 rather than through the sandbox: a read-only workspace has no
 // sandbox to write through, and a picture does not deserve a VM boot. The mount
 // credentials already carry PutObject, which is what makes this the same write
-// the sandbox would have performed.
+// the sandbox would have performed. The attachment store copy is written on the
+// harness's own role, in the managed bucket, whatever bucket the workspace uses.
 //
 // The link is what the model reads, so a deployment with no public base URL
-// stores the file and returns nothing: the agent can still open it, and no part
-// is built around a URL that would resolve nowhere.
+// stores the files and returns nothing: the agent can still open its copy, and
+// no part is built around a URL that would resolve nowhere.
 async function writeMediaObject(
   workspace: ResolvedWorkspace,
   accountId: string,
@@ -837,25 +848,26 @@ async function writeMediaObject(
   bytes: Buffer,
   mediaType: string,
 ): Promise<string | undefined> {
+  const ticket: AttachmentMediaTicket = { accountId: accountId, path: path };
   const target = await resolveS3ReadTarget(
     workspaceReadContext(workspace.config.storage, workspace.namespace),
   );
-  await writeS3Object(target.bucket, `${target.prefix}${path}`, bytes, {
-    contentType: mediaType,
-  });
+  await Promise.all([
+    writeS3Object(target.bucket, `${target.prefix}${path}`, bytes, {
+      contentType: mediaType,
+    }),
+    writeS3Object(
+      requireEnv("FILESYSTEM_BUCKET_NAME"),
+      attachmentStoreKey(ticket),
+      bytes,
+      { contentType: mediaType },
+    ),
+  ]);
   const baseUrl = getHarnessPublicUrl();
   if (!baseUrl) {
     return undefined;
   }
-  const token = sealMediaTicket(
-    {
-      accountId: accountId,
-      workspaceId: workspace.workspaceId,
-      namespace: workspace.namespace,
-      path: path,
-    },
-    requireEnv("SERVICE_AUTH_SECRET"),
-  );
+  const token = sealMediaTicket(ticket, requireEnv("SERVICE_AUTH_SECRET"));
 
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }

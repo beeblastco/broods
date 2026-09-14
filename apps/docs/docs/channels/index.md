@@ -62,11 +62,16 @@ Chat providers fetch the picture themselves rather than accepting an upload, and
 ## Inbound attachments
 
 Media arriving on a channel is the mirror of the same path. A picture, document,
-voice note, video or sticker sent to the agent is read once while the turn runs,
-stored in the agent's default workspace under `media/`, and handed to the model
-as the same durable `/v1/media/{ticket}` link the outbound tools mint. Nothing is
-inlined as base64: the conversation is persisted as JSON, so a link is what
-still resolves when the turn is replayed months later.
+voice note, video or sticker sent to the agent is read once while the turn runs
+and written twice. One copy lands in the agent's default workspace under
+`media/`, for the agent to open with its own tools. The other lands in the
+attachment store, a prefix of the managed bucket that no sandbox mounts, and
+that copy is what the model is handed as a durable `/v1/media/{ticket}` link.
+The provider fetches the link on every turn, so it has to survive the agent
+tidying its workspace; a sealed link never points into a folder the agent can
+delete. Nothing is inlined as base64: the conversation is persisted as JSON, so
+a link is what still resolves when the turn is replayed months later. Deleting
+the account deletes the store.
 
 Parsing never downloads. Core acknowledges the webhook first, and only then
 reads the provider. A download during parse would hold the provider's

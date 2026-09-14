@@ -1,5 +1,6 @@
 /**
- * Public media route. Serves one workspace file per sealed ticket.
+ * Public media route. Serves one file per sealed ticket: a workspace file a
+ * channel tool sent out, or an inbound attachment from the attachment store.
  *
  * Chat providers store the URL and fetch it lazily, so this replaces a presigned
  * S3 link: storage stays private, the ticket is the only credential, every fetch
@@ -10,9 +11,19 @@
 import { requireEnv } from "./shared/env.ts";
 import { errorResponse, type CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
-import { MEDIA_PATH_PREFIX, openMediaTicket } from "./shared/media-ticket.ts";
+import {
+  attachmentStoreKey,
+  MEDIA_PATH_PREFIX,
+  openMediaTicket,
+  type MediaTicket,
+} from "./shared/media-ticket.ts";
 import { contentTypeForPath } from "./shared/media-types.ts";
-import { headS3Object, readS3Bytes } from "./shared/s3.ts";
+import {
+  headS3Object,
+  readS3Bytes,
+  type S3Access,
+  type S3ObjectHead,
+} from "./shared/s3.ts";
 import { getStorage } from "./shared/storage.ts";
 import {
   resolveS3ReadTarget,
@@ -22,6 +33,13 @@ import {
 // Streaming would buy nothing here: chat pictures are small, and the cap exists
 // to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+
+interface MediaObject {
+  bucket: string;
+  key: string;
+  access: S3Access | undefined;
+  head: S3ObjectHead;
+}
 
 export function routesToMedia(method: string, pathname: string): boolean {
   const upperMethod = method.toUpperCase();
@@ -45,40 +63,15 @@ export async function handleMediaRequest(
     return notFound();
   }
 
-  const record = await getStorage().workspaceConfigs.getById(
-    ticket.accountId,
-    ticket.workspaceId,
-  );
-  if (!record) {
-    logWarn("media.workspace missing", {
-      accountId: ticket.accountId,
-      workspaceId: ticket.workspaceId,
-    });
-
+  const object = await locateMediaObject(ticket);
+  if (!object) {
     return notFound();
   }
-
-  const target = await resolveS3ReadTarget(
-    workspaceReadContext(record.config.storage, ticket.namespace),
-  );
-  const key = `${target.prefix}${ticket.path}`;
-  const head = target.access
-    ? await headS3Object(target.bucket, key, target.access)
-    : await headS3Object(target.bucket, key);
-  if (!head) {
-    logWarn("media.object missing", {
-      accountId: ticket.accountId,
-      workspaceId: ticket.workspaceId,
-      path: ticket.path,
-    });
-
-    return notFound();
-  }
-  if ((head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
+  if ((object.head.contentLength ?? 0) > MAX_MEDIA_BYTES) {
     logWarn("media.object too large", {
       accountId: ticket.accountId,
       path: ticket.path,
-      contentLength: head.contentLength,
+      contentLength: object.head.contentLength,
     });
 
     return errorResponse(413, "Payload too large");
@@ -98,27 +91,81 @@ export async function handleMediaRequest(
       : {}),
     // The ticket names one immutable file, so a provider CDN may hold it forever.
     "cache-control": "public, max-age=31536000, immutable",
-    ...(head.contentLength !== undefined
-      ? { "content-length": String(head.contentLength) }
+    ...(object.head.contentLength !== undefined
+      ? { "content-length": String(object.head.contentLength) }
       : {}),
   };
   logDebug("media.serve", {
     accountId: ticket.accountId,
-    workspaceId: ticket.workspaceId,
     path: ticket.path,
     contentType: contentType,
-    contentLength: head.contentLength,
+    contentLength: object.head.contentLength,
     method: request.method,
   });
   if (request.method.toUpperCase() === "HEAD") {
     return new Response(null, { status: 200, headers: headers });
   }
 
-  const bytes = target.access
-    ? await readS3Bytes(target.bucket, key, target.access)
-    : await readS3Bytes(target.bucket, key);
+  const bytes = object.access
+    ? await readS3Bytes(object.bucket, object.key, object.access)
+    : await readS3Bytes(object.bucket, object.key);
 
   return new Response(bytes, { status: 200, headers: headers });
+}
+
+// The object a ticket names, or null when it is gone. An attachment ticket reads
+// the managed bucket on the harness's own role; a workspace ticket goes through
+// the workspace's storage, which may be a tenant bucket behind an assumed role.
+async function locateMediaObject(
+  ticket: MediaTicket,
+): Promise<MediaObject | null> {
+  if (!("workspaceId" in ticket)) {
+    const bucket = requireEnv("FILESYSTEM_BUCKET_NAME");
+    const key = attachmentStoreKey(ticket);
+    const head = await headS3Object(bucket, key);
+    if (!head) {
+      logWarn("media.attachment missing", {
+        accountId: ticket.accountId,
+        path: ticket.path,
+      });
+
+      return null;
+    }
+
+    return { bucket: bucket, key: key, access: undefined, head: head };
+  }
+
+  const record = await getStorage().workspaceConfigs.getById(
+    ticket.accountId,
+    ticket.workspaceId,
+  );
+  if (!record) {
+    logWarn("media.workspace missing", {
+      accountId: ticket.accountId,
+      workspaceId: ticket.workspaceId,
+    });
+
+    return null;
+  }
+
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(record.config.storage, ticket.namespace),
+  );
+  const key = `${target.prefix}${ticket.path}`;
+  const head = target.access
+    ? await headS3Object(target.bucket, key, target.access)
+    : await headS3Object(target.bucket, key);
+  if (!head) {
+    logWarn("media.object missing", {
+      accountId: ticket.accountId,
+      workspaceId: ticket.workspaceId,
+      path: ticket.path,
+    });
+
+    return null;
+  }
+
+  return { bucket: target.bucket, key: key, access: target.access, head: head };
 }
 
 // One answer for a bad ticket, a deleted workspace and a missing file, so the

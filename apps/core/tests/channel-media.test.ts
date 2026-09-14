@@ -14,6 +14,7 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
+import { openMediaTicket } from "../src/shared/media-ticket.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
@@ -152,12 +153,38 @@ describe("ingestInboundAttachments", () => {
     expect(String(image.image)).toStartWith("https://core.example/v1/media/");
     expect(image.mediaType).toBe("image/png");
 
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
-    const [, key, body, options] = writeS3ObjectMock.mock.calls[0]!;
-    expect(key).toContain("media/");
-    expect(key).toEndWith("-photo.png");
-    expect(body).toEqual(PNG_BYTES);
-    expect(options).toEqual({ contentType: "image/png" });
+    // One copy for the agent, inside its mount; one for the conversation, in
+    // the attachment store, where a workspace clean-up cannot reach it.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const [, workspaceKey, workspaceBody, workspaceOptions] =
+      writeS3ObjectMock.mock.calls[0]!;
+    const [, storeKey] = writeS3ObjectMock.mock.calls[1]!;
+    expect(workspaceKey).toStartWith(`${workspace().namespace}/media/`);
+    expect(workspaceKey).toEndWith("-photo.png");
+    expect(workspaceBody).toEqual(PNG_BYTES);
+    expect(workspaceOptions).toEqual({ contentType: "image/png" });
+    expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
+    expect(storeKey).toEndWith("-photo.png");
+  });
+
+  it("seals the link against the attachment store, not the workspace", async () => {
+    const parts = await ingestInboundAttachments([imageAttachment()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-1",
+      workspace: workspace(),
+    });
+
+    const image = parts.stored.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected an image part");
+    const token = String(image.image).slice(
+      "https://core.example/v1/media/".length,
+    );
+    const ticket = openMediaTicket(token, "service-auth-secret");
+    expect(ticket).not.toBeNull();
+    expect(ticket).not.toHaveProperty("workspaceId");
+    expect(ticket?.path).toStartWith("media/");
+    expect(ticket?.path).toEndWith("-photo.png");
   });
 
   it("tells the agent where every attachment landed", async () => {
@@ -199,7 +226,8 @@ describe("ingestInboundAttachments", () => {
       [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
     ).toEqual([]);
     expect(noteText(parts)).toContain("voice.aac");
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
+    // Workspace copy plus attachment store copy.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
   });
 
   it("sends a voice note natively to a provider that listens to it", async () => {
@@ -333,7 +361,8 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(10);
+    // Ten accepted attachments, two copies each.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
     expect(noteText(parts)).toContain("2 further attachment(s)");
   });
 
