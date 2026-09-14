@@ -25,7 +25,10 @@ import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../../shared/workspaces.ts";
 import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
@@ -101,6 +104,9 @@ export interface ToolContext {
   // attached workspaces all borrow a different sandbox. Undefined => no own sandbox.
   agentSandbox?: SandboxExecutorConfig;
   agentSandboxPermissionMode?: SandboxPermissionMode;
+  // Extra sandboxes (`config.sandboxes`) bash reaches by name, each with no
+  // workspace mounted. Empty => bash keeps its boolean `sandbox` flag.
+  sandboxes?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
@@ -130,6 +136,7 @@ export async function createTools(
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const agentSandbox = context.agentSandbox;
+  const sandboxes = context.sandboxes ?? [];
   const sandboxOptions =
     typeof agentSandbox?.options === "object" && agentSandbox.options !== null
       ? (agentSandbox.options as Record<string, unknown>)
@@ -178,7 +185,7 @@ export async function createTools(
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
   // of silently selecting the first writable workspace.
-  if (agentSandbox || sandboxWorkspaces.length > 0) {
+  if (agentSandbox || sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
@@ -190,6 +197,7 @@ export async function createTools(
                 context.agentSandboxPermissionMode ?? "ask",
             }
           : {}),
+        ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
         ...(backgroundContext ? { background: backgroundContext } : {}),
         ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }),

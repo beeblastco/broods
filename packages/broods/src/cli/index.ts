@@ -2337,6 +2337,10 @@ async function agentGet(
   const config = agent.config;
   const sandbox =
     typeof config.sandbox === "string" ? config.sandbox : undefined;
+  // `[x].flat()` reads an absent list as empty without another branch here.
+  const sandboxes = [config.sandboxes]
+    .flat()
+    .filter((entry): entry is string => typeof entry === "string");
   const workspaces = Array.isArray(config.workspaces)
     ? config.workspaces
         .map((ref) =>
@@ -2373,6 +2377,9 @@ async function agentGet(
   );
   console.log(`  Model:        ${agentModelLabel(config)}`);
   console.log(`  Sandbox:      ${sandbox ?? "none"}`);
+  console.log(
+    `  Sandboxes:    ${sandboxes.length > 0 ? sandboxes.join(", ") : "none"}`,
+  );
   console.log(
     `  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "none"}`,
   );

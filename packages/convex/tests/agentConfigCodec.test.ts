@@ -36,4 +36,17 @@ describe("agent config codec", () => {
     expect(flat.extraConfig).toMatchObject({ mcp: mcp });
     expect(toNestedAgentConfig(flat).mcp).toEqual(mcp);
   });
+
+  // Extra sandboxes have no flat column either, so they only reach core through
+  // extraConfig.
+  test("round-trips the sandboxes branch", () => {
+    const flat = fromNestedAgentConfig({
+      model: { provider: "custom", modelId: "deepseek-v4-pro" },
+      sandbox: "sb_default",
+      sandboxes: ["sb_offline"],
+    });
+
+    expect(flat.extraConfig).toMatchObject({ sandboxes: ["sb_offline"] });
+    expect(toNestedAgentConfig(flat).sandboxes).toEqual(["sb_offline"]);
+  });
 });

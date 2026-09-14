@@ -178,6 +178,105 @@ export const coding = defineAgent({
   );
 });
 
+test("compileProject maps extra agent sandboxes to their names", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({ name: "runner", provider: "sandbox" });
+export const browser = defineSandbox({
+  name: "browser",
+  description: "Headless Chromium.",
+  provider: "lambda",
+  persistent: true,
+});
+export const offline = defineSandbox({ name: "offline", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandbox: runner,
+  sandboxes: [browser, "offline"],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  // A resource and a bare name both land as the record name, like \`sandbox\`.
+  expect(
+    manifest.resources.find(
+      (resource) => resource.kind === "agent" && resource.name === "support",
+    )?.config,
+  ).toMatchObject({ sandbox: "runner", sandboxes: ["browser", "offline"] });
+});
+
+test("compileProject rejects an unexported extra sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+const browser = defineSandbox({ name: "browser", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: [browser],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandboxes references sandbox "browser", but that sandbox is not exported from broods/',
+  );
+});
+
+test("compileProject rejects an unexported default sandbox on defineAgent", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+const runner = defineSandbox({ name: "runner", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandbox: runner,
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandbox references sandbox "runner", but that sandbox is not exported from broods/',
+  );
+});
+
+test("compileProject rejects an extra sandbox that also backs a workspace", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" } });
+export const browser = defineSandbox({ name: "browser", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: [browser],
+  workspaces: [{ workspace: repo, sandbox: browser }],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandboxes references sandbox "browser", which also backs workspace "repo"',
+  );
+});
+
 test("compileProject defaults to the Broods harness when harness is omitted", async () => {
   const cwd = await fixtureProject(
     "",

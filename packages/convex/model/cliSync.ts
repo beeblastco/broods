@@ -417,6 +417,9 @@ export function rewriteIdsToNames(
   if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
     result.sandbox = sandboxNames[result.sandbox];
   }
+  if (Array.isArray(result.sandboxes)) {
+    result.sandboxes = rewriteRefList(result.sandboxes, sandboxNames);
+  }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
       if (!isPlainObject(entry)) return entry;
@@ -510,6 +513,9 @@ export function rewriteResourceRefs(
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
     result.sandbox = sandboxIds[result.sandbox];
   }
+  if (Array.isArray(result.sandboxes)) {
+    result.sandboxes = rewriteRefList(result.sandboxes, sandboxIds);
+  }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
       if (!isPlainObject(entry)) return entry;
@@ -597,6 +603,16 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   }
 
   return value;
+}
+
+// Swap each string entry for its table value; anything else passes through.
+function rewriteRefList(
+  entries: unknown[],
+  table: Record<string, string>,
+): unknown[] {
+  return entries.map((entry): unknown =>
+    typeof entry === "string" && table[entry] ? table[entry] : entry,
+  );
 }
 
 function sandboxProvider(sandbox: CliResource): string {

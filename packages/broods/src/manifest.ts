@@ -162,7 +162,7 @@ export async function compileProject(
     }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
-  assertExportedHarnessSandboxes(resources);
+  assertExportedAgentSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
   const reach = declaredReach(resources);
   for (const resource of resources) assertKnownConfigKeys(resource);
@@ -378,6 +378,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "mcp",
   "denyTools",
   "sandbox",
+  "sandboxes",
   "workspaces",
   "subagent",
   "skills",
@@ -397,7 +398,6 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   channels: "connections",
   hook: "hooks",
   subagents: "subagent",
-  sandboxes: "sandbox",
   systemPrompt: "agent",
   system: "agent",
 };
@@ -686,7 +686,9 @@ function sandboxProvider(sandbox: SandboxResource): string {
     : "sandbox";
 }
 
-function assertExportedHarnessSandboxes(resources: AnyResource[]): void {
+// A sandbox referenced as a resource but never exported is not compiled into the
+// manifest, so the name the agent config carries would resolve to nothing at sync.
+function assertExportedAgentSandboxes(resources: AnyResource[]): void {
   const exportedSandboxNames = new Set(
     resources
       .filter(
@@ -696,15 +698,26 @@ function assertExportedHarnessSandboxes(resources: AnyResource[]): void {
   );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
-    const sandbox = resource.config.harness?.sandbox;
-    if (
-      isResource(sandbox) &&
-      sandbox.kind === "sandbox" &&
-      !exportedSandboxNames.has(sandbox.name)
-    ) {
-      throw new Error(
-        `Agent "${resource.name}" harness references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
-      );
+    const references: Array<{ field: string; sandbox: unknown }> = [
+      { field: "sandbox", sandbox: resource.config.sandbox },
+      { field: "harness", sandbox: resource.config.harness?.sandbox },
+      ...(resource.config.sandboxes ?? []).map(
+        (sandbox): { field: string; sandbox: unknown } => ({
+          field: "sandboxes",
+          sandbox: sandbox,
+        }),
+      ),
+    ];
+    for (const reference of references) {
+      if (
+        isResource(reference.sandbox) &&
+        reference.sandbox.kind === "sandbox" &&
+        !exportedSandboxNames.has(reference.sandbox.name)
+      ) {
+        throw new Error(
+          `Agent "${resource.name}" ${reference.field} references sandbox "${reference.sandbox.name}", but that sandbox is not exported from broods/`,
+        );
+      }
     }
   }
 }
@@ -1357,10 +1370,28 @@ function normalizeAgentConfig(
   if (isResource(config.sandbox)) {
     config.sandbox = config.sandbox.name;
   }
+  if (Array.isArray(config.sandboxes)) {
+    config.sandboxes = config.sandboxes.map((sandbox): unknown =>
+      isResource(sandbox) ? sandbox.name : sandbox,
+    );
+  }
   if (Array.isArray(config.workspaces)) {
-    config.workspaces = config.workspaces.map((workspace) =>
+    const workspaces = config.workspaces.map((workspace) =>
       normalizeWorkspaceRef(workspace, resource.name),
     );
+    // An extra never mounts a workspace, so one that also backs a workspace would
+    // be the same machine reachable with and without the mount.
+    for (const workspace of workspaces) {
+      if (
+        Array.isArray(config.sandboxes) &&
+        config.sandboxes.includes(workspace.sandbox)
+      ) {
+        throw new Error(
+          `Agent "${resource.name}" sandboxes references sandbox "${String(workspace.sandbox)}", which also backs workspace "${String(workspace.name)}"`,
+        );
+      }
+    }
+    config.workspaces = workspaces;
   }
   if (config.policies !== undefined) {
     const policies = normalizePolicyRefs(config.policies, resource.name);

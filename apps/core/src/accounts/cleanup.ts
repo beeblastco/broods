@@ -10,6 +10,7 @@ import {
 } from "../harness/sandbox/s3-mount.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
+import type { SandboxConfigRecord } from "../shared/domain/sandbox-config.ts";
 import type { WorkspaceStorageConfig } from "../shared/domain/workspace-config.ts";
 import { optionalEnv, requireEnv } from "../shared/env.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
@@ -98,37 +99,47 @@ export async function deleteWorkspaceFilesystem(
 }
 
 /**
- * The reservation keys this account's agents hold on their own sandboxes. Asks
- * `agentSandboxReservation` so a pinned key releases the machine actually reserved.
+ * The reservation keys this account's agents hold on their own and extra
+ * sandboxes. Asks `agentSandboxReservation` so a pinned key releases the machine
+ * actually reserved.
  */
-async function agentSandboxReservationKeys(
+export async function agentSandboxReservationKeys(
   accountId: string,
 ): Promise<string[]> {
-  const agents = await getStorage().agents.list(accountId);
-  const keys = await Promise.all(
-    agents.map(async (agent): Promise<string | undefined> => {
-      const sandboxId = agent.config.sandbox;
-      if (typeof sandboxId !== "string" || sandboxId.length === 0) {
-        return undefined;
-      }
-      const record = await getStorage().sandboxConfigs.getById(
-        accountId,
-        sandboxId,
-      );
-      if (!record) {
-        return undefined;
-      }
-
-      return agentSandboxReservation(
-        record.config,
-        accountId,
-        agent.agentId,
-        sandboxId,
-      );
-    }),
+  const storage = getStorage();
+  // Many agents share a few records, so one list beats a query per reference.
+  const [agents, records] = await Promise.all([
+    storage.agents.list(accountId),
+    storage.sandboxConfigs.list(accountId),
+  ]);
+  const recordsById = new Map(
+    records.map((record): [string, SandboxConfigRecord] => [
+      record.sandboxId,
+      record,
+    ]),
   );
 
-  return keys.filter((key): key is string => key !== undefined);
+  return agents.flatMap((agent): string[] =>
+    [agent.config.sandbox, ...(agent.config.sandboxes ?? [])].flatMap(
+      (sandboxId): string[] => {
+        const record =
+          typeof sandboxId === "string"
+            ? recordsById.get(sandboxId)
+            : undefined;
+        if (!record) {
+          return [];
+        }
+        const key = agentSandboxReservation(
+          record.config,
+          accountId,
+          agent.agentId,
+          record.sandboxId,
+        );
+
+        return key ? [key] : [];
+      },
+    ),
+  );
 }
 
 async function deleteConvexRuntimeRows(

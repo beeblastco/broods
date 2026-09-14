@@ -17,7 +17,10 @@ export function isStringRecord(
   );
 }
 
-export function assertOptionalStringArray(value: unknown, name: string): void {
+export function assertOptionalStringArray(
+  value: unknown,
+  name: string,
+): asserts value is string[] | undefined {
   if (
     value !== undefined &&
     (!Array.isArray(value) ||

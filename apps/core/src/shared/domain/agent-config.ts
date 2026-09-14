@@ -127,6 +127,9 @@ export interface AgentConfig {
   // concrete configs live in their own tables (see sandbox-config.ts /
   // workspace-config.ts) and are resolved by the handler before the agent loop.
   sandbox?: string;
+  // Extra sandboxes bash reaches by name with no workspace mounted. Never repeats
+  // `sandbox`.
+  sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: AgentSessionConfig;
   hooks?: AgentHooksConfig;
@@ -600,6 +603,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     model,
     provider,
     sandbox,
+    sandboxes,
     workspaces,
     session,
     hooks,
@@ -619,6 +623,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(model !== undefined ? { model: model } : {}),
     ...(provider !== undefined ? { provider: provider } : {}),
     ...(sandbox !== undefined ? { sandbox: sandbox } : {}),
+    ...(sandboxes !== undefined ? { sandboxes: sandboxes } : {}),
     ...(workspaces !== undefined ? { workspaces: workspaces } : {}),
     ...(session !== undefined ? { session: session } : {}),
     ...(hooks !== undefined ? { hooks: hooks } : {}),
@@ -706,13 +711,13 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  normalizeSandboxRef(config.sandbox);
   if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
     throw new Error(
       `config.sandbox is required for the ${String(config.harness.type)} harness`,
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
+  normalizeSandboxRefs(config.sandbox, config.sandboxes, config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -1097,11 +1102,47 @@ function baseUrlTypoHint(config: Record<string, unknown>): string {
 // The concrete sandbox/workspace configs live in their own account-scoped tables;
 // the agent config only carries references. Validation of the referenced records
 // themselves lives in sandbox-config.ts / workspace-config.ts.
-function normalizeSandboxRef(value: unknown): void {
-  assertOptionalNonEmptyString(value, "config.sandbox");
+// Extra sandboxes are bash targets beside the default, so repeating the default
+// or a workspace's sandbox would name one machine twice, once with a mount and
+// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+function normalizeSandboxRefs(
+  sandbox: unknown,
+  sandboxes: unknown,
+  workspaces: AgentWorkspaceRef[] | undefined,
+): void {
+  assertOptionalNonEmptyString(sandbox, "config.sandbox");
+  assertOptionalStringArray(sandboxes, "config.sandboxes");
+  if (sandboxes === undefined) {
+    return;
+  }
+
+  const seen = new Set<string>();
+  sandboxes.forEach((sandboxId, index): void => {
+    if (sandboxId === sandbox) {
+      throw new Error(
+        `config.sandboxes[${index}] repeats the default config.sandbox`,
+      );
+    }
+    if (seen.has(sandboxId)) {
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+      );
+    }
+    const mounted = workspaces?.find(
+      (ref): boolean => ref.sandbox === sandboxId,
+    );
+    if (mounted) {
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
+      );
+    }
+    seen.add(sandboxId);
+  });
 }
 
-function normalizeWorkspaceRefs(value: unknown): void {
+function normalizeWorkspaceRefs(
+  value: unknown,
+): asserts value is AgentWorkspaceRef[] | undefined {
   if (value == null) {
     return;
   }

@@ -551,6 +551,21 @@ attached, and one per agent where none is. `options.reservationKey` pins that id
 yourself. Two sandboxes carrying the same key share one machine. Keys are scoped to
 your account; the same string on another account names a different machine.
 
+Attach extra sandboxes when one agent needs a specialized machine beside its default, such
+as a browser image, a deny-all network, or a stricter `permissionMode`:
+
+```ts
+export const myAgent = defineAgent({
+  name: "my-agent",
+  sandbox: lambdaSandbox, // default machine
+  sandboxes: [reservedSandbox], // extra machines, picked by name
+});
+```
+
+Extras only get `bash`. The model passes `sandbox: "persistent"` to run there. No
+workspace is mounted, so nothing written reaches durable storage, and a persistent extra
+reserves its own machine for the agent.
+
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
 
 ## Workspaces

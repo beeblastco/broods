@@ -936,11 +936,17 @@ describe("SubagentCoordinator", () => {
       resolvedWorkspaces: () => [],
       agentSandbox: () => undefined,
       agentSandboxPermissionMode: () => "ask",
+      sandboxes: () => [{ name: "browser-sandbox", sandbox: {} }],
       loadSkillPrompt: async () => "",
       createEphemeralTurnContext: async () => ({ system: [] }),
     } as never;
 
     const ephemeral = createEphemeralChildSession(childSession, []);
+
+    // A child reaches the same extra sandboxes as the agent it runs for.
+    expect(ephemeral.sandboxes().map((extra) => extra.name)).toEqual([
+      "browser-sandbox",
+    ]);
 
     // Without the deployment scope, runAgentLoop stamps empty project/stage/
     // endpoint_id on the subtask span: publishSpan early-returns (no live span) AND

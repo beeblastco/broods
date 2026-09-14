@@ -58,10 +58,20 @@ export interface ResolvedWorkspace {
   readMount?: SandboxConfig;
 }
 
+// An extra sandbox from `config.sandboxes`. `name` is the sandbox record name the
+// model picks with bash `sandbox`; `description` tells it what the sandbox is for.
+export interface ResolvedAgentSandbox {
+  name: string;
+  description?: string;
+  sandbox: WorkspaceSandboxConfig;
+}
+
 export interface ResolvedAgentRuntime {
   // Agent-level default sandbox. Powers stateless bash (no workspace) and is the
   // fallback sandbox for workspaces that don't declare their own.
   sandbox?: WorkspaceSandboxConfig;
+  // Extra sandboxes bash reaches by name with no workspace mounted. Never the default.
+  sandboxes: ResolvedAgentSandbox[];
   workspaces: ResolvedWorkspace[];
 }
 
@@ -79,11 +89,18 @@ export interface AgentRuntimeIdentity {
   agentId?: string;
 }
 
+// A sandbox record as resolution loads it: the record for its name and description,
+// the runtime config with the control-plane identity attached.
+interface LoadedSandbox {
+  record: SandboxConfigRecord;
+  sandbox: WorkspaceSandboxConfig;
+}
+
 /**
- * The key an agent's own sandbox reserves on, or undefined when it reserves
- * nothing. A pinned `options.reservationKey` wins over the derived key, and both
- * `resolveAgentRuntime` and account-deletion cleanup ask this one function so the
- * machine released is the machine reserved.
+ * The key an agent-level sandbox (the default or an extra) reserves on, or
+ * undefined when it reserves nothing. A pinned `options.reservationKey` wins over
+ * the derived key, and both `resolveAgentRuntime` and account-deletion cleanup ask
+ * this one function so the machine released is the machine reserved.
  */
 export function agentSandboxReservation(
   sandbox: WorkspaceSandboxConfig,
@@ -106,7 +123,7 @@ export function agentSandboxReservation(
 }
 
 /**
- * Derive the reservation key for an agent's own workspace-less sandbox, scoped
+ * Derive the reservation key for a workspace-less sandbox an agent reserves, scoped
  * `accountId:agentId:sandboxId` like workspaceNamespace's account-plus-record
  * scope: agents never share a machine by accident, and re-pointing an agent at
  * another sandbox record hands it that record's machine.
@@ -166,8 +183,9 @@ export function pinnedSandboxReservationKey(
 }
 
 /**
- * Resolve an agent's `sandbox` + `workspaces` references into concrete records.
- * Throws a clear error when a referenced record is missing (misconfigured agent).
+ * Resolve an agent's `sandbox`, `sandboxes` and `workspaces` references into
+ * concrete records. Throws a clear error when a referenced record is missing
+ * (misconfigured agent).
  */
 export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
@@ -176,14 +194,35 @@ export async function resolveAgentRuntime(
 ): Promise<ResolvedAgentRuntime> {
   const accountId = identity.accountId;
   const storage = getStorage();
-  const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
+  // Keyed on the in-flight fetch, so a record the extras and a workspace share is
+  // fetched once even while both resolve concurrently.
+  const sandboxCache = new Map<string, Promise<LoadedSandbox>>();
+
+  // An extra never backs a workspace, so it keeps its record config and, when
+  // persistent, reserves per agent and sandbox exactly like the default one.
+  async function loadExtraSandbox(
+    extraId: string,
+  ): Promise<ResolvedAgentSandbox> {
+    const extra = await loadSandbox(extraId);
+
+    return {
+      name: extra.record.name,
+      ...(extra.record.description
+        ? { description: extra.record.description }
+        : {}),
+      sandbox: reservedAgentSandbox(
+        extra.sandbox,
+        accountId,
+        identity.agentId,
+        extraId,
+      ),
+    };
+  }
 
   // Load (and memoize) a sandbox record so a sandbox shared across workspaces is
   // only fetched once. The control-plane identity (account + size specs) is attached
   // here so a reserved instance mirrors itself into Convex from the executor.
-  async function loadSandbox(
-    sandboxId: string,
-  ): Promise<WorkspaceSandboxConfig> {
+  function loadSandbox(sandboxId: string): Promise<LoadedSandbox> {
     if (!accountId) {
       throw new Error("Cannot resolve sandbox reference without an account");
     }
@@ -191,96 +230,123 @@ export async function resolveAgentRuntime(
     if (cached) {
       return cached;
     }
-    const record = await storage.sandboxConfigs.getById(accountId, sandboxId);
-    if (!record) {
-      throw new Error(`Referenced sandbox not found: ${sandboxId}`);
-    }
-    const resolved: WorkspaceSandboxConfig = {
-      ...record.config,
-      controlPlane: sandboxControlPlane(accountId, record),
-    };
-    sandboxCache.set(sandboxId, resolved);
+    const loading = storage.sandboxConfigs
+      .getById(accountId, sandboxId)
+      .then((record): LoadedSandbox => {
+        if (!record) {
+          throw new Error(`Referenced sandbox not found: ${sandboxId}`);
+        }
 
-    return resolved;
+        return {
+          record: record,
+          sandbox: {
+            ...record.config,
+            controlPlane: sandboxControlPlane(accountId, record),
+          },
+        };
+      });
+    sandboxCache.set(sandboxId, loading);
+
+    return loading;
+  }
+
+  async function loadWorkspaces(
+    sandbox: WorkspaceSandboxConfig | undefined,
+  ): Promise<ResolvedWorkspace[]> {
+    const workspaces: ResolvedWorkspace[] = [];
+    for (const ref of agentConfig.workspaces ?? []) {
+      if (!accountId) {
+        throw new Error(
+          "Cannot resolve workspace reference without an account",
+        );
+      }
+      const record = await storage.workspaceConfigs.getById(
+        accountId,
+        ref.workspaceId,
+      );
+      if (!record) {
+        throw new Error(
+          `Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`,
+        );
+      }
+      // Effective sandbox cascade:
+      //   null            => read-only opt-out (even when an agent default exists)
+      //   "sb_…" (string) => per-workspace override
+      //   undefined       => inherit the agent-level default (read-only if none)
+      let effectiveSandbox: WorkspaceSandboxConfig | undefined;
+      if (ref.sandbox === null) {
+        effectiveSandbox = undefined;
+      } else if (typeof ref.sandbox === "string" && ref.sandbox.length > 0) {
+        effectiveSandbox = (await loadSandbox(ref.sandbox)).sandbox;
+      } else {
+        effectiveSandbox = sandbox;
+      }
+      // Read-only workspace (no effective sandbox): default to reading through a
+      // service-managed read-only Lambda mount (network denied, cheapest mount slot)
+      // so reads reflect committed writes immediately. The existing `sandbox: null`
+      // opt-out ("no sandbox, no compute") also skips the mount: read straight from
+      // S3 instead.
+      const readMount: SandboxConfig | undefined =
+        !effectiveSandbox && ref.sandbox !== null
+          ? { provider: "lambda", network: { mode: "deny-all" } }
+          : undefined;
+      workspaces.push({
+        name: ref.name,
+        workspaceId: ref.workspaceId,
+        namespace: isolatedWorkspaceNamespace(
+          workspaceNamespace(accountId, ref.workspaceId),
+          record.config.isolation,
+          isolationScope,
+        ),
+        ...(record.description ? { description: record.description } : {}),
+        config: record.config,
+        // Attach the workspace's storage identity to its effective sandbox so the
+        // executor resolves the mount target against the right bucket/creds.
+        ...(effectiveSandbox
+          ? {
+              sandbox: {
+                ...effectiveSandbox,
+                ...(record.config.storage
+                  ? { storage: record.config.storage }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(readMount ? { readMount: readMount } : {}),
+      });
+    }
+
+    return workspaces;
   }
 
   const sandboxId =
     typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
       ? agentConfig.sandbox
       : undefined;
-  const sandbox = sandboxId ? await loadSandbox(sandboxId) : undefined;
-
-  const workspaces: ResolvedWorkspace[] = [];
-  for (const ref of agentConfig.workspaces ?? []) {
-    if (!accountId) {
-      throw new Error("Cannot resolve workspace reference without an account");
-    }
-    const record = await storage.workspaceConfigs.getById(
-      accountId,
-      ref.workspaceId,
-    );
-    if (!record) {
-      throw new Error(
-        `Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`,
-      );
-    }
-    // Effective sandbox cascade:
-    //   null            => read-only opt-out (even when an agent default exists)
-    //   "sb_…" (string) => per-workspace override
-    //   undefined       => inherit the agent-level default (read-only if none)
-    let effectiveSandbox: WorkspaceSandboxConfig | undefined;
-    if (ref.sandbox === null) {
-      effectiveSandbox = undefined;
-    } else if (typeof ref.sandbox === "string" && ref.sandbox.length > 0) {
-      effectiveSandbox = await loadSandbox(ref.sandbox);
-    } else {
-      effectiveSandbox = sandbox;
-    }
-    // Read-only workspace (no effective sandbox): default to reading through a
-    // service-managed read-only Lambda mount (network denied, cheapest mount slot) so
-    // reads reflect committed writes immediately. The existing `sandbox: null` opt-out
-    // ("no sandbox, no compute") also skips the mount: read straight from S3 instead.
-    const readMount: SandboxConfig | undefined =
-      !effectiveSandbox && ref.sandbox !== null
-        ? { provider: "lambda", network: { mode: "deny-all" } }
-        : undefined;
-    workspaces.push({
-      name: ref.name,
-      workspaceId: ref.workspaceId,
-      namespace: isolatedWorkspaceNamespace(
-        workspaceNamespace(accountId, ref.workspaceId),
-        record.config.isolation,
-        isolationScope,
-      ),
-      ...(record.description ? { description: record.description } : {}),
-      config: record.config,
-      // Attach the workspace's storage identity to its effective sandbox so the
-      // executor resolves the mount against the right bucket/creds.
-      ...(effectiveSandbox
-        ? {
-            sandbox: {
-              ...effectiveSandbox,
-              ...(record.config.storage
-                ? { storage: record.config.storage }
-                : {}),
-            },
-          }
-        : {}),
-      ...(readMount ? { readMount: readMount } : {}),
-    });
-  }
+  const sandbox = sandboxId
+    ? (await loadSandbox(sandboxId)).sandbox
+    : undefined;
+  // The extras depend on nothing in the workspace loop, so they load alongside it.
+  const [sandboxes, workspaces] = await Promise.all([
+    Promise.all((agentConfig.sandboxes ?? []).map(loadExtraSandbox)),
+    loadWorkspaces(sandbox),
+  ]);
+  assertDistinctSandboxNames(sandbox, sandboxes);
 
   // Only the agent-level copy carries the derived reservation key; the copies the
   // workspaces inherit key their reservation on the workspace namespace instead.
-  const agentSandbox = reservedAgentSandbox(
-    sandbox,
-    accountId,
-    identity.agentId,
-    sandboxId,
-  );
-
   return {
-    ...(agentSandbox ? { sandbox: agentSandbox } : {}),
+    ...(sandbox
+      ? {
+          sandbox: reservedAgentSandbox(
+            sandbox,
+            accountId,
+            identity.agentId,
+            sandboxId,
+          ),
+        }
+      : {}),
+    sandboxes: sandboxes,
     workspaces: workspaces,
   };
 }
@@ -313,19 +379,38 @@ export function workspaceNamespacesForAccount(
   );
 }
 
+// bash picks a sandbox by record name, so two records under one name would leave
+// the model no way to reach the second.
+function assertDistinctSandboxNames(
+  sandbox: WorkspaceSandboxConfig | undefined,
+  sandboxes: ResolvedAgentSandbox[],
+): void {
+  const seen = new Set(
+    sandbox?.controlPlane?.name ? [sandbox.controlPlane.name] : [],
+  );
+  for (const extra of sandboxes) {
+    if (seen.has(extra.name)) {
+      throw new Error(
+        `Sandbox "${extra.name}" is attached twice; bash picks a sandbox by name`,
+      );
+    }
+    seen.add(extra.name);
+  }
+}
+
 /**
- * Give a persistent agent-level sandbox the reservation key its workspace-less
- * runs key persistence on, so `persistent: true` works without the author also
- * supplying `options.reservationKey`. A sandbox that reserves nothing passes
- * through untouched.
+ * Give a persistent agent-level sandbox (the default or an extra) the reservation
+ * key its workspace-less runs key persistence on, so `persistent: true` works
+ * without the author also supplying `options.reservationKey`. A sandbox that
+ * reserves nothing passes through untouched.
  */
 function reservedAgentSandbox(
-  sandbox: WorkspaceSandboxConfig | undefined,
+  sandbox: WorkspaceSandboxConfig,
   accountId: string | undefined,
   agentId: string | undefined,
   sandboxId: string | undefined,
-): WorkspaceSandboxConfig | undefined {
-  if (!sandbox || !sandboxId) {
+): WorkspaceSandboxConfig {
+  if (!sandboxId) {
     return sandbox;
   }
   const reservationKey = agentSandboxReservation(

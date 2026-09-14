@@ -416,6 +416,67 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
+  it("resolves extra sandboxes by record name and reserves each on its own key", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: id === "sb_browser" ? "browser-sandbox" : "primary",
+          ...(id === "sb_browser" ? { description: "Headless Chromium." } : {}),
+          config: { provider: "lambda", persistent: id === "sb_browser" },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      { sandbox: "sb_1", sandboxes: ["sb_browser"] },
+      { accountId: "acct_1", agentId: "ag_1" },
+    );
+
+    // The record name is what the model names in bash, and the description is what
+    // tells it which sandbox to pick.
+    expect(resolved.sandboxes).toEqual([
+      {
+        name: "browser-sandbox",
+        description: "Headless Chromium.",
+        sandbox: expect.objectContaining({
+          provider: "lambda",
+          persistent: true,
+          options: {
+            reservationKey: agentSandboxReservationKey(
+              "acct_1",
+              "ag_1",
+              "sb_browser",
+            ),
+          },
+        }),
+      },
+    ]);
+    // A non-persistent default reserves nothing, so the extra's key is its own.
+    expect(resolved.sandbox?.options).toBeUndefined();
+  });
+
+  it("refuses two attached sandboxes that share one record name", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: "runner",
+          config: { provider: "lambda" },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+
+    await expect(
+      resolveAgentRuntime(
+        { sandbox: "sb_1", sandboxes: ["sb_2"] },
+        { accountId: "acct_1", agentId: "ag_1" },
+      ),
+    ).rejects.toThrow('Sandbox "runner" is attached twice');
+  });
+
   it("stamps a pinned key in account-scoped form and leaves a non-persistent sandbox alone", async () => {
     setStorageForTests({
       sandboxConfigs: {

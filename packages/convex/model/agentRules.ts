@@ -36,6 +36,7 @@ export type AgentConfig = Record<string, unknown> & {
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandbox?: string;
+  sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: Record<string, unknown>;
   hooks?: Record<string, unknown>;
@@ -191,6 +192,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
+  normalizeSandboxRefs(config.sandboxes, config.sandbox, config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -579,6 +581,37 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
 
 function normalizeSandboxRef(value: unknown): void {
   assertOptionalNonEmptyString(value, "config.sandbox");
+}
+
+// Extra sandboxes are bash targets beside the default, so repeating the default
+// or a workspace's sandbox would name one machine twice, once with a mount and
+// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+function normalizeSandboxRefs(
+  value: unknown,
+  defaultSandbox: unknown,
+  workspaces: AgentWorkspaceRef[] | undefined,
+): void {
+  assertOptionalStringArray(value, "config.sandboxes");
+  if (value === undefined) return;
+  const seen = new Set<string>();
+  value.forEach((sandboxId, index): void => {
+    if (sandboxId === defaultSandbox)
+      throw new Error(
+        `config.sandboxes[${index}] repeats the default config.sandbox`,
+      );
+    if (seen.has(sandboxId))
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+      );
+    const mounted = workspaces?.find(
+      (ref): boolean => ref.sandbox === sandboxId,
+    );
+    if (mounted)
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
+      );
+    seen.add(sandboxId);
+  });
 }
 
 function normalizeWorkspaceRefs(value: unknown): void {
@@ -1178,7 +1211,10 @@ function assertOptionalPositiveInteger(
   }
 }
 
-function assertOptionalStringArray(value: unknown, name: string): void {
+function assertOptionalStringArray(
+  value: unknown,
+  name: string,
+): asserts value is string[] | undefined {
   if (value === undefined) return;
   if (
     !Array.isArray(value) ||

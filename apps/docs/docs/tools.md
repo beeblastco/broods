@@ -43,7 +43,7 @@ Sandbox tools come from a referenced `sandbox` (+ `workspaces`); see [Workspace 
 Tool registry path:
 
 1. `createTools()` rejects `config.tools` names reserved by the harness itself.
-2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`.
+2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`. An agent's `sandboxes` add more `bash` targets with no workspace, selected by name with the `sandbox` argument; `read`/`write`/`edit`/`glob`/`grep` never run there.
 3. `run_subagent` comes only from `config.subagent`.
 4. `load_skill` comes from `config.skills`.
 5. Every remaining key is resolved against the configured provider's `tools` namespace; the config keys other than `enabled`/`needsApproval`/`async` are passed through as that tool's arguments.

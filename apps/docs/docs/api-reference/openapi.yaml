@@ -3778,6 +3778,10 @@ components:
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
+        sandboxes:
+          type: array
+          items: { type: string }
+          description: Ids of extra sandbox configs that `bash` can run on with no workspace mounted, such as a specialized image, a stricter network or a different permissionMode. The model selects one by name with the bash `sandbox` argument. Must not repeat `sandbox`. Nothing written there reaches durable storage, and a persistent one reserves one machine per agent and sandbox.
         workspaces:
           type: array
           description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.

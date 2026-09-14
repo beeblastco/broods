@@ -58,5 +58,6 @@ Sandbox examples (one `defineSandbox` per provider/mode):
 - `sandbox-workspace`: workspace-backed `sandbox`. File tools on the shared S3 workspace mount.
 - `sandbox-workspace-persistent`: reserved (persistent) `sandbox` with package persistence + a background job via `async_status`.
 - `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
+- `sandbox-multiple`: a default `lambda` sandbox plus an extra deny-all one attached with `sandboxes`, picked per bash call.
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.
 - `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-workspace-override`: provider-specific sandbox configs.
