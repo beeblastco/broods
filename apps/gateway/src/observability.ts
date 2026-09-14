@@ -266,7 +266,13 @@ export function lokiLogEntry(
   return {
     ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
     level: level,
-    eventType: stringValue(record.eventType, metadata.eventType, "log"),
+    // Core's live stream falls back to the lowercased level, so a replayed row
+    // dedupes against its live copy instead of showing twice.
+    eventType: stringValue(
+      record.eventType,
+      metadata.eventType,
+      level.toLowerCase(),
+    ),
     message: stringValue(record.message, metadata.message, line),
     traceId: optionalString(
       record.traceId,
