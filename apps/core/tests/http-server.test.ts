@@ -7,12 +7,11 @@
 
 import { describe, expect, it } from "bun:test";
 import type { CoreRequest, RequestContext } from "../src/shared/http.ts";
+import { drainInFlight, waitUntil } from "../src/shared/in-flight.ts";
 import {
   createRoute,
-  drainInFlight,
   routesToAccountManage,
   toCoreRequest,
-  waitUntil,
   type CoreRouteHandlers,
 } from "../src/server.ts";
 
