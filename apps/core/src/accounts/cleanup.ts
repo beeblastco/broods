@@ -98,34 +98,38 @@ export async function deleteWorkspaceFilesystem(
 }
 
 /**
- * The reservation keys this account's agents hold on their own sandboxes. Asks
- * `agentSandboxReservation` so a pinned key releases the machine actually reserved.
+ * The reservation keys this account's agents hold on their own and extra
+ * sandboxes. Asks `agentSandboxReservation` so a pinned key releases the machine
+ * actually reserved.
  */
 async function agentSandboxReservationKeys(
   accountId: string,
 ): Promise<string[]> {
   const agents = await getStorage().agents.list(accountId);
   const keys = await Promise.all(
-    agents.map(async (agent): Promise<string | undefined> => {
-      const sandboxId = agent.config.sandbox;
-      if (typeof sandboxId !== "string" || sandboxId.length === 0) {
-        return undefined;
-      }
-      const record = await getStorage().sandboxConfigs.getById(
-        accountId,
-        sandboxId,
-      );
-      if (!record) {
-        return undefined;
-      }
+    agents.flatMap((agent) =>
+      [agent.config.sandbox, ...(agent.config.sandboxes ?? [])].map(
+        async (sandboxId): Promise<string | undefined> => {
+          if (typeof sandboxId !== "string" || sandboxId.length === 0) {
+            return undefined;
+          }
+          const record = await getStorage().sandboxConfigs.getById(
+            accountId,
+            sandboxId,
+          );
+          if (!record) {
+            return undefined;
+          }
 
-      return agentSandboxReservation(
-        record.config,
-        accountId,
-        agent.agentId,
-        sandboxId,
-      );
-    }),
+          return agentSandboxReservation(
+            record.config,
+            accountId,
+            agent.agentId,
+            sandboxId,
+          );
+        },
+      ),
+    ),
   );
 
   return keys.filter((key): key is string => key !== undefined);

@@ -592,6 +592,11 @@ export type AgentDefinitionConfig = EnvRefString<
   };
   connections?: readonly AnyConnectionDefinition[];
   sandbox?: SandboxResource | string;
+  /**
+   * Extra sandboxes bash picks by name with no workspace mounted, each with its
+   * own image, size, network and permissionMode. Never repeat `sandbox` here.
+   */
+  sandboxes?: readonly (SandboxResource | string)[];
   workspaces?: readonly AgentWorkspaceInput[];
   subagent?: AgentSubagentDefinitionConfig;
   skills?: AgentSkillsDefinitionConfig;

@@ -35,6 +35,7 @@ import { getStorage } from "../shared/storage.ts";
 import {
   resolveAgentRuntime,
   type ResolvedAgentRuntime,
+  type ResolvedAgentSandbox,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
@@ -708,6 +709,11 @@ export class Session {
 
   agentSandboxPermissionMode(): SandboxPermissionMode {
     return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
+  }
+
+  /** Extra sandboxes (`config.sandboxes`) bash reaches by name with no workspace. */
+  sandboxes(): ResolvedAgentSandbox[] {
+    return this.resolvedRuntime?.sandboxes ?? [];
   }
 
   // Namespace of the default (first) workspace, used for memory/skill staging

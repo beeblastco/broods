@@ -27,10 +27,14 @@ import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
 import { getStorage } from "../shared/storage.ts";
-import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../shared/workspaces.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   bashNeedsApproval,
+  bashSandboxTarget,
   editNeedsApproval,
   resolveWorkspace,
   targetsAgentSandbox,
@@ -85,6 +89,7 @@ export function compatibilityApprovalStatus(
     workspaces: ResolvedWorkspace[];
     agentSandbox?: SandboxExecutorConfig;
     agentSandboxPermissionMode?: SandboxPermissionMode;
+    sandboxes?: ResolvedAgentSandbox[];
   },
 ): ToolApprovalStatus {
   const record =
@@ -93,7 +98,7 @@ export function compatibilityApprovalStatus(
       : {};
   const workspace =
     typeof record.workspace === "string" ? record.workspace : undefined;
-  const onSandbox = record.sandbox === true;
+  const onSandbox = bashSandboxTarget(record.sandbox);
 
   if (toolName === "bash") {
     return bashNeedsApproval(
@@ -103,10 +108,11 @@ export function compatibilityApprovalStatus(
         ...(options.agentSandboxPermissionMode
           ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
           : {}),
+        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
       },
       {
         ...(workspace ? { workspace: workspace } : {}),
-        ...(onSandbox ? { sandbox: true } : {}),
+        ...(onSandbox !== undefined ? { sandbox: onSandbox } : {}),
       },
     )
       ? "user-approval"
@@ -228,12 +234,14 @@ export function createRuntimeToolApproval(options: {
   workspaces: ResolvedWorkspace[];
   agentSandbox?: SandboxExecutorConfig;
   agentSandboxPermissionMode?: SandboxPermissionMode;
+  sandboxes?: ResolvedAgentSandbox[];
   policyApproval?: RuntimeToolApproval;
 }): RuntimeToolApproval | undefined {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
-    Boolean(options.agentSandbox);
+    Boolean(options.agentSandbox) ||
+    (options.sandboxes?.length ?? 0) > 0;
 
   if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
 
@@ -370,7 +378,8 @@ export function policyInputForTool(
     input && typeof input === "object"
       ? (input as Record<string, unknown>)
       : {};
-  // A bash call that runs on the standalone sandbox touches no workspace, so it must
+  const sandboxTarget = bashSandboxTarget(record.sandbox);
+  // A bash call that runs on an agent-level sandbox touches no workspace, so it must
   // not be described to the policy as if it did. A workspace-scoped rule would then
   // authorize a run that never lands there. Resolve the same target execution will.
   const onAgentSandbox =
@@ -384,7 +393,7 @@ export function policyInputForTool(
         ...(typeof record.workspace === "string"
           ? { workspace: record.workspace }
           : {}),
-        ...(record.sandbox === true ? { sandbox: true } : {}),
+        ...(sandboxTarget !== undefined ? { sandbox: sandboxTarget } : {}),
       },
     );
   const workspace = onAgentSandbox

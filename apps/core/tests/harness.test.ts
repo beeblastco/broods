@@ -632,6 +632,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         renewConversationLease: async () => "renewed",
         applySteeringIngress: applySteeringIngress,
@@ -704,6 +705,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         renewConversationLease: async () => "stopped",
         applySteeringIngress: applySteeringIngress,
@@ -745,6 +747,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -813,6 +816,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -868,6 +872,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -944,6 +949,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -997,6 +1003,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1044,6 +1051,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1103,6 +1111,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => ({ provider: "lambda" }),
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1205,6 +1214,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: (): ResolvedWorkspace[] => [],
         agentSandbox: (): SandboxExecutorConfig => ({ provider: "lambda" }),
         agentSandboxPermissionMode: (): SandboxPermissionMode => "bypass",
+        sandboxes: () => [],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async (): Promise<{
           systemContextSnapshot: SystemContextSnapshot;
@@ -1274,6 +1284,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1341,6 +1352,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1407,6 +1419,7 @@ describe("runAgentLoop", () => {
       resolvedWorkspaces: () => [],
       agentSandbox: () => undefined,
       agentSandboxPermissionMode: () => "ask",
+      sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -1495,6 +1508,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1552,6 +1566,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1617,6 +1632,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1680,6 +1696,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1802,6 +1819,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1872,6 +1890,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1917,6 +1936,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1969,6 +1989,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadSkillPrompt: loadSkillPrompt,
         loadRefreshedSystemPromptParts: async () => ({
@@ -2037,6 +2058,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2098,6 +2120,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2184,6 +2207,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2235,6 +2259,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2291,6 +2316,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2342,6 +2368,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
+        sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -2393,6 +2420,7 @@ describe("runAgentLoop", () => {
       resolvedWorkspaces: () => [],
       agentSandbox: () => undefined,
       agentSandboxPermissionMode: () => "ask",
+      sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },
@@ -2441,6 +2469,7 @@ describe("runAgentLoop", () => {
       resolvedWorkspaces: () => [],
       agentSandbox: () => undefined,
       agentSandboxPermissionMode: () => "ask",
+      sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
         systemContextSnapshot: { cursor: null, messages: [] },

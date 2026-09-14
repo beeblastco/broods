@@ -214,6 +214,25 @@ describe("agent config validation", () => {
     ).toThrow("config.sandbox is required for the pi harness");
   });
 
+  it("validates extra sandbox references", () => {
+    expect(
+      normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_browser"] }),
+    ).toEqual({ sandbox: "sb_1", sandboxes: ["sb_browser"] });
+    expect(() => normalizeAgentConfig({ sandboxes: "sb_1" })).toThrow(
+      "config.sandboxes must be an array",
+    );
+    expect(() => normalizeAgentConfig({ sandboxes: [""] })).toThrow(
+      "config.sandboxes[0] must be a non-empty string",
+    );
+    // Two names for one machine: the default is already reachable on its own.
+    expect(() =>
+      normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_1"] }),
+    ).toThrow('config.sandboxes[0] repeats config.sandbox "sb_1"');
+    expect(() => normalizeAgentConfig({ sandboxes: ["sb_a", "sb_a"] })).toThrow(
+      'config.sandboxes[1] "sb_a" is listed more than once',
+    );
+  });
+
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
     expect(resolveSubagentMode({})).toBe("persistent");
     expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(

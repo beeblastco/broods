@@ -224,6 +224,37 @@ function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+// The agent attaches a second sandbox with no workspace on it, so bash reaches it
+// by name. Its own image ARN is what proves a call landed there.
+function extraSandboxCtx(extraOverrides: Record<string, unknown> = {}) {
+  return {
+    workspaces: [],
+    agentSandbox: {
+      provider: "lambda",
+      network: { mode: "allow-all" },
+      controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
+    },
+    agentSandboxPermissionMode: "ask",
+    sandboxes: [
+      {
+        name: "browser-sandbox",
+        description: "Headless Chromium.",
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          snapshot:
+            "arn:aws:lambda:us-east-1:123456789012:microvm-image:browser",
+          controlPlane: {
+            sandboxConfigId: "sb_browser",
+            name: "browser-sandbox",
+          },
+          ...extraOverrides,
+        },
+      },
+    ],
+  } as never;
+}
+
 // Read-only workspace, `sandbox: null` opt-out (no readMount => served directly from S3).
 function readonlyCtx() {
   return {
@@ -261,6 +292,7 @@ async function approvalStatus(
     workspaces?: unknown[];
     agentSandbox?: unknown;
     agentSandboxPermissionMode?: unknown;
+    sandboxes?: unknown[];
   },
 ): Promise<ToolApprovalStatus> {
   const { compatibilityApprovalStatus } =
@@ -269,6 +301,7 @@ async function approvalStatus(
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
+    ...(ctx.sandboxes ? { sandboxes: ctx.sandboxes as never } : {}),
     ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
     ...(typeof ctx.agentSandboxPermissionMode === "string"
       ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
@@ -707,6 +740,80 @@ describe("sandbox tool set", () => {
       jsonSchema: { properties: { sandbox?: unknown } };
     };
     expect(ownSchema.jsonSchema.properties.sandbox).toBeUndefined();
+  });
+
+  it("bash names attached extra sandboxes and runs the command on the one picked", async () => {
+    const bash = await tool("bash", extraSandboxCtx());
+    const schema = bash.inputSchema as unknown as {
+      jsonSchema: {
+        properties: { sandbox?: { type?: string; enum?: string[] } };
+      };
+    };
+    expect(schema.jsonSchema.properties.sandbox).toMatchObject({
+      type: "string",
+      enum: ["own-sandbox", "browser-sandbox"],
+    });
+    expect(bash.description).toContain("browser-sandbox: Headless Chromium.");
+
+    await bash.execute({
+      command: "chromium --version",
+      sandbox: "browser-sandbox",
+    });
+    const onExtra = microvmCommandsOfType("RunMicrovm").at(-1) as {
+      input: { imageIdentifier: string };
+    };
+    expect(onExtra.input.imageIdentifier).toContain("microvm-image:browser");
+    // An extra mounts nothing, so the exec carries no workspace namespace.
+    expect(lastSandboxExec().payload.namespace).toBeUndefined();
+
+    // `true` still means the agent's own sandbox, so replayed calls keep working.
+    await bash.execute({ command: "echo hi", sandbox: true });
+    const onOwn = microvmCommandsOfType("RunMicrovm").at(-1) as {
+      input: { imageIdentifier: string };
+    };
+    expect(onOwn.input.imageIdentifier).not.toContain("microvm-image:browser");
+
+    await expect(
+      bash.execute({ command: "echo hi", sandbox: "nope" }),
+    ).rejects.toThrow("unknown sandbox nope");
+  });
+
+  it("an extra sandbox is approved on its own permissionMode", async () => {
+    const ctx = extraSandboxCtx({ permissionMode: "bypass" }) as unknown as {
+      workspaces: unknown[];
+      agentSandbox: unknown;
+      agentSandboxPermissionMode: string;
+      sandboxes: unknown[];
+    };
+
+    await expect(
+      approvalStatus(
+        "bash",
+        { command: "ls", sandbox: "browser-sandbox" },
+        ctx,
+      ),
+    ).resolves.toBeUndefined();
+    // A bypassing extra must not lift the gate on the agent's own sandbox.
+    await expect(
+      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
+    ).resolves.toBe("user-approval");
+  });
+
+  it("background jobs stay a workspace feature on an extra sandbox", async () => {
+    const bash = await tool("bash", extraSandboxCtx({ persistent: true }));
+    // A detached job is tracked by tool call id, so this path needs the options
+    // argument the AI SDK passes.
+    const execute = bash.execute as unknown as (
+      input: Record<string, unknown>,
+      options: { toolCallId: string },
+    ) => Promise<string>;
+
+    await expect(
+      execute(
+        { command: "sleep 1", sandbox: "browser-sandbox", background: true },
+        { toolCallId: "call_1" },
+      ),
+    ).rejects.toThrow("background jobs require a persistent workspace sandbox");
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {

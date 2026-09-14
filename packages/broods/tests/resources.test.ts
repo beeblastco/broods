@@ -178,6 +178,59 @@ export const coding = defineAgent({
   );
 });
 
+test("compileProject maps extra agent sandboxes to their names", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({ name: "runner", provider: "sandbox" });
+export const browser = defineSandbox({
+  name: "browser",
+  description: "Headless Chromium.",
+  provider: "lambda",
+  persistent: true,
+});
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandbox: runner,
+  sandboxes: [browser],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(
+    manifest.resources.find(
+      (resource) => resource.kind === "agent" && resource.name === "support",
+    )?.config,
+  ).toMatchObject({ sandbox: "runner", sandboxes: ["browser"] });
+});
+
+test("compileProject rejects an unexported extra sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+const browser = defineSandbox({ name: "browser", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: [browser],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandboxes references sandbox "browser", but that sandbox is not exported from broods/',
+  );
+});
+
 test("compileProject defaults to the Broods harness when harness is omitted", async () => {
   const cwd = await fixtureProject(
     "",

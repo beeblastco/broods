@@ -313,6 +313,7 @@ export async function runAgentLoop(
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
   const agentSandbox = session.agentSandbox();
+  const sandboxes = session.sandboxes();
   // A subagent run is its own top-level trace (kind "subtask"), a scheduler run
   // a "cron", anything a person asked for a "task". All three are roots, so
   // each gets its own scaled waterfall.
@@ -345,6 +346,7 @@ export async function runAgentLoop(
     secretValues: collectSecretValues([
       agentConfig,
       agentSandbox,
+      sandboxes,
       resolvedWorkspaces,
     ]),
   });
@@ -522,6 +524,7 @@ export async function runAgentLoop(
         workspaces: resolvedWorkspaces,
         agentSandbox: agentSandbox,
         agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
+        sandboxes: sandboxes,
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
@@ -607,6 +610,7 @@ export async function runAgentLoop(
     workspaces: resolvedWorkspaces,
     ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
     agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
+    ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
     ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
   });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;

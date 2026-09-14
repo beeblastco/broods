@@ -114,6 +114,21 @@ describe("agent policy input", () => {
     });
   });
 
+  // An extra sandbox mounts no workspace, so a workspace-scoped rule must not be
+  // handed a workspace the run never touches.
+  it("drops workspace identity when a bash call names an extra sandbox", () => {
+    const onExtra = policyInputForTool(
+      "bash",
+      { command: "chromium --version", sandbox: "browser-sandbox" },
+      workspaces,
+    );
+
+    expect(onExtra.action).toBe("workspace.exec");
+    expect(onExtra.workspaceId).toBeUndefined();
+    expect(onExtra.workspaceName).toBeUndefined();
+    expect(onExtra.sandboxPermissionMode).toBeUndefined();
+  });
+
   it("defaults unknown tools to generic tool calls", () => {
     expect(policyInputForTool("googleSearch", { query: "opa" }, [])).toEqual({
       action: "tool.call",

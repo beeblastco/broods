@@ -966,6 +966,7 @@ export function createEphemeralChildSession(
     resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
     agentSandbox: () => childSession.agentSandbox(),
     agentSandboxPermissionMode: () => childSession.agentSandboxPermissionMode(),
+    sandboxes: () => childSession.sandboxes(),
     persistModelMessages: async () => [],
     loadSkillPrompt: (
       allowedSkillPaths: string[],

@@ -114,6 +114,66 @@ it("registers agent/crons.remove as an internal mutation", () => {
   );
 });
 
+// A reserved extra sandbox is a machine per agent and record, so cleanup has to
+// ask about every id the agent attaches, not only config.sandbox.
+it("collects reservation keys from an agent's default and extra sandboxes", async () => {
+  const requested: string[] = [];
+  setStorageForTests({
+    workspaceConfigs: {
+      list: async function () {
+        return [];
+      },
+      removeAllForAccount: async function () {
+        return 0;
+      },
+    },
+    agents: {
+      list: async function () {
+        return [
+          {
+            agentId: "ag_1",
+            config: { sandbox: "sb_default", sandboxes: ["sb_browser"] },
+          },
+        ];
+      },
+    },
+    sandboxConfigs: {
+      getById: async function (_accountId: string, sandboxId: string) {
+        requested.push(sandboxId);
+
+        return {
+          sandboxId: sandboxId,
+          name: sandboxId,
+          config: { provider: "lambda" },
+        };
+      },
+      removeAllForAccount: async function () {
+        return 0;
+      },
+    },
+  } as never);
+  runtime.mutate = (async () => ({
+    conversationsDeleted: 0,
+    processedEventsDeleted: 0,
+    asyncAgentResultDeleted: 0,
+    asyncToolResultDeleted: 0,
+    asyncToolGroupDeleted: 0,
+    sandboxReservationDeleted: 0,
+    totalDeleted: 0,
+  })) as never;
+
+  await deleteAccountRuntimeData({
+    accountId: "acct_test",
+    username: "test",
+    secretHash: "hash",
+    status: "disabled",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+  });
+
+  expect(requested.sort()).toEqual(["sb_browser", "sb_default"]);
+});
+
 // The adapter reaches this reference through an any-typed require, so nothing
 // but this check catches a rewire that stops descheduling deleted crons.
 it("crons.remove delegates to internal.agent.crons.remove via mutation", async () => {
