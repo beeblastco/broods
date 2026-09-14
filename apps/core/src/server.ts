@@ -13,6 +13,7 @@ import {
   type RequestContext,
 } from "./shared/http.ts";
 import { optionalEnv, positiveIntegerEnv } from "./shared/env.ts";
+import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
 import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
 import { logError, logInfo } from "./shared/log.ts";
 import { forceFlushOtel, initOtel } from "./shared/otel.ts";
@@ -22,7 +23,6 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
   /^\/v1\/mcp-service\/rpc$/,
 ];
-const inFlight = new Set<Promise<void>>();
 
 /**
  * The handlers the entry point imports lazily, passed in so the router can be
@@ -151,26 +151,6 @@ export async function toCoreRequest(
     cookies: cookies,
     clientIp: clientIp,
   };
-}
-
-export async function drainInFlight(): Promise<void> {
-  while (inFlight.size > 0) {
-    await Promise.allSettled(inFlight);
-  }
-}
-
-export function waitUntil(promise: Promise<unknown>): void {
-  const tracked = Promise.resolve(promise)
-    .then(() => undefined)
-    .catch((err) => {
-      logError("Post-response work failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    })
-    .finally(() => {
-      inFlight.delete(tracked);
-    });
-  inFlight.add(tracked);
 }
 
 if (import.meta.main) {

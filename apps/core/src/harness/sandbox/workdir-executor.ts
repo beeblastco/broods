@@ -18,6 +18,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
+import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { workdirSizeResources } from "../../shared/sandbox-sizes.ts";
@@ -175,12 +176,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ? resolveS3Mount(this.#s3Context(request))
         : undefined;
     void ephemeralMount?.catch((): void => {});
-    const sandbox = await this.#acquire(request);
+    const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
 
     try {
-      if (ephemeralMount)
-        await this.#mountS3(sandbox, request, await ephemeralMount);
-      else if (execMount) await this.#ensureS3Mount(sandbox, request);
+      if (execMount)
+        await this.#ensureS3Mount(
+          sandbox,
+          request,
+          isFirstCreate,
+          ephemeralMount,
+        );
       if (persistent)
         await this.#runLifecycle(
           sandbox,
@@ -213,23 +218,26 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         provider: "sandbox",
       };
     } finally {
-      // The exec already held the sandbox for its whole run, so leaving the delete off
-      // the tool clock barely widens the window a crash could leak it in.
+      // The delete leaves the tool clock but not the process: shutdown drains it, so
+      // a rolling deploy cannot strand the VM at workdir, which has no TTL of its own.
+      // The next call's create can now overlap this delete at the admission ceiling.
       if (!persistent)
-        void sandbox.delete().catch((error: unknown): void => {
-          logWarn("workdir sandbox delete failed", {
-            sandboxId: sandbox.id,
-            error: toErrorMessage(error),
-          });
-        });
+        waitUntil(
+          sandbox.delete().catch((error: unknown): void => {
+            logWarn("workdir sandbox delete failed", {
+              sandboxId: sandbox.id,
+              error: toErrorMessage(error),
+            });
+          }),
+        );
     }
   }
 
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
-    const sandbox = await this.#acquire(request);
+    const { sandbox, isFirstCreate } = await this.#acquireWithState(request);
     if (this.#s3MountStrategy(request) === "exec")
-      await this.#ensureS3Mount(sandbox, request);
+      await this.#ensureS3Mount(sandbox, request, isFirstCreate);
     await this.#runLifecycle(sandbox, this.#workDir(ns));
     const jobId = request.jobId ?? generateJobId();
     const script = launchScript(
@@ -773,18 +781,32 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // credentials scoped to the mount prefix and passed as per-call exec env. Never the
   // harness's own broad creds, which any code the agent runs could read.
   //
-  // A reserved sandbox usually still holds a live mount, so a credential-free check
-  // runs first and STS is only called when a remount is due.
+  // A sandbox this call created has no mount yet, so it mounts straight away on
+  // `minted` when the caller started the STS call early. A reserved one usually still
+  // holds a live mount, so a credential-free check runs first and STS is only called
+  // when a remount is due.
   async #ensureS3Mount(
     sandbox: Sandbox,
     request: { namespace?: string; workspaceRoot?: string },
+    isFirstCreate: boolean,
+    minted?: Promise<ResolvedS3Mount>,
   ): Promise<void> {
+    // Resolved first so a run with no namespace is refused before any exec.
     const context = this.#s3Context(request);
-    const check = await sandbox.exec(
-      freshMountScript(this.#mountPath(request), Math.floor(Date.now() / 1000)),
+    if (!isFirstCreate) {
+      const check = await sandbox.exec(
+        freshMountScript(
+          this.#mountPath(request),
+          Math.floor(Date.now() / 1000),
+        ),
+      );
+      if (check.exit_code === 0) return;
+    }
+    await this.#mountS3(
+      sandbox,
+      request,
+      await (minted ?? resolveS3Mount(context)),
     );
-    if (check.exit_code === 0) return;
-    await this.#mountS3(sandbox, request, await resolveS3Mount(context));
   }
 
   // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
@@ -817,7 +839,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       [
         `if ! { ${freshMountScript(mountPath, now)}; }; then`,
         `fusermount -u ${quotedPath} 2>/dev/null || umount -l ${quotedPath} 2>/dev/null;`,
-        `mkdir -p ${quotedPath} && mount-s3 ${mountArgs} && echo ${now} > ${shellQuote(`${mountPath}.mounted-at`)};`,
+        `mkdir -p ${quotedPath} && mount-s3 ${mountArgs} && echo ${now} > "$stamp_file";`,
         `fi`,
       ].join("\n"),
       {
@@ -977,13 +999,17 @@ function s3SecretNames(options: Record<string, unknown>): string[] {
 }
 
 // Exits 0 when the workspace is mounted on credentials younger than
-// MOUNT_MAX_AGE_SECONDS. Age comes from a stamp written with the harness's clock, not
-// the guest's, which a Firecracker pause freezes. The stamp sits on agent-writable
-// disk, so anything non-numeric reads as "unknown age" and fails the check.
+// MOUNT_MAX_AGE_SECONDS, and leaves `$stamp_file` set for the remount that writes it.
+// Age comes from a stamp written with the harness's clock, not the guest's, which a
+// Firecracker pause freezes. The stamp sits on agent-writable disk, so anything that
+// is not a plain epoch (non-digits, a leading zero that dash refuses as octal, more
+// than ten digits, a future time) reads as "unknown age" and fails the check.
 function freshMountScript(mountPath: string, now: number): string {
   return [
-    `stamp=$(cat ${shellQuote(`${mountPath}.mounted-at`)} 2>/dev/null || echo 0);`,
-    `case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac;`,
-    `mountpoint -q ${shellQuote(mountPath)} && [ $((${now} - stamp)) -lt ${MOUNT_MAX_AGE_SECONDS} ]`,
+    `stamp_file=${shellQuote(`${mountPath}.mounted-at`)};`,
+    `stamp=$(cat "$stamp_file" 2>/dev/null || echo 0);`,
+    `case "$stamp" in '' | *[!0-9]* | 0?* | ???????????*) stamp=0 ;; esac;`,
+    `age=$((${now} - stamp));`,
+    `mountpoint -q ${shellQuote(mountPath)} && [ "$age" -ge 0 ] && [ "$age" -lt ${MOUNT_MAX_AGE_SECONDS} ]`,
   ].join("\n");
 }
