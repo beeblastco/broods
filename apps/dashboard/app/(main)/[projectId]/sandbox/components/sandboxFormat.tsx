@@ -1,5 +1,6 @@
 "use client";
 
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useEffect, useState } from "react";
@@ -7,6 +8,27 @@ import { useEffect, useState } from "react";
 // A sandbox row changes state on the minute scale, so re-read the clock often
 // enough that the displayed age is never more than a minute stale.
 const CLOCK_TICK_MS = 30_000;
+
+// Same four tones as the tracing panel: sky while the provider is still moving
+// (suspending, terminating, building), grey once nothing runs. Tables and
+// titles show the dot only; the detail view spells the word out.
+const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
+  running: "ok",
+  suspending: "running",
+  suspended: "ended",
+  terminating: "running",
+  error: "error",
+};
+
+const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
+  pending: "running",
+  building: "running",
+  pulling: "running",
+  active: "ok",
+  inactive: "ended",
+  error: "error",
+  build_failed: "error",
+};
 
 /** Deep link into the project dashboard, keeping the stage the page is on. */
 export function dashboardHref(
@@ -68,33 +90,10 @@ export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
   return `${specs.vcpu} vCPU · ${memory} · ${specs.storageGb} GB`;
 }
 
-export function instanceStatusBadge(
+export function instanceStatusDot(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
-  if (status === "running")
-    return (
-      <Badge variant="success" className="text-xs">
-        running
-      </Badge>
-    );
-  if (status === "suspended")
-    return (
-      <Badge variant="secondary" className="text-xs">
-        suspended
-      </Badge>
-    );
-  if (status === "suspending" || status === "terminating")
-    return (
-      <Badge variant="warning" className="text-xs">
-        {status}
-      </Badge>
-    );
-
-  return (
-    <Badge variant="destructive" className="text-xs">
-      error
-    </Badge>
-  );
+  return <StatusDot tone={INSTANCE_TONE[status]} label={status} />;
 }
 
 /** Em dash when the row predates the permission-mode mirror. */
@@ -142,33 +141,10 @@ export function relativeTime(ts: number | undefined, now = Date.now()): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h ago`;
 }
 
-export function snapshotStatusBadge(
+export function snapshotStatusDot(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {
-  if (status === "active")
-    return (
-      <Badge variant="success" className="text-xs">
-        active
-      </Badge>
-    );
-  if (status === "error" || status === "build_failed")
-    return (
-      <Badge variant="destructive" className="text-xs">
-        {status}
-      </Badge>
-    );
-  if (status === "inactive")
-    return (
-      <Badge variant="secondary" className="text-xs">
-        inactive
-      </Badge>
-    );
-
-  return (
-    <Badge variant="warning" className="text-xs">
-      {status}
-    </Badge>
-  );
+  return <StatusDot tone={SNAPSHOT_TONE[status]} label={status} />;
 }
 
 /**

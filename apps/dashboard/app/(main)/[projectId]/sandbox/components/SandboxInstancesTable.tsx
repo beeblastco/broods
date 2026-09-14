@@ -39,7 +39,7 @@ import {
   dashboardHref,
   formatProvider,
   formatSpecs,
-  instanceStatusBadge,
+  instanceStatusDot,
   relativeTime,
   useNow,
 } from "./sandboxFormat";
@@ -332,7 +332,7 @@ export function SandboxInstancesTable({
                       : formatProvider(instance.provider)}
                   </td>
                   <td className="px-4 py-2.5">
-                    {instanceStatusBadge(instance.status)}
+                    {instanceStatusDot(instance.status)}
                     {instance.errorMessage && (
                       <div
                         className="mt-1 max-w-xs truncate text-xs text-destructive"

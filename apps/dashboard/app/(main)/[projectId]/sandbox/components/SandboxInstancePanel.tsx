@@ -14,7 +14,6 @@ import {
 } from "@/app/components/ui/tabs";
 import { Textarea } from "@/app/components/ui/textarea";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -27,7 +26,7 @@ import {
   dashboardHref,
   formatProvider,
   formatSpecs,
-  instanceStatusBadge,
+  instanceStatusDot,
   relativeTime,
 } from "./sandboxFormat";
 import {
@@ -192,7 +191,7 @@ export function SandboxInstancePanel({
       title={
         <span className="flex items-center gap-2">
           {instance.name}
-          {instanceStatusBadge(instance.status)}
+          {instanceStatusDot(instance.status)}
         </span>
       }
       meta={
@@ -365,52 +364,57 @@ function ActivityList({
 
   return (
     <div className="divide-y divide-border/40 text-xs">
-      {events.map((event) => (
-        <div
-          key={event._id}
-          className="grid grid-cols-[14px_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 px-2 py-1.5 transition-colors hover:bg-accent/20"
-        >
-          <StatusDot tone={event.result} className="justify-self-center" />
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="font-medium whitespace-nowrap text-foreground">
-              {event.action}
-            </span>
-            <span
-              className={cn(
-                "truncate",
-                event.result === "ok"
-                  ? "text-muted-foreground"
-                  : "text-red-700 dark:text-red-400",
+      {events.map((event) => {
+        const detail = auditDetail(event);
+
+        return (
+          <div
+            key={event._id}
+            className="grid grid-cols-[14px_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 px-2 py-1.5 transition-colors hover:bg-accent/20"
+          >
+            <StatusDot tone={event.result} className="justify-self-center" />
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="font-medium whitespace-nowrap text-foreground">
+                {event.action}
+              </span>
+              {detail && (
+                <span
+                  className={
+                    event.result === "ok"
+                      ? "truncate text-muted-foreground"
+                      : "truncate text-red-700 dark:text-red-400"
+                  }
+                >
+                  {detail}
+                </span>
               )}
-            >
-              {auditDetail(event)}
-            </span>
-            <span className="ml-auto truncate text-muted-foreground/70">
-              {actorLabel(event)}
-            </span>
-          </div>
-          {event.traceId && (
-            <TraceLink href={traceHref(event.traceId)}>View trace</TraceLink>
-          )}
-          <span className="col-start-4 w-16 text-right font-mono whitespace-nowrap text-muted-foreground">
-            {relativeTime(event.createdAt, now)}
-          </span>
-          {(event.traceId || event.taskId) && (
-            <div className="col-span-3 col-start-2 flex min-w-0 gap-3 font-mono text-muted-foreground">
-              {event.traceId && (
-                <CopyRow value={event.traceId} className="flex">
-                  <span className="truncate">trace {event.traceId}</span>
-                </CopyRow>
-              )}
-              {event.taskId && (
-                <CopyRow value={event.taskId} className="flex">
-                  <span className="truncate">task {event.taskId}</span>
-                </CopyRow>
-              )}
+              <span className="ml-auto truncate text-muted-foreground/70">
+                {actorLabel(event)}
+              </span>
             </div>
-          )}
-        </div>
-      ))}
+            {event.traceId && (
+              <TraceLink href={traceHref(event.traceId)}>View trace</TraceLink>
+            )}
+            <span className="col-start-4 w-16 text-right font-mono whitespace-nowrap text-muted-foreground">
+              {relativeTime(event.createdAt, now)}
+            </span>
+            {(event.traceId || event.taskId) && (
+              <div className="col-span-3 col-start-2 flex min-w-0 gap-3 font-mono text-muted-foreground">
+                {event.traceId && (
+                  <CopyRow value={event.traceId} className="flex">
+                    <span className="truncate">trace {event.traceId}</span>
+                  </CopyRow>
+                )}
+                {event.taskId && (
+                  <CopyRow value={event.taskId} className="flex">
+                    <span className="truncate">task {event.taskId}</span>
+                  </CopyRow>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -422,13 +426,13 @@ function actorLabel(event: SandboxAuditEvent): string {
   return who ? `${label} · ${who}` : label;
 }
 
-function auditDetail(event: SandboxAuditEvent): string {
+/** Nothing for a plain success: the dot already says ok. */
+function auditDetail(event: SandboxAuditEvent): string | undefined {
   if (event.result === "error") return event.errorMessage ?? "failed";
   if (event.action === "exec" && event.exitCode !== undefined)
     return `exit ${event.exitCode}`;
-  if (event.status) return event.status;
 
-  return "ok";
+  return event.status;
 }
 
 function CommandRunner({

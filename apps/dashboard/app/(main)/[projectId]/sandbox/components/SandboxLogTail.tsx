@@ -7,6 +7,7 @@
  * bridge, not the tab.
  */
 
+import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
 import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
 import { formatTime } from "@/app/lib/formatTime";
 import Link from "next/link";
@@ -88,8 +89,11 @@ export function SandboxLogTail({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span className="font-mono">{logSandboxId}</span>
-        <span className={status === "error" ? "text-red-500" : undefined}>
-          {status === "error" ? (error ?? "stream error") : status}
+        <span className="inline-flex items-center gap-1.5">
+          {status === "error" && (
+            <span className="text-destructive">{error ?? "stream error"}</span>
+          )}
+          <StatusDot tone={CONNECTION_TONE[status]} label={status} />
         </span>
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-black p-3 font-mono text-xs text-zinc-100">

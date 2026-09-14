@@ -11,7 +11,7 @@ import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
 import {
   formatProvider,
   relativeTime,
-  snapshotStatusBadge,
+  snapshotStatusDot,
   useNow,
 } from "./sandboxFormat";
 
@@ -71,7 +71,7 @@ export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
                   {formatProvider(snapshot.provider)}
                 </td>
                 <td className="px-4 py-2.5">
-                  {snapshotStatusBadge(snapshot.status)}
+                  {snapshotStatusDot(snapshot.status)}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">
                   {snapshot.baseImage}

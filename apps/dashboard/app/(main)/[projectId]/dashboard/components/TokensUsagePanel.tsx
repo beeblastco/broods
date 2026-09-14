@@ -1,6 +1,7 @@
 "use client";
 
 import { Section } from "@/app/components/Section";
+import { StatusDot } from "@/app/components/StatusDot";
 import {
   isRootSpanKind,
   useObservabilityStream,
@@ -13,7 +14,6 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { RefreshCw } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 type Range = "1h" | "3h" | "1d" | "7d" | "30d" | "1y";
@@ -226,18 +226,16 @@ export function TokensUsagePanel({
               </button>
             ))}
           </div>
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            {/* Spin only while connecting. A live stream stays open indefinitely
-                and a spinning icon for its whole lifetime repaints continuously. */}
-            <RefreshCw
-              className={`size-3.5 ${isFetching ? "animate-spin" : ""}`}
-            />
-            {isFetching
-              ? "Connecting…"
-              : isStreamingLive
-                ? "Streaming"
-                : "Live"}
-          </span>
+          <StatusDot
+            tone={isFetching ? "running" : "ok"}
+            label={
+              isFetching
+                ? "Connecting…"
+                : isStreamingLive
+                  ? "Streaming"
+                  : "Live"
+            }
+          />
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <ComputeTile
