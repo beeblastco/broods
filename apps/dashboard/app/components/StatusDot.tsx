@@ -11,19 +11,24 @@ const TONE_BG: Record<StatusTone, string> = {
   stale: "bg-muted-foreground/50",
 };
 
-/** Status as a colored dot with no word. The tone is exposed on hover and to
- * screen readers, since the color is the only visible signal. */
+/**
+ * Status as a colored dot with no word. `label` is what hover and screen
+ * readers get, since the color is the only visible signal; pass the real state
+ * when several states share a tone (suspending and terminating both run sky).
+ */
 export function StatusDot({
   tone,
+  label = tone,
   className,
 }: {
   tone: StatusTone;
+  label?: string;
   className?: string;
 }): React.JSX.Element {
   return (
     <span
-      aria-label={tone}
-      title={tone}
+      aria-label={label}
+      title={label}
       className={cn("size-2 shrink-0 rounded-full", TONE_BG[tone], className)}
     />
   );

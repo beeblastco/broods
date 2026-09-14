@@ -5,6 +5,7 @@
  * gateway's terminal WebSocket. Raw bytes both ways, no resize protocol.
  */
 
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
@@ -30,6 +31,14 @@ const STATUS_LABEL: Record<TerminalStatus, string> = {
   live: "Live",
   ended: "Session ended",
   error: "Connection error",
+};
+
+const STATUS_TONE: Record<TerminalStatus, StatusTone> = {
+  idle: "stale",
+  connecting: "running",
+  live: "ok",
+  ended: "stale",
+  error: "error",
 };
 
 export function LiveSandboxTerminal({
@@ -176,9 +185,11 @@ export function LiveSandboxTerminal({
       <div className="overflow-hidden rounded-lg border border-border bg-black p-2">
         <div ref={containerRef} className="h-80 w-full" />
       </div>
-      <p className="text-xs text-muted-foreground">
-        {STATUS_LABEL[status]}
-        {error ? `: ${error}` : ""}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <StatusDot tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} />
+        {error && (
+          <span className="text-red-700 dark:text-red-400">{error}</span>
+        )}
       </p>
     </div>
   );

@@ -7,11 +7,21 @@
  * bridge, not the tab.
  */
 
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { useObservabilityStream } from "@/app/hooks/useObservabilityStream";
 import { formatTime } from "@/app/lib/formatTime";
 import Link from "next/link";
 
 const BACKFILL = 200;
+const STREAM_TONE: Record<
+  ReturnType<typeof useObservabilityStream>["status"],
+  StatusTone
+> = {
+  idle: "stale",
+  connecting: "running",
+  live: "ok",
+  error: "error",
+};
 // Core writes "-" for a run with no deployment scope (channel, cron).
 const UNSCOPED = "-";
 
@@ -88,8 +98,13 @@ export function SandboxLogTail({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span className="font-mono">{logSandboxId}</span>
-        <span className={status === "error" ? "text-red-500" : undefined}>
-          {status === "error" ? (error ?? "stream error") : status}
+        <span className="inline-flex items-center gap-1.5">
+          {status === "error" && (
+            <span className="text-red-700 dark:text-red-400">
+              {error ?? "stream error"}
+            </span>
+          )}
+          <StatusDot tone={STREAM_TONE[status]} label={status} />
         </span>
       </div>
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-black p-3 font-mono text-xs text-zinc-100">

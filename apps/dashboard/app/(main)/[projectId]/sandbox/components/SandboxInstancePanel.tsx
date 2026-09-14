@@ -27,7 +27,7 @@ import {
   dashboardHref,
   formatProvider,
   formatSpecs,
-  instanceStatusBadge,
+  instanceStatusDot,
   relativeTime,
 } from "./sandboxFormat";
 import {
@@ -192,7 +192,7 @@ export function SandboxInstancePanel({
       title={
         <span className="flex items-center gap-2">
           {instance.name}
-          {instanceStatusBadge(instance.status)}
+          {instanceStatusDot(instance.status)}
         </span>
       }
       meta={

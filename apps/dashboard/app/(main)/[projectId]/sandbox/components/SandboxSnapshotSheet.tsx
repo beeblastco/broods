@@ -16,7 +16,7 @@ import type { Doc } from "@broods/convex/_generated/dataModel";
 import {
   formatProvider,
   relativeTime,
-  snapshotStatusBadge,
+  snapshotStatusDot,
 } from "./sandboxFormat";
 
 interface Props {
@@ -52,7 +52,7 @@ export function SandboxSnapshotSheet({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             {snapshot.name}
-            {snapshotStatusBadge(snapshot.status)}
+            {snapshotStatusDot(snapshot.status)}
           </SheetTitle>
           <SheetDescription>
             {formatProvider(snapshot.provider)} snapshot / image
