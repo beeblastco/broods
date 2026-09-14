@@ -717,11 +717,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(
-    config.sandbox,
-    config.sandboxes,
-    config.workspaces as AgentWorkspaceRef[] | undefined,
-  );
+  normalizeSandboxRefs(config.sandbox, config.sandboxes, config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -1121,7 +1117,7 @@ function normalizeSandboxRefs(
   }
 
   const seen = new Set<string>();
-  (sandboxes as string[]).forEach((sandboxId, index) => {
+  sandboxes.forEach((sandboxId, index): void => {
     if (sandboxId === sandbox) {
       throw new Error(
         `config.sandboxes[${index}] repeats the default config.sandbox`,
@@ -1132,7 +1128,9 @@ function normalizeSandboxRefs(
         `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
       );
     }
-    const mounted = workspaces?.find((ref) => ref.sandbox === sandboxId);
+    const mounted = workspaces?.find(
+      (ref): boolean => ref.sandbox === sandboxId,
+    );
     if (mounted) {
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
@@ -1142,7 +1140,9 @@ function normalizeSandboxRefs(
   });
 }
 
-function normalizeWorkspaceRefs(value: unknown): void {
+function normalizeWorkspaceRefs(
+  value: unknown,
+): asserts value is AgentWorkspaceRef[] | undefined {
   if (value == null) {
     return;
   }

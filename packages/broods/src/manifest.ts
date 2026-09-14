@@ -701,10 +701,12 @@ function assertExportedAgentSandboxes(resources: AnyResource[]): void {
     const references: Array<{ field: string; sandbox: unknown }> = [
       { field: "sandbox", sandbox: resource.config.sandbox },
       { field: "harness", sandbox: resource.config.harness?.sandbox },
-      ...(resource.config.sandboxes ?? []).map((sandbox) => ({
-        field: "sandboxes",
-        sandbox: sandbox,
-      })),
+      ...(resource.config.sandboxes ?? []).map(
+        (sandbox): { field: string; sandbox: unknown } => ({
+          field: "sandboxes",
+          sandbox: sandbox,
+        }),
+      ),
     ];
     for (const reference of references) {
       if (
@@ -1369,7 +1371,7 @@ function normalizeAgentConfig(
     config.sandbox = config.sandbox.name;
   }
   if (Array.isArray(config.sandboxes)) {
-    config.sandboxes = config.sandboxes.map((sandbox) =>
+    config.sandboxes = config.sandboxes.map((sandbox): unknown =>
       isResource(sandbox) ? sandbox.name : sandbox,
     );
   }

@@ -594,7 +594,7 @@ function normalizeSandboxRefs(
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
-  (value as string[]).forEach((sandboxId, index) => {
+  value.forEach((sandboxId, index): void => {
     if (sandboxId === defaultSandbox)
       throw new Error(
         `config.sandboxes[${index}] repeats the default config.sandbox`,
@@ -603,7 +603,9 @@ function normalizeSandboxRefs(
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
       );
-    const mounted = workspaces?.find((ref) => ref.sandbox === sandboxId);
+    const mounted = workspaces?.find(
+      (ref): boolean => ref.sandbox === sandboxId,
+    );
     if (mounted)
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
@@ -1209,7 +1211,10 @@ function assertOptionalPositiveInteger(
   }
 }
 
-function assertOptionalStringArray(value: unknown, name: string): void {
+function assertOptionalStringArray(
+  value: unknown,
+  name: string,
+): asserts value is string[] | undefined {
   if (value === undefined) return;
   if (
     !Array.isArray(value) ||

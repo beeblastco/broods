@@ -610,7 +610,7 @@ function rewriteRefList(
   entries: unknown[],
   table: Record<string, string>,
 ): unknown[] {
-  return entries.map((entry) =>
+  return entries.map((entry): unknown =>
     typeof entry === "string" && table[entry] ? table[entry] : entry,
   );
 }

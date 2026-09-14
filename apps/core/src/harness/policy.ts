@@ -408,7 +408,7 @@ export function policyInputForTool(
   // An extra carries its own permissionMode, and that is the one fact a policy
   // can use to tell one extra from another.
   const extra = onAgentSandbox
-    ? options.sandboxes?.find((entry) => entry.name === sandboxTarget)
+    ? options.sandboxes?.find((entry): boolean => entry.name === sandboxTarget)
     : undefined;
   const filePath =
     typeof record.file_path === "string"

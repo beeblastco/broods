@@ -182,16 +182,15 @@ export function resolveAgentSandbox(
   sandbox: SandboxExecutorConfig | undefined;
   permissionMode: SandboxPermissionMode;
 } {
-  if (
-    typeof requested !== "string" ||
-    requested === context.agentSandbox?.controlPlane?.name
-  ) {
+  if (picksOwnSandbox(context, requested)) {
     return {
       sandbox: context.agentSandbox,
       permissionMode: context.agentSandboxPermissionMode ?? "ask",
     };
   }
-  const extra = context.sandboxes?.find((entry) => entry.name === requested);
+  const extra = context.sandboxes?.find(
+    (entry): boolean => entry.name === requested,
+  );
   if (!extra) {
     throw new Error(`unknown sandbox ${requested}`);
   }
@@ -436,13 +435,11 @@ export function targetsAgentSandbox(
   }
   // An extra is only ever reachable with no mount; the agent's own sandbox, named
   // or asked for with `true`, belongs to the workspace once one mounts it.
-  if (
-    selection.sandbox !== true &&
-    selection.sandbox !== context.agentSandbox?.controlPlane?.name
-  ) {
+  if (!picksOwnSandbox(context, selection.sandbox)) {
     return (
-      context.sandboxes?.some((extra) => extra.name === selection.sandbox) ??
-      false
+      context.sandboxes?.some(
+        (extra): boolean => extra.name === selection.sandbox,
+      ) ?? false
     );
   }
 
@@ -773,6 +770,18 @@ function permissionModeFor(
   workspace: ResolvedWorkspace | undefined,
 ): SandboxPermissionMode {
   return workspace?.sandbox?.permissionMode ?? "ask";
+}
+
+// `true`, nothing, and the own record name all mean the agent's own sandbox; only
+// another name means an extra. One rule, so the tool and the gate cannot drift.
+function picksOwnSandbox(
+  context: SandboxToolContext,
+  requested: boolean | string | undefined,
+): boolean {
+  return (
+    typeof requested !== "string" ||
+    requested === context.agentSandbox?.controlPlane?.name
+  );
 }
 
 async function runSandboxOn(

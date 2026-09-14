@@ -317,6 +317,16 @@ async function dispatchBackground(
   );
 }
 
+// An agent whose only sandboxes are extras has no default place to run, so a call
+// that names none would fail after approval. The schema makes the name mandatory.
+function extrasOnly(context: SandboxToolContext): boolean {
+  return (
+    context.workspaces.length === 0 &&
+    !context.agentSandbox &&
+    (context.sandboxes?.length ?? 0) > 0
+  );
+}
+
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
   const sandboxProp = sandboxParamSchema(context);
@@ -348,16 +358,6 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
     required: extrasOnly(context) ? ["command", "sandbox"] : ["command"],
     additionalProperties: false,
   };
-}
-
-// An agent whose only sandboxes are extras has no default place to run, so a call
-// that names none would fail after approval. The schema makes the name mandatory.
-function extrasOnly(context: SandboxToolContext): boolean {
-  return (
-    context.workspaces.length === 0 &&
-    !context.agentSandbox &&
-    (context.sandboxes?.length ?? 0) > 0
-  );
 }
 
 // Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
@@ -433,14 +433,14 @@ function sandboxesNote(context: SandboxToolContext): string {
       ? [`${ownName}: your own sandbox.${reservedStandaloneNote(context)}`]
       : []),
     ...extras.map(
-      (extra) =>
+      (extra): string =>
         `${extra.name}${extra.description ? `: ${extra.description}` : ""}`,
     ),
   ];
 
   return `
 - sandbox:"<name>" runs on that sandbox with no workspace mounted. ${THROWAWAY_NOTE}:
-${entries.map((entry) => `  - ${entry}`).join("\n")}`;
+${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
 // `sandbox` is a flag while the agent's own sandbox is the only one a call can pick.
@@ -465,7 +465,10 @@ function sandboxParamSchema(
 
   return {
     type: "string",
-    enum: [...(ownName ? [ownName] : []), ...extras.map((extra) => extra.name)],
+    enum: [
+      ...(ownName ? [ownName] : []),
+      ...extras.map((extra): string => extra.name),
+    ],
     description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
   };
 }
