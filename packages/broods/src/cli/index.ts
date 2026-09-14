@@ -2374,7 +2374,7 @@ async function agentGet(
   console.log(`  Model:        ${agentModelLabel(config)}`);
   console.log(`  Sandbox:      ${sandbox ?? "none"}`);
   console.log(
-    `  Sandboxes:    ${[config.sandboxes ?? "none"].flat().join(", ")}`,
+    `  Sandboxes:    ${[config.sandboxes].flat().filter(Boolean).join(", ") || "none"}`,
   );
   console.log(
     `  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "none"}`,

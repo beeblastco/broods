@@ -799,6 +799,53 @@ describe("sandbox tool set", () => {
     ).resolves.toBe("user-approval");
   });
 
+  it("bash drops the own sandbox from the enum once a workspace mounts it", async () => {
+    const mounted = ownSandboxCtx() as unknown as Record<string, unknown>;
+    const extras = extraSandboxCtx() as unknown as { sandboxes: unknown[] };
+    const bash = await tool("bash", {
+      ...mounted,
+      sandboxes: extras.sandboxes,
+    } as never);
+    const schema = bash.inputSchema as unknown as {
+      jsonSchema: { properties: { sandbox?: { enum?: string[] } } };
+    };
+
+    // The workspace is the way onto the own sandbox, so only the extra is a name.
+    expect(schema.jsonSchema.properties.sandbox?.enum).toEqual([
+      "browser-sandbox",
+    ]);
+    expect(bash.description).not.toContain("your own sandbox");
+  });
+
+  it("an agent with only extra sandboxes still gets bash, gated by their permissionMode", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const extras = extraSandboxCtx() as unknown as { sandboxes: unknown[] };
+    const ctx = { workspaces: [], sandboxes: extras.sandboxes };
+    const tools = await createTools(
+      {
+        ...ctx,
+        config: {},
+        modelProviderName: "openai",
+        modelProvider: {},
+      } as never,
+      {},
+    );
+
+    expect(Object.keys(tools)).toEqual(["bash"]);
+    await expect(
+      approvalStatus(
+        "bash",
+        { command: "ls", sandbox: "browser-sandbox" },
+        ctx as never,
+      ),
+    ).resolves.toBe("user-approval");
+    // Nothing answers to `true` when the agent has no default sandbox.
+    const bash = await tool("bash", ctx as never);
+    await expect(
+      bash.execute({ command: "ls", sandbox: true }),
+    ).rejects.toThrow("no sandbox available");
+  });
+
   it("background jobs stay a workspace feature on an extra sandbox", async () => {
     const bash = await tool("bash", extraSandboxCtx({ persistent: true }));
     // A detached job is tracked by tool call id, so this path needs the options

@@ -191,23 +191,25 @@ export const browser = defineSandbox({
   provider: "lambda",
   persistent: true,
 });
+export const offline = defineSandbox({ name: "offline", provider: "lambda" });
 
 export const support = defineAgent({
   name: "support",
   model: { provider: "openai", modelId: "gpt-5-mini" },
   sandbox: runner,
-  sandboxes: [browser],
+  sandboxes: [browser, "offline"],
 });
 `,
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
+  // A resource and a bare name both land as the record name, like \`sandbox\`.
   expect(
     manifest.resources.find(
       (resource) => resource.kind === "agent" && resource.name === "support",
     )?.config,
-  ).toMatchObject({ sandbox: "runner", sandboxes: ["browser"] });
+  ).toMatchObject({ sandbox: "runner", sandboxes: ["browser", "offline"] });
 });
 
 test("compileProject rejects an unexported extra sandbox", async () => {

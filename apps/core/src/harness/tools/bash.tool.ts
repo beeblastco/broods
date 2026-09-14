@@ -464,11 +464,9 @@ function sandboxTargetNote(context: SandboxToolContext): string {
 function standaloneSandboxName(
   context: SandboxToolContext,
 ): string | undefined {
-  const reachable =
-    context.workspaces.length === 0 ||
-    hasStandaloneSandbox(context.workspaces, context.agentSandbox);
-
-  return reachable ? context.agentSandbox?.controlPlane?.name : undefined;
+  return targetsAgentSandbox(context, { sandbox: true })
+    ? context.agentSandbox?.controlPlane?.name
+    : undefined;
 }
 
 // The write guard is not on everywhere: it steps aside on the agent's own reserved

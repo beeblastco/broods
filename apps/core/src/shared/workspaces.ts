@@ -314,6 +314,7 @@ export async function resolveAgentRuntime(
   const sandboxes = await Promise.all(
     (agentConfig.sandboxes ?? []).map(loadExtraSandbox),
   );
+  assertDistinctSandboxNames(sandbox, sandboxes);
 
   // Only the agent-level copy carries the derived reservation key; the copies the
   // workspaces inherit key their reservation on the workspace namespace instead.
@@ -359,6 +360,25 @@ export function workspaceNamespacesForAccount(
   return workspaceIds.map((workspaceId) =>
     workspaceNamespace(accountId, workspaceId),
   );
+}
+
+// bash picks a sandbox by record name, so two records under one name would leave
+// the model no way to reach the second.
+function assertDistinctSandboxNames(
+  sandbox: WorkspaceSandboxConfig | undefined,
+  sandboxes: ResolvedAgentSandbox[],
+): void {
+  const seen = new Set(
+    sandbox?.controlPlane?.name ? [sandbox.controlPlane.name] : [],
+  );
+  for (const extra of sandboxes) {
+    if (seen.has(extra.name)) {
+      throw new Error(
+        `Sandbox "${extra.name}" is attached twice; bash picks a sandbox by name`,
+      );
+    }
+    seen.add(extra.name);
+  }
 }
 
 /**

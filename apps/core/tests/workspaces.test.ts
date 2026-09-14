@@ -457,6 +457,26 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.sandbox?.options).toBeUndefined();
   });
 
+  it("refuses two attached sandboxes that share one record name", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: "runner",
+          config: { provider: "lambda" },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+
+    await expect(
+      resolveAgentRuntime(
+        { sandbox: "sb_1", sandboxes: ["sb_2"] },
+        { accountId: "acct_1", agentId: "ag_1" },
+      ),
+    ).rejects.toThrow('Sandbox "runner" is attached twice');
+  });
+
   it("stamps a pinned key in account-scoped form and leaves a non-persistent sandbox alone", async () => {
     setStorageForTests({
       sandboxConfigs: {
