@@ -2,6 +2,7 @@
 
 import { CopyRow } from "@/app/components/CopyButton";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
   isRootSpanKind,
@@ -46,21 +47,18 @@ interface ContinueNote {
   text: string;
 }
 
-// One line in a span's Details section. Ids, counts and model ids read in
-// mono; words do not.
+// One line in a span's Details section. Values read in mono (ids, counts,
+// model ids) unless the row is `words`.
 interface DetailRow {
   key: string;
   label: string;
-  mono: boolean;
   value: string;
+  words?: true;
 }
 
 // One collapsible payload section, with the count line on its header.
-interface PayloadSection {
-  key: string;
-  label: string;
+interface PayloadSection extends DetailRow {
   summary: string;
-  value: string;
 }
 
 const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
@@ -123,7 +121,7 @@ interface DetailField {
   extraLabel?: string;
   key: string;
   label: string;
-  mono: boolean;
+  words?: true;
 }
 
 // Token rows come in two spellings: the task root writes usage.*, a model step
@@ -132,14 +130,12 @@ const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
   {
     key: "input_tokens",
     label: "Input tokens",
-    mono: true,
     extraKey: "cached_input_tokens",
     extraLabel: "cached",
   },
   {
     key: "output_tokens",
     label: "Output tokens",
-    mono: true,
     extraKey: "reasoning_tokens",
     extraLabel: "reasoning",
   },
@@ -148,35 +144,23 @@ const TOKEN_FIELDS: ReadonlyArray<DetailField> = [
 // Labeled Details rows, shown when the span carries `key`; `extraKey` adds a
 // second value after it.
 const DETAIL_FIELDS: ReadonlyArray<DetailField> = [
-  { key: "model.id", label: "Model", mono: true },
-  { key: "model.provider", label: "Provider", mono: false },
-  { key: "task.delivery", label: "Delivery", mono: false },
-  { key: "agent.step_count", label: "Steps", mono: true },
-  { key: "agent.tool_call_count", label: "Tool call count", mono: true },
+  { key: "model.id", label: "Model" },
+  { key: "model.provider", label: "Provider", words: true },
+  { key: "task.delivery", label: "Delivery", words: true },
+  { key: "agent.step_count", label: "Steps" },
+  { key: "agent.tool_call_count", label: "Tool call count" },
   ...["usage", "model"].flatMap((prefix) =>
     TOKEN_FIELDS.map((field): DetailField => ({
       key: `${prefix}.${field.key}`,
       label: field.label,
-      mono: field.mono,
       extraKey: `${prefix}.${field.extraKey}`,
       extraLabel: field.extraLabel,
     })),
   ),
-  { key: "model.finish_reason", label: "Finish reason", mono: false },
-  { key: "tool.success", label: "Succeeded", mono: false },
-  { key: "task.id", label: "Task id", mono: true },
+  { key: "model.finish_reason", label: "Finish reason", words: true },
+  { key: "tool.success", label: "Succeeded", words: true },
+  { key: "task.id", label: "Task id" },
 ];
-
-// The muted word after a child span's name. Roots carry their kind in the bar
-// hue and the detail header instead.
-const KIND_WORD: Record<ObservabilitySpanRow["kind"], string> = {
-  task: "task",
-  cron: "cron",
-  subtask: "subagent",
-  "model.step": "model",
-  "tool.call": "tool",
-  phase: "phase",
-};
 
 // Attribute keys the panel already shows as its title, header, a section row, a
 // timing chip or a labeled Details row. Details lists every other key raw.
@@ -216,18 +200,24 @@ const SHOWN_KEYS: ReadonlySet<string> = new Set([
 // Search text per span object, built on first search. See spanSearchText.
 const SPAN_SEARCH_TEXT = new WeakMap<ObservabilitySpanRow, string>();
 
+interface KindTheme {
+  bar: string;
+  // The muted word after a child span's name and in the detail header.
+  word: string;
+}
+
 // One bar hue per span kind, checked for colorblind (protan/deutan) separation
 // on both surfaces, including against the error red that can replace a root
 // bar. Bars step deeper where a hue would wash out on one surface (task keeps
 // violet-500 on dark: violet-400 collapses into model.step's blue-400 under
 // deuteranopia).
-const KIND_BAR: Record<ObservabilitySpanRow["kind"], string> = {
-  task: "bg-violet-500/70",
-  cron: "bg-amber-500/70 dark:bg-amber-300/70",
-  subtask: "bg-cyan-500/70 dark:bg-cyan-300/70",
-  "model.step": "bg-blue-700/70 dark:bg-blue-400/70",
-  "tool.call": "bg-orange-600/70 dark:bg-orange-500/70",
-  phase: "bg-teal-700/70 dark:bg-teal-500/70",
+const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
+  task: { bar: "bg-violet-500/70", word: "task" },
+  cron: { bar: "bg-amber-500/70 dark:bg-amber-300/70", word: "cron" },
+  subtask: { bar: "bg-cyan-500/70 dark:bg-cyan-300/70", word: "subagent" },
+  "model.step": { bar: "bg-blue-700/70 dark:bg-blue-400/70", word: "model" },
+  "tool.call": { bar: "bg-orange-600/70 dark:bg-orange-500/70", word: "tool" },
+  phase: { bar: "bg-teal-700/70 dark:bg-teal-500/70", word: "phase" },
 };
 
 // A root task/subtask still "running" past this likely never reported its
@@ -511,8 +501,8 @@ export function TracingPanel({
                 <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
                   <span>
                     {isRootSpanKind(selected.span.kind)
-                      ? KIND_WORD[selected.span.kind]
-                      : `${spanLabel(selected.span)} ${KIND_WORD[selected.span.kind]}`}
+                      ? kindTheme(selected.span.kind).word
+                      : `${spanLabel(selected.span)} ${kindTheme(selected.span.kind).word}`}
                   </span>
                   <SpanStatus
                     span={selected.span}
@@ -615,7 +605,7 @@ function attributeText(value: unknown): string | undefined {
 function detailRows(span: ObservabilitySpanRow): DetailRow[] {
   const attributes = span.attributes ?? {};
   const labeled = DETAIL_FIELDS.flatMap(
-    ({ extraKey, extraLabel, key, label, mono }): DetailRow[] => {
+    ({ extraKey, extraLabel, key, label, words }): DetailRow[] => {
       const value = attributeText(attributes[key]);
       if (value === undefined) return [];
       const extra = extraKey ? attributeText(attributes[extraKey]) : undefined;
@@ -624,26 +614,20 @@ function detailRows(span: ObservabilitySpanRow): DetailRow[] {
         {
           key: key,
           label: label,
-          mono: mono,
           value:
             extra === undefined ? value : `${value} · ${extra} ${extraLabel}`,
+          words: words,
         },
       ];
     },
   );
   const identity: DetailRow[] = isRootSpanKind(span.kind)
     ? [
-        { key: "trace", label: "Trace", mono: true, value: span.traceId },
-        {
-          key: "agent",
-          label: "Agent",
-          mono: true,
-          value: span.agentId ?? "unknown",
-        },
+        { key: "trace", label: "Trace", value: span.traceId },
+        { key: "agent", label: "Agent", value: span.agentId ?? "unknown" },
         {
           key: "conversation",
           label: "Conversation",
-          mono: true,
           value: span.conversationKey ?? "none",
         },
       ]
@@ -654,7 +638,7 @@ function detailRows(span: ObservabilitySpanRow): DetailRow[] {
 
       return SHOWN_KEYS.has(key) || text === undefined
         ? []
-        : [{ key: key, label: key, mono: true, value: text }];
+        : [{ key: key, label: key, value: text }];
     },
   );
 
@@ -798,10 +782,10 @@ function isTaskRunning(root: ObservabilitySpanRow): boolean {
   );
 }
 
-/** KIND_BAR lookup with a fallback: core can ship a new span kind before
+/** KIND_THEME lookup with a fallback: core can ship a new span kind before
  * this dashboard build knows it, and that must not take down the panel. */
-function kindBar(kind: ObservabilitySpanRow["kind"]): string {
-  return KIND_BAR[kind] ?? KIND_BAR["tool.call"];
+function kindTheme(kind: ObservabilitySpanRow["kind"]): KindTheme {
+  return KIND_THEME[kind] ?? KIND_THEME["tool.call"];
 }
 
 /** Newest task first. */
@@ -880,17 +864,10 @@ function SpanStatus({
   taskRunning: boolean;
 }): React.JSX.Element {
   const stale = isStale(span, taskRunning);
-  const dot = stale
-    ? "bg-muted-foreground/50"
-    : span.status === "running"
-      ? "bg-sky-600 dark:bg-sky-400"
-      : span.status === "error"
-        ? "bg-red-600 dark:bg-red-400"
-        : "bg-emerald-600 dark:bg-emerald-400";
 
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <span className={cn("size-1.5 shrink-0 rounded-full", dot)} />
+      <StatusDot tone={stale ? "stale" : span.status} />
       {stale ? "ended" : span.status}
     </span>
   );
@@ -939,7 +916,7 @@ function TaskDurationBar({
   scaleMaxMs: number;
 }): React.JSX.Element {
   const live = isTaskRunning(group.root);
-  const barColor = kindBar(group.root.kind);
+  const barColor = kindTheme(group.root.kind).bar;
   const widthPct = Math.max(
     1.5,
     Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100),
@@ -981,7 +958,7 @@ function TimelineBar({
 }): React.JSX.Element {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
-  const barColor = kindBar(span.kind);
+  const barColor = kindTheme(span.kind).bar;
   const end = live
     ? windowStart + windowSpan
     : Math.max(span.endTimeMs, span.startTimeMs);
@@ -1191,11 +1168,10 @@ function SpanDetails({
                 }
               />
               <div className="grid px-1 pb-2 text-xs">
-                {rows.map(({ key, label, mono, value }) => (
+                {rows.map(({ key, label, value, words }) => (
                   <CopyRow
                     key={key}
                     value={value}
-                    label={label}
                     className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
                   >
                     <span className="truncate text-muted-foreground">
@@ -1204,7 +1180,7 @@ function SpanDetails({
                     <span
                       className={cn(
                         "truncate text-foreground/80",
-                        mono && "font-mono",
+                        !words && "font-mono",
                       )}
                     >
                       {value}
@@ -1334,6 +1310,7 @@ function SpanRow({
 }): React.JSX.Element {
   // Every root gets its own duration bar, anchor id, and subtitle.
   const isRoot = isRootSpanKind(span.kind);
+  const label = spanLabel(span);
   const parentTraceId =
     span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
 
@@ -1382,8 +1359,8 @@ function SpanRow({
           ) : (
             <span className="size-3.5 shrink-0" />
           )}
-          <span className="min-w-0 truncate" title={spanLabel(span)}>
-            {spanLabel(span)}
+          <span className="min-w-0 truncate" title={label}>
+            {label}
             {isRoot ? (
               <span className="text-muted-foreground">
                 {" · "}
@@ -1393,7 +1370,7 @@ function SpanRow({
               </span>
             ) : (
               <span className="ml-2 text-muted-foreground">
-                {KIND_WORD[span.kind]}
+                {kindTheme(span.kind).word}
               </span>
             )}
           </span>

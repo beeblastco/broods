@@ -3,6 +3,7 @@
 import { DetailPanel } from "@/app/components/DetailSplit";
 import { CopyButton, CopyRow } from "@/app/components/CopyButton";
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import {
@@ -369,14 +370,7 @@ function ActivityList({
           key={event._id}
           className="grid grid-cols-[14px_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 px-2 py-1.5 transition-colors hover:bg-accent/20"
         >
-          <span
-            className={cn(
-              "size-1.5 justify-self-center rounded-full",
-              event.result === "ok"
-                ? "bg-emerald-600 dark:bg-emerald-400"
-                : "bg-red-600 dark:bg-red-400",
-            )}
-          />
+          <StatusDot tone={event.result} className="justify-self-center" />
           <div className="flex min-w-0 items-center gap-2">
             <span className="font-medium whitespace-nowrap text-foreground">
               {event.action}
@@ -395,23 +389,21 @@ function ActivityList({
               {actorLabel(event)}
             </span>
           </div>
-          {event.traceId ? (
+          {event.traceId && (
             <TraceLink href={traceHref(event.traceId)}>View trace</TraceLink>
-          ) : (
-            <span />
           )}
-          <span className="w-16 text-right font-mono whitespace-nowrap text-muted-foreground">
+          <span className="col-start-4 w-16 text-right font-mono whitespace-nowrap text-muted-foreground">
             {relativeTime(event.createdAt, now)}
           </span>
           {(event.traceId || event.taskId) && (
             <div className="col-span-3 col-start-2 flex min-w-0 gap-3 font-mono text-muted-foreground">
               {event.traceId && (
-                <CopyRow value={event.traceId} label="trace id">
+                <CopyRow value={event.traceId} className="flex">
                   <span className="truncate">trace {event.traceId}</span>
                 </CopyRow>
               )}
               {event.taskId && (
-                <CopyRow value={event.taskId} label="task id">
+                <CopyRow value={event.taskId} className="flex">
                   <span className="truncate">task {event.taskId}</span>
                 </CopyRow>
               )}
@@ -625,29 +617,22 @@ function InstanceDetailFields({
       {instance.workspaceName && (
         <Field label="Workspace" value={instance.workspaceName} />
       )}
-      {instance.createdByTraceId && (
-        <Field
-          label="Created trace"
-          value={
-            <TraceLink href={traceHref(instance.createdByTraceId)}>
-              <code className="max-w-45 truncate font-mono">
-                {instance.createdByTraceId}
-              </code>
-            </TraceLink>
-          }
-        />
-      )}
-      {instance.lastUsedTraceId && (
-        <Field
-          label="Last trace"
-          value={
-            <TraceLink href={traceHref(instance.lastUsedTraceId)}>
-              <code className="max-w-45 truncate font-mono">
-                {instance.lastUsedTraceId}
-              </code>
-            </TraceLink>
-          }
-        />
+      {[
+        { label: "Created trace", traceId: instance.createdByTraceId },
+        { label: "Last trace", traceId: instance.lastUsedTraceId },
+      ].map(
+        ({ label, traceId }) =>
+          traceId && (
+            <Field
+              key={label}
+              label={label}
+              value={
+                <TraceLink href={traceHref(traceId)}>
+                  <code className="max-w-45 truncate font-mono">{traceId}</code>
+                </TraceLink>
+              }
+            />
+          ),
       )}
       {instance.snapshotId && (
         <Field
