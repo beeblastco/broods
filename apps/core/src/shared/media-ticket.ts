@@ -1,9 +1,10 @@
 /**
- * Durable workspace media links. A channel tool seals one when it hands a
- * workspace file to a chat provider; the media route opens it to learn which
- * file to stream. Providers store the URL and fetch it lazily, and Zalo re-fetches
- * every time a viewer opens the photo, so the ticket carries no expiry.
- * Rotating the service secret is what revokes every issued link.
+ * Durable media links. A channel tool seals one when it hands a workspace file
+ * to a chat provider, and inbound media seals one for the copy kept in the
+ * attachment store; the media route opens it to learn which file to stream.
+ * Providers store the URL and fetch it lazily, and Zalo re-fetches every time a
+ * viewer opens the photo, so the ticket carries no expiry. Rotating the service
+ * secret is what revokes every issued link.
  */
 
 import {
@@ -19,13 +20,37 @@ const TICKET_VERSION = "ml1";
 
 export const MEDIA_PATH_PREFIX = "/v1/media/";
 
-export interface MediaTicket {
+// Root of the attachment store in the managed filesystem bucket. Workspace
+// mounts are keyed by an `fs-` namespace, so nothing under here is ever mounted
+// and no sandbox tool can delete it.
+const ATTACHMENT_STORE_ROOT = "attachments/";
+
+/** A file in the attachment store: inbound media, kept for the conversation. */
+export interface AttachmentMediaTicket {
+  accountId: string;
+  /** Same path the agent's workspace copy was saved under. */
+  path: string;
+}
+
+/** A file in a workspace, sent out by a channel tool. */
+export interface WorkspaceMediaTicket {
   accountId: string;
   workspaceId: string;
   /** Filesystem namespace, which already carries any workspace isolation suffix. */
   namespace: string;
   /** File path relative to the workspace root. */
   path: string;
+}
+
+export type MediaTicket = AttachmentMediaTicket | WorkspaceMediaTicket;
+
+export function attachmentStoreKey(ticket: AttachmentMediaTicket): string {
+  return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(ticket.accountId)}/${ticket.path}`;
+}
+
+/** Every key of one account's attachment store, for the account delete sweep. */
+export function attachmentStorePrefix(accountId: string): string {
+  return `${ATTACHMENT_STORE_ROOT}${encodeURIComponent(accountId)}/`;
 }
 
 /**
@@ -59,13 +84,13 @@ export function openMediaTicket(
     const parsed: unknown = JSON.parse(plaintext);
     if (!isPlainObject(parsed)) return null;
     const { accountId, workspaceId, namespace, path } = parsed;
-    if (
-      typeof accountId !== "string" ||
-      typeof workspaceId !== "string" ||
-      typeof namespace !== "string" ||
-      typeof path !== "string"
-    )
+    if (typeof accountId !== "string" || typeof path !== "string") return null;
+    if (workspaceId === undefined && namespace === undefined) {
+      return { accountId: accountId, path: path };
+    }
+    if (typeof workspaceId !== "string" || typeof namespace !== "string") {
       return null;
+    }
 
     return {
       accountId: accountId,

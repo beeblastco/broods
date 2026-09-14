@@ -675,6 +675,7 @@ paths:
                       agentsDeleted: 1
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
+                      attachmentObjectsDeleted: 3
 
   /v1/accounts/{accountId}/rotate-secret:
     post:
@@ -3744,6 +3745,8 @@ components:
             skillObjectsDeleted:
               type: integer
             bundleObjectsDeleted:
+              type: integer
+            attachmentObjectsDeleted:
               type: integer
 
     AgentConfig:

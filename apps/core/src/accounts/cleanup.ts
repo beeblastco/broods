@@ -1,7 +1,8 @@
 /**
  * Account deletion cleanup across Convex runtime state and the account's S3
- * prefixes (workspaces, skills, tool/hook bundles). CRUD for these resources
- * lives in the Convex config plane; only the deletion sweep belongs here.
+ * prefixes (workspaces, attachment store, skills, tool/hook bundles). CRUD for
+ * these resources lives in the Convex config plane; only the deletion sweep
+ * belongs here.
  */
 
 import {
@@ -13,6 +14,7 @@ import type { AccountRecord } from "../shared/domain/accounts.ts";
 import type { SandboxConfigRecord } from "../shared/domain/sandbox-config.ts";
 import type { WorkspaceStorageConfig } from "../shared/domain/workspace-config.ts";
 import { optionalEnv, requireEnv } from "../shared/env.ts";
+import { attachmentStorePrefix } from "../shared/media-ticket.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
 import { skillsBucketName } from "../shared/skills.ts";
@@ -33,6 +35,17 @@ export interface AccountCleanupSummary {
   sandboxReservationDeleted: number;
   filesystemObjectsDeleted: number;
   reservedSandboxesReleased: number;
+}
+
+// Inbound chat media kept for the account's conversations, outside every
+// workspace mount. The conversations go with the Convex cascade; this is the bytes.
+export async function deleteAccountAttachments(
+  accountId: string,
+): Promise<number> {
+  const bucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
+  if (!bucket) return 0;
+
+  return deleteS3Prefix(bucket, attachmentStorePrefix(accountId));
 }
 
 // Bundle metadata lives in Convex; only the executable module bytes are stored

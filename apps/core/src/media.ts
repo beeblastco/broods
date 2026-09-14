@@ -1,5 +1,6 @@
 /**
- * Public media route. Serves one workspace file per sealed ticket.
+ * Public media route. Serves one file per sealed ticket: a workspace file a
+ * channel tool sent out, or an inbound attachment from the attachment store.
  *
  * Chat providers store the URL and fetch it lazily, so this replaces a presigned
  * S3 link: storage stays private, the ticket is the only credential, every fetch
@@ -11,6 +12,7 @@ import { requireEnv } from "./shared/env.ts";
 import { errorResponse, type CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
 import {
+  attachmentStoreKey,
   MEDIA_PATH_PREFIX,
   openMediaTicket,
   type MediaTicket,
@@ -46,48 +48,6 @@ export function routesToMedia(method: string, pathname: string): boolean {
     pathname.startsWith(MEDIA_PATH_PREFIX) &&
     (upperMethod === "GET" || upperMethod === "HEAD")
   );
-}
-
-/**
- * The S3 object a ticket names, with its head. Null when the workspace record
- * or the file is gone. The harness asks this before replaying a sealed link to
- * the model, so a file the agent deleted turns into a note rather than a
- * provider-side 404 that fails the whole turn.
- */
-export async function locateMediaObject(
-  ticket: MediaTicket,
-): Promise<MediaObject | null> {
-  const record = await getStorage().workspaceConfigs.getById(
-    ticket.accountId,
-    ticket.workspaceId,
-  );
-  if (!record) {
-    logWarn("media.workspace missing", {
-      accountId: ticket.accountId,
-      workspaceId: ticket.workspaceId,
-    });
-
-    return null;
-  }
-
-  const target = await resolveS3ReadTarget(
-    workspaceReadContext(record.config.storage, ticket.namespace),
-  );
-  const key = `${target.prefix}${ticket.path}`;
-  const head = target.access
-    ? await headS3Object(target.bucket, key, target.access)
-    : await headS3Object(target.bucket, key);
-  if (!head) {
-    logWarn("media.object missing", {
-      accountId: ticket.accountId,
-      workspaceId: ticket.workspaceId,
-      path: ticket.path,
-    });
-
-    return null;
-  }
-
-  return { bucket: target.bucket, key: key, access: target.access, head: head };
 }
 
 export async function handleMediaRequest(
@@ -137,7 +97,6 @@ export async function handleMediaRequest(
   };
   logDebug("media.serve", {
     accountId: ticket.accountId,
-    workspaceId: ticket.workspaceId,
     path: ticket.path,
     contentType: contentType,
     contentLength: object.head.contentLength,
@@ -152,6 +111,61 @@ export async function handleMediaRequest(
     : await readS3Bytes(object.bucket, object.key);
 
   return new Response(bytes, { status: 200, headers: headers });
+}
+
+// The object a ticket names, or null when it is gone. An attachment ticket reads
+// the managed bucket on the harness's own role; a workspace ticket goes through
+// the workspace's storage, which may be a tenant bucket behind an assumed role.
+async function locateMediaObject(
+  ticket: MediaTicket,
+): Promise<MediaObject | null> {
+  if (!("workspaceId" in ticket)) {
+    const bucket = requireEnv("FILESYSTEM_BUCKET_NAME");
+    const key = attachmentStoreKey(ticket);
+    const head = await headS3Object(bucket, key);
+    if (!head) {
+      logWarn("media.attachment missing", {
+        accountId: ticket.accountId,
+        path: ticket.path,
+      });
+
+      return null;
+    }
+
+    return { bucket: bucket, key: key, access: undefined, head: head };
+  }
+
+  const record = await getStorage().workspaceConfigs.getById(
+    ticket.accountId,
+    ticket.workspaceId,
+  );
+  if (!record) {
+    logWarn("media.workspace missing", {
+      accountId: ticket.accountId,
+      workspaceId: ticket.workspaceId,
+    });
+
+    return null;
+  }
+
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(record.config.storage, ticket.namespace),
+  );
+  const key = `${target.prefix}${ticket.path}`;
+  const head = target.access
+    ? await headS3Object(target.bucket, key, target.access)
+    : await headS3Object(target.bucket, key);
+  if (!head) {
+    logWarn("media.object missing", {
+      accountId: ticket.accountId,
+      workspaceId: ticket.workspaceId,
+      path: ticket.path,
+    });
+
+    return null;
+  }
+
+  return { bucket: target.bucket, key: key, access: target.access, head: head };
 }
 
 // One answer for a bad ticket, a deleted workspace and a missing file, so the

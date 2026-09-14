@@ -60,6 +60,7 @@ import {
 } from "../shared/terminal-ticket.ts";
 import {
   deleteAccountRuntimeData,
+  deleteAccountAttachments,
   deleteAccountSkills,
   deleteAccountBundles,
 } from "./cleanup.ts";
@@ -648,6 +649,7 @@ async function deleteAccountResponse(
     agentsDeleted,
     skillObjectsDeleted,
     bundleObjectsDeleted,
+    attachmentObjectsDeleted,
     accountHooksDeleted,
     mcpDeleted,
     channelRecordsDeleted,
@@ -656,6 +658,7 @@ async function deleteAccountResponse(
     getStorage().agents.removeAllForAccount(account.accountId),
     deleteAccountSkills(account.accountId),
     deleteAccountBundles(account.accountId),
+    deleteAccountAttachments(account.accountId),
     getStorage().accountHooks.removeAllForAccount(account.accountId),
     getStorage().mcp.removeAllForAccount(account.accountId),
     getStorage().channelRecords.removeAllForAccount(account.accountId),
@@ -669,6 +672,7 @@ async function deleteAccountResponse(
       agentsDeleted: agentsDeleted,
       skillObjectsDeleted: skillObjectsDeleted,
       bundleObjectsDeleted: bundleObjectsDeleted,
+      attachmentObjectsDeleted: attachmentObjectsDeleted,
       accountHooksDeleted: accountHooksDeleted,
       mcpDeleted: mcpDeleted,
       channelRecordsDeleted: channelRecordsDeleted,

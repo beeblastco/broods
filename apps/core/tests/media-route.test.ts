@@ -141,6 +141,27 @@ describe("handleMediaRequest", () => {
     expect(response.headers.get("content-disposition")).toBe("attachment");
   });
 
+  it("serves an attachment store file without touching the workspace", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    setStorageForTests({ workspaceConfigs: {} } as never);
+
+    const response = await handleMediaRequest(
+      mediaRequest(
+        sealMediaTicket(
+          { accountId: ACCOUNT, path: "media/ab12/0-photo.png" },
+          SECRET,
+        ),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(headS3ObjectMock.mock.calls[0]).toEqual([
+      "filesystem-bucket",
+      `attachments/${ACCOUNT}/media/ab12/0-photo.png`,
+    ]);
+  });
+
   it("404s once the file is gone", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
     headS3ObjectMock.mockImplementation(async () => null as never);

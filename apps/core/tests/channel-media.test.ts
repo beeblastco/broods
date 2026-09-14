@@ -14,13 +14,8 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
-import { sealMediaTicket } from "../src/shared/media-ticket.ts";
+import { openMediaTicket } from "../src/shared/media-ticket.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
-import {
-  resetStorageForTests,
-  setStorageForTests,
-  type Storage,
-} from "../src/shared/storage.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const writeS3ObjectMock = mock(
@@ -33,16 +28,10 @@ const writeS3ObjectMock = mock(
     typeof body === "string" ? body.length : body.byteLength,
 );
 
-// Answers the existence check a sealed workspace link gets before it is replayed.
-const headS3ObjectMock = mock(
-  async (_bucket: string, _key: string) =>
-    null as { contentLength: number } | null,
-);
-
 mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
-  headS3Object: headS3ObjectMock,
+  headS3Object: mock(async () => undefined),
   readS3Bytes: mock(async () => new Uint8Array()),
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
@@ -107,16 +96,12 @@ beforeEach(() => {
   process.env.SERVICE_AUTH_SECRET = "service-auth-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
   writeS3ObjectMock.mockClear();
-  headS3ObjectMock.mockClear();
-  headS3ObjectMock.mockImplementation(async () => null);
   transcribeAudioMock.mockClear();
-  setStorageForTests(storageWithWorkspace());
 });
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   globalThis.fetch = ORIGINAL_FETCH;
-  resetStorageForTests();
 });
 
 describe("resolveMediaType", () => {
@@ -168,12 +153,38 @@ describe("ingestInboundAttachments", () => {
     expect(String(image.image)).toStartWith("https://core.example/v1/media/");
     expect(image.mediaType).toBe("image/png");
 
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
-    const [, key, body, options] = writeS3ObjectMock.mock.calls[0]!;
-    expect(key).toContain("media/");
-    expect(key).toEndWith("-photo.png");
-    expect(body).toEqual(PNG_BYTES);
-    expect(options).toEqual({ contentType: "image/png" });
+    // One copy for the agent, inside its mount; one for the conversation, in
+    // the attachment store, where a workspace clean-up cannot reach it.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
+    const [, workspaceKey, workspaceBody, workspaceOptions] =
+      writeS3ObjectMock.mock.calls[0]!;
+    const [, storeKey] = writeS3ObjectMock.mock.calls[1]!;
+    expect(workspaceKey).toStartWith(`${workspace().namespace}/media/`);
+    expect(workspaceKey).toEndWith("-photo.png");
+    expect(workspaceBody).toEqual(PNG_BYTES);
+    expect(workspaceOptions).toEqual({ contentType: "image/png" });
+    expect(storeKey).toStartWith(`attachments/${ACCOUNT}/media/`);
+    expect(storeKey).toEndWith("-photo.png");
+  });
+
+  it("seals the link against the attachment store, not the workspace", async () => {
+    const parts = await ingestInboundAttachments([imageAttachment()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-1",
+      workspace: workspace(),
+    });
+
+    const image = parts.stored.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected an image part");
+    const token = String(image.image).slice(
+      "https://core.example/v1/media/".length,
+    );
+    const ticket = openMediaTicket(token, "service-auth-secret");
+    expect(ticket).not.toBeNull();
+    expect(ticket).not.toHaveProperty("workspaceId");
+    expect(ticket?.path).toStartWith("media/");
+    expect(ticket?.path).toEndWith("-photo.png");
   });
 
   it("tells the agent where every attachment landed", async () => {
@@ -215,7 +226,8 @@ describe("ingestInboundAttachments", () => {
       [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
     ).toEqual([]);
     expect(noteText(parts)).toContain("voice.aac");
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
+    // Workspace copy plus attachment store copy.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(2);
   });
 
   it("sends a voice note natively to a provider that listens to it", async () => {
@@ -349,7 +361,8 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    expect(writeS3ObjectMock).toHaveBeenCalledTimes(10);
+    // Ten accepted attachments, two copies each.
+    expect(writeS3ObjectMock).toHaveBeenCalledTimes(20);
     expect(noteText(parts)).toContain("2 further attachment(s)");
   });
 
@@ -581,56 +594,6 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  // The provider downloads a sealed link itself, and answers a 404 by failing
-  // the turn. Once a file is gone from the workspace, every later message in
-  // that conversation would die the same way.
-  it("says a workspace file the agent deleted is gone instead of failing the turn", async () => {
-    const messages = await rehydrateStoredMedia(
-      [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "what is in this" },
-            { type: "image", image: sealedLink("media/ab12/0-photo.png") },
-          ],
-        },
-      ],
-      telegramConfig(),
-    );
-
-    expect(headS3ObjectMock.mock.calls[0]).toEqual([
-      "filesystem-bucket",
-      `${workspace().namespace}/media/ab12/0-photo.png`,
-    ]);
-    expect(messages[0]?.content).toEqual([
-      { type: "text", text: "what is in this" },
-      {
-        type: "text",
-        text: "[media/ab12/0-photo.png is no longer in the workspace]",
-      },
-    ]);
-  });
-
-  it("replays a sealed link the workspace still serves", async () => {
-    headS3ObjectMock.mockImplementation(async () => ({ contentLength: 12 }));
-    const messages: ModelMessage[] = [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            mediaType: "image/png",
-            image: sealedLink("media/ab12/0-photo.png"),
-          },
-        ],
-      },
-    ];
-
-    const replayed = await rehydrateStoredMedia(messages, telegramConfig());
-
-    expect(replayed[0]?.content).toEqual(messages[0]?.content);
-  });
-
   it("leaves a conversation with no references untouched", async () => {
     const messages = [
       {
@@ -661,30 +624,6 @@ function noteText(
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
-}
-
-function sealedLink(path: string): string {
-  return `https://core.example/v1/media/${sealMediaTicket(
-    {
-      accountId: ACCOUNT,
-      workspaceId: workspace().workspaceId,
-      namespace: workspace().namespace,
-      path: path,
-    },
-    "service-auth-secret",
-  )}`;
-}
-
-function storageWithWorkspace(): Storage {
-  return {
-    workspaceConfigs: {
-      getById: async function (accountId: string, workspaceId: string) {
-        return accountId === ACCOUNT && workspaceId === workspace().workspaceId
-          ? { config: { storage: { provider: "s3" } } }
-          : null;
-      },
-    },
-  } as never;
 }
 
 function workspace(): ResolvedWorkspace {
