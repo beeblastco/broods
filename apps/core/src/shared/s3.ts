@@ -17,10 +17,16 @@ const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
 
 let defaultClient: AwsS3Client | undefined;
+// One client per access object, so a cached read target keeps its connection
+// pool instead of paying a TLS handshake per read. Weak, so a dropped target
+// frees its client.
+const accessClients = new WeakMap<S3Access, AwsS3Client>();
 
 // Per-call S3 access for reads against a bring-your-own bucket: short-lived
 // assume-role credentials plus the bucket's region/endpoint. Omitted (the common
 // case) => the default client on the harness's own role against the managed bucket.
+// Pass the object a read target hands out as is: the client is cached by its
+// identity, so a copy pays for a new client.
 export interface S3Access {
   credentials?: {
     accessKeyId: string;
@@ -362,13 +368,18 @@ export async function writeS3Object(
 // own credentials and stay per-call.
 function awsClient(access?: S3Access): AwsS3Client {
   if (access) {
-    return new AwsS3Client({
+    const existing = accessClients.get(access);
+    if (existing) return existing;
+    const client = new AwsS3Client({
       region: access.region ?? process.env.AWS_REGION,
       ...(access.endpoint
         ? { endpoint: access.endpoint, forcePathStyle: true }
         : {}),
       ...(access.credentials ? { credentials: access.credentials } : {}),
     });
+    accessClients.set(access, client);
+
+    return client;
   }
   defaultClient ??= new AwsS3Client({ region: process.env.AWS_REGION });
 

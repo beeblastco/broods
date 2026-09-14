@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpsServer, type Server } from "node:https";
-import type { SystemModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage } from "ai";
 import * as actualAi from "ai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
@@ -2564,6 +2564,31 @@ describe("system prompt trace attributes", () => {
 
     expect(attributes["model.system"]).toBe("x".repeat(10));
     expect(attributes["model.system_chars"]).toBe(100);
+  });
+});
+
+describe("task input trace attribute", () => {
+  it("labels a run with its newest user message text, without media", async () => {
+    const { latestUserText } = await import("../src/harness/harness.ts");
+    const messages: ModelMessage[] = [
+      { role: "user", content: "keep an eye on staging" },
+      { role: "assistant", content: "Will do." },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "why did the deploy fail? " },
+          { type: "image", image: new URL("https://example.com/log.png") },
+          { type: "text", text: "post it in #eng\n" },
+        ],
+      },
+      { role: "assistant", content: "Checking the logs." },
+      { role: "tool", content: [] },
+    ];
+
+    expect(latestUserText(messages)).toBe(
+      "why did the deploy fail? post it in #eng",
+    );
+    expect(latestUserText([{ role: "assistant", content: "hi" }])).toBe("");
   });
 });
 

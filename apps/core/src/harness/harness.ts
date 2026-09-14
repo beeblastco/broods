@@ -31,6 +31,7 @@ import {
 } from "ai";
 import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
+import { extractText } from "../shared/channels.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
@@ -129,6 +130,9 @@ export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // truncate further on its side, but that only affects history older than the
 // JetStream replay window.
 const MAX_TRACE_ATTRIBUTE_CHARS = 32_000;
+// Tracing labels a run with its request. The whole text is already in
+// model.input, so this only has to fill one row.
+const MAX_TASK_INPUT_CHARS = 500;
 
 const SPAN_ENCODER = new TextEncoder();
 
@@ -372,6 +376,10 @@ export async function runAgentLoop(
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
+    "task.input": traceAttribute(latestUserText(turnContext.messages)).slice(
+      0,
+      MAX_TASK_INPUT_CHARS,
+    ),
     "agent.message_count": turnContext.messages.length,
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
@@ -409,12 +417,14 @@ export async function runAgentLoop(
     label: string,
     startMs: number,
     endMs: number,
+    extraAttributes: Record<string, number> = {},
   ): void => {
     try {
       const durationMs = Math.max(0, endMs - startMs);
       const attributes = {
         "phase.name": label,
         "phase.duration_ms": durationMs,
+        ...extraAttributes,
       };
       const phaseSpan = tracer.startSpan(
         phaseName,
@@ -466,12 +476,30 @@ export async function runAgentLoop(
     );
   }
   if (turnContext.timings) {
+    const { phases, prepareEndedMs, prepareStartedMs } = turnContext.timings;
     emitPhaseSpan(
       "phase.context_prepare",
       "Context prepare",
-      turnContext.timings.prepareStartedMs,
-      turnContext.timings.prepareEndedMs,
+      prepareStartedMs,
+      prepareEndedMs,
+      {
+        "prepare.history_ms": phases.historyMs,
+        "prepare.history_rows": phases.historyRows,
+        "prepare.media_ms": phases.mediaMs,
+        "prepare.memory_ms": phases.memoryMs,
+        "prepare.runtime_ms": phases.runtimeMs,
+        "prepare.skills_ms": phases.skillsMs,
+        "prepare.subagents_ms": phases.subagentsMs,
+      },
     );
+    // `bun run local:verify` reads this line to hold a warm prepare to budget.
+    logInfo("Context prepared", {
+      eventType: "session.context.prepared",
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      durationMs: prepareEndedMs - prepareStartedMs,
+      ...phases,
+    });
     if (turnContext.timings.compaction) {
       emitPhaseSpan(
         "phase.compaction",
@@ -1916,6 +1944,16 @@ export async function runAgentLoop(
     finalResponse: (): JSONValue | undefined => finalResponse,
     traceId: (): string => traceId,
   });
+}
+
+// Tracing labels a run with this and its search matches on it. Only text parts
+// count, and a tool continuation keeps the request that started the run.
+export function latestUserText(messages: ModelMessage[]): string {
+  const message = messages.findLast(
+    (candidate): candidate is UserModelMessage => candidate.role === "user",
+  );
+
+  return message ? extractText(message.content).trim() : "";
 }
 
 // The system prompt is assembled per turn from the agent config plus every

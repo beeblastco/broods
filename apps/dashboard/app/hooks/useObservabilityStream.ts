@@ -451,8 +451,13 @@ function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   if (rank(b.status) !== rank(a.status)) {
     return rank(b.status) > rank(a.status) ? incoming : existing;
   }
+  // Payload chars without serializing: a string's length is free, and a live
+  // root span re-arrives with tens of KB of attributes several times a run.
   const size = (span: ObservabilitySpanRow): number =>
-    JSON.stringify(span.attributes ?? {}).length;
+    Object.values(span.attributes ?? {}).reduce<number>(
+      (total, value) => total + (typeof value === "string" ? value.length : 1),
+      0,
+    );
 
   return size(b) >= size(a) ? incoming : existing;
 }

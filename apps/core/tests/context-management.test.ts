@@ -1,6 +1,9 @@
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
-import type { Session } from "../src/harness/session.ts";
+import type {
+  Session,
+  StoredConversationEventPage,
+} from "../src/harness/session.ts";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
@@ -87,6 +90,24 @@ const testStorage = () =>
   }) as never;
 
 const { setStorageForTests } = await import("../src/shared/storage.ts");
+
+const compactingAgentConfig = {
+  provider: {
+    google: {
+      apiKey: "google-key",
+    },
+  },
+  model: {
+    provider: "google" as const,
+    modelId: "gemini-test",
+  },
+  session: {
+    compaction: {
+      enabled: true,
+      maxContextLength: 1,
+    },
+  },
+};
 setStorageForTests(testStorage());
 
 afterEach(() => {
@@ -584,7 +605,7 @@ describe("stored item projection", () => {
     provider: { openai: { apiKey: "openai-key" } },
     model: { provider: "openai", modelId: "gpt-5.6-luna" },
   };
-  const assistantMessage = {
+  const assistantMessage: actualAi.AssistantModelMessage = {
     role: "assistant",
     content: [
       {
@@ -600,37 +621,28 @@ describe("stored item projection", () => {
     ],
   };
 
-  // Replaces the Convex page load with one stored assistant row, so the
-  // assertion is purely on how projection treats its recorded producer.
+  // One stored assistant row, so the assertion is purely on how projection
+  // treats its recorded producer.
   async function projectedMessages(
     model: string | undefined,
   ): Promise<actualAi.ModelMessage[]> {
-    const { runtime } = await import("../src/shared/convex/runtime.ts");
-    const originalQuery = runtime.query;
-    runtime.query = (async (name: string) =>
-      name === "listConversationEvents"
-        ? {
-            page: [
-              {
-                cursor: "1",
-                event: {
-                  version: 1,
-                  sourceEventId: "event",
-                  ...(model !== undefined ? { model: model } : {}),
-                  message: assistantMessage,
-                },
-              },
-            ],
-            isDone: true,
-            continueCursor: null,
-          }
-        : null) as typeof runtime.query;
+    const history = await stubHistory([
+      {
+        cursor: "1",
+        event: {
+          version: 1,
+          sourceEventId: "event",
+          ...(model !== undefined ? { model: model } : {}),
+          message: assistantMessage,
+        },
+      },
+    ]);
     try {
       const session = await newSession(openaiAgentConfig);
 
       return (await session.createTurnContext()).messages;
     } finally {
-      runtime.query = originalQuery;
+      history.restore();
     }
   }
 
@@ -663,25 +675,75 @@ describe("stored item projection", () => {
   });
 });
 
-describe("session compaction", () => {
-  const compactingAgentConfig = {
-    provider: {
-      google: {
-        apiKey: "google-key",
-      },
-    },
-    model: {
-      provider: "google" as const,
-      modelId: "gemini-test",
-    },
-    session: {
-      compaction: {
-        enabled: true,
-        maxContextLength: 1,
-      },
-    },
-  };
+describe("context prepare", () => {
+  it("times each load and reads memory and skills once for the whole run", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    process.env.SKILLS_BUCKET_NAME = "skills";
+    const memoryIndex = "# Memory Index\n- [Deploys](deploys.md) — how we ship";
+    const skillMarkdown =
+      "---\nname: review\ndescription: Review a change\n---\nRead the diff.";
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) =>
+      key.endsWith("SKILL.md") ? skillMarkdown : memoryIndex,
+    );
+    const history = await stubHistory(userRows(3));
+    try {
+      const session = await newSession({
+        workspaces: [{ name: "default", workspaceId: "ws_a" }],
+        skills: { enabled: true, allowed: ["acct/review"] },
+      });
+      const turnContext = await session.createTurnContext();
 
+      expect(turnContext.messages).toHaveLength(3);
+      expect(turnContext.timings?.phases.historyRows).toBe(3);
+      expect(turnContext.timings?.compaction).toBeUndefined();
+      // One S3 read for the memory index, one for the skill, before the
+      // system prompt was built.
+      expect(readS3TextMock).toHaveBeenCalledTimes(2);
+
+      // prepareStep rebuilds the prompt before every step: same reads, no S3.
+      const refreshed = await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+
+      expect(readS3TextMock).toHaveBeenCalledTimes(2);
+      expect(refreshed.system).toEqual(turnContext.system);
+      expect(
+        refreshed.system.some((message) =>
+          message.content.includes("how we ship"),
+        ),
+      ).toBe(true);
+    } finally {
+      history.restore();
+    }
+  });
+
+  it("ends the prepare window where compaction starts", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory(userRows(2));
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    runtime.mutate = (async () => "cursor") as typeof runtime.mutate;
+    try {
+      const session = await newSession({
+        ...compactingAgentConfig,
+        skills: { enabled: false },
+      });
+      const turnContext = await session.createTurnContext();
+      const timings = turnContext.timings;
+
+      expect(generateTextMock).toHaveBeenCalledTimes(1);
+      expect(timings?.compaction?.startedMs).toBe(timings!.prepareEndedMs);
+      expect(timings!.compaction!.endedMs).toBeGreaterThanOrEqual(
+        timings!.compaction!.startedMs,
+      );
+    } finally {
+      history.restore();
+      runtime.mutate = originalMutate;
+    }
+  });
+});
+
+describe("session compaction", () => {
   it("does not compact when disabled", async () => {
     const { compactSessionContext } =
       await import("../src/harness/compaction.ts");
@@ -905,4 +967,34 @@ async function newSession(
     agentId: "agent",
     agentConfig: agentConfig,
   });
+}
+
+// Replaces the Convex page load with the given rows until restored, so a test
+// controls the history a turn starts from.
+async function stubHistory(
+  page: StoredConversationEventPage["page"],
+): Promise<{ restore: () => void }> {
+  const { runtime } = await import("../src/shared/convex/runtime.ts");
+  const originalQuery = runtime.query;
+  runtime.query = (async (name: string) =>
+    name === "listConversationEvents"
+      ? { page: page, isDone: true, continueCursor: null }
+      : null) as typeof runtime.query;
+
+  return {
+    restore: (): void => {
+      runtime.query = originalQuery;
+    },
+  };
+}
+
+function userRows(count: number): StoredConversationEventPage["page"] {
+  return Array.from({ length: count }, (_, index) => ({
+    cursor: String(index),
+    event: {
+      version: 1,
+      sourceEventId: "event",
+      message: { role: "user", content: `message ${index}` },
+    },
+  }));
 }

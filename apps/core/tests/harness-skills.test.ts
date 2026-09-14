@@ -157,7 +157,6 @@ describe("listConfiguredSkillMetadata", () => {
   it("returns skill metadata for configured skills", async () => {
     const skillContent = createSkillMarkdown("my-skill", "A test skill");
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
     const { listConfiguredSkillMetadata } =
@@ -175,8 +174,7 @@ describe("listConfiguredSkillMetadata", () => {
     });
   });
 
-  it("skips skills that do not exist in S3", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
+  it("fails the turn when a configured skill's SKILL.md is missing", async () => {
     readS3TextMock.mockImplementation(async () => {
       throw new Error("NoSuchKey");
     });
@@ -184,16 +182,14 @@ describe("listConfiguredSkillMetadata", () => {
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
-    const result = await listConfiguredSkillMetadata("acct_test", {
-      skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
-    });
-
-    expect(result).toEqual([]);
+    await expect(
+      listConfiguredSkillMetadata("acct_test", {
+        skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
+      }),
+    ).rejects.toThrow("Skill not found: acct_test/missing-skill");
   });
 
   it("throws when skill path belongs to another account", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
-
     const { listConfiguredSkillMetadata } =
       await import("../src/harness/skills.ts");
 
@@ -217,13 +213,12 @@ describe("listConfiguredSkillMetadata", () => {
     ).rejects.toThrow("Invalid skill path: invalid-path");
   });
 
-  it("handles multiple skills with mixed existence", async () => {
+  it("skips a skill whose read fails for a reason other than a missing file", async () => {
     const skill1Content = createSkillMarkdown("skill-one", "First skill");
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.includes("skill-one")) return skill1Content;
-      throw new Error("NoSuchKey");
+      throw new Error("AccessDenied");
     });
 
     const { listConfiguredSkillMetadata } =
@@ -232,7 +227,7 @@ describe("listConfiguredSkillMetadata", () => {
     const result = await listConfiguredSkillMetadata("acct_test", {
       skills: {
         enabled: true,
-        allowed: ["acct_test/skill-one", "acct_test/missing-skill"],
+        allowed: ["acct_test/skill-one", "acct_test/unreadable-skill"],
       },
     });
 
@@ -552,7 +547,6 @@ describe("listSkillMetadataForConfig", () => {
       "# Instructions\nFollow these steps.",
     );
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue(skillContent);
 
     const { listSkillMetadataForConfig } =
@@ -571,24 +565,21 @@ describe("listSkillMetadataForConfig", () => {
   });
 
   it("skips skills that cannot be read from S3", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async () => {
-      throw new Error("NoSuchKey");
+      throw new Error("AccessDenied");
     });
 
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
     const result = await listSkillMetadataForConfig("acct_test", [
-      "acct_test/missing-skill",
+      "acct_test/unreadable-skill",
     ]);
 
     expect(result).toEqual([]);
   });
 
   it("throws when skill path belongs to another account", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
-
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
 
@@ -612,7 +603,6 @@ describe("listSkillMetadataForConfig", () => {
     const skill1Content = createSkillMarkdown("alpha-skill", "Alpha skill");
     const skill2Content = createSkillMarkdown("beta-skill", "Beta skill");
 
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.includes("alpha")) return skill1Content;
       if (key.includes("beta")) return skill2Content;
@@ -633,7 +623,9 @@ describe("listSkillMetadataForConfig", () => {
   });
 
   it("throws when skill does not exist in S3", async () => {
-    s3ObjectExistsMock.mockResolvedValue(false);
+    readS3TextMock.mockImplementation(async () => {
+      throw new Error("NoSuchKey");
+    });
 
     const { listSkillMetadataForConfig } =
       await import("../src/harness/skills.ts");
@@ -641,6 +633,37 @@ describe("listSkillMetadataForConfig", () => {
     await expect(
       listSkillMetadataForConfig("acct_test", ["acct_test/nonexistent-skill"]),
     ).rejects.toThrow("Skill not found: acct_test/nonexistent-skill");
+  });
+
+  it("reads every SKILL.md at once, with no HEAD first", async () => {
+    // Runs every turn: the turn should wait on the slowest read, not the sum.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await Bun.sleep(5);
+      inFlight -= 1;
+
+      return createSkillMarkdown(key.split("/")[1] ?? "", "A skill");
+    });
+
+    const { listSkillMetadataForConfig } =
+      await import("../src/harness/skills.ts");
+
+    const result = await listSkillMetadataForConfig("acct_test", [
+      "acct_test/alpha-skill",
+      "acct_test/beta-skill",
+      "acct_test/gamma-skill",
+    ]);
+
+    expect(result.map((skill) => skill.name)).toEqual([
+      "alpha-skill",
+      "beta-skill",
+      "gamma-skill",
+    ]);
+    expect(maxInFlight).toBe(3);
+    expect(s3ObjectExistsMock).not.toHaveBeenCalled();
   });
 });
 
@@ -651,7 +674,6 @@ describe("loadConfiguredHarnessSkills", () => {
       "Review a code change",
       "Read the diff and report correctness risks.",
     );
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.endsWith("SKILL.md")) return skillContent;
       if (key.endsWith("references/checklist.md")) return "Check tests.";
@@ -691,8 +713,33 @@ describe("loadConfiguredHarnessSkills", () => {
     ]);
   });
 
+  it("leaves out a skill it cannot read and still fails on a missing one", async () => {
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
+      if (key.includes("locked")) throw new Error("AccessDenied");
+      if (key.includes("missing")) throw new Error("NoSuchKey");
+
+      return createSkillMarkdown("open-skill", "Readable");
+    });
+    listS3PrefixMock.mockResolvedValue([]);
+
+    const { loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+    const skills = await loadConfiguredHarnessSkills("acct_test", {
+      skills: {
+        enabled: true,
+        allowed: ["acct_test/locked-skill", "acct_test/open-skill"],
+      },
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["open-skill"]);
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: ["acct_test/missing-skill"] },
+      }),
+    ).rejects.toThrow("Skill not found: acct_test/missing-skill");
+  });
+
   it("rejects an oversized SKILL.md before building a harness skill", async () => {
-    s3ObjectExistsMock.mockResolvedValue(true);
     readS3TextMock.mockResolvedValue("x".repeat(5 * 1024 * 1024 + 1));
 
     const { loadConfiguredHarnessSkills } =

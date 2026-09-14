@@ -6,6 +6,7 @@ import {
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
+import { formatNumber } from "@/app/lib/formatNumber";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -526,13 +527,6 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   }
 
   return totals;
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-
-  return n.toLocaleString();
 }
 
 /** Microseconds → compact duration (µs / ms / s). */

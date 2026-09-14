@@ -43,3 +43,18 @@ test("a backfilled span never downgrades a finished one back to running", () => 
 
   expect(merged.map((row) => row.status)).toEqual(["ok"]);
 });
+
+test("among two copies of a finished span the fuller payload wins", () => {
+  // Tempo truncates large attributes; the JetStream copy carries them whole.
+  const full = {
+    ...span("a", 1_000),
+    attributes: { "model.input": "x".repeat(4_000), "usage.total_tokens": 9 },
+  };
+  const truncated = {
+    ...span("a", 1_000),
+    attributes: { "model.input": "x".repeat(400), "usage.total_tokens": 9 },
+  };
+
+  expect(mergeBackfill([truncated], [full])[0]).toBe(full);
+  expect(mergeBackfill([full], [truncated])[0]).toBe(full);
+});

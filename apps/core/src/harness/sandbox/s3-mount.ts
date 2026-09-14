@@ -21,6 +21,15 @@ import { optionalEnv } from "../../shared/env.ts";
 import type { S3Access } from "../../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
+// A cached bring-your-own read target is reused until its credentials are this
+// close to expiry: longer than the 300s presign a read target can back, plus
+// room for clock skew.
+const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
+// Bring-your-own read targets keyed by everything the STS session is scoped to.
+// The pending promise is cached, so parallel first reads of one workspace share
+// a single STS round trip and, through s3.ts, a single S3 client.
+const readTargetCache = new Map<string, Promise<S3ReadTarget>>();
+
 export interface ResolvedS3Mount extends S3MountIdentity {
   // Present when the harness resolved credentials (assume-role / platform role).
   // Absent => the provider must supply credentials itself (workdir declarative
@@ -142,16 +151,12 @@ export async function resolveS3Mount(
 ): Promise<ResolvedS3Mount> {
   const identity = resolveS3MountIdentity(ctx);
   const roleArn = mountRoleArn(ctx.storage);
-  const externalId =
-    ctx.storage?.auth?.type === "assumeRole"
-      ? ctx.storage.auth.externalId
-      : undefined;
   const credentials = roleArn
     ? await assumeScopedMountCredentials({
         roleArn: roleArn,
         bucket: identity.bucket,
         prefix: identity.prefix,
-        externalId: externalId,
+        externalId: mountExternalId(ctx.storage),
       })
     : undefined;
 
@@ -193,7 +198,8 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
 
 // Resolve a harness read target. The managed bucket is read directly on the
 // harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
-// assumes the configured role for short-lived, prefix-scoped cross-account creds.
+// assumes the configured role for short-lived, prefix-scoped cross-account creds,
+// reused until they near expiry.
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
@@ -201,28 +207,23 @@ export async function resolveS3ReadTarget(
   if (!ctx.storage?.bucket) {
     return { bucket: identity.bucket, prefix: identity.prefix };
   }
-  const mount = await resolveS3Mount(ctx);
-  const access: S3Access = {
-    ...(mount.credentials
-      ? {
-          credentials: {
-            accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
-            secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
-            sessionToken: mount.credentials.AWS_SESSION_TOKEN,
-          },
-        }
-      : {}),
-    ...(mount.region ? { region: mount.region } : {}),
-    ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
-  };
-  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+  const cacheKey = JSON.stringify([
+    mountRoleArn(ctx.storage),
+    mountExternalId(ctx.storage),
+    identity.bucket,
+    identity.prefix,
+    identity.region,
+    identity.endpoint,
+  ]);
+  const cached = await readTargetCache.get(cacheKey)?.catch(() => undefined);
+  if (cached && !nearsExpiry(cached)) {
+    return cached;
+  }
+  const pending = readTargetFromMount(ctx);
+  readTargetCache.set(cacheKey, pending);
+  pending.catch(() => readTargetCache.delete(cacheKey));
 
-  return {
-    bucket: mount.bucket,
-    prefix: mount.prefix,
-    access: access,
-    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
-  };
+  return pending;
 }
 
 // Build the resolver context for a harness-side read of a workspace's storage,
@@ -251,14 +252,56 @@ function joinPrefix(
   return joined ? `${joined}/` : "";
 }
 
+function mountExternalId(
+  storage: WorkspaceStorageConfig | undefined,
+): string | undefined {
+  return storage?.auth?.type === "assumeRole"
+    ? storage.auth.externalId
+    : undefined;
+}
+
 function namespaceIsolationSuffix(namespace: string): string | undefined {
   const separator = namespace.indexOf("/");
 
   return separator >= 0 ? namespace.slice(separator + 1) : undefined;
 }
 
+// A target without assumed credentials never expires.
+function nearsExpiry(target: S3ReadTarget): boolean {
+  return (
+    target.credentialsExpireAt !== undefined &&
+    target.credentialsExpireAt.getTime() - Date.now() <=
+      READ_TARGET_REFRESH_MARGIN_MS
+  );
+}
+
 function normalizePrefix(prefix: string | undefined): string {
   const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
 
   return trimmed.length > 0 ? `${trimmed}/` : "";
+}
+
+async function readTargetFromMount(ctx: S3MountContext): Promise<S3ReadTarget> {
+  const mount = await resolveS3Mount(ctx);
+  const access: S3Access = {
+    ...(mount.credentials
+      ? {
+          credentials: {
+            accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
+            secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
+            sessionToken: mount.credentials.AWS_SESSION_TOKEN,
+          },
+        }
+      : {}),
+    ...(mount.region ? { region: mount.region } : {}),
+    ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
+  };
+  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+
+  return {
+    bucket: mount.bucket,
+    prefix: mount.prefix,
+    access: access,
+    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
+  };
 }
