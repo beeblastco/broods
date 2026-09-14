@@ -104,11 +104,31 @@ export interface TurnContextSnapshot {
 }
 
 export interface TurnContextTimings {
-  // Whole createTurnContext span (load + project + system prompt + prune).
+  // createTurnContext up to where compaction starts, or to the end when no
+  // summary is written: load, project, system prompt, prune.
   prepareStartedMs: number;
   prepareEndedMs: number;
-  // Present only when compaction actually produced a summary this turn.
+  phases: ContextPreparePhases;
+  // Present only when compaction actually produced a summary this turn. Starts
+  // where prepare ends and covers the summary call, its write and the rebuild.
   compaction?: { startedMs: number; endedMs: number };
+}
+
+// Each prepare load's own wall time. The loads overlap, so these do not add up
+// to the prepare span.
+export interface ContextPreparePhases {
+  historyMs: number;
+  historyRows: number;
+  mediaMs: number;
+  memoryMs: number;
+  runtimeMs: number;
+  skillsMs: number;
+  subagentsMs: number;
+}
+
+interface MemoryFile {
+  content: string;
+  workspace: ResolvedWorkspace;
 }
 
 export interface SystemContextSnapshot {
@@ -258,6 +278,10 @@ export class Session {
   private readonly startedAt = new Date();
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
+  // Read once per run. prepareStep rebuilds the system prompt before every step
+  // and would otherwise go back to S3 each time.
+  private memoryFilesPromise: Promise<MemoryFile[]> | undefined;
+  private skillMetadataPromise: Promise<SkillMetadata[]> | undefined;
   // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
   // refs). Resolved once per session at turn-context construction; the sync
   // getters below read the cached value.
@@ -498,11 +522,23 @@ export class Session {
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
-    // Runtime resolution and history load hit Convex independently, so overlap
-    // them. The first token should not wait on two sequential round-trips.
-    const [, entries] = await Promise.all([
-      this.ensureResolvedRuntime(),
-      this.loadConversationEntries(),
+    // Every load behind the turn starts at once. Memory waits only on the
+    // runtime, which names the workspaces; skills and subagents need neither.
+    // buildSystemPromptParts below reads the memoized results.
+    const [
+      [, runtimeMs],
+      [entries, historyMs],
+      [, memoryMs],
+      [, skillsMs],
+      [, subagentsMs],
+    ] = await Promise.all([
+      withElapsedMs(() => this.ensureResolvedRuntime()),
+      withElapsedMs(() => this.loadConversationEntries()),
+      this.ensureResolvedRuntime().then(() =>
+        withElapsedMs(() => this.loadMemoryFiles()),
+      ),
+      withElapsedMs(() => this.loadSkillMetadata()),
+      withElapsedMs(() => this.loadSubagentMetadata()),
     ]);
     const activeEntries = projectActiveConversationEntries(entries);
     // Snapshot persisted system context separately from chat messages. The
@@ -512,13 +548,25 @@ export class Session {
     // Media the row only points at is read back before anything else looks at
     // the history: compaction, the system prompt and the model all see the
     // same messages, and none of them should have to know how it got there.
-    let messages = await rehydrateStoredMedia(
-      projectEntriesToMessages(
-        activeEntries,
-        modelIdentityFromModelConfig(this.agentConfig),
+    const [rehydratedMessages, mediaMs] = await withElapsedMs(() =>
+      rehydrateStoredMedia(
+        projectEntriesToMessages(
+          activeEntries,
+          modelIdentityFromModelConfig(this.agentConfig),
+        ),
+        this.agentConfig,
       ),
-      this.agentConfig,
     );
+    let messages = rehydratedMessages;
+    const phases: ContextPreparePhases = {
+      historyMs: historyMs,
+      historyRows: entries.length,
+      mediaMs: mediaMs,
+      memoryMs: memoryMs,
+      runtimeMs: runtimeMs,
+      skillsMs: skillsMs,
+      subagentsMs: subagentsMs,
+    };
     const system = await this.buildSystemPromptParts(
       systemContextSnapshot.messages,
       ephemeralSystem,
@@ -543,7 +591,6 @@ export class Session {
 
       return null;
     });
-    const compactionEndedMs = Date.now();
 
     if (compactionSummary) {
       const [summaryCursor] = await this.persistModelMessages([
@@ -567,10 +614,11 @@ export class Session {
         systemContextSnapshot: compactedSystemContextSnapshot,
         timings: {
           prepareStartedMs: prepareStartedMs,
-          prepareEndedMs: Date.now(),
+          prepareEndedMs: compactionStartedMs,
+          phases: phases,
           compaction: {
             startedMs: compactionStartedMs,
-            endedMs: compactionEndedMs,
+            endedMs: Date.now(),
           },
         },
       };
@@ -593,6 +641,7 @@ export class Session {
       timings: {
         prepareStartedMs: prepareStartedMs,
         prepareEndedMs: Date.now(),
+        phases: phases,
       },
     };
   }
@@ -911,34 +960,39 @@ export class Session {
     return null;
   }
 
-  private async loadMemoryFiles(): Promise<
-    Array<{ workspace: ResolvedWorkspace; content: string }>
-  > {
+  // No re-read after memory_save: it writes through the sandbox mount, which
+  // reaches S3 a minute or two later, so the run would get the same index back.
+  private async loadMemoryFiles(): Promise<MemoryFile[]> {
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
 
-    const memoryFiles: Array<{
-      workspace: ResolvedWorkspace;
-      content: string;
-    }> = [];
-    for (const workspace of this.resolvedWorkspaces()) {
-      // harness.memory.enabled: false is a full opt-out. The index is not
-      // loaded into the model context either.
-      if (!workspaceMemoryHarnessEnabled(workspace.config)) {
-        continue;
-      }
-      const content = await this.loadMemoryFile(workspace);
-      if (content != null) {
-        memoryFiles.push({ workspace: workspace, content: content });
-      }
-    }
+    // harness.memory.enabled: false is a full opt-out. The index is not loaded
+    // into the model context either.
+    this.memoryFilesPromise ??= Promise.all(
+      this.resolvedWorkspaces()
+        .filter((workspace) => workspaceMemoryHarnessEnabled(workspace.config))
+        .map(async (workspace): Promise<MemoryFile | null> => {
+          const content = await this.loadMemoryFile(workspace);
 
-    return memoryFiles;
+          return content == null
+            ? null
+            : { content: content, workspace: workspace };
+        }),
+    ).then((files) =>
+      files.filter((file): file is MemoryFile => file !== null),
+    );
+
+    return this.memoryFilesPromise;
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
-    return listConfiguredSkillMetadata(this.accountId, this.agentConfig);
+    this.skillMetadataPromise ??= listConfiguredSkillMetadata(
+      this.accountId,
+      this.agentConfig,
+    );
+
+    return this.skillMetadataPromise;
   }
 
   private async loadSubagentMetadata(): Promise<SubagentMetadata[]> {
@@ -1276,9 +1330,7 @@ You have a persistent memory: markdown files in the workspace's memory/ folder, 
 </memory>`;
 }
 
-function formatMemorySystemPrompt(
-  memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>,
-): string {
+function formatMemorySystemPrompt(memoryFiles: MemoryFile[]): string {
   if (
     memoryFiles.length === 1 &&
     memoryFiles[0]?.workspace.name === "default"
@@ -1611,6 +1663,14 @@ function toStoredConversationEvent<
         message: message,
       }
     : null;
+}
+
+// Runs one load and reports its own wall time next to the result.
+async function withElapsedMs<T>(load: () => Promise<T>): Promise<[T, number]> {
+  const startedMs = Date.now();
+  const result = await load();
+
+  return [result, Date.now() - startedMs];
 }
 
 /**

@@ -258,4 +258,64 @@ describe("resolveS3ReadTarget", () => {
     expect(lastAssumeRoleInput?.RoleArn).toBe("arn:aws:iam::2:role/byo");
     expect(lastAssumeRoleInput?.ExternalId).toBe("ext-9");
   });
+
+  it("reuses an assumed session across reads until it nears expiry", async () => {
+    const byoStorage = {
+      provider: "s3" as const,
+      bucket: "acme-cached",
+      prefix: "agents/",
+      auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
+    };
+    const inAnHour = new Date(Date.now() + 60 * 60 * 1000);
+    assumeRoleSendMock.mockResolvedValueOnce({
+      Credentials: {
+        AccessKeyId: "ASIA_TEMP",
+        SecretAccessKey: "temp-secret",
+        SessionToken: "temp-token",
+        Expiration: inAnHour,
+      },
+    } as never);
+
+    const first = await resolveS3ReadTarget({
+      storage: byoStorage,
+      namespace: NS,
+    });
+    const second = await resolveS3ReadTarget({
+      storage: byoStorage,
+      namespace: NS,
+    });
+
+    // Same object, so s3.ts also reuses the client it built for it.
+    expect(second).toBe(first);
+    expect(assumeRoleSendMock).toHaveBeenCalledTimes(1);
+
+    // A different prefix is a different session policy: never shared.
+    await resolveS3ReadTarget({
+      storage: { ...byoStorage, prefix: "other/" },
+      namespace: NS,
+    });
+    expect(assumeRoleSendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("assumes again when the cached session is about to expire", async () => {
+    const byoStorage = {
+      provider: "s3" as const,
+      bucket: "acme-expiring",
+      prefix: "agents/",
+      auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
+    };
+    assumeRoleSendMock.mockResolvedValueOnce({
+      Credentials: {
+        AccessKeyId: "ASIA_TEMP",
+        SecretAccessKey: "temp-secret",
+        SessionToken: "temp-token",
+        Expiration: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    } as never);
+
+    await resolveS3ReadTarget({ storage: byoStorage, namespace: NS });
+    await resolveS3ReadTarget({ storage: byoStorage, namespace: NS });
+
+    expect(assumeRoleSendMock).toHaveBeenCalledTimes(2);
+  });
 });

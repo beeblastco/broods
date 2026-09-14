@@ -416,12 +416,14 @@ export async function runAgentLoop(
     label: string,
     startMs: number,
     endMs: number,
+    extraAttributes: Record<string, number> = {},
   ): void => {
     try {
       const durationMs = Math.max(0, endMs - startMs);
       const attributes = {
         "phase.name": label,
         "phase.duration_ms": durationMs,
+        ...extraAttributes,
       };
       const phaseSpan = tracer.startSpan(
         phaseName,
@@ -473,12 +475,30 @@ export async function runAgentLoop(
     );
   }
   if (turnContext.timings) {
+    const { phases, prepareEndedMs, prepareStartedMs } = turnContext.timings;
     emitPhaseSpan(
       "phase.context_prepare",
       "Context prepare",
-      turnContext.timings.prepareStartedMs,
-      turnContext.timings.prepareEndedMs,
+      prepareStartedMs,
+      prepareEndedMs,
+      {
+        "prepare.history_ms": phases.historyMs,
+        "prepare.history_rows": phases.historyRows,
+        "prepare.media_ms": phases.mediaMs,
+        "prepare.memory_ms": phases.memoryMs,
+        "prepare.runtime_ms": phases.runtimeMs,
+        "prepare.skills_ms": phases.skillsMs,
+        "prepare.subagents_ms": phases.subagentsMs,
+      },
     );
+    // `bun run local:verify` reads this line to hold a warm prepare to budget.
+    logInfo("Context prepared", {
+      eventType: "session.context.prepared",
+      eventId: session.eventId,
+      conversationKey: session.conversationKey,
+      durationMs: prepareEndedMs - prepareStartedMs,
+      ...phases,
+    });
     if (turnContext.timings.compaction) {
       emitPhaseSpan(
         "phase.compaction",

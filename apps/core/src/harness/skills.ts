@@ -11,6 +11,7 @@ import {
   copyS3Object,
   deleteS3Object,
   ensureS3DirectoryMarkers,
+  isMissingS3Error,
   listS3Prefix,
 } from "../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
@@ -21,12 +22,14 @@ import {
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
   normalizeBundlePath,
+  parseOwnedSkillPath,
   parseSkillMarkdown,
   parseSkillPath,
   readSkillMarkdown,
   readSkillText,
   SKILL_FILE,
   skillInstructionsFromMarkdown,
+  SkillNotFoundError,
   skillsBucketName,
   type SkillMetadata,
 } from "../shared/skills.ts";
@@ -66,24 +69,33 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
+// Runs every turn, so every SKILL.md is read at once and the read doubles as the
+// existence check: a 404 fails the turn as a missing skill, like the HEAD it
+// replaces, and any other read error skips that skill.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
 ): Promise<SkillMetadata[]> {
-  const enabled: SkillMetadata[] = [];
-  for (const skillPath of skillPaths) {
-    await assertAccountOwnsSkillPath(accountId, skillPath);
-    const parsed = parseSkillPath(skillPath)!;
-    const skillText = await readSkillMarkdown(accountId, parsed.skillName);
-    if (skillText) {
-      enabled.push({
-        ...parseSkillMarkdown(skillText),
-        path: skillPath,
-      });
-    }
-  }
+  const metadata = await Promise.all(
+    skillPaths.map(async (skillPath): Promise<SkillMetadata | null> => {
+      parseOwnedSkillPath(accountId, skillPath);
+      let skillText: string;
+      try {
+        skillText = await readSkillText(skillPath, SKILL_FILE);
+      } catch (error) {
+        if (isMissingS3Error(error)) {
+          throw new SkillNotFoundError(skillPath);
+        }
 
-  return enabled;
+        return null;
+      }
+      if (!skillText) return null;
+
+      return { ...parseSkillMarkdown(skillText), path: skillPath };
+    }),
+  );
+
+  return metadata.filter((entry): entry is SkillMetadata => entry !== null);
 }
 
 export async function loadConfiguredHarnessSkills(

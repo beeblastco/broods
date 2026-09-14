@@ -663,25 +663,135 @@ describe("stored item projection", () => {
   });
 });
 
-describe("session compaction", () => {
-  const compactingAgentConfig = {
-    provider: {
-      google: {
-        apiKey: "google-key",
+describe("context prepare", () => {
+  const stubHistory = async (
+    rows: number,
+  ): Promise<{ restore: () => void; calls: () => number }> => {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query;
+    let calls = 0;
+    runtime.query = (async (name: string) => {
+      if (name !== "listConversationEvents") return null;
+      calls += 1;
+
+      return {
+        page: Array.from({ length: rows }, (_, index) => ({
+          cursor: String(index),
+          event: {
+            version: 1,
+            sourceEventId: "event",
+            message: { role: "user", content: `message ${index}` },
+          },
+        })),
+        isDone: true,
+        continueCursor: null,
+      };
+    }) as typeof runtime.query;
+
+    return {
+      restore: (): void => {
+        runtime.query = originalQuery;
       },
-    },
-    model: {
-      provider: "google" as const,
-      modelId: "gemini-test",
-    },
-    session: {
-      compaction: {
-        enabled: true,
-        maxContextLength: 1,
-      },
-    },
+      calls: (): number => calls,
+    };
   };
 
+  it("times each load and reads memory and skills once for the whole run", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    process.env.SKILLS_BUCKET_NAME = "skills";
+    const memoryIndex = "# Memory Index\n- [Deploys](deploys.md) — how we ship";
+    const skillMarkdown =
+      "---\nname: review\ndescription: Review a change\n---\nRead the diff.";
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) =>
+      key.endsWith("SKILL.md") ? skillMarkdown : memoryIndex,
+    );
+    const history = await stubHistory(3);
+    try {
+      const session = await newSession({
+        workspaces: [{ name: "default", workspaceId: "ws_a" }],
+        skills: { enabled: true, allowed: ["acct/review"] },
+      });
+      const turnContext = await session.createTurnContext();
+
+      expect(turnContext.messages).toHaveLength(3);
+      expect(turnContext.timings?.phases.historyRows).toBe(3);
+      expect(turnContext.timings?.compaction).toBeUndefined();
+      for (const key of [
+        "historyMs",
+        "mediaMs",
+        "memoryMs",
+        "runtimeMs",
+        "skillsMs",
+        "subagentsMs",
+      ] as const) {
+        expect(turnContext.timings?.phases[key]).toBeGreaterThanOrEqual(0);
+      }
+      // One S3 read for the memory index, one for the skill, before the
+      // system prompt was built.
+      expect(readS3TextMock).toHaveBeenCalledTimes(2);
+
+      // prepareStep rebuilds the prompt before every step: same reads, no S3.
+      const refreshed = await session.loadRefreshedSystemPromptParts({
+        systemContextSnapshot: turnContext.systemContextSnapshot,
+      });
+
+      expect(readS3TextMock).toHaveBeenCalledTimes(2);
+      expect(refreshed.system).toEqual(turnContext.system);
+      expect(
+        refreshed.system.some((message) =>
+          message.content.includes("how we ship"),
+        ),
+      ).toBe(true);
+    } finally {
+      history.restore();
+    }
+  });
+
+  it("ends the prepare window where compaction starts", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const history = await stubHistory(2);
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    runtime.mutate = (async () => "cursor") as typeof runtime.mutate;
+    try {
+      const session = await newSession({
+        ...compactingAgentConfig,
+        skills: { enabled: false },
+      });
+      const turnContext = await session.createTurnContext();
+      const timings = turnContext.timings;
+
+      expect(generateTextMock).toHaveBeenCalledTimes(1);
+      expect(timings?.compaction?.startedMs).toBe(timings!.prepareEndedMs);
+      expect(timings!.compaction!.endedMs).toBeGreaterThanOrEqual(
+        timings!.compaction!.startedMs,
+      );
+    } finally {
+      history.restore();
+      runtime.mutate = originalMutate;
+    }
+  });
+});
+
+const compactingAgentConfig = {
+  provider: {
+    google: {
+      apiKey: "google-key",
+    },
+  },
+  model: {
+    provider: "google" as const,
+    modelId: "gemini-test",
+  },
+  session: {
+    compaction: {
+      enabled: true,
+      maxContextLength: 1,
+    },
+  },
+};
+
+describe("session compaction", () => {
   it("does not compact when disabled", async () => {
     const { compactSessionContext } =
       await import("../src/harness/compaction.ts");

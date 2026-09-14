@@ -21,6 +21,15 @@ import { optionalEnv } from "../../shared/env.ts";
 import type { S3Access } from "../../shared/s3.ts";
 import { workspaceNamespacePrefix } from "../../shared/sandbox.ts";
 
+// A cached bring-your-own read target is reused until its credentials are this
+// close to expiry: longer than the 300s presign a read target can back, plus
+// room for clock skew.
+const READ_TARGET_REFRESH_MARGIN_MS = 10 * 60 * 1000;
+// Read targets that carry assumed credentials, keyed by everything the STS
+// session is scoped to. Saves an STS round trip, and through s3.ts a new S3
+// client, on every harness read of the same workspace.
+const readTargetCache = new Map<string, S3ReadTarget>();
+
 export interface ResolvedS3Mount extends S3MountIdentity {
   // Present when the harness resolved credentials (assume-role / platform role).
   // Absent => the provider must supply credentials itself (workdir declarative
@@ -193,13 +202,32 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
 
 // Resolve a harness read target. The managed bucket is read directly on the
 // harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
-// assumes the configured role for short-lived, prefix-scoped cross-account creds.
+// assumes the configured role for short-lived, prefix-scoped cross-account creds,
+// reused until they near expiry.
 export async function resolveS3ReadTarget(
   ctx: S3MountContext,
 ): Promise<S3ReadTarget> {
   const identity = resolveS3MountIdentity(ctx);
   if (!ctx.storage?.bucket) {
     return { bucket: identity.bucket, prefix: identity.prefix };
+  }
+  const cacheKey = JSON.stringify([
+    mountRoleArn(ctx.storage) ?? null,
+    ctx.storage.auth?.type === "assumeRole"
+      ? (ctx.storage.auth.externalId ?? null)
+      : null,
+    identity.bucket,
+    identity.prefix,
+    identity.region ?? null,
+    identity.endpoint ?? null,
+  ]);
+  const cached = readTargetCache.get(cacheKey);
+  if (
+    cached?.credentialsExpireAt &&
+    cached.credentialsExpireAt.getTime() - Date.now() >
+      READ_TARGET_REFRESH_MARGIN_MS
+  ) {
+    return cached;
   }
   const mount = await resolveS3Mount(ctx);
   const access: S3Access = {
@@ -216,13 +244,17 @@ export async function resolveS3ReadTarget(
     ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
   };
   const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
-
-  return {
+  const target: S3ReadTarget = {
     bucket: mount.bucket,
     prefix: mount.prefix,
     access: access,
     ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
   };
+  if (target.credentialsExpireAt) {
+    readTargetCache.set(cacheKey, target);
+  }
+
+  return target;
 }
 
 // Build the resolver context for a harness-side read of a workspace's storage,

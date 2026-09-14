@@ -31,8 +31,24 @@ const CONVEX_IMAGE =
 const HEALTH_TIMEOUT_MS = 60_000;
 const PORT_BLOCK_BASE = 4300;
 const PORT_BLOCK_SIZE = 10;
+// A warm turn's context prepare. Convex is on localhost here, so this catches
+// prepare work that grows or goes serial, not network latency.
+const PREPARE_BUDGET_MS = 100;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
+
+// The "Context prepared" line core logs once per run (apps/core harness.ts).
+interface ContextPreparedLog {
+  durationMs: number;
+  eventId: string;
+  historyMs: number;
+  historyRows: number;
+  mediaMs: number;
+  memoryMs: number;
+  runtimeMs: number;
+  skillsMs: number;
+  subagentsMs: number;
+}
 
 interface InstancePorts {
   convexApi: number;
@@ -318,8 +334,12 @@ async function verify(): Promise<void> {
     return created;
   });
 
-  const eventId = `smoke-${runId}`;
-  await measureStep(perf, "start async run", async () => {
+  // The 202 names the run by a server-issued id; polling follows its statusUrl.
+  const startRun = async (
+    eventId: string,
+    text: string,
+    step: string,
+  ): Promise<string> => {
     const response = await httpJson(`${gatewayUrl}/v1/runs`, {
       method: "POST",
       token: accountSecret,
@@ -328,20 +348,25 @@ async function verify(): Promise<void> {
         eventId: eventId,
         conversationKey: `smoke-${runId}`,
         background: true,
-        events: [
-          { role: "user", content: [{ type: "text", text: "Say OK." }] },
-        ],
+        events: [{ role: "user", content: [{ type: "text", text: text }] }],
       },
     });
+    const statusUrl = (response.body as { statusUrl?: string }).statusUrl;
     assertStep(
-      "start async run (core via gateway)",
-      response.status === 202,
+      step,
+      response.status === 202 && typeof statusUrl === "string",
       `status ${response.status}: ${JSON.stringify(response.body)}`,
     );
-  });
+
+    return statusUrl.startsWith("/") ? `${gatewayUrl}${statusUrl}` : statusUrl;
+  };
+
+  const eventId = `smoke-${runId}`;
+  const statusUrl = await measureStep(perf, "start async run", () =>
+    startRun(eventId, "Say OK.", "start async run (core via gateway)"),
+  );
 
   await measureStep(perf, "run to terminal state", async () => {
-    const statusUrl = `${gatewayUrl}/v1/runs/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
     const finalStatus = await pollRunStatus(statusUrl, accountSecret);
     const expected = modelKey
       ? finalStatus.status === "completed"
@@ -350,6 +375,37 @@ async function verify(): Promise<void> {
       ? "run completed with a real model key"
       : "run reached a terminal state (no model key; set ANTHROPIC_API_KEY for a full run)";
     assertStep(label, expected, JSON.stringify(finalStatus));
+  });
+
+  // A second turn on the same conversation takes the path a live chat does:
+  // core is warm and the history already has rows.
+  const warmEventId = `${eventId}-warm`;
+  await measureStep(perf, "warm run to terminal state", async () => {
+    const warmStatusUrl = await startRun(
+      warmEventId,
+      "Say OK again.",
+      "start warm run (core via gateway)",
+    );
+    const finalStatus = await pollRunStatus(warmStatusUrl, accountSecret);
+    assertStep(
+      "warm run reached a terminal state",
+      finalStatus.status === "completed" || finalStatus.status === "failed",
+      JSON.stringify(finalStatus),
+    );
+  });
+
+  await measureStep(perf, "warm context prepare", async () => {
+    const prepared = contextPreparedLog(state.instanceId, warmEventId);
+    assertStep(
+      `warm context prepare under ${PREPARE_BUDGET_MS}ms`,
+      prepared !== null && prepared.durationMs < PREPARE_BUDGET_MS,
+      prepared === null
+        ? "no Context prepared line for the warm run in the core log"
+        : JSON.stringify(prepared),
+    );
+    console.log(
+      `prepare   ${prepared.durationMs}ms: history ${prepared.historyMs}ms over ${prepared.historyRows} rows, runtime ${prepared.runtimeMs}ms, memory ${prepared.memoryMs}ms, skills ${prepared.skillsMs}ms, subagents ${prepared.subagentsMs}ms, media ${prepared.mediaMs}ms`,
+    );
   });
 
   const totalMs = Date.now() - startedAt;
@@ -644,6 +700,31 @@ function dockerContainerState(name: string): string | null {
 }
 
 // --- http ---------------------------------------------------------------
+
+// The prepare timings core logged for one run, from the instance's core log.
+// Core writes one JSON object per line and scopes the event id under the
+// account and agent, so the public id is matched as a suffix. The last match
+// wins, since a retried run prepares again.
+function contextPreparedLog(
+  instanceId: string,
+  eventId: string,
+): ContextPreparedLog | null {
+  const logPath = join(instanceDir(instanceId), "logs", "core.log");
+  if (!existsSync(logPath)) return null;
+  const lines = readFileSync(logPath, "utf8").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] as string;
+    if (!line.includes('"session.context.prepared"')) continue;
+    try {
+      const parsed = JSON.parse(line) as ContextPreparedLog;
+      if (parsed.eventId.endsWith(`:${eventId}`)) return parsed;
+    } catch {
+      // A partial line from a log that is still being written.
+    }
+  }
+
+  return null;
+}
 
 function assertStep(step: string, ok: boolean, detail: string): asserts ok {
   if (ok) {

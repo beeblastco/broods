@@ -75,13 +75,7 @@ export async function assertAccountOwnsSkillPath(
   accountId: string,
   skillPath: string,
 ): Promise<void> {
-  const parsed = parseSkillPath(skillPath);
-  if (!parsed) {
-    throw new Error(`Invalid skill path: ${skillPath}`);
-  }
-  if (parsed.accountId !== accountId) {
-    throw new SkillAuthorizationError(skillPath);
-  }
+  parseOwnedSkillPath(accountId, skillPath);
   if (
     !(await s3ObjectExists(skillsBucketName(), `${skillPath}/${SKILL_FILE}`))
   ) {
@@ -182,6 +176,25 @@ export function parseSkillMarkdown(
   validateSkillDescription(description);
 
   return { name: name, description: description };
+}
+
+/**
+ * Parses a configured skill path and rejects one owned by another account.
+ * No S3 call: a caller that needs the skill to exist reads or HEADs it itself.
+ */
+export function parseOwnedSkillPath(
+  accountId: string,
+  skillPath: string,
+): NonNullable<ReturnType<typeof parseSkillPath>> {
+  const parsed = parseSkillPath(skillPath);
+  if (!parsed) {
+    throw new Error(`Invalid skill path: ${skillPath}`);
+  }
+  if (parsed.accountId !== accountId) {
+    throw new SkillAuthorizationError(skillPath);
+  }
+
+  return parsed;
 }
 
 export function parseSkillPath(
