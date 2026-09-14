@@ -177,7 +177,9 @@ export function buildCoreRunBody(
     eventId: eventId,
     conversationKey: conversationKey,
     connectionId: `ws-${crypto.randomUUID()}`,
-    events: resolveRunEvents(message),
+    ...(message.answers
+      ? { answers: message.answers }
+      : { events: resolveRunEvents(message) }),
     ...(message.mode !== undefined ? { mode: message.mode } : {}),
     ...(message.idempotencyKey !== undefined
       ? { idempotencyKey: message.idempotencyKey }
@@ -1132,7 +1134,22 @@ function isExecuteMessage(
     typeof record.agentId === "string" &&
     record.agentId.trim().length > 0 &&
     (record.mode === undefined || isIngressMode(record.mode)) &&
-    hasEventInput(value)
+    (hasEventInput(value) || hasAnswerInput(value))
+  );
+}
+
+function hasAnswerInput(value: object): boolean {
+  const record = value as { answers?: unknown };
+
+  return (
+    Array.isArray(record.answers) &&
+    record.answers.length > 0 &&
+    record.answers.every(
+      (answer: { statusId?: unknown; answers?: unknown }) =>
+        typeof answer?.statusId === "string" &&
+        typeof answer.answers === "object" &&
+        answer.answers !== null,
+    )
   );
 }
 

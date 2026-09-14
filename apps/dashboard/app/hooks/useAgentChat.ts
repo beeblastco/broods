@@ -12,22 +12,40 @@ import {
   uiMessageChunkSchema,
 } from "ai";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  PendingQuestion,
+  QuestionAnswer,
+  WebSocketOutputMessage,
+} from "../../../../packages/broods/src/websocket-contracts";
 
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
 
-type ChatStatus = "ready" | "streaming" | "error";
+/** `awaiting_input` means the agent asked a question and the run stopped on it. */
+type ChatStatus = "ready" | "streaming" | "awaiting_input" | "error";
 
-/** What `useAgentChat` hands its caller: the transcript plus the two controls. */
+/** What `useAgentChat` hands its caller: the transcript plus its controls. */
 export interface AgentChat {
   messages: UIMessage[];
   status: ChatStatus;
   error: Error | null;
+  /** Open `ask_questions` prompts; answer them to resume the run. */
+  pendingQuestions: PendingQuestion[];
   sendMessage: (text: string) => Promise<void>;
+  answerQuestions: (answers: QuestionAnswer[]) => Promise<void>;
   resetChat: () => void;
 }
 
+/** One socket turn either sends events or settles open questions. */
+type TurnInput = { events: [UserTextEvent] } | { answers: QuestionAnswer[] };
+
+type UserTextEvent = {
+  role: "user";
+  content: [{ type: "text"; text: string }];
+};
+
 type WsServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
+  | { type: "question-request"; questions: PendingQuestion[] }
   | { type: "sse"; chunk: string }
   | { type: "continuation_delta"; delta: string }
   | {
@@ -99,6 +117,10 @@ export function useAgentChat({
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [error, setError] = useState<Error | null>(null);
+  const [pendingQuestions, setPendingQuestions] = useState<PendingQuestion[]>(
+    [],
+  );
+  const pendingQuestionsRef = useRef<PendingQuestion[]>([]);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<UIMessage[]>([]);
@@ -121,19 +143,19 @@ export function useAgentChat({
     };
   }, []);
 
-  const sendMessage = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-
+  // One turn on the wire: the user's text, or the answers to open questions.
+  const runTurn = useCallback(
+    async (userText: string, input: TurnInput) => {
       const userMessage: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: trimmed }],
+        parts: [{ type: "text", text: userText }],
       };
       setMessages((prev) => [...prev, userMessage]);
       setStatus("streaming");
       setError(null);
+      pendingQuestionsRef.current = [];
+      setPendingQuestions([]);
 
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -161,11 +183,15 @@ export function useAgentChat({
               websocketBaseUrl: websocketBaseUrl,
               projectSlug: projectSlug,
               stageSlug: stageSlug,
-              message: trimmed,
+              input: input,
               sessionId: sessionIdRef.current,
               signal: controller.signal,
               onMeta: ({ sessionId }) => {
                 sessionIdRef.current = sessionId;
+              },
+              onQuestions: (questions) => {
+                pendingQuestionsRef.current = questions;
+                setPendingQuestions(questions);
               },
               onContinuationDelta: (delta) => {
                 setMessages((prev) => {
@@ -269,6 +295,9 @@ export function useAgentChat({
         }
 
         if (!streamBody) {
+          if ("answers" in input) {
+            throw new Error("Answering a question needs the WebSocket stream.");
+          }
           const httpResult = await startHttpSseStream({
             endpointId: endpointId,
             agentId: agentId,
@@ -276,7 +305,7 @@ export function useAgentChat({
             baseUrl: baseUrl,
             projectSlug: projectSlug,
             stageSlug: stageSlug,
-            message: trimmed,
+            events: input.events,
             sessionId: sessionIdRef.current,
             signal: controller.signal,
           });
@@ -318,7 +347,9 @@ export function useAgentChat({
           });
         }
 
-        setStatus("ready");
+        setStatus(
+          pendingQuestionsRef.current.length > 0 ? "awaiting_input" : "ready",
+        );
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         const message =
@@ -347,11 +378,34 @@ export function useAgentChat({
     ],
   );
 
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      await runTurn(trimmed, {
+        events: [{ role: "user", content: [{ type: "text", text: trimmed }] }],
+      });
+    },
+    [runTurn],
+  );
+
+  const answerQuestions = useCallback(
+    async (answers: QuestionAnswer[]) => {
+      if (answers.length === 0) return;
+      await runTurn(answerTranscript(pendingQuestionsRef.current, answers), {
+        answers: answers,
+      });
+    },
+    [runTurn],
+  );
+
   const resetChat = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
     setStatus("ready");
     setError(null);
+    pendingQuestionsRef.current = [];
+    setPendingQuestions([]);
     sessionIdRef.current = undefined;
     mainAssistantMessageIdRef.current = null;
     continuationMessageIdRef.current = null;
@@ -362,9 +416,32 @@ export function useAgentChat({
     messages: messages,
     status: status,
     error: error,
+    pendingQuestions: pendingQuestions,
     sendMessage: sendMessage,
+    answerQuestions: answerQuestions,
     resetChat: resetChat,
   };
+}
+
+/** The transcript line for an answer turn: one `header: choice` per question. */
+function answerTranscript(
+  pending: PendingQuestion[],
+  answers: QuestionAnswer[],
+): string {
+  const headers = new Map(
+    pending.flatMap((prompt) =>
+      prompt.questions.map((question) => [question.id, question.header]),
+    ),
+  );
+
+  return answers
+    .flatMap((answer) =>
+      Object.entries(answer.answers).map(
+        ([questionId, labels]) =>
+          `${headers.get(questionId) ?? questionId}: ${labels.join(", ")}`,
+      ),
+    )
+    .join("\n");
 }
 
 async function startHttpSseStream(options: {
@@ -374,7 +451,7 @@ async function startHttpSseStream(options: {
   baseUrl: string;
   projectSlug?: string;
   stageSlug?: string;
-  message: string;
+  events: [UserTextEvent];
   sessionId?: string;
   signal: AbortSignal;
 }): Promise<HttpStreamResult> {
@@ -385,7 +462,7 @@ async function startHttpSseStream(options: {
     baseUrl,
     projectSlug,
     stageSlug,
-    message,
+    events,
     sessionId,
     signal,
   } = options;
@@ -407,12 +484,7 @@ async function startHttpSseStream(options: {
       agentId: agentId,
       eventId: `evt-${crypto.randomUUID()}`,
       conversationKey: conversationKey,
-      events: [
-        {
-          role: "user",
-          content: [{ type: "text", text: message }],
-        },
-      ],
+      events: events,
       stream: true,
     }),
     signal: signal,
@@ -445,10 +517,11 @@ async function startWebSocketSseStream(options: {
   websocketBaseUrl: string;
   projectSlug?: string;
   stageSlug?: string;
-  message: string;
+  input: TurnInput;
   sessionId?: string;
   signal: AbortSignal;
   onMeta: (meta: { sessionId: string; taskId: string }) => void;
+  onQuestions: (questions: PendingQuestion[]) => void;
   onContinuationDelta: (delta: string) => void;
   onSubagentDelta: (event: {
     sessionId: string;
@@ -472,10 +545,11 @@ async function startWebSocketSseStream(options: {
     websocketBaseUrl,
     projectSlug,
     stageSlug,
-    message,
+    input,
     sessionId,
     signal,
     onMeta,
+    onQuestions,
     onContinuationDelta,
     onSubagentDelta,
     onSubagentActivity,
@@ -577,12 +651,7 @@ async function startWebSocketSseStream(options: {
       socket.send(
         JSON.stringify({
           type: "execute",
-          events: [
-            {
-              role: "user",
-              content: [{ type: "text", text: message }],
-            },
-          ],
+          ...input,
           agentId: agentId,
           sessionId: sessionId,
         }),
@@ -603,7 +672,12 @@ async function startWebSocketSseStream(options: {
 
       let payload: WsServerMessage;
       try {
-        payload = JSON.parse(event.data) as WsServerMessage;
+        // The gateway wraps every stream frame in a durable output envelope.
+        const frame = JSON.parse(event.data) as
+          | WsServerMessage
+          | WebSocketOutputMessage;
+        payload =
+          frame.type === "output" ? (frame.data as WsServerMessage) : frame;
       } catch {
         return;
       }
@@ -613,6 +687,12 @@ async function startWebSocketSseStream(options: {
           sessionId: payload.sessionId,
           taskId: payload.taskId,
         });
+
+        return;
+      }
+
+      if (payload.type === "question-request") {
+        onQuestions(payload.questions);
 
         return;
       }

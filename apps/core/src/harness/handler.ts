@@ -626,6 +626,26 @@ function continuationResponse(
   });
 }
 
+/** The 202 a socket turn gets: the NATS scope the gateway streams the run from. */
+function natsStartResponse(
+  event: DirectInboundEvent,
+  publicEventId: string,
+  statusUrl: string | null,
+): Response {
+  return jsonResponse(202, {
+    eventId: publicEventId,
+    conversationKey: event.publicConversationKey,
+    status: "processing",
+    requestedMode: event.requestedMode,
+    ...(statusUrl ? { statusUrl: statusUrl } : {}),
+    nats: {
+      accountId: event.accountId,
+      agentId: event.agentId,
+      conversationKey: event.publicConversationKey,
+    },
+  });
+}
+
 /**
  * Settle open ask_questions prompts from a direct API body and resume the
  * conversation, answering with the last continuation's outcome.
@@ -674,6 +694,11 @@ async function handleDirectAnswers(
       `Questions already answered: ${alreadyAnswered.join(", ")}`,
       { code: "question_already_answered", param: "answers" },
     );
+  }
+
+  // A socket answer follows the resumed run over NATS, like any socket turn.
+  if (event.connectionId && outcome.kind === "ready") {
+    return natsStartResponse(event, outcome.publicEventId, null);
   }
 
   return last
@@ -807,18 +832,11 @@ async function handleDirectRequest(
       throw error;
     }
 
-    return jsonResponse(202, {
-      eventId: event.publicEventId,
-      conversationKey: event.publicConversationKey,
-      status: "processing",
-      requestedMode: event.requestedMode,
-      ...(directStatusUrl(event) ? { statusUrl: directStatusUrl(event) } : {}),
-      nats: {
-        accountId: event.accountId,
-        agentId: event.agentId,
-        conversationKey: event.publicConversationKey,
-      },
-    });
+    return natsStartResponse(
+      event,
+      event.publicEventId,
+      directStatusUrl(event),
+    );
   }
 
   try {
@@ -1980,10 +1998,11 @@ async function invokeAsyncToolContinuationWorker(
   event: DirectInboundEvent,
   settled: AsyncToolResultRecord,
 ): Promise<void> {
+  // The continuation streams under its own public event id, the one the
+  // settling 202 reports, so a socket that answered can follow it.
   if (settled.delivery?.kind === "nats") {
     await invokeNatsWorker({
       ...event,
-      publicEventId: settled.delivery.publicEventId,
       publicConversationKey: settled.delivery.publicConversationKey,
       connectionId: settled.delivery.connectionId,
     });

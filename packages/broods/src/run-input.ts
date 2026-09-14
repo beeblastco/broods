@@ -24,11 +24,13 @@ export type AgentRunEventInput =
       /** Shorthand for a single user text message. */
       input: string;
       events?: never;
+      answers?: never;
     }
   | {
       /** Full-fidelity event list for multimodal content or tool responses. */
       events: [ModelMessage, ...ModelMessage[]];
       input?: never;
+      answers?: never;
     };
 
 /**

@@ -1,6 +1,10 @@
 import { expect, spyOn, test } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
+import type {
+  QuestionAnswer,
+  WebSocketClientExecuteMessage,
+} from "../../../packages/broods/src/websocket-contracts.ts";
 import {
   buildCoreRunBody,
   handleAgentMessage,
@@ -105,6 +109,32 @@ test("supports input shorthand for websocket execute messages", () => {
     events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
   });
   expect(typeof body.connectionId).toBe("string");
+});
+
+test("sends question answers instead of events on an execute message", () => {
+  const answers: [QuestionAnswer] = [
+    { statusId: "async_tool_1", answers: { deploy_target: ["dev"] } },
+  ];
+  const message: WebSocketClientExecuteMessage = {
+    type: "execute",
+    agentId: "agent_123",
+    sessionId: "demo-session",
+    answers: answers,
+  };
+  const body = buildCoreRunBody(message);
+
+  expect(body).toMatchObject({
+    agentId: "agent_123",
+    conversationKey: "demo-session",
+    answers: answers,
+  });
+  expect(body.events).toBeUndefined();
+  expect(parseGatewayMessage(JSON.stringify(message))).toEqual(message);
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({ type: "execute", agentId: "agent_123", answers: [] }),
+    ),
+  ).toBeNull();
 });
 
 test("forwards typed NATS stream payloads directly", () => {

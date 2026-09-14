@@ -32,6 +32,19 @@ export interface PendingQuestion {
   }[];
 }
 
+/** Answers one open prompt: option labels or free text, keyed by question id. */
+export interface QuestionAnswer {
+  statusId: string;
+  answers: Record<string, string[]>;
+}
+
+/** Settles open prompts instead of sending events; the run resumes on this socket. */
+export type AgentRunAnswerInput = {
+  answers: [QuestionAnswer, ...QuestionAnswer[]];
+  input?: never;
+  events?: never;
+};
+
 export type WebSocketStreamMessage =
   | AgentStreamPart
   | { type: "question-request"; questions: PendingQuestion[] }
@@ -100,7 +113,7 @@ export type WebSocketClientExecuteMessage = {
   /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: IngressMode;
   idempotencyKey?: string;
-} & AgentRunEventInput &
+} & (AgentRunEventInput | AgentRunAnswerInput) &
   AgentRunOverrides;
 
 export type WebSocketClientControlMessage = {
