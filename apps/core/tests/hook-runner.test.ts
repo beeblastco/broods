@@ -61,6 +61,25 @@ describe("sanitizeHookResult", () => {
     const huge = { system: "x".repeat(200 * 1024) };
     expect(() => sanitizeHookResult("agent.started", huge)).toThrow(/exceeds/);
   });
+
+  it("lets a return grow its input by at most the size cap", () => {
+    const messages = [{ role: "user", content: "x".repeat(200 * 1024) }];
+    const inputBytes = Buffer.byteLength(
+      JSON.stringify({ messages: messages }),
+      "utf8",
+    );
+
+    expect(
+      sanitizeHookResult("agent.started", { messages: messages }, inputBytes),
+    ).toEqual({ messages: messages });
+    expect(() =>
+      sanitizeHookResult(
+        "agent.started",
+        { system: "y".repeat(200 * 1024), messages: messages },
+        inputBytes,
+      ),
+    ).toThrow(/exceeds/);
+  });
 });
 
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;

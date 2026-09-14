@@ -17,8 +17,9 @@ import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
 import { toolBundlesBucket } from "./frames.ts";
 
-// A hook's return is capped before it re-enters the harness so a runaway hook
-// cannot balloon the conversation or a channel payload.
+// A hook may return at most this many bytes more than the event it was handed,
+// so a runaway hook cannot balloon the conversation or a channel payload while
+// an agent.started hook that rewrites a long conversation in place still fits.
 const MAX_HOOK_RESULT_BYTES = 128 * 1024;
 
 // ctx.state round-trips through the isolate on every hook call, so cap it too; a
@@ -86,7 +87,11 @@ export async function runCodeHook(
       | undefined;
 
     return {
-      mutation: sanitizeHookResult(event, raw?.result),
+      mutation: sanitizeHookResult(
+        event,
+        raw?.result,
+        Buffer.byteLength(JSON.stringify(params.payload), "utf8"),
+      ),
       state: sanitizeHookState(raw?.state, incomingState),
     };
   } catch (error) {
@@ -104,20 +109,23 @@ export async function runCodeHook(
 
 /**
  * Keep only the fields a hook is allowed to mutate at this event, after a size
- * cap. Returns undefined when the event is observe-only, the return is not an
- * object, or no mutable field is present.
+ * cap of `inputBytes` (the serialized event the hook received) plus
+ * MAX_HOOK_RESULT_BYTES. Returns undefined when the event is observe-only, the
+ * return is not an object, or no mutable field is present.
  */
 export function sanitizeHookResult(
   event: AgentHookEventName,
   raw: unknown,
+  inputBytes = 0,
 ): Record<string, unknown> | undefined {
   if (!isHookMutableEvent(event)) return undefined;
   if (!isPlainObject(raw)) return undefined;
 
   const serialized = safeStringify(raw);
   if (serialized === undefined) return undefined;
-  if (Buffer.byteLength(serialized, "utf8") > MAX_HOOK_RESULT_BYTES) {
-    throw new Error(`code hook return exceeds ${MAX_HOOK_RESULT_BYTES} bytes`);
+  const limit = inputBytes + MAX_HOOK_RESULT_BYTES;
+  if (Buffer.byteLength(serialized, "utf8") > limit) {
+    throw new Error(`code hook return exceeds ${limit} bytes`);
   }
 
   const allowed = HOOK_MUTABLE_FIELDS[event];

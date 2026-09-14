@@ -2233,6 +2233,17 @@ test("reads a lowercase Loki level label as its real level", () => {
   ).toBe("DEBUG");
 });
 
+test("defaults a Loki line with no eventType to its level, like the live stream", () => {
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1" },
+      JSON.stringify({ level: "ERROR", message: "Code hook execution failed" }),
+      1_700_000_000_000,
+      "fallback",
+    ).eventType,
+  ).toBe("error");
+});
+
 test("rehydrates Loki OTLP metadata for durable log history", () => {
   expect(
     lokiLogEntry(
