@@ -10,6 +10,7 @@ import {
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
   Select,
@@ -293,7 +294,9 @@ function StandInTable(): React.JSX.Element {
         {STAND_IN_ROWS.map((row) => (
           <tr key={row} className="border-b border-border/40">
             <td className="px-3 py-1.5 text-muted-foreground">08:0{row}</td>
-            <td className="px-3 py-1.5">INFO</td>
+            <td className="px-3 py-1.5">
+              <StatusDot tone="ok" />
+            </td>
             <td className="px-3 py-1.5">gateway</td>
             <td className="px-3 py-1.5">stand-in row {row}</td>
           </tr>

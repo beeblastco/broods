@@ -28,7 +28,8 @@ export const CONNECTION_TONE: Record<
 /**
  * Status as a colored dot with no visible word. `label` is what hover and
  * screen readers get; pass the real state when several states share a tone
- * (suspending and terminating both run sky).
+ * (suspending and terminating both run sky). Inline-block, so it keeps its size
+ * straight in a table cell, not only inside a flex row.
  */
 export function StatusDot({
   tone,
@@ -42,7 +43,11 @@ export function StatusDot({
   return (
     <span
       title={label}
-      className={cn("size-2 shrink-0 rounded-full", TONE_BG[tone], className)}
+      className={cn(
+        "inline-block size-2 shrink-0 rounded-full",
+        TONE_BG[tone],
+        className,
+      )}
     >
       <span className="sr-only">{label}</span>
     </span>
