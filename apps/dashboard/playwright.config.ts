@@ -80,6 +80,10 @@ export default defineConfig({
           NEXT_PUBLIC_WORKOS_REDIRECT_URI:
             process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ||
             "http://localhost:3000/auth/callback",
+          // The observability panels open their socket only with a gateway
+          // set. The ui specs answer that socket themselves, so it never dials.
+          NEXT_PUBLIC_BROODS_BASE_URL:
+            process.env.NEXT_PUBLIC_BROODS_BASE_URL || "http://localhost:3999",
         },
       },
 });

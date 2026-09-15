@@ -6,10 +6,16 @@
  * there, and here it is a 404 everywhere else.
  */
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { UiGallery } from "./UiGallery";
 
 export default function UiGalleryPage(): React.JSX.Element {
   if (process.env.NODE_ENV !== "development") notFound();
 
-  return <UiGallery />;
+  // UiGallery reads ?tab=, and a search-param read needs its own boundary.
+  return (
+    <Suspense>
+      <UiGallery />
+    </Suspense>
+  );
 }
