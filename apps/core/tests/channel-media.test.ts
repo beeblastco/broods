@@ -611,11 +611,11 @@ describe("rehydrateStoredMedia", () => {
 
   // The provider fetches the link itself, so a file the agent deleted from its
   // workspace would 404 there and fail every later turn of the conversation.
-  it("says a workspace file that is gone is gone instead of failing the turn", async () => {
+  it("says a workspace file that is gone is gone instead of failing the turn", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
 
     const messages = await rehydrateStoredMedia(
-      [sealedImageMessage(workspaceTicket("media/ab12/0-image-1.jpeg"))],
+      [sealedImageMessage(workspaceTicket())],
       modelConfig("openai"),
     );
 
@@ -624,13 +624,13 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
-  it("keeps a sealed link whose file is still there", async () => {
+  it("keeps a sealed link whose file is still there", async (): Promise<void> => {
     setStorageForTests(storageWithWorkspace());
-    headS3ObjectMock.mockImplementationOnce(async () => ({
-      contentLength: 12,
-    }));
+    headS3ObjectMock.mockImplementationOnce(
+      async (): Promise<S3ObjectHead> => ({ contentLength: 12 }),
+    );
     const stored = [
-      sealedImageMessage(workspaceTicket("media/ab12/0-image-1.jpeg")),
+      sealedImageMessage(workspaceTicket()),
       sealedImageMessage({
         accountId: ACCOUNT,
         path: "media/cd34/0-image-1.jpeg",
@@ -682,6 +682,17 @@ function workspace(): ResolvedWorkspace {
     workspaceId: "ws_1",
     namespace: "fs-0123456789abcdef0123456789abcdef01234567",
     config: {} as WorkspaceConfig,
+  };
+}
+
+function workspaceTicket(): MediaTicket {
+  const { workspaceId, namespace } = workspace();
+
+  return {
+    accountId: ACCOUNT,
+    workspaceId: workspaceId,
+    namespace: namespace,
+    path: "media/ab12/0-image-1.jpeg",
   };
 }
 
@@ -901,19 +912,6 @@ function loopbackTransport(
   };
 }
 
-function storedMessage(fileId: string): ModelMessage {
-  return {
-    role: "user",
-    content: [
-      {
-        type: "image",
-        image: `broods-media://telegram/photo.png?fileId=${fileId}&mediaType=image%2Fpng&type=image`,
-        mediaType: "image/png",
-      },
-    ],
-  };
-}
-
 function sealedImageMessage(ticket: MediaTicket): ModelMessage {
   const token = sealMediaTicket(ticket, "service-auth-secret");
 
@@ -932,17 +930,23 @@ function sealedImageMessage(ticket: MediaTicket): ModelMessage {
 function storageWithWorkspace(): Storage {
   return {
     workspaceConfigs: {
-      getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      getById: async (): Promise<{
+        config: { storage: { provider: string } };
+      }> => ({ config: { storage: { provider: "s3" } } }),
     },
   } as never;
 }
 
-function workspaceTicket(path: string): MediaTicket {
+function storedMessage(fileId: string): ModelMessage {
   return {
-    accountId: ACCOUNT,
-    workspaceId: workspace().workspaceId,
-    namespace: workspace().namespace,
-    path: path,
+    role: "user",
+    content: [
+      {
+        type: "image",
+        image: `broods-media://telegram/photo.png?fileId=${fileId}&mediaType=image%2Fpng&type=image`,
+        mediaType: "image/png",
+      },
+    ],
   };
 }
 

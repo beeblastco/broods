@@ -31,6 +31,7 @@ import type { Attachment } from "chat";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { channelAdapterFromConfig } from "./integrations.ts";
 import { createHash } from "node:crypto";
+import { basename } from "node:path/posix";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
@@ -312,10 +313,7 @@ export async function rehydrateStoredMedia(
     (message) =>
       message.role === "user" &&
       typeof message.content !== "string" &&
-      message.content.some(
-        (part) =>
-          mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null,
-      ),
+      message.content.some(isStoredMediaPart),
   );
   if (!carriesMedia) {
     return messages;
@@ -498,9 +496,7 @@ async function goneWorkspaceFile(
     return null;
   }
   try {
-    if (await locateMediaObject(ticket)) {
-      return null;
-    }
+    return (await locateMediaObject(ticket)) ? null : basename(ticket.path);
   } catch (err) {
     logWarn("Stored media link could not be checked", {
       path: ticket.path,
@@ -509,21 +505,14 @@ async function goneWorkspaceFile(
 
     return null;
   }
-
-  return ticket.path.slice(ticket.path.lastIndexOf("/") + 1);
 }
 
-// A file part this module stored: a channel reference it can read again, or a
-// sealed media link. Tool results and subagent output arrive as file parts
-// too, carrying shapes this module never wrote, and re-gating those would
-// rewrite results it has no business judging.
-function isStoredMediaPart(
-  part: UserContentPart,
-): part is Extract<UserContentPart, { type: "file" }> {
-  return (
-    part.type === "file" &&
-    (mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null)
-  );
+// A part this module stored: a channel reference it can read again, or a sealed
+// media link. Tool results and subagent output arrive as file parts too,
+// carrying shapes this module never wrote, and re-gating those would rewrite
+// results it has no business judging.
+function isStoredMediaPart(part: UserContentPart): boolean {
+  return mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null;
 }
 
 function limitForMediaType(mediaType: string | undefined): number {
@@ -682,6 +671,7 @@ async function rehydrateMessage(
       // a part that provider refuses, and fail every turn from here on rather
       // than the one it arrived in.
       if (
+        part.type === "file" &&
         isStoredMediaPart(part) &&
         !acceptsNativeMedia(provider, part.mediaType)
       ) {
@@ -758,13 +748,10 @@ async function resolveMediaReference(
 }
 
 function sealedMediaLink(part: UserContentPart): string | null {
-  let value: unknown;
-  if (part.type === "image") {
-    value = part.image;
+  if (part.type !== "image" && part.type !== "file") {
+    return null;
   }
-  if (part.type === "file") {
-    value = part.data;
-  }
+  const value = part.type === "image" ? part.image : part.data;
 
   return typeof value === "string" && value.includes(MEDIA_PATH_PREFIX)
     ? value

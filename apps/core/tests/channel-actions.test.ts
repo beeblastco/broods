@@ -252,6 +252,32 @@ describe("telegram channel actions", () => {
     });
   });
 
+  // A run that fails before its first word streams nothing. Throwing here would
+  // skip the error reply, and the sender would see only the reaction.
+  it("hands an empty Telegram stream back so the reply goes out as text", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set(["123"]),
+      null,
+      "👀",
+    ).actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        threadId: "telegram:123",
+      }),
+    );
+
+    const messageId = await actions.stream?.(
+      (async function* (): AsyncGenerator<string> {})(),
+    );
+
+    expect(messageId).toBeNull();
+    expect(fetchMock.calls).toHaveLength(0);
+  });
+
   it("splits long final Telegram replies before SDK formatting to avoid truncation", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(

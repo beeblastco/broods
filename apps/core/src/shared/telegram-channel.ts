@@ -10,6 +10,7 @@ import {
   fromFullStream,
   type Attachment,
   type Message,
+  type StreamChunk,
 } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
 import type {
@@ -293,12 +294,30 @@ export function createTelegramChannel(
           ),
         ...(source.chatId > 0
           ? {
+              // Telegram refuses a stream that carried no text, which is all a
+              // run that fails before its first word leaves. Nothing was posted
+              // then, so null hands the reply back to be sent as plain text.
               stream: async (textStream, options) => {
-                const result = await transport.stream(
-                  source.threadId,
-                  fromFullStream(textStream),
-                  options,
-                );
+                let sawText = false;
+                const chunks = (async function* (): AsyncGenerator<
+                  string | StreamChunk
+                > {
+                  for await (const chunk of fromFullStream(textStream)) {
+                    if (typeof chunk === "string") {
+                      sawText ||= chunk.trim() !== "";
+                    } else if (chunk.type === "markdown_text") {
+                      sawText ||= chunk.text.trim() !== "";
+                    }
+                    yield chunk;
+                  }
+                })();
+                const result = await transport
+                  .stream(source.threadId, chunks, options)
+                  .catch((err: unknown): null => {
+                    if (sawText) throw err;
+
+                    return null;
+                  });
 
                 return result?.id ?? null;
               },
