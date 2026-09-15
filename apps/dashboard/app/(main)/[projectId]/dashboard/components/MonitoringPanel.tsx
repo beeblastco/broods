@@ -1,8 +1,11 @@
 "use client";
 
-import { CopyRow } from "@/app/components/CopyButton";
+import {
+  DetailFields,
+  DetailPayload,
+  type DetailRow,
+} from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
-import { SectionSummary } from "@/app/components/SectionSummary";
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -11,7 +14,7 @@ import {
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
-import { formatDateTime, toEpochMs } from "@/app/lib/formatTime";
+import { formatDateTimeMillis, toEpochMs } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -21,25 +24,6 @@ import {
   ObservabilityToolbar,
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
-
-interface Props {
-  projectSlug: string | undefined;
-  stageSlug: string | undefined;
-  apiKey: string | undefined;
-}
-
-type LevelFilter = "all" | ObservabilityLogEntry["level"];
-
-// One Details row: label, value, and whether the value reads as words or mono.
-interface DetailRow {
-  label: string;
-  value: string;
-  words?: true;
-}
-
-// Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
-// live buffer holds thousands of entries.
-const PAGE_SIZE = 100;
 
 const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "all", label: "All levels" },
@@ -55,6 +39,18 @@ const LEVEL_TONE: Record<ObservabilityLogEntry["level"], StatusTone> = {
   INFO: "ok",
   DEBUG: "ended",
 };
+
+// Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
+// live buffer holds thousands of entries.
+const PAGE_SIZE = 100;
+
+type LevelFilter = "all" | ObservabilityLogEntry["level"];
+
+interface Props {
+  projectSlug: string | undefined;
+  stageSlug: string | undefined;
+  apiKey: string | undefined;
+}
 
 export function MonitoringPanel({
   projectSlug,
@@ -176,14 +172,13 @@ export function MonitoringPanel({
                     label={selected.level.toLowerCase()}
                   />
                   <span className="font-mono">
-                    {formatDateTime(selected.ts, true)}
+                    {formatDateTimeMillis(selected.ts)}
                   </span>
                   {selectedTraceId && (
                     <Button
                       variant="outline"
                       size="xs"
                       onClick={() => viewTrace(selectedTraceId)}
-                      className="cursor-pointer"
                     >
                       View trace
                       <ArrowUpRight />
@@ -253,19 +248,31 @@ export function MonitoringPanel({
   );
 }
 
-/** The labeled rows under Details: ids and origin, all copyable. */
+/** The copyable rows under Details: where the line came from. The level is in the header. */
 function detailRows(entry: ObservabilityLogEntry): DetailRow[] {
   const rows: DetailRow[] = [];
   if (isTraceId(entry.traceId)) {
-    rows.push({ label: "Trace id", value: entry.traceId });
+    rows.push({ key: "traceId", label: "Trace id", value: entry.traceId });
   }
   if (entry.endpointId) {
-    rows.push({ label: "Endpoint", value: entry.endpointId });
+    rows.push({
+      key: "endpointId",
+      label: "Endpoint",
+      value: entry.endpointId,
+    });
   }
-  if (entry.agentId) rows.push({ label: "Agent", value: entry.agentId });
-  if (entry.service) rows.push({ label: "Service", value: entry.service });
-  rows.push({ label: "Event type", value: entry.eventType, words: true });
-  rows.push({ label: "Level", value: entry.level.toLowerCase(), words: true });
+  if (entry.agentId) {
+    rows.push({ key: "agentId", label: "Agent", value: entry.agentId });
+  }
+  if (entry.service) {
+    rows.push({ key: "service", label: "Service", value: entry.service });
+  }
+  rows.push({
+    key: "eventType",
+    label: "Event type",
+    value: entry.eventType,
+    words: true,
+  });
 
   return rows;
 }
@@ -319,41 +326,18 @@ function LogDetails({
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
   const rows = detailRows(entry);
 
-  // Same flat section list as a span: a clickable header row over a
-  // soft-tinted payload, no bordered card around each one.
   return (
     <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
-      <details className="group/detail" open>
-        <SectionSummary
-          label="Message"
-          summary={`${parsed.pretty.length.toLocaleString()} chars`}
-        />
-        <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere px-3 pb-3 text-xs leading-relaxed text-foreground/90">
-          {parsed.pretty}
-        </pre>
-      </details>
-      <details className="group/detail">
-        <SectionSummary label="Details" summary={`${rows.length} fields`} />
-        <div className="grid px-1 pb-2 text-xs">
-          {rows.map(({ label, value, words }) => (
-            <CopyRow
-              key={label}
-              value={value}
-              className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
-            >
-              <span className="truncate text-muted-foreground">{label}</span>
-              <span
-                className={cn(
-                  "truncate text-foreground/80",
-                  !words && "font-mono",
-                )}
-              >
-                {value}
-              </span>
-            </CopyRow>
-          ))}
-        </div>
-      </details>
+      <DetailPayload
+        label="Message"
+        summary={`${parsed.pretty.length.toLocaleString()} chars`}
+        value={parsed.pretty}
+      />
+      <DetailFields
+        label="Details"
+        rows={rows}
+        summary={`${rows.length} fields`}
+      />
     </div>
   );
 }
@@ -379,7 +363,7 @@ function LogRow({
       )}
     >
       <td className="px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground">
-        {formatDateTime(entry.ts, true)}
+        {formatDateTimeMillis(entry.ts)}
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
         <span className="inline-flex items-center gap-1.5">

@@ -1,25 +1,40 @@
-/** `Sep 14, 16:44:07` in the viewer's zone; `millis` appends `.312`. */
-export function formatDateTime(ms: number, millis = false): string {
-  const text = new Date(ms).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+const CLOCK: Intl.DateTimeFormatOptions = {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+};
 
-  return millis ? `${text}.${String(ms % 1000).padStart(3, "0")}` : text;
+// Built once: creating the formatter is the expensive part of a call, and a
+// streaming table formats every visible row on each render.
+const DATE_TIME = new Intl.DateTimeFormat([], {
+  month: "short",
+  day: "numeric",
+  ...CLOCK,
+});
+
+const DATE_TIME_MILLIS = new Intl.DateTimeFormat([], {
+  month: "short",
+  day: "numeric",
+  ...CLOCK,
+  fractionalSecondDigits: 3,
+});
+
+const TIME = new Intl.DateTimeFormat([], CLOCK);
+
+/** `Sep 14, 16:44:07` in the viewer's zone, so a row is locatable across days. */
+export function formatDateTime(ms: number): string {
+  return DATE_TIME.format(ms);
+}
+
+/** `Sep 14, 16:44:07.312`, for log lines that land in the same second. */
+export function formatDateTimeMillis(ms: number): string {
+  return DATE_TIME_MILLIS.format(ms);
 }
 
 /** Wall-clock `HH:MM:SS` in the viewer's zone, for log and span rows. */
 export function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  return TIME.format(ms);
 }
 
 /** A `datetime-local` input value as epoch ms, null when empty or unparseable. */
