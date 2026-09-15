@@ -1323,7 +1323,10 @@ describe("runAgentLoop", () => {
     await stream.consumeStream();
 
     expect(googleModelMock).toHaveBeenCalledWith("gemini-custom");
-    expect(createGoogleMock).toHaveBeenCalledWith({ apiKey: "google-key" });
+    expect(createGoogleMock).toHaveBeenCalledWith({
+      apiKey: "google-key",
+      fetch: expect.any(Function),
+    });
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "google", modelId: "gemini-custom" },
       temperature: 0.2,
@@ -2240,8 +2243,25 @@ describe("runAgentLoop", () => {
     expect(createOpenAIMock).toHaveBeenCalledWith({
       apiKey: "openai-key",
       project: "project-id",
+      fetch: expect.any(Function),
     });
     expect(openAIModelMock).toHaveBeenCalledWith("gpt-5.4");
+
+    // Bun drops a fetch whose socket stays silent for 300s, which failed a
+    // throttled provider's step mid-run. Model requests turn that timer off.
+    const inits: BunFetchRequestInit[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      inits.push(init ?? {});
+
+      return new Response("ok");
+    }) as typeof fetch;
+    const [settings] = createOpenAIMock.mock.calls[0] as [
+      { fetch: typeof fetch },
+    ];
+    await settings.fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+    });
+    expect(inits[0]?.timeout).toBe(false);
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
       model: { provider: "openai", modelId: "gpt-5.4" },
     });
@@ -2500,6 +2520,7 @@ describe("runAgentLoop", () => {
     expect(createBedrockMock).toHaveBeenCalledWith({
       region: "us-east-1",
       apiKey: "bedrock-key",
+      fetch: expect.any(Function),
     });
     expect(bedrockModelMock).toHaveBeenCalledWith("amazon.nova-lite-v1:0");
 
@@ -2525,6 +2546,7 @@ describe("runAgentLoop", () => {
 
     expect(createGatewayMock).toHaveBeenCalledWith({
       apiKey: "gateway-key",
+      fetch: expect.any(Function),
     });
     expect(gatewayModelMock).toHaveBeenCalledWith("openai/gpt-5.4");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
