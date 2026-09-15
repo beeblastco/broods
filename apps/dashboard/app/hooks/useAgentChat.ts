@@ -2,7 +2,8 @@
 
 /**
  * Streaming chat hook for testing a deployed agent via the core service API.
- * Uses AI SDK utilities to parse the UIMessage SSE stream.
+ * Both transports carry the same AI SDK UI message chunks, SSE over HTTP and
+ * one frame per chunk over the WebSocket, parsed into UIMessages the same way.
  */
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import type { UIMessage } from "ai";
@@ -16,12 +17,12 @@ import type {
   PendingQuestion,
   QuestionAnswer,
   WebSocketOutputMessage,
+  WebSocketStreamMessage,
 } from "../../../../packages/broods/src/websocket-contracts";
 
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
 
-/** `awaiting_input` means the agent asked a question and the run stopped on it. */
-type ChatStatus = "ready" | "streaming" | "awaiting_input" | "error";
+type ChatStatus = "ready" | "streaming" | "error";
 
 /** What `useAgentChat` hands its caller: the transcript plus its controls. */
 export interface AgentChat {
@@ -35,18 +36,9 @@ export interface AgentChat {
   resetChat: () => void;
 }
 
-/** One socket turn either sends events or settles open questions. */
-type TurnInput = { events: [UserTextEvent] } | { answers: QuestionAnswer[] };
-
-type UserTextEvent = {
-  role: "user";
-  content: [{ type: "text"; text: string }];
-};
-
 type WsServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
-  | { type: "question-request"; questions: PendingQuestion[] }
-  | { type: "sse"; chunk: string }
+  | Extract<WebSocketStreamMessage, { type: "question-request" }>
   | { type: "continuation_delta"; delta: string }
   | {
       type: "subagent_delta";
@@ -120,7 +112,6 @@ export function useAgentChat({
   const [pendingQuestions, setPendingQuestions] = useState<PendingQuestion[]>(
     [],
   );
-  const pendingQuestionsRef = useRef<PendingQuestion[]>([]);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<UIMessage[]>([]);
@@ -143,9 +134,10 @@ export function useAgentChat({
     };
   }, []);
 
-  // One turn on the wire: the user's text, or the answers to open questions.
+  // One turn on the wire: the user's text, or `answers` to the open questions
+  // with `userText` as their transcript line.
   const runTurn = useCallback(
-    async (userText: string, input: TurnInput) => {
+    async (userText: string, answers?: QuestionAnswer[]): Promise<void> => {
       const userMessage: UIMessage = {
         id: crypto.randomUUID(),
         role: "user",
@@ -154,7 +146,6 @@ export function useAgentChat({
       setMessages((prev) => [...prev, userMessage]);
       setStatus("streaming");
       setError(null);
-      pendingQuestionsRef.current = [];
       setPendingQuestions([]);
 
       abortRef.current?.abort();
@@ -183,16 +174,14 @@ export function useAgentChat({
               websocketBaseUrl: websocketBaseUrl,
               projectSlug: projectSlug,
               stageSlug: stageSlug,
-              input: input,
+              message: userText,
+              answers: answers,
               sessionId: sessionIdRef.current,
               signal: controller.signal,
               onMeta: ({ sessionId }) => {
                 sessionIdRef.current = sessionId;
               },
-              onQuestions: (questions) => {
-                pendingQuestionsRef.current = questions;
-                setPendingQuestions(questions);
-              },
+              onQuestions: setPendingQuestions,
               onContinuationDelta: (delta) => {
                 setMessages((prev) => {
                   const next = appendAssistantTextDelta({
@@ -295,7 +284,8 @@ export function useAgentChat({
         }
 
         if (!streamBody) {
-          if ("answers" in input) {
+          // Core answers `answers` over HTTP with JSON, not a stream to follow.
+          if (answers) {
             throw new Error("Answering a question needs the WebSocket stream.");
           }
           const httpResult = await startHttpSseStream({
@@ -305,7 +295,7 @@ export function useAgentChat({
             baseUrl: baseUrl,
             projectSlug: projectSlug,
             stageSlug: stageSlug,
-            events: input.events,
+            message: userText,
             sessionId: sessionIdRef.current,
             signal: controller.signal,
           });
@@ -347,9 +337,7 @@ export function useAgentChat({
           });
         }
 
-        setStatus(
-          pendingQuestionsRef.current.length > 0 ? "awaiting_input" : "ready",
-        );
+        setStatus("ready");
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         const message =
@@ -379,32 +367,27 @@ export function useAgentChat({
   );
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<void> => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      await runTurn(trimmed, {
-        events: [{ role: "user", content: [{ type: "text", text: trimmed }] }],
-      });
+      await runTurn(trimmed);
     },
     [runTurn],
   );
 
   const answerQuestions = useCallback(
-    async (answers: QuestionAnswer[]) => {
+    async (answers: QuestionAnswer[]): Promise<void> => {
       if (answers.length === 0) return;
-      await runTurn(answerTranscript(pendingQuestionsRef.current, answers), {
-        answers: answers,
-      });
+      await runTurn(answerTranscript(pendingQuestions, answers), answers);
     },
-    [runTurn],
+    [runTurn, pendingQuestions],
   );
 
-  const resetChat = useCallback(() => {
+  const resetChat = useCallback((): void => {
     abortRef.current?.abort();
     setMessages([]);
     setStatus("ready");
     setError(null);
-    pendingQuestionsRef.current = [];
     setPendingQuestions([]);
     sessionIdRef.current = undefined;
     mainAssistantMessageIdRef.current = null;
@@ -451,7 +434,7 @@ async function startHttpSseStream(options: {
   baseUrl: string;
   projectSlug?: string;
   stageSlug?: string;
-  events: [UserTextEvent];
+  message: string;
   sessionId?: string;
   signal: AbortSignal;
 }): Promise<HttpStreamResult> {
@@ -462,7 +445,7 @@ async function startHttpSseStream(options: {
     baseUrl,
     projectSlug,
     stageSlug,
-    events,
+    message,
     sessionId,
     signal,
   } = options;
@@ -484,7 +467,12 @@ async function startHttpSseStream(options: {
       agentId: agentId,
       eventId: `evt-${crypto.randomUUID()}`,
       conversationKey: conversationKey,
-      events: events,
+      events: [
+        {
+          role: "user",
+          content: [{ type: "text", text: message }],
+        },
+      ],
       stream: true,
     }),
     signal: signal,
@@ -517,7 +505,8 @@ async function startWebSocketSseStream(options: {
   websocketBaseUrl: string;
   projectSlug?: string;
   stageSlug?: string;
-  input: TurnInput;
+  message: string;
+  answers?: QuestionAnswer[];
   sessionId?: string;
   signal: AbortSignal;
   onMeta: (meta: { sessionId: string; taskId: string }) => void;
@@ -545,7 +534,8 @@ async function startWebSocketSseStream(options: {
     websocketBaseUrl,
     projectSlug,
     stageSlug,
-    input,
+    message,
+    answers,
     sessionId,
     signal,
     onMeta,
@@ -651,7 +641,7 @@ async function startWebSocketSseStream(options: {
       socket.send(
         JSON.stringify({
           type: "execute",
-          ...input,
+          ...(answers ? { answers: answers } : { input: message }),
           agentId: agentId,
           sessionId: sessionId,
         }),
@@ -693,14 +683,6 @@ async function startWebSocketSseStream(options: {
 
       if (payload.type === "question-request") {
         onQuestions(payload.questions);
-
-        return;
-      }
-
-      if (payload.type === "sse") {
-        if (streamController) {
-          streamController.enqueue(encoder.encode(payload.chunk));
-        }
 
         return;
       }
@@ -748,7 +730,16 @@ async function startWebSocketSseStream(options: {
 
       if (payload.type === "error") {
         fail(new Error(payload.error || "WebSocket stream error."));
+
+        return;
       }
+
+      // Anything else is an AI SDK stream part, the chunk the HTTP body carries
+      // as SSE. The chunk schema downstream drops what it does not know, such
+      // as the gateway's ack and status frames.
+      streamController?.enqueue(
+        encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+      );
     };
 
     socket.onerror = () => {

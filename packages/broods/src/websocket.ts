@@ -13,6 +13,7 @@ import {
   type AgentRunOverrides,
 } from "./run-input.ts";
 import type {
+  AgentRunAnswerInput,
   WebSocketClientCancelMessage,
   WebSocketClientAttachMessage,
   WebSocketClientControlMessage,
@@ -39,7 +40,7 @@ export type WebSocketRunInput = {
   /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: "reject" | "followup" | "collect" | "steer";
   idempotencyKey?: string;
-} & AgentRunEventInput &
+} & (AgentRunEventInput | AgentRunAnswerInput) &
   AgentRunOverrides;
 
 export type WebSocketAttachInput = Omit<
@@ -183,7 +184,9 @@ export class BroodsWebSocketClient {
         JSON.stringify({
           type: "execute",
           agentId: agentId,
-          events: resolveRunEvents(input),
+          ...(input.answers
+            ? { answers: input.answers }
+            : { events: resolveRunEvents(input) }),
           sessionId: input.sessionId,
           ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
           ...(input.mode !== undefined ? { mode: input.mode } : {}),

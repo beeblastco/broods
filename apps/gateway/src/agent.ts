@@ -1067,6 +1067,13 @@ function parseCursor(value: string): {
   };
 }
 
+// Core checks each answer's shape and refuses a bad one with a 400.
+function hasAnswerInput(value: object): boolean {
+  const record = value as { answers?: unknown };
+
+  return Array.isArray(record.answers) && record.answers.length > 0;
+}
+
 function hasEventInput(value: object): boolean {
   const record = value as { input?: unknown; events?: unknown };
 
@@ -1135,21 +1142,6 @@ function isExecuteMessage(
     record.agentId.trim().length > 0 &&
     (record.mode === undefined || isIngressMode(record.mode)) &&
     (hasEventInput(value) || hasAnswerInput(value))
-  );
-}
-
-function hasAnswerInput(value: object): boolean {
-  const record = value as { answers?: unknown };
-
-  return (
-    Array.isArray(record.answers) &&
-    record.answers.length > 0 &&
-    record.answers.every(
-      (answer: { statusId?: unknown; answers?: unknown }) =>
-        typeof answer?.statusId === "string" &&
-        typeof answer.answers === "object" &&
-        answer.answers !== null,
-    )
   );
 }
 

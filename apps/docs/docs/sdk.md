@@ -164,6 +164,8 @@ curl -X POST "https://gateway.broods.app/async" \
   }'
 ```
 
+Over a WebSocket, `subscribe` takes the same `answers` in place of `input`, on the same `sessionId`; the resumed run streams back on that subscription.
+
 **Curl equivalent:**
 
 ```bash

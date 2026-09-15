@@ -3,11 +3,6 @@
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useEffect, useState } from "react";
-
-// A sandbox row changes state on the minute scale, so re-read the clock often
-// enough that the displayed age is never more than a minute stale.
-const CLOCK_TICK_MS = 30_000;
 
 // Same four tones as the tracing panel: sky while the provider is still moving
 // (suspending, terminating, building), grey once nothing runs. Tables and
@@ -145,20 +140,4 @@ export function snapshotStatusDot(
   status: Doc<"sandboxSnapshots">["status"],
 ): React.JSX.Element {
   return <StatusDot tone={SNAPSHOT_TONE[status]} label={status} />;
-}
-
-/**
- * Ticking wall clock for the relative-time columns. Convex only re-renders a row
- * when its document changes, so without this an age freezes at whatever it read
- * when the row last moved.
- */
-export function useNow(): number {
-  const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  return now;
 }

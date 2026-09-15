@@ -696,9 +696,12 @@ async function handleDirectAnswers(
     );
   }
 
-  // A socket answer follows the resumed run over NATS, like any socket turn.
-  if (event.connectionId && outcome.kind === "ready") {
-    return natsStartResponse(event, outcome.publicEventId, null);
+  // A socket turn needs a stream to follow or a terminal status. Only a ready
+  // continuation streams; otherwise the answer is saved and the turn is over.
+  if (event.connectionId && last) {
+    return outcome.kind === "ready"
+      ? natsStartResponse(event, outcome.publicEventId, null)
+      : jsonResponse(202, { eventId: last.resultId, status: "completed" });
   }
 
   return last
@@ -1998,11 +2001,15 @@ async function invokeAsyncToolContinuationWorker(
   event: DirectInboundEvent,
   settled: AsyncToolResultRecord,
 ): Promise<void> {
-  // The continuation streams under its own public event id, the one the
-  // settling 202 reports, so a socket that answered can follow it.
   if (settled.delivery?.kind === "nats") {
     await invokeNatsWorker({
       ...event,
+      // An answered question streams under its own id, the one the answer
+      // response names. Any other job keeps the parent's, so a reconnect that
+      // attaches to the parent replays it.
+      ...(settled.toolName === ASK_QUESTIONS_TOOL_NAME
+        ? {}
+        : { publicEventId: settled.delivery.publicEventId }),
       publicConversationKey: settled.delivery.publicConversationKey,
       connectionId: settled.delivery.connectionId,
     });

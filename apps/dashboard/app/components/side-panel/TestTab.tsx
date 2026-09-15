@@ -243,8 +243,8 @@ function ChatWindow({
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
-  const awaitingAnswer =
-    status === "awaiting_input" && pendingQuestions.length > 0;
+  // A run that stopped on a blocking question ends ready with its prompts open.
+  const awaitingAnswer = status === "ready" && pendingQuestions.length > 0;
   // The composer is closed while streaming and while a question waits: a typed
   // message would steer the run but leave the question open.
   const composerLocked = status === "streaming" || awaitingAnswer;
@@ -280,12 +280,7 @@ function ChatWindow({
           <ThinkingIndicator nodeColor={nodeColor} />
         )}
         {awaitingAnswer && (
-          <QuestionCard
-            key={pendingQuestions[0]?.statusId}
-            prompts={pendingQuestions}
-            disabled={false}
-            onAnswer={answerQuestions}
-          />
+          <QuestionCard prompts={pendingQuestions} onAnswer={answerQuestions} />
         )}
         {error && <p className="text-xs text-destructive">{error.message}</p>}
         <div ref={bottomRef} />
@@ -315,9 +310,7 @@ function ChatWindow({
             }
             disabled={composerLocked}
             rows={1}
-            className={`max-h-40 min-h-0 py-2.5 text-sm ${
-              composerLocked ? "cursor-not-allowed" : ""
-            }`}
+            className="max-h-40 min-h-0 py-2.5 text-sm"
           />
           <InputGroupAddon align="block-end" className="pt-0">
             <div className="flex w-full items-center justify-between">
@@ -334,11 +327,7 @@ function ChatWindow({
                 size="icon-xs"
                 variant="default"
                 disabled={!input.trim() || composerLocked}
-                className={`rounded-sm ${
-                  !input.trim() || composerLocked
-                    ? "cursor-not-allowed"
-                    : "cursor-pointer"
-                }`}
+                className="rounded-sm"
               >
                 {status === "streaming" ? (
                   <Loader2 className="size-3.5 animate-spin" />

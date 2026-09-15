@@ -2,6 +2,7 @@
 
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
+import { useNow } from "@/app/hooks/useNow";
 import { useState } from "react";
 import type {
   PendingQuestion,
@@ -21,24 +22,17 @@ type Choice =
  */
 export function QuestionCard({
   prompts,
-  disabled,
   onAnswer,
 }: {
   prompts: PendingQuestion[];
-  disabled: boolean;
   onAnswer: (answers: QuestionAnswer[]) => void;
 }): React.JSX.Element {
   const [choices, setChoices] = useState<Record<string, Choice>>({});
-  const questions = prompts.flatMap((prompt) =>
-    prompt.questions.map((question) => ({
-      statusId: prompt.statusId,
-      question: question,
-    })),
-  );
+  const now = useNow();
+  const questions = prompts.flatMap((prompt) => prompt.questions);
   const answered = questions.filter(
-    (entry) => choiceLabel(choices[entry.question.id]) !== "",
+    (question) => choiceLabel(choices[question.id]) !== "",
   ).length;
-  const complete = answered === questions.length;
   const answerBy = Math.min(
     ...prompts.map((prompt) => Date.parse(prompt.answerBy)),
   );
@@ -48,22 +42,22 @@ export function QuestionCard({
   }
 
   function submit(): void {
-    if (!complete || disabled) return;
-    const answers = prompts.map((prompt): QuestionAnswer => ({
-      statusId: prompt.statusId,
-      answers: Object.fromEntries(
-        prompt.questions.map((question) => [
-          question.id,
-          [choiceLabel(choices[question.id])],
-        ]),
-      ),
-    }));
-    onAnswer(answers);
+    onAnswer(
+      prompts.map((prompt): QuestionAnswer => ({
+        statusId: prompt.statusId,
+        answers: Object.fromEntries(
+          prompt.questions.map((question) => [
+            question.id,
+            [choiceLabel(choices[question.id])],
+          ]),
+        ),
+      })),
+    );
   }
 
   return (
     <div className="rounded-md border border-border bg-background text-xs">
-      {questions.map(({ question }) => {
+      {questions.map((question) => {
         const current = choices[question.id];
 
         return (
@@ -86,11 +80,10 @@ export function QuestionCard({
                   key={option.label}
                   type="button"
                   aria-pressed={selected}
-                  disabled={disabled}
                   onClick={() =>
                     choose(question.id, { kind: "option", label: option.label })
                   }
-                  className={`grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-2 rounded-sm px-1.5 py-1 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed ${
+                  className={`grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-2 rounded-sm px-1.5 py-1 text-left transition-colors hover:bg-accent/40 ${
                     selected ? "bg-accent/60" : ""
                   }`}
                 >
@@ -117,9 +110,8 @@ export function QuestionCard({
                     text: event.target.value,
                   })
                 }
-                disabled={disabled}
                 placeholder="Or type an answer"
-                className="mt-1.5 h-7 text-xs"
+                className="h-7 text-xs"
               />
             )}
           </div>
@@ -128,15 +120,12 @@ export function QuestionCard({
       <div className="flex items-center justify-between border-t border-border/60 px-2.5 py-1.5 text-muted-foreground">
         <span>
           {answered} of {questions.length} answered · expires in{" "}
-          {expiresIn(answerBy)}
+          {expiresIn(answerBy, now)}
         </span>
         <Button
           size="xs"
-          disabled={!complete || disabled}
+          disabled={answered < questions.length}
           onClick={submit}
-          className={
-            complete && !disabled ? "cursor-pointer" : "cursor-not-allowed"
-          }
         >
           Answer
         </Button>
@@ -151,8 +140,8 @@ function choiceLabel(choice: Choice | undefined): string {
   return choice.kind === "option" ? choice.label : choice.text.trim();
 }
 
-function expiresIn(answerBy: number): string {
-  const hours = Math.max(0, Math.round((answerBy - Date.now()) / HOUR_MS));
+function expiresIn(answerBy: number, now: number): string {
+  const hours = Math.max(0, Math.round((answerBy - now) / HOUR_MS));
 
   return hours >= 48 ? `${Math.floor(hours / 24)}d` : `${hours}h`;
 }
