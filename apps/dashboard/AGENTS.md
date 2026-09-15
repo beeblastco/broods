@@ -8,6 +8,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+# Design lint
+
+Root `bun run lint` runs [`@shadcn/lint`](https://github.com/shadcn-ui/lint) on this app, configured in the `apps/dashboard/**` override of the root `.oxlintrc.json`. It reads `components.json`, the variants in `app/components/ui`, and the `@theme` tokens in `app/globals.css`, and each finding names the variant, size, or token to use instead.
+
+- `no-unknown-classes` is an error: a class this app's Tailwind cannot generate fails CI. `nodrag` and `nopan` are allowed because React Flow reads them from the DOM.
+- `no-restyle` (layout classes allowed), `no-raw-colors`, `no-arbitrary-values` (layout allowed), `no-inline-styles` and `require-static-classes` are warnings with a backlog. Do not add new ones; the pre-commit hook prints them for staged files. Promote a rule to `error` once its count reaches zero.
+- `app/components/ui/**` styles its own internals, so `no-restyle`, `no-arbitrary-values` and `require-static-classes` are off there.
+
 # Tests
 
 - `bun run test` is the unit suite (bun test) for pure helpers.

@@ -23,7 +23,17 @@
         "jsx-a11y",
         "nextjs"
       ],
+      "jsPlugins": ["@shadcn/lint"],
       "rules": {
+        "shadcn/no-restyle": ["warn", { "allow": ["layout"] }],
+        "shadcn/no-raw-colors": "warn",
+        "shadcn/no-arbitrary-values": ["warn", { "allow": ["layout"] }],
+        "shadcn/no-inline-styles": "warn",
+        "shadcn/require-static-classes": "warn",
+        "shadcn/no-unknown-classes": [
+          "error",
+          { "allow": ["nodrag", "nopan"] }
+        ],
         "react/exhaustive-deps": "warn",
         "react/set-state-in-effect": "warn",
         "nextjs/no-img-element": "warn",
@@ -40,6 +50,9 @@
     {
       "files": ["apps/dashboard/app/components/ui/**"],
       "rules": {
+        "shadcn/no-arbitrary-values": "off",
+        "shadcn/no-restyle": "off",
+        "shadcn/require-static-classes": "off",
         "typescript/explicit-module-boundary-types": "off"
       }
     },
