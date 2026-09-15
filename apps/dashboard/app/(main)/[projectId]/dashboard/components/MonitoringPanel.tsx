@@ -1,15 +1,22 @@
 "use client";
 
+import {
+  DetailFields,
+  DetailPayload,
+  type DetailRow,
+} from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
-import { Badge } from "@/app/components/ui/badge";
+import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
+import { Button } from "@/app/components/ui/button";
 import {
   entryKey,
   isTraceId,
   useObservabilityStream,
   type ObservabilityLogEntry,
 } from "@/app/hooks/useObservabilityStream";
+import { formatDateTimeMillis, toEpochMs } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
-import { AlertTriangle, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
@@ -18,25 +25,32 @@ import {
   type ToolbarFilterOption,
 } from "./ObservabilityToolbar";
 
-interface Props {
-  projectSlug: string | undefined;
-  stageSlug: string | undefined;
-  apiKey: string | undefined;
-}
+const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
+  { value: "all", label: "All levels" },
+  { value: "ERROR", label: "error" },
+  { value: "WARN", label: "warn" },
+  { value: "INFO", label: "info" },
+  { value: "DEBUG", label: "debug" },
+];
 
-type LevelFilter = "all" | ObservabilityLogEntry["level"];
+const LEVEL_TONE: Record<ObservabilityLogEntry["level"], StatusTone> = {
+  ERROR: "error",
+  WARN: "warn",
+  INFO: "ok",
+  DEBUG: "ended",
+};
 
 // Rows rendered before the "Load more" pager; keeps the DOM bounded even when the
 // live buffer holds thousands of entries.
 const PAGE_SIZE = 100;
 
-const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
-  { value: "all", label: "All levels" },
-  { value: "ERROR", label: "ERROR" },
-  { value: "WARN", label: "WARN" },
-  { value: "INFO", label: "INFO" },
-  { value: "DEBUG", label: "DEBUG" },
-];
+type LevelFilter = "all" | ObservabilityLogEntry["level"];
+
+interface Props {
+  projectSlug: string | undefined;
+  stageSlug: string | undefined;
+  apiKey: string | undefined;
+}
 
 export function MonitoringPanel({
   projectSlug,
@@ -112,6 +126,8 @@ export function MonitoringPanel({
 
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
+  const selectedTraceId =
+    selected && isTraceId(selected.traceId) ? selected.traceId : null;
 
   const clearFilters = (): void => {
     setFilter("");
@@ -122,11 +138,6 @@ export function MonitoringPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <p className="shrink-0 text-xs text-muted-foreground">
-        Project service logs from channel ingress, agent execution, tools, and
-        runtime services.
-      </p>
-
       <ObservabilityToolbar
         search={filter}
         onSearchChange={setFilter}
@@ -154,36 +165,43 @@ export function MonitoringPanel({
             <DetailPanel
               title={selectedSummary}
               meta={
-                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                  <span
-                    className={cn("font-medium", levelColor(selected.level))}
-                  >
-                    {selected.level}
+                <div className="mt-0.5 flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
+                  <span>{sourceLabel(selected)}</span>
+                  <StatusDot
+                    tone={LEVEL_TONE[selected.level]}
+                    label={selected.level.toLowerCase()}
+                  />
+                  <span className="font-mono">
+                    {formatDateTimeMillis(selected.ts)}
                   </span>
-                  <span className="text-muted-foreground">
-                    {formatDateTime(selected.ts).date}{" "}
-                    {formatDateTime(selected.ts).time}
-                    {selected.service &&
-                      ` · ${shortFunctionName(selected.service)}`}
-                  </span>
+                  {selectedTraceId && (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => viewTrace(selectedTraceId)}
+                    >
+                      View trace
+                      <ArrowUpRight />
+                    </Button>
+                  )}
                 </div>
               }
               onClose={() => setSelected(null)}
             >
-              <LogDetails entry={selected} onViewTrace={viewTrace} />
+              <LogDetails entry={selected} />
             </DetailPanel>
           )
         }
       >
-        <table className="w-full text-xs font-mono table-fixed">
+        <table className="w-full table-fixed text-xs">
           <colgroup>
-            <col className="w-42.5" />
-            <col className="w-22.5" />
-            <col className="w-50" />
+            <col className="w-40" />
+            <col className="w-19" />
+            <col className="w-36" />
             <col />
           </colgroup>
-          <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
-            <tr className="text-left text-muted-foreground text-[11px] uppercase tracking-wide">
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+            <tr className="text-left text-muted-foreground">
               <th className="px-3 py-2 font-medium">Time</th>
               <th className="px-3 py-2 font-medium">Level</th>
               <th className="px-3 py-2 font-medium">Service</th>
@@ -230,38 +248,33 @@ export function MonitoringPanel({
   );
 }
 
-function formatDateTime(ms: number): { date: string; time: string } {
-  const d = new Date(ms);
-  const date = d
-    .toLocaleDateString([], { month: "short", day: "2-digit" })
-    .toUpperCase();
-  const time = d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
+/** The copyable rows under Details: where the line came from. The level is in the header. */
+function detailRows(entry: ObservabilityLogEntry): DetailRow[] {
+  const rows: DetailRow[] = [];
+  if (isTraceId(entry.traceId)) {
+    rows.push({ key: "traceId", label: "Trace id", value: entry.traceId });
+  }
+  if (entry.endpointId) {
+    rows.push({
+      key: "endpointId",
+      label: "Endpoint",
+      value: entry.endpointId,
+    });
+  }
+  if (entry.agentId) {
+    rows.push({ key: "agentId", label: "Agent", value: entry.agentId });
+  }
+  if (entry.service) {
+    rows.push({ key: "service", label: "Service", value: entry.service });
+  }
+  rows.push({
+    key: "eventType",
+    label: "Event type",
+    value: entry.eventType,
+    words: true,
   });
-  const ms3 = String(d.getMilliseconds()).padStart(3, "0");
 
-  return { date: date, time: `${time}.${ms3.slice(0, 2)}` };
-}
-
-// Both themes per level: the 400 shades only clear WCAG AA on the dark card,
-// the 700 shades only on the light one.
-function levelColor(level: ObservabilityLogEntry["level"]): string {
-  if (level === "ERROR") return "text-red-700 dark:text-red-400";
-  if (level === "WARN") return "text-amber-700 dark:text-amber-400";
-  if (level === "INFO") return "text-sky-700 dark:text-sky-400";
-
-  return "text-muted-foreground";
-}
-
-function levelDot(level: ObservabilityLogEntry["level"]): string {
-  if (level === "ERROR") return "bg-red-400";
-  if (level === "WARN") return "bg-amber-400";
-  if (level === "INFO") return "bg-sky-400";
-
-  return "bg-muted-foreground/60";
+  return rows;
 }
 
 /** `pretty` is the raw string unchanged when the message is not JSON. */
@@ -297,56 +310,34 @@ function shortFunctionName(name: string): string {
   return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
 }
 
-function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
+/** Where the line came from: service, else endpoint, else agent. */
+function sourceLabel(entry: ObservabilityLogEntry): string {
+  if (entry.service) return shortFunctionName(entry.service);
+  if (entry.endpointId) return shortFunctionName(entry.endpointId);
 
-  return Number.isFinite(ms) ? ms : null;
+  return entry.agentId ?? "—";
 }
 
 function LogDetails({
   entry,
-  onViewTrace,
 }: {
   entry: ObservabilityLogEntry;
-  onViewTrace: (traceId: string) => void;
 }): React.JSX.Element {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
-  // A line logged outside any task run carries no trace, or the all-zero
-  // sentinel; neither has anything to open on the Tracing tab.
-  const traceId = isTraceId(entry.traceId) ? entry.traceId : null;
+  const rows = detailRows(entry);
 
   return (
-    <div className="flex flex-col gap-2">
-      {traceId && (
-        <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
-          <span className="truncate">trace: {traceId}</span>
-          <button
-            type="button"
-            onClick={() => onViewTrace(traceId)}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
-          >
-            View trace
-            <ArrowUpRight className="size-3" />
-          </button>
-        </div>
-      )}
-      {entry.endpointId && (
-        <div
-          className="text-[11px] text-muted-foreground break-all"
-          title={entry.endpointId}
-        >
-          {entry.endpointId}
-        </div>
-      )}
-      <pre
-        className={cn(
-          "whitespace-pre-wrap wrap-break-word leading-relaxed bg-background/60 border border-border rounded p-3 overflow-auto text-xs",
-          levelColor(entry.level),
-        )}
-      >
-        {parsed.pretty}
-      </pre>
+    <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
+      <DetailPayload
+        label="Message"
+        summary={`${parsed.pretty.length.toLocaleString()} chars`}
+        value={parsed.pretty}
+      />
+      <DetailFields
+        label="Details"
+        rows={rows}
+        summary={`${rows.length} fields`}
+      />
     </div>
   );
 }
@@ -361,57 +352,36 @@ function LogRow({
   onSelect: () => void;
 }): React.JSX.Element {
   const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
-  const { date, time } = formatDateTime(entry.ts);
+  const eventType = parsed.eventType ?? entry.eventType;
 
   return (
     <tr
       onClick={onSelect}
       className={cn(
-        "cursor-pointer border-b border-border/40 hover:bg-accent/20 transition-colors",
+        "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isSelected && "bg-accent/30",
       )}
     >
-      <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
-        <span className="text-muted-foreground mr-1">{date}</span>
-        {time}
+      <td className="px-3 py-1.5 font-mono whitespace-nowrap tabular-nums text-muted-foreground">
+        {formatDateTimeMillis(entry.ts)}
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
-        <span
-          className={cn(
-            "inline-flex items-center gap-1.5 font-medium",
-            levelColor(entry.level),
-          )}
-        >
-          {entry.level === "ERROR" || entry.level === "WARN" ? (
-            <AlertTriangle className="size-3" />
-          ) : (
-            <span
-              className={cn("size-1.5 rounded-full", levelDot(entry.level))}
-            />
-          )}
-          {entry.level}
+        <span className="inline-flex items-center gap-1.5">
+          <StatusDot tone={LEVEL_TONE[entry.level]} />
+          {entry.level.toLowerCase()}
         </span>
       </td>
       <td
-        className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
+        className="px-3 py-1.5 whitespace-nowrap truncate text-muted-foreground"
         title={entry.endpointId}
       >
-        {entry.service
-          ? shortFunctionName(entry.service)
-          : entry.endpointId
-            ? shortFunctionName(entry.endpointId)
-            : (entry.agentId ?? "—")}
+        {sourceLabel(entry)}
       </td>
-      <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
-        {(parsed.eventType ?? entry.eventType) && (
-          <Badge
-            variant="secondary"
-            className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
-          >
-            {parsed.eventType ?? entry.eventType}
-          </Badge>
-        )}
+      <td className="px-3 py-1.5 max-w-0 truncate text-foreground/90">
         {parsed.summary}
+        {eventType && (
+          <span className="ml-1.5 text-muted-foreground">{eventType}</span>
+        )}
       </td>
     </tr>
   );

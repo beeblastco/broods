@@ -1,6 +1,10 @@
 "use client";
 
-import { CopyRow } from "@/app/components/CopyButton";
+import {
+  DetailFields,
+  DetailPayload,
+  type DetailRow,
+} from "@/app/components/DetailSections";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
@@ -11,7 +15,7 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatNumber } from "@/app/lib/formatNumber";
-import { formatTime } from "@/app/lib/formatTime";
+import { formatDateTime, formatTime, toEpochMs } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -45,15 +49,6 @@ type StatusFilter = "all" | ObservabilitySpanRow["status"];
 interface ContinueNote {
   pending: boolean;
   text: string;
-}
-
-// One line in a span's Details section. Values read in mono (ids, counts,
-// model ids) unless the row is `words`.
-interface DetailRow {
-  key: string;
-  label: string;
-  value: string;
-  words?: true;
 }
 
 // One collapsible payload section, with the count line on its header.
@@ -663,18 +658,6 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
-/** Date + time for the "Started" column so a task is locatable across days, not just within the hour. */
-function formatDateTime(ms: number): string {
-  return new Date(ms).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
@@ -756,13 +739,6 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   SPAN_SEARCH_TEXT.set(span, text);
 
   return text;
-}
-
-function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-
-  return Number.isFinite(ms) ? ms : null;
 }
 
 // Only a failed top-level run can be continued: a subtask belongs to its
@@ -1129,68 +1105,25 @@ function SpanDetails({
       {(sections.length > 0 || rows.length > 0) && (
         <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
           {sections.map(({ key, label, summary, value }) => (
-            <details key={key} className="group/detail">
-              <SectionSummary label={label} summary={summary} />
-              {/* wrap-anywhere, unlike wrap-break-word, also lowers the min-content width. */}
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere px-3 pb-3 text-xs leading-relaxed text-foreground/90">
-                {value}
-              </pre>
-            </details>
+            <DetailPayload
+              key={key}
+              label={label}
+              summary={summary}
+              value={value}
+            />
           ))}
           {rows.length > 0 && (
-            <details className="group/detail">
-              <SectionSummary
-                label="Details"
-                summary={
-                  typeof modelId === "string"
-                    ? modelId
-                    : `${rows.length} fields`
-                }
-              />
-              <div className="grid px-1 pb-2 text-xs">
-                {rows.map(({ key, label, value, words }) => (
-                  <CopyRow
-                    key={key}
-                    value={value}
-                    className="grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] px-2 py-1"
-                  >
-                    <span className="truncate text-muted-foreground">
-                      {label}
-                    </span>
-                    <span
-                      className={cn(
-                        "truncate text-foreground/80",
-                        !words && "font-mono",
-                      )}
-                    >
-                      {value}
-                    </span>
-                  </CopyRow>
-                ))}
-              </div>
-            </details>
+            <DetailFields
+              label="Details"
+              rows={rows}
+              summary={
+                typeof modelId === "string" ? modelId : `${rows.length} fields`
+              }
+            />
           )}
         </div>
       )}
     </div>
-  );
-}
-
-function SectionSummary({
-  label,
-  summary,
-}: {
-  label: string;
-  summary: string;
-}): React.JSX.Element {
-  return (
-    <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-xs text-foreground/80 transition-colors hover:text-foreground">
-      <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open/detail:rotate-90" />
-      <span className="flex-1">{label}</span>
-      <span className="truncate font-mono text-muted-foreground">
-        {summary}
-      </span>
-    </summary>
   );
 }
 
