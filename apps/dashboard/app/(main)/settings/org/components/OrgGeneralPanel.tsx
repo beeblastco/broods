@@ -59,7 +59,7 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
     >
       <div className="grid gap-4">
         <div className="grid gap-1">
-          <Label htmlFor="org-name" className="text-xs text-muted-foreground">
+          <Label htmlFor="org-name" variant="muted" className="text-xs">
             Name
           </Label>
           <div className="flex items-center gap-2">
@@ -91,7 +91,9 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
         </div>
 
         <div className="grid gap-1">
-          <Label className="text-xs text-muted-foreground">Plan</Label>
+          <Label variant="muted" className="text-xs">
+            Plan
+          </Label>
           <div>
             <Badge variant="secondary" className="text-xs uppercase">
               {org.plan}

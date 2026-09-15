@@ -7,6 +7,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import { cn } from "@/app/lib/utils";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -16,8 +17,6 @@ import {
 } from "@xyflow/react";
 import { useState } from "react";
 
-const MOUNT_COLOR = "rgba(20, 184, 166, 0.55)";
-const MOUNT_COLOR_HOVER = "rgb(239, 68, 68, 0.9)";
 const ARROW_ID_PREFIX = "mount-arrow";
 
 /**
@@ -77,7 +76,7 @@ export function MountEdge({
     isCodeManagedEdgeId(id) ||
     (isCodeManagedOwner(sourceManagedBy) &&
       isCodeManagedOwner(targetManagedBy));
-  const stroke = hovered && !locked ? MOUNT_COLOR_HOVER : MOUNT_COLOR;
+  const deleteHover = hovered && !locked;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -93,7 +92,12 @@ export function MountEdge({
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M -10,-4 L 0,0 L -10,4 Z" fill={stroke} />
+          <path
+            d="M -10,-4 L 0,0 L -10,4 Z"
+            className={
+              deleteHover ? "fill-destructive/90" : "fill-canvas-mount/55"
+            }
+          />
         </marker>
       </defs>
 
@@ -102,13 +106,17 @@ export function MountEdge({
         path={edgePath}
         // Keep the teal stroke but honor focus-mode dimming: pull only `opacity` from the
         // incoming style (which also carries the gray default stroke we must not apply).
+        // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
+        // and the width goes through xyflow's own variable.
+        className={cn(
+          "animate-dashdraw opacity-(--edge-opacity)",
+          deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/55!",
+        )}
         style={{
-          stroke: stroke,
-          strokeWidth: 1.5,
-          strokeDasharray: "5 3",
-          animation: "dashdraw 0.5s linear infinite",
-          opacity: style?.opacity,
+          "--edge-opacity": style?.opacity,
+          "--xy-edge-stroke-width": 1.5,
         }}
+        strokeDasharray="5 3"
         markerStart={`url(#${arrowId})`}
         markerEnd={`url(#${arrowId})`}
       />

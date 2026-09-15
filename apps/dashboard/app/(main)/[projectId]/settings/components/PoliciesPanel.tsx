@@ -172,7 +172,7 @@ export function PoliciesPanel({
                     {policy.name}
                   </p>
                   {policy.managedBy === "cli" && (
-                    <span className="shrink-0 rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">
+                    <span className="shrink-0 rounded border border-border px-1 text-3xs uppercase text-muted-foreground">
                       CLI
                     </span>
                   )}
@@ -193,7 +193,8 @@ export function PoliciesPanel({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="cursor-pointer text-muted-foreground"
+                    tone="muted"
+                    className="cursor-pointer"
                     onClick={() => beginEdit(policy)}
                   >
                     <Pencil className="size-3.5" />
@@ -201,7 +202,8 @@ export function PoliciesPanel({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="cursor-pointer text-muted-foreground hover:text-destructive"
+                    tone="muted-destructive"
+                    className="cursor-pointer"
                     onClick={() => setDeletingPolicy(policy)}
                   >
                     <Trash2 className="size-3.5" />

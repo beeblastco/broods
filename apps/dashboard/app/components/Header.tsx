@@ -35,7 +35,7 @@ export function Header(): React.JSX.Element {
         <OrgSwitcher />
         {role === "member" && (
           <span
-            className="flex select-none items-center gap-1 text-[11px] text-amber-500/90"
+            className="flex select-none items-center gap-1 text-2xs text-warning/90"
             title="Members read everything and change nothing. Ask an org admin for changes."
           >
             <Lock className="size-3" />

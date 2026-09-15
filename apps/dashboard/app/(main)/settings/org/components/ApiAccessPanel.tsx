@@ -139,7 +139,9 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
     >
       <div className="grid gap-4">
         <div className="grid gap-1">
-          <Label className="text-xs text-muted-foreground">Account ID</Label>
+          <Label variant="muted" className="text-xs">
+            Account ID
+          </Label>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
               {account.accountId}
@@ -157,14 +159,18 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
         </div>
 
         <div className="grid gap-1">
-          <Label className="text-xs text-muted-foreground">Base URL</Label>
+          <Label variant="muted" className="text-xs">
+            Base URL
+          </Label>
           <code className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
             {harnessUrl}
           </code>
         </div>
 
         <div className="grid gap-1">
-          <Label className="text-xs text-muted-foreground">Bearer secret</Label>
+          <Label variant="muted" className="text-xs">
+            Bearer secret
+          </Label>
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
               {revealedSecret && showSecret ? revealedSecret : MASKED_SECRET}

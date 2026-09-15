@@ -52,5 +52,5 @@ test("dims the default label with its edge", () => {
   );
   const defaultLabel = markup.match(/<div[^>]*>default<\/div>/)?.[0];
 
-  expect(defaultLabel).toContain("opacity:0.12");
+  expect(defaultLabel).toContain("--edge-opacity:0.12");
 });

@@ -148,10 +148,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         >
           <div className="grid gap-3">
             <div className="grid gap-1">
-              <Label
-                htmlFor="invite-email"
-                className="text-xs text-muted-foreground"
-              >
+              <Label htmlFor="invite-email" variant="muted" className="text-xs">
                 Email
               </Label>
               <div className="flex items-center gap-2">
@@ -234,7 +231,7 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                       {m.avatarUrl && (
                         <AvatarImage src={m.avatarUrl} alt={m.name} />
                       )}
-                      <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+                      <AvatarFallback className="text-3xs font-medium">
                         {initials || "?"}
                       </AvatarFallback>
                     </Avatar>
@@ -276,7 +273,8 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="cursor-pointer text-muted-foreground hover:text-destructive"
+                        tone="muted-destructive"
+                        className="cursor-pointer"
                         onClick={() => setRemovingMember(m as MemberRow)}
                         aria-label="Remove member"
                       >

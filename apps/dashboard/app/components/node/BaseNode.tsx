@@ -23,19 +23,19 @@ export type BaseNodeData = {
 };
 
 export const statusConfig = {
-  running: { color: "bg-emerald-500", text: "Running" },
-  idle: { color: "bg-zinc-500", text: "Idle" },
-  error: { color: "bg-red-500", text: "Error" },
+  running: { color: "bg-success", text: "Running" },
+  idle: { color: "bg-muted-foreground", text: "Idle" },
+  error: { color: "bg-destructive", text: "Error" },
 };
 
 export const agentStatusConfig: Record<
   AgentHealthStatus,
   { color: string; text: string }
 > = {
-  healthy: { color: "bg-emerald-500", text: "Healthy" },
-  deploying: { color: "bg-amber-500", text: "Deploying" },
-  idle: { color: "bg-zinc-500", text: "Idle" },
-  unhealthy: { color: "bg-red-500", text: "Unhealthy" },
+  healthy: { color: "bg-success", text: "Healthy" },
+  deploying: { color: "bg-warning", text: "Deploying" },
+  idle: { color: "bg-muted-foreground", text: "Idle" },
+  unhealthy: { color: "bg-destructive", text: "Unhealthy" },
 };
 
 const zoomSelector = (state: { transform: [number, number, number] }): number =>
@@ -132,17 +132,17 @@ export function BaseNode({
   } else if (nodeType === "database") {
     // Conversation persistence is always on once wired to an agent (the session store).
     if (isConnectedToAgent) {
-      statusColor = "bg-emerald-500";
+      statusColor = "bg-success";
       statusText = "Persistent";
     } else {
-      statusColor = "bg-red-400";
+      statusColor = "bg-destructive";
       statusText = "Unconnected";
     }
   } else if (!isConnectedToAgent) {
-    statusColor = "bg-red-400";
+    statusColor = "bg-destructive";
     statusText = "Unconnected";
   } else if (cardStatus) {
-    statusColor = cardStatus.enabled ? "bg-emerald-500" : "bg-red-400";
+    statusColor = cardStatus.enabled ? "bg-success" : "bg-destructive";
     statusText = cardStatus.enabled ? "Enabled" : "Disabled";
   } else {
     const config = statusConfig[data.status ?? "idle"];
@@ -151,12 +151,12 @@ export function BaseNode({
   }
 
   const borderClass = !isConnectedToAgent
-    ? "border-red-400/40 hover:border-red-400/60"
+    ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
 
   return (
     <div
-      className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition-[border-color,box-shadow] duration-200 hover:shadow-md ${borderClass}`}
+      className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
     >
       {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
                 handle to the node's FIRST handle (sources before targets) for the snap preview,
@@ -218,7 +218,7 @@ export function BaseNode({
           return (
             <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
               <Globe
-                className={`size-3.5 ${isOn ? "text-emerald-500" : "text-muted-foreground"}`}
+                className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
               />
               {!isOn && (
                 <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
@@ -228,14 +228,16 @@ export function BaseNode({
         })()}
 
       <div
+        className="h-(--content-height)"
         style={{
-          height: contentHeight != null ? contentHeight * scale : undefined,
+          "--content-height":
+            contentHeight != null ? `${contentHeight * scale}px` : undefined,
         }}
       >
         <div
           ref={contentRef}
-          className="px-3 pt-2.5 origin-top-left"
-          style={{ transform: `scale(${scale})` }}
+          className="px-3 pt-2.5 origin-top-left scale-(--node-scale)"
+          style={{ "--node-scale": scale }}
         >
           <div className="flex items-center gap-1.5 pr-7 min-w-0">
             {nodeType === "agent" ? (
@@ -246,8 +248,8 @@ export function BaseNode({
               />
             ) : data.properties?.color ? (
               <span
-                className="inline-block size-3 rounded-full shrink-0"
-                style={{ backgroundColor: data.properties.color }}
+                className="inline-block size-3 rounded-full shrink-0 bg-(--dot-color)"
+                style={{ "--dot-color": data.properties.color }}
               />
             ) : (
               <span className="text-muted-foreground shrink-0">{icon}</span>
@@ -260,7 +262,7 @@ export function BaseNode({
             </span>
           </div>
           {subtitle && (
-            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <div className="mt-1 flex items-center gap-1.5 text-2xs text-muted-foreground">
               {subtitle}
             </div>
           )}
@@ -269,7 +271,7 @@ export function BaseNode({
               {featureRows.map((row) => (
                 <div
                   key={row.key}
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                  className="flex items-center gap-1.5 text-2xs text-muted-foreground"
                 >
                   <span className="text-muted-foreground">+</span>
                   {row.icon}
@@ -281,17 +283,17 @@ export function BaseNode({
 
           {/* B: workspace effective-sandbox state from the cascade */}
           {workspaceState && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] min-w-0">
+            <div className="mt-1.5 flex items-center gap-1.5 text-2xs min-w-0">
               {workspaceState.kind === "readonly" ? (
                 <>
-                  <Lock className="size-3 shrink-0 text-amber-500/80" />
-                  <span className="text-amber-500/90">read-only</span>
+                  <Lock className="size-3 shrink-0 text-warning/80" />
+                  <span className="text-warning/90">read-only</span>
                 </>
               ) : workspaceState.kind === "override" ? (
                 <>
-                  <CornerDownRight className="size-3 shrink-0 text-teal-500/80" />
+                  <CornerDownRight className="size-3 shrink-0 text-canvas-mount/80" />
                   <span
-                    className="truncate text-teal-500/90"
+                    className="truncate text-canvas-mount/90"
                     title={workspaceState.sandboxLabels.join(", ")}
                   >
                     {workspaceState.sandboxLabels.join(", ")}
@@ -319,7 +321,7 @@ export function BaseNode({
 
           {/* F: shared across multiple agents */}
           {sharedAgentCount >= 2 && (
-            <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <div className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground">
               <Users className="size-3 shrink-0" />
               <span>shared ×{sharedAgentCount}</span>
             </div>
@@ -330,9 +332,7 @@ export function BaseNode({
       {showStatus && (
         <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
           <div className={`size-1.5 rounded-full ${statusColor}`} />
-          <span className="text-[11px] text-muted-foreground">
-            {statusText}
-          </span>
+          <span className="text-2xs text-muted-foreground">{statusText}</span>
         </div>
       )}
     </div>

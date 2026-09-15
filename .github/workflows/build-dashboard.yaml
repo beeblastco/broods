@@ -51,8 +51,9 @@ jobs:
         # Dockerfile uses the same flag before building the app image.
         run: bun install --ignore-scripts --no-save
 
-      - name: Type-check dashboard
-        run: cd apps/dashboard && npx tsc --noEmit
+      - name: Check dashboard
+        # Types plus the design system lint (@shadcn/lint), same gate as ci.yaml.
+        run: bun run --filter @broods/dashboard check
 
       - name: Validate build variables
         shell: bash

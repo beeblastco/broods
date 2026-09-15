@@ -235,7 +235,7 @@ export function UiGallery(): React.JSX.Element {
                 <DetailPanel
                   title="stand-in row 3"
                   meta={
-                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    <div className="mt-0.5 text-2xs text-muted-foreground">
                       INFO · gateway
                     </div>
                   }
@@ -292,7 +292,7 @@ function StandInTable(): React.JSX.Element {
   return (
     <table className="w-full table-fixed font-mono text-xs">
       <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-        <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+        <tr className="text-left text-2xs uppercase tracking-wide text-muted-foreground">
           <th className="px-3 py-2 font-medium">Time</th>
           <th className="px-3 py-2 font-medium">Level</th>
           <th className="px-3 py-2 font-medium">Service</th>

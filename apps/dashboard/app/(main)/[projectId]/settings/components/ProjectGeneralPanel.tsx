@@ -72,10 +72,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
     >
       <div className="grid gap-4">
         <div className="grid gap-1">
-          <Label
-            htmlFor="project-name"
-            className="text-xs text-muted-foreground"
-          >
+          <Label htmlFor="project-name" variant="muted" className="text-xs">
             Name
           </Label>
           <Input
@@ -94,7 +91,8 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
         <div className="grid gap-1">
           <Label
             htmlFor="project-description"
-            className="text-xs text-muted-foreground"
+            variant="muted"
+            className="text-xs"
           >
             Description
           </Label>

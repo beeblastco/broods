@@ -13,7 +13,7 @@ export function DatabaseNode({ id, data }: NodeProps): React.JSX.Element {
       data={data as BaseNodeData}
       icon={<Database className="size-3.5" />}
       subtitle={
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           Conversation store
         </span>
       }

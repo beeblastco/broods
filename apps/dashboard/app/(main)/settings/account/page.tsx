@@ -4,7 +4,6 @@ import { AccountPanel } from "@/app/(main)/[projectId]/settings/components/Accou
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -34,18 +33,10 @@ export default function AccountSettingsPage(): React.JSX.Element {
           {TABS.map((tab) => (
             <Button
               key={tab.id}
-              variant="ghost"
+              variant={tab.danger ? "nav-destructive" : "nav"}
               size="sm"
-              className={cn(
-                "w-full justify-start px-3 cursor-pointer",
-                activeTab === tab.id
-                  ? tab.danger
-                    ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
-                    : "bg-accent text-foreground"
-                  : tab.danger
-                    ? "text-destructive/70 hover:text-destructive hover:bg-destructive/10"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-              )}
+              data-active={activeTab === tab.id}
+              className="w-full justify-start cursor-pointer"
               onClick={() => {
                 const p = new URLSearchParams(searchParams.toString());
                 p.set("tab", tab.id);

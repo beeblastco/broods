@@ -27,18 +27,13 @@ export function EdgeDeleteButton({
   return (
     // 64×64 hit zone centered on the edge midpoint, with no child div intercepting clicks
     <div
-      className="nodrag nopan group absolute flex items-center justify-center"
-      style={{
-        transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-        pointerEvents: "all",
-        width: 64,
-        height: 64,
-      }}
+      className="nodrag nopan group pointer-events-auto absolute top-(--label-y) left-(--label-x) flex size-16 -translate-1/2 items-center justify-center"
+      style={{ "--label-x": `${labelX}px`, "--label-y": `${labelY}px` }}
       onMouseEnter={() => onHoverChange?.(true)}
       onMouseLeave={() => onHoverChange?.(false)}
     >
       <button
-        className="flex cursor-pointer items-center justify-center rounded-md border bg-card p-1 text-red-500 opacity-0 shadow-sm transition-all group-hover:opacity-100 hover:scale-110 hover:border-red-500/50"
+        className="flex cursor-pointer items-center justify-center rounded-md border bg-card p-1 text-destructive opacity-0 shadow-sm transition-all group-hover:opacity-100 hover:scale-110 hover:border-destructive/50"
         onClick={onDelete}
       >
         <Trash2 className="size-4" />

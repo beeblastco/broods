@@ -69,10 +69,10 @@ export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
       className={cn(
         "size-2 fill-current",
         kind === "development"
-          ? "text-emerald-500"
+          ? "text-stage-development"
           : kind === "production"
-            ? "text-violet-500"
-            : "text-cyan-500",
+            ? "text-stage-production"
+            : "text-stage-custom",
       )}
     />
   );
@@ -225,8 +225,9 @@ export function StageSelector(): React.JSX.Element | null {
         <DropdownMenuTrigger
           render={
             <Button
-              variant="ghost"
-              className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+              variant="nav"
+              size="sm"
+              className="h-7 select-none cursor-pointer"
             />
           }
         >
@@ -248,12 +249,8 @@ export function StageSelector(): React.JSX.Element | null {
               {stages.map((stage: Doc<"stages">) => (
                 <DropdownMenuItem
                   key={stage._id}
-                  className={cn(
-                    "gap-2 cursor-pointer",
-                    stage._id === stageId
-                      ? "bg-accent text-accent-foreground"
-                      : "",
-                  )}
+                  data-active={stage._id === stageId}
+                  className="cursor-pointer"
                   onClick={() => handleSelectStage(stage)}
                 >
                   <StageDot kind={stage.kind} />
@@ -263,7 +260,7 @@ export function StageSelector(): React.JSX.Element | null {
 
               {!productionStage && canWrite && (
                 <DropdownMenuItem
-                  className="gap-2 cursor-pointer"
+                  className="cursor-pointer"
                   onClick={handleSelectProductionTarget}
                 >
                   <StageDot kind="production" />
@@ -326,7 +323,7 @@ export function StageSelector(): React.JSX.Element | null {
                     className={cn(
                       "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                       createMode === "empty"
-                        ? "border-cyan-500 bg-cyan-500/10"
+                        ? "border-stage-custom bg-stage-custom/10"
                         : "border-border hover:bg-accent/50",
                     )}
                   >
@@ -345,7 +342,7 @@ export function StageSelector(): React.JSX.Element | null {
                     className={cn(
                       "flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-left transition-colors",
                       createMode === "duplicate"
-                        ? "border-cyan-500 bg-cyan-500/10"
+                        ? "border-stage-custom bg-stage-custom/10"
                         : "border-border hover:bg-accent/50",
                     )}
                   >
@@ -438,7 +435,7 @@ export function StageSelector(): React.JSX.Element | null {
                       ? "cursor-pointer hover:bg-accent/50"
                       : "cursor-not-allowed opacity-50",
                     productionRegion === region.value
-                      ? "border-violet-500 bg-violet-500/10"
+                      ? "border-stage-production bg-stage-production/10"
                       : "border-border",
                   )}
                 >

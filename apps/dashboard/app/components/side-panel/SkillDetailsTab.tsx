@@ -129,7 +129,7 @@ export function SkillDetailsTab({
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
         <div className="flex flex-col gap-1">
           <SectionHeader>How do you want to add this skill?</SectionHeader>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Choose a source for this skill node.
           </p>
         </div>
@@ -166,7 +166,7 @@ export function SkillDetailsTab({
           <div className="flex items-center justify-between">
             <SectionHeader>File upload</SectionHeader>
             <button
-              className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="flex cursor-pointer items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
               onClick={resetSource}
               title="Change source type"
             >
@@ -178,7 +178,7 @@ export function SkillDetailsTab({
             <p className="text-xs font-medium text-foreground/80">
               Upload skill files in the Files tab
             </p>
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            <p className="mt-1 text-2xs text-muted-foreground">
               Switch to the{" "}
               <span className="font-medium text-foreground/60">Files</span> tab
               to upload your skill bundle. Add a{" "}
@@ -189,7 +189,7 @@ export function SkillDetailsTab({
           {path && (
             <>
               <SectionHeader>Skill path</SectionHeader>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 Set after publishing. Format:{" "}
                 <code className="rounded bg-muted px-1">
                   accountId/skill-name
@@ -216,7 +216,7 @@ export function SkillDetailsTab({
           <div className="flex items-center justify-between">
             <SectionHeader>Import from GitHub</SectionHeader>
             <button
-              className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="flex cursor-pointer items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
               onClick={resetSource}
               title="Change source type"
             >
@@ -240,7 +240,7 @@ export function SkillDetailsTab({
           <div className="flex items-center justify-between">
             <SectionHeader>Quick create</SectionHeader>
             <button
-              className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="flex cursor-pointer items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
               onClick={resetSource}
               title="Change source type"
             >
@@ -281,7 +281,7 @@ export function SkillDetailsTab({
           onCheckedChange={setActive}
         />
         {!disabled && !path && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Set the skill path above before enabling.
           </p>
         )}
@@ -331,7 +331,7 @@ function GithubForm({
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
         <SectionHeader>GitHub URL</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Format:{" "}
           <code className="rounded bg-muted px-1">
             https://github.com/&#123;owner&#125;/&#123;repo&#125;/tree/&#123;ref&#125;/&#123;path&#125;
@@ -347,7 +347,7 @@ function GithubForm({
 
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Your broods Bearer token (starts with{" "}
           <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
           session only.
@@ -356,7 +356,7 @@ function GithubForm({
       </div>
 
       {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive">
           {status.message}
         </p>
       )}
@@ -364,7 +364,7 @@ function GithubForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
           disabled={!url.trim() || !token.trim() || status.type === "busy"}
           onClick={() => void handleImport()}
         >
@@ -433,7 +433,7 @@ function JsonForm({
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Skill name</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Lowercase letters, numbers, and hyphens. Max 64 characters.
         </p>
         <Input
@@ -446,12 +446,12 @@ function JsonForm({
           disabled={isUpdate}
         />
         {name && !nameValid && (
-          <p className="text-[11px] text-destructive">
+          <p className="text-2xs text-destructive">
             Must start and end with a letter or number.
           </p>
         )}
         {isUpdate && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Name cannot be changed after creation. Use &ldquo;Change&rdquo; to
             start over.
           </p>
@@ -470,7 +470,7 @@ function JsonForm({
 
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Instructions (SKILL.md)</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Markdown content that tells the agent how to apply this skill.
         </p>
         <Textarea
@@ -483,20 +483,20 @@ function JsonForm({
 
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Your broods Bearer token. Saved in session only.
         </p>
         <TokenInput value={token} onChange={setToken} />
       </div>
 
       {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive">
           {status.message}
         </p>
       )}
 
       {status.type === "success" && status.message && (
-        <p className="rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+        <p className="rounded-md bg-success/10 px-2 py-1.5 text-2xs text-success">
           {status.message}
         </p>
       )}
@@ -504,7 +504,7 @@ function JsonForm({
       {canWrite && (
         <Button
           size="sm"
-          className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
+          className="h-8 cursor-pointer text-xs disabled:cursor-not-allowed"
           disabled={!canSubmit}
           onClick={() => void handleSubmit()}
         >
@@ -538,7 +538,7 @@ function SourceCard({
         <span className="text-muted-foreground">{icon}</span>
         <span className="text-xs font-medium text-foreground">{title}</span>
       </div>
-      <p className="text-[11px] text-muted-foreground">{description}</p>
+      <p className="text-2xs text-muted-foreground">{description}</p>
     </button>
   );
 }
@@ -558,7 +558,7 @@ function TokenInput({
         type={show ? "text" : "password"}
         value={value}
         placeholder="fp_acct_…"
-        className="h-7 flex-1 font-mono text-[11px]"
+        className="h-7 flex-1 font-mono text-2xs"
         onChange={(e) => onChange(e.target.value)}
       />
       <Button

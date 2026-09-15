@@ -25,11 +25,54 @@
       ],
       "jsPlugins": ["@shadcn/lint"],
       "rules": {
-        "shadcn/no-restyle": ["warn", { "allow": ["layout"] }],
-        "shadcn/no-raw-colors": "warn",
-        "shadcn/no-arbitrary-values": ["warn", { "allow": ["layout"] }],
-        "shadcn/no-inline-styles": "warn",
-        "shadcn/require-static-classes": "warn",
+        "shadcn/no-restyle": [
+          "error",
+          {
+            "allow": ["layout"],
+            "contracts": [
+              {
+                "pattern": "^(AvatarFallback|Badge|Button|ContextMenuLabel|DialogDescription|DropdownMenuLabel|Label|SelectItem|SelectTrigger|Textarea)$",
+                "allow": ["layout", "typography"]
+              },
+              {
+                "pattern": "^(InputGroup|InputGroupAddon|InputGroupButton|InputGroupTextarea)$",
+                "allow": ["layout", "typography", "spacing", "shape"]
+              },
+              {
+                "pattern": "^(DialogTitle|SheetTitle)$",
+                "allow": ["layout", "typography", "gap"]
+              },
+              {
+                "pattern": "^Input$",
+                "allow": ["layout", "typography", "pl"]
+              },
+              {
+                "pattern": "^(DialogContent|DialogHeader|TabsList)$",
+                "allow": ["layout", "spacing"]
+              },
+              {
+                "pattern": "^Skeleton$",
+                "allow": ["layout", "color", "shape"]
+              },
+              {
+                "pattern": "^(Collapsible|CollapsibleContent|CollapsibleTrigger|ContextMenuTrigger|DialogClose|DialogTrigger|DropdownMenuTrigger|ResizablePanel|ResizablePanelGroup|SheetClose|SheetTrigger|TabsContent)$",
+                "allow": [
+                  "layout",
+                  "color",
+                  "typography",
+                  "spacing",
+                  "shape",
+                  "effects",
+                  "motion"
+                ]
+              }
+            ]
+          }
+        ],
+        "shadcn/no-raw-colors": "error",
+        "shadcn/no-arbitrary-values": ["error", { "allow": ["layout"] }],
+        "shadcn/no-inline-styles": "error",
+        "shadcn/require-static-classes": "error",
         "shadcn/no-unknown-classes": [
           "error",
           { "allow": ["nodrag", "nopan"] }
@@ -54,6 +97,12 @@
         "shadcn/no-restyle": "off",
         "shadcn/require-static-classes": "off",
         "typescript/explicit-module-boundary-types": "off"
+      }
+    },
+    {
+      "files": ["apps/dashboard/tests/**"],
+      "rules": {
+        "shadcn/no-inline-styles": "off"
       }
     },
     {

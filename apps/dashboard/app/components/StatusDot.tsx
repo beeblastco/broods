@@ -6,10 +6,10 @@ export type StatusTone = "ok" | "warn" | "error" | "running" | "ended";
 // The hue carries the meaning, so each tone needs both themes: the 400 shades
 // only clear WCAG AA on the dark card, the 600 shades only on the light.
 const TONE_BG: Record<StatusTone, string> = {
-  ok: "bg-emerald-600 dark:bg-emerald-400",
-  warn: "bg-amber-600 dark:bg-amber-400",
-  error: "bg-red-600 dark:bg-red-400",
-  running: "bg-sky-600 dark:bg-sky-400",
+  ok: "bg-success",
+  warn: "bg-warning",
+  error: "bg-destructive",
+  running: "bg-info",
   ended: "bg-muted-foreground/50",
 };
 

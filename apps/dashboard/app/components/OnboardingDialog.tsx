@@ -17,10 +17,6 @@ import { type ReactNode, useState } from "react";
 const CLI_COMMAND =
   "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
 
-/** Flat-top hexagon clip path, the brood-comb shape used by the step indicator. */
-const HEX_CLIP =
-  "polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%)";
-
 interface Props {
   /** The one-time plaintext account secret to hand over on step two. */
   secret: string;
@@ -241,9 +237,8 @@ function HexSteps({
       {Array.from({ length: count }, (_, index) => (
         <span
           key={index}
-          style={{ clipPath: HEX_CLIP }}
           className={cn(
-            "size-2.5 transition-colors duration-300",
+            "clip-hex size-2.5 transition-colors duration-300",
             index === step
               ? "bg-foreground"
               : index < step
@@ -259,7 +254,7 @@ function HexSteps({
 /** Inline `<code>` styling for prose mentions of commands and names. */
 function Mono({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+    <code className="rounded bg-muted px-1 py-0.5 font-mono text-2xs text-foreground">
       {children}
     </code>
   );

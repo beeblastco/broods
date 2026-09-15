@@ -77,10 +77,11 @@ export function BranchEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-2xs uppercase tracking-wider text-muted-foreground">
         {title}
       </span>
       <Textarea
+        variant="code"
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
@@ -89,7 +90,7 @@ export function BranchEditor({
         }}
         spellCheck={false}
         rows={8}
-        className="min-h-32 resize-y bg-muted/50 font-mono text-xs"
+        className="min-h-32 resize-y"
         disabled={disabled}
         readOnly={!canWrite}
       />
@@ -107,7 +108,7 @@ export function BranchEditor({
           </Button>
         )}
         {saved && (
-          <span className="flex items-center gap-1 text-xs text-emerald-500">
+          <span className="flex items-center gap-1 text-xs text-success">
             <Check className="size-3" /> Saved
           </span>
         )}

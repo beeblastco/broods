@@ -195,7 +195,7 @@ export function SandboxInstancePanel({
         </span>
       }
       meta={
-        <div className="mt-0.5 text-[11px] text-muted-foreground">
+        <div className="mt-0.5 text-2xs text-muted-foreground">
           {formatProvider(instance.provider)} sandbox instance
         </div>
       }
@@ -382,7 +382,7 @@ function ActivityList({
                   className={
                     event.result === "ok"
                       ? "truncate text-muted-foreground"
-                      : "truncate text-red-700 dark:text-red-400"
+                      : "truncate text-destructive"
                   }
                 >
                   {detail}
@@ -504,7 +504,7 @@ function CommandRunner({
               key={`${entry.command}-${index}`}
               className="rounded-lg border border-border bg-black p-3 text-xs text-white"
             >
-              <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-zinc-400">
+              <div className="mb-2 flex items-center justify-between gap-3 text-2xs text-terminal-muted">
                 <code className="min-w-0 flex-1 truncate">
                   $ {entry.command}
                 </code>
@@ -512,8 +512,8 @@ function CommandRunner({
                   <span
                     className={
                       entry.result.ok
-                        ? "shrink-0 text-emerald-300"
-                        : "shrink-0 text-red-300"
+                        ? "shrink-0 text-terminal-success"
+                        : "shrink-0 text-terminal-error"
                     }
                   >
                     exit {entry.result.exitCode ?? "?"} ·{" "}
@@ -522,23 +522,23 @@ function CommandRunner({
                 )}
               </div>
               {entry.error ? (
-                <pre className="whitespace-pre-wrap wrap-break-word text-red-200">
+                <pre className="whitespace-pre-wrap wrap-break-word text-terminal-error">
                   {entry.error}
                 </pre>
               ) : (
                 <>
                   {entry.result?.stdout && (
-                    <pre className="whitespace-pre-wrap wrap-break-word text-zinc-100">
+                    <pre className="whitespace-pre-wrap wrap-break-word text-terminal-foreground">
                       {entry.result.stdout}
                     </pre>
                   )}
                   {entry.result?.stderr && (
-                    <pre className="mt-2 whitespace-pre-wrap wrap-break-word text-amber-200">
+                    <pre className="mt-2 whitespace-pre-wrap wrap-break-word text-terminal-warning">
                       {entry.result.stderr}
                     </pre>
                   )}
                   {entry.result?.truncated && (
-                    <p className="mt-2 text-[11px] text-amber-200">
+                    <p className="mt-2 text-2xs text-terminal-warning">
                       Output truncated.
                     </p>
                   )}

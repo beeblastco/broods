@@ -399,7 +399,7 @@ export function DetailsTab({
     <div className="flex flex-1 flex-col gap-5 p-4">
       {/* Editable name, auto-saves on blur or Enter */}
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Name
         </span>
         <Input
@@ -418,7 +418,7 @@ export function DetailsTab({
         <>
           {agentConfig.description && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <span className="text-2xs uppercase tracking-wider text-muted-foreground">
                 Description
               </span>
               <p className="text-xs text-foreground">
@@ -427,7 +427,7 @@ export function DetailsTab({
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
               Provider & Model
             </span>
             <Select
@@ -514,7 +514,7 @@ export function DetailsTab({
               {reasoningEnabled && (
                 <ExpandBlock>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-2xs text-muted-foreground">
                       Budget tokens{" "}
                       <span className="text-muted-foreground">
                         (Anthropic / MiniMax / Google)
@@ -539,7 +539,7 @@ export function DetailsTab({
                     />
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-2xs text-muted-foreground">
                       Effort{" "}
                       <span className="text-muted-foreground">
                         (OpenAI / Anthropic)
@@ -573,7 +573,7 @@ export function DetailsTab({
                       </SelectContent>
                     </Select>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-2xs text-muted-foreground">
                     Set budget for Anthropic/MiniMax/Google, effort for OpenAI.
                     Anthropic honors either.
                   </p>
@@ -589,10 +589,10 @@ export function DetailsTab({
       {onUpdatePolicyConfig && (
         <>
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
               Runtime Policy
             </span>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               Each policy carries its own mode: audit records decisions without
               blocking, enforce blocks the tool calls it denies. Set it on the
               policy in Settings.
@@ -628,7 +628,7 @@ export function DetailsTab({
 
       {/* Public access controls */}
       <div className="flex flex-col gap-3">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Public API
         </span>
         {onUpdatePublicAccess && (
@@ -640,7 +640,7 @@ export function DetailsTab({
           />
         )}
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             {publicAccess
               ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
               : "Secured by default. This agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
@@ -653,7 +653,7 @@ export function DetailsTab({
               <KeyRound className="size-3.5" />
               No runtime API key yet
             </span>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
               <code>broods deploy</code> also mints it automatically.
             </p>
@@ -684,7 +684,7 @@ export function DetailsTab({
             ) : (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-2xs uppercase tracking-wider text-muted-foreground">
                     Endpoint URL (HTTP/SSE)
                   </span>
                   <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
@@ -694,7 +694,8 @@ export function DetailsTab({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      className="shrink-0 cursor-pointer text-muted-foreground"
+                      tone="muted"
+                      className="shrink-0 cursor-pointer"
                       onClick={() => handleCopy(endpointUrl, "url")}
                     >
                       {copiedField === "url" ? (
@@ -707,7 +708,7 @@ export function DetailsTab({
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 text-2xs uppercase tracking-wider text-muted-foreground">
                     <Wifi className="size-3" />
                     WebSocket URL
                   </span>
@@ -718,7 +719,8 @@ export function DetailsTab({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      className="shrink-0 cursor-pointer text-muted-foreground"
+                      tone="muted"
+                      className="shrink-0 cursor-pointer"
                       onClick={() => handleCopy(websocketUrl, "websocket")}
                     >
                       {copiedField === "websocket" ? (
@@ -734,7 +736,7 @@ export function DetailsTab({
 
             {agentConfig?.agentId && (
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                <span className="text-2xs uppercase tracking-wider text-muted-foreground">
                   Agent ID
                 </span>
                 <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
@@ -744,7 +746,8 @@ export function DetailsTab({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
+                    tone="muted"
+                    className="shrink-0 cursor-pointer"
                     onClick={() =>
                       handleCopy(agentConfig.agentId as string, "agentid")
                     }
@@ -756,7 +759,7 @@ export function DetailsTab({
                     )}
                   </Button>
                 </div>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Pass this as <code>agentId</code> in the invoke payload.
                 </span>
               </div>
@@ -764,14 +767,15 @@ export function DetailsTab({
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                <span className="text-2xs uppercase tracking-wider text-muted-foreground">
                   API Key (stage-wide)
                 </span>
                 {canWrite && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
+                    tone="muted"
+                    className="h-6 cursor-pointer text-2xs"
                     disabled={isSavingKey}
                     onClick={() => setRotateOpen(true)}
                   >
@@ -790,7 +794,8 @@ export function DetailsTab({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
+                    tone="muted"
+                    className="shrink-0 cursor-pointer"
                     onClick={() => setShowApiKey(!showApiKey)}
                     aria-label={showApiKey ? "Hide API key" : "Show API key"}
                   >
@@ -803,7 +808,8 @@ export function DetailsTab({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
+                    tone="muted"
+                    className="shrink-0 cursor-pointer"
                     onClick={() => handleCopy(deploymentApiKey, "apikey")}
                   >
                     {copiedField === "apikey" ? (
@@ -828,7 +834,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
               Provider Tools
             </span>
 
@@ -872,7 +878,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
               Output Format
             </span>
             <div className="flex items-center justify-between">
@@ -880,7 +886,7 @@ export function DetailsTab({
                 <span className="text-xs font-medium text-foreground">
                   Structured Output
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Import a JSON schema or write one manually
                 </span>
               </div>
@@ -908,7 +914,7 @@ export function DetailsTab({
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-7 cursor-pointer text-[11px]"
+                      className="h-7 cursor-pointer text-2xs"
                       onClick={() => schemaFileInputRef.current?.click()}
                     >
                       Import Schema
@@ -917,7 +923,7 @@ export function DetailsTab({
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-7 cursor-pointer text-[11px]"
+                      className="h-7 cursor-pointer text-2xs"
                       onClick={handleApplySchema}
                     >
                       Save Schema

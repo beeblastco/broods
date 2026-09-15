@@ -119,7 +119,7 @@ export function OrgSwitcher(): React.JSX.Element {
           className="flex max-h-[min(24rem,var(--available-height))] w-64 flex-col overflow-hidden"
         >
           <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col">
-            <DropdownMenuLabel className="text-xs text-muted-foreground">
+            <DropdownMenuLabel variant="muted" className="text-xs">
               Organizations
             </DropdownMenuLabel>
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -175,10 +175,7 @@ export function OrgSwitcher(): React.JSX.Element {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
-            <Label
-              htmlFor="new-org-name"
-              className="text-xs text-muted-foreground"
-            >
+            <Label htmlFor="new-org-name" variant="muted" className="text-xs">
               Name
             </Label>
             <Input

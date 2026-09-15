@@ -1,6 +1,7 @@
 "use client";
 
 /** Deterministic dithered avatar generated from a seed string (e.g. an agent name). */
+import { cn } from "@/app/lib/utils";
 import type { CSSProperties } from "react";
 
 const GRID = 34;
@@ -42,8 +43,8 @@ export function DitherAvatarSVG({
       width={size}
       height={size}
       shapeRendering="crispEdges"
-      className={className}
-      style={{ borderRadius: "50%", ...style }}
+      className={cn("rounded-full", className)}
+      style={style}
       dangerouslySetInnerHTML={{ __html: inner }}
     />
   );

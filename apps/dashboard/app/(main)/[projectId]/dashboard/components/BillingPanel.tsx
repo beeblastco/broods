@@ -99,7 +99,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Badge className={planConfig.badgeClass}>
+              <Badge variant={planConfig.badgeVariant}>
                 {planConfig.label}
               </Badge>
               {isSubscribed && <Badge variant="success">Active</Badge>}
@@ -134,7 +134,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
             <Button
               size="sm"
               variant="outline"
-              className="cursor-pointer gap-1.5"
+              className="cursor-pointer"
               onClick={handlePortal}
               disabled={portalLoading}
             >
@@ -145,7 +145,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           {!onMaxPlan && (
             <Button
               size="sm"
-              className="cursor-pointer gap-1.5"
+              className="cursor-pointer"
               onClick={handleUpgrade}
               disabled={checkoutLoading}
             >
@@ -197,7 +197,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                className="cursor-pointer gap-1.5"
+                className="cursor-pointer"
                 onClick={handleUpgrade}
                 disabled={checkoutLoading}
               >
@@ -207,7 +207,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
               <Button
                 size="sm"
                 variant="ghost"
-                className="cursor-pointer gap-1.5"
+                className="cursor-pointer"
                 nativeButton={false}
                 render={
                   <a

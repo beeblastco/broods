@@ -124,7 +124,7 @@ export function SandboxResourceDetailsTab({
       <div className="flex flex-col gap-3">
         <SectionHeader>Sandbox config</SectionHeader>
         {managedByCode && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             Defined in code. Edit the sandbox in your broods project and deploy.
           </p>
         )}
@@ -277,7 +277,7 @@ export function WorkspaceResourceDetailsTab({
             onUpdateNodeData({ mountName: mountName || undefined })
           }
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           The graph writes this node into `config.workspaces[]` for each
           connected agent.
         </p>
@@ -403,7 +403,7 @@ export function WorkspaceResourceDetailsTab({
         />
         {config.isolation === true && (
           <ExpandBlock>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               Every channel attached to this workspace must set `partition`. A
               `conversation` scope mounts a private child folder per thread,
               issue, or PR; a `shared` scope mounts the workspace root.
@@ -411,7 +411,7 @@ export function WorkspaceResourceDetailsTab({
           </ExpandBlock>
         )}
         {disabledFeatures.length > 0 && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             {disabledFeatures.map((feature) => feature.label).join(" and ")}{" "}
             {disabledFeatures.length > 1 ? "are" : "is"} switched off in code
             for this workspace. {disabledFeatures.length > 1 ? "Both" : "It"}{" "}
@@ -539,7 +539,7 @@ function TextField({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[11px] text-muted-foreground">{label}</label>
+      <label className="text-2xs text-muted-foreground">{label}</label>
       <Input
         defaultValue={value}
         placeholder={placeholder}

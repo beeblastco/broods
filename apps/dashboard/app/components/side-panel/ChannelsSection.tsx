@@ -260,7 +260,7 @@ export function ChannelsSection({
     <>
       <div className="flex flex-col gap-3">
         <SectionHeader>Channels</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Inbound triggers the agent replies on. Secrets accept{" "}
           <code className="rounded bg-muted px-1">${"{ENV}"}</code>{" "}
           placeholders.
@@ -276,7 +276,7 @@ export function ChannelsSection({
                 {channel.label}
               </span>
               <button
-                className="flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"
+                className="flex cursor-pointer items-center gap-1 text-2xs text-muted-foreground hover:text-destructive"
                 onClick={() => setDeletingChannel(channel)}
                 title={`Remove ${channel.label}`}
               >
@@ -294,7 +294,7 @@ export function ChannelsSection({
 
               return (
                 <div key={field.key} className="flex flex-col gap-1">
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-2xs text-muted-foreground">
                     {field.label}
                     {field.required && (
                       <span className="text-destructive"> *</span>
@@ -311,7 +311,7 @@ export function ChannelsSection({
                       defaultValue={stored}
                       key={stored}
                       placeholder={field.placeholder}
-                      className="h-7 text-[11px]"
+                      className="h-7 text-2xs"
                       onBlur={(e) =>
                         commitField(channel.kind, field, e.target.value)
                       }
@@ -338,7 +338,7 @@ export function ChannelsSection({
                 key={channel.kind}
                 size="sm"
                 variant="outline"
-                className="h-7 cursor-pointer gap-1 text-[11px]"
+                className="h-7 cursor-pointer text-2xs"
                 onClick={() => void onUpdateChannel(channel.kind, {})}
               >
                 <Plus className="size-3" />
@@ -432,7 +432,7 @@ function SecretField({
         defaultValue={defaultValue}
         key={defaultValue}
         placeholder={placeholder ?? "${ENV_NAME} or literal"}
-        className="h-7 flex-1 font-mono text-[11px]"
+        className="h-7 flex-1 font-mono text-2xs"
         onBlur={(e) => onCommit(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") onCommit((e.target as HTMLInputElement).value);

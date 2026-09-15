@@ -75,7 +75,7 @@ export function SessionDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Name
         </span>
         <div className="flex items-center gap-2">
@@ -103,7 +103,7 @@ export function SessionDetailsTab({
 
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
         <Database className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-2xs leading-relaxed text-muted-foreground">
           The connected agent&rsquo;s conversation is saved automatically and
           kept across turns, so follow-ups continue the same thread. Persistence
           is always on &mdash; tune how the history is trimmed below.
@@ -138,10 +138,10 @@ export function SessionDetailsTab({
           {compactionEnabled && (
             <ExpandBlock>
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-medium text-foreground">
+                <span className="text-2xs font-medium text-foreground">
                   Max context length
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Serialized characters before compaction triggers (1&ndash;
                   {MAX_CONTEXT_LENGTH_LIMIT.toLocaleString()}).
                 </span>

@@ -45,6 +45,7 @@ interface DropdownMenuLabelProps extends Omit<
 > {
   className?: string;
   inset?: boolean;
+  variant?: "default" | "muted";
 }
 
 interface DropdownMenuSeparatorProps extends Omit<
@@ -129,7 +130,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "data-highlighted:bg-accent data-highlighted:text-accent-foreground data-[variant=destructive]:text-destructive data-[variant=destructive]:data-highlighted:bg-destructive/10 dark:data-[variant=destructive]:data-highlighted:bg-destructive/20 data-[variant=destructive]:data-highlighted:text-destructive data-[variant=destructive]:*:[svg]:text-destructive! [&_svg:not([class*='text-'])]:text-muted-foreground relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:opacity-50 data-inset:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "data-highlighted:bg-accent data-highlighted:text-accent-foreground data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[variant=destructive]:text-destructive data-[variant=destructive]:data-highlighted:bg-destructive/10 dark:data-[variant=destructive]:data-highlighted:bg-destructive/20 data-[variant=destructive]:data-highlighted:text-destructive data-[variant=destructive]:*:[svg]:text-destructive! [&_svg:not([class*='text-'])]:text-muted-foreground relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:opacity-50 data-inset:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -205,14 +206,16 @@ function DropdownMenuRadioItem({
 function DropdownMenuLabel({
   className,
   inset,
+  variant = "default",
   ...props
 }: DropdownMenuLabelProps) {
   return (
     <DropdownMenuPrimitive.GroupLabel
       data-slot="dropdown-menu-label"
       data-inset={inset}
+      data-variant={variant}
       className={cn(
-        "px-2 py-1.5 text-sm font-medium data-inset:pl-8",
+        "px-2 py-1.5 text-sm font-medium data-inset:pl-8 data-[variant=muted]:text-muted-foreground",
         className,
       )}
       {...props}

@@ -192,14 +192,14 @@ function initialsFromName(name: string): string {
 
 function colorFromName(name: string): string {
   const palette = [
-    "#14b8a6",
-    "#22c55e",
-    "#3b82f6",
-    "#06b6d4",
-    "#f59e0b",
-    "#ef4444",
-    "#8b5cf6",
-    "#f97316",
+    "var(--color-avatar-1)",
+    "var(--color-avatar-2)",
+    "var(--color-avatar-3)",
+    "var(--color-avatar-4)",
+    "var(--color-avatar-5)",
+    "var(--color-avatar-6)",
+    "var(--color-avatar-7)",
+    "var(--color-avatar-8)",
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i += 1) {
@@ -355,11 +355,11 @@ function AgentAvatar({
 }): React.JSX.Element {
   return (
     <span
-      className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${className ?? ""}`}
-      style={{ backgroundColor: color ?? "rgb(168, 85, 247)" }}
+      className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-(--avatar-color) ${className ?? ""}`}
+      style={{ "--avatar-color": color ?? "var(--color-canvas-agent)" }}
     >
       {label && (
-        <span className="text-[9px] font-semibold leading-none text-white">
+        <span className="text-3xs font-semibold leading-none text-white">
           {label}
         </span>
       )}
@@ -568,7 +568,7 @@ function SubagentPanelBlock({
 
   return (
     <Collapsible open={open} onOpenChange={setUserOverride}>
-      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/5 px-2 py-1.5 text-xs hover:bg-cyan-500/10 transition-colors">
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md border border-run-subagent/30 bg-run-subagent/5 px-2 py-1.5 text-xs hover:bg-run-subagent/10 transition-colors">
         <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
         <Wrench className="size-3 shrink-0" />
         <span className="font-medium text-foreground">
@@ -585,14 +585,14 @@ function SubagentPanelBlock({
       <CollapsibleContent>
         <div
           ref={contentRef}
-          className="ml-5 mt-1 max-h-40 space-y-2 overflow-y-auto overflow-x-auto rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2.5 py-2"
+          className="ml-5 mt-1 max-h-40 space-y-2 overflow-y-auto overflow-x-auto rounded-md border border-run-subagent/20 bg-run-subagent/5 px-2.5 py-2"
         >
           {events.length > 0 && (
             <div className="flex flex-col gap-1">
               {events.map((event, index) => (
                 <p
                   key={`subagent-event-${index}`}
-                  className="text-[11px] text-cyan-700 wrap-break-word dark:text-cyan-200/90"
+                  className="text-2xs text-run-subagent wrap-break-word"
                 >
                   {event.text}
                 </p>
@@ -640,7 +640,7 @@ function ReasoningBlock({
         <span className="ml-auto tabular-nums">{formatElapsed(elapsed)}</span>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="ml-5 mt-1 rounded-md border border-purple-500/20 bg-purple-500/5 px-2.5 py-2">
+        <div className="ml-5 mt-1 rounded-md border border-run-reasoning/20 bg-run-reasoning/5 px-2.5 py-2">
           <pre
             ref={preRef}
             className="max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word font-mono text-xs text-muted-foreground"
@@ -680,10 +680,10 @@ function ToolInvocationBlock({
       <CollapsibleTrigger
         className={`group flex w-full cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
           isError
-            ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
+            ? "border-destructive/30 bg-destructive/5 hover:bg-destructive/10"
             : hasOutput
-              ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
-              : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
+              ? "border-success/30 bg-success/5 hover:bg-success/10"
+              : "border-info/30 bg-info/5 hover:bg-info/10"
         }`}
       >
         <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
@@ -703,8 +703,8 @@ function ToolInvocationBlock({
       <CollapsibleContent>
         <div className="ml-5 mt-1 flex flex-col gap-1.5">
           {/* Tool call request */}
-          <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-2">
-            <p className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-blue-700 dark:text-blue-400">
+          <div className="rounded-md border border-info/20 bg-info/5 px-2.5 py-2">
+            <p className="mb-1 flex items-center gap-1 text-3xs font-medium uppercase tracking-wider text-info">
               <Terminal className="size-2.5" />
               Request
             </p>
@@ -718,15 +718,13 @@ function ToolInvocationBlock({
             <div
               className={`rounded-md border px-2.5 py-2 ${
                 isError
-                  ? "border-red-500/20 bg-red-500/5"
-                  : "border-emerald-500/20 bg-emerald-500/5"
+                  ? "border-destructive/20 bg-destructive/5"
+                  : "border-success/20 bg-success/5"
               }`}
             >
               <p
-                className={`mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider ${
-                  isError
-                    ? "text-red-700 dark:text-red-400"
-                    : "text-emerald-700 dark:text-emerald-400"
+                className={`mb-1 flex items-center gap-1 text-3xs font-medium uppercase tracking-wider ${
+                  isError ? "text-destructive" : "text-success"
                 }`}
               >
                 <Terminal className="size-2.5" />

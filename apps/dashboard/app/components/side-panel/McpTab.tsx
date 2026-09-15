@@ -180,7 +180,7 @@ export function McpTab({
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Transport
         </span>
         <TransportToggle active={activeTransport} onChange={setTransport} />
@@ -188,7 +188,7 @@ export function McpTab({
 
       {activeTransport === "hosted" ? (
         <>
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span className="text-2xs uppercase tracking-wider text-muted-foreground">
             Server code (Node · @modelcontextprotocol/server + zod)
           </span>
           <p className="text-xs text-muted-foreground">
@@ -200,7 +200,7 @@ export function McpTab({
       ) : (
         <>
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
               Server URL
             </span>
             <Input
@@ -218,7 +218,7 @@ export function McpTab({
       )}
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Headers (JSON, optional)
         </span>
         <Textarea
@@ -226,9 +226,10 @@ export function McpTab({
           onChange={(e) => setHeadersJson(e.target.value)}
           spellCheck={false}
           placeholder={'{\n  "Authorization": "Bearer ${MY_TOKEN}"\n}'}
-          className="min-h-16 resize-y bg-muted/50 font-mono text-xs"
+          variant="code"
+          className="resize-y"
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Credential headers must reference an account env var like{" "}
           <code>{"${NAME}"}</code>; it resolves at agent sync, never stored
           here.
@@ -273,7 +274,7 @@ function BundleManagedNotice({
 }): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col gap-3 p-4">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-2xs uppercase tracking-wider text-muted-foreground">
         Bundle
       </span>
       <p className="text-xs text-muted-foreground">
@@ -282,7 +283,7 @@ function BundleManagedNotice({
         <code>broods deploy</code> to change it.
       </p>
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
           Checksum
         </span>
         <code className="break-all text-xs text-foreground">
@@ -331,7 +332,7 @@ function SavedBadge({ state }: { state: SaveState }): React.JSX.Element | null {
   if (state.kind !== "saved") return null;
 
   return (
-    <span className="flex items-center gap-1 text-xs text-emerald-500">
+    <span className="flex items-center gap-1 text-xs text-success">
       <Check className="size-3" />
       {state.verified
         ? `Verified · ${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`

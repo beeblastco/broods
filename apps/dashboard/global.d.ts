@@ -16,6 +16,13 @@ declare module "*.sass" {
   export default content;
 }
 
+// Lets `style` carry CSS custom properties for classes to read, as in `w-(--bar-width)`.
+declare namespace React {
+  interface CSSProperties {
+    [key: `--${string}`]: string | number | undefined;
+  }
+}
+
 declare module "react-file-icon" {
   import type { ComponentType, SVGProps } from "react";
   export interface StyleProps {

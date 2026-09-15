@@ -213,12 +213,12 @@ export function SkillFilesTab({
         <div className="flex shrink-0 flex-col gap-0.5 border-b border-border bg-muted/20 px-3 py-2">
           <div className="flex items-center gap-1.5">
             <BookOpen className="size-3 text-muted-foreground" />
-            <span className="font-mono text-[12px] font-medium text-foreground/80">
+            <span className="font-mono text-xs font-medium text-foreground/80">
               {skillMeta.name ?? "—"}
             </span>
           </div>
           {skillMeta.description && (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-3xs text-muted-foreground">
               {skillMeta.description}
             </p>
           )}
@@ -227,14 +227,14 @@ export function SkillFilesTab({
 
       {/* SKILL.md missing warning */}
       {files !== undefined && !hasSkillMd && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-3 py-1.5">
-          <AlertTriangle className="size-3 shrink-0 text-amber-500" />
-          <span className="flex-1 text-[10px] text-amber-600 dark:text-amber-400">
+        <div className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning/5 px-3 py-1.5">
+          <AlertTriangle className="size-3 shrink-0 text-warning" />
+          <span className="flex-1 text-3xs text-warning">
             SKILL.md required at the root
           </span>
           {canWrite && (
             <button
-              className="cursor-pointer text-[10px] font-medium text-amber-600 underline dark:text-amber-400"
+              className="cursor-pointer text-3xs font-medium text-warning underline"
               onClick={() => setShowCreateSkillMd(true)}
             >
               Create
@@ -247,7 +247,7 @@ export function SkillFilesTab({
       {unsupportedFiles.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-1.5">
           <AlertTriangle className="size-3 shrink-0 text-destructive" />
-          <span className="text-[10px] text-destructive">
+          <span className="text-3xs text-destructive">
             {unsupportedFiles.length} unsupported file type
             {unsupportedFiles.length > 1 ? "s" : ""}. Skill bundles are
             text-only
@@ -289,10 +289,10 @@ export function SkillFilesTab({
       {/* Status message */}
       {status.type !== "idle" && status.message && (
         <div
-          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] ${
+          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-2xs ${
             status.type === "error"
               ? "bg-destructive/10 text-destructive"
-              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : "bg-success/10 text-success"
           }`}
         >
           <span className="flex-1">{status.message}</span>
@@ -311,7 +311,7 @@ export function SkillFilesTab({
           <Button
             size="sm"
             variant="outline"
-            className="h-7 flex-1 cursor-pointer gap-1.5 text-[11px] disabled:cursor-not-allowed"
+            className="h-7 flex-1 cursor-pointer text-2xs disabled:cursor-not-allowed"
             disabled={isBusy || !hasSkillMd}
             title={!hasSkillMd ? "SKILL.md is required" : undefined}
             onClick={handlePublishClick}
@@ -327,7 +327,8 @@ export function SkillFilesTab({
             <Button
               size="icon-xs"
               variant="ghost"
-              className="size-7 cursor-pointer text-muted-foreground"
+              tone="muted"
+              className="size-7 cursor-pointer"
               title="Clear saved Bearer token"
               onClick={() => clearSkillsBearerToken()}
             >
@@ -369,7 +370,7 @@ function CreateSkillMdForm({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-foreground">
+        <span className="text-2xs font-medium text-foreground">
           Create SKILL.md
         </span>
         <button
@@ -379,37 +380,37 @@ function CreateSkillMdForm({
           <X className="size-3.5" />
         </button>
       </div>
-      <p className="text-[10px] text-muted-foreground">
+      <p className="text-3xs text-muted-foreground">
         Lowercase letters, numbers, hyphens. Required at the bundle root.
       </p>
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted-foreground">Skill name</label>
+        <label className="text-3xs text-muted-foreground">Skill name</label>
         <Input
           value={name}
           placeholder="support-flow"
-          className="h-7 font-mono text-[11px]"
+          className="h-7 font-mono text-2xs"
           onChange={(e) =>
             setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
           }
         />
         {name && !nameValid && (
-          <p className="text-[10px] text-destructive">
+          <p className="text-3xs text-destructive">
             Name must start and end with a letter or number.
           </p>
         )}
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] text-muted-foreground">Description</label>
+        <label className="text-3xs text-muted-foreground">Description</label>
         <Textarea
           value={desc}
           placeholder="What this skill does and when to use it."
-          className="h-16 resize-none text-[11px]"
+          className="h-16 resize-none text-2xs"
           onChange={(e) => setDesc(e.target.value)}
         />
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
         disabled={!nameValid || !desc.trim()}
         onClick={() => onSubmit(name, desc.trim())}
       >
@@ -439,7 +440,7 @@ function TokenPrompt({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-foreground">{label}</span>
+        <span className="text-2xs font-medium text-foreground">{label}</span>
         <button
           className="cursor-pointer text-muted-foreground hover:text-foreground"
           onClick={onCancel}
@@ -447,7 +448,7 @@ function TokenPrompt({
           <X className="size-3.5" />
         </button>
       </div>
-      <p className="text-[10px] text-muted-foreground">
+      <p className="text-3xs text-muted-foreground">
         Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
         session only.
       </p>
@@ -457,7 +458,7 @@ function TokenPrompt({
           type={show ? "text" : "password"}
           value={draft}
           placeholder="fp_acct_…"
-          className="h-7 flex-1 font-mono text-[11px]"
+          className="h-7 flex-1 font-mono text-2xs"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
@@ -479,7 +480,7 @@ function TokenPrompt({
       </div>
       <Button
         size="sm"
-        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
+        className="h-7 cursor-pointer self-end text-2xs disabled:cursor-not-allowed"
         disabled={!draft.trim()}
         onClick={() => onConfirm(draft.trim())}
       >

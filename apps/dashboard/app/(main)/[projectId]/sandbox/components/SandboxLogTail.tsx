@@ -87,7 +87,7 @@ export function SandboxLogTail({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+      <div className="flex items-center justify-between text-2xs text-muted-foreground">
         <span className="font-mono">{logSandboxId}</span>
         <span className="inline-flex items-center gap-1.5">
           {status === "error" && (
@@ -96,9 +96,9 @@ export function SandboxLogTail({
           <StatusDot tone={CONNECTION_TONE[status]} label={status} />
         </span>
       </div>
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-black p-3 font-mono text-xs text-zinc-100">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-black p-3 font-mono text-xs text-terminal-foreground">
         {entries.length === 0 ? (
-          <p className="text-zinc-400">
+          <p className="text-terminal-muted">
             No output yet. Guest stdout and stderr appear here a few seconds
             after the sandbox writes them.
           </p>
@@ -111,7 +111,7 @@ export function SandboxLogTail({
                 key={`${entry.ts}-${index}`}
                 className="flex gap-3 whitespace-pre-wrap wrap-break-word"
               >
-                <span className="shrink-0 text-zinc-500 tabular-nums">
+                <span className="shrink-0 text-terminal-subtle tabular-nums">
                   {formatTime(entry.ts)}
                 </span>
                 <span>{entry.message}</span>

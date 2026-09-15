@@ -268,7 +268,8 @@ export function SandboxInstancesTable({
             }}
             aria-label="Clear filters"
             title="Clear filters"
-            className="cursor-pointer text-muted-foreground"
+            tone="muted"
+            className="cursor-pointer"
           >
             <X className="size-3.5" />
           </Button>

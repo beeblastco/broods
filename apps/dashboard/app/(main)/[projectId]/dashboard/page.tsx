@@ -268,14 +268,10 @@ export default function DashboardPage(): React.JSX.Element {
               key={t.id}
               nativeButton={false}
               render={<Link href={tabHref(t.id)} draggable={false} />}
-              variant="ghost"
+              variant="nav"
               size="sm"
-              className={cn(
-                "w-full select-none justify-start px-3 cursor-pointer active:bg-accent/70",
-                activeTab === t.id
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-              )}
+              data-active={activeTab === t.id}
+              className="w-full select-none justify-start cursor-pointer"
             >
               {t.label}
             </Button>

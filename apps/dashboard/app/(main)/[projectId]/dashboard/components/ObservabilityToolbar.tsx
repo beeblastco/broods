@@ -145,7 +145,8 @@ export function ObservabilityToolbar({
           onClick={onClear}
           aria-label="Clear filters"
           title="Clear filters"
-          className="cursor-pointer text-muted-foreground"
+          tone="muted"
+          className="cursor-pointer"
         >
           <X className="size-3.5" />
         </Button>
@@ -159,10 +160,10 @@ export function ObservabilityToolbar({
         disabled={refreshDisabled}
         aria-label="Refresh"
         title={refreshTitle}
+        tone={isError ? "destructive" : "muted"}
         className={cn(
-          "cursor-pointer text-muted-foreground",
+          "cursor-pointer",
           refreshDisabled && "cursor-not-allowed",
-          isError && "text-destructive",
         )}
       >
         <RefreshCw

@@ -1,3 +1,7 @@
+import type { VariantProps } from "class-variance-authority";
+
+import type { badgeVariants } from "@/app/components/ui/badge";
+
 /** Valid plan tier identifiers stored in the database. */
 export type PlanTier = "hobby" | "developer" | "pro" | "free";
 
@@ -9,8 +13,7 @@ export interface PlanConfig {
   label: string;
   description: string;
   order: number;
-  /** Tailwind classes for the plan badge background and text color. */
-  badgeClass: string;
+  badgeVariant: NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 }
 
 export const DEFAULT_PLAN: PlanTier = "hobby";
@@ -27,21 +30,21 @@ export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
     label: "Hobby",
     description: "Free tier for personal projects",
     order: 0,
-    badgeClass: "bg-secondary text-secondary-foreground",
+    badgeVariant: "secondary",
   },
   developer: {
     key: "developer",
     label: "Developer",
     description: "For individual developers shipping to production",
     order: 1,
-    badgeClass: "bg-blue-500/15 text-blue-700 dark:text-blue-400",
+    badgeVariant: "info",
   },
   pro: {
     key: "pro",
     label: "Pro",
     description: "For teams and advanced workloads",
     order: 2,
-    badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+    badgeVariant: "warning",
   },
 };
 

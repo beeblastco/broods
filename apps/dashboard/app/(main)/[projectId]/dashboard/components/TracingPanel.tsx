@@ -205,14 +205,14 @@ interface KindTheme {
 // on both surfaces, including against the error red that can replace a root
 // bar. Bars step deeper where a hue would wash out on one surface (task keeps
 // violet-500 on dark: violet-400 collapses into model.step's blue-400 under
-// deuteranopia).
+// deuteranopia). The shades per theme live in the --span-* tokens in globals.css.
 const KIND_THEME: Record<ObservabilitySpanRow["kind"], KindTheme> = {
-  task: { bar: "bg-violet-500/70", word: "task" },
-  cron: { bar: "bg-amber-500/70 dark:bg-amber-300/70", word: "cron" },
-  subtask: { bar: "bg-cyan-500/70 dark:bg-cyan-300/70", word: "subagent" },
-  "model.step": { bar: "bg-blue-700/70 dark:bg-blue-400/70", word: "model" },
-  "tool.call": { bar: "bg-orange-600/70 dark:bg-orange-500/70", word: "tool" },
-  phase: { bar: "bg-teal-700/70 dark:bg-teal-500/70", word: "phase" },
+  task: { bar: "bg-span-task/70", word: "task" },
+  cron: { bar: "bg-span-cron/70", word: "cron" },
+  subtask: { bar: "bg-span-subtask/70", word: "subagent" },
+  "model.step": { bar: "bg-span-model/70", word: "model" },
+  "tool.call": { bar: "bg-span-tool/70", word: "tool" },
+  phase: { bar: "bg-span-phase/70", word: "phase" },
 };
 
 // A root task/subtask still "running" past this likely never reported its
@@ -883,12 +883,12 @@ function TaskDurationBar({
     <div className="relative h-4 w-full">
       <div
         className={cn(
-          "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
-          group.root.status === "error" ? "bg-red-500/70" : barColor,
+          "absolute top-1/2 h-2 w-(--bar-width) -translate-y-1/2 rounded-sm",
+          group.root.status === "error" ? "bg-destructive/70" : barColor,
           live &&
             "ring-1 ring-inset ring-foreground/40 dark:ring-background/70",
         )}
-        style={{ width: `${widthPct}%` }}
+        style={{ "--bar-width": `${widthPct}%` }}
         title={title}
       />
     </div>
@@ -942,14 +942,14 @@ function TimelineBar({
     <div className="relative h-4 w-full">
       <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" />
       <div
-        className="absolute top-1/2 flex h-2 -translate-y-1/2 overflow-hidden rounded-sm"
-        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm"
+        style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}
         title={title}
       >
         {ttftFrac > 0 && (
           <div
-            className="h-full shrink-0 bg-blue-500/25"
-            style={{ width: `${ttftFrac * 100}%` }}
+            className="h-full w-(--ttft-width) shrink-0 bg-info/25"
+            style={{ "--ttft-width": `${ttftFrac * 100}%` }}
           />
         )}
         <div
@@ -1096,7 +1096,7 @@ function SpanDetails({
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <SpanTimings span={span} />
       {span.error && (
-        <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:bg-red-950/20 dark:text-red-400">
+        <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {span.error}
         </div>
       )}
@@ -1240,7 +1240,7 @@ function SpanRow({
         "cursor-pointer border-b border-border/40 transition-colors hover:bg-accent/20",
         isSelected && "bg-accent/30",
         !isRoot && "text-foreground/80",
-        highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
+        highlighted && "bg-info/10 ring-1 ring-inset ring-info/40",
       )}
     >
       <td
@@ -1251,7 +1251,10 @@ function SpanRow({
           ? formatDateTime(span.startTimeMs)
           : formatTime(span.startTimeMs)}
       </td>
-      <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
+      <td
+        className="py-1.5 pr-3 pl-(--row-indent)"
+        style={{ "--row-indent": `${depth * 18 + 12}px` }}
+      >
         <span className="flex min-w-0 items-center gap-2">
           {hasChildren ? (
             <button

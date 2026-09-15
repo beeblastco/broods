@@ -45,6 +45,7 @@ interface ContextMenuLabelProps extends Omit<
 > {
   className?: string;
   inset?: boolean;
+  variant?: "default" | "muted";
 }
 
 interface ContextMenuSeparatorProps extends Omit<
@@ -243,14 +244,16 @@ function ContextMenuRadioItem({
 function ContextMenuLabel({
   className,
   inset,
+  variant = "default",
   ...props
 }: ContextMenuLabelProps) {
   return (
     <ContextMenuPrimitive.GroupLabel
       data-slot="context-menu-label"
       data-inset={inset}
+      data-variant={variant}
       className={cn(
-        "text-foreground px-2 py-1.5 text-sm font-medium data-inset:pl-8",
+        "text-foreground px-2 py-1.5 text-sm font-medium data-inset:pl-8 data-[variant=muted]:text-muted-foreground",
         className,
       )}
       {...props}

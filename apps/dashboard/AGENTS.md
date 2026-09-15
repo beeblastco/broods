@@ -10,11 +10,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Design lint
 
-Root `bun run lint` runs [`@shadcn/lint`](https://github.com/shadcn-ui/lint) on this app, configured in the `apps/dashboard/**` override of the root `.oxlintrc.json`. It reads `components.json`, the variants in `app/components/ui`, and the `@theme` tokens in `app/globals.css`, and each finding names the variant, size, or token to use instead.
+`bun run check` runs types, then `bun run lint`: oxlint with the root `.oxlintrc.json`, which loads [`@shadcn/lint`](https://github.com/shadcn-ui/lint) for this app. CI runs it in `ci.yaml` (app-surfaces) and `build-dashboard.yaml`. Every `shadcn/*` rule is an error, and each finding names the variant, size, or token to use instead.
 
-- `no-unknown-classes` is an error: a class this app's Tailwind cannot generate fails CI. `nodrag` and `nopan` are allowed because React Flow reads them from the DOM.
-- `no-restyle` (layout classes allowed), `no-raw-colors`, `no-arbitrary-values` (layout allowed), `no-inline-styles` and `require-static-classes` are warnings with a backlog. Do not add new ones; the pre-commit hook prints them for staged files. Promote a rule to `error` once its count reaches zero.
-- `app/components/ui/**` styles its own internals, so `no-restyle`, `no-arbitrary-values` and `require-static-classes` are off there.
+- Colors come from tokens in `app/globals.css`, never the Tailwind palette. `success`, `warning`, `info`, `destructive`, `folder` and `run-*` switch between light and dark; `stage-*`, `canvas-*`, `usage-*`, `code-*`, `terminal-*` and `brand-*` read the same in both. A new color is a new `--color-*` token.
+- Text below `text-xs` is `text-2xs` (11px) or `text-3xs` (10px). No arbitrary values: add a theme token instead.
+- `style` carries only CSS custom properties that a class reads: `style={{ "--bar-width": `${pct}%` }}` with `w-(--bar-width)`. `global.d.ts` types them.
+- Components own color, spacing and shape; use their props. Button `tone` (`muted`, `muted-destructive`, `destructive`); Button `variant="nav"` or `"nav-destructive"` with `data-active` for sidebar tabs and header switchers; `variant="muted"` on Label, DropdownMenuLabel and ContextMenuLabel; Textarea `variant="code"`; DropdownMenuItem `data-active` for the current item.
+- What a page may still set on a component (the `no-restyle` contracts): layout everywhere; typography on text components (Button, Input, Label, Badge, dialog and menu labels, select parts); `gap` on dialog and sheet titles; `pl` on Input for a leading icon; spacing on DialogContent, DialogHeader and TabsList; color and shape on Skeleton; anything on unstyled primitives (Collapsible parts, triggers, close buttons, ResizablePanel, TabsContent).
+- `app/components/ui/**` styles its own internals, so `no-restyle`, `no-arbitrary-values` and `require-static-classes` are off there. `tests/**` may use inline styles. `nodrag` and `nopan` are allowed class names because React Flow reads them from the DOM.
 
 # Tests
 
