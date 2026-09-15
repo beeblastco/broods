@@ -2,6 +2,7 @@
 
 import { CopyRow } from "@/app/components/CopyButton";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
+import { SectionSummary } from "@/app/components/SectionSummary";
 import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import {
@@ -11,7 +12,7 @@ import {
 } from "@/app/hooks/useObservabilityStream";
 import { agentEndpointPath, resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { formatNumber } from "@/app/lib/formatNumber";
-import { formatTime } from "@/app/lib/formatTime";
+import { formatDateTime, formatTime, toEpochMs } from "@/app/lib/formatTime";
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -664,17 +665,6 @@ function displayAttribute(value: unknown): string {
 }
 
 /** Date + time for the "Started" column so a task is locatable across days, not just within the hour. */
-function formatDateTime(ms: number): string {
-  return new Date(ms).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
@@ -756,13 +746,6 @@ function spanSearchText(span: ObservabilitySpanRow): string {
   SPAN_SEARCH_TEXT.set(span, text);
 
   return text;
-}
-
-function toEpochMs(value: string): number | null {
-  if (!value) return null;
-  const ms = new Date(value).getTime();
-
-  return Number.isFinite(ms) ? ms : null;
 }
 
 // Only a failed top-level run can be continued: a subtask belongs to its
@@ -1173,24 +1156,6 @@ function SpanDetails({
         </div>
       )}
     </div>
-  );
-}
-
-function SectionSummary({
-  label,
-  summary,
-}: {
-  label: string;
-  summary: string;
-}): React.JSX.Element {
-  return (
-    <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-xs text-foreground/80 transition-colors hover:text-foreground">
-      <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open/detail:rotate-90" />
-      <span className="flex-1">{label}</span>
-      <span className="truncate font-mono text-muted-foreground">
-        {summary}
-      </span>
-    </summary>
   );
 }
 
