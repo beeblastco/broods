@@ -8,6 +8,7 @@
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -77,9 +78,7 @@ export function BranchEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-        {title}
-      </span>
+      <SectionHeader>{title}</SectionHeader>
       <Textarea
         variant="code"
         value={draft}

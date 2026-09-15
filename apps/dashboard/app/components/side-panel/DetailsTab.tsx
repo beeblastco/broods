@@ -26,6 +26,7 @@ import {
 import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   MODEL_PROVIDERS,
@@ -399,9 +400,7 @@ export function DetailsTab({
     <div className="flex flex-1 flex-col gap-5 p-4">
       {/* Editable name, auto-saves on blur or Enter */}
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Name
-        </span>
+        <SectionHeader>Name</SectionHeader>
         <Input
           value={editName}
           onChange={(e) => setEditName(e.target.value)}
@@ -418,18 +417,14 @@ export function DetailsTab({
         <>
           {agentConfig.description && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-                Description
-              </span>
+              <SectionHeader>Description</SectionHeader>
               <p className="text-xs text-foreground">
                 {agentConfig.description}
               </p>
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-              Provider & Model
-            </span>
+            <SectionHeader>Provider & Model</SectionHeader>
             <Select
               items={providerOptions}
               value={editProvider}
@@ -589,9 +584,7 @@ export function DetailsTab({
       {onUpdatePolicyConfig && (
         <>
           <div className="flex flex-col gap-3">
-            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-              Runtime Policy
-            </span>
+            <SectionHeader>Runtime Policy</SectionHeader>
             <p className="text-2xs text-muted-foreground">
               Each policy carries its own mode: audit records decisions without
               blocking, enforce blocks the tool calls it denies. Set it on the
@@ -628,9 +621,7 @@ export function DetailsTab({
 
       {/* Public access controls */}
       <div className="flex flex-col gap-3">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Public API
-        </span>
+        <SectionHeader>Public API</SectionHeader>
         {onUpdatePublicAccess && (
           <ToggleRow
             label="Public access"
@@ -684,9 +675,7 @@ export function DetailsTab({
             ) : (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-                    Endpoint URL (HTTP/SSE)
-                  </span>
+                  <SectionHeader>Endpoint URL (HTTP/SSE)</SectionHeader>
                   <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
                     <code className="flex-1 text-xs text-foreground break-all">
                       {endpointUrl}
@@ -736,9 +725,7 @@ export function DetailsTab({
 
             {agentConfig?.agentId && (
               <div className="flex flex-col gap-1.5">
-                <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-                  Agent ID
-                </span>
+                <SectionHeader>Agent ID</SectionHeader>
                 <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
                   <code className="flex-1 text-xs text-foreground break-all">
                     {agentConfig.agentId}
@@ -767,9 +754,7 @@ export function DetailsTab({
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-                  API Key (stage-wide)
-                </span>
+                <SectionHeader>API Key (stage-wide)</SectionHeader>
                 {canWrite && (
                   <Button
                     variant="ghost"
@@ -834,9 +819,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-              Provider Tools
-            </span>
+            <SectionHeader>Provider Tools</SectionHeader>
 
             {/* Google Search */}
             <ToggleRow
@@ -878,9 +861,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-              Output Format
-            </span>
+            <SectionHeader>Output Format</SectionHeader>
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
                 <span className="text-xs font-medium text-foreground">

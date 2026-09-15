@@ -535,7 +535,7 @@ export function TracingPanel({
             <col className="w-19" />
             <col className="w-[26%]" />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
             <tr className="text-left text-muted-foreground">
               <th className="px-3 py-2 font-medium">Started</th>
               <th className="px-3 py-2 font-medium">Request</th>

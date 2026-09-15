@@ -759,7 +759,7 @@ function ChartTooltip({
 }): React.JSX.Element {
   return (
     <div
-      className="pointer-events-none absolute top-(--tooltip-y) left-(--tooltip-x) z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-2xs shadow-lg backdrop-blur"
+      className="pointer-events-none absolute top-(--tooltip-y) left-(--tooltip-x) z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-2xs shadow-lg"
       style={{ "--tooltip-x": `${xPct}%`, "--tooltip-y": `${yPct}%` }}
     >
       {children}

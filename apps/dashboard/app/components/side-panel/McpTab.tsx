@@ -9,6 +9,7 @@ import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatSource } from "@/app/lib/formatSource";
 import { api } from "@broods/convex/_generated/api";
@@ -180,17 +181,15 @@ export function McpTab({
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Transport
-        </span>
+        <SectionHeader>Transport</SectionHeader>
         <TransportToggle active={activeTransport} onChange={setTransport} />
       </div>
 
       {activeTransport === "hosted" ? (
         <>
-          <span className="text-2xs uppercase tracking-wider text-muted-foreground">
+          <SectionHeader>
             Server code (Node · @modelcontextprotocol/server + zod)
-          </span>
+          </SectionHeader>
           <p className="text-xs text-muted-foreground">
             Save bundles the code, runs it in the sandbox, and lists its tools;
             a server that fails to build or answer never uploads.
@@ -200,9 +199,7 @@ export function McpTab({
       ) : (
         <>
           <div className="flex flex-col gap-1.5">
-            <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-              Server URL
-            </span>
+            <SectionHeader>Server URL</SectionHeader>
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -218,9 +215,7 @@ export function McpTab({
       )}
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Headers (JSON, optional)
-        </span>
+        <SectionHeader>Headers (JSON, optional)</SectionHeader>
         <Textarea
           value={headersJson}
           onChange={(e) => setHeadersJson(e.target.value)}
@@ -274,18 +269,14 @@ function BundleManagedNotice({
 }): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col gap-3 p-4">
-      <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-        Bundle
-      </span>
+      <SectionHeader>Bundle</SectionHeader>
       <p className="text-xs text-muted-foreground">
         This server was uploaded by the CLI or SDK, which bundles it from your
         project. The source stays with your code. Run <code>broods dev</code> or{" "}
         <code>broods deploy</code> to change it.
       </p>
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Checksum
-        </span>
+        <SectionHeader>Checksum</SectionHeader>
         <code className="break-all text-xs text-foreground">
           {server.sha256}
         </code>

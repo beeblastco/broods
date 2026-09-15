@@ -108,7 +108,7 @@ of it. If `bun --revision` shows a canary build, use `bun upgrade --stable`. Pla
 
 ```bash
 bun install      # install all workspaces
-bun run check    # typecheck core + convex + SDK + demos
+bun run check    # lint, format check, and typecheck every workspace
 bun run test     # core unit tests
 bun run build    # build the core Bun container binary
 ```

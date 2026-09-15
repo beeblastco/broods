@@ -75,9 +75,7 @@ export function SessionDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Name
-        </span>
+        <SectionHeader>Name</SectionHeader>
         <div className="flex items-center gap-2">
           <Input
             value={editName}

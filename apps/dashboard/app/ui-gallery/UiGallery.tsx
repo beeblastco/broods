@@ -291,7 +291,7 @@ function LogTableStandIn(): React.JSX.Element {
 function StandInTable(): React.JSX.Element {
   return (
     <table className="w-full table-fixed font-mono text-xs">
-      <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+      <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
         <tr className="text-left text-2xs uppercase tracking-wide text-muted-foreground">
           <th className="px-3 py-2 font-medium">Time</th>
           <th className="px-3 py-2 font-medium">Level</th>

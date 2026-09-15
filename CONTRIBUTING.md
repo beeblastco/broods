@@ -16,7 +16,7 @@ cp apps/core/.env.example apps/core/.env
 ## Development workflow
 
 ```bash
-bun run check            # typecheck core + convex + SDK + demos
+bun run check            # oxlint, oxfmt check, and every workspace check (dashboard adds @shadcn/lint)
 bun run test             # core unit tests (max-concurrency 1)
 bun run build            # build the core Bun container binary
 # Try a demo (from repo root):

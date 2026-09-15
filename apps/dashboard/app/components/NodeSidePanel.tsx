@@ -2,7 +2,10 @@
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import { agentStatusConfig } from "@/app/components/node/BaseNode";
+import {
+  agentStatusConfig,
+  statusConfig,
+} from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import {
   DetailsTab,
@@ -28,6 +31,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import {
   Tabs,
   TabsContent,
@@ -73,18 +77,6 @@ const nodeStatusBadgeVariant: Record<
   running: "success",
   idle: "secondary",
   error: "destructive",
-};
-
-const nodeStatusBadgeColor: Record<"running" | "idle" | "error", string> = {
-  running: "bg-success",
-  idle: "bg-muted-foreground",
-  error: "bg-destructive",
-};
-
-const nodeStatusBadgeText: Record<"running" | "idle" | "error", string> = {
-  running: "Running",
-  idle: "Idle",
-  error: "Error",
 };
 
 const healthBadgeVariant: Record<
@@ -381,8 +373,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       const workspaceStatus = nodeData?.status ?? "idle";
 
       return {
-        text: nodeStatusBadgeText[workspaceStatus],
-        color: nodeStatusBadgeColor[workspaceStatus],
+        text: statusConfig[workspaceStatus].text,
+        color: statusConfig[workspaceStatus].color,
         variant: nodeStatusBadgeVariant[workspaceStatus],
       };
     }
@@ -391,8 +383,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       const sandboxStatus = nodeData?.status ?? "idle";
 
       return {
-        text: nodeStatusBadgeText[sandboxStatus],
-        color: nodeStatusBadgeColor[sandboxStatus],
+        text: statusConfig[sandboxStatus].text,
+        color: statusConfig[sandboxStatus].color,
         variant: nodeStatusBadgeVariant[sandboxStatus],
       };
     }
@@ -416,8 +408,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const nodeStatus = nodeData?.status ?? "idle";
 
     return {
-      text: nodeStatusBadgeText[nodeStatus],
-      color: nodeStatusBadgeColor[nodeStatus],
+      text: statusConfig[nodeStatus].text,
+      color: statusConfig[nodeStatus].color,
       variant: nodeStatusBadgeVariant[nodeStatus],
     };
   }, [
@@ -1121,9 +1113,7 @@ function ServiceDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-2xs uppercase tracking-wider text-muted-foreground">
-          Name
-        </span>
+        <SectionHeader>Name</SectionHeader>
         <div className="flex items-center gap-2">
           <Input
             value={editName}

@@ -3,8 +3,9 @@ import { cn } from "@/app/lib/utils";
 
 export type StatusTone = "ok" | "warn" | "error" | "running" | "ended";
 
-// The hue carries the meaning, so each tone needs both themes: the 400 shades
-// only clear WCAG AA on the dark card, the 600 shades only on the light.
+// The hue carries the meaning, so each tone needs both themes. The tokens hold
+// the 600 shade on the light card and the 400 shade on the dark, the only
+// shades that clear WCAG AA there.
 const TONE_BG: Record<StatusTone, string> = {
   ok: "bg-success",
   warn: "bg-warning",
