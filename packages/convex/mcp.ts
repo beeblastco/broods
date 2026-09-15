@@ -238,12 +238,24 @@ export const saveForNode = action({
       }),
       { requireConnection: context.existing === null },
     );
-    const connection = await resolveConnection(ctx, context, input);
     const touchesConnection =
       context.existing === null ||
       args.url !== undefined ||
       args.bundle !== undefined ||
       args.headers !== undefined;
+    // A machine row's connection is its sandbox, which only `broods deploy`
+    // sets; the dashboard still edits its description and enabled state.
+    if (context.existing?.transport === "machine") {
+      if (touchesConnection) {
+        throw new Error(
+          "A server on a machine is defined in code: defineMcp({ sandbox }) and broods machine --mcp on that computer.",
+        );
+      }
+      const serverId = await writeRow(ctx, context, args, input, null);
+
+      return { serverId: serverId, verified: true, tools: [] };
+    }
+    const connection = await resolveConnection(ctx, context, input);
     const probe = touchesConnection
       ? await probeServer(context.accountId, input.name!, connection)
       : { verified: true, tools: [] };
@@ -374,7 +386,8 @@ async function resolveConnection(
   input: McpInput,
 ): Promise<ResolvedConnection> {
   const existing = context.existing;
-  const transport = input.transport ?? existing?.transport ?? "http";
+  const transport: ResolvedConnection["transport"] =
+    input.transport === "hosted" ? "hosted" : "http";
   if (transport === "http") {
     const url = input.url ?? existing?.url;
     if (!url) throw new Error("Provide the server url before saving it.");
@@ -431,10 +444,10 @@ async function writeRow(
   context: NodeContext,
   args: NodeScope & { nodeLabel: string; sourceCode?: string },
   input: McpInput,
-  connection: ResolvedConnection,
+  connection: ResolvedConnection | null,
 ): Promise<Id<"mcp">> {
   const sourceCode =
-    connection.transport === "hosted" ? args.sourceCode : undefined;
+    connection?.transport === "hosted" ? args.sourceCode : undefined;
   const shared = stripUndefined({
     ...connection,
     name: input.name,

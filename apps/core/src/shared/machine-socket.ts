@@ -1,7 +1,8 @@
 /**
  * Frames between the `broods machine` daemon and core. The gateway relays
  * them unchanged and the CLI bundles this file. `computerInput` is also the
- * computer tool's input schema, so the model and the wire share one shape.
+ * computer tool's input schema, so the model and the wire share one shape. MCP
+ * replies carry the SDK's JSON as is; core parses them with the SDK's schemas.
  */
 
 import { z } from "zod";
@@ -124,6 +125,45 @@ const helloFrame = z.object({
   hostname: z.string().optional(),
   platform: z.string().optional(),
   computer: z.boolean().optional(),
+  // Names of the MCP servers in the daemon's --mcp file.
+  mcp: z.array(z.string()).optional(),
+});
+
+const mcpCallFrame = z.object({
+  type: z.literal("mcp-call"),
+  id: z.string(),
+  server: z.string(),
+  tool: z.string(),
+  args: z.record(z.string(), z.unknown()),
+});
+
+const mcpListFrame = z.object({
+  type: z.literal("mcp-list"),
+  id: z.string(),
+  server: z.string(),
+});
+
+// The SDK's CallToolResult, checked down to what core reads off it.
+const mcpResultFrame = z.object({
+  type: z.literal("mcp-result"),
+  id: z.string(),
+  result: z.looseObject({ content: z.array(z.unknown()) }).optional(),
+  error: z.string().optional(),
+});
+
+// The SDK's Tool[], likewise.
+const mcpToolsFrame = z.object({
+  type: z.literal("mcp-tools"),
+  id: z.string(),
+  tools: z
+    .array(
+      z.looseObject({
+        name: z.string(),
+        inputSchema: z.record(z.string(), z.unknown()),
+      }),
+    )
+    .optional(),
+  error: z.string().optional(),
 });
 
 const readyFrame = z.object({
@@ -145,12 +185,16 @@ const resultFrame = z.object({
 const coreFrame = z.discriminatedUnion("type", [
   computerFrame,
   execFrame,
+  mcpCallFrame,
+  mcpListFrame,
   readyFrame,
 ]);
 
 const daemonFrame = z.discriminatedUnion("type", [
   computerResultFrame,
   helloFrame,
+  mcpResultFrame,
+  mcpToolsFrame,
   resultFrame,
 ]);
 
@@ -161,6 +205,10 @@ export type MachineCoreFrame = z.infer<typeof coreFrame>;
 export type MachineDaemonFrame = z.infer<typeof daemonFrame>;
 export type MachineExecFrame = z.infer<typeof execFrame>;
 export type MachineHelloFrame = z.infer<typeof helloFrame>;
+export type MachineMcpCallFrame = z.infer<typeof mcpCallFrame>;
+export type MachineMcpListFrame = z.infer<typeof mcpListFrame>;
+export type MachineMcpResultFrame = z.infer<typeof mcpResultFrame>;
+export type MachineMcpToolsFrame = z.infer<typeof mcpToolsFrame>;
 export type MachineReadyFrame = z.infer<typeof readyFrame>;
 export type MachineResultFrame = z.infer<typeof resultFrame>;
 

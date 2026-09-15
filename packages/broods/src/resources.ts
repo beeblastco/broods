@@ -156,15 +156,21 @@ export type McpHandler =
   | { fetch(request: Request): Response | Promise<Response> };
 
 /**
- * MCP server registration (#331), either external (`url`) or hosted (`handler`).
- * Either way the server's tools are offered as `<name>__<tool>`; an external
- * row is dialed over the stateless HTTP transport (spec 2026-07-28) at agent
- * registration time. The name namespaces those tools, so it must be 1-32
- * lowercase letters, digits, or hyphens, starting with a letter.
+ * MCP server registration (#331): external (`url`), hosted (`handler`), or on
+ * a user's computer (`sandbox`). Either way the server's tools are offered as
+ * `<name>__<tool>`; an external row is dialed over the stateless HTTP
+ * transport (spec 2026-07-28) at agent registration time. The name namespaces
+ * those tools, so it must be 1-32 lowercase letters, digits, or hyphens,
+ * starting with a letter.
  */
 export interface McpDefinitionConfig {
   /** External server's MCP endpoint; http(s), no embedded credentials. */
   url?: string;
+  /**
+   * Instead of `url` or `handler`: the machine sandbox whose daemon runs this
+   * server, from the entry with the same name in its `--mcp` file.
+   */
+  sandbox?: SandboxResource | string;
   /**
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,

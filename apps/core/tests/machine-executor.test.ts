@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { ToolExecuteFunction } from "ai";
+import {
+  callMcpTool,
+  listMcpTools,
+  mcpConnection,
+} from "../src/harness/mcp/client.ts";
 import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import {
   MachineSandboxExecutor,
@@ -15,6 +20,8 @@ import {
   parseDaemonFrame,
   type MachineComputerFrame,
   type MachineExecFrame,
+  type MachineMcpCallFrame,
+  type MachineMcpListFrame,
   type MachineReadyFrame,
   type MachineResultFrame,
 } from "../src/shared/machine-socket.ts";
@@ -26,12 +33,23 @@ import {
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
+  machineMcpRecord,
   machineStorage,
   startMachineCore,
 } from "./helpers/machine.ts";
 
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
+
+/** The services a fake daemon advertises in its hello, and how it answers. */
+interface FakeDaemon {
+  mcp?: string[];
+  onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
+  onMcp?: (
+    frame: MachineMcpCallFrame | MachineMcpListFrame,
+    socket: WebSocket,
+  ) => void;
+}
 
 beforeEach(() => {
   setStorageForTests(machineStorage());
@@ -159,11 +177,8 @@ test("the computer tool reaches a daemon started with --computer, and names the 
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
-  await connectDaemon(
-    server,
-    "my-mac",
-    () => {},
-    (frame, socket) => {
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket) => {
       socket.send(
         JSON.stringify({
           type: "computer-result",
@@ -177,7 +192,7 @@ test("the computer tool reaches a daemon started with --computer, and names the 
         }),
       );
     },
-  );
+  });
   const execute = computerTool(machineExecutorConfig()).computer
     ?.execute as ToolExecuteFunction<
     Record<string, unknown>,
@@ -199,6 +214,47 @@ test("the computer tool reaches a daemon started with --computer, and names the 
     type: "text",
     value: "X=10,Y=20 (frontmost app: com.apple.Safari)",
   });
+});
+
+test("an MCP row lists and calls through the daemon that serves that server", async () => {
+  const server = core();
+  const connection = mcpConnection(machineMcpRecord(), undefined);
+
+  await expect(listMcpTools(connection)).rejects.toThrow("is not connected");
+  await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
+  await expect(listMcpTools(connection)).rejects.toThrow(
+    'does not serve MCP server "echo"',
+  );
+
+  await connectDaemon(server, "my-mac", () => {}, {
+    mcp: ["echo"],
+    onMcp: (frame, socket) => {
+      socket.send(
+        JSON.stringify(
+          frame.type === "mcp-list"
+            ? {
+                type: "mcp-tools",
+                id: frame.id,
+                tools: [{ name: "echo", inputSchema: { type: "object" } }],
+              }
+            : {
+                type: "mcp-result",
+                id: frame.id,
+                result: {
+                  content: [{ type: "text", text: `echo: ${frame.args.text}` }],
+                },
+              },
+        ),
+      );
+    },
+  });
+
+  expect((await listMcpTools(connection)).map((tool) => tool.name)).toEqual([
+    "echo",
+  ]);
+  expect(await callMcpTool(connection, "echo", { text: "pong" })).toBe(
+    "echo: pong",
+  );
 });
 
 test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
@@ -241,6 +297,9 @@ test("each side's parser drops a frame whose fields do not match its type", () =
       '{"type":"computer","id":"1","action":"left_click","coordinate":[1]}',
     ),
   ).toBeNull();
+  expect(
+    parseCoreFrame('{"type":"mcp-call","id":"1","server":"echo","tool":"t"}'),
+  ).toBeNull();
   expect(parseDaemonFrame('{"type":"hello","sandbox":""}')).toBeNull();
   expect(
     parseDaemonFrame(
@@ -282,12 +341,11 @@ function closeOf(socket: WebSocket): Promise<CloseEvent> {
   });
 }
 
-/** Passing `onComputer` makes the daemon say it started with --computer. */
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   sandbox: string,
   onExec: (frame: MachineExecFrame, socket: WebSocket) => void,
-  onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void,
+  daemon: FakeDaemon = {},
 ): Promise<{ ready: MachineReadyFrame; socket: WebSocket }> {
   return new Promise((resolve, reject): void => {
     const socket = openSocket(server);
@@ -297,7 +355,8 @@ function connectDaemon(
         JSON.stringify({
           type: "hello",
           sandbox: sandbox,
-          computer: onComputer !== undefined,
+          computer: daemon.onComputer !== undefined,
+          mcp: daemon.mcp,
         }),
       );
     socket.onmessage = (event): void => {
@@ -307,7 +366,10 @@ function connectDaemon(
         resolve({ ready: frame, socket: socket });
       }
       if (frame?.type === "exec") onExec(frame, socket);
-      if (frame?.type === "computer") onComputer?.(frame, socket);
+      if (frame?.type === "computer") daemon.onComputer?.(frame, socket);
+      if (frame?.type === "mcp-call" || frame?.type === "mcp-list") {
+        daemon.onMcp?.(frame, socket);
+      }
     };
     socket.onclose = (event): void => {
       if (!ready) reject(new Error(`closed ${event.code} ${event.reason}`));

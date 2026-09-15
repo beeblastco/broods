@@ -27,6 +27,8 @@ export interface McpRecord {
   transport: McpTransport;
   /** Present on "http" rows; a "hosted" row's endpoint is the Lambda host. */
   url?: string;
+  /** "machine" rows: name of the machine sandbox whose daemon serves the server. */
+  sandbox?: string;
   /** Hosted-only: the uploaded server bundle's S3 key and sha256. */
   bundleStorageKey?: string;
   sha256?: string;

@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { hostname } from "node:os";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   cleanupTerminalSocket,
   openTerminalUpstream,
@@ -7,6 +9,11 @@ import {
   type MachineGatewayData,
 } from "../../gateway/src/terminal.ts";
 import { runMachineDaemon } from "../../../packages/broods/src/cli/machine.ts";
+import {
+  callMcpTool,
+  listMcpTools,
+  mcpConnection,
+} from "../src/harness/mcp/client.ts";
 import { MachineSandboxExecutor } from "../src/harness/sandbox/machine-executor.ts";
 import {
   MACHINE_CLOSE,
@@ -21,6 +28,7 @@ import {
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
+  machineMcpRecord,
   machineStorage,
   startMachineCore,
 } from "./helpers/machine.ts";
@@ -28,6 +36,10 @@ import {
 // Gateway routing is covered in apps/gateway/tests/route.test.ts; importing
 // main.ts here would pull the gateway into core's typecheck.
 
+const ECHO_SERVER = join(
+  import.meta.dir,
+  "../../../packages/broods/tests/fixtures/echo-mcp-server.ts",
+);
 const servers: Bun.Server<unknown>[] = [];
 const controllers: AbortController[] = [];
 
@@ -64,6 +76,35 @@ test("the CLI daemon runs bash on this machine through the gateway relay", async
   expect(result.ok).toBe(true);
   expect(result.stdout).toBe(`relay=yes host=${hostname()}\n`);
   expect(lines).toContain("$ echo relay=$RELAY host=$(hostname)");
+
+  controller.abort();
+  await daemon;
+});
+
+test("core's MCP client lists and calls a stdio server on this machine through the relay", async () => {
+  setStorageForTests(machineStorage());
+  const lines: string[] = [];
+  const controller = daemonController();
+  const daemon = runMachineDaemon({
+    apiKey: MACHINE_RUNTIME_KEY,
+    baseUrl: startDoor(coreUrl()),
+    cwd: "/tmp",
+    log: (line) => lines.push(line),
+    mcpFile: mcpServersFile(),
+    sandbox: "my-mac",
+    signal: controller.signal,
+  });
+  await waitFor(() =>
+    lines.includes(`connected as my-mac (${MACHINE_SANDBOX_ID})`),
+  );
+  const connection = mcpConnection(machineMcpRecord(), undefined);
+
+  expect((await listMcpTools(connection)).map((tool) => tool.name)).toEqual([
+    "echo",
+  ]);
+  expect(await callMcpTool(connection, "echo", { text: "relay" })).toBe(
+    "echo: relay",
+  );
 
   controller.abort();
   await daemon;
@@ -116,6 +157,21 @@ function daemonController(): AbortController {
   controllers.push(controller);
 
   return controller;
+}
+
+function mcpServersFile(): string {
+  const file = join(
+    mkdtempSync(join(tmpdir(), "broods-relay-mcp-")),
+    "mcp.json",
+  );
+  writeFileSync(
+    file,
+    JSON.stringify({
+      mcpServers: { echo: { command: "bun", args: [ECHO_SERVER] } },
+    }),
+  );
+
+  return file;
 }
 
 /** The gateway's machine branch on its real relay. */

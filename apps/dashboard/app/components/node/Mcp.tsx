@@ -3,11 +3,17 @@
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import type { NodeProps } from "@xyflow/react";
 import { useQuery } from "convex/react";
 import { Plug } from "lucide-react";
 import { useParams } from "next/navigation";
+
+const TRANSPORT_SUBTITLE: Record<Doc<"mcp">["transport"], string> = {
+  hosted: "hosted · node",
+  http: "external · url",
+  machine: "your computer · stdio",
+};
 
 /** MCP server node: one registered server exposing its tools to wired agents. */
 export function McpNode({ id, data }: NodeProps): React.JSX.Element {
@@ -31,13 +37,7 @@ export function McpNode({ id, data }: NodeProps): React.JSX.Element {
       nodeType="mcp"
       data={data as BaseNodeData}
       icon={<Plug className="size-3.5" />}
-      subtitle={
-        server
-          ? server.transport === "hosted"
-            ? "hosted · node"
-            : "external · url"
-          : undefined
-      }
+      subtitle={server ? TRANSPORT_SUBTITLE[server.transport] : undefined}
       cardStatus={{ enabled: !!server && server.disabled !== true }}
     />
   );

@@ -1655,7 +1655,8 @@ async function normalizeSkillConfig(
 }
 
 /**
- * An mcp resource with `url` syncs as-is (external server); one with `handler`
+ * An mcp resource with `url` syncs as-is (external server); one with `sandbox`
+ * syncs the sandbox's name (the daemon there serves it); one with `handler`
  * bundles the module that declared it, so the handler stays inline next to the
  * `defineMcp` call, one file per server, and the row becomes
  * `transport: "hosted"` on the backend (#331 phase 2).
@@ -1666,15 +1667,18 @@ async function normalizeMcpConfig(
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
   const { handler, ...rest } = config;
-  if (handler !== undefined && config.url !== undefined) {
+  const connections = [handler, config.url, config.sandbox].filter(
+    (value) => value !== undefined,
+  ).length;
+  if (connections > 1) {
     throw new Error(
-      `MCP server "${entry.resource.name}" declares both url and handler; pick one`,
+      `MCP server "${entry.resource.name}" declares more than one of url, handler and sandbox; pick one`,
     );
   }
   if (handler === undefined) {
-    if (config.url === undefined) {
+    if (connections === 0) {
       throw new Error(
-        `MCP server "${entry.resource.name}" needs url (external) or handler (hosted)`,
+        `MCP server "${entry.resource.name}" needs url (external), handler (hosted) or sandbox (on a machine)`,
       );
     }
 

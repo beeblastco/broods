@@ -232,10 +232,20 @@ export const mcpFields = {
   /** Namespace prefix for the server's tools (`name__tool`); unique per stage. */
   name: v.string(),
   description: v.optional(v.string()),
-  /** "http" connects to an external url; "hosted" runs an uploaded bundle on the Lambda host. */
-  transport: v.union(v.literal("http"), v.literal("hosted")),
+  /**
+   * "http" connects to an external url; "hosted" runs an uploaded bundle on
+   * the Lambda host; "machine" is a stdio server on the user's own computer,
+   * reached through the daemon of the machine sandbox named in `sandbox`.
+   */
+  transport: v.union(
+    v.literal("http"),
+    v.literal("hosted"),
+    v.literal("machine"),
+  ),
   /** Required for "http"; absent on "hosted" rows (the Lambda is the endpoint). */
   url: v.optional(v.string()),
+  /** Machine-only: name of the machine sandbox whose daemon serves it. */
+  sandbox: v.optional(v.string()),
   /** Hosted-only: S3 key + sha256 of the uploaded server bundle. */
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),

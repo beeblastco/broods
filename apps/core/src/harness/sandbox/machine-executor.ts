@@ -1,10 +1,11 @@
 /**
- * The "machine" provider: bash and the computer tool run on the user's own
- * computer through the WebSocket its `broods machine` daemon keeps open. Live
- * daemons are held in memory only.
+ * The "machine" provider: bash, the computer tool and local MCP servers run on
+ * the user's own computer through the WebSocket its `broods machine` daemon
+ * keeps open. Live daemons are held in memory only.
  */
 
 import { resolveBearerAuth } from "../../shared/auth.ts";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import {
@@ -16,6 +17,10 @@ import {
   type MachineComputerResultFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
+  type MachineMcpCallFrame,
+  type MachineMcpListFrame,
+  type MachineMcpResultFrame,
+  type MachineMcpToolsFrame,
   type MachineReadyFrame,
   type MachineResultFrame,
 } from "../../shared/machine-socket.ts";
@@ -31,15 +36,28 @@ import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 // The helper bounds a desktop action; a wait or hold adds its own duration.
 const COMPUTER_REPLY_MS = 30_000;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
+// Codex's per-tool default; a local server slower than that is hung.
+const MCP_REPLY_MS = 60_000;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
 // Keyed by registryKey; the last daemon to claim a record wins.
 const connections = new Map<string, MachineConnection>();
 
-type MachineReply = MachineComputerResultFrame | MachineResultFrame;
+type MachineReply =
+  | MachineComputerResultFrame
+  | MachineMcpResultFrame
+  | MachineMcpToolsFrame
+  | MachineResultFrame;
+
+type MachineRequest =
+  | MachineComputerFrame
+  | MachineExecFrame
+  | MachineMcpCallFrame
+  | MachineMcpListFrame;
 
 interface MachineConnection {
   computer: boolean;
+  mcp: ReadonlySet<string>;
   name: string;
   pending: Map<string, PendingReply>;
   socket: Bun.ServerWebSocket<MachineSocketData>;
@@ -82,9 +100,7 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       frame.timeoutSeconds * 1000 + REPLY_GRACE_MS,
     );
     if (reply.type !== "result") {
-      throw new Error(
-        "machine sandbox answered an exec with a computer result",
-      );
+      throw new Error(`machine sandbox answered an exec with ${reply.type}`);
     }
     const stdout = truncateText(reply.stdout, request.outputLimitBytes);
     const stderr = truncateText(reply.stderr, request.outputLimitBytes);
@@ -188,11 +204,59 @@ export async function runMachineComputerAction(
   );
   if (reply.type !== "computer-result") {
     throw new Error(
-      "machine sandbox answered a computer action with an exec result",
+      `machine sandbox answered a computer action with ${reply.type}`,
     );
   }
 
   return reply;
+}
+
+/** The server's CallToolResult as JSON; the MCP client parses it. */
+export async function runMachineMcpCall(
+  record: McpRecord,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const reply = await sendFrame(
+    machineServingMcp(record),
+    {
+      type: "mcp-call",
+      id: crypto.randomUUID(),
+      server: record.name,
+      tool: tool,
+      args: args,
+    },
+    MCP_REPLY_MS,
+  );
+  if (reply.type !== "mcp-result") {
+    throw new Error(`machine sandbox answered an MCP call with ${reply.type}`);
+  }
+  if (!reply.result) {
+    throw new Error(reply.error ?? "machine sandbox returned no MCP result");
+  }
+
+  return reply.result;
+}
+
+/** The server's tools as JSON; the MCP client parses them. */
+export async function runMachineMcpList(
+  record: McpRecord,
+): Promise<Record<string, unknown>[]> {
+  const reply = await sendFrame(
+    machineServingMcp(record),
+    { type: "mcp-list", id: crypto.randomUUID(), server: record.name },
+    MCP_REPLY_MS,
+  );
+  if (reply.type !== "mcp-tools") {
+    throw new Error(
+      `machine sandbox answered an MCP listing with ${reply.type}`,
+    );
+  }
+  if (!reply.tools) {
+    throw new Error(reply.error ?? "machine sandbox returned no MCP listing");
+  }
+
+  return reply.tools;
 }
 
 /**
@@ -244,6 +308,7 @@ async function claimSandbox(
   socket.data.key = key;
   connections.set(key, {
     computer: hello.computer === true,
+    mcp: new Set(hello.mcp),
     name: record.name,
     pending: new Map(),
     socket: socket,
@@ -257,6 +322,7 @@ async function claimSandbox(
     accountId: accountId,
     sandbox: record.name,
     computer: hello.computer === true,
+    mcp: hello.mcp,
     host: hello.hostname,
     platform: hello.platform,
   });
@@ -279,6 +345,28 @@ function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
   return connection;
 }
 
+// An MCP row names its sandbox rather than the record id, so this scans the registry.
+function machineServingMcp(record: McpRecord): MachineConnection {
+  const sandbox = record.sandbox ?? "";
+  const connection = [...connections.values()].find(
+    (entry) =>
+      entry.socket.data.accountId === record.accountId &&
+      entry.name === sandbox,
+  );
+  if (!connection) {
+    throw new Error(
+      `machine sandbox "${sandbox}" is not connected. Run \`broods machine ${sandbox} --mcp <file>\` on that computer.`,
+    );
+  }
+  if (!connection.mcp.has(record.name)) {
+    throw new Error(
+      `machine sandbox "${sandbox}" does not serve MCP server "${record.name}". Add it under mcpServers in its --mcp file.`,
+    );
+  }
+
+  return connection;
+}
+
 function registryKey(accountId: string, sandboxConfigId: string): string {
   return `${accountId}:${sandboxConfigId}`;
 }
@@ -293,7 +381,7 @@ function rejectPending(connection: MachineConnection, reason: string): void {
 
 function sendFrame(
   connection: MachineConnection,
-  frame: MachineComputerFrame | MachineExecFrame,
+  frame: MachineRequest,
   timeoutMs: number,
 ): Promise<MachineReply> {
   return new Promise((resolve, reject): void => {

@@ -4,10 +4,13 @@
  * older versions, so a 2025-era server is refused at negotiation. One client
  * per operation, no session state. An "http" row dials its url; a "hosted"
  * row runs the same transport with every request routed through the Lambda
- * host (hosted.ts). The version probe and tool listings are cached in-process
- * per server row (keyed by row version, resolved headers and oauth config, so
- * an edit is a cache miss), honoring the ttlMs the spec puts on cacheable
- * results. A row with oauth mints a bearer token (oauth.ts) at connect time.
+ * host (hosted.ts). A "machine" row never dials: the daemon on the user's
+ * computer runs the MCP client for its stdio server, and core relays the
+ * listing and each call over the machine socket. The version probe and tool listings
+ * are cached in-process per server row (keyed by row version, resolved headers
+ * and oauth config, so an edit is a cache miss), honoring the ttlMs the spec
+ * puts on cacheable results. A row with oauth mints a bearer token (oauth.ts)
+ * at connect time.
  */
 
 import {
@@ -24,6 +27,10 @@ import {
   type McpOauth,
   type McpRecord,
 } from "../../shared/domain/mcp.ts";
+import {
+  runMachineMcpCall,
+  runMachineMcpList,
+} from "../sandbox/machine-executor.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -111,6 +118,14 @@ export async function callMcpToolResult(
   if (testOverrides?.callTool) {
     return await testOverrides.callTool(connection, toolName, args);
   }
+  // The daemon's own SDK client produced this; the frame parser checks it.
+  if (connection.record.transport === "machine") {
+    return (await runMachineMcpCall(
+      connection.record,
+      toolName,
+      args,
+    )) as CallToolResult;
+  }
 
   return await withClient(
     connection,
@@ -135,6 +150,10 @@ export async function listMcpTools(
 ): Promise<Tool[]> {
   if (testOverrides?.listTools) {
     return await testOverrides.listTools(connection);
+  }
+  // Uncached: the daemon answers from the live server process.
+  if (connection.record.transport === "machine") {
+    return (await runMachineMcpList(connection.record)) as Tool[];
   }
   const key = cacheKeyFor(connection);
   const cached = toolListCache.get(key);

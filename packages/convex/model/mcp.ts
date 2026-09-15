@@ -53,7 +53,7 @@ const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 /** Remote tool names, as constrained by the MCP spec's SHOULD plus our cap. */
 const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type McpTransport = "http" | "hosted";
+export type McpTransport = "http" | "hosted" | "machine";
 
 /**
  * OAuth 2.0 refresh-token grant for an external row. Core mints access tokens
@@ -74,6 +74,8 @@ export interface McpInput {
   description?: string;
   transport?: McpTransport;
   url?: string;
+  /** Machine-only: the machine sandbox (by name) whose daemon serves it. */
+  sandbox?: string;
   /** Hosted-only: bundled server module source; sha256 derived from it. */
   bundle?: string;
   /**
@@ -90,19 +92,26 @@ export interface McpInput {
 }
 
 /**
- * The oauth invariants on the row a create or update produces, whichever side
- * brings each field: external transport, an https url (the minted bearer
- * rides every request) and no Authorization header (core mints it itself).
+ * Invariants on the row a create or update produces, whichever side brings
+ * each field: a machine row names its sandbox, and oauth needs an external row
+ * with an https url (the minted bearer rides every request) and no
+ * Authorization header (core mints it itself).
  */
-export function assertOauthRow(row: {
+export function assertMcpRow(row: {
   transport: McpTransport;
   url?: string;
+  sandbox?: string;
   headers?: Record<string, string>;
   oauth?: McpOauth;
 }): void {
+  if (row.transport === "machine" && !row.sandbox) {
+    throw new Error("a machine MCP server needs the sandbox that serves it");
+  }
   if (row.oauth === undefined) return;
-  if (row.transport === "hosted") {
-    throw new Error("oauth applies to external (url) servers, not hosted");
+  if (row.transport !== "http") {
+    throw new Error(
+      `oauth applies to external (url) servers, not ${row.transport}`,
+    );
   }
   if (row.url !== undefined && new URL(row.url).protocol !== "https:") {
     throw new Error(
@@ -178,14 +187,15 @@ export async function normalizeMcpInput(
     }
     input.disabled = record.disabled;
   }
+  if (input.transport === "machine" && input.headers !== undefined) {
+    throw new Error("headers do not apply to a machine server");
+  }
   if (options.requireConnection) {
     if (input.name === undefined) throw new Error("name must be provided");
-    if (
-      input.url === undefined &&
-      input.bundle === undefined &&
-      input.bundleStorageId === undefined
-    ) {
-      throw new Error("url must be provided, or bundle for a hosted server");
+    if (input.transport === undefined) {
+      throw new Error(
+        "url must be provided, or bundle for a hosted server, or sandbox for a server on a machine",
+      );
     }
   }
 
@@ -260,16 +270,28 @@ function normalizeConnection(
     input.bundleStorageId = record.bundleStorageId;
     input.sha256 = record.sha256;
   }
-  const connections = [input.url, input.bundle, input.bundleStorageId].filter(
-    (value) => value !== undefined,
-  );
+  if (record.sandbox !== undefined) {
+    if (typeof record.sandbox !== "string" || record.sandbox.length === 0) {
+      throw new Error("sandbox must be the name of a machine sandbox");
+    }
+    input.sandbox = record.sandbox;
+  }
+  const connections = [
+    input.url,
+    input.bundle,
+    input.bundleStorageId,
+    input.sandbox,
+  ].filter((value) => value !== undefined);
   if (connections.length > 1) {
-    throw new Error("url, bundle and bundleStorageId are mutually exclusive");
+    throw new Error(
+      "url, bundle, bundleStorageId and sandbox are mutually exclusive",
+    );
   }
   if (input.url !== undefined) input.transport = "http";
   if (input.bundle !== undefined || input.bundleStorageId !== undefined) {
     input.transport = "hosted";
   }
+  if (input.sandbox !== undefined) input.transport = "machine";
 }
 
 function normalizeDescription(value: unknown): string {
@@ -330,7 +352,7 @@ function normalizeName(value: unknown): string {
 
 /**
  * Set input.oauth from the body. The cross-field rules (external transport,
- * https url, no Authorization header) live in assertOauthRow, which sees the
+ * https url, no Authorization header) live in assertMcpRow, which sees the
  * whole row a create or patch produces. clientId may be inline (it is not a secret); clientSecret and refreshToken
  * must be ${NAME} refs, exactly like credential-bearing headers, so a token
  * never lands on the row or in a public projection.

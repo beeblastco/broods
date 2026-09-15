@@ -1,7 +1,8 @@
 /**
  * `broods machine <sandbox>`: runs core's exec frames with `bash -lc` on this
  * computer, in the user's own environment, and reconnects until core refuses.
- * With --computer it also answers computer frames through desktop.ts.
+ * With --computer it also answers computer frames through desktop.ts, and
+ * with --mcp MCP frames through mcp-host.ts.
  */
 
 import { spawn } from "node:child_process";
@@ -14,11 +15,16 @@ import {
   type MachineComputerFrame,
   type MachineDaemonFrame,
   type MachineExecFrame,
+  type MachineMcpCallFrame,
+  type MachineMcpListFrame,
+  type MachineMcpResultFrame,
+  type MachineMcpToolsFrame,
   type MachineResultFrame,
 } from "../../../../apps/core/src/shared/machine-socket.ts";
 import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
 import type { DesktopDriver } from "./desktop.ts";
+import type { McpHost } from "./mcp-host.ts";
 
 // Refusals a reconnect would only repeat.
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
@@ -38,6 +44,8 @@ export interface MachineDaemonOptions {
   /** Working directory for an exec that names none. */
   cwd: string;
   log: (line: string) => void;
+  /** A `.mcp.json` whose stdio servers agents may call. */
+  mcpFile?: string;
   sandbox: string;
   signal: AbortSignal;
 }
@@ -110,12 +118,16 @@ export async function runMachineDaemon(
   options: MachineDaemonOptions,
 ): Promise<void> {
   const WebSocketImpl = resolveWebSocket();
+  // MCP first: a bad file fails before the desktop helper starts.
+  const mcp = options.mcpFile
+    ? await openMcpHost(options.mcpFile, options.log)
+    : null;
   const desktop = options.computer ? await openDesktop(options.log) : null;
   let delayMs = RECONNECT_MIN_MS;
   try {
     while (!options.signal.aborted) {
       const startedAt = Date.now();
-      const closed = await serveOnce(options, WebSocketImpl, desktop);
+      const closed = await serveOnce(options, WebSocketImpl, desktop, mcp);
       if (options.signal.aborted) return;
       if (FATAL_CLOSE_CODES.has(closed.code)) {
         throw new Error(
@@ -131,6 +143,7 @@ export async function runMachineDaemon(
     }
   } finally {
     desktop?.stop();
+    await mcp?.stop();
   }
 }
 
@@ -204,11 +217,52 @@ async function openDesktop(
   return driver;
 }
 
+// Lazy, so the MCP client loads only with --mcp. Servers spawn on first use.
+async function openMcpHost(
+  file: string,
+  log: (line: string) => void,
+): Promise<McpHost> {
+  const { McpHost: Host, readMcpServersFile } = await import("./mcp-host.ts");
+  const host = new Host(readMcpServersFile(file), log);
+  log(`mcp servers from ${file}: ${host.names().join(", ")}`);
+
+  return host;
+}
+
+async function serveMcp(
+  frame: MachineMcpCallFrame | MachineMcpListFrame,
+  host: McpHost,
+  log: (line: string) => void,
+): Promise<MachineMcpResultFrame | MachineMcpToolsFrame> {
+  try {
+    if (frame.type === "mcp-list") {
+      const tools = await host.listTools(frame.server);
+      log(`  mcp ${frame.server}: ${tools.length} tools`);
+
+      return { type: "mcp-tools", id: frame.id, tools: tools };
+    }
+    log(`  mcp ${frame.server}.${frame.tool}`);
+    const result = await host.callTool(frame.server, frame.tool, frame.args);
+
+    return { type: "mcp-result", id: frame.id, result: result };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`  mcp ${frame.server}: ${message}`);
+
+    return {
+      type: frame.type === "mcp-call" ? "mcp-result" : "mcp-tools",
+      id: frame.id,
+      error: message,
+    };
+  }
+}
+
 /** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
   desktop: DesktopDriver | null,
+  mcp: McpHost | null,
 ): Promise<{ code: number; reason: string }> {
   return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
@@ -235,6 +289,7 @@ function serveOnce(
         hostname: hostname(),
         platform: process.platform,
         computer: desktop !== null,
+        mcp: mcp?.names(),
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);
@@ -249,6 +304,11 @@ function serveOnce(
           if (result.error) options.log(`  error: ${result.error}`);
           send(result);
         });
+
+        return;
+      }
+      if ((frame?.type === "mcp-call" || frame?.type === "mcp-list") && mcp) {
+        void serveMcp(frame, mcp, options.log).then(send);
 
         return;
       }

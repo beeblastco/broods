@@ -52,7 +52,7 @@ test("compileProject rejects a server with neither url nor handler", async () =>
   const cwd = await mcpFixture("");
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    "needs url (external) or handler (hosted)",
+    "needs url (external), handler (hosted) or sandbox (on a machine)",
   );
 });
 
