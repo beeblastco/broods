@@ -25,8 +25,11 @@ ARG NEXT_PUBLIC_WORKOS_REDIRECT_URI
 ENV NEXT_PUBLIC_BROODS_BASE_URL=$NEXT_PUBLIC_BROODS_BASE_URL
 ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
 ENV NEXT_PUBLIC_WORKOS_REDIRECT_URI=$NEXT_PUBLIC_WORKOS_REDIRECT_URI
+# Installs are isolated per workspace, so every source tree the app compiles
+# needs its own node_modules: the SDK contracts resolve `ai` from packages/broods.
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
+COPY --from=deps /app/packages/broods/node_modules ./packages/broods/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
 COPY packages/convex/ ./packages/convex/
