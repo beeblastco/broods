@@ -68,10 +68,15 @@ export async function runMachineDaemon(
   }
 }
 
-/** Run one exec frame on this machine and shape its outcome as a result frame. */
+/**
+ * Run one exec frame on this machine and shape its outcome as a result frame.
+ * `signal` is the socket's lifetime: once it aborts nobody can receive the
+ * result, so the command's process group is killed rather than left running.
+ */
 export function runExec(
   frame: MachineExecFrame,
   defaultCwd: string,
+  signal?: AbortSignal,
 ): Promise<MachineResultFrame> {
   return new Promise((resolve): void => {
     const startedAt = performance.now();
@@ -83,6 +88,7 @@ export function runExec(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (failure) stderr.append(Buffer.from(`${failure}\n`));
       resolve({
         type: "result",
@@ -104,21 +110,29 @@ export function runExec(
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const killGroup = (): void => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
     const timer = setTimeout((): void => {
       timedOut = true;
-      if (child.pid) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL");
-        }
-      }
+      killGroup();
     }, frame.timeoutSeconds * 1000);
+    const onAbort = (): void => {
+      killGroup();
+      finish(null, "stopped: the daemon closed its socket");
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer): void => stdout.append(chunk));
     child.stderr.on("data", (chunk: Buffer): void => stderr.append(chunk));
     child.on("error", (error): void => finish(null, error.message));
     child.on("close", (code): void => finish(code));
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -183,6 +197,8 @@ function serveOnce(
       machineSocketUrl(options.baseUrl),
       webSocketSubprotocols(options.apiKey),
     );
+    // Aborts with the socket, so an exec still running when it drops is killed.
+    const lifetime = new AbortController();
     const onAbort = (): void => socket.close(1000, "daemon stopped");
     options.signal.addEventListener("abort", onAbort, { once: true });
 
@@ -204,7 +220,7 @@ function serveOnce(
         return;
       }
       options.log(`$ ${oneLine(frame.code)}`);
-      void runExec(frame, options.cwd).then((result): void => {
+      void runExec(frame, options.cwd, lifetime.signal).then((result): void => {
         options.log(
           `  exit ${result.exitCode ?? "none"} in ${result.durationMs}ms${result.timedOut ? " (timed out)" : ""}`,
         );
@@ -217,6 +233,7 @@ function serveOnce(
     };
     socket.onclose = (event): void => {
       options.signal.removeEventListener("abort", onAbort);
+      lifetime.abort();
       resolve({ code: event.code, reason: event.reason });
     };
   });

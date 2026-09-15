@@ -74,8 +74,8 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 {
   "name": "default",
   "config": {
-    "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel | machine
-    "fallbackProvider": "lambda", // ephemeral only: where a run goes when provider is out of capacity
+    "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel | machine (only provider, permissionMode, network allow-all, envVars, options.cwd apply; see Machine Details)
+    "fallbackProvider": "lambda", // ephemeral only: where a run goes when provider is out of capacity; never machine
     "size": "small", // tiny | xsmall | small | medium | large (see Snapshots & Sizes)
     "snapshot": "img_curated", // prebuilt image/snapshot to boot from (see Snapshots & Sizes); omit for the provider default
     "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted (see Networking)

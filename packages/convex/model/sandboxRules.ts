@@ -174,6 +174,12 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (fallbackProvider === provider) {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }
+  // A fallback runs the primary record, and only a machine record has a daemon.
+  if (fallbackProvider === "machine") {
+    throw new Error(
+      "config.fallbackProvider cannot be machine; a computer is not a capacity fallback for a cloud sandbox",
+    );
+  }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new Error(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",

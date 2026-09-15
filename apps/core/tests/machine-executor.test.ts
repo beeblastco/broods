@@ -9,7 +9,10 @@ import {
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
-import { MACHINE_WEBSOCKET_PATH } from "../src/shared/machine-socket.ts";
+import {
+  MACHINE_WEBSOCKET_PATH,
+  parseMachineFrame,
+} from "../src/shared/machine-socket.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
@@ -110,6 +113,58 @@ test("an unknown record or a wrong provider closes the socket with 4404", async 
   const closed = await connectDaemonExpectingClose(server, "cloud-box");
 
   expect(closed.code).toBe(4404);
+});
+
+test("a result with missing fields is a bad frame, and so is a second hello", async () => {
+  const server = coreServer();
+  const first = await connectDaemon(server, "my-mac", (frame, socket) => {
+    socket.send(JSON.stringify({ type: "result", id: frame.id }));
+  });
+  const firstClosed = new Promise<CloseEvent>((resolve) => {
+    first.socket.onclose = resolve;
+  });
+
+  await expect(
+    new MachineSandboxExecutor(executorConfig({})).run({
+      code: "true",
+      timeoutSeconds: 5,
+      outputLimitBytes: 1024,
+    }),
+  ).rejects.toThrow("disconnected while the command was running");
+  expect((await firstClosed).code).toBe(4400);
+
+  const second = await connectDaemon(server, "my-mac", () => {});
+  const secondClosed = new Promise<CloseEvent>((resolve) => {
+    second.socket.onclose = resolve;
+  });
+  second.socket.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
+
+  expect((await secondClosed).code).toBe(4400);
+});
+
+test("parseMachineFrame drops frames whose fields do not match their type", () => {
+  expect(parseMachineFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
+  expect(
+    parseMachineFrame(
+      '{"type":"exec","id":"1","code":"yes","timeoutSeconds":0,"outputLimitBytes":10}',
+    ),
+  ).toBeNull();
+  expect(parseMachineFrame('{"type":"hello","sandbox":""}')).toBeNull();
+  expect(parseMachineFrame('{"type":"ready"}')).toBeNull();
+  expect(parseMachineFrame("[]")).toBeNull();
+  expect(parseMachineFrame("nope")).toBeNull();
+  expect(
+    parseMachineFrame(
+      '{"type":"exec","id":"1","code":"yes","timeoutSeconds":5,"outputLimitBytes":10,"env":{"A":"b"},"extra":1}',
+    ),
+  ).toEqual({
+    type: "exec",
+    id: "1",
+    code: "yes",
+    env: { A: "b" },
+    timeoutSeconds: 5,
+    outputLimitBytes: 10,
+  });
 });
 
 test("the upgrade refuses a bad bearer and ignores non-machine paths", async () => {

@@ -163,9 +163,9 @@ export function openTerminalUpstream(
     if (socket.readyState !== WebSocket.OPEN) return;
     if (socket.data.kind === "machine") {
       // Core's own close code (4404 unknown sandbox, 4409 replaced) is the
-      // daemon's only explanation, so it passes through untouched. A refused
-      // upgrade never opens and arrives as a bare 1006.
-      if (opened) socket.close(event.code, event.reason);
+      // daemon's only explanation, so it passes through. A refused upgrade
+      // never opens and arrives as a bare 1006.
+      if (opened) socket.close(relayCloseCode(event.code), event.reason);
       else
         socket.close(
           MACHINE_UPSTREAM_REJECTED.code,
@@ -226,4 +226,11 @@ export function cleanupTerminalSocket(
       return;
     }
   }
+}
+
+// Forward 1000 and core's application codes (4000-4999) as they are. Anything
+// else collapses to 1011: 1006 (lost without a frame) and other reserved codes
+// cannot be sent in a close frame, and the daemon reconnects on 1011 anyway.
+function relayCloseCode(code: number): number {
+  return code === 1000 || (code >= 4000 && code <= 4999) ? code : 1011;
 }

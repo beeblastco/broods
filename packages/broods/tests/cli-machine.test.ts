@@ -45,6 +45,22 @@ test("runExec kills a command at the timeout and says so", async () => {
   expect(result.durationMs).toBeLessThan(3_000);
 });
 
+test("runExec kills a running command when the socket lifetime aborts", async () => {
+  const lifetime = new AbortController();
+  const pending = runExec(
+    exec({ code: "sleep 5; echo late", timeoutSeconds: 10 }),
+    process.cwd(),
+    lifetime.signal,
+  );
+  setTimeout(() => lifetime.abort(), 100);
+  const result = await pending;
+
+  expect(result.exitCode).toBeNull();
+  expect(result.stderr).toContain("stopped: the daemon closed its socket");
+  expect(result.stdout).not.toContain("late");
+  expect(result.durationMs).toBeLessThan(2_000);
+});
+
 test("runExec cuts output at the limit and reports the exit code", async () => {
   const result = await runExec(
     exec({ code: "yes | head -c 5000; exit 3", outputLimitBytes: 100 }),

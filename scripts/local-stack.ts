@@ -457,6 +457,12 @@ async function verify(): Promise<void> {
     );
     daemon.stdout.on("data", (chunk: Buffer) => (daemonOutput += chunk));
     daemon.stderr.on("data", (chunk: Buffer) => (daemonOutput += chunk));
+    // assertStep exits the process, which skips `finally`; the daemon would
+    // otherwise outlive a failed verify and keep serving execs.
+    const stopDaemon = (): void => {
+      daemon.kill("SIGINT");
+    };
+    process.once("exit", stopDaemon);
     try {
       const connected = await pollUntil(
         {
@@ -514,7 +520,8 @@ async function verify(): Promise<void> {
         `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
       );
     } finally {
-      daemon.kill("SIGINT");
+      process.off("exit", stopDaemon);
+      stopDaemon();
     }
   });
 

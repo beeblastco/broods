@@ -277,6 +277,13 @@ describe("sandbox config defaults & validation", () => {
         options: { cwd: " " },
       }),
     ).toThrow("config.options.cwd must be a non-empty string");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "machine",
+        network: { mode: "allow-all" },
+      }),
+    ).toThrow("config.fallbackProvider cannot be machine");
   });
 
   it("round-trips runtimes/network/envVars and trims name/description through create input", () => {

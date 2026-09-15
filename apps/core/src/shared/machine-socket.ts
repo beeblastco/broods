@@ -67,23 +67,133 @@ export function machineSocketUrl(baseUrl: string): string {
   return url.toString();
 }
 
+/**
+ * Parse one text frame off the socket. Every field is checked, so a frame that
+ * names a `type` but lacks the fields that go with it is dropped as malformed
+ * rather than settling a pending exec with holes in it.
+ */
 export function parseMachineFrame(raw: unknown): MachineFrame | null {
-  if (typeof raw !== "string") return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const type = (parsed as { type?: unknown }).type;
-    if (
-      type === "exec" ||
-      type === "hello" ||
-      type === "ready" ||
-      type === "result"
-    ) {
-      return parsed as MachineFrame;
-    }
-  } catch {
+  const fields = jsonFields(raw);
+  if (!fields) return null;
+  if (fields.type === "exec") return execFrame(fields);
+  if (fields.type === "hello") return helloFrame(fields);
+  if (fields.type === "ready") return readyFrame(fields);
+  if (fields.type === "result") return resultFrame(fields);
+
+  return null;
+}
+
+function execFrame(fields: Record<string, unknown>): MachineExecFrame | null {
+  if (
+    typeof fields.id !== "string" ||
+    typeof fields.code !== "string" ||
+    !isPositiveNumber(fields.timeoutSeconds) ||
+    !isPositiveNumber(fields.outputLimitBytes) ||
+    !isOptionalString(fields.cwd) ||
+    !isOptionalStringRecord(fields.env)
+  ) {
     return null;
   }
 
-  return null;
+  return {
+    type: "exec",
+    id: fields.id,
+    code: fields.code,
+    ...(fields.cwd !== undefined ? { cwd: fields.cwd } : {}),
+    ...(fields.env !== undefined ? { env: fields.env } : {}),
+    timeoutSeconds: fields.timeoutSeconds,
+    outputLimitBytes: fields.outputLimitBytes,
+  };
+}
+
+function helloFrame(fields: Record<string, unknown>): MachineHelloFrame | null {
+  if (
+    typeof fields.sandbox !== "string" ||
+    fields.sandbox.length === 0 ||
+    !isOptionalString(fields.hostname) ||
+    !isOptionalString(fields.platform)
+  ) {
+    return null;
+  }
+
+  return {
+    type: "hello",
+    sandbox: fields.sandbox,
+    ...(fields.hostname !== undefined ? { hostname: fields.hostname } : {}),
+    ...(fields.platform !== undefined ? { platform: fields.platform } : {}),
+  };
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalStringRecord(
+  value: unknown,
+): value is Record<string, string> | undefined {
+  if (value === undefined) return true;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => typeof entry === "string");
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function jsonFields(raw: unknown): Record<string, unknown> | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readyFrame(fields: Record<string, unknown>): MachineReadyFrame | null {
+  if (typeof fields.sandboxId !== "string") return null;
+
+  return { type: "ready", sandboxId: fields.sandboxId };
+}
+
+function resultFrame(
+  fields: Record<string, unknown>,
+): MachineResultFrame | null {
+  if (
+    typeof fields.id !== "string" ||
+    (fields.exitCode !== null && typeof fields.exitCode !== "number") ||
+    typeof fields.stdout !== "string" ||
+    typeof fields.stderr !== "string" ||
+    typeof fields.durationMs !== "number" ||
+    !isOptionalBoolean(fields.timedOut) ||
+    !isOptionalBoolean(fields.truncated)
+  ) {
+    return null;
+  }
+
+  return {
+    type: "result",
+    id: fields.id,
+    exitCode: fields.exitCode,
+    stdout: fields.stdout,
+    stderr: fields.stderr,
+    durationMs: fields.durationMs,
+    ...(fields.timedOut !== undefined ? { timedOut: fields.timedOut } : {}),
+    ...(fields.truncated !== undefined ? { truncated: fields.truncated } : {}),
+  };
 }

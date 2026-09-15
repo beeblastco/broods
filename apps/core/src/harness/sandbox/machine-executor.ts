@@ -37,6 +37,8 @@ const connections = new Map<string, MachineConnection>();
 
 export interface MachineSocketData {
   accountId: string;
+  /** Set the moment a `hello` arrives, so a second one is a bad frame. */
+  claimed?: boolean;
   /** Set once `hello` claimed a sandbox record. */
   key?: string;
   sandboxName?: string;
@@ -120,7 +122,25 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
         return;
       }
       if (frame.type === "hello") {
-        void claimSandbox(socket, frame);
+        // The claim is async; the flag closes the window for a second hello
+        // that would register this socket twice or under another record.
+        if (socket.data.claimed) {
+          socket.close(
+            MACHINE_CLOSE.badFrame.code,
+            MACHINE_CLOSE.badFrame.reason,
+          );
+
+          return;
+        }
+        socket.data.claimed = true;
+        claimSandbox(socket, frame).catch((error: unknown): void => {
+          logWarn("Machine sandbox claim failed", {
+            accountId: socket.data.accountId,
+            sandbox: frame.sandbox,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          socket.close(1011, "sandbox lookup failed");
+        });
 
         return;
       }

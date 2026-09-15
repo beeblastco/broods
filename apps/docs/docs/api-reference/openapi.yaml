@@ -1324,8 +1324,8 @@ paths:
                     fallbackProvider:
                       {
                         type: string,
-                        enum: [sandbox, lambda, e2b, daytona, vercel, machine],
-                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. options and snapshot are the primary's and do not carry over to the fallback.",
+                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Never machine: a computer is not a capacity fallback. options and snapshot are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
                       type: object
