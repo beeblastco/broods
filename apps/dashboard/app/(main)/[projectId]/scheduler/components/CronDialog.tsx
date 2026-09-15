@@ -149,7 +149,7 @@ export function CronDialog({
 
         <div className="grid gap-3 py-2">
           <div className="grid gap-1">
-            <Label htmlFor="cj-name" className="text-xs text-muted-foreground">
+            <Label htmlFor="cj-name" variant="muted" className="text-xs">
               Name
             </Label>
             <Input
@@ -161,10 +161,7 @@ export function CronDialog({
           </div>
 
           <div className="grid gap-1">
-            <Label
-              htmlFor="cj-description"
-              className="text-xs text-muted-foreground"
-            >
+            <Label htmlFor="cj-description" variant="muted" className="text-xs">
               Description
             </Label>
             <Input
@@ -176,7 +173,7 @@ export function CronDialog({
           </div>
 
           <div className="grid gap-1">
-            <Label htmlFor="cj-agent" className="text-xs text-muted-foreground">
+            <Label htmlFor="cj-agent" variant="muted" className="text-xs">
               Agent
             </Label>
             {agents.length === 0 ? (
@@ -215,10 +212,7 @@ export function CronDialog({
           </div>
 
           <div className="grid gap-1">
-            <Label
-              htmlFor="cj-prompt"
-              className="text-xs text-muted-foreground"
-            >
+            <Label htmlFor="cj-prompt" variant="muted" className="text-xs">
               Prompt
             </Label>
             <Textarea
@@ -231,7 +225,7 @@ export function CronDialog({
           </div>
 
           <div className="grid gap-1">
-            <Label htmlFor="cj-conv" className="text-xs text-muted-foreground">
+            <Label htmlFor="cj-conv" variant="muted" className="text-xs">
               Conversation key (optional)
             </Label>
             <Input
@@ -243,10 +237,7 @@ export function CronDialog({
           </div>
 
           <div className="grid gap-1">
-            <Label
-              htmlFor="cj-schedule"
-              className="text-xs text-muted-foreground"
-            >
+            <Label htmlFor="cj-schedule" variant="muted" className="text-xs">
               Schedule expression
             </Label>
             <Input
@@ -279,7 +270,7 @@ export function CronDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1">
-              <Label htmlFor="cj-tz" className="text-xs text-muted-foreground">
+              <Label htmlFor="cj-tz" variant="muted" className="text-xs">
                 Timezone (optional)
               </Label>
               <Input
@@ -291,10 +282,7 @@ export function CronDialog({
             </div>
 
             <div className="grid gap-1">
-              <Label
-                htmlFor="cj-status"
-                className="text-xs text-muted-foreground"
-              >
+              <Label htmlFor="cj-status" variant="muted" className="text-xs">
                 Status
               </Label>
               <Select

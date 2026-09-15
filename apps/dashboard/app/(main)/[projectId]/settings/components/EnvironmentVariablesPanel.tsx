@@ -166,7 +166,8 @@ export function EnvironmentVariablesPanel({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
+                    tone="muted"
+                    className="shrink-0 cursor-pointer"
                     title={
                       revealed[v._id] !== undefined
                         ? "Hide value"
@@ -183,7 +184,8 @@ export function EnvironmentVariablesPanel({
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                    tone="muted-destructive"
+                    className="shrink-0 cursor-pointer"
                     onClick={() => setDeletingVar(v)}
                   >
                     <Trash2 className="size-3.5" />
@@ -211,11 +213,10 @@ export function EnvironmentVariablesPanel({
             <Button
               variant="ghost"
               size="icon-xs"
+              tone="muted"
               className={cn(
                 "shrink-0",
-                !name.trim() || busy
-                  ? "cursor-not-allowed text-muted-foreground"
-                  : "cursor-pointer text-muted-foreground hover:text-foreground",
+                !name.trim() || busy ? "cursor-not-allowed" : "cursor-pointer",
               )}
               disabled={!name.trim() || busy}
               onClick={handleAdd}
@@ -227,7 +228,8 @@ export function EnvironmentVariablesPanel({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+              tone="muted-destructive"
+              className="shrink-0 cursor-pointer"
               onClick={() => {
                 setAdding(false);
                 setName("");

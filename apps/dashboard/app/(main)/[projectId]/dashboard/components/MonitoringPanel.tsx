@@ -200,7 +200,7 @@ export function MonitoringPanel({
             <col className="w-36" />
             <col />
           </colgroup>
-          <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+          <thead className="sticky top-0 z-10 border-b border-border bg-card/95">
             <tr className="text-left text-muted-foreground">
               <th className="px-3 py-2 font-medium">Time</th>
               <th className="px-3 py-2 font-medium">Level</th>

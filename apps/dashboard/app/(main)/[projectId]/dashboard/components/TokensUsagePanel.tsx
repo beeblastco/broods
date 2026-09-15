@@ -89,11 +89,27 @@ const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
 
 const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> =
   [
-    { key: "inputTokens", label: "Input", color: "#60a5fa" },
-    { key: "outputTokens", label: "Output", color: "#34d399" },
-    { key: "reasoningTokens", label: "Reasoning", color: "#a78bfa" },
-    { key: "cachedInputTokens", label: "Cache read", color: "#fbbf24" },
-    { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
+    { key: "inputTokens", label: "Input", color: "var(--color-usage-input)" },
+    {
+      key: "outputTokens",
+      label: "Output",
+      color: "var(--color-usage-output)",
+    },
+    {
+      key: "reasoningTokens",
+      label: "Reasoning",
+      color: "var(--color-usage-reasoning)",
+    },
+    {
+      key: "cachedInputTokens",
+      label: "Cache read",
+      color: "var(--color-usage-cache-read)",
+    },
+    {
+      key: "cacheWriteTokens",
+      label: "Cache write",
+      color: "var(--color-usage-cache-write)",
+    },
   ];
 
 // Sandbox CPU split: the agent's own sandbox vs the MCP sandbox that runs
@@ -103,8 +119,16 @@ const SANDBOX_CPU_SERIES: Array<{
   label: string;
   color: string;
 }> = [
-  { key: "agentSandboxCpuUsec", label: "Agent sandbox", color: "#2dd4bf" },
-  { key: "toolSandboxCpuUsec", label: "MCP sandbox", color: "#fb923c" },
+  {
+    key: "agentSandboxCpuUsec",
+    label: "Agent sandbox",
+    color: "var(--color-usage-agent-sandbox)",
+  },
+  {
+    key: "toolSandboxCpuUsec",
+    label: "MCP sandbox",
+    color: "var(--color-usage-mcp-sandbox)",
+  },
 ];
 
 export function TokensUsagePanel({
@@ -241,7 +265,7 @@ export function TokensUsagePanel({
           <ComputeTile
             label="Estimated token cost"
             value={formatUsd(estimatedCost)}
-            color="#34d399"
+            color="var(--color-usage-output)"
           />
           <ComputeTile
             label="Cache read"
@@ -249,12 +273,12 @@ export function TokensUsagePanel({
               (stats?.totals.cachedInputTokens ?? 0) +
                 liveOverlay.cachedInputTokens,
             )}
-            color="#fbbf24"
+            color="var(--color-usage-cache-read)"
           />
           <ComputeTile
             label="Cache write"
             value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)}
-            color="#fb7185"
+            color="var(--color-usage-cache-write)"
           />
         </div>
         {unpricedModels > 0 && (
@@ -283,8 +307,8 @@ export function TokensUsagePanel({
                 className="flex items-center gap-1.5 text-xs text-muted-foreground"
               >
                 <span
-                  className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: s.color }}
+                  className="size-2.5 rounded-sm bg-(--series-color)"
+                  style={{ "--series-color": s.color }}
                 />
                 {s.label}
               </div>
@@ -301,17 +325,11 @@ export function TokensUsagePanel({
           <InvocationsChart bins={bins} binSeconds={binSeconds} />
           <div className="flex flex-wrap gap-3 pt-2 pl-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span
-                className="size-2.5 rounded-sm"
-                style={{ backgroundColor: "#22d3ee" }}
-              />
+              <span className="size-2.5 rounded-sm bg-usage-tasks" />
               Tasks
             </div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span
-                className="size-2.5 rounded-sm"
-                style={{ backgroundColor: "#f472b6" }}
-              />
+              <span className="size-2.5 rounded-sm bg-usage-model-calls" />
               Model calls
             </div>
           </div>
@@ -326,7 +344,7 @@ export function TokensUsagePanel({
           <ComputeTile
             label="Runtime"
             value={formatMs(compute?.runtimeWallMs ?? 0)}
-            color="#818cf8"
+            color="var(--color-usage-runtime)"
           />
           <ComputeTile
             label="Agent sandbox CPU"
@@ -334,7 +352,7 @@ export function TokensUsagePanel({
               (compute?.agentSandboxCpuUsec ?? 0) +
                 liveOverlay.agentSandboxCpuUsec,
             )}
-            color="#2dd4bf"
+            color="var(--color-usage-agent-sandbox)"
           />
           <ComputeTile
             label="MCP sandbox CPU"
@@ -342,7 +360,7 @@ export function TokensUsagePanel({
               (compute?.toolSandboxCpuUsec ?? 0) +
                 liveOverlay.toolSandboxCpuUsec,
             )}
-            color="#fb923c"
+            color="var(--color-usage-mcp-sandbox)"
           />
         </div>
         <div className="rounded-lg border border-border bg-card p-3">
@@ -361,8 +379,8 @@ export function TokensUsagePanel({
                 className="flex items-center gap-1.5 text-xs text-muted-foreground"
               >
                 <span
-                  className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: s.color }}
+                  className="size-2.5 rounded-sm bg-(--series-color)"
+                  style={{ "--series-color": s.color }}
                 />
                 {s.label}
               </div>
@@ -741,8 +759,8 @@ function ChartTooltip({
 }): React.JSX.Element {
   return (
     <div
-      className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
-      style={{ left: `${xPct}%`, top: `${yPct}%` }}
+      className="pointer-events-none absolute top-(--tooltip-y) left-(--tooltip-x) z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-2xs shadow-lg"
+      style={{ "--tooltip-x": `${xPct}%`, "--tooltip-y": `${yPct}%` }}
     >
       {children}
     </div>
@@ -792,7 +810,8 @@ function StackedBarChart({
     <div className="relative" ref={containerRef}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-auto"
+        className="w-full h-auto text-(length:--chart-font-size)"
+        style={{ "--chart-font-size": `${fontSize}px` }}
         onMouseLeave={() => setHoverIndex(null)}
       >
         {/* Y-axis ticks */}
@@ -816,7 +835,6 @@ function StackedBarChart({
                 y={y + 3}
                 textAnchor="end"
                 className="fill-muted-foreground"
-                style={{ fontSize: fontSize }}
               >
                 {formatAxis(val)}
               </text>
@@ -835,7 +853,7 @@ function StackedBarChart({
             <g
               key={b.bucketStart}
               onMouseEnter={() => setHoverIndex(i)}
-              style={{ cursor: "pointer" }}
+              className="cursor-pointer"
             >
               {/* Full-height invisible hit target so empty space above the stack is also hoverable */}
               <rect
@@ -858,7 +876,8 @@ function StackedBarChart({
                     y={yCursor}
                     width={w}
                     height={h}
-                    fill={s.color}
+                    className="fill-(--series-color)"
+                    style={{ "--series-color": s.color }}
                     opacity={hoverIndex === null || isHover ? 1 : 0.5}
                   />
                 );
@@ -880,7 +899,6 @@ function StackedBarChart({
               y={height - 8}
               textAnchor="middle"
               className="fill-muted-foreground"
-              style={{ fontSize: fontSize }}
             >
               {formatBucketLabel(b.bucketStart, binSeconds)}
             </text>
@@ -904,8 +922,8 @@ function StackedBarChart({
                 >
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <span
-                      className="size-2 rounded-sm"
-                      style={{ backgroundColor: s.color }}
+                      className="size-2 rounded-sm bg-(--series-color)"
+                      style={{ "--series-color": s.color }}
                     />
                     {s.label}
                   </span>
@@ -967,7 +985,8 @@ function InvocationsChart({
     <div className="relative" ref={containerRef}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-auto"
+        className="w-full h-auto text-(length:--chart-font-size)"
+        style={{ "--chart-font-size": `${fontSize}px` }}
         onMouseLeave={() => setHoverIndex(null)}
       >
         {[0, 0.5, 1].map((t, i) => {
@@ -989,7 +1008,6 @@ function InvocationsChart({
                 y={y + 3}
                 textAnchor="end"
                 className="fill-muted-foreground"
-                style={{ fontSize: fontSize }}
               >
                 {formatNumber(maxVal * t)}
               </text>
@@ -1007,7 +1025,7 @@ function InvocationsChart({
             <g
               key={b.bucketStart}
               onMouseEnter={() => setHoverIndex(i)}
-              style={{ cursor: "pointer" }}
+              className="cursor-pointer"
             >
               <rect
                 x={padding.left + slot * i}
@@ -1021,7 +1039,7 @@ function InvocationsChart({
                 y={padding.top + innerH - hTasks}
                 width={barW}
                 height={hTasks}
-                fill="#22d3ee"
+                className="fill-usage-tasks"
                 opacity={hoverIndex === null || isHover ? 1 : 0.5}
               />
               <rect
@@ -1029,7 +1047,7 @@ function InvocationsChart({
                 y={padding.top + innerH - hCalls}
                 width={barW}
                 height={hCalls}
-                fill="#f472b6"
+                className="fill-usage-model-calls"
                 opacity={hoverIndex === null || isHover ? 1 : 0.5}
               />
             </g>
@@ -1048,7 +1066,6 @@ function InvocationsChart({
               y={height - 8}
               textAnchor="middle"
               className="fill-muted-foreground"
-              style={{ fontSize: fontSize }}
             >
               {formatBucketLabel(b.bucketStart, binSeconds)}
             </text>
@@ -1064,10 +1081,7 @@ function InvocationsChart({
           <div className="mt-1 grid gap-0.5">
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span
-                  className="size-2 rounded-sm"
-                  style={{ backgroundColor: "#22d3ee" }}
-                />
+                <span className="size-2 rounded-sm bg-usage-tasks" />
                 Tasks
               </span>
               <span className="tabular-nums">
@@ -1076,10 +1090,7 @@ function InvocationsChart({
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span
-                  className="size-2 rounded-sm"
-                  style={{ backgroundColor: "#f472b6" }}
-                />
+                <span className="size-2 rounded-sm bg-usage-model-calls" />
                 Model calls
               </span>
               <span className="tabular-nums">
@@ -1106,8 +1117,8 @@ function ComputeTile({
     <div className="rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <span
-          className="size-2.5 rounded-sm"
-          style={{ backgroundColor: color }}
+          className="size-2.5 rounded-sm bg-(--series-color)"
+          style={{ "--series-color": color }}
         />
         {label}
       </div>

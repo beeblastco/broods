@@ -14,7 +14,6 @@ import {
 } from "@/app/components/ui/dropdown-menu";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useConvexAuth, useQuery } from "convex/react";
@@ -83,8 +82,9 @@ export function ProjectSelector(): React.JSX.Element {
     return (
       <>
         <Button
-          variant="ghost"
-          className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+          variant="nav"
+          size="sm"
+          className="h-7 select-none cursor-pointer"
           onClick={() => setDialogOpen(true)}
         >
           <Plus className="size-3.5" />
@@ -102,8 +102,9 @@ export function ProjectSelector(): React.JSX.Element {
         <DropdownMenuTrigger
           render={
             <Button
-              variant="ghost"
-              className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+              variant="nav"
+              size="sm"
+              className="h-7 select-none cursor-pointer"
             />
           }
         >
@@ -127,12 +128,8 @@ export function ProjectSelector(): React.JSX.Element {
                   onClick={() => router.push(`/${project._id}`)}
                   onMouseEnter={() => prefetchProject(project._id)}
                   onFocus={() => prefetchProject(project._id)}
-                  className={cn(
-                    "cursor-pointer",
-                    project._id === currentProjectId
-                      ? "bg-accent text-accent-foreground"
-                      : "",
-                  )}
+                  data-active={project._id === currentProjectId}
+                  className="cursor-pointer"
                 >
                   <Folder className="size-4" />
                   <span className="truncate max-w-60 block">

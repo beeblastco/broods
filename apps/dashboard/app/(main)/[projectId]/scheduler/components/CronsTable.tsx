@@ -112,7 +112,8 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Edit ${job.name}`}
-                        className="cursor-pointer text-muted-foreground hover:text-foreground"
+                        tone="muted"
+                        className="cursor-pointer"
                         onClick={() => setEditing(job)}
                       >
                         <Pencil className="size-3.5" />
@@ -121,7 +122,8 @@ export function CronsTable({ crons, agents }: Props): React.JSX.Element {
                         variant="ghost"
                         size="icon-xs"
                         aria-label={`Delete ${job.name}`}
-                        className="cursor-pointer text-muted-foreground hover:text-destructive"
+                        tone="muted-destructive"
+                        className="cursor-pointer"
                         onClick={() => {
                           setError(null);
                           setDeleting(job);

@@ -66,7 +66,7 @@ export function QuestionCard({
             className="border-b border-border/60 px-2.5 py-2 last:border-b-0"
           >
             <p className="mb-1.5 flex items-center gap-2">
-              <span className="rounded-sm border border-border px-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <span className="rounded-sm border border-border px-1 text-3xs uppercase tracking-wider text-muted-foreground">
                 {question.header}
               </span>
               <span className="text-foreground">{question.question}</span>
@@ -90,7 +90,7 @@ export function QuestionCard({
                   <span
                     className={`size-3 self-center rounded-full border ${
                       selected
-                        ? "border-foreground bg-foreground shadow-[inset_0_0_0_2px_var(--background)]"
+                        ? "border-foreground bg-foreground inset-ring-2 inset-ring-background"
                         : "border-muted-foreground/60"
                     }`}
                   />

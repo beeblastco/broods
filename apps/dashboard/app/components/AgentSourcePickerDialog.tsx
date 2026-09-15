@@ -22,10 +22,8 @@ export function AgentSourcePickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xs p-1 gap-0">
         <DialogHeader className="px-3 pt-3 pb-1">
-          <DialogTitle className="text-sm font-medium text-foreground/80">
-            Add agent
-          </DialogTitle>
-          <DialogDescription className="text-xs text-muted-foreground">
+          <DialogTitle className="text-sm font-medium">Add agent</DialogTitle>
+          <DialogDescription className="text-xs">
             Select where the config should come from
           </DialogDescription>
         </DialogHeader>

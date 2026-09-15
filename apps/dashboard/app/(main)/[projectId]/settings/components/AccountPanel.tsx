@@ -271,7 +271,7 @@ export function AccountPanel(): React.JSX.Element {
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-xs text-muted-foreground">Plan</span>
             <div className="flex items-center gap-2">
-              <Badge className={planConfig.badgeClass}>
+              <Badge variant={planConfig.badgeVariant}>
                 {planConfig.label}
               </Badge>
               {showUpgrade && (

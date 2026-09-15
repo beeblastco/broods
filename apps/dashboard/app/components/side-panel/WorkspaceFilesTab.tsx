@@ -4,7 +4,6 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
-import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -612,7 +611,7 @@ export function WorkspaceFilesTab({
 
       {/* Error banner */}
       {error && (
-        <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+        <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-2xs text-destructive">
           {error}
           <button
             className="ml-2 cursor-pointer underline"
@@ -635,10 +634,10 @@ export function WorkspaceFilesTab({
               <Upload className="size-4 text-muted-foreground" />
             </div>
             <div className="flex flex-col gap-1">
-              <p className="text-[12px] font-medium text-foreground/70">
+              <p className="text-xs font-medium text-foreground/70">
                 No files yet
               </p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-2xs text-muted-foreground">
                 Drop files or folders here, or use the buttons above.
               </p>
             </div>
@@ -673,8 +672,7 @@ export function WorkspaceFilesTab({
               return (
                 <div
                   key={`uploading-${path}`}
-                  className="flex h-5.5 items-center gap-1.5 text-[12px] text-muted-foreground"
-                  style={{ paddingLeft: "20px" }}
+                  className="flex h-5.5 items-center gap-1.5 pl-5 text-xs text-muted-foreground"
                 >
                   <Loader2 className="size-3 animate-spin" />
                   <span className="truncate font-mono">{name}</span>
@@ -687,13 +685,11 @@ export function WorkspaceFilesTab({
 
       {/* Drag-over overlay */}
       {isDragOver && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded bg-primary/5 backdrop-blur-[1px]">
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded bg-primary/5">
           <div className="flex size-12 items-center justify-center rounded-full border-2 border-dashed border-primary/50 bg-background">
             <Upload className="size-5 text-primary/70" />
           </div>
-          <p className="text-[12px] font-medium text-primary/80">
-            Drop to upload
-          </p>
+          <p className="text-xs font-medium text-primary/80">Drop to upload</p>
         </div>
       )}
 
@@ -931,10 +927,10 @@ function RenameInput({
   };
 
   return (
-    <Input
+    <input
       ref={ref}
       value={draft}
-      className="h-4.5 flex-1 rounded-sm border-primary px-1 py-0 font-mono text-[12px]"
+      className="h-4.5 w-full min-w-0 flex-1 rounded-sm border border-primary bg-transparent px-1 py-0 font-mono text-xs shadow-xs outline-none transition-shadow placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -995,13 +991,13 @@ function TreeRow({
     <>
       <div
         className={cn(
-          "group flex h-5.5 select-none items-center gap-0 pr-1 text-[13px]",
+          "group flex h-5.5 select-none items-center gap-0 pl-(--indent) pr-1 text-xs",
           "cursor-pointer",
           isSelected
             ? "bg-accent text-accent-foreground"
             : "text-foreground/80 hover:bg-muted/50",
         )}
-        style={{ paddingLeft: `${4 + depth * 16}px` }}
+        style={{ "--indent": `${4 + depth * 16}px` }}
         onClick={handleClick}
         title={isRenaming ? undefined : node.path}
       >
@@ -1019,9 +1015,9 @@ function TreeRow({
         {/* icon */}
         {node.isFolder ? (
           isExpanded ? (
-            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
+            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-folder" />
           ) : (
-            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
+            <Folder className="mr-1.5 size-3.5 shrink-0 text-folder" />
           )
         ) : (
           <ExtIcon name={node.name} />
@@ -1036,7 +1032,7 @@ function TreeRow({
           />
         ) : (
           <span
-            className="flex-1 truncate font-mono text-[12px]"
+            className="flex-1 truncate font-mono text-xs"
             onDoubleClick={(e) => {
               if (!canWrite) return;
               e.stopPropagation();
@@ -1052,7 +1048,7 @@ function TreeRow({
           node.sizeBytes !== undefined &&
           isSelected &&
           !isRenaming && (
-            <span className="mr-1 shrink-0 text-[10px] text-muted-foreground">
+            <span className="mr-1 shrink-0 text-3xs text-muted-foreground">
               {formatBytes(node.sizeBytes)}
             </span>
           )}
@@ -1084,7 +1080,8 @@ function TreeRow({
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  className="size-5 cursor-pointer text-destructive hover:text-destructive"
+                  tone="destructive"
+                  className="size-5 cursor-pointer"
                   title="Delete"
                   onClick={(e) => {
                     e.stopPropagation();

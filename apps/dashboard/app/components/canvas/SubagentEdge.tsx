@@ -2,6 +2,7 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import { cn } from "@/app/lib/utils";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -10,8 +11,6 @@ import {
 } from "@xyflow/react";
 import { useState } from "react";
 
-const SUBAGENT_COLOR = "rgba(139, 92, 246, 0.65)";
-const SUBAGENT_COLOR_HOVER = "rgb(239, 68, 68, 0.9)";
 const ARROW_ID_PREFIX = "subagent-arrow";
 
 /**
@@ -55,7 +54,6 @@ export function SubagentEdge({
     targetPosition: targetPosition,
   });
 
-  const stroke = hovered ? SUBAGENT_COLOR_HOVER : SUBAGENT_COLOR;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -71,7 +69,12 @@ export function SubagentEdge({
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M -10,-4 L 0,0 L -10,4 Z" fill={stroke} />
+          <path
+            d="M -10,-4 L 0,0 L -10,4 Z"
+            className={
+              hovered ? "fill-destructive/90" : "fill-canvas-subagent/65"
+            }
+          />
         </marker>
       </defs>
 
@@ -80,10 +83,15 @@ export function SubagentEdge({
         path={edgePath}
         // Keep the violet stroke but honor focus-mode dimming: pull only `opacity` from the
         // incoming style (which also carries the gray default stroke we must not apply).
+        // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
+        // and the width goes through xyflow's own variable.
+        className={cn(
+          "opacity-(--edge-opacity)",
+          hovered ? "stroke-destructive/90!" : "stroke-canvas-subagent/65!",
+        )}
         style={{
-          stroke: stroke,
-          strokeWidth: 1.5,
-          opacity: style?.opacity,
+          "--edge-opacity": style?.opacity,
+          "--xy-edge-stroke-width": 1.5,
         }}
         markerEnd={`url(#${arrowId})`}
       />

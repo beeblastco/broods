@@ -4,6 +4,7 @@ import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Switch } from "@/app/components/ui/switch";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import {
   readAgentBranch,
@@ -78,9 +79,7 @@ export function McpDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Name
-        </span>
+        <SectionHeader>Name</SectionHeader>
         <div className="flex items-center gap-2">
           <Input
             value={editName}
@@ -105,18 +104,16 @@ export function McpDetailsTab({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <SectionHeader>
           Server name (prefixes every tool as name__tool)
-        </span>
+        </SectionHeader>
         <code className="text-xs text-foreground">
           {server?.name ?? "generated_on_save"}
         </code>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Transport
-        </span>
+        <SectionHeader>Transport</SectionHeader>
         <code className="text-xs text-foreground">
           {transportLabel(server)}
         </code>
@@ -124,9 +121,7 @@ export function McpDetailsTab({
 
       {server?.sha256 && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            Checksum
-          </span>
+          <SectionHeader>Checksum</SectionHeader>
           <code className="break-all text-xs text-foreground">
             {server.sha256}
           </code>
@@ -136,7 +131,7 @@ export function McpDetailsTab({
       <div className="flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
         <div className="flex flex-col">
           <span className="text-xs font-medium text-foreground">Enabled</span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {isEnabled
               ? "Server can register tools on agent runs."
               : "Server is disabled."}
@@ -205,7 +200,7 @@ function AgentWireRow({
           <span className="text-xs font-medium text-foreground">
             Enabled on connected agent
           </span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {agentConfig
               ? "Writes mcp into the wired agent's config."
               : "Wire this node to an agent first."}

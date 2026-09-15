@@ -26,9 +26,7 @@ export function ToggleRow({
       <div className="flex flex-col">
         <span className="text-xs font-medium text-foreground">{label}</span>
         {description && (
-          <span className="text-[11px] text-muted-foreground">
-            {description}
-          </span>
+          <span className="text-2xs text-muted-foreground">{description}</span>
         )}
       </div>
       <Switch

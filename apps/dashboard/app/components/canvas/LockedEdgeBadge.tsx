@@ -18,13 +18,8 @@ export function LockedEdgeBadge({
 }): React.JSX.Element {
   return (
     <div
-      className="nodrag nopan group absolute flex cursor-not-allowed items-center justify-center"
-      style={{
-        transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-        pointerEvents: "all",
-        width: 64,
-        height: 64,
-      }}
+      className="nodrag nopan group pointer-events-auto absolute top-(--label-y) left-(--label-x) flex size-16 -translate-1/2 cursor-not-allowed items-center justify-center"
+      style={{ "--label-x": `${labelX}px`, "--label-y": `${labelY}px` }}
       onMouseEnter={() => onHoverChange?.(true)}
       onMouseLeave={() => onHoverChange?.(false)}
       title="Managed by broods/ code. The connection is defined in code."

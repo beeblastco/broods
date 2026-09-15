@@ -2,7 +2,6 @@
 
 import { Button } from "@/app/components/ui/button";
 import { useStage } from "@/app/hooks/useStage";
-import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -100,14 +99,10 @@ export default function SettingsPage(): React.JSX.Element {
                 key={t.id}
                 nativeButton={false}
                 render={<Link href={tabHref(t.id)} draggable={false} />}
-                variant="ghost"
+                variant="nav"
                 size="sm"
-                className={cn(
-                  "w-full select-none justify-start px-3 cursor-pointer active:bg-accent/70 h-8",
-                  activeTab === t.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
+                data-active={activeTab === t.id}
+                className="w-full select-none justify-start cursor-pointer"
               >
                 {t.label}
               </Button>
@@ -120,14 +115,10 @@ export default function SettingsPage(): React.JSX.Element {
                 key={t.id}
                 nativeButton={false}
                 render={<Link href={tabHref(t.id)} draggable={false} />}
-                variant="ghost"
+                variant="nav-destructive"
                 size="sm"
-                className={cn(
-                  "w-full select-none justify-start px-3 cursor-pointer active:bg-accent/70 h-8",
-                  activeTab === t.id
-                    ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
-                    : "text-destructive/70 hover:text-destructive hover:bg-destructive/10 active:bg-destructive/10",
-                )}
+                data-active={activeTab === t.id}
+                className="w-full select-none justify-start cursor-pointer"
               >
                 {t.label}
               </Button>

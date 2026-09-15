@@ -33,8 +33,9 @@ export function CopyButton({ value, label }: Props): React.JSX.Element {
       type="button"
       variant="ghost"
       size="icon-xs"
+      tone="muted"
       aria-label={`Copy ${label}`}
-      className="cursor-pointer text-muted-foreground"
+      className="cursor-pointer"
       onClick={copy}
     >
       {copied ? <Check /> : <Copy />}
@@ -66,7 +67,7 @@ export function CopyRow({
     >
       {children}
       {copied ? (
-        <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <Check className="size-3 shrink-0 text-success" />
       ) : (
         <Copy className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100" />
       )}

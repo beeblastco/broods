@@ -70,12 +70,12 @@ const WS_SNIPPET = [
 // VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippets
 // read like an editor without pulling in a full highlighter dependency.
 const COLOR = {
-  comment: "text-[#6a9955]",
-  string: "text-[#ce9178]",
-  keyword: "text-[#569cd6]",
-  func: "text-[#dcdcaa]",
-  number: "text-[#b5cea8]",
-  variable: "text-[#9cdcfe]",
+  comment: "text-code-comment",
+  string: "text-code-string",
+  keyword: "text-code-keyword",
+  func: "text-code-function",
+  number: "text-code-number",
+  variable: "text-code-variable",
 };
 
 const TS_RE =
@@ -134,14 +134,14 @@ export function RuntimeKeyView({
     <div className="grid gap-6">
       <section className="grid gap-2">
         <div className="flex min-h-7 items-center justify-between gap-2">
-          <Label className="text-sm font-medium text-foreground">API key</Label>
+          <Label>API key</Label>
           {onRotate ? <RotateButton onRotate={onRotate} /> : null}
         </div>
         <div className="flex items-center gap-2">
           <Input
             readOnly
             value={showKey ? apiKey : maskedKey}
-            className="h-9 font-mono text-xs text-foreground"
+            className="h-9 font-mono text-xs"
           />
           <Button
             variant="outline"
@@ -177,9 +177,7 @@ export function RuntimeKeyView({
       </section>
 
       <section className="grid gap-2">
-        <Label className="text-sm font-medium text-foreground">
-          Add it to your environment
-        </Label>
+        <Label>Add it to your environment</Label>
         <p className="text-xs leading-relaxed text-muted-foreground">
           The SDK reads <Mono>BROODS_API_KEY</Mono> by default. Copy this into
           your <Mono>.env.local</Mono> or <Mono>.env</Mono> file.
@@ -188,15 +186,13 @@ export function RuntimeKeyView({
       </section>
 
       <section className="grid gap-2">
-        <Label className="text-sm font-medium text-foreground">
-          Stream the response
-        </Label>
+        <Label>Stream the response</Label>
         <p className="text-xs leading-relaxed text-muted-foreground">
           The SDK streams over <Mono>SSE</Mono> by default, plain HTTP that
           works through any proxy with zero setup. For the lowest latency and a
           full-duplex channel, opt into the WebSocket client.
         </p>
-        <Tabs defaultValue="sse" className="mt-1 gap-2">
+        <Tabs defaultValue="sse" className="mt-1">
           <TabsList>
             <TabsTrigger value="sse" className="cursor-pointer">
               SSE · default
@@ -249,7 +245,7 @@ function CodeBlock({
 
   return (
     <div className="relative">
-      <pre className="overflow-x-auto rounded-md border border-border bg-[#1e1e1e] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#d4d4d4]">
+      <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
         <code>{highlight(code, lang)}</code>
       </pre>
       <button
@@ -307,7 +303,7 @@ function highlight(code: string, lang: "ts" | "bash"): ReactNode[] {
 
 function Mono({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-foreground">
       {children}
     </code>
   );
@@ -368,7 +364,8 @@ function RotateButton({
       <Button
         variant="outline"
         size="sm"
-        className="h-7 cursor-pointer text-muted-foreground"
+        tone="muted"
+        className="h-7 cursor-pointer"
         onClick={() => setConfirming(true)}
       >
         <RefreshCw className="size-3.5" />

@@ -38,6 +38,18 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-folder: var(--folder);
+  --color-run-subagent: var(--run-subagent);
+  --color-run-reasoning: var(--run-reasoning);
+  --color-span-task: var(--span-task);
+  --color-span-cron: var(--span-cron);
+  --color-span-subtask: var(--span-subtask);
+  --color-span-model: var(--span-model);
+  --color-span-tool: var(--span-tool);
+  --color-span-phase: var(--span-phase);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -45,6 +57,77 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+}
+
+/* Tokens that read the same in light and dark. */
+@theme {
+  /* Dense panels sit below text-xs. No line-height token, so the text keeps its parent's. */
+  --text-2xs: 0.6875rem;
+  --text-3xs: 0.625rem;
+
+  /* Keyframes come from @xyflow/react/dist/style.css. */
+  --animate-dashdraw: dashdraw 0.5s linear infinite;
+
+  --color-stage-development: oklch(0.696 0.17 162.48);
+  --color-stage-production: oklch(0.606 0.25 292.717);
+  --color-stage-custom: oklch(0.715 0.143 215.221);
+
+  --color-canvas-agent: oklch(0.627 0.265 303.9);
+  --color-canvas-subagent: oklch(0.606 0.25 292.717);
+  --color-canvas-mount: oklch(0.704 0.14 182.503);
+
+  --color-usage-input: #60a5fa;
+  --color-usage-output: #34d399;
+  --color-usage-reasoning: #a78bfa;
+  --color-usage-cache-read: #fbbf24;
+  --color-usage-cache-write: #fb7185;
+  --color-usage-runtime: #818cf8;
+  --color-usage-agent-sandbox: #2dd4bf;
+  --color-usage-mcp-sandbox: #fb923c;
+  --color-usage-tasks: #22d3ee;
+  --color-usage-model-calls: #f472b6;
+
+  /* Syntax colors for code samples on --color-code-background. */
+  --color-code-background: #1e1e1e;
+  --color-code-foreground: #d4d4d4;
+  --color-code-comment: #6a9955;
+  --color-code-string: #ce9178;
+  --color-code-keyword: #569cd6;
+  --color-code-function: #dcdcaa;
+  --color-code-number: #b5cea8;
+  --color-code-variable: #9cdcfe;
+
+  /* Command output on bg-black. */
+  --color-terminal-foreground: oklch(0.967 0.001 286.375);
+  --color-terminal-muted: oklch(0.705 0.015 286.067);
+  --color-terminal-subtle: oklch(0.552 0.016 285.938);
+  --color-terminal-success: oklch(0.845 0.143 164.978);
+  --color-terminal-error: oklch(0.808 0.114 19.571);
+  --color-terminal-warning: oklch(0.924 0.12 95.746);
+
+  --color-brand-ink: #0a0903;
+  --color-brand-paper: #f7f3f3;
+
+  /* Chat avatars, picked by a hash of the name. */
+  --color-avatar-1: #14b8a6;
+  --color-avatar-2: #22c55e;
+  --color-avatar-3: #3b82f6;
+  --color-avatar-4: #06b6d4;
+  --color-avatar-5: #f59e0b;
+  --color-avatar-6: #ef4444;
+  --color-avatar-7: #8b5cf6;
+  --color-avatar-8: #f97316;
+}
+
+@utility clip-hex {
+  clip-path: polygon(
+    25% 6.7%,
+    75% 6.7%,
+    100% 50%,
+    75% 93.3%,
+    25% 93.3%,
+    0% 50%
+  );
 }
 
 html,
@@ -86,6 +169,19 @@ body {
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --success: oklch(0.596 0.145 163.225);
+  --warning: oklch(0.666 0.179 58.318);
+  --info: oklch(0.546 0.245 262.881);
+  --folder: oklch(0.554 0.135 66.442);
+  --run-subagent: oklch(0.609 0.126 221.723);
+  --run-reasoning: oklch(0.558 0.288 302.321);
+  /* Trace bar hues, tuned for protan/deutan separation; see KIND_THEME in TracingPanel. */
+  --span-task: oklch(0.606 0.25 292.717);
+  --span-cron: oklch(0.769 0.188 70.08);
+  --span-subtask: oklch(0.715 0.143 215.221);
+  --span-model: oklch(0.488 0.243 264.376);
+  --span-tool: oklch(0.646 0.222 41.116);
+  --span-phase: oklch(0.511 0.096 186.391);
 }
 
 .dark {
@@ -120,6 +216,18 @@ body {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --success: oklch(0.765 0.177 163.223);
+  --warning: oklch(0.828 0.189 84.429);
+  --info: oklch(0.707 0.165 254.624);
+  --folder: oklch(0.852 0.199 91.936);
+  --run-subagent: oklch(0.789 0.154 211.53);
+  --run-reasoning: oklch(0.714 0.203 305.504);
+  --span-task: oklch(0.606 0.25 292.717);
+  --span-cron: oklch(0.879 0.169 91.605);
+  --span-subtask: oklch(0.865 0.127 207.078);
+  --span-model: oklch(0.707 0.165 254.624);
+  --span-tool: oklch(0.705 0.213 47.604);
+  --span-phase: oklch(0.704 0.14 182.503);
 }
 
 @layer base {

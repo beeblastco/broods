@@ -18,6 +18,10 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Sidebar tabs and header switchers. Pass data-active={isCurrent}; an open menu trigger lights up on its own.
+        nav: "text-muted-foreground hover:bg-accent/50 hover:text-foreground active:bg-accent/70 data-popup-open:bg-accent data-popup-open:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground",
+        "nav-destructive":
+          "text-destructive/70 hover:bg-destructive/10 hover:text-destructive active:bg-destructive/10 data-[active=true]:bg-destructive/10 data-[active=true]:text-destructive data-[active=true]:hover:bg-destructive/20",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
@@ -29,10 +33,18 @@ const buttonVariants = cva(
         "icon-sm": "size-8",
         "icon-lg": "size-10",
       },
+      // Text color layered over the variant, for buttons that stay quiet until hovered.
+      tone: {
+        default: "",
+        muted: "text-muted-foreground hover:text-foreground",
+        "muted-destructive": "text-muted-foreground hover:text-destructive",
+        destructive: "text-destructive hover:text-destructive",
+      },
     },
     defaultVariants: {
       variant: "default",
       size: "default",
+      tone: "default",
     },
   },
 );
@@ -48,6 +60,7 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  tone = "default",
   ...props
 }: ButtonProps) {
   return (
@@ -56,7 +69,12 @@ function Button({
       data-variant={variant}
       data-size={size}
       className={cn(
-        buttonVariants({ variant: variant, size: size, className: className }),
+        buttonVariants({
+          variant: variant,
+          size: size,
+          tone: tone,
+          className: className,
+        }),
       )}
       {...props}
     />

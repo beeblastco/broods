@@ -73,14 +73,10 @@ export default function SandboxPage(): React.JSX.Element {
           {VIEWS.map((tab) => (
             <Button
               key={tab.id}
-              variant="ghost"
+              variant="nav"
               size="sm"
-              className={cn(
-                "w-full justify-start px-3 cursor-pointer",
-                view === tab.id
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-              )}
+              data-active={view === tab.id}
+              className="w-full justify-start cursor-pointer"
               onClick={() => setView(tab.id)}
             >
               {tab.label}

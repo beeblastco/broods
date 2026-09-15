@@ -1228,9 +1228,12 @@ function CanvasInner({
               {flow}
             </ContextMenuTrigger>
             {canWrite && (
-              <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
+              <ContextMenuContent className="w-48">
                 <ContextMenuGroup>
-                  <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
+                  <ContextMenuLabel
+                    variant="muted"
+                    className="text-xs tracking-wider"
+                  >
                     Add service
                   </ContextMenuLabel>
                 </ContextMenuGroup>
@@ -1269,7 +1272,7 @@ function CanvasInner({
         </div>
 
         <div
-          className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
+          className={`h-full shrink-0 overflow-hidden transition-all duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
         >
           {sidePanelWanted && (
             <NodeSidePanel

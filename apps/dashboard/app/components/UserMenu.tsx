@@ -61,9 +61,7 @@ export function UserMenu(): React.JSX.Element | null {
         type="button"
       >
         <Avatar size="sm">
-          <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
-            ...
-          </AvatarFallback>
+          <AvatarFallback className="text-3xs font-medium">...</AvatarFallback>
         </Avatar>
       </button>
     );
@@ -88,7 +86,7 @@ export function UserMenu(): React.JSX.Element | null {
       <DropdownMenuTrigger className="relative flex size-6 cursor-pointer items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-popup-open:ring-2 data-popup-open:ring-white/40">
         <Avatar size="sm">
           {picture && <AvatarImage src={picture} alt={name} />}
-          <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+          <AvatarFallback className="text-3xs font-medium">
             {initials}
           </AvatarFallback>
         </Avatar>

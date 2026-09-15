@@ -22,8 +22,9 @@ export function AgentSourceOptions({
         <Button
           key={key}
           variant="ghost"
+          tone="muted"
           onClick={key === "create" ? onCreateNew : undefined}
-          className="h-auto justify-start gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground"
+          className="h-10 justify-start"
         >
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           {label}

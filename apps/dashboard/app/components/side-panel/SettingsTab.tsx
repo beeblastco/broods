@@ -113,7 +113,7 @@ export function SettingsTab({
                 <p className="text-xs font-semibold text-destructive">
                   Danger Zone
                 </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mt-0.5 text-2xs text-muted-foreground">
                   {managedByCode && codeOwner === "api" ? (
                     <>
                       Managed through the account API. Delete it via{" "}
@@ -149,7 +149,7 @@ export function SettingsTab({
                 <p className="text-xs font-semibold text-destructive">
                   Danger Zone
                 </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mt-0.5 text-2xs text-muted-foreground">
                   {descriptions.summary}
                 </p>
               </div>

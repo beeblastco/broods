@@ -94,7 +94,7 @@ export function DeployKeysPanel({
     <>
       <Section description="Scoped CLI tokens that deploy only to this stage.">
         {revealed && (
-          <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
+          <div className="rounded-md border border-success/40 bg-success/5 p-3">
             <p className="mb-1 text-xs font-medium text-foreground">
               Copy this token now. It won&apos;t be shown again.
             </p>
@@ -142,7 +142,8 @@ export function DeployKeysPanel({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="cursor-pointer text-muted-foreground hover:text-destructive"
+                  tone="muted-destructive"
+                  className="cursor-pointer"
                   onClick={() => setDeletingKey(key)}
                 >
                   <Trash2 className="size-3.5" />

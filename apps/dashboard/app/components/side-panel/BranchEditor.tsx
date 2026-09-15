@@ -8,6 +8,7 @@
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -77,10 +78,9 @@ export function BranchEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-        {title}
-      </span>
+      <SectionHeader>{title}</SectionHeader>
       <Textarea
+        variant="code"
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
@@ -89,7 +89,7 @@ export function BranchEditor({
         }}
         spellCheck={false}
         rows={8}
-        className="min-h-32 resize-y bg-muted/50 font-mono text-xs"
+        className="min-h-32 resize-y"
         disabled={disabled}
         readOnly={!canWrite}
       />
@@ -107,7 +107,7 @@ export function BranchEditor({
           </Button>
         )}
         {saved && (
-          <span className="flex items-center gap-1 text-xs text-emerald-500">
+          <span className="flex items-center gap-1 text-xs text-success">
             <Check className="size-3" /> Saved
           </span>
         )}

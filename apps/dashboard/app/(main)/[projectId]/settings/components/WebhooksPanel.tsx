@@ -145,7 +145,8 @@ export function WebhooksPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 shrink-0 cursor-pointer gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    tone="muted"
+                    className="h-7 shrink-0 cursor-pointer text-xs"
                     onClick={() =>
                       setAddingFor(
                         addingFor === agent.agentConfigId
@@ -200,8 +201,8 @@ export function WebhooksPanel({
                           "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
                           canWrite ? "cursor-pointer" : "cursor-default",
                           webhook.enabled
-                            ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
-                            : "bg-red-500/15 text-red-600 hover:bg-red-500/25",
+                            ? "bg-success/15 text-success hover:bg-success/25"
+                            : "bg-destructive/15 text-destructive hover:bg-destructive/25",
                         )}
                         title={
                           webhook.enabled
@@ -212,7 +213,7 @@ export function WebhooksPanel({
                         <span
                           className={cn(
                             "size-1.5 rounded-full",
-                            webhook.enabled ? "bg-emerald-500" : "bg-red-500",
+                            webhook.enabled ? "bg-success" : "bg-destructive",
                           )}
                         />
                         {webhook.enabled ? "Active" : "Inactive"}
@@ -221,7 +222,8 @@ export function WebhooksPanel({
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                          tone="muted-destructive"
+                          className="shrink-0 cursor-pointer"
                           onClick={() =>
                             setDeletingWebhook({
                               agentConfigId: agent.agentConfigId,

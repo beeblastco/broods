@@ -2,7 +2,10 @@
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import { agentStatusConfig } from "@/app/components/node/BaseNode";
+import {
+  agentStatusConfig,
+  statusConfig,
+} from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import {
   DetailsTab,
@@ -28,6 +31,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import {
   Tabs,
   TabsContent,
@@ -73,18 +77,6 @@ const nodeStatusBadgeVariant: Record<
   running: "success",
   idle: "secondary",
   error: "destructive",
-};
-
-const nodeStatusBadgeColor: Record<"running" | "idle" | "error", string> = {
-  running: "bg-emerald-500",
-  idle: "bg-zinc-500",
-  error: "bg-red-500",
-};
-
-const nodeStatusBadgeText: Record<"running" | "idle" | "error", string> = {
-  running: "Running",
-  idle: "Idle",
-  error: "Error",
 };
 
 const healthBadgeVariant: Record<
@@ -346,7 +338,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       if (!canQueryMcpStatus || mcpServer === undefined) {
         return {
           text: "Loading",
-          color: "bg-zinc-500",
+          color: "bg-muted-foreground",
           variant: "secondary",
         };
       }
@@ -355,7 +347,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
       return {
         text: isServerEnabled ? "Enabled" : "Disabled",
-        color: isServerEnabled ? "bg-emerald-500" : "bg-zinc-500",
+        color: isServerEnabled ? "bg-success" : "bg-muted-foreground",
         variant: isServerEnabled ? "success" : "secondary",
       };
     }
@@ -364,7 +356,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       // Mirror the canvas node: conversation persistence is always on once wired to an agent.
       return {
         text: isConnectedToAgent ? "Persistent" : "Unconnected",
-        color: isConnectedToAgent ? "bg-emerald-500" : "bg-red-400",
+        color: isConnectedToAgent ? "bg-success" : "bg-destructive",
         variant: isConnectedToAgent ? "success" : "destructive",
       };
     }
@@ -372,7 +364,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     if (!isConnectedToAgent) {
       return {
         text: "Unconnected",
-        color: "bg-red-400",
+        color: "bg-destructive",
         variant: "destructive",
       };
     }
@@ -381,8 +373,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       const workspaceStatus = nodeData?.status ?? "idle";
 
       return {
-        text: nodeStatusBadgeText[workspaceStatus],
-        color: nodeStatusBadgeColor[workspaceStatus],
+        text: statusConfig[workspaceStatus].text,
+        color: statusConfig[workspaceStatus].color,
         variant: nodeStatusBadgeVariant[workspaceStatus],
       };
     }
@@ -391,8 +383,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       const sandboxStatus = nodeData?.status ?? "idle";
 
       return {
-        text: nodeStatusBadgeText[sandboxStatus],
-        color: nodeStatusBadgeColor[sandboxStatus],
+        text: statusConfig[sandboxStatus].text,
+        color: statusConfig[sandboxStatus].color,
         variant: nodeStatusBadgeVariant[sandboxStatus],
       };
     }
@@ -408,7 +400,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
       return {
         text: enabled ? "Enabled" : "Disabled",
-        color: enabled ? "bg-emerald-500" : "bg-red-400",
+        color: enabled ? "bg-success" : "bg-destructive",
         variant: enabled ? "success" : "secondary",
       };
     }
@@ -416,8 +408,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const nodeStatus = nodeData?.status ?? "idle";
 
     return {
-      text: nodeStatusBadgeText[nodeStatus],
-      color: nodeStatusBadgeColor[nodeStatus],
+      text: statusConfig[nodeStatus].text,
+      color: statusConfig[nodeStatus].color,
       variant: nodeStatusBadgeVariant[nodeStatus],
     };
   }, [
@@ -784,10 +776,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             {PANEL_TITLES[nodeType] ?? "Node"}
           </h2>
           {headerStatus && (
-            <Badge
-              variant={headerStatus.variant}
-              className="gap-1.5 py-0 text-[10px]"
-            >
+            <Badge variant={headerStatus.variant} className="text-3xs">
               <span className={`size-1.5 rounded-full ${headerStatus.color}`} />
               {headerStatus.text}
             </Badge>
@@ -801,8 +790,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       <Separator />
 
       {isCodeManaged && (
-        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
-          <p className="text-sm text-amber-600 dark:text-amber-400">
+        <div className="border-b border-warning/30 bg-warning/10 px-4 py-2.5">
+          <p className="text-sm text-warning">
             {codeOwner === "api"
               ? "Managed through the account API, edits re-sync on every API write, delete is locked."
               : "Managed by broods packages, edits sync on deploy, delete is locked."}
@@ -811,8 +800,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       )}
 
       {collidesWithCode && (
-        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
-          <p className="text-sm text-amber-600 dark:text-amber-400">
+        <div className="border-b border-warning/30 bg-warning/10 px-4 py-2.5">
+          <p className="text-sm text-warning">
             Name matches a code-managed {nodeType}, next deploy overwrites this.
             Rename to keep it.
           </p>
@@ -1124,9 +1113,7 @@ function ServiceDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Name
-        </span>
+        <SectionHeader>Name</SectionHeader>
         <div className="flex items-center gap-2">
           <Input
             value={editName}

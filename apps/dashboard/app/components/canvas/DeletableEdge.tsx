@@ -17,7 +17,6 @@ import {
 import { useTheme } from "next-themes";
 import { useState } from "react";
 
-const HOVER_COLOR = "rgb(239, 68, 68, 0.9)";
 const ARROW_ID_PREFIX = "deletable-arrow";
 
 /**
@@ -88,16 +87,8 @@ export function DeletableEdge({
     isCodeManagedEdgeId(id) ||
     (isCodeManagedOwner(sourceManagedBy) &&
       isCodeManagedOwner(targetManagedBy));
-  const edgeStyle =
-    hovered && !locked
-      ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
-      : style;
-  const arrowColor =
-    hovered && !locked
-      ? HOVER_COLOR
-      : isDark
-        ? "rgba(255,255,255,0.35)"
-        : "rgba(0,0,0,0.3)";
+  const deleteHover = hovered && !locked;
+  const arrowColor = isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)";
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -117,24 +108,31 @@ export function DeletableEdge({
           markerUnits="userSpaceOnUse"
           orient="auto-start-reverse"
         >
-          <path d="M -10,-4 L 0,0 L -10,4 Z" fill={arrowColor} />
+          <path
+            d="M -10,-4 L 0,0 L -10,4 Z"
+            fill={arrowColor}
+            className={deleteHover ? "fill-destructive/90" : undefined}
+          />
         </marker>
       </defs>
 
       <BaseEdge
         id={id}
         path={edgePath}
-        style={edgeStyle}
+        style={style}
+        // Important, so the hover stroke wins over the default stroke inline in `style`.
+        className={deleteHover ? "stroke-destructive/90! stroke-2!" : undefined}
         markerEnd={`url(#${arrowId})`}
       />
       <EdgeLabelRenderer>
         {/* Subtle "default" marker at the midpoint; hidden on hover so the delete button takes over */}
         {isDefaultSandbox && !hovered && (
           <div
-            className="nodrag nopan pointer-events-none absolute text-[8px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
+            className="nodrag nopan pointer-events-none absolute top-(--label-y) left-(--label-x) -translate-1/2 text-3xs font-medium uppercase tracking-widest text-muted-foreground opacity-(--edge-opacity)"
             style={{
-              opacity: style?.opacity,
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              "--edge-opacity": style?.opacity,
+              "--label-x": `${labelX}px`,
+              "--label-y": `${labelY}px`,
             }}
           >
             default

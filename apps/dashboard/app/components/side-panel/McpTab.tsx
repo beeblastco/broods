@@ -9,6 +9,7 @@ import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Textarea } from "@/app/components/ui/textarea";
+import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatSource } from "@/app/lib/formatSource";
 import { api } from "@broods/convex/_generated/api";
@@ -180,17 +181,15 @@ export function McpTab({
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Transport
-        </span>
+        <SectionHeader>Transport</SectionHeader>
         <TransportToggle active={activeTransport} onChange={setTransport} />
       </div>
 
       {activeTransport === "hosted" ? (
         <>
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          <SectionHeader>
             Server code (Node · @modelcontextprotocol/server + zod)
-          </span>
+          </SectionHeader>
           <p className="text-xs text-muted-foreground">
             Save bundles the code, runs it in the sandbox, and lists its tools;
             a server that fails to build or answer never uploads.
@@ -200,9 +199,7 @@ export function McpTab({
       ) : (
         <>
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Server URL
-            </span>
+            <SectionHeader>Server URL</SectionHeader>
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -218,17 +215,16 @@ export function McpTab({
       )}
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Headers (JSON, optional)
-        </span>
+        <SectionHeader>Headers (JSON, optional)</SectionHeader>
         <Textarea
           value={headersJson}
           onChange={(e) => setHeadersJson(e.target.value)}
           spellCheck={false}
           placeholder={'{\n  "Authorization": "Bearer ${MY_TOKEN}"\n}'}
-          className="min-h-16 resize-y bg-muted/50 font-mono text-xs"
+          variant="code"
+          className="resize-y"
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           Credential headers must reference an account env var like{" "}
           <code>{"${NAME}"}</code>; it resolves at agent sync, never stored
           here.
@@ -273,18 +269,14 @@ function BundleManagedNotice({
 }): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col gap-3 p-4">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-        Bundle
-      </span>
+      <SectionHeader>Bundle</SectionHeader>
       <p className="text-xs text-muted-foreground">
         This server was uploaded by the CLI or SDK, which bundles it from your
         project. The source stays with your code. Run <code>broods dev</code> or{" "}
         <code>broods deploy</code> to change it.
       </p>
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Checksum
-        </span>
+        <SectionHeader>Checksum</SectionHeader>
         <code className="break-all text-xs text-foreground">
           {server.sha256}
         </code>
@@ -331,7 +323,7 @@ function SavedBadge({ state }: { state: SaveState }): React.JSX.Element | null {
   if (state.kind !== "saved") return null;
 
   return (
-    <span className="flex items-center gap-1 text-xs text-emerald-500">
+    <span className="flex items-center gap-1 text-xs text-success">
       <Check className="size-3" />
       {state.verified
         ? `Verified · ${state.toolCount} tool${state.toolCount === 1 ? "" : "s"}`
