@@ -461,7 +461,7 @@ async function verify(): Promise<void> {
       },
     );
     const collect = (chunk: Buffer): void => {
-      daemonOutput += chunk;
+      daemonOutput += chunk.toString("utf8");
     };
     daemon.stdout.on("data", collect);
     daemon.stderr.on("data", collect);

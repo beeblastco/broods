@@ -1,6 +1,7 @@
 /**
- * Registered MCP server contract (#331): external "http" rows and uploaded
- * "hosted" rows. The persisted row and its normalizer live in the config
+ * Registered MCP server contract (#331): external "http" rows, uploaded
+ * "hosted" rows, and "machine" rows a daemon serves from the user's own
+ * computer. The persisted row and its normalizer live in the config
  * plane (packages/convex/model/mcp.ts, packages/convex/account/mcp.ts); this
  * file owns the core-side record shape the storage adapter returns.
  * Connection and tool registration live in harness/mcp/.

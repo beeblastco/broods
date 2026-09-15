@@ -76,6 +76,21 @@ export interface TaskUsageInput {
   toolCallCount: number;
 }
 
+/** Identifies one daemon connection of a `machine` sandbox. */
+export interface MachineConnectionRef {
+  accountId: string;
+  /** New on every connect, so a replaced connection's late writes miss. */
+  connectionId: string;
+  sandboxConfigId: string;
+}
+
+export interface MachineConnectionRecord extends MachineConnectionRef {
+  computer: boolean;
+  hostname?: string;
+  mcp: string[];
+  platform?: string;
+}
+
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
   /** Agent sandbox provider (sandbox/lambda metered), or "mcp-sandbox". */
@@ -173,21 +188,6 @@ interface CronStore {
     runId: string,
     error: string,
   ): Promise<void>;
-}
-
-/** Identifies one daemon connection of a `machine` sandbox. */
-export interface MachineConnectionRef {
-  accountId: string;
-  /** New on every connect, so a replaced connection's late writes miss. */
-  connectionId: string;
-  sandboxConfigId: string;
-}
-
-export interface MachineConnectionRecord extends MachineConnectionRef {
-  computer: boolean;
-  hostname?: string;
-  mcp: string[];
-  platform?: string;
 }
 
 /** Mirrors machine daemon connections so the dashboard can show them. */

@@ -5,7 +5,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { normalizeMcpInput } from "../model/mcp";
+import { assertMcpRow, normalizeMcpInput } from "../model/mcp";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -267,6 +267,21 @@ describe("normalizeMcpInput", () => {
         { requireConnection: true },
       ),
     ).rejects.toThrow("sandbox must be the name of a machine sandbox");
+  });
+
+  test("headers cannot reach a machine row through a patch", () => {
+    // A patch carrying headers alone leaves transport unset, so the body
+    // normalizer above never fires; the row invariant is what refuses it.
+    expect(() =>
+      assertMcpRow({ transport: "machine", sandbox: "my-mac" }),
+    ).not.toThrow();
+    expect(() =>
+      assertMcpRow({
+        transport: "machine",
+        sandbox: "my-mac",
+        headers: { "X-A": "b" },
+      }),
+    ).toThrow("headers do not apply to a machine server");
   });
 
   test("rejects names that break the server__tool namespace", async () => {
