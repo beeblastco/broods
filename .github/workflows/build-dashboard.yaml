@@ -7,6 +7,7 @@ on:
       - dev
     paths:
       - "apps/dashboard/**"
+      - "packages/broods/**"
       - "packages/convex/**"
       - "package.json"
       - "bun.lock"
