@@ -24,10 +24,9 @@ export const MACHINE_RUNTIME_KEY = "runtime-key";
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 
 /** One connection status write core sent to storage. */
-export interface MachineConnectionWrite {
-  kind: "connected" | "disconnected" | "seen";
-  ref: MachineConnectionRecord | MachineConnectionRef;
-}
+export type MachineConnectionWrite =
+  | { kind: "connected"; ref: MachineConnectionRecord }
+  | { kind: "disconnected" | "seen"; ref: MachineConnectionRef };
 
 /** The executor config core builds for the `my-mac` record. */
 export function machineExecutorConfig(
