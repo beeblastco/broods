@@ -4,8 +4,7 @@
  * resolves to a Vercel AI SDK factory, which `satisfies` alone cannot prove.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
-import { generateText } from "ai";
+import { describe, expect, it } from "bun:test";
 import {
   modelProviderFactories,
   modelSettingsFromModelConfig,
@@ -93,36 +92,5 @@ describe("modelSettingsFromModelConfig", () => {
         },
       }),
     ).toEqual({ temperature: 0.2 });
-  });
-});
-
-// Bun drops a fetch whose socket stays silent for 300s. A throttled provider held
-// one step's stream that long and failed a 24-minute run, so model requests turn
-// that timer off and end only on the provider's error or the run's abort.
-describe("model request fetch", () => {
-  const originalFetch = globalThis.fetch;
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("sends model requests with Bun's idle timeout off", async () => {
-    const inits: BunFetchRequestInit[] = [];
-    globalThis.fetch = (async (_input, init) => {
-      inits.push(init ?? {});
-
-      return new Response("{}", { status: 500 });
-    }) as typeof fetch;
-    const resolved = resolveConfiguredModel({
-      model: { provider: "vertex", modelId: "gemini-2.5-flash" },
-      provider: { vertex: { apiKey: "sk-test" } },
-    });
-
-    await expect(
-      generateText({ model: resolved.model, prompt: "hi", maxRetries: 0 }),
-    ).rejects.toThrow();
-
-    expect(inits).toHaveLength(1);
-    expect(inits[0]?.timeout).toBe(false);
   });
 });

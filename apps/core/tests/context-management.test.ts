@@ -779,7 +779,10 @@ describe("session compaction", () => {
 
     expect(result).toBeDefined();
     expect(isCompactionSummaryMessage(result!)).toBe(true);
-    expect(createGoogleMock).toHaveBeenCalledWith({ apiKey: "google-key" });
+    expect(createGoogleMock).toHaveBeenCalledWith({
+      apiKey: "google-key",
+      fetch: expect.any(Function),
+    });
     expect(googleModelMock).toHaveBeenCalledWith("gemini-test");
     expect(generateTextMock).toHaveBeenCalledTimes(1);
   });
