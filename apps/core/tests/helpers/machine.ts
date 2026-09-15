@@ -119,13 +119,13 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
           : null,
     },
     machineConnections: {
-      connected: async (connection: MachineConnectionRecord) => {
+      connected: async (connection: MachineConnectionRecord): Promise<void> => {
         writes.push({ kind: "connected", ref: connection });
       },
-      disconnected: async (ref: MachineConnectionRef) => {
+      disconnected: async (ref: MachineConnectionRef): Promise<void> => {
         writes.push({ kind: "disconnected", ref: ref });
       },
-      seen: async (ref: MachineConnectionRef) => {
+      seen: async (ref: MachineConnectionRef): Promise<void> => {
         writes.push({ kind: "seen", ref: ref });
       },
     },

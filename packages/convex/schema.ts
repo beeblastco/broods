@@ -576,18 +576,12 @@ export const sandboxInstancesFields = {
   ephemeral: v.optional(v.boolean()),
 };
 
-/**
- * A `machine` sandbox's daemon connection as core last saw it; see
- * sandbox/machines.ts. One row per sandbox config. The dashboard reads it as
- * connected while `disconnectedAt` is unset and `lastSeenAt` is recent, so a
- * core that died without writing the disconnect still reads as offline.
- */
+/** A `machine` sandbox's daemon connection as core last saw it, one row per sandbox config; see sandbox/machines.ts. */
 export const machineConnectionsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   sandboxConfigId: v.id("sandboxConfigs"),
-  /** New on every connect, so a replaced socket's late writes miss. */
   connectionId: v.string(),
   hostname: v.optional(v.string()),
   platform: v.optional(v.string()),

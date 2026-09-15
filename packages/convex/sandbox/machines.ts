@@ -6,7 +6,7 @@
  * heartbeat or disconnect names the old id and changes nothing.
  */
 
-import { v } from "convex/values";
+import { v, type ObjectType } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalMutation,
@@ -29,11 +29,7 @@ const namedConnection = v.object({
   name: v.string(),
 });
 
-type ConnectionRef = {
-  accountId: Id<"accounts">;
-  sandboxConfigId: Id<"sandboxConfigs">;
-  connectionId: string;
-};
+type ConnectionRef = ObjectType<typeof connectionRef>;
 
 type NamedConnection = Doc<"machineConnections"> & { name: string };
 
