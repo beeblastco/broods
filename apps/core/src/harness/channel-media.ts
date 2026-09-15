@@ -36,9 +36,11 @@ import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
+import { locateMediaObject } from "../media.ts";
 import {
   attachmentStoreKey,
   MEDIA_PATH_PREFIX,
+  openMediaTicket,
   sealMediaTicket,
   type AttachmentMediaTicket,
 } from "../shared/media-ticket.ts";
@@ -297,9 +299,10 @@ export async function readAttachmentBytes(
  * week is still a picture this turn.
  *
  * Every reference is resolved through the channel that delivered it, with that
- * channel's own credentials. One the channel no longer serves becomes a line of
- * text saying so: a photo the sender deleted must cost that message its picture,
- * not cost the conversation every turn from here on.
+ * channel's own credentials, and a sealed link into a workspace is checked,
+ * since the agent can delete that file. Either one gone becomes a line of text
+ * saying so: a photo the sender deleted must cost that message its picture, not
+ * cost the conversation every turn from here on.
  */
 export async function rehydrateStoredMedia(
   messages: ModelMessage[],
@@ -310,7 +313,8 @@ export async function rehydrateStoredMedia(
       message.role === "user" &&
       typeof message.content !== "string" &&
       message.content.some(
-        (part) => isStoredMediaPart(part) || mediaReferenceOf(part) !== null,
+        (part) =>
+          mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null,
       ),
   );
   if (!carriesMedia) {
@@ -476,20 +480,49 @@ function formatBytes(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+// The name of the workspace file a sealed link points at, when that file is
+// gone. The provider fetches the link itself, and its 404 fails the whole turn.
+// Attachment store links are trusted without a round trip: no sandbox mounts
+// that prefix. A storage error is not proof of a deletion, so the link stays.
+async function goneWorkspaceFile(
+  part: UserContentPart,
+): Promise<string | null> {
+  const link = sealedMediaLink(part);
+  const ticket = link
+    ? openMediaTicket(
+        link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
+        requireEnv("SERVICE_AUTH_SECRET"),
+      )
+    : null;
+  if (!ticket || !("workspaceId" in ticket)) {
+    return null;
+  }
+  try {
+    if (await locateMediaObject(ticket)) {
+      return null;
+    }
+  } catch (err) {
+    logWarn("Stored media link could not be checked", {
+      path: ticket.path,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return null;
+  }
+
+  return ticket.path.slice(ticket.path.lastIndexOf("/") + 1);
+}
+
 // A file part this module stored: a channel reference it can read again, or a
-// sealed workspace link. Tool results and subagent output arrive as file parts
+// sealed media link. Tool results and subagent output arrive as file parts
 // too, carrying shapes this module never wrote, and re-gating those would
 // rewrite results it has no business judging.
 function isStoredMediaPart(
   part: UserContentPart,
 ): part is Extract<UserContentPart, { type: "file" }> {
-  if (part.type !== "file" || typeof part.data !== "string") {
-    return false;
-  }
-
   return (
-    parseMediaReference(part.data) !== null ||
-    part.data.includes(MEDIA_PATH_PREFIX)
+    part.type === "file" &&
+    (mediaReferenceOf(part) !== null || sealedMediaLink(part) !== null)
   );
 }
 
@@ -628,8 +661,9 @@ function parseMediaReference(value: unknown): MediaReference | null {
 }
 
 // One stored message with its references read back. A reference the channel
-// will not serve becomes text in the same position, so the turn still says a
-// file was there and the model stops waiting to be shown it.
+// will not serve, or a workspace link whose file is gone, becomes text in the
+// same position, so the turn still says a file was there and the model stops
+// waiting to be shown it.
 async function rehydrateMessage(
   message: ModelMessage,
   agentConfig: AgentConfig,
@@ -658,7 +692,11 @@ async function rehydrateMessage(
       }
       const reference = mediaReferenceOf(part);
       if (!reference) {
-        return part;
+        const gone = await goneWorkspaceFile(part);
+
+        return gone
+          ? { type: "text", text: `[${gone} is no longer available]` }
+          : part;
       }
       const bytes = await resolveMediaReference(reference, agentConfig);
       if (!bytes) {
@@ -717,6 +755,20 @@ async function resolveMediaReference(
 
     return null;
   }
+}
+
+function sealedMediaLink(part: UserContentPart): string | null {
+  let value: unknown;
+  if (part.type === "image") {
+    value = part.image;
+  }
+  if (part.type === "file") {
+    value = part.data;
+  }
+
+  return typeof value === "string" && value.includes(MEDIA_PATH_PREFIX)
+    ? value
+    : null;
 }
 
 // Read the bytes, put them in the workspace, and seal the link. Every failure

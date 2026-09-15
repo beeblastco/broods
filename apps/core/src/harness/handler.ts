@@ -1516,9 +1516,16 @@ async function handleChannelRequest(
                 ? {
                     streamMessage: async (stream) => {
                       await session.assertCurrentOwner();
+                      // A run that fails before its first word leaves nothing
+                      // to stream, and Telegram refuses an empty stream. The
+                      // error reply sent after the run answers instead.
                       const streamedResult = await event.channel.stream!(
                         readAgentFullStream(stream),
-                      );
+                      ).catch((err: unknown) => {
+                        if (!stream.didFail()) throw err;
+
+                        return null;
+                      });
                       streamed = Boolean(streamedResult);
                       if (!streamed) await stream.consumeStream();
                     },
