@@ -12,6 +12,9 @@ import type { FunctionReturnType } from "convex/server";
 // Two missed heartbeats plus slack.
 const HEARTBEAT_GRACE_MS = 150_000;
 
+/** What a machine sandbox is called wherever a provider name is shown. */
+export const MACHINE_LABEL = "your computer";
+
 export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
   connected: "Connected",
   never: "Not connected yet",

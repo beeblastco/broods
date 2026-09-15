@@ -22,7 +22,7 @@ export function MachinePanel({
   onClose,
 }: {
   machine: MachineConnection;
-  /** The parent table's clock, so both tick together off one timer. */
+  /** The table's clock, so the row and this panel tick off one timer. */
   now: number;
   onClose: () => void;
 }): React.JSX.Element {

@@ -5,9 +5,15 @@
  * sandbox shows its daemon's connection in place of the idle pill.
  */
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
+import { STATUS_TONE_BG } from "@/app/components/StatusDot";
 import { useMachineConnection } from "@/app/hooks/useMachineConnection";
 import { useNow } from "@/app/hooks/useNow";
-import { MACHINE_STATE_LABEL, machineState } from "@/app/lib/machineConnection";
+import {
+  MACHINE_LABEL,
+  MACHINE_STATE_LABEL,
+  MACHINE_TONE,
+  machineState,
+} from "@/app/lib/machineConnection";
 import type { NodeProps } from "@xyflow/react";
 import { Box } from "lucide-react";
 import { useMemo } from "react";
@@ -57,10 +63,10 @@ function MachineSandboxNode({
       nodeType="sandbox"
       data={data}
       icon={<Box className="size-3.5" />}
-      subtitle="your computer"
+      subtitle={MACHINE_LABEL}
       liveStatus={
         state && {
-          color: state === "connected" ? "bg-success" : "bg-muted-foreground",
+          color: STATUS_TONE_BG[MACHINE_TONE[state]],
           text: MACHINE_STATE_LABEL[state],
         }
       }

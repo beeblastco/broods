@@ -3,6 +3,7 @@
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import {
+  MACHINE_LABEL,
   MACHINE_STATE_LABEL,
   MACHINE_TONE,
   type MachineState,
@@ -23,7 +24,7 @@ const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
 // What users see for a stored provider; `lambda` is an implementation detail.
 const PROVIDER_LABEL: Record<string, string> = {
   lambda: "managed-vm",
-  machine: "your computer",
+  machine: MACHINE_LABEL,
 };
 
 const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {

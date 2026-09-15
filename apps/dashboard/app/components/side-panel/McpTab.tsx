@@ -299,9 +299,11 @@ function MachineManagedNotice({
       <SectionHeader>On your computer</SectionHeader>
       <p className="text-xs text-muted-foreground">
         This server runs where{" "}
-        <code>broods machine {server.sandbox} --mcp</code> is running, from that
-        computer&apos;s <code>.mcp.json</code>. It is defined in code with{" "}
-        <code>defineMcp(&#123; sandbox &#125;)</code>; run{" "}
+        <code>
+          broods machine {server.sandbox} --mcp {"<file>"}
+        </code>{" "}
+        is running, from that computer&apos;s <code>.mcp.json</code>. It is
+        defined in code with <code>defineMcp(&#123; sandbox &#125;)</code>; run{" "}
         <code>broods dev</code> or <code>broods deploy</code> to change it.
       </p>
     </div>

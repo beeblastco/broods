@@ -61,6 +61,11 @@ interface Props {
   observability: SandboxObservabilityScope | null;
 }
 
+/** One row of the table: a connected computer, or a cloud instance. */
+type TableRow =
+  | { kind: "machine"; machine: MachineConnection }
+  | { kind: "instance"; instance: Doc<"sandboxInstances"> };
+
 /** Status filter values; "all" disables the status predicate. */
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All statuses" },
@@ -139,15 +144,37 @@ export function SandboxInstancesTable({
     );
   }, [machines, search, status]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Computers sort above the instances and paginate with them, so the count
+  // under the table matches what is on screen.
+  const rows = useMemo(
+    (): TableRow[] => [
+      ...filteredMachines.map((machine): TableRow => ({
+        kind: "machine",
+        machine: machine,
+      })),
+      ...filtered.map((instance): TableRow => ({
+        kind: "instance",
+        instance: instance,
+      })),
+    ],
+    [filtered, filteredMachines],
+  );
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = useMemo(
+    () => rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [rows, safePage],
+  );
+  // Only instances have a lifecycle, so the refresh controls work off these.
+  const pageInstances = useMemo(
     () =>
-      filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [filtered, safePage],
+      pageRows.flatMap((row) =>
+        row.kind === "instance" ? [row.instance] : [],
+      ),
+    [pageRows],
   );
   const hasFilters = search.trim() !== "" || status !== "all";
-  const refreshKey = pageRows
+  const refreshKey = pageInstances
     .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
@@ -176,7 +203,7 @@ export function SandboxInstancesTable({
   }
 
   const refreshVisible = useCallback(async (): Promise<void> => {
-    const targets = pageRows.filter(controllable);
+    const targets = pageInstances.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
     setError(null);
@@ -194,7 +221,7 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }, [pageRows, refresh]);
+  }, [pageInstances, refresh]);
 
   useEffect(() => {
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
@@ -274,7 +301,7 @@ export function SandboxInstancesTable({
           variant="outline"
           size="sm"
           onClick={refreshVisible}
-          disabled={refreshing || !pageRows.some(controllable)}
+          disabled={refreshing || !pageInstances.some(controllable)}
           className="cursor-pointer disabled:cursor-not-allowed"
         >
           <RefreshCw
@@ -341,19 +368,21 @@ export function SandboxInstancesTable({
             </tr>
           </thead>
           <tbody>
-            {safePage === 0 &&
-              filteredMachines.map((machine) => (
-                <MachineRow
-                  key={machine._id}
-                  machine={machine}
-                  now={now}
-                  onSelect={() => {
-                    setSelectedId(null);
-                    setSelectedMachineId(machine._id);
-                  }}
-                />
-              ))}
-            {pageRows.map((instance) => {
+            {pageRows.map((row) => {
+              if (row.kind === "machine") {
+                return (
+                  <MachineRow
+                    key={row.machine._id}
+                    machine={row.machine}
+                    now={now}
+                    onSelect={() => {
+                      setSelectedId(null);
+                      setSelectedMachineId(row.machine._id);
+                    }}
+                  />
+                );
+              }
+              const instance = row.instance;
               const running = instance.status === "running";
               const toggleable =
                 controllable(instance) &&
@@ -456,13 +485,13 @@ export function SandboxInstancesTable({
                 </tr>
               );
             })}
-            {pageRows.length === 0 && filteredMachines.length === 0 && (
+            {pageRows.length === 0 && (
               <tr>
                 <td
                   colSpan={9}
                   className="px-4 py-10 text-center text-xs text-muted-foreground"
                 >
-                  No instances match the current filters.
+                  Nothing matches the current filters.
                 </td>
               </tr>
             )}
@@ -470,12 +499,11 @@ export function SandboxInstancesTable({
         </table>
       </DetailSplit>
 
-      {filtered.length > PAGE_SIZE && (
+      {rows.length > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
           <span>
             {safePage * PAGE_SIZE + 1}-
-            {Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{" "}
-            {filtered.length}
+            {Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of {rows.length}
           </span>
           <div className="flex items-center gap-1">
             <Button

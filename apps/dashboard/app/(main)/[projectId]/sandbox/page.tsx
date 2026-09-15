@@ -108,9 +108,9 @@ export default function SandboxPage(): React.JSX.Element {
           )}
         >
           <p className="shrink-0 text-xs text-muted-foreground">
-            Live sandbox instances, your connected computers and their
-            snapshots. broods owns the runtime; the dashboard drives suspend,
-            resume, terminate, and snapshot.
+            Live sandbox instances and their snapshots, plus the computers
+            connected through broods machine. broods owns the runtime; the
+            dashboard drives suspend, resume, terminate, and snapshot.
           </p>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>

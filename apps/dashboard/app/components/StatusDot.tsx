@@ -6,7 +6,7 @@ export type StatusTone = "ok" | "warn" | "error" | "running" | "ended";
 // The hue carries the meaning, so each tone needs both themes. The tokens hold
 // the 600 shade on the light card and the 400 shade on the dark, the only
 // shades that clear WCAG AA there.
-const TONE_BG: Record<StatusTone, string> = {
+export const STATUS_TONE_BG: Record<StatusTone, string> = {
   ok: "bg-success",
   warn: "bg-warning",
   error: "bg-destructive",
@@ -49,7 +49,7 @@ export function StatusDot({
       title={label}
       className={cn(
         "relative inline-block size-2 shrink-0 rounded-full",
-        TONE_BG[tone],
+        STATUS_TONE_BG[tone],
         className,
       )}
     >
