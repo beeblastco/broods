@@ -12,6 +12,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
+import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
 import type { UIMessage } from "ai";
 import {
@@ -223,7 +224,15 @@ function ChatWindow({
   nodeColor?: string;
   stageSlug?: string;
 }): React.JSX.Element {
-  const { messages, status, error, sendMessage, resetChat } = useAgentChat({
+  const {
+    messages,
+    status,
+    error,
+    pendingQuestions,
+    sendMessage,
+    answerQuestions,
+    resetChat,
+  } = useAgentChat({
     endpointId: endpointId,
     agentId: agentId,
     apiKey: apiKey,
@@ -234,14 +243,19 @@ function ChatWindow({
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
+  const awaitingAnswer =
+    status === "awaiting_input" && pendingQuestions.length > 0;
+  // The composer is closed while streaming and while a question waits: a typed
+  // message would steer the run but leave the question open.
+  const composerLocked = status === "streaming" || awaitingAnswer;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, awaitingAnswer]);
 
   function handleSubmit(e: React.FormEvent): void {
     e.preventDefault();
-    if (!input.trim() || status === "streaming") return;
+    if (!input.trim() || composerLocked) return;
     sendMessage(input);
     setInput("");
   }
@@ -265,6 +279,14 @@ function ChatWindow({
         {status === "streaming" && !hasAssistantMessage && (
           <ThinkingIndicator nodeColor={nodeColor} />
         )}
+        {awaitingAnswer && (
+          <QuestionCard
+            key={pendingQuestions[0]?.statusId}
+            prompts={pendingQuestions}
+            disabled={false}
+            onAnswer={answerQuestions}
+          />
+        )}
         {error && <p className="text-xs text-destructive">{error.message}</p>}
         <div ref={bottomRef} />
       </div>
@@ -280,16 +302,22 @@ function ChatWindow({
             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (input.trim() && status !== "streaming") {
+                if (input.trim() && !composerLocked) {
                   sendMessage(input);
                   setInput("");
                 }
               }
             }}
-            placeholder="Message..."
-            disabled={status === "streaming"}
+            placeholder={
+              awaitingAnswer
+                ? "Answer the question above to continue"
+                : "Message..."
+            }
+            disabled={composerLocked}
             rows={1}
-            className="max-h-40 min-h-0 py-2.5 text-sm"
+            className={`max-h-40 min-h-0 py-2.5 text-sm ${
+              composerLocked ? "cursor-not-allowed" : ""
+            }`}
           />
           <InputGroupAddon align="block-end" className="pt-0">
             <div className="flex w-full items-center justify-between">
@@ -305,8 +333,12 @@ function ChatWindow({
                 type="submit"
                 size="icon-xs"
                 variant="default"
-                disabled={!input.trim() || status === "streaming"}
-                className="rounded-sm"
+                disabled={!input.trim() || composerLocked}
+                className={`rounded-sm ${
+                  !input.trim() || composerLocked
+                    ? "cursor-not-allowed"
+                    : "cursor-pointer"
+                }`}
               >
                 {status === "streaming" ? (
                   <Loader2 className="size-3.5 animate-spin" />
