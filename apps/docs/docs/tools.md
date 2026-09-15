@@ -79,6 +79,7 @@ How the answer gets in:
 | Telegram          | inline keyboard, one button per option  | button click (`callback_query`), the button carries the statusId                                                                                                        |
 | Other channels    | numbered text                           | a reply while a question is open answers the oldest one: an option number, an option label, or free text when the question allows it. Anything else is an ordinary turn |
 | Direct HTTP/async | status `awaiting_input` + `questions[]` | `POST` the same route with `answers: [{ statusId, answers: { <question id>: [labels] } }]` and no `events`                                                              |
+| WebSocket         | a `question-request` frame, then `done` | an `execute` frame with `answers` instead of `events`; the resumed run streams back on that socket under the event id the frames name                                   |
 
 The injected result is `{ status: "answered", answers: { <id>: [labels] }, answeredBy? }`. A prompt nobody answers by its deadline settles as `no_answer` the next time the conversation sees a message; a reply after that is an ordinary turn. A typed reply answers only the first question of a multi-question prompt (buttons carry their own position); the result says so.
 

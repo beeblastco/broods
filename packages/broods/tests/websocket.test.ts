@@ -9,6 +9,7 @@ import {
   type WebSocketServerMessage,
   type WebSocketLike,
 } from "../src/websocket.ts";
+import type { QuestionAnswer } from "../src/websocket-contracts.ts";
 
 class FakeWebSocket implements WebSocketLike {
   static instances: FakeWebSocket[] = [];
@@ -205,6 +206,31 @@ test("websocket client subscribes to the core service and forwards server messag
     { type: "done" },
   ]);
   expect(done).toBe(true);
+});
+
+test("websocket client sends answers in place of events", async () => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const answers: [QuestionAnswer] = [
+    { statusId: "async_tool_1", answers: { deploy_target: ["dev"] } },
+  ];
+
+  client.subscribe({
+    endpointId: "agent_1",
+    sessionId: "session_1",
+    answers: answers,
+  });
+
+  await Promise.resolve();
+  expect(JSON.parse(FakeWebSocket.instances[0]!.sent[0]!)).toEqual({
+    type: "execute",
+    agentId: "agent_1",
+    answers: answers,
+    sessionId: "session_1",
+  });
 });
 
 test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {

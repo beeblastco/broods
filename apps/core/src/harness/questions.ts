@@ -27,12 +27,6 @@ export const MIN_ANSWER_TIMEOUT_SECONDS = 30;
 export const MIN_OPTIONS = 2;
 export const NO_ANSWER_ERROR = "no_answer";
 
-/** A direct API answer to one open prompt. */
-export interface DirectQuestionAnswer {
-  statusId: string;
-  answers: QuestionAnswers;
-}
-
 /** An open prompt row with its parsed input. */
 export interface OpenQuestion {
   record: AsyncToolResultRecord;

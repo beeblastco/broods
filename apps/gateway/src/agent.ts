@@ -177,7 +177,9 @@ export function buildCoreRunBody(
     eventId: eventId,
     conversationKey: conversationKey,
     connectionId: `ws-${crypto.randomUUID()}`,
-    events: resolveRunEvents(message),
+    ...(message.answers
+      ? { answers: message.answers }
+      : { events: resolveRunEvents(message) }),
     ...(message.mode !== undefined ? { mode: message.mode } : {}),
     ...(message.idempotencyKey !== undefined
       ? { idempotencyKey: message.idempotencyKey }
@@ -1065,6 +1067,13 @@ function parseCursor(value: string): {
   };
 }
 
+// Core checks each answer's shape and refuses a bad one with a 400.
+function hasAnswerInput(value: object): boolean {
+  const record = value as { answers?: unknown };
+
+  return Array.isArray(record.answers) && record.answers.length > 0;
+}
+
 function hasEventInput(value: object): boolean {
   const record = value as { input?: unknown; events?: unknown };
 
@@ -1132,7 +1141,7 @@ function isExecuteMessage(
     typeof record.agentId === "string" &&
     record.agentId.trim().length > 0 &&
     (record.mode === undefined || isIngressMode(record.mode)) &&
-    hasEventInput(value)
+    (hasEventInput(value) || hasAnswerInput(value))
   );
 }
 

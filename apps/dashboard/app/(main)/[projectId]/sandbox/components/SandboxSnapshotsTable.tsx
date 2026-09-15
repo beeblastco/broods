@@ -5,6 +5,7 @@
  * image pipeline.
  */
 
+import { useNow } from "@/app/hooks/useNow";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useState } from "react";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
@@ -12,7 +13,6 @@ import {
   formatProvider,
   relativeTime,
   snapshotStatusDot,
-  useNow,
 } from "./sandboxFormat";
 
 interface Props {

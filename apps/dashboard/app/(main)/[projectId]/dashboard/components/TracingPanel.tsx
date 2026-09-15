@@ -678,7 +678,7 @@ function formatDateTime(ms: number): string {
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
-  return `${ms}ms`;
+  return `${Math.round(ms)}ms`;
 }
 
 function numericAttribute(

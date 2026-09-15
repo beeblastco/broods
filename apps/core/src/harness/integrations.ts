@@ -55,7 +55,7 @@ import {
 } from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
-import type { DirectQuestionAnswer } from "./questions.ts";
+import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -206,7 +206,7 @@ export interface DirectInboundEvent {
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
   // Answers to open ask_questions prompts. A request carrying these settles
   // the prompts and resumes the conversation; it runs no turn of its own.
-  answers?: DirectQuestionAnswer[];
+  answers?: QuestionAnswer[];
 }
 
 /** The scope a queued envelope needs to be rebuilt into its own run. */
@@ -2116,13 +2116,13 @@ function assertOneDirectPayloadShape(
 }
 
 /** One entry per open prompt, labels keyed by question id. */
-function parseDirectQuestionAnswers(value: unknown): DirectQuestionAnswer[] {
+function parseDirectQuestionAnswers(value: unknown): QuestionAnswer[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
     throw new Error("Request body field 'answers' must be an array");
   }
 
-  return value.map((entry): DirectQuestionAnswer => {
+  return value.map((entry): QuestionAnswer => {
     if (
       !isPlainObject(entry) ||
       typeof entry.statusId !== "string" ||
@@ -2132,7 +2132,7 @@ function parseDirectQuestionAnswers(value: unknown): DirectQuestionAnswer[] {
         "Each answer must be an object with statusId and answers",
       );
     }
-    const answers: DirectQuestionAnswer["answers"] = {};
+    const answers: QuestionAnswer["answers"] = {};
     for (const [questionId, labels] of Object.entries(entry.answers)) {
       if (
         !Array.isArray(labels) ||

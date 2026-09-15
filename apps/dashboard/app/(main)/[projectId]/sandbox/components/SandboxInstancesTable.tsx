@@ -2,6 +2,7 @@
 
 import { DetailSplit } from "@/app/components/DetailSplit";
 import { Button } from "@/app/components/ui/button";
+import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
   Dialog,
@@ -41,7 +42,6 @@ import {
   formatSpecs,
   instanceStatusDot,
   relativeTime,
-  useNow,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
