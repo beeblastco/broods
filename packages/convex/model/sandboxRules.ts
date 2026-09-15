@@ -175,9 +175,7 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }
   if (fallbackProvider === "machine") {
-    throw new Error(
-      "config.fallbackProvider cannot be machine; a computer is not a capacity fallback for a cloud sandbox",
-    );
+    throw new Error("config.fallbackProvider cannot be machine");
   }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new Error(
@@ -291,9 +289,7 @@ function assertMachineFields(
   if (provider !== "machine") return;
   for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
     if (config[field] !== undefined) {
-      throw new Error(
-        `config.${field} does not apply to the machine provider; the user's computer is always on and sized by itself`,
-      );
+      throw new Error(`config.${field} does not apply to the machine provider`);
     }
   }
 }

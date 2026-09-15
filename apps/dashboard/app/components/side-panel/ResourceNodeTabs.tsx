@@ -100,8 +100,7 @@ export function SandboxResourceDetailsTab({
   const network: { mode?: string } = isPlainObject(config.network)
     ? (config.network as { mode?: string })
     : {};
-  // A machine record may not claim persistence, sizing or egress rules
-  // (convex sandboxRules), so picking it clears them and locks those toggles.
+  // Convex rejects sizing, persistence and egress rules on a machine record.
   const machine = config.provider === "machine";
 
   function setConfig(patch: Record<string, unknown>): void {

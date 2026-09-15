@@ -24,12 +24,6 @@ import {
   startMachineCore,
 } from "./helpers/machine.ts";
 
-/**
- * Core's half of the machine sandbox: the daemon socket claims a record, the
- * executor turns `run` into an exec frame on that socket, and a missing,
- * refused or replaced daemon fails with a reason the model can act on.
- */
-
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
@@ -90,8 +84,7 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
   const server = core();
   const first = await connectDaemon(server, "my-mac", () => {});
   const firstClosed = closeOf(first.socket);
-  // Settled by the replacement before this test can await it, so the handler
-  // is attached up front.
+  // The replacement rejects this run before the next await.
   const pending = new MachineSandboxExecutor(machineExecutorConfig())
     .run({ code: "sleep 1", timeoutSeconds: 5, outputLimitBytes: 1024 })
     .then(

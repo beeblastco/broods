@@ -1,17 +1,15 @@
 # Machine (your computer)
 
-The `machine` provider makes the user's own computer the sandbox. The agent
-keeps running in the cloud. Its `bash` tool runs on that computer, as that
-user, with that user's `PATH`, environment and installed tools: browsers,
-cloud CLIs, Blender, anything a shell can reach.
+The `machine` provider runs the agent's `bash` tool on your own computer. The
+agent stays in the cloud. Commands run as you, with your `PATH`, environment
+and installed tools.
 
-Nothing is opened inbound. The computer runs `broods machine <sandbox>`, which
-keeps one WebSocket open to the gateway. Core sends each command down that
-socket and waits for the output. When the daemon is not running, the tool
-returns a clear error and the run carries on.
+Your computer opens no port. `broods machine <sandbox>` keeps one WebSocket
+open to the gateway, and core sends each command down it. When the daemon is
+not running, the tool call fails with the command that starts it.
 
-Leave `permissionMode` on `ask` unless you really mean `bypass`. This is your
-machine.
+Keep `permissionMode` on `ask`. With `bypass` the agent runs any command on
+your computer without asking.
 
 ## Config
 
@@ -30,8 +28,8 @@ machine.
 }
 ```
 
-Validation refuses what a laptop cannot honour: `persistent`, `size`,
-`snapshot`, `memoryLimit`, and any `network.mode` but `allow-all`.
+Validation rejects `persistent`, `size`, `snapshot`, `memoryLimit`, and any
+`network.mode` other than `allow-all`.
 
 ## Run the daemon
 
@@ -40,15 +38,14 @@ broods machine my-mac            # uses BROODS_API_KEY from .env.local, like `br
 broods machine my-mac --cwd ~/Projects/app
 ```
 
-It prints one line per command and the exit code, reconnects after a network
-drop, and stops with the reason when core refuses it: an invalid key, no
-`machine` record by that name in the account, or a newer daemon that took the
-same record over. Last daemon wins, so restarting it never needs the old one
-gone first.
+The daemon prints each command with its exit code and reconnects after a
+network drop. It exits with core's reason on an invalid key, on a name with no
+`machine` record, or when a newer daemon claims the same record. The newest
+daemon always wins, so a restart never waits for the old one.
 
-## What it does not do
+## Limits
 
-- No workspaces. The file tools come with an S3-backed workspace mount, and a
-  laptop has no mount. `bash` covers reading and writing files.
+- No workspaces. The file tools need the S3 workspace mount, which a computer
+  does not have. Use `bash` to read and write files.
 - No background jobs, snapshots, suspend or resume.
-- No dashboard presence. The instance list shows reserved cloud sandboxes only.
+- The dashboard instance list does not show machines.

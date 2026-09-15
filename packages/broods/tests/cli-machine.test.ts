@@ -4,13 +4,6 @@ import type { MachineExecFrame } from "../../../apps/core/src/shared/machine-soc
 import { runExec, runMachineDaemon } from "../src/cli/machine.ts";
 import { startFakeCore } from "./fixtures/fake-core.ts";
 
-/**
- * The daemon is the half of the machine sandbox that runs on the user's
- * computer, so these run real bash here: a command must come back with this
- * host's output, a runaway must be killed at the timeout, and output past the
- * limit must be cut, not buffered.
- */
-
 const servers: Bun.Server<undefined>[] = [];
 
 afterEach(() => {

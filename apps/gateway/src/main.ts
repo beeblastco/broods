@@ -192,8 +192,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           : jsonError(400, "WebSocket upgrade failed");
       }
 
-      // A `broods machine` daemon: core checks the bearer and answers with a
-      // close code, so only the presence of a credential is checked here.
+      // Core checks the daemon's bearer and refuses with a close code.
       if (url.pathname === MACHINE_WEBSOCKET_PATH) {
         if (activeSocketCount >= config.limits.maxConnections) {
           return jsonError(503, "Gateway is at capacity");

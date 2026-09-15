@@ -25,14 +25,8 @@ import {
   startMachineCore,
 } from "./helpers/machine.ts";
 
-/**
- * The whole machine sandbox path on this computer, minus the model: the real
- * CLI daemon dials a door built on the gateway's relay, the relay pipes to
- * core's socket handler, and `MachineSandboxExecutor.run` comes back with bash
- * output from this host. The gateway entry's routing and credential parsing
- * are covered in apps/gateway/tests/route.test.ts; importing them here would
- * drag the gateway's dependency graph into core's typecheck.
- */
+// Gateway routing is covered in apps/gateway/tests/route.test.ts; importing
+// main.ts here would pull the gateway into core's typecheck.
 
 const servers: Bun.Server<unknown>[] = [];
 const controllers: AbortController[] = [];
@@ -43,7 +37,7 @@ afterEach(() => {
   resetStorageForTests();
 });
 
-test("daemon → gateway relay → core → executor runs bash on this machine", async () => {
+test("the CLI daemon runs bash on this machine through the gateway relay", async () => {
   setStorageForTests(machineStorage());
   const lines: string[] = [];
   const controller = daemonController();
@@ -124,7 +118,7 @@ function daemonController(): AbortController {
   return controller;
 }
 
-/** What apps/gateway/src/main.ts does for MACHINE_WEBSOCKET_PATH, on the real relay. */
+/** The gateway's machine branch on its real relay. */
 function startDoor(upstreamBaseUrl: string): string {
   const door = Bun.serve<MachineGatewayData>({
     port: 0,

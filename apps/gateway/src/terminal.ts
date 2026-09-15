@@ -11,7 +11,7 @@ export type TerminalGatewayData = {
   ticket: TerminalTicket | null;
 };
 
-/** A `broods machine` daemon: the terminal relay aimed at core, which checks the bearer. */
+/** A `broods machine` daemon, relayed to core, which checks its bearer. */
 export type MachineGatewayData = {
   kind: "machine";
   ticket: Pick<TerminalTicket, "url" | "authorization" | "authorizationHeader">;
@@ -147,7 +147,7 @@ export function openTerminalUpstream(
     }
   };
 
-  upstream.onclose = (event) => {
+  upstream.onclose = (event): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
     // A daemon reads core's close code to decide whether to reconnect.
     if (socket.data.kind === "machine") {
@@ -208,8 +208,7 @@ export function cleanupTerminalSocket(
   }
 }
 
-// Only 1000 and application codes (4000-4999) can be sent in a close frame;
-// 1006 and the rest become 1011, which the daemon reconnects on.
+// A close frame can only carry 1000 or 4000-4999; the daemon retries on 1011.
 function relayCloseCode(code: number): number {
   return code === 1000 || (code >= 4000 && code <= 4999) ? code : 1011;
 }

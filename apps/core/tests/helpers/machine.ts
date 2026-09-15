@@ -1,7 +1,6 @@
 /**
- * Fixtures for core's machine sandbox tests: storage with one account, its
- * runtime key, a machine record and a cloud record, plus a core server that
- * serves only the daemon socket.
+ * Storage with a `my-mac` machine record and a `cloud-box` lambda record, and
+ * a core server that serves only the daemon socket.
  */
 
 import {

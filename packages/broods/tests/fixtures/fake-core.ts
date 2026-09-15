@@ -1,7 +1,6 @@
 /**
- * A stand-in for core's end of the machine socket. It answers `hello` with
- * `ready`, then sends whatever `next` returns for each frame it receives and
- * closes with 4409 when `next` returns null, which stops the daemon under test.
+ * Core's end of the machine socket. Sends `next(frame)` for each frame, and
+ * closes with 4409 when it returns null, which stops the daemon under test.
  */
 
 import {
@@ -24,7 +23,7 @@ export function startFakeCore(
   const received: MachineDaemonFrame[] = [];
   const server = Bun.serve<undefined>({
     port: 0,
-    fetch: (request, bunServer) =>
+    fetch: (request, bunServer): Response | undefined =>
       bunServer.upgrade(request)
         ? undefined
         : new Response("no", { status: 400 }),

@@ -84,7 +84,8 @@
     "nats": "^2.29.3",
     "nats.ws": "^1.30.3",
     "sst": "4.17.1",
-    "vercel-minimax-ai-provider": "^0.0.2"
+    "vercel-minimax-ai-provider": "^0.0.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/aws-lambda": "8.10.163",

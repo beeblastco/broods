@@ -67,16 +67,6 @@ interface InstancePorts {
   gateway: number;
 }
 
-/** The `model` + `provider` block of the smoke agents. */
-interface SmokeModel {
-  model: {
-    provider: string;
-    modelId: string;
-    providerOptions?: Record<string, Record<string, unknown>>;
-  };
-  provider: Record<string, { apiKey: string }>;
-}
-
 interface InstanceSecrets {
   accountConfigEncryption: string;
   adminAccount: string;
@@ -104,6 +94,15 @@ interface PerfRecord {
 interface PerfStep {
   ms: number;
   step: string;
+}
+
+interface SmokeModel {
+  model: {
+    provider: string;
+    modelId: string;
+    providerOptions?: Record<string, Record<string, unknown>>;
+  };
+  provider: Record<string, { apiKey: string }>;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -418,9 +417,7 @@ async function verify(): Promise<void> {
     );
   });
 
-  // This computer as the sandbox: the CLI daemon dials the gateway and core
-  // resolves the record it claims. With a model key the agent's bash then runs
-  // here and the reply carries this host's name.
+  // With a model key, the agent's bash runs here and its reply names this host.
   await measureStep(perf, "machine sandbox", async () => {
     const sandboxName = `machine-${runId}`;
     const created = await httpJson(`${gatewayUrl}/v1/sandboxes`, {
@@ -456,8 +453,11 @@ async function verify(): Promise<void> {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    daemon.stdout.on("data", (chunk: Buffer) => (daemonOutput += chunk));
-    daemon.stderr.on("data", (chunk: Buffer) => (daemonOutput += chunk));
+    const collect = (chunk: Buffer): void => {
+      daemonOutput += chunk;
+    };
+    daemon.stdout.on("data", collect);
+    daemon.stderr.on("data", collect);
     // assertStep calls process.exit, which skips `finally`.
     const stopDaemon = (): void => {
       daemon.kill("SIGINT");
@@ -815,7 +815,7 @@ function dockerContainerState(name: string): string | null {
 
 // --- model --------------------------------------------------------------
 
-/** The smoke agents' model from whichever key the shell carries; null for none. */
+/** Anthropic when its key is set, then OpenAI; null without either. */
 function smokeModel(): SmokeModel | null {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {

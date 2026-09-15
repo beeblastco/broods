@@ -77,7 +77,6 @@ import {
   printReadyLine,
   printWarning,
 } from "./output.ts";
-import { runMachineDaemon } from "./machine.ts";
 import { runAgentTui, streamAgentText } from "./tui.ts";
 import {
   isNewerVersion,
@@ -232,10 +231,9 @@ Options:
 ${GLOBAL_OPTIONS}`,
   machine: `Usage: broods machine <sandbox> [options]
 
-Makes this computer the sandbox behind a sandbox record whose provider is
-"machine". The agent keeps running in the cloud; its bash tool runs here, as
-you, with your PATH and environment. Stays connected until Ctrl+C and
-reconnects on its own after a network drop.
+Connects this computer to a sandbox record whose provider is "machine". Agents
+on that sandbox run their bash tool here, as you, with your PATH and
+environment. Reconnects after a network drop; Ctrl+C stops it.
 
 Authenticates with BROODS_API_KEY from .env.local, like \`broods logs\`.
 
@@ -2207,9 +2205,7 @@ async function streamLogs(args: string[]): Promise<void> {
   }
 }
 
-// `broods machine <sandbox>` serves bash execs for one machine sandbox record
-// until Ctrl-C. A refusal from core (bad key, unknown record, replaced by a
-// newer daemon) ends it with that reason; anything else reconnects.
+// `broods machine <sandbox>` runs until Ctrl-C or until core refuses it.
 async function machine(args: string[]): Promise<void> {
   const sandbox = positionalArgs(args)[0];
   if (!sandbox) {
@@ -2218,6 +2214,8 @@ async function machine(args: string[]): Promise<void> {
 
     return;
   }
+  // Lazy, so zod loads for this command only.
+  const { runMachineDaemon } = await import("./machine.ts");
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
   const controller = new AbortController();

@@ -243,7 +243,7 @@ describe("sandbox config defaults & validation", () => {
     ).toEqual({ mode: "allow-all" });
   });
 
-  it("accepts a machine sandbox only as the always-on, unrestricted thing it is", () => {
+  it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
     expect(
       normalizeSandboxConfig({
         provider: "machine",

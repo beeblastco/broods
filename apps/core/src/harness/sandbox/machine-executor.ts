@@ -1,8 +1,7 @@
 /**
- * The "machine" provider: the sandbox is the user's own computer. Its daemon
- * (`broods machine`, relayed by the gateway) holds one WebSocket into this
- * module, and `run` is an exec frame over it. The registry lives in memory;
- * nothing is reserved or persisted.
+ * The "machine" provider: bash runs on the user's own computer through the
+ * WebSocket its `broods machine` daemon keeps open. Live daemons are held in
+ * memory only.
  */
 
 import { resolveBearerAuth } from "../../shared/auth.ts";
@@ -26,23 +25,23 @@ import type {
 } from "./types.ts";
 import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
+const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
-const MAX_FRAME_BYTES = 4 * 1024 * 1024;
-// Live daemons by `${accountId}:${sandboxConfigId}`; the last one to claim wins.
+// Keyed by registryKey; the last daemon to claim a record wins.
 const connections = new Map<string, MachineConnection>();
-
-export interface MachineSocketData {
-  /** Unset when the bearer named no account; its first frame is refused. */
-  accountId?: string;
-  claimed?: boolean;
-  key?: string;
-}
 
 interface MachineConnection {
   name: string;
   pending: Map<string, PendingReply>;
   socket: Bun.ServerWebSocket<MachineSocketData>;
+}
+
+export interface MachineSocketData {
+  /** Unset for a bearer with no account. */
+  accountId?: string;
+  claimed?: boolean;
+  key?: string;
 }
 
 interface PendingReply {
@@ -99,7 +98,6 @@ export function isMachineUpgrade(request: Request): boolean {
   );
 }
 
-/** Bun.serve `websocket` handler for the daemon socket. */
 export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
     maxPayloadLength: MAX_FRAME_BYTES,
@@ -114,8 +112,7 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
         return;
       }
       const frame = parseDaemonFrame(raw);
-      // The claim is async; a second hello in that window would register
-      // this socket twice.
+      // A second hello during the async claim would register this socket twice.
       if (!frame || (frame.type === "hello" && socket.data.claimed)) {
         socket.close(
           MACHINE_CLOSE.badFrame.code,
@@ -157,10 +154,8 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   };
 
 /**
- * Upgrade every daemon, even one whose bearer names no account: its first
- * frame is answered with close 4401, which the gateway relays, where a refused
- * upgrade would reach the daemon as a bare 1006. Refusing in `open` instead
- * can cut the connection before a relay's own handshake completes.
+ * Upgrades even a bearer with no account, so the daemon reads a 4401 close
+ * through the gateway relay instead of a bare 1006.
  */
 export async function upgradeMachineSocket(
   request: Request,
@@ -223,13 +218,10 @@ async function claimSandbox(
   });
 }
 
-/** The live daemon behind a config, or an error that says how to start one. */
 function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
   const plane = config.controlPlane;
   if (!plane?.sandboxConfigId) {
-    throw new Error(
-      "machine sandbox needs its config record id; a synthetic config cannot reach a computer",
-    );
+    throw new Error("machine sandbox needs a sandbox config record");
   }
   const connection = connections.get(
     registryKey(plane.accountId, plane.sandboxConfigId),

@@ -190,8 +190,7 @@ if (import.meta.main) {
     hostname: optionalEnv("HOSTNAME") ?? "0.0.0.0",
     idleTimeout: 255,
     maxRequestBodySize: 10 * 1024 * 1024,
-    // The one WebSocket core serves: the daemon side of a machine sandbox,
-    // relayed here by the gateway.
+    // Core's only WebSocket: the machine sandbox daemon, relayed by the gateway.
     fetch: (request, bunServer) =>
       isMachineUpgrade(request)
         ? upgradeMachineSocket(request, bunServer)

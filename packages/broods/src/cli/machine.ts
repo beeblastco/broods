@@ -1,9 +1,6 @@
 /**
- * `broods machine <sandbox>`: this computer becomes the sandbox behind a
- * machine record. One WebSocket out, a `bash -lc` per exec frame, and a
- * reconnect loop for anything but a refusal. The host environment is
- * inherited on purpose: the agent gets the PATH, keychains and CLIs the user
- * has.
+ * `broods machine <sandbox>`: runs core's exec frames with `bash -lc` on this
+ * computer, in the user's own environment, and reconnects until core refuses.
  */
 
 import { spawn } from "node:child_process";
@@ -20,15 +17,15 @@ import {
 import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
 
-const RECONNECT_MIN_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
-const LOG_CODE_WIDTH = 72;
 // Refusals a reconnect would only repeat.
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
   MACHINE_CLOSE.replaced.code,
   MACHINE_CLOSE.unauthorized.code,
   MACHINE_CLOSE.unknownSandbox.code,
 ]);
+const LOG_CODE_WIDTH = 72;
+const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_MIN_MS = 1_000;
 
 export interface MachineDaemonOptions {
   apiKey: string;
@@ -40,35 +37,7 @@ export interface MachineDaemonOptions {
   signal: AbortSignal;
 }
 
-/** Serve core until the signal aborts. Throws with core's reason on a refusal. */
-export async function runMachineDaemon(
-  options: MachineDaemonOptions,
-): Promise<void> {
-  const WebSocketImpl = resolveWebSocket();
-  let delayMs = RECONNECT_MIN_MS;
-  while (!options.signal.aborted) {
-    const startedAt = Date.now();
-    const closed = await serveOnce(options, WebSocketImpl);
-    if (options.signal.aborted) return;
-    if (FATAL_CLOSE_CODES.has(closed.code)) {
-      throw new Error(
-        closed.reason || `core closed the socket (${closed.code})`,
-      );
-    }
-    // A session that lasted is a healthy one: restart the backoff.
-    if (Date.now() - startedAt > RECONNECT_MAX_MS) delayMs = RECONNECT_MIN_MS;
-    options.log(
-      `disconnected (${closed.reason || closed.code}), reconnecting in ${Math.round(delayMs / 1000)}s`,
-    );
-    await reconnectDelay(delayMs, options.signal);
-    delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
-  }
-}
-
-/**
- * Run one exec frame here. `signal` is the socket's lifetime: once it aborts
- * nobody can receive the result, so the command's process group is killed.
- */
+/** Aborting `signal`, the socket's lifetime, kills the command's process group. */
 export function runExec(
   frame: MachineExecFrame,
   defaultCwd: string,
@@ -98,8 +67,7 @@ export function runExec(
       });
     };
 
-    // Its own process group, so a timeout kills the whole pipeline the code
-    // started, not just the shell.
+    // Its own process group, so a kill reaches every process the command started.
     const child = spawn("bash", ["-lc", frame.code], {
       cwd: frame.cwd ?? defaultCwd,
       env: { ...process.env, ...frame.env },
@@ -132,7 +100,31 @@ export function runExec(
   });
 }
 
-/** Bounded byte sink: keeps the first `limit` bytes and notes the overflow. */
+/** Serves core until the signal aborts. Throws core's reason on a refusal. */
+export async function runMachineDaemon(
+  options: MachineDaemonOptions,
+): Promise<void> {
+  const WebSocketImpl = resolveWebSocket();
+  let delayMs = RECONNECT_MIN_MS;
+  while (!options.signal.aborted) {
+    const startedAt = Date.now();
+    const closed = await serveOnce(options, WebSocketImpl);
+    if (options.signal.aborted) return;
+    if (FATAL_CLOSE_CODES.has(closed.code)) {
+      throw new Error(
+        closed.reason || `core closed the socket (${closed.code})`,
+      );
+    }
+    if (Date.now() - startedAt > RECONNECT_MAX_MS) delayMs = RECONNECT_MIN_MS;
+    options.log(
+      `disconnected (${closed.reason || closed.code}), reconnecting in ${Math.round(delayMs / 1000)}s`,
+    );
+    await reconnectDelay(delayMs, options.signal);
+    delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+  }
+}
+
+/** Keeps the first `limit` bytes of a stream. */
 class OutputBuffer {
   readonly #chunks: Buffer[] = [];
   readonly #limit: number;
@@ -176,7 +168,7 @@ function oneLine(text: string): string {
     : line;
 }
 
-/** One socket lifetime: connect, claim the sandbox, serve frames until close. */
+/** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
@@ -186,11 +178,16 @@ function serveOnce(
       machineSocketUrl(options.baseUrl),
       webSocketSubprotocols(options.apiKey),
     );
-    // Aborts with the socket, so a command still running when it drops is killed.
+    // Aborts on close: a result that can no longer be sent is not worth waiting for.
     const lifetime = new AbortController();
     const onAbort = (): void => socket.close(1000, "daemon stopped");
     const send = (frame: MachineDaemonFrame): void => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frame));
+    };
+    const finish = (code: number, reason: string): void => {
+      options.signal.removeEventListener("abort", onAbort);
+      lifetime.abort();
+      resolve({ code: code, reason: reason });
     };
     options.signal.addEventListener("abort", onAbort, { once: true });
 
@@ -217,10 +214,8 @@ function serveOnce(
         send(result);
       });
     };
-    socket.onclose = (event): void => {
-      options.signal.removeEventListener("abort", onAbort);
-      lifetime.abort();
-      resolve({ code: event.code, reason: event.reason });
-    };
+    // Node fires only `error`, never `close`, for a connection that fails.
+    socket.onerror = (): void => finish(1006, "connection failed");
+    socket.onclose = (event): void => finish(event.code, event.reason);
   });
 }

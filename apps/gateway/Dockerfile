@@ -21,6 +21,7 @@ COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
 COPY packages/broods ./packages/broods
+COPY apps/core/src/shared/machine-socket.ts ./apps/core/src/shared/machine-socket.ts
 COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
 COPY apps/core/src/shared/request-id.ts ./apps/core/src/shared/request-id.ts
 COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
