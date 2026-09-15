@@ -13,6 +13,14 @@ import {
  * a real request. Keep route-specific logic out of here.
  */
 
+declare global {
+  // Bun 1.4 reads this and @types/bun 1.3.14 does not declare it yet. `false`
+  // turns off the 300s socket idle timer for that one request.
+  interface BunFetchRequestInit {
+    timeout?: number | boolean;
+  }
+}
+
 /**
  * A transport-neutral inbound request. The server builds one per HTTP request;
  * handlers never see the underlying runtime. Headers are lowercased and the
@@ -152,7 +160,7 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
  */
 export async function publicHostFetch(
   input: string | URL | Request,
-  init?: RequestInit,
+  init?: BunFetchRequestInit,
 ): Promise<Response> {
   const url = new URL(input instanceof Request ? input.url : String(input));
   const hostname = url.hostname;

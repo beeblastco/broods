@@ -167,7 +167,7 @@ export function resolveConfiguredModel(
   const createProvider = modelProviderFactories()[providerName] as (
     settings: AgentProviderSettings & { fetch?: typeof fetch },
   ) => ModelProviderInstance;
-  const provider = createProvider(withGuardedFetch(providerConfig));
+  const provider = createProvider(withModelFetch(providerConfig));
   const model = provider(modelId);
 
   return {
@@ -204,7 +204,7 @@ export function resolveTranscriptionModel(
   }
   try {
     const provider = source.factory(
-      withGuardedFetch(
+      withModelFetch(
         requireProviderSettings(agentConfig, providerName),
       ) as never,
     );
@@ -578,7 +578,7 @@ function resolveOpenAICompatibleModel(
   modelId: string,
 ): ResolvedModelProvider {
   const { base_url: _baseUrl, ...openAIConfig } =
-    withGuardedFetch(providerConfig);
+    withModelFetch(providerConfig);
   // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
@@ -607,15 +607,28 @@ function resolveOpenAICompatibleModel(
 }
 
 /**
- * A tenant-supplied endpoint gets the resolve-then-connect `fetch`; the
- * provider's own default endpoint keeps the SDK's fetch untouched.
+ * Every model request goes out with Bun's socket idle timeout off. Bun drops a
+ * connection that stays silent for 300s, and a busy provider can hold a stream
+ * that long, so a model call ends only on the provider's own error or the run's
+ * abort signal. A tenant-supplied endpoint also gets the resolve-then-connect
+ * `fetch`.
  */
-function withGuardedFetch<T extends AgentProviderSettings>(
+function withModelFetch<T extends AgentProviderSettings>(
   settings: T,
-): T & { fetch?: typeof fetch } {
-  return settings.baseURL || settings.base_url
-    ? { ...settings, fetch: publicHostFetch as typeof fetch }
-    : settings;
+): T & { fetch: typeof fetch } {
+  const guarded = Boolean(settings.baseURL || settings.base_url);
+  const modelFetch = (
+    input: string | URL | Request,
+    init?: BunFetchRequestInit,
+  ): Promise<Response> => {
+    const unbounded = { ...init, timeout: false };
+
+    return guarded
+      ? publicHostFetch(input, unbounded)
+      : fetch(input, unbounded);
+  };
+
+  return { ...settings, fetch: modelFetch as typeof fetch };
 }
 
 function requireModelProvider(
