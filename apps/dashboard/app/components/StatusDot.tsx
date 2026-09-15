@@ -29,7 +29,10 @@ export const CONNECTION_TONE: Record<
  * Status as a colored dot with no visible word. `label` is what hover and
  * screen readers get; pass the real state when several states share a tone
  * (suspending and terminating both run sky). Inline-block, so it keeps its size
- * straight in a table cell, not only inside a flex row.
+ * straight in a table cell, not only inside a flex row. Relative, so the
+ * absolute sr-only label stays inside the table's scroll box: with no
+ * positioned ancestor, every row's label stretches the document, and View
+ * trace's scrollIntoView then slides the whole page.
  */
 export function StatusDot({
   tone,
@@ -44,7 +47,7 @@ export function StatusDot({
     <span
       title={label}
       className={cn(
-        "inline-block size-2 shrink-0 rounded-full",
+        "relative inline-block size-2 shrink-0 rounded-full",
         TONE_BG[tone],
         className,
       )}

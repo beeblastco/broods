@@ -22,8 +22,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { ReactFlow, ReactFlowProvider, type Node } from "@xyflow/react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
+import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
@@ -74,6 +76,13 @@ export function UiGallery(): React.JSX.Element {
     () => true,
     () => false,
   );
+  const dashboardTab = useSearchParams().get("tab");
+
+  // A trace link keeps the path and swaps ?tab=, so the dashboard stand-in
+  // answers the same parameter the dashboard page does.
+  if (dashboardTab === "monitoring" || dashboardTab === "tracing") {
+    return <ObservabilityPageStandIn tab={dashboardTab} />;
+  }
 
   return (
     <main
