@@ -1,9 +1,38 @@
 /**
  * Frames between the `broods machine` daemon and core. The gateway relays
- * them unchanged and the CLI bundles this file.
+ * them unchanged and the CLI bundles this file. `computerInput` is also the
+ * computer tool's input schema, so the model and the wire share one shape.
  */
 
 import { z } from "zod";
+
+const COMPUTER_ACTIONS = [
+  "cursor_position",
+  "double_click",
+  "hold_key",
+  "key",
+  "left_click",
+  "left_click_drag",
+  "left_mouse_down",
+  "left_mouse_up",
+  "middle_click",
+  "mouse_move",
+  "right_click",
+  "screenshot",
+  "scroll",
+  "triple_click",
+  "type",
+  "wait",
+  "zoom",
+] as const;
+
+/** Actions that only look, so they never need approval. */
+export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set([
+  "cursor_position",
+  "screenshot",
+  "wait",
+  "zoom",
+]);
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
@@ -16,6 +45,68 @@ export const MACHINE_CLOSE = {
 } as const;
 
 export const MACHINE_WEBSOCKET_PATH = "/v1/machines/ws";
+
+// Anthropic's computer-use field names. Arrays, not tuples: some providers
+// reject JSON Schema tuple items.
+export const computerInput = z.object({
+  action: z.enum(COMPUTER_ACTIONS),
+  coordinate: z
+    .array(z.number().int())
+    .length(2)
+    .optional()
+    .describe("[x, y] in screenshot pixels for mouse actions."),
+  start_coordinate: z
+    .array(z.number().int())
+    .length(2)
+    .optional()
+    .describe("[x, y] where a left_click_drag starts."),
+  text: z
+    .string()
+    .optional()
+    .describe(
+      "Text for type, the key chord for key and hold_key, or modifiers to hold during a click, drag or scroll.",
+    ),
+  scroll_direction: z.enum(["down", "left", "right", "up"]).optional(),
+  scroll_amount: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Scroll clicks, default 3."),
+  duration: z
+    .number()
+    .min(0)
+    .max(300)
+    .optional()
+    .describe("Seconds for wait and hold_key."),
+  region: z
+    .array(z.number().int())
+    .length(4)
+    .optional()
+    .describe("[x0, y0, x1, y1] of the screenshot to zoom into."),
+  repeat: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("How many times to press the key."),
+});
+
+const computerFrame = computerInput.extend({
+  type: z.literal("computer"),
+  id: z.string(),
+});
+
+const computerResultFrame = z.object({
+  type: z.literal("computer-result"),
+  id: z.string(),
+  text: z.string().optional(),
+  image: z.object({ data: z.string(), mediaType: z.string() }).optional(),
+  // Bundle id of the frontmost app after the action.
+  app: z.string().optional(),
+  error: z.string().optional(),
+});
 
 const execFrame = z.object({
   type: z.literal("exec"),
@@ -32,6 +123,7 @@ const helloFrame = z.object({
   sandbox: z.string().min(1),
   hostname: z.string().optional(),
   platform: z.string().optional(),
+  computer: z.boolean().optional(),
 });
 
 const readyFrame = z.object({
@@ -50,10 +142,21 @@ const resultFrame = z.object({
   truncated: z.boolean(),
 });
 
-const coreFrame = z.discriminatedUnion("type", [execFrame, readyFrame]);
+const coreFrame = z.discriminatedUnion("type", [
+  computerFrame,
+  execFrame,
+  readyFrame,
+]);
 
-const daemonFrame = z.discriminatedUnion("type", [helloFrame, resultFrame]);
+const daemonFrame = z.discriminatedUnion("type", [
+  computerResultFrame,
+  helloFrame,
+  resultFrame,
+]);
 
+export type ComputerInput = z.infer<typeof computerInput>;
+export type MachineComputerFrame = z.infer<typeof computerFrame>;
+export type MachineComputerResultFrame = z.infer<typeof computerResultFrame>;
 export type MachineCoreFrame = z.infer<typeof coreFrame>;
 export type MachineDaemonFrame = z.infer<typeof daemonFrame>;
 export type MachineExecFrame = z.infer<typeof execFrame>;

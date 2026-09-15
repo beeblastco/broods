@@ -8,3 +8,8 @@ declare module "*.sh" {
   const text: string;
   export default text;
 }
+
+declare module "*.swift" {
+  const text: string;
+  export default text;
+}

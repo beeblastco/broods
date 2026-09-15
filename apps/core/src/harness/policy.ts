@@ -26,6 +26,7 @@ import type {
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
+import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
 import { getStorage } from "../shared/storage.ts";
 import type {
   ResolvedAgentSandbox,
@@ -115,6 +116,14 @@ export function compatibilityApprovalStatus(
         ...(onSandbox !== undefined ? { sandbox: onSandbox } : {}),
       },
     )
+      ? "user-approval"
+      : undefined;
+  }
+
+  // Looking is free; any other action asks like bash does.
+  if (toolName === "computer") {
+    return !COMPUTER_READ_ACTIONS.has(String(record.action)) &&
+      options.agentSandboxPermissionMode !== "bypass"
       ? "user-approval"
       : undefined;
   }

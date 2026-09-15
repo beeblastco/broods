@@ -1,6 +1,7 @@
 /**
  * `broods machine <sandbox>`: runs core's exec frames with `bash -lc` on this
  * computer, in the user's own environment, and reconnects until core refuses.
+ * With --computer it also answers computer frames through desktop.ts.
  */
 
 import { spawn } from "node:child_process";
@@ -10,12 +11,14 @@ import {
   MACHINE_CLOSE,
   machineSocketUrl,
   parseCoreFrame,
+  type MachineComputerFrame,
   type MachineDaemonFrame,
   type MachineExecFrame,
   type MachineResultFrame,
 } from "../../../../apps/core/src/shared/machine-socket.ts";
 import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
+import type { DesktopDriver } from "./desktop.ts";
 
 // Refusals a reconnect would only repeat.
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
@@ -30,6 +33,8 @@ const RECONNECT_MIN_MS = 1_000;
 export interface MachineDaemonOptions {
   apiKey: string;
   baseUrl: string;
+  /** Serve the computer tool through the desktop helper. */
+  computer?: boolean;
   /** Working directory for an exec that names none. */
   cwd: string;
   log: (line: string) => void;
@@ -105,22 +110,27 @@ export async function runMachineDaemon(
   options: MachineDaemonOptions,
 ): Promise<void> {
   const WebSocketImpl = resolveWebSocket();
+  const desktop = options.computer ? await openDesktop(options.log) : null;
   let delayMs = RECONNECT_MIN_MS;
-  while (!options.signal.aborted) {
-    const startedAt = Date.now();
-    const closed = await serveOnce(options, WebSocketImpl);
-    if (options.signal.aborted) return;
-    if (FATAL_CLOSE_CODES.has(closed.code)) {
-      throw new Error(
-        closed.reason || `core closed the socket (${closed.code})`,
+  try {
+    while (!options.signal.aborted) {
+      const startedAt = Date.now();
+      const closed = await serveOnce(options, WebSocketImpl, desktop);
+      if (options.signal.aborted) return;
+      if (FATAL_CLOSE_CODES.has(closed.code)) {
+        throw new Error(
+          closed.reason || `core closed the socket (${closed.code})`,
+        );
+      }
+      if (Date.now() - startedAt > RECONNECT_MAX_MS) delayMs = RECONNECT_MIN_MS;
+      options.log(
+        `disconnected (${closed.reason || closed.code}), reconnecting in ${Math.round(delayMs / 1000)}s`,
       );
+      await reconnectDelay(delayMs, options.signal);
+      delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
     }
-    if (Date.now() - startedAt > RECONNECT_MAX_MS) delayMs = RECONNECT_MIN_MS;
-    options.log(
-      `disconnected (${closed.reason || closed.code}), reconnecting in ${Math.round(delayMs / 1000)}s`,
-    );
-    await reconnectDelay(delayMs, options.signal);
-    delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+  } finally {
+    desktop?.stop();
   }
 }
 
@@ -160,6 +170,15 @@ class OutputBuffer {
   }
 }
 
+function describeComputerFrame(frame: MachineComputerFrame): string {
+  const parts: string[] = [frame.action];
+  if (frame.coordinate) parts.push(`at ${frame.coordinate.join(",")}`);
+  if (frame.text !== undefined) parts.push(JSON.stringify(oneLine(frame.text)));
+  if (frame.region) parts.push(`region ${frame.region.join(",")}`);
+
+  return parts.join(" ");
+}
+
 function oneLine(text: string): string {
   const line = text.trim().split("\n")[0] ?? "";
 
@@ -168,10 +187,28 @@ function oneLine(text: string): string {
     : line;
 }
 
+// Lazy, so the embedded Swift source loads only with --computer. Starting
+// before the first connect surfaces a missing compiler or grant right away.
+async function openDesktop(
+  log: (line: string) => void,
+): Promise<DesktopDriver> {
+  const { startDesktop } = await import("./desktop.ts");
+  const { display, driver, permissions } = await startDesktop(false);
+  log(`computer use on, ${display.width}x${display.height} screenshots`);
+  if (!permissions.screenRecording || !permissions.accessibility) {
+    log(
+      "  screen recording or accessibility is missing, run `broods machine --doctor --request`",
+    );
+  }
+
+  return driver;
+}
+
 /** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
+  desktop: DesktopDriver | null,
 ): Promise<{ code: number; reason: string }> {
   return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
@@ -197,11 +234,21 @@ function serveOnce(
         sandbox: options.sandbox,
         hostname: hostname(),
         platform: process.platform,
+        computer: desktop !== null,
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);
       if (frame?.type === "ready") {
         options.log(`connected as ${options.sandbox} (${frame.sandboxId})`);
+
+        return;
+      }
+      if (frame?.type === "computer" && desktop) {
+        options.log(`  ${describeComputerFrame(frame)}`);
+        void desktop.run(frame).then((result): void => {
+          if (result.error) options.log(`  error: ${result.error}`);
+          send(result);
+        });
 
         return;
       }

@@ -43,6 +43,32 @@ network drop. It exits with core's reason on an invalid key, on a name with no
 `machine` record, or when a newer daemon claims the same record. The newest
 daemon always wins, so a restart never waits for the old one.
 
+## Computer use
+
+Start the daemon with `--computer` and agents on the sandbox also get a
+`computer` tool: screenshots of the main display, mouse and keyboard. It takes
+the action names of Anthropic's computer-use tool (`screenshot`, `left_click`,
+`type`, `key`, `scroll`, `zoom`, ...) as one plain tool, so any model provider
+can call it.
+
+```bash
+broods machine --doctor --request   # once: grant Screen Recording and Accessibility to this terminal
+broods machine my-mac --computer
+```
+
+macOS only for now. The first start compiles a small helper with `swiftc`
+(Xcode Command Line Tools) into `~/.broods/desktop/`. Both permissions belong
+to the terminal that runs the daemon.
+
+Coordinates are pixels in the screenshot, which is the display scaled to fit
+1280 on its long edge. The daemon maps them to screen points, so a Retina
+display needs no setup. Every result names the frontmost app.
+
+`screenshot`, `zoom`, `cursor_position` and `wait` never ask for approval.
+Every other action asks unless `permissionMode` is `bypass`. The tool tells the
+model that text on the screen is data, not instructions, and to ask before
+CAPTCHAs, payments or security settings. Ctrl+C on the daemon stops it all.
+
 ## Limits
 
 - No workspaces. The file tools need the S3 workspace mount, which a computer

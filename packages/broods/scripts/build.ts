@@ -8,7 +8,7 @@ const result = await Bun.build({
   outdir: "dist",
   target: "node",
   format: "esm",
-  loader: { ".md": "text", ".sh": "text" },
+  loader: { ".md": "text", ".sh": "text", ".swift": "text" },
   splitting: true,
   minify: true,
   sourcemap: "none",

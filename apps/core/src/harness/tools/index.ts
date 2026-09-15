@@ -47,6 +47,7 @@ import { mcpTools } from "../mcp/mcp.tool.ts";
 import askQuestionsTool from "./ask-questions.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import computerTool from "./computer.tool.ts";
 import {
   sendFilesTool,
   sendImagesTool,
@@ -202,6 +203,10 @@ export async function createTools(
         ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }),
     );
+  }
+  // computer: only the user's own computer has a screen to drive.
+  if (agentSandbox?.provider === "machine") {
+    Object.assign(sandboxTools, computerTool(agentSandbox));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
