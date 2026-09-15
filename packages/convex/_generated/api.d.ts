@@ -121,6 +121,7 @@ import type * as runtimeIngress from "../runtimeIngress.js";
 import type * as sandbox_auditEvents from "../sandbox/auditEvents.js";
 import type * as sandbox_configs from "../sandbox/configs.js";
 import type * as sandbox_instances from "../sandbox/instances.js";
+import type * as sandbox_machines from "../sandbox/machines.js";
 import type * as sandbox_public from "../sandbox/public.js";
 import type * as sandbox_snapshots from "../sandbox/snapshots.js";
 import type * as skillsPublic from "../skillsPublic.js";
@@ -253,6 +254,7 @@ declare const fullApi: ApiFromModules<{
   "sandbox/auditEvents": typeof sandbox_auditEvents;
   "sandbox/configs": typeof sandbox_configs;
   "sandbox/instances": typeof sandbox_instances;
+  "sandbox/machines": typeof sandbox_machines;
   "sandbox/public": typeof sandbox_public;
   "sandbox/snapshots": typeof sandbox_snapshots;
   skillsPublic: typeof skillsPublic;

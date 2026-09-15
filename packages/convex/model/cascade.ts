@@ -61,6 +61,13 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
+      .query("machineConnections")
+      .withIndex("by_accountId_projectId_and_stageId", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),

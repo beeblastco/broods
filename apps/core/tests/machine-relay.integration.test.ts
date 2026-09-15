@@ -31,6 +31,7 @@ import {
   machineMcpRecord,
   machineStorage,
   startMachineCore,
+  waitFor,
 } from "./helpers/machine.ts";
 
 // Gateway routing is covered in apps/gateway/tests/route.test.ts; importing
@@ -213,12 +214,4 @@ function startDoor(upstreamBaseUrl: string): string {
   servers.push(door);
 
   return `http://127.0.0.1:${door.port}`;
-}
-
-async function waitFor(condition: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error("timed out waiting");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
 }

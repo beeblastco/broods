@@ -1,7 +1,8 @@
 /**
  * The "machine" provider: bash, the computer tool and local MCP servers run on
  * the user's own computer through the WebSocket its `broods machine` daemon
- * keeps open. Live daemons are held in memory only.
+ * keeps open. Live daemons are held in memory; each connection is mirrored to
+ * Convex for the dashboard.
  */
 
 import { resolveBearerAuth } from "../../shared/auth.ts";
@@ -24,7 +25,7 @@ import {
   type MachineReadyFrame,
   type MachineResultFrame,
 } from "../../shared/machine-socket.ts";
-import { getStorage } from "../../shared/storage.ts";
+import { getStorage, type MachineConnectionRef } from "../../shared/storage.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -35,6 +36,8 @@ import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
 // The helper bounds a desktop action; a wait or hold adds its own duration.
 const COMPUTER_REPLY_MS = 30_000;
+// The dashboard reads a computer as offline once its heartbeat goes quiet.
+const HEARTBEAT_MS = 60_000;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 // Codex's per-tool default; a local server slower than that is hung.
 const MCP_REPLY_MS = 60_000;
@@ -42,6 +45,7 @@ const MCP_REPLY_MS = 60_000;
 const REPLY_GRACE_MS = 5_000;
 // Keyed by registryKey; the last daemon to claim a record wins.
 const connections = new Map<string, MachineConnection>();
+let heartbeat: ReturnType<typeof setInterval> | undefined;
 
 type MachineReply =
   | MachineComputerResultFrame
@@ -60,6 +64,7 @@ interface MachineConnection {
   mcp: ReadonlySet<string>;
   name: string;
   pending: Map<string, PendingReply>;
+  ref: MachineConnectionRef;
   socket: Bun.ServerWebSocket<MachineSocketData>;
 }
 
@@ -171,6 +176,13 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
       // A replaced socket must not tear down its successor's registration.
       if (!key || !connection || connection.socket !== socket) return;
       connections.delete(key);
+      mirrorConnection(() =>
+        getStorage().machineConnections.disconnected(connection.ref),
+      );
+      if (connections.size === 0) {
+        clearInterval(heartbeat);
+        heartbeat = undefined;
+      }
       rejectPending(
         connection,
         `machine sandbox "${connection.name}" disconnected while the command was running`,
@@ -306,11 +318,17 @@ async function claimSandbox(
     );
   }
   socket.data.key = key;
+  const ref: MachineConnectionRef = {
+    accountId: accountId,
+    connectionId: crypto.randomUUID(),
+    sandboxConfigId: record.sandboxId,
+  };
   connections.set(key, {
     computer: hello.computer === true,
     mcp: new Set(hello.mcp),
     name: record.name,
     pending: new Map(),
+    ref: ref,
     socket: socket,
   });
   const ready: MachineReadyFrame = {
@@ -318,6 +336,16 @@ async function claimSandbox(
     sandboxId: record.sandboxId,
   };
   socket.send(JSON.stringify(ready));
+  mirrorConnection(() =>
+    getStorage().machineConnections.connected({
+      ...ref,
+      computer: hello.computer === true,
+      hostname: hello.hostname,
+      mcp: hello.mcp ?? [],
+      platform: hello.platform,
+    }),
+  );
+  heartbeat ??= setInterval(sendHeartbeats, HEARTBEAT_MS);
   logInfo("Machine sandbox connected", {
     accountId: accountId,
     sandbox: record.name,
@@ -367,6 +395,17 @@ function machineServingMcp(record: McpRecord): MachineConnection {
   return connection;
 }
 
+// Status is for display only: a failed write never touches the daemon's socket.
+function mirrorConnection(write: () => Promise<void>): void {
+  Promise.resolve()
+    .then(write)
+    .catch((error: unknown): void => {
+      logWarn("Machine connection mirror failed", {
+        error: toErrorMessage(error),
+      });
+    });
+}
+
 function registryKey(accountId: string, sandboxConfigId: string): string {
   return `${accountId}:${sandboxConfigId}`;
 }
@@ -400,6 +439,14 @@ function sendFrame(
     });
     connection.socket.send(JSON.stringify(frame));
   });
+}
+
+function sendHeartbeats(): void {
+  for (const connection of connections.values()) {
+    mirrorConnection(() =>
+      getStorage().machineConnections.seen(connection.ref),
+    );
+  }
 }
 
 function settleReply(key: string, reply: MachineReply): void {

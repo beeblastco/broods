@@ -576,6 +576,24 @@ export const sandboxInstancesFields = {
   ephemeral: v.optional(v.boolean()),
 };
 
+/** A `machine` sandbox's daemon connection as core last saw it, one row per sandbox config; see sandbox/machines.ts. */
+export const machineConnectionsFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  sandboxConfigId: v.id("sandboxConfigs"),
+  connectionId: v.string(),
+  hostname: v.optional(v.string()),
+  platform: v.optional(v.string()),
+  /** The daemon started with --computer. */
+  computer: v.boolean(),
+  /** Server names from the daemon's --mcp file. */
+  mcp: v.array(v.string()),
+  connectedAt: v.number(),
+  lastSeenAt: v.number(),
+  disconnectedAt: v.optional(v.number()),
+};
+
 /**
  * Sandbox snapshot/image registry, mirrored from broods. Account-scoped because
  * a built image is reusable across stages. `status` follows the unified
@@ -1320,6 +1338,13 @@ export default defineSchema({
     ])
     .index("by_lastUsedAt", ["lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"]),
+  machineConnections: defineTable(machineConnectionsFields)
+    .index("by_accountId_projectId_and_stageId", [
+      "accountId",
+      "projectId",
+      "stageId",
+    ])
+    .index("by_sandboxConfigId", ["sandboxConfigId"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields).index(
     "by_accountId_and_name",
     ["accountId", "name"],

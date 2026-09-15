@@ -13,11 +13,20 @@ import type { SandboxExecutorConfig } from "../../src/harness/sandbox/types.ts";
 import type { AccountRecord } from "../../src/shared/domain/accounts.ts";
 import type { McpRecord } from "../../src/shared/domain/mcp.ts";
 import type { SandboxConfigRecord } from "../../src/shared/domain/sandbox-config.ts";
-import type { Storage } from "../../src/shared/storage.ts";
+import type {
+  MachineConnectionRecord,
+  MachineConnectionRef,
+  Storage,
+} from "../../src/shared/storage.ts";
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
 export const MACHINE_RUNTIME_KEY = "runtime-key";
 export const MACHINE_SANDBOX_ID = "sbx_machine";
+
+/** One connection status write core sent to storage. */
+export type MachineConnectionWrite =
+  | { kind: "connected"; ref: MachineConnectionRecord }
+  | { kind: "disconnected" | "seen"; ref: MachineConnectionRef };
 
 /** The executor config core builds for the `my-mac` record. */
 export function machineExecutorConfig(
@@ -51,7 +60,8 @@ export function machineMcpRecord(): McpRecord {
   };
 }
 
-export function machineStorage(): Storage {
+/** Connection status writes land in `writes`. */
+export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
   const account: AccountRecord = {
     accountId: MACHINE_ACCOUNT_ID,
     username: "machine",
@@ -107,6 +117,17 @@ export function machineStorage(): Storage {
             }
           : null,
     },
+    machineConnections: {
+      connected: async (connection: MachineConnectionRecord): Promise<void> => {
+        writes.push({ kind: "connected", ref: connection });
+      },
+      disconnected: async (ref: MachineConnectionRef): Promise<void> => {
+        writes.push({ kind: "disconnected", ref: ref });
+      },
+      seen: async (ref: MachineConnectionRef): Promise<void> => {
+        writes.push({ kind: "seen", ref: ref });
+      },
+    },
     sandboxConfigs: {
       getById: async (_accountId: string, sandboxId: string) =>
         records.find((record) => record.sandboxId === sandboxId) ?? null,
@@ -125,4 +146,12 @@ export function startMachineCore(): Bun.Server<MachineSocketData> {
         : new Response("not found", { status: 404 }),
     websocket: machineWebSocketHandler,
   });
+}
+
+export async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }

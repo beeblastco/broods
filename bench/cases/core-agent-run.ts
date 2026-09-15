@@ -259,6 +259,11 @@ function fakeStorage(): Storage {
       completeRun: async () => undefined,
       failRun: async () => undefined,
     },
+    machineConnections: {
+      connected: async () => undefined,
+      disconnected: async () => undefined,
+      seen: async () => undefined,
+    },
     sandboxConfigs: { getById: none, list: empty, removeAllForAccount: zero },
     workspaceConfigs: { getById: none, list: empty, removeAllForAccount: zero },
     accountHooks: { getById: none, removeAllForAccount: zero },
