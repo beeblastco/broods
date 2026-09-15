@@ -37,6 +37,13 @@ const PREPARE_BUDGET_MS = 100;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
+const MODEL_KEY_HINT =
+  "set ANTHROPIC_API_KEY or OPENAI_API_KEY for the full run";
+// Without a key the smoke agent still exercises the run path; the model call fails.
+const NO_KEY_MODEL: SmokeModel = {
+  model: { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
+  provider: { anthropic: { apiKey: "sk-ant-local-smoke-no-key" } },
+};
 
 // The "Context prepared" line core logs once per run (apps/core harness.ts).
 interface ContextPreparedLog {
@@ -57,6 +64,16 @@ interface InstancePorts {
   convexSite: number;
   core: number;
   gateway: number;
+}
+
+/** The `model` + `provider` block of the smoke agents. */
+interface SmokeModel {
+  model: {
+    provider: string;
+    modelId: string;
+    providerOptions?: Record<string, Record<string, unknown>>;
+  };
+  provider: Record<string, { apiKey: string }>;
 }
 
 interface InstanceSecrets {
@@ -285,7 +302,7 @@ async function verify(): Promise<void> {
   const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
   const runId = Date.now().toString(36);
-  const modelKey = process.env.ANTHROPIC_API_KEY;
+  const smoke = smokeModel();
 
   await measureStep(perf, "gateway healthz", async () => {
     const health = await probeHttp(`${gatewayUrl}/healthz`);
@@ -315,13 +332,7 @@ async function verify(): Promise<void> {
       body: {
         name: `smoke-${runId}`,
         config: {
-          model: {
-            provider: "anthropic",
-            modelId: "claude-haiku-4-5-20251001",
-          },
-          provider: {
-            anthropic: { apiKey: modelKey ?? "sk-ant-local-smoke-no-key" },
-          },
+          ...(smoke ?? NO_KEY_MODEL),
           instructions: "Reply with the single word OK.",
         },
       },
@@ -370,12 +381,12 @@ async function verify(): Promise<void> {
 
   await measureStep(perf, "run to terminal state", async () => {
     const finalStatus = await pollRunStatus(statusUrl, accountSecret);
-    const expected = modelKey
+    const expected = smoke
       ? finalStatus.status === "completed"
       : finalStatus.status === "completed" || finalStatus.status === "failed";
-    const label = modelKey
-      ? "run completed with a real model key"
-      : "run reached a terminal state (no model key; set ANTHROPIC_API_KEY for a full run)";
+    const label = smoke
+      ? `run completed with a real model key (${smoke.model.modelId})`
+      : `run reached a terminal state (no model key; ${MODEL_KEY_HINT})`;
     assertStep(label, expected, JSON.stringify(finalStatus));
   });
 
@@ -461,10 +472,8 @@ async function verify(): Promise<void> {
         connected === true,
         daemonOutput,
       );
-      if (!modelKey) {
-        console.log(
-          "  skip agent bash on this machine (set ANTHROPIC_API_KEY for the full run)",
-        );
+      if (!smoke) {
+        console.log(`  skip agent bash on this machine (${MODEL_KEY_HINT})`);
 
         return;
       }
@@ -475,11 +484,7 @@ async function verify(): Promise<void> {
         body: {
           name: sandboxName,
           config: {
-            model: {
-              provider: "anthropic",
-              modelId: "claude-haiku-4-5-20251001",
-            },
-            provider: { anthropic: { apiKey: modelKey } },
+            ...smoke,
             instructions:
               "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
             sandbox: sandboxId,
@@ -802,6 +807,32 @@ function dockerContainerState(name: string): string | null {
   }).trim();
 
   return output || null;
+}
+
+// --- model --------------------------------------------------------------
+
+/** The smoke agents' model from whichever key the shell carries; null for none. */
+function smokeModel(): SmokeModel | null {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    return {
+      model: { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
+      provider: { anthropic: { apiKey: anthropicKey } },
+    };
+  }
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    return {
+      model: {
+        provider: "openai",
+        modelId: "gpt-5.6-luna",
+        providerOptions: { openai: { reasoningEffort: "max" } },
+      },
+      provider: { openai: { apiKey: openaiKey } },
+    };
+  }
+
+  return null;
 }
 
 // --- http ---------------------------------------------------------------
