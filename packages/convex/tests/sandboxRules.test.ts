@@ -254,19 +254,17 @@ describe("sandbox config defaults & validation", () => {
     expect(() => normalizeSandboxConfig({ provider: "machine" })).toThrow(
       "machine cannot enforce egress restrictions",
     );
-    for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    for (const [field, value] of Object.entries({
+      persistent: true,
+      size: "small",
+      snapshot: "img",
+      memoryLimit: 512,
+    })) {
       expect(() =>
         normalizeSandboxConfig({
           provider: "machine",
           network: { mode: "allow-all" },
-          [field]:
-            field === "size"
-              ? "small"
-              : field === "snapshot"
-                ? "img"
-                : field === "memoryLimit"
-                  ? 512
-                  : true,
+          [field]: value,
         }),
       ).toThrow(`config.${field} does not apply to the machine provider`);
     }

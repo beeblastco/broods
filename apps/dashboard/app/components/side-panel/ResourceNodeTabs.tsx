@@ -100,9 +100,8 @@ export function SandboxResourceDetailsTab({
   const network: { mode?: string } = isPlainObject(config.network)
     ? (config.network as { mode?: string })
     : {};
-  // The user's own computer: always on, sized by itself, egress unenforceable.
-  // Core rejects a record that claims otherwise, so the picker clears those
-  // fields and the toggles below stay locked while it is selected.
+  // A machine record may not claim persistence, sizing or egress rules
+  // (convex sandboxRules), so picking it clears them and locks those toggles.
   const machine = config.provider === "machine";
 
   function setConfig(patch: Record<string, unknown>): void {

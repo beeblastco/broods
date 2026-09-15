@@ -2,31 +2,34 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   MachineSandboxExecutor,
   isMachineUpgrade,
-  machineWebSocketHandler,
-  upgradeMachineSocket,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
-import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
-import type { AccountRecord } from "../src/shared/domain/accounts.ts";
-import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
 import {
   MACHINE_WEBSOCKET_PATH,
-  parseMachineFrame,
+  parseCoreFrame,
+  parseDaemonFrame,
+  type MachineExecFrame,
+  type MachineReadyFrame,
+  type MachineResultFrame,
 } from "../src/shared/machine-socket.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type Storage,
 } from "../src/shared/storage.ts";
+import {
+  MACHINE_RUNTIME_KEY,
+  MACHINE_SANDBOX_ID,
+  machineExecutorConfig,
+  machineStorage,
+  startMachineCore,
+} from "./helpers/machine.ts";
 
 /**
  * Core's half of the machine sandbox: the daemon socket claims a record, the
- * executor turns `run` into an exec frame on that socket, and a missing or
- * replaced daemon fails the call with a reason the model can act on.
+ * executor turns `run` into an exec frame on that socket, and a missing,
+ * refused or replaced daemon fails with a reason the model can act on.
  */
 
-const ACCOUNT_ID = "acct_machine";
-const SANDBOX_ID = "sbx_machine";
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
@@ -41,29 +44,26 @@ afterEach(() => {
 });
 
 test("a run round-trips through the daemon socket that claimed the record", async () => {
-  const server = coreServer();
-  const daemon = await connectDaemon(server, "my-mac", (frame, socket) => {
+  const daemon = await connectDaemon(core(), "my-mac", (frame, socket) => {
     socket.send(
-      JSON.stringify({
-        type: "result",
-        id: frame.id,
-        exitCode: 0,
-        stdout: `ran: ${frame.code} in ${frame.cwd} as ${frame.env?.WHO}`,
-        stderr: "",
-        durationMs: 7,
-      }),
+      JSON.stringify(
+        result(frame.id, {
+          stdout: `ran: ${frame.code} in ${frame.cwd} as ${frame.env?.WHO}`,
+          durationMs: 7,
+        }),
+      ),
     );
   });
-  expect(daemon.ready.sandboxId).toBe(SANDBOX_ID);
+  expect(daemon.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
 
-  const result = await new MachineSandboxExecutor(
-    executorConfig({
+  const outcome = await new MachineSandboxExecutor(
+    machineExecutorConfig({
       options: { cwd: "/Users/me/app" },
       envVars: { WHO: "me" },
     }),
   ).run({ code: "echo hi", timeoutSeconds: 5, outputLimitBytes: 1024 });
 
-  expect(result).toMatchObject({
+  expect(outcome).toMatchObject({
     ok: true,
     exitCode: 0,
     stdout: "ran: echo hi in /Users/me/app as me",
@@ -73,10 +73,10 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 });
 
 test("a run with no daemon connected names the command to fix it", async () => {
-  coreServer();
+  core();
 
   await expect(
-    new MachineSandboxExecutor(executorConfig({})).run({
+    new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
       outputLimitBytes: 1024,
@@ -87,14 +87,12 @@ test("a run with no daemon connected names the command to fix it", async () => {
 });
 
 test("a second daemon replaces the first, and a dropped daemon fails its in-flight run", async () => {
-  const server = coreServer();
+  const server = core();
   const first = await connectDaemon(server, "my-mac", () => {});
-  const firstClosed = new Promise<CloseEvent>((resolve) => {
-    first.socket.onclose = resolve;
-  });
+  const firstClosed = closeOf(first.socket);
   // Settled by the replacement before this test can await it, so the handler
   // is attached up front.
-  const pending = new MachineSandboxExecutor(executorConfig({}))
+  const pending = new MachineSandboxExecutor(machineExecutorConfig())
     .run({ code: "sleep 1", timeoutSeconds: 5, outputLimitBytes: 1024 })
     .then(
       () => "resolved",
@@ -108,24 +106,39 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
 });
 
 test("an unknown record or a wrong provider closes the socket with 4404", async () => {
-  const server = coreServer();
+  const socket = openSocket(core());
+  socket.onopen = (): void =>
+    socket.send(JSON.stringify({ type: "hello", sandbox: "cloud-box" }));
 
-  const closed = await connectDaemonExpectingClose(server, "cloud-box");
+  expect((await closeOf(socket)).code).toBe(4404);
+});
 
-  expect(closed.code).toBe(4404);
+test("a bad bearer still upgrades, and its first frame is refused with 4401", async () => {
+  expect(
+    isMachineUpgrade(
+      new Request(`http://x${MACHINE_WEBSOCKET_PATH}`, {
+        headers: { upgrade: "websocket" },
+      }),
+    ),
+  ).toBe(true);
+  expect(isMachineUpgrade(new Request("http://x/v1/runs"))).toBe(false);
+
+  const socket = openSocket(core(), "nope");
+  socket.onopen = (): void =>
+    socket.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
+
+  expect((await closeOf(socket)).code).toBe(4401);
 });
 
 test("a result with missing fields is a bad frame, and so is a second hello", async () => {
-  const server = coreServer();
+  const server = core();
   const first = await connectDaemon(server, "my-mac", (frame, socket) => {
     socket.send(JSON.stringify({ type: "result", id: frame.id }));
   });
-  const firstClosed = new Promise<CloseEvent>((resolve) => {
-    first.socket.onclose = resolve;
-  });
+  const firstClosed = closeOf(first.socket);
 
   await expect(
-    new MachineSandboxExecutor(executorConfig({})).run({
+    new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
       outputLimitBytes: 1024,
@@ -134,27 +147,31 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   expect((await firstClosed).code).toBe(4400);
 
   const second = await connectDaemon(server, "my-mac", () => {});
-  const secondClosed = new Promise<CloseEvent>((resolve) => {
-    second.socket.onclose = resolve;
-  });
+  const secondClosed = closeOf(second.socket);
   second.socket.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
 
   expect((await secondClosed).code).toBe(4400);
 });
 
-test("parseMachineFrame drops frames whose fields do not match their type", () => {
-  expect(parseMachineFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
+test("each side's parser drops a frame whose fields do not match its type", () => {
+  expect(parseCoreFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
   expect(
-    parseMachineFrame(
+    parseCoreFrame(
       '{"type":"exec","id":"1","code":"yes","timeoutSeconds":0,"outputLimitBytes":10}',
     ),
   ).toBeNull();
-  expect(parseMachineFrame('{"type":"hello","sandbox":""}')).toBeNull();
-  expect(parseMachineFrame('{"type":"ready"}')).toBeNull();
-  expect(parseMachineFrame("[]")).toBeNull();
-  expect(parseMachineFrame("nope")).toBeNull();
+  expect(parseCoreFrame('{"type":"ready"}')).toBeNull();
+  expect(parseCoreFrame('{"type":"hello","sandbox":"my-mac"}')).toBeNull();
+  expect(parseDaemonFrame('{"type":"hello","sandbox":""}')).toBeNull();
   expect(
-    parseMachineFrame(
+    parseDaemonFrame(
+      '{"type":"result","id":"1","exitCode":0,"stdout":"","stderr":"","durationMs":1}',
+    ),
+  ).toBeNull();
+  expect(parseDaemonFrame("[]")).toBeNull();
+  expect(parseDaemonFrame("nope")).toBeNull();
+  expect(
+    parseCoreFrame(
       '{"type":"exec","id":"1","code":"yes","timeoutSeconds":5,"outputLimitBytes":10,"env":{"A":"b"},"extra":1}',
     ),
   ).toEqual({
@@ -167,172 +184,69 @@ test("parseMachineFrame drops frames whose fields do not match their type", () =
   });
 });
 
-test("the upgrade refuses a bad bearer and ignores non-machine paths", async () => {
-  const server = coreServer();
-  expect(
-    isMachineUpgrade(
-      new Request(`http://x${MACHINE_WEBSOCKET_PATH}`, {
-        headers: { upgrade: "websocket" },
-      }),
-    ),
-  ).toBe(true);
-  expect(isMachineUpgrade(new Request("http://x/v1/runs"))).toBe(false);
-
-  const response = await upgradeMachineSocket(
-    new Request(`http://x${MACHINE_WEBSOCKET_PATH}`, {
-      headers: { upgrade: "websocket", authorization: "Bearer nope" },
-    }),
-    server,
-  );
-
-  expect(response?.status).toBe(401);
-});
-
-function coreServer(): Bun.Server<MachineSocketData> {
-  const server = Bun.serve<MachineSocketData>({
-    port: 0,
-    fetch: (request, bunServer) =>
-      isMachineUpgrade(request)
-        ? upgradeMachineSocket(request, bunServer)
-        : new Response("not found", { status: 404 }),
-    websocket: machineWebSocketHandler,
+function closeOf(socket: WebSocket): Promise<CloseEvent> {
+  return new Promise((resolve): void => {
+    socket.onclose = resolve;
   });
-  servers.push(server);
-
-  return server;
 }
 
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   sandbox: string,
-  onExec: (
-    frame: {
-      id: string;
-      code: string;
-      cwd?: string;
-      env?: Record<string, string>;
-    },
-    socket: WebSocket,
-  ) => void,
-): Promise<{ ready: { sandboxId: string }; socket: WebSocket }> {
-  return new Promise((resolve, reject) => {
+  onExec: (frame: MachineExecFrame, socket: WebSocket) => void,
+): Promise<{ ready: MachineReadyFrame; socket: WebSocket }> {
+  return new Promise((resolve, reject): void => {
     const socket = openSocket(server);
     let ready = false;
-    socket.onopen = () =>
+    socket.onopen = (): void =>
       socket.send(JSON.stringify({ type: "hello", sandbox: sandbox }));
-    socket.onmessage = (event) => {
-      const frame = JSON.parse(String(event.data));
-      if (frame.type === "ready") {
+    socket.onmessage = (event): void => {
+      const frame = parseCoreFrame(event.data);
+      if (frame?.type === "ready") {
         ready = true;
         resolve({ ready: frame, socket: socket });
       }
-      if (frame.type === "exec") onExec(frame, socket);
+      if (frame?.type === "exec") onExec(frame, socket);
     };
-    socket.onclose = (event) => {
+    socket.onclose = (event): void => {
       if (!ready) reject(new Error(`closed ${event.code} ${event.reason}`));
     };
   });
 }
 
-function connectDaemonExpectingClose(
+function core(): Bun.Server<MachineSocketData> {
+  const server = startMachineCore();
+  servers.push(server);
+
+  return server;
+}
+
+function openSocket(
   server: Bun.Server<MachineSocketData>,
-  sandbox: string,
-): Promise<CloseEvent> {
-  return new Promise((resolve) => {
-    const socket = openSocket(server);
-    socket.onopen = () =>
-      socket.send(JSON.stringify({ type: "hello", sandbox: sandbox }));
-    socket.onclose = resolve;
-  });
-}
-
-function executorConfig(
-  overrides: Partial<SandboxExecutorConfig>,
-): SandboxExecutorConfig {
-  return {
-    provider: "machine",
-    controlPlane: {
-      accountId: ACCOUNT_ID,
-      sandboxConfigId: SANDBOX_ID,
-      name: "my-mac",
-      specs: { vcpu: 0, memoryMb: 0, storageGb: 0 },
-    },
-    ...overrides,
-  };
-}
-
-function machineStorage(): Storage {
-  const account: AccountRecord = {
-    accountId: ACCOUNT_ID,
-    username: "machine",
-    secretHash: "hash",
-    status: "active",
-    createdAt: "2026-06-06T00:00:00.000Z",
-    updatedAt: "2026-06-06T00:00:00.000Z",
-  };
-  const records: SandboxConfigRecord[] = [
-    {
-      accountId: ACCOUNT_ID,
-      sandboxId: SANDBOX_ID,
-      name: "my-mac",
-      config: {
-        provider: "machine",
-        permissionMode: "ask",
-        network: { mode: "allow-all" },
-      },
-      createdAt: account.createdAt,
-      updatedAt: account.updatedAt,
-    },
-    {
-      accountId: ACCOUNT_ID,
-      sandboxId: "sbx_cloud",
-      name: "cloud-box",
-      config: {
-        provider: "lambda",
-        permissionMode: "ask",
-        network: { mode: "deny-all" },
-      },
-      createdAt: account.createdAt,
-      updatedAt: account.updatedAt,
-    },
-  ];
-
-  return {
-    accounts: {
-      getById: async (accountId: string) =>
-        accountId === ACCOUNT_ID ? account : null,
-      getBySecretHash: async () => null,
-    },
-    agentDeployments: {
-      getByApiKeyHash: async (hash: string) =>
-        hash === runtimeKeyHash()
-          ? {
-              accountId: ACCOUNT_ID,
-              endpointId: "endpoint",
-              projectSlug: "demo",
-              stageSlug: "development",
-            }
-          : null,
-    },
-    sandboxConfigs: {
-      getById: async (_accountId: string, sandboxId: string) =>
-        records.find((record) => record.sandboxId === sandboxId) ?? null,
-      list: async () => records,
-      removeAllForAccount: async () => 0,
-    },
-  } as unknown as Storage;
-}
-
-function openSocket(server: Bun.Server<MachineSocketData>): WebSocket {
+  token: string = MACHINE_RUNTIME_KEY,
+): WebSocket {
   const socket = new WebSocket(
     `ws://127.0.0.1:${server.port}${MACHINE_WEBSOCKET_PATH}`,
-    { headers: { authorization: "Bearer runtime-key" } } as unknown as string[],
+    { headers: { authorization: `Bearer ${token}` } } as unknown as string[],
   );
   sockets.push(socket);
 
   return socket;
 }
 
-function runtimeKeyHash(): string {
-  return new Bun.CryptoHasher("sha256").update("runtime-key").digest("hex");
+function result(
+  id: string,
+  overrides: Partial<MachineResultFrame>,
+): MachineResultFrame {
+  return {
+    type: "result",
+    id: id,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    durationMs: 1,
+    timedOut: false,
+    truncated: false,
+    ...overrides,
+  };
 }

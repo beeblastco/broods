@@ -174,7 +174,6 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (fallbackProvider === provider) {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }
-  // A fallback runs the primary record, and only a machine record has a daemon.
   if (fallbackProvider === "machine") {
     throw new Error(
       "config.fallbackProvider cannot be machine; a computer is not a capacity fallback for a cloud sandbox",
@@ -285,8 +284,6 @@ function assertEnvVarsAndOptions(
   }
 }
 
-// A machine is the user's own computer: always on, sized by whatever it is,
-// and nothing between it and the network. The record cannot claim otherwise.
 function assertMachineFields(
   config: Record<string, unknown>,
   provider: SandboxProvider,
@@ -614,9 +611,7 @@ function validateProviderOptions(
     );
   }
   if (provider === "machine" && "cwd" in options) {
-    if (typeof options.cwd !== "string" || options.cwd.trim().length === 0) {
-      throw new Error("config.options.cwd must be a non-empty string");
-    }
+    requireString(options.cwd, "config.options.cwd");
   }
   if (provider === "vercel") {
     if ("image" in options && typeof options.image !== "string") {

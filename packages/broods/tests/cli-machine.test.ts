@@ -1,10 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { hostname } from "node:os";
+import type { MachineExecFrame } from "../../../apps/core/src/shared/machine-socket.ts";
 import { runExec, runMachineDaemon } from "../src/cli/machine.ts";
-import type {
-  MachineExecFrame,
-  MachineResultFrame,
-} from "../src/machine-contracts.ts";
+import { startFakeCore } from "./fixtures/fake-core.ts";
 
 /**
  * The daemon is the half of the machine sandbox that runs on the user's
@@ -13,7 +11,7 @@ import type {
  * limit must be cut, not buffered.
  */
 
-const servers: Bun.Server<unknown>[] = [];
+const servers: Bun.Server<undefined>[] = [];
 
 afterEach(() => {
   for (const server of servers.splice(0)) server.stop(true);
@@ -31,7 +29,7 @@ test("runExec runs bash on this machine with the frame's cwd and env", async () 
     result.stdout.trim().endsWith("/tmp") ||
       result.stdout.includes("/private/tmp"),
   ).toBe(true);
-  expect(result.timedOut).toBeUndefined();
+  expect(result.timedOut).toBe(false);
 });
 
 test("runExec kills a command at the timeout and says so", async () => {
@@ -73,36 +71,17 @@ test("runExec cuts output at the limit and reports the exit code", async () => {
   expect(result.stdout.length).toBeLessThan(200);
 });
 
-test("the daemon says hello, answers an exec, and stops on a fatal close", async () => {
-  const seen: { hello?: unknown; result?: MachineResultFrame } = {};
-  const server = Bun.serve<{ id: string }>({
-    port: 0,
-    fetch: (request, bunServer) =>
-      bunServer.upgrade(request, { data: { id: "1" } })
-        ? undefined
-        : new Response("no", { status: 400 }),
-    websocket: {
-      message: function (socket, raw): void {
-        const frame = JSON.parse(String(raw)) as { type: string };
-        if (frame.type === "hello") {
-          seen.hello = frame;
-          socket.send(JSON.stringify({ type: "ready", sandboxId: "sbx_1" }));
-          socket.send(JSON.stringify(exec({ code: "echo from-daemon" })));
-
-          return;
-        }
-        seen.result = frame as MachineResultFrame;
-        socket.close(4409, "Replaced by a newer connection");
-      },
-    },
-  });
-  servers.push(server);
+test("the daemon says hello, answers an exec, and stops on a refusal", async () => {
+  const core = startFakeCore((frame) =>
+    frame.type === "hello" ? exec({ code: "echo from-daemon" }) : null,
+  );
+  servers.push(core.server);
   const lines: string[] = [];
 
   await expect(
     runMachineDaemon({
       apiKey: "key",
-      baseUrl: `http://127.0.0.1:${server.port}`,
+      baseUrl: core.url,
       cwd: process.cwd(),
       log: (line) => lines.push(line),
       sandbox: "my-mac",
@@ -110,14 +89,19 @@ test("the daemon says hello, answers an exec, and stops on a fatal close", async
     }),
   ).rejects.toThrow("Replaced by a newer connection");
 
-  expect(seen.hello).toMatchObject({
+  expect(core.received[0]).toMatchObject({
     type: "hello",
     sandbox: "my-mac",
     hostname: hostname(),
   });
-  expect(seen.result?.stdout).toBe("from-daemon\n");
-  expect(lines[0]).toBe("connected as my-mac (sbx_1)");
-  expect(lines[1]).toBe("$ echo from-daemon");
+  expect(core.received[1]).toMatchObject({
+    type: "result",
+    stdout: "from-daemon\n",
+  });
+  expect(lines.slice(0, 2)).toEqual([
+    "connected as my-mac (sbx_1)",
+    "$ echo from-daemon",
+  ]);
 });
 
 function exec(overrides: Partial<MachineExecFrame>): MachineExecFrame {

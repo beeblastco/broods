@@ -1,20 +1,17 @@
 /**
- * The "machine" provider: the sandbox is the user's own computer.
- *
- * The computer runs `broods machine <sandbox>` (packages/broods), which opens
- * one WebSocket out through the gateway to `MACHINE_WEBSOCKET_PATH` here and
- * claims a sandbox record by name. Core keeps that socket in memory, keyed by
- * account + sandbox record, and `run` is a request/reply over it: the bash
- * `code` string goes out, stdout/stderr/exit come back. Nothing is persisted
- * and there is nothing to reserve or release; a laptop is always "on".
+ * The "machine" provider: the sandbox is the user's own computer. Its daemon
+ * (`broods machine`, relayed by the gateway) holds one WebSocket into this
+ * module, and `run` is an exec frame over it. The registry lives in memory;
+ * nothing is reserved or persisted.
  */
 
 import { resolveBearerAuth } from "../../shared/auth.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import {
   MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
-  parseMachineFrame,
+  parseDaemonFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
   type MachineReadyFrame,
@@ -27,31 +24,30 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { mergeSandboxEnv, truncateText } from "./utils.ts";
+import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
-/** Live daemon sockets by `${accountId}:${sandboxConfigId}`; last daemon wins. */
+// Live daemons by `${accountId}:${sandboxConfigId}`; the last one to claim wins.
 const connections = new Map<string, MachineConnection>();
 
 export interface MachineSocketData {
-  accountId: string;
-  /** Set the moment a `hello` arrives, so a second one is a bad frame. */
+  /** Unset when the bearer named no account; its first frame is refused. */
+  accountId?: string;
   claimed?: boolean;
-  /** Set once `hello` claimed a sandbox record. */
   key?: string;
-  sandboxName?: string;
 }
 
 interface MachineConnection {
-  pending: Map<string, PendingExec>;
+  name: string;
+  pending: Map<string, PendingReply>;
   socket: Bun.ServerWebSocket<MachineSocketData>;
 }
 
-interface PendingExec {
+interface PendingReply {
   reject: (error: Error) => void;
-  resolve: (result: MachineResultFrame) => void;
+  resolve: (reply: MachineResultFrame) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -63,24 +59,21 @@ export class MachineSandboxExecutor implements SandboxExecutor {
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
-    const name = this.#config.controlPlane?.name ?? "machine";
-    const connection = connections.get(registryKeyFor(this.#config));
-    if (!connection) {
-      throw new Error(
-        `machine sandbox "${name}" is not connected. Run \`broods machine ${name}\` on that computer.`,
-      );
-    }
-    const cwd = configCwd(this.#config);
+    const connection = connectedMachine(this.#config);
     const frame: MachineExecFrame = {
       type: "exec",
       id: crypto.randomUUID(),
       code: request.code,
-      ...(cwd ? { cwd: cwd } : {}),
+      cwd: configString(this.#config.options?.cwd),
       env: mergeSandboxEnv(this.#config.envVars, request.envVars),
       timeoutSeconds: request.timeoutSeconds,
       outputLimitBytes: request.outputLimitBytes,
     };
-    const result = await sendExec(connection, frame);
+    const result = await sendFrame(
+      connection,
+      frame,
+      frame.timeoutSeconds * 1000 + REPLY_GRACE_MS,
+    );
     const stdout = truncateText(result.stdout, request.outputLimitBytes);
     const stderr = truncateText(result.stderr, request.outputLimitBytes);
 
@@ -91,9 +84,8 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       stdout: stdout.value,
       stderr: stderr.value,
       durationMs: result.durationMs,
-      timedOut: result.timedOut === true,
-      truncated:
-        result.truncated === true || stdout.truncated || stderr.truncated,
+      timedOut: result.timedOut,
+      truncated: result.truncated || stdout.truncated || stderr.truncated,
       provider: "machine",
     };
   }
@@ -112,8 +104,19 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
     maxPayloadLength: MAX_FRAME_BYTES,
     message: function (socket, raw): void {
-      const frame = parseMachineFrame(raw);
-      if (!frame) {
+      const accountId = socket.data.accountId;
+      if (!accountId) {
+        socket.close(
+          MACHINE_CLOSE.unauthorized.code,
+          MACHINE_CLOSE.unauthorized.reason,
+        );
+
+        return;
+      }
+      const frame = parseDaemonFrame(raw);
+      // The claim is async; a second hello in that window would register
+      // this socket twice.
+      if (!frame || (frame.type === "hello" && socket.data.claimed)) {
         socket.close(
           MACHINE_CLOSE.badFrame.code,
           MACHINE_CLOSE.badFrame.reason,
@@ -121,77 +124,65 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
 
         return;
       }
-      if (frame.type === "hello") {
-        // The claim is async; the flag closes the window for a second hello
-        // that would register this socket twice or under another record.
-        if (socket.data.claimed) {
-          socket.close(
-            MACHINE_CLOSE.badFrame.code,
-            MACHINE_CLOSE.badFrame.reason,
-          );
-
-          return;
-        }
-        socket.data.claimed = true;
-        claimSandbox(socket, frame).catch((error: unknown): void => {
-          logWarn("Machine sandbox claim failed", {
-            accountId: socket.data.accountId,
-            sandbox: frame.sandbox,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          socket.close(1011, "sandbox lookup failed");
-        });
+      if (frame.type !== "hello") {
+        if (socket.data.key) settleReply(socket.data.key, frame);
 
         return;
       }
-      if (frame.type === "result" && socket.data.key) {
-        settleExec(socket.data.key, frame);
-      }
+      socket.data.claimed = true;
+      claimSandbox(socket, accountId, frame).catch((error: unknown): void => {
+        logWarn("Machine sandbox claim failed", {
+          accountId: accountId,
+          sandbox: frame.sandbox,
+          error: toErrorMessage(error),
+        });
+        socket.close(1011, "sandbox lookup failed");
+      });
     },
     close: function (socket): void {
       const key = socket.data.key;
-      if (!key) return;
-      const connection = connections.get(key);
+      const connection = key ? connections.get(key) : undefined;
       // A replaced socket must not tear down its successor's registration.
-      if (!connection || connection.socket !== socket) return;
+      if (!key || !connection || connection.socket !== socket) return;
       connections.delete(key);
       rejectPending(
         connection,
-        `machine sandbox "${socket.data.sandboxName}" disconnected while the command was running`,
+        `machine sandbox "${connection.name}" disconnected while the command was running`,
       );
       logInfo("Machine sandbox disconnected", {
         accountId: socket.data.accountId,
-        sandbox: socket.data.sandboxName,
+        sandbox: connection.name,
       });
     },
   };
 
 /**
- * Authenticate the daemon and upgrade. A runtime key or the account secret
- * both name one account; the sandbox record is claimed by the first frame.
+ * Upgrade every daemon, even one whose bearer names no account: its first
+ * frame is answered with close 4401, which the gateway relays, where a refused
+ * upgrade would reach the daemon as a bare 1006. Refusing in `open` instead
+ * can cut the connection before a relay's own handshake completes.
  */
 export async function upgradeMachineSocket(
   request: Request,
   server: Bun.Server<MachineSocketData>,
 ): Promise<Response | undefined> {
-  const authorization = request.headers.get("authorization") ?? "";
-  const auth = await resolveBearerAuth({ authorization: authorization });
-  if (!auth || auth.kind === "admin") {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const data: MachineSocketData = { accountId: auth.account.accountId };
-  const upgraded = server.upgrade(request, { data: data });
+  const auth = await resolveBearerAuth({
+    authorization: request.headers.get("authorization") ?? "",
+  });
+  const data: MachineSocketData =
+    auth && auth.kind !== "admin" ? { accountId: auth.account.accountId } : {};
 
-  return upgraded
+  return server.upgrade(request, { data: data })
     ? undefined
     : Response.json({ error: "WebSocket upgrade failed" }, { status: 400 });
 }
 
 async function claimSandbox(
   socket: Bun.ServerWebSocket<MachineSocketData>,
+  accountId: string,
   hello: MachineHelloFrame,
 ): Promise<void> {
-  const records = await getStorage().sandboxConfigs.list(socket.data.accountId);
+  const records = await getStorage().sandboxConfigs.list(accountId);
   const record = records.find(
     (entry) =>
       entry.name === hello.sandbox && entry.config.provider === "machine",
@@ -204,10 +195,9 @@ async function claimSandbox(
 
     return;
   }
-  const key = registryKey(socket.data.accountId, record.sandboxId);
+  const key = registryKey(accountId, record.sandboxId);
   const previous = connections.get(key);
-  if (previous && previous.socket !== socket) {
-    // Last one wins: restarting the daemon must not need the old one gone first.
+  if (previous) {
     rejectPending(previous, MACHINE_CLOSE.replaced.reason);
     previous.socket.close(
       MACHINE_CLOSE.replaced.code,
@@ -215,40 +205,46 @@ async function claimSandbox(
     );
   }
   socket.data.key = key;
-  socket.data.sandboxName = record.name;
-  connections.set(key, { socket: socket, pending: new Map() });
+  connections.set(key, {
+    name: record.name,
+    pending: new Map(),
+    socket: socket,
+  });
   const ready: MachineReadyFrame = {
     type: "ready",
     sandboxId: record.sandboxId,
   };
   socket.send(JSON.stringify(ready));
   logInfo("Machine sandbox connected", {
-    accountId: socket.data.accountId,
+    accountId: accountId,
     sandbox: record.name,
     host: hello.hostname,
     platform: hello.platform,
   });
 }
 
-function configCwd(config: SandboxExecutorConfig): string | undefined {
-  const cwd = config.options?.cwd;
-
-  return typeof cwd === "string" && cwd.trim() ? cwd.trim() : undefined;
-}
-
-function registryKey(accountId: string, sandboxConfigId: string): string {
-  return `${accountId}:${sandboxConfigId}`;
-}
-
-function registryKeyFor(config: SandboxExecutorConfig): string {
+/** The live daemon behind a config, or an error that says how to start one. */
+function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
   const plane = config.controlPlane;
   if (!plane?.sandboxConfigId) {
     throw new Error(
       "machine sandbox needs its config record id; a synthetic config cannot reach a computer",
     );
   }
+  const connection = connections.get(
+    registryKey(plane.accountId, plane.sandboxConfigId),
+  );
+  if (!connection) {
+    throw new Error(
+      `machine sandbox "${plane.name}" is not connected. Run \`broods machine ${plane.name}\` on that computer.`,
+    );
+  }
 
-  return registryKey(plane.accountId, plane.sandboxConfigId);
+  return connection;
+}
+
+function registryKey(accountId: string, sandboxConfigId: string): string {
+  return `${accountId}:${sandboxConfigId}`;
 }
 
 function rejectPending(connection: MachineConnection, reason: string): void {
@@ -259,40 +255,38 @@ function rejectPending(connection: MachineConnection, reason: string): void {
   connection.pending.clear();
 }
 
-function sendExec(
+function sendFrame(
   connection: MachineConnection,
   frame: MachineExecFrame,
+  timeoutMs: number,
 ): Promise<MachineResultFrame> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => {
-        connection.pending.delete(frame.id);
-        reject(
-          new Error(
-            `machine sandbox did not answer within ${frame.timeoutSeconds}s`,
-          ),
-        );
-      },
-      frame.timeoutSeconds * 1000 + REPLY_GRACE_MS,
-    );
+  return new Promise((resolve, reject): void => {
+    const timer = setTimeout((): void => {
+      connection.pending.delete(frame.id);
+      reject(
+        new Error(
+          `machine sandbox did not answer within ${Math.round(timeoutMs / 1000)}s`,
+        ),
+      );
+    }, timeoutMs);
     connection.pending.set(frame.id, {
-      resolve: resolve,
       reject: reject,
+      resolve: resolve,
       timer: timer,
     });
     connection.socket.send(JSON.stringify(frame));
   });
 }
 
-function settleExec(key: string, result: MachineResultFrame): void {
+function settleReply(key: string, reply: MachineResultFrame): void {
   const connection = connections.get(key);
-  const pending = connection?.pending.get(result.id);
+  const pending = connection?.pending.get(reply.id);
   if (!connection || !pending) {
-    logWarn("Machine result for an unknown exec", { id: result.id });
+    logWarn("Machine reply for an unknown request", { id: reply.id });
 
     return;
   }
   clearTimeout(pending.timer);
-  connection.pending.delete(result.id);
-  pending.resolve(result);
+  connection.pending.delete(reply.id);
+  pending.resolve(reply);
 }

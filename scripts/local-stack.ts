@@ -37,11 +37,12 @@ const PREPARE_BUDGET_MS = 100;
 const RUN_POLL_TIMEOUT_MS = 120_000;
 const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
+const ANTHROPIC_SMOKE_MODEL = "claude-haiku-4-5-20251001";
 const MODEL_KEY_HINT =
   "set ANTHROPIC_API_KEY or OPENAI_API_KEY for the full run";
 // Without a key the smoke agent still exercises the run path; the model call fails.
 const NO_KEY_MODEL: SmokeModel = {
-  model: { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
+  model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
   provider: { anthropic: { apiKey: "sk-ant-local-smoke-no-key" } },
 };
 
@@ -457,8 +458,7 @@ async function verify(): Promise<void> {
     );
     daemon.stdout.on("data", (chunk: Buffer) => (daemonOutput += chunk));
     daemon.stderr.on("data", (chunk: Buffer) => (daemonOutput += chunk));
-    // assertStep exits the process, which skips `finally`; the daemon would
-    // otherwise outlive a failed verify and keep serving execs.
+    // assertStep calls process.exit, which skips `finally`.
     const stopDaemon = (): void => {
       daemon.kill("SIGINT");
     };
@@ -508,10 +508,7 @@ async function verify(): Promise<void> {
         "Run hostname.",
         machineAgentId,
       );
-      const finalStatus = (await pollRunStatus(statusUrl, accountSecret)) as {
-        status?: string;
-        response?: unknown;
-      };
+      const finalStatus = await pollRunStatus(statusUrl, accountSecret);
       assertStep(
         "agent bash ran on this machine and the reply names this host",
         finalStatus.status === "completed" &&
@@ -823,7 +820,7 @@ function smokeModel(): SmokeModel | null {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     return {
-      model: { provider: "anthropic", modelId: "claude-haiku-4-5-20251001" },
+      model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
       provider: { anthropic: { apiKey: anthropicKey } },
     };
   }
@@ -881,7 +878,7 @@ async function httpJson(
 async function pollRunStatus(
   statusUrl: string,
   token: string,
-): Promise<{ status?: string }> {
+): Promise<{ status?: string; response?: unknown }> {
   const doc = await pollUntil(
     {
       initialIntervalMs: 200,
@@ -894,7 +891,7 @@ async function pollRunStatus(
           method: "GET",
           token: token,
         });
-        const body = response.body as { status?: string };
+        const body = response.body as { status?: string; response?: unknown };
 
         return body.status === "completed" || body.status === "failed"
           ? body

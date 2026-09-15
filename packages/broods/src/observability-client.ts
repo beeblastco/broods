@@ -83,6 +83,39 @@ export async function fetchObservabilityScope(
   }
 }
 
+/** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
+export function reconnectDelay(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+export function resolveWebSocket(): new (
+  url: string,
+  protocols?: string[],
+) => WebSocket {
+  const impl = (
+    globalThis as {
+      WebSocket?: new (url: string, protocols?: string[]) => WebSocket;
+    }
+  ).WebSocket;
+  if (!impl) throw new Error("WebSocket is not available in this environment.");
+
+  return impl;
+}
+
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
@@ -273,36 +306,4 @@ function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
   } catch {
     return null;
   }
-}
-
-function reconnectDelay(
-  ms: number,
-  signal: AbortSignal | undefined,
-): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-function resolveWebSocket(): new (
-  url: string,
-  protocols?: string[],
-) => WebSocket {
-  const impl = (
-    globalThis as {
-      WebSocket?: new (url: string, protocols?: string[]) => WebSocket;
-    }
-  ).WebSocket;
-  if (!impl) throw new Error("WebSocket is not available in this environment.");
-
-  return impl;
 }

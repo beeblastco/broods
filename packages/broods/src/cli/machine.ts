@@ -1,28 +1,34 @@
 /**
- * `broods machine <sandbox>`: make this computer the sandbox behind a
- * `provider: "machine"` record. One WebSocket out to the gateway, one `bash -lc`
- * per exec frame, and a reconnect loop for everything that is not a refusal.
- *
- * The host environment is inherited on purpose. This is the user's own
- * machine, so the agent gets the same PATH, keychains and CLIs the user has.
+ * `broods machine <sandbox>`: this computer becomes the sandbox behind a
+ * machine record. One WebSocket out, a `bash -lc` per exec frame, and a
+ * reconnect loop for anything but a refusal. The host environment is
+ * inherited on purpose: the agent gets the PATH, keychains and CLIs the user
+ * has.
  */
 
 import { spawn } from "node:child_process";
 import { hostname } from "node:os";
 import { performance } from "node:perf_hooks";
-import { webSocketSubprotocols } from "../websocket.ts";
 import {
-  MACHINE_FATAL_CLOSE_CODES,
+  MACHINE_CLOSE,
   machineSocketUrl,
-  parseMachineServerFrame,
+  parseCoreFrame,
+  type MachineDaemonFrame,
   type MachineExecFrame,
-  type MachineHelloFrame,
   type MachineResultFrame,
-} from "../machine-contracts.ts";
+} from "../../../../apps/core/src/shared/machine-socket.ts";
+import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
+import { webSocketSubprotocols } from "../websocket.ts";
 
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const LOG_CODE_WIDTH = 72;
+// Refusals a reconnect would only repeat.
+const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  MACHINE_CLOSE.replaced.code,
+  MACHINE_CLOSE.unauthorized.code,
+  MACHINE_CLOSE.unknownSandbox.code,
+]);
 
 export interface MachineDaemonOptions {
   apiKey: string;
@@ -34,16 +40,7 @@ export interface MachineDaemonOptions {
   signal: AbortSignal;
 }
 
-type WebSocketConstructor = new (
-  url: string,
-  protocols?: string[],
-) => WebSocket;
-
-/**
- * Serve execs until the signal aborts. Throws when core refuses the socket
- * (bad key, unknown sandbox, replaced by another daemon), since retrying
- * those would only repeat the refusal.
- */
+/** Serve core until the signal aborts. Throws with core's reason on a refusal. */
 export async function runMachineDaemon(
   options: MachineDaemonOptions,
 ): Promise<void> {
@@ -53,7 +50,7 @@ export async function runMachineDaemon(
     const startedAt = Date.now();
     const closed = await serveOnce(options, WebSocketImpl);
     if (options.signal.aborted) return;
-    if (MACHINE_FATAL_CLOSE_CODES.has(closed.code)) {
+    if (FATAL_CLOSE_CODES.has(closed.code)) {
       throw new Error(
         closed.reason || `core closed the socket (${closed.code})`,
       );
@@ -63,15 +60,14 @@ export async function runMachineDaemon(
     options.log(
       `disconnected (${closed.reason || closed.code}), reconnecting in ${Math.round(delayMs / 1000)}s`,
     );
-    await sleep(delayMs, options.signal);
+    await reconnectDelay(delayMs, options.signal);
     delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
   }
 }
 
 /**
- * Run one exec frame on this machine and shape its outcome as a result frame.
- * `signal` is the socket's lifetime: once it aborts nobody can receive the
- * result, so the command's process group is killed rather than left running.
+ * Run one exec frame here. `signal` is the socket's lifetime: once it aborts
+ * nobody can receive the result, so the command's process group is killed.
  */
 export function runExec(
   frame: MachineExecFrame,
@@ -97,8 +93,8 @@ export function runExec(
         stdout: stdout.text(),
         stderr: stderr.text(),
         durationMs: Math.round(performance.now() - startedAt),
-        ...(timedOut ? { timedOut: true } : {}),
-        ...(stdout.truncated || stderr.truncated ? { truncated: true } : {}),
+        timedOut: timedOut,
+        truncated: stdout.truncated || stderr.truncated,
       });
     };
 
@@ -172,81 +168,59 @@ class OutputBuffer {
   }
 }
 
-function oneLine(code: string): string {
-  const line = code.trim().split("\n")[0] ?? "";
+function oneLine(text: string): string {
+  const line = text.trim().split("\n")[0] ?? "";
 
   return line.length > LOG_CODE_WIDTH
     ? `${line.slice(0, LOG_CODE_WIDTH)}…`
     : line;
 }
 
-function resolveWebSocket(): WebSocketConstructor {
-  const impl = (globalThis as { WebSocket?: WebSocketConstructor }).WebSocket;
-  if (!impl) throw new Error("WebSocket is not available in this environment.");
-
-  return impl;
-}
-
-/** One socket lifetime: connect, claim the sandbox, serve execs until close. */
+/** One socket lifetime: connect, claim the sandbox, serve frames until close. */
 function serveOnce(
   options: MachineDaemonOptions,
-  WebSocketImpl: WebSocketConstructor,
+  WebSocketImpl: ReturnType<typeof resolveWebSocket>,
 ): Promise<{ code: number; reason: string }> {
   return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
       machineSocketUrl(options.baseUrl),
       webSocketSubprotocols(options.apiKey),
     );
-    // Aborts with the socket, so an exec still running when it drops is killed.
+    // Aborts with the socket, so a command still running when it drops is killed.
     const lifetime = new AbortController();
     const onAbort = (): void => socket.close(1000, "daemon stopped");
+    const send = (frame: MachineDaemonFrame): void => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frame));
+    };
     options.signal.addEventListener("abort", onAbort, { once: true });
 
-    socket.onopen = (): void => {
-      const hello: MachineHelloFrame = {
+    socket.onopen = (): void =>
+      send({
         type: "hello",
         sandbox: options.sandbox,
         hostname: hostname(),
         platform: process.platform,
-      };
-      socket.send(JSON.stringify(hello));
-    };
+      });
     socket.onmessage = (event): void => {
-      const frame = parseMachineServerFrame(event.data);
-      if (!frame) return;
-      if (frame.type === "ready") {
+      const frame = parseCoreFrame(event.data);
+      if (frame?.type === "ready") {
         options.log(`connected as ${options.sandbox} (${frame.sandboxId})`);
 
         return;
       }
+      if (frame?.type !== "exec") return;
       options.log(`$ ${oneLine(frame.code)}`);
       void runExec(frame, options.cwd, lifetime.signal).then((result): void => {
         options.log(
           `  exit ${result.exitCode ?? "none"} in ${result.durationMs}ms${result.timedOut ? " (timed out)" : ""}`,
         );
-        if (socket.readyState === socket.OPEN)
-          socket.send(JSON.stringify(result));
+        send(result);
       });
-    };
-    socket.onerror = (): void => {
-      // The close event that follows carries the code; nothing to do here.
     };
     socket.onclose = (event): void => {
       options.signal.removeEventListener("abort", onAbort);
       lifetime.abort();
       resolve({ code: event.code, reason: event.reason });
     };
-  });
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve): void => {
-    const timer = setTimeout(done, ms);
-    function done(): void {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", done);
-      resolve();
-    }
-    signal.addEventListener("abort", done, { once: true });
   });
 }
