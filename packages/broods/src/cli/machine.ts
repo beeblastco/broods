@@ -73,7 +73,7 @@ export function runExec(
   frame: MachineExecFrame,
   defaultCwd: string,
 ): Promise<MachineResultFrame> {
-  return new Promise((resolve) => {
+  return new Promise((resolve): void => {
     const startedAt = performance.now();
     const stdout = new OutputBuffer(frame.outputLimitBytes);
     const stderr = new OutputBuffer(frame.outputLimitBytes);
@@ -104,7 +104,7 @@ export function runExec(
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timer = setTimeout(() => {
+    const timer = setTimeout((): void => {
       timedOut = true;
       if (child.pid) {
         try {
@@ -115,10 +115,10 @@ export function runExec(
       }
     }, frame.timeoutSeconds * 1000);
 
-    child.stdout.on("data", (chunk: Buffer) => stdout.append(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.append(chunk));
-    child.on("error", (error) => finish(null, error.message));
-    child.on("close", (code) => finish(code));
+    child.stdout.on("data", (chunk: Buffer): void => stdout.append(chunk));
+    child.stderr.on("data", (chunk: Buffer): void => stderr.append(chunk));
+    child.on("error", (error): void => finish(null, error.message));
+    child.on("close", (code): void => finish(code));
   });
 }
 
@@ -178,7 +178,7 @@ function serveOnce(
   options: MachineDaemonOptions,
   WebSocketImpl: WebSocketConstructor,
 ): Promise<{ code: number; reason: string }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
       machineSocketUrl(options.baseUrl),
       webSocketSubprotocols(options.apiKey),
@@ -204,11 +204,11 @@ function serveOnce(
         return;
       }
       options.log(`$ ${oneLine(frame.code)}`);
-      void runExec(frame, options.cwd).then((result) => {
+      void runExec(frame, options.cwd).then((result): void => {
         options.log(
           `  exit ${result.exitCode ?? "none"} in ${result.durationMs}ms${result.timedOut ? " (timed out)" : ""}`,
         );
-        if (socket.readyState === WebSocket.OPEN)
+        if (socket.readyState === socket.OPEN)
           socket.send(JSON.stringify(result));
       });
     };
@@ -223,7 +223,7 @@ function serveOnce(
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve): void => {
     const timer = setTimeout(done, ms);
     function done(): void {
       clearTimeout(timer);

@@ -32,6 +32,8 @@ import { mergeSandboxEnv, truncateText } from "./utils.ts";
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
+/** Live daemon sockets by `${accountId}:${sandboxConfigId}`; last daemon wins. */
+const connections = new Map<string, MachineConnection>();
 
 export interface MachineSocketData {
   accountId: string;
@@ -50,8 +52,6 @@ interface PendingExec {
   resolve: (result: MachineResultFrame) => void;
   timer: ReturnType<typeof setTimeout>;
 }
-
-const connections = new Map<string, MachineConnection>();
 
 export class MachineSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -95,13 +95,6 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       provider: "machine",
     };
   }
-}
-
-/** The names of the machine sandboxes currently connected for an account. */
-export function connectedMachines(accountId: string): string[] {
-  return [...connections.values()]
-    .filter((connection) => connection.socket.data.accountId === accountId)
-    .map((connection) => connection.socket.data.sandboxName ?? "");
 }
 
 export function isMachineUpgrade(request: Request): boolean {

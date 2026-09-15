@@ -194,8 +194,6 @@ function startDoor(
         ticket: {
           url: machineSocketUrl(`http://127.0.0.1:${core.port}`),
           authorization: `Bearer ${token}`,
-          accountId: "",
-          expiresAt: Number.MAX_SAFE_INTEGER,
         },
       };
 

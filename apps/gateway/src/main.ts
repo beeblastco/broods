@@ -202,17 +202,16 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         const token = websocketToken(request, url);
         if (!token) return jsonError(401, "Missing WebSocket token");
 
+        const data: MachineGatewayData = {
+          kind: "machine",
+          ticket: {
+            url: machineSocketUrl(config.coreBaseUrls[0]!),
+            authorization: `Bearer ${token}`,
+          },
+        };
         const upgraded = server.upgrade(request, {
           headers: websocketUpgradeHeaders(request),
-          data: {
-            kind: "machine",
-            ticket: {
-              url: machineSocketUrl(config.coreBaseUrls[0]!),
-              authorization: `Bearer ${token}`,
-              accountId: "",
-              expiresAt: Number.MAX_SAFE_INTEGER,
-            },
-          } satisfies MachineGatewayData,
+          data: data,
         });
 
         return upgraded

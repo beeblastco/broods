@@ -336,8 +336,6 @@ test("a machine daemon upgrade needs a credential and is relayed to core's socke
       ticket: {
         url: "wss://core.example/v1/machines/ws",
         authorization: "Bearer runtime-key",
-        accountId: "",
-        expiresAt: Number.MAX_SAFE_INTEGER,
       },
     },
   ]);

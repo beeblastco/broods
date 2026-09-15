@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   MachineSandboxExecutor,
-  connectedMachines,
   isMachineUpgrade,
   machineWebSocketHandler,
   upgradeMachineSocket,
@@ -53,7 +52,6 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
     );
   });
   expect(daemon.ready.sandboxId).toBe(SANDBOX_ID);
-  expect(connectedMachines(ACCOUNT_ID)).toEqual(["my-mac"]);
 
   const result = await new MachineSandboxExecutor(
     executorConfig({
@@ -104,7 +102,6 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
 
   expect((await firstClosed).code).toBe(4409);
   expect(await pending).toBe("Replaced by a newer connection");
-  expect(connectedMachines(ACCOUNT_ID)).toEqual(["my-mac"]);
 });
 
 test("an unknown record or a wrong provider closes the socket with 4404", async () => {

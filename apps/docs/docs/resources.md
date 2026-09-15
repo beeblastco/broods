@@ -544,7 +544,8 @@ export const reservedSandbox = defineSandbox({
 });
 ```
 
-Supported providers: `sandbox`, `lambda`, `e2b`, `daytona`, `vercel`.
+Supported providers: `sandbox`, `lambda`, `e2b`, `daytona`, `vercel`, `machine`
+(your own computer, see [Machine](./workspace/sandbox/machine.md)).
 
 `persistent: true` reserves a long-lived machine: one per workspace where a workspace is
 attached, and one per agent where none is. `options.reservationKey` pins that identity

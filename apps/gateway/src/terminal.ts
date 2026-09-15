@@ -18,7 +18,7 @@ export type TerminalGatewayData = {
  */
 export type MachineGatewayData = {
   kind: "machine";
-  ticket: TerminalTicket;
+  ticket: Pick<TerminalTicket, "url" | "authorization" | "authorizationHeader">;
 };
 
 export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;

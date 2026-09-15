@@ -2232,7 +2232,7 @@ async function machine(args: string[]): Promise<void> {
       apiKey: apiKey,
       baseUrl: baseUrl,
       cwd: cwd,
-      log: (line) => console.log(line),
+      log: (line: string): void => console.log(line),
       sandbox: sandbox,
       signal: controller.signal,
     });
