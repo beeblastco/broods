@@ -10,7 +10,8 @@
     "src/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts",
-    "sst-env.d.ts"
+    "sst-env.d.ts",
+    "../../packages/broods/src/assets.d.ts"
   ],
   "exclude": ["node_modules"]
 }

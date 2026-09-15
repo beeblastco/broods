@@ -439,10 +439,17 @@ async function verify(): Promise<void> {
       `status ${created.status}: ${JSON.stringify(created.body)}`,
     );
 
+    // Opt-in: only a person can grant this terminal Screen Recording and Accessibility.
+    const computer = process.env.BROODS_VERIFY_COMPUTER === "1";
     let daemonOutput = "";
     const daemon = spawn(
       "bun",
-      ["packages/broods/src/cli/index.ts", "machine", sandboxName],
+      [
+        "packages/broods/src/cli/index.ts",
+        "machine",
+        sandboxName,
+        ...(computer ? ["--computer"] : []),
+      ],
       {
         cwd: repoRoot,
         env: {
@@ -491,8 +498,9 @@ async function verify(): Promise<void> {
           name: sandboxName,
           config: {
             ...smoke,
-            instructions:
-              "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
+            instructions: computer
+              ? "Use the computer tool to take one screenshot, then reply with exactly the frontmost app it reported and nothing else."
+              : "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
             sandbox: sandboxId,
           },
         },
@@ -505,10 +513,21 @@ async function verify(): Promise<void> {
       );
       const statusUrl = await startRun(
         `${eventId}-machine`,
-        "Run hostname.",
+        computer ? "What app is in front?" : "Run hostname.",
         machineAgentId,
       );
       const finalStatus = await pollRunStatus(statusUrl, accountSecret);
+      if (computer) {
+        assertStep(
+          "agent screenshot ran on this machine and the reply names an app",
+          finalStatus.status === "completed" &&
+            daemonOutput.includes("  screenshot") &&
+            JSON.stringify(finalStatus.response ?? "").length > 2,
+          `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
+        );
+
+        return;
+      }
       assertStep(
         "agent bash ran on this machine and the reply names this host",
         finalStatus.status === "completed" &&

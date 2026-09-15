@@ -235,10 +235,16 @@ Connects this computer to a sandbox record whose provider is "machine". Agents
 on that sandbox run their bash tool here, as you, with your PATH and
 environment. Reconnects after a network drop; Ctrl+C stops it.
 
+With --computer, agents also get a computer tool for this display: screenshots,
+mouse and keyboard. macOS only; this terminal needs Screen Recording and
+Accessibility, which --doctor checks.
+
 Authenticates with BROODS_API_KEY from .env.local, like \`broods logs\`.
 
 Options:
   --cwd <dir>           Working directory for commands (default: current directory)
+  --computer            Serve the computer tool: screen, mouse and keyboard
+  --doctor [--request]  Check the macOS permissions computer use needs; --request prompts for them
 
 ${GLOBAL_OPTIONS}`,
   org: `Usage: broods org <list|use|create> [name]
@@ -2207,6 +2213,11 @@ async function streamLogs(args: string[]): Promise<void> {
 
 // `broods machine <sandbox>` runs until Ctrl-C or until core refuses it.
 async function machine(args: string[]): Promise<void> {
+  if (hasFlag(args, "--doctor")) {
+    await machineDoctor(hasFlag(args, "--request"));
+
+    return;
+  }
   const sandbox = positionalArgs(args)[0];
   if (!sandbox) {
     console.log(COMMAND_HELP.machine);
@@ -2218,17 +2229,19 @@ async function machine(args: string[]): Promise<void> {
   const { runMachineDaemon } = await import("./machine.ts");
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
+  const computer = hasFlag(args, "--computer");
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
   console.log(
-    `Connecting ${sandbox} to ${baseUrl} (cwd ${cwd}), Ctrl+C to stop`,
+    `Connecting ${sandbox} to ${baseUrl} (cwd ${cwd}${computer ? ", computer use on" : ""}), Ctrl+C to stop`,
   );
 
   try {
     await runMachineDaemon({
       apiKey: apiKey,
       baseUrl: baseUrl,
+      computer: computer,
       cwd: cwd,
       log: (line: string): void => console.log(line),
       sandbox: sandbox,
@@ -2239,6 +2252,33 @@ async function machine(args: string[]): Promise<void> {
     process.exitCode = 1;
   } finally {
     process.off("SIGINT", onSigint);
+  }
+}
+
+// `broods machine --doctor [--request]` checks the grants computer use needs.
+async function machineDoctor(request: boolean): Promise<void> {
+  try {
+    // Lazy: desktop.ts embeds the Swift helper source.
+    const { startDesktop } = await import("./desktop.ts");
+    const { display, driver, permissions } = await startDesktop(request);
+    driver.stop();
+    const mark = (ok: boolean): string => (ok ? "granted" : "missing");
+    console.log(
+      `screenshot frame   ${display.width}x${display.height} (scale ${display.scale.toFixed(2)})`,
+    );
+    console.log(`screen recording   ${mark(permissions.screenRecording)}`);
+    console.log(`accessibility      ${mark(permissions.accessibility)}`);
+    if (!permissions.screenRecording || !permissions.accessibility) {
+      console.log(
+        request
+          ? "Approve the prompts, or add this terminal under System Settings > Privacy & Security, then run again."
+          : "Run `broods machine --doctor --request` to show the macOS prompts.",
+      );
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
 }
 

@@ -1,7 +1,7 @@
 /**
- * The "machine" provider: bash runs on the user's own computer through the
- * WebSocket its `broods machine` daemon keeps open. Live daemons are held in
- * memory only.
+ * The "machine" provider: bash and the computer tool run on the user's own
+ * computer through the WebSocket its `broods machine` daemon keeps open. Live
+ * daemons are held in memory only.
  */
 
 import { resolveBearerAuth } from "../../shared/auth.ts";
@@ -11,6 +11,9 @@ import {
   MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
   parseDaemonFrame,
+  type ComputerInput,
+  type MachineComputerFrame,
+  type MachineComputerResultFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
   type MachineReadyFrame,
@@ -25,13 +28,18 @@ import type {
 } from "./types.ts";
 import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 
+// The helper bounds a desktop action; a wait or hold adds its own duration.
+const COMPUTER_REPLY_MS = 30_000;
 const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
 // Keyed by registryKey; the last daemon to claim a record wins.
 const connections = new Map<string, MachineConnection>();
 
+type MachineReply = MachineComputerResultFrame | MachineResultFrame;
+
 interface MachineConnection {
+  computer: boolean;
   name: string;
   pending: Map<string, PendingReply>;
   socket: Bun.ServerWebSocket<MachineSocketData>;
@@ -46,7 +54,7 @@ export interface MachineSocketData {
 
 interface PendingReply {
   reject: (error: Error) => void;
-  resolve: (reply: MachineResultFrame) => void;
+  resolve: (reply: MachineReply) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -68,23 +76,28 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       timeoutSeconds: request.timeoutSeconds,
       outputLimitBytes: request.outputLimitBytes,
     };
-    const result = await sendFrame(
+    const reply = await sendFrame(
       connection,
       frame,
       frame.timeoutSeconds * 1000 + REPLY_GRACE_MS,
     );
-    const stdout = truncateText(result.stdout, request.outputLimitBytes);
-    const stderr = truncateText(result.stderr, request.outputLimitBytes);
+    if (reply.type !== "result") {
+      throw new Error(
+        "machine sandbox answered an exec with a computer result",
+      );
+    }
+    const stdout = truncateText(reply.stdout, request.outputLimitBytes);
+    const stderr = truncateText(reply.stderr, request.outputLimitBytes);
 
     return {
-      ok: result.exitCode === 0,
+      ok: reply.exitCode === 0,
       runtime: request.runtime ?? "bash",
-      exitCode: result.exitCode,
+      exitCode: reply.exitCode,
       stdout: stdout.value,
       stderr: stderr.value,
-      durationMs: result.durationMs,
-      timedOut: result.timedOut,
-      truncated: result.truncated || stdout.truncated || stderr.truncated,
+      durationMs: reply.durationMs,
+      timedOut: reply.timedOut,
+      truncated: reply.truncated || stdout.truncated || stderr.truncated,
       provider: "machine",
     };
   }
@@ -153,6 +166,35 @@ export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
     },
   };
 
+export async function runMachineComputerAction(
+  config: SandboxExecutorConfig,
+  input: ComputerInput,
+): Promise<MachineComputerResultFrame> {
+  const connection = connectedMachine(config);
+  if (!connection.computer) {
+    throw new Error(
+      `computer use is off on machine sandbox "${connection.name}". Restart it with \`broods machine ${connection.name} --computer\`.`,
+    );
+  }
+  const frame: MachineComputerFrame = {
+    ...input,
+    type: "computer",
+    id: crypto.randomUUID(),
+  };
+  const reply = await sendFrame(
+    connection,
+    frame,
+    COMPUTER_REPLY_MS + (input.duration ?? 0) * 1000,
+  );
+  if (reply.type !== "computer-result") {
+    throw new Error(
+      "machine sandbox answered a computer action with an exec result",
+    );
+  }
+
+  return reply;
+}
+
 /**
  * Upgrades even a bearer with no account, so the daemon reads a 4401 close
  * through the gateway relay instead of a bare 1006.
@@ -201,6 +243,7 @@ async function claimSandbox(
   }
   socket.data.key = key;
   connections.set(key, {
+    computer: hello.computer === true,
     name: record.name,
     pending: new Map(),
     socket: socket,
@@ -213,6 +256,7 @@ async function claimSandbox(
   logInfo("Machine sandbox connected", {
     accountId: accountId,
     sandbox: record.name,
+    computer: hello.computer === true,
     host: hello.hostname,
     platform: hello.platform,
   });
@@ -249,9 +293,9 @@ function rejectPending(connection: MachineConnection, reason: string): void {
 
 function sendFrame(
   connection: MachineConnection,
-  frame: MachineExecFrame,
+  frame: MachineComputerFrame | MachineExecFrame,
   timeoutMs: number,
-): Promise<MachineResultFrame> {
+): Promise<MachineReply> {
   return new Promise((resolve, reject): void => {
     const timer = setTimeout((): void => {
       connection.pending.delete(frame.id);
@@ -270,7 +314,7 @@ function sendFrame(
   });
 }
 
-function settleReply(key: string, reply: MachineResultFrame): void {
+function settleReply(key: string, reply: MachineReply): void {
   const connection = connections.get(key);
   const pending = connection?.pending.get(reply.id);
   if (!connection || !pending) {

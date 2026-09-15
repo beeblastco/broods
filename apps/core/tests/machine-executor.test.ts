@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import type { ToolExecuteFunction } from "ai";
+import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
 import {
   MachineSandboxExecutor,
   isMachineUpgrade,
+  runMachineComputerAction,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
+import computerTool from "../src/harness/tools/computer.tool.ts";
+import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   MACHINE_WEBSOCKET_PATH,
   parseCoreFrame,
   parseDaemonFrame,
+  type MachineComputerFrame,
   type MachineExecFrame,
   type MachineReadyFrame,
   type MachineResultFrame,
@@ -146,6 +152,78 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   expect((await secondClosed).code).toBe(4400);
 });
 
+test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {});
+  await expect(
+    runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
+  ).rejects.toThrow("broods machine my-mac --computer");
+
+  await connectDaemon(
+    server,
+    "my-mac",
+    () => {},
+    (frame, socket) => {
+      socket.send(
+        JSON.stringify({
+          type: "computer-result",
+          id: frame.id,
+          ...(frame.action === "screenshot"
+            ? { image: { data: "AAAA", mediaType: "image/png" } }
+            : {
+                text: `X=${frame.coordinate?.[0]},Y=${frame.coordinate?.[1]}`,
+              }),
+          app: "com.apple.Safari",
+        }),
+      );
+    },
+  );
+  const execute = computerTool(machineExecutorConfig()).computer
+    ?.execute as ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+  const options = { toolCallId: "call-1", messages: [], context: {} };
+
+  expect(await execute({ action: "screenshot" }, options)).toEqual({
+    type: "content",
+    value: [
+      { type: "text", text: "Screenshot (frontmost app: com.apple.Safari)" },
+      { type: "image-data", data: "AAAA", mediaType: "image/png" },
+    ],
+  });
+  expect(
+    await execute({ action: "left_click", coordinate: [10, 20] }, options),
+  ).toEqual({
+    type: "text",
+    value: "X=10,Y=20 (frontmost app: com.apple.Safari)",
+  });
+});
+
+test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
+  const approval = (
+    action: string,
+    mode: SandboxPermissionMode,
+  ): ReturnType<typeof compatibilityApprovalStatus> =>
+    compatibilityApprovalStatus(
+      "computer",
+      { action: action },
+      {
+        configuredApprovals: new Map(),
+        workspaces: [],
+        agentSandbox: machineExecutorConfig(),
+        agentSandboxPermissionMode: mode,
+      },
+    );
+
+  expect(approval("screenshot", "ask")).toBeUndefined();
+  expect(approval("zoom", "edit")).toBeUndefined();
+  expect(approval("left_click", "ask")).toBe("user-approval");
+  expect(approval("type", "edit")).toBe("user-approval");
+  expect(approval("type", "bypass")).toBeUndefined();
+});
+
 test("each side's parser drops a frame whose fields do not match its type", () => {
   expect(parseCoreFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
   expect(
@@ -155,11 +233,22 @@ test("each side's parser drops a frame whose fields do not match its type", () =
   ).toBeNull();
   expect(parseCoreFrame('{"type":"ready"}')).toBeNull();
   expect(parseCoreFrame('{"type":"hello","sandbox":"my-mac"}')).toBeNull();
+  expect(
+    parseCoreFrame('{"type":"computer","id":"1","action":"fly"}'),
+  ).toBeNull();
+  expect(
+    parseCoreFrame(
+      '{"type":"computer","id":"1","action":"left_click","coordinate":[1]}',
+    ),
+  ).toBeNull();
   expect(parseDaemonFrame('{"type":"hello","sandbox":""}')).toBeNull();
   expect(
     parseDaemonFrame(
       '{"type":"result","id":"1","exitCode":0,"stdout":"","stderr":"","durationMs":1}',
     ),
+  ).toBeNull();
+  expect(
+    parseDaemonFrame('{"type":"computer-result","id":"1","image":"AAAA"}'),
   ).toBeNull();
   expect(parseDaemonFrame("[]")).toBeNull();
   expect(parseDaemonFrame("nope")).toBeNull();
@@ -175,6 +264,16 @@ test("each side's parser drops a frame whose fields do not match its type", () =
     timeoutSeconds: 5,
     outputLimitBytes: 10,
   });
+  expect(
+    parseCoreFrame(
+      '{"type":"computer","id":"1","action":"zoom","region":[0,0,10,10]}',
+    ),
+  ).toEqual({
+    type: "computer",
+    id: "1",
+    action: "zoom",
+    region: [0, 0, 10, 10],
+  });
 });
 
 function closeOf(socket: WebSocket): Promise<CloseEvent> {
@@ -183,16 +282,24 @@ function closeOf(socket: WebSocket): Promise<CloseEvent> {
   });
 }
 
+/** Passing `onComputer` makes the daemon say it started with --computer. */
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   sandbox: string,
   onExec: (frame: MachineExecFrame, socket: WebSocket) => void,
+  onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void,
 ): Promise<{ ready: MachineReadyFrame; socket: WebSocket }> {
   return new Promise((resolve, reject): void => {
     const socket = openSocket(server);
     let ready = false;
     socket.onopen = (): void =>
-      socket.send(JSON.stringify({ type: "hello", sandbox: sandbox }));
+      socket.send(
+        JSON.stringify({
+          type: "hello",
+          sandbox: sandbox,
+          computer: onComputer !== undefined,
+        }),
+      );
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);
       if (frame?.type === "ready") {
@@ -200,6 +307,7 @@ function connectDaemon(
         resolve({ ready: frame, socket: socket });
       }
       if (frame?.type === "exec") onExec(frame, socket);
+      if (frame?.type === "computer") onComputer?.(frame, socket);
     };
     socket.onclose = (event): void => {
       if (!ready) reject(new Error(`closed ${event.code} ${event.reason}`));
