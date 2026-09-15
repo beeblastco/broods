@@ -137,6 +137,7 @@ async function handleMcpCollectionRoute(
       name: input.name!,
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
       ...(bundleStorageKey !== undefined
         ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
         : {}),
@@ -205,6 +206,7 @@ async function patchMcpRoute(
       : {}),
     ...(input.transport !== undefined ? { transport: input.transport } : {}),
     ...(input.url !== undefined ? { url: input.url } : {}),
+    ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
     ...(bundleStorageKey !== undefined
       ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
       : {}),
@@ -290,6 +292,7 @@ function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
       : {}),
     transport: record.transport,
     ...(record.url !== undefined ? { url: record.url } : {}),
+    ...(record.sandbox !== undefined ? { sandbox: record.sandbox } : {}),
     ...(record.sha256 !== undefined ? { sha256: record.sha256 } : {}),
     ...(record.headers !== undefined ? { headers: record.headers } : {}),
     // Safe to echo like headers: the secret fields hold ${NAME} refs.

@@ -852,6 +852,7 @@ async function syncMcpResources(
       name: input.name!,
       ...(input.transport !== undefined ? { transport: input.transport } : {}),
       ...(input.url !== undefined ? { url: input.url } : {}),
+      ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
       ...(bundleStorageKey !== undefined
         ? { bundleStorageKey: bundleStorageKey, sha256: input.sha256! }
         : {}),

@@ -221,7 +221,12 @@ function AgentWireRow({
 function transportLabel(server: Doc<"mcp"> | null | undefined): string {
   if (!server) return "set in the Server tab";
 
-  return server.transport === "hosted"
-    ? "hosted (Node bundle on the tool runner)"
-    : `external (${server.url ?? ""})`;
+  if (server.transport === "hosted") {
+    return "hosted (Node bundle on the tool runner)";
+  }
+  if (server.transport === "machine") {
+    return `on your computer (machine sandbox ${server.sandbox ?? ""})`;
+  }
+
+  return `external (${server.url ?? ""})`;
 }

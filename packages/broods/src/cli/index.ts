@@ -239,11 +239,16 @@ With --computer, agents also get a computer tool for this display: screenshots,
 mouse and keyboard. macOS only; this terminal needs Screen Recording and
 Accessibility, which --doctor checks.
 
+With --mcp <file>, the stdio MCP servers in that file run here for MCP rows
+whose sandbox is this record. The file has the .mcp.json shape Claude Code and
+Cursor read, and it never leaves this computer.
+
 Authenticates with BROODS_API_KEY from .env.local, like \`broods logs\`.
 
 Options:
   --cwd <dir>           Working directory for commands (default: current directory)
   --computer            Serve the computer tool: screen, mouse and keyboard
+  --mcp <file>          Serve the stdio MCP servers listed in this .mcp.json
   --doctor [--request]  Check the macOS permissions computer use needs; --request prompts for them
 
 ${GLOBAL_OPTIONS}`,
@@ -2230,6 +2235,7 @@ async function machine(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
   const computer = hasFlag(args, "--computer");
+  const mcpFile = optionValue(args, "--mcp");
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
@@ -2244,6 +2250,7 @@ async function machine(args: string[]): Promise<void> {
       computer: computer,
       cwd: cwd,
       log: (line: string): void => console.log(line),
+      mcpFile: mcpFile ? resolve(mcpFile) : undefined,
       sandbox: sandbox,
       signal: controller.signal,
     });

@@ -4450,7 +4450,14 @@ components:
           type: string
           description: >-
             External server's MCP endpoint (`transport: http`). http(s) only,
-            no embedded credentials. Exactly one of url or bundle is required.
+            no embedded credentials. Exactly one of url, bundle or sandbox is
+            required.
+        sandbox:
+          type: string
+          description: >-
+            Name of a `machine` sandbox (`transport: machine`). Its daemon,
+            started with `broods machine <sandbox> --mcp <file>`, runs the
+            stdio server with the same name. headers and oauth do not apply.
         bundle:
           type: string
           description: >-
@@ -4549,9 +4556,12 @@ components:
           type: string
         transport:
           type: string
-          enum: [http, hosted]
+          enum: [http, hosted, machine]
         url:
           type: string
+        sandbox:
+          type: string
+          description: Machine-only; name of the machine sandbox whose daemon serves it.
         sha256:
           type: string
           description: Hosted-only; sha256 of the uploaded server bundle.

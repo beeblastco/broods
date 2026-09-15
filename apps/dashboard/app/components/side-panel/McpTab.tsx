@@ -168,6 +168,9 @@ export function McpTab({
       </div>
     );
   }
+  if (server && server.transport === "machine") {
+    return <MachineManagedNotice server={server} />;
+  }
   if (
     server &&
     server.transport === "hosted" &&
@@ -285,6 +288,26 @@ function BundleManagedNotice({
   );
 }
 
+/** Machine rows run on a person's computer, which the dashboard cannot reach. */
+function MachineManagedNotice({
+  server,
+}: {
+  server: Doc<"mcp">;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-1 flex-col gap-3 p-4">
+      <SectionHeader>On your computer</SectionHeader>
+      <p className="text-xs text-muted-foreground">
+        This server runs where{" "}
+        <code>broods machine {server.sandbox} --mcp</code> is running, from that
+        computer&apos;s <code>.mcp.json</code>. It is defined in code with{" "}
+        <code>defineMcp(&#123; sandbox &#125;)</code>; run{" "}
+        <code>broods dev</code> or <code>broods deploy</code> to change it.
+      </p>
+    </div>
+  );
+}
+
 async function bundleSource(sourceCode: string): Promise<string> {
   const response = await fetch("/api/mcp/bundle", {
     method: "POST",
@@ -380,7 +403,8 @@ function useServerForm(server: Doc<"mcp"> | null | undefined): {
   if (server !== undefined && server !== syncedServer) {
     setSyncedServer(server);
     if (server) {
-      setTransport(server.transport);
+      // A machine row has no editor; the form only ever edits the other two.
+      setTransport(server.transport === "machine" ? null : server.transport);
       setSourceCode(server.sourceCode ?? DEFAULT_SOURCE);
       setUrl(server.url ?? "");
       setHeadersJson(
@@ -390,7 +414,10 @@ function useServerForm(server: Doc<"mcp"> | null | undefined): {
   }
 
   return {
-    activeTransport: transport ?? server?.transport ?? "hosted",
+    activeTransport:
+      transport ??
+      (server?.transport === "machine" ? null : server?.transport) ??
+      "hosted",
     headersJson: headersJson,
     setHeadersJson: setHeadersJson,
     setSourceCode: setSourceCode,

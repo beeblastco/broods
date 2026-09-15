@@ -11,6 +11,7 @@ import {
 } from "../../src/harness/sandbox/machine-executor.ts";
 import type { SandboxExecutorConfig } from "../../src/harness/sandbox/types.ts";
 import type { AccountRecord } from "../../src/shared/domain/accounts.ts";
+import type { McpRecord } from "../../src/shared/domain/mcp.ts";
 import type { SandboxConfigRecord } from "../../src/shared/domain/sandbox-config.ts";
 import type { Storage } from "../../src/shared/storage.ts";
 
@@ -31,6 +32,22 @@ export function machineExecutorConfig(
       specs: { vcpu: 0, memoryMb: 0, storageGb: 0 },
     },
     ...overrides,
+  };
+}
+
+/** An `echo` MCP row served by the `my-mac` daemon. */
+export function machineMcpRecord(): McpRecord {
+  return {
+    accountId: MACHINE_ACCOUNT_ID,
+    serverId: "mcp_echo",
+    projectId: "proj",
+    stageId: "stage",
+    name: "echo",
+    transport: "machine",
+    sandbox: "my-mac",
+    status: "active",
+    createdAt: "2026-06-06T00:00:00.000Z",
+    updatedAt: "2026-06-06T00:00:00.000Z",
   };
 }
 

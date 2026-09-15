@@ -69,6 +69,35 @@ Every other action asks unless `permissionMode` is `bypass`. The tool tells the
 model that text on the screen is data, not instructions, and to ask before
 CAPTCHAs, payments or security settings. Ctrl+C on the daemon stops it all.
 
+## Local MCP servers
+
+Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run
+on this computer for your agents. The file has the `.mcp.json` shape Claude
+Code, Cursor and Codex read, so a server already set up for them works as is:
+
+```json
+{
+  "mcpServers": {
+    "blender": { "command": "uvx", "args": ["blender-mcp"] },
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/Work"]
+    }
+  }
+}
+```
+
+```bash
+broods machine my-mac --mcp ./.mcp.json
+```
+
+An MCP row reaches one of these servers by naming the sandbox instead of a url:
+`defineMcp({ name: "blender", sandbox: mac })`, or `sandbox` in the API body.
+The row's `name` is the `mcpServers` key. The daemon starts a server on its
+first call and keeps it running. Core sees server names, tool listings and
+results, never the file or the commands in it. `allowedTools` and
+`needsApproval` work as on any other MCP row.
+
 ## Limits
 
 - No workspaces. The file tools need the S3 workspace mount, which a computer

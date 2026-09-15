@@ -242,6 +242,33 @@ describe("normalizeMcpInput", () => {
     ).rejects.toThrow("url must be provided");
   });
 
+  test("a sandbox makes a machine row, alone and without headers or oauth", async () => {
+    const input = await normalizeMcpInput(
+      { name: "blender", sandbox: "my-mac" },
+      { requireConnection: true },
+    );
+    expect(input.transport).toBe("machine");
+    expect(input.sandbox).toBe("my-mac");
+    await expect(
+      normalizeMcpInput(
+        { name: "blender", sandbox: "my-mac", url: SERVER_URL },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("mutually exclusive");
+    await expect(
+      normalizeMcpInput(
+        { name: "blender", sandbox: "my-mac", headers: { "X-A": "b" } },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("headers do not apply to a machine server");
+    await expect(
+      normalizeMcpInput(
+        { name: "blender", sandbox: "" },
+        { requireConnection: true },
+      ),
+    ).rejects.toThrow("sandbox must be the name of a machine sandbox");
+  });
+
   test("rejects names that break the server__tool namespace", async () => {
     for (const name of ["Search", "se_arch", "1search", "a".repeat(33), ""]) {
       await expect(
@@ -459,7 +486,7 @@ describe("normalizeMcpInput", () => {
         { name: "both", url: SERVER_URL, bundle: "export default 1" },
         { requireConnection: true },
       ),
-    ).rejects.toThrow("url, bundle and bundleStorageId are mutually exclusive");
+    ).rejects.toThrow("mutually exclusive");
     await expect(
       normalizeMcpInput({ name: "neither" }, { requireConnection: true }),
     ).rejects.toThrow("url must be provided, or bundle for a hosted server");
@@ -496,7 +523,7 @@ describe("normalizeMcpInput", () => {
         },
         { requireConnection: true },
       ),
-    ).rejects.toThrow("url, bundle and bundleStorageId are mutually exclusive");
+    ).rejects.toThrow("mutually exclusive");
   });
 });
 

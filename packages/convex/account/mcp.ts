@@ -10,7 +10,7 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { assertOauthRow, type McpOauth } from "../model/mcp";
+import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 
@@ -28,8 +28,9 @@ export const create = internalMutation({
     stageId: v.id("stages"),
     name: v.string(),
     description: v.optional(v.string()),
-    transport: v.optional(v.union(v.literal("http"), v.literal("hosted"))),
+    transport: v.optional(mcpFields.transport),
     url: v.optional(v.string()),
+    sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -66,9 +67,10 @@ export const create = internalMutation({
     if (transport === "hosted" && (!args.bundleStorageKey || !args.sha256)) {
       throw new Error("hosted MCP servers need bundleStorageKey and sha256");
     }
-    assertOauthRow({
+    assertMcpRow({
       transport: transport,
       url: args.url,
+      sandbox: args.sandbox,
       headers: args.headers,
       oauth: args.oauth,
     });
@@ -83,6 +85,7 @@ export const create = internalMutation({
       description: args.description,
       transport: transport,
       url: args.url,
+      sandbox: args.sandbox,
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
       headers: args.headers,
@@ -228,8 +231,9 @@ export const update = internalMutation({
     serverId: v.string(),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
-    transport: v.optional(v.union(v.literal("http"), v.literal("hosted"))),
+    transport: v.optional(mcpFields.transport),
     url: v.optional(v.string()),
+    sandbox: v.optional(v.string()),
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     headers: v.optional(v.record(v.string(), v.string())),
@@ -254,7 +258,7 @@ export const update = internalMutation({
     // The normalizer only sees one body; the row the patch produces is
     // what has to hold.
     const patch = updatePatch(args, doc);
-    assertOauthRow({ ...doc, ...patch });
+    assertMcpRow({ ...doc, ...patch });
 
     await ctx.db.patch(normalized, patch);
 
@@ -289,8 +293,9 @@ function updatePatch(
   args: {
     name?: string;
     description?: string;
-    transport?: "http" | "hosted";
+    transport?: McpTransport;
     url?: string;
+    sandbox?: string;
     bundleStorageKey?: string;
     sha256?: string;
     headers?: Record<string, string>;
@@ -308,6 +313,7 @@ function updatePatch(
       : {}),
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
     ...(args.url !== undefined ? { url: args.url } : {}),
+    ...(args.sandbox !== undefined ? { sandbox: args.sandbox } : {}),
     ...(args.bundleStorageKey !== undefined
       ? { bundleStorageKey: args.bundleStorageKey }
       : {}),
@@ -320,10 +326,21 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...(args.transport === "hosted"
-      ? { url: undefined, oauth: undefined }
+      ? { url: undefined, oauth: undefined, sandbox: undefined }
       : {}),
     ...(args.transport === "http"
       ? {
+          bundleStorageKey: undefined,
+          sha256: undefined,
+          sourceCode: undefined,
+          sandbox: undefined,
+        }
+      : {}),
+    ...(args.transport === "machine"
+      ? {
+          url: undefined,
+          oauth: undefined,
+          headers: undefined,
           bundleStorageKey: undefined,
           sha256: undefined,
           sourceCode: undefined,

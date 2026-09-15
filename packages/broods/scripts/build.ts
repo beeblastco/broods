@@ -12,7 +12,8 @@ const result = await Bun.build({
   splitting: true,
   minify: true,
   sourcemap: "none",
-  external: ["esbuild"],
+  // Installed with the package, not bundled: the MCP client alone would double the CLI.
+  external: ["esbuild", "@modelcontextprotocol/client"],
 });
 
 if (!result.success) {

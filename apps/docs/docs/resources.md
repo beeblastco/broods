@@ -636,6 +636,31 @@ export const agent = defineAgent({
 });
 ```
 
+Pass `sandbox` instead of `url` to run the server on your own computer. The row
+names a `machine` sandbox. The daemon on that computer, started with
+`broods machine <sandbox> --mcp <file>`, runs the stdio server with the same
+name from that `.mcp.json` and answers each call over the machine socket. The
+file and its commands stay on that computer. See
+[Machine](./workspace/sandbox/machine.md).
+
+```ts
+import { defineAgent, defineMcp, defineSandbox } from "broods";
+
+export const mac = defineSandbox({ name: "my-mac", provider: "machine" });
+
+export const blender = defineMcp({
+  name: "blender", // the mcpServers key on the computer
+  sandbox: mac,
+  allowedTools: ["get_scene_info", "execute_blender_code"],
+});
+
+export const designer = defineAgent({
+  name: "designer",
+  sandbox: mac,
+  mcp: { [blender.name]: { enabled: true, needsApproval: true } },
+});
+```
+
 Pass `handler` instead of `url` to host the server on the platform. The whole server then lives in one file. The server package is the project's own dependency (`bun add @modelcontextprotocol/server`); the CLI bundles it from there:
 
 ```ts

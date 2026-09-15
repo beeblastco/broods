@@ -27,6 +27,7 @@ const VALUE_OPTIONS = new Set([
   "--from",
   "--level",
   "--limit",
+  "--mcp",
   "--project",
   "--region",
   "--sandbox",
