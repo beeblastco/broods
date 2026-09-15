@@ -796,6 +796,24 @@ const accountHooks: Storage["accountHooks"] = {
   },
 };
 
+const machineConnections: Storage["machineConnections"] = {
+  connected: async function (connection) {
+    await getConvexClient().mutation(
+      internal.sandbox.machines.connected,
+      connection,
+    );
+  },
+  disconnected: async function (ref) {
+    await getConvexClient().mutation(
+      internal.sandbox.machines.disconnected,
+      ref,
+    );
+  },
+  seen: async function (ref) {
+    await getConvexClient().mutation(internal.sandbox.machines.seen, ref);
+  },
+};
+
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
     return (await getConvexClient().query(
@@ -817,6 +835,7 @@ export const convexStorage: Storage = {
   workspaceConfigs: workspaceConfigs,
   agentPolicies: agentPolicies,
   accountHooks: accountHooks,
+  machineConnections: machineConnections,
   mcp: mcp,
   roleSessions: roleSessions,
   taskUsage: taskUsage,

@@ -175,6 +175,28 @@ interface CronStore {
   ): Promise<void>;
 }
 
+/** Identifies one daemon connection of a `machine` sandbox. */
+export interface MachineConnectionRef {
+  accountId: string;
+  /** New on every connect, so a replaced connection's late writes miss. */
+  connectionId: string;
+  sandboxConfigId: string;
+}
+
+export interface MachineConnectionRecord extends MachineConnectionRef {
+  computer: boolean;
+  hostname?: string;
+  mcp: string[];
+  platform?: string;
+}
+
+/** Mirrors machine daemon connections so the dashboard can show them. */
+interface MachineConnectionStore {
+  connected(connection: MachineConnectionRecord): Promise<void>;
+  disconnected(ref: MachineConnectionRef): Promise<void>;
+  seen(ref: MachineConnectionRef): Promise<void>;
+}
+
 /** Account-scoped, reusable sandbox config records (encrypted at rest). */
 interface SandboxConfigStore {
   getById(
@@ -236,6 +258,7 @@ export interface Storage {
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;
   accountHooks: AccountHookStore;
+  machineConnections: MachineConnectionStore;
   mcp: McpStore;
   agentPolicies: AgentPolicyStore;
   roleSessions: RoleSessionStore;

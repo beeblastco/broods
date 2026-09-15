@@ -577,6 +577,30 @@ export const sandboxInstancesFields = {
 };
 
 /**
+ * A `machine` sandbox's daemon connection as core last saw it; see
+ * sandbox/machines.ts. One row per sandbox config. The dashboard reads it as
+ * connected while `disconnectedAt` is unset and `lastSeenAt` is recent, so a
+ * core that died without writing the disconnect still reads as offline.
+ */
+export const machineConnectionsFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  sandboxConfigId: v.id("sandboxConfigs"),
+  /** New on every connect, so a replaced socket's late writes miss. */
+  connectionId: v.string(),
+  hostname: v.optional(v.string()),
+  platform: v.optional(v.string()),
+  /** The daemon started with --computer. */
+  computer: v.boolean(),
+  /** Server names from the daemon's --mcp file. */
+  mcp: v.array(v.string()),
+  connectedAt: v.number(),
+  lastSeenAt: v.number(),
+  disconnectedAt: v.optional(v.number()),
+};
+
+/**
  * Sandbox snapshot/image registry, mirrored from broods. Account-scoped because
  * a built image is reusable across stages. `status` follows the unified
  * (Daytona-aligned) build model mapped from AWS MicroVM image versions and
@@ -1320,6 +1344,13 @@ export default defineSchema({
     ])
     .index("by_lastUsedAt", ["lastUsedAt"])
     .index("by_reservationKey", ["reservationKey"]),
+  machineConnections: defineTable(machineConnectionsFields)
+    .index("by_accountId_projectId_and_stageId", [
+      "accountId",
+      "projectId",
+      "stageId",
+    ])
+    .index("by_sandboxConfigId", ["sandboxConfigId"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields).index(
     "by_accountId_and_name",
     ["accountId", "name"],

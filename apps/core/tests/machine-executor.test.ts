@@ -30,12 +30,15 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import {
+  MACHINE_ACCOUNT_ID,
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
   machineMcpRecord,
   machineStorage,
   startMachineCore,
+  waitFor,
+  type MachineConnectionWrite,
 } from "./helpers/machine.ts";
 
 const servers: Bun.Server<MachineSocketData>[] = [];
@@ -255,6 +258,35 @@ test("an MCP row lists and calls through the daemon that serves that server", as
   expect(await callMcpTool(connection, "echo", { text: "pong" })).toBe(
     "echo: pong",
   );
+});
+
+test("core records each daemon connection, and a disconnect names that same connection", async () => {
+  const writes: MachineConnectionWrite[] = [];
+  setStorageForTests(machineStorage(writes));
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, { mcp: ["echo"] });
+  const replacement = await connectDaemon(server, "my-mac", () => {});
+  // An earlier test's socket can still close into `writes`, so match by id.
+  const connects = (): MachineConnectionWrite[] =>
+    writes.filter((write) => write.kind === "connected");
+  const disconnected = (connectionId: string | undefined): boolean =>
+    writes.some(
+      (write) =>
+        write.kind === "disconnected" &&
+        write.ref.connectionId === connectionId,
+    );
+  await waitFor(() => connects().length === 2);
+  const [first, second] = connects();
+  replacement.socket.close();
+  await waitFor(() => disconnected(second?.ref.connectionId));
+
+  expect(first?.ref).toMatchObject({
+    accountId: MACHINE_ACCOUNT_ID,
+    sandboxConfigId: MACHINE_SANDBOX_ID,
+    computer: false,
+    mcp: ["echo"],
+  });
+  expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
 });
 
 test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
