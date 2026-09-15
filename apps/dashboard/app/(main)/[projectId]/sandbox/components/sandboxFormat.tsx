@@ -4,6 +4,7 @@ import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
 import {
   MACHINE_STATE_LABEL,
+  MACHINE_TONE,
   type MachineState,
 } from "@/app/lib/machineConnection";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -19,13 +20,7 @@ const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
   error: "error",
 };
 
-const MACHINE_TONE: Record<MachineState, StatusTone> = {
-  connected: "ok",
-  never: "ended",
-  offline: "ended",
-};
-
-// The values users see where the stored one is an implementation detail.
+// What users see for a stored provider; `lambda` is an implementation detail.
 const PROVIDER_LABEL: Record<string, string> = {
   lambda: "managed-vm",
   machine: "your computer",

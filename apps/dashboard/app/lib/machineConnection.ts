@@ -5,6 +5,7 @@
  * landed.
  */
 
+import type { StatusTone } from "@/app/components/StatusDot";
 import type { api } from "@broods/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 
@@ -15,6 +16,12 @@ export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
   connected: "Connected",
   never: "Not connected yet",
   offline: "Offline",
+};
+
+export const MACHINE_TONE: Record<MachineState, StatusTone> = {
+  connected: "ok",
+  never: "ended",
+  offline: "ended",
 };
 
 export type MachineConnection = FunctionReturnType<

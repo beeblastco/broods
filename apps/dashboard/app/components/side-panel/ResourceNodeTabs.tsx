@@ -12,6 +12,7 @@ import {
   ToggleRow,
 } from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Input } from "@/app/components/ui/input";
 import {
   Select,
@@ -20,12 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { StatusDot } from "@/app/components/StatusDot";
 import { Separator } from "@/app/components/ui/separator";
 import { useMachineConnection } from "@/app/hooks/useMachineConnection";
 import { useNow } from "@/app/hooks/useNow";
 import {
   MACHINE_STATE_LABEL,
+  MACHINE_TONE,
   machineStartCommand,
   machineState,
 } from "@/app/lib/machineConnection";
@@ -464,20 +465,20 @@ function MachineConnectionStatus({
 }): React.JSX.Element {
   const connection = useMachineConnection(name);
   const now = useNow();
-  const state = machineState(connection, now);
+  const state =
+    connection === undefined ? undefined : machineState(connection, now);
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-xs">
-        <StatusDot
-          tone={state === "connected" ? "ok" : "ended"}
-          label={MACHINE_STATE_LABEL[state]}
-        />
-        <span className="text-foreground">{MACHINE_STATE_LABEL[state]}</span>
-        {connection?.hostname && (
-          <span className="text-muted-foreground">{connection.hostname}</span>
-        )}
-      </div>
+      {state && (
+        <div className="flex items-center gap-2 text-xs">
+          <StatusDot tone={MACHINE_TONE[state]} />
+          <span className="text-foreground">{MACHINE_STATE_LABEL[state]}</span>
+          {connection?.hostname && (
+            <span className="text-muted-foreground">{connection.hostname}</span>
+          )}
+        </div>
+      )}
       <code className="rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-2xs text-foreground">
         {machineStartCommand(name, connection)}
       </code>

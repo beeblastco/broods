@@ -129,8 +129,8 @@ export function SandboxInstancesTable({
 
   // A computer has no lifecycle status, so any status filter hides it.
   const filteredMachines = useMemo(() => {
-    const needle = search.trim().toLowerCase();
     if (status !== "all") return [];
+    const needle = search.trim().toLowerCase();
 
     return machines.filter(
       (machine) =>
