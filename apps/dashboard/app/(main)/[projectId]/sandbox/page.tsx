@@ -46,6 +46,10 @@ export default function SandboxPage(): React.JSX.Element {
     api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
+  const machines = useQuery(
+    api.sandbox.machines.listForActiveOrg,
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
+  );
   const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
   const account = useQuery(api.org.orgs.getActiveAccount, {});
   const observability = useObservabilityScope(projectId, activeStageId);
@@ -60,6 +64,7 @@ export default function SandboxPage(): React.JSX.Element {
   const loading =
     stages === undefined ||
     instances === undefined ||
+    machines === undefined ||
     snapshots === undefined ||
     account === undefined;
 
@@ -103,9 +108,9 @@ export default function SandboxPage(): React.JSX.Element {
           )}
         >
           <p className="shrink-0 text-xs text-muted-foreground">
-            Live persistent sandbox instances and their snapshots. broods owns
-            the runtime; the dashboard drives suspend, resume, terminate, and
-            snapshot.
+            Live sandbox instances, your connected computers and their
+            snapshots. broods owns the runtime; the dashboard drives suspend,
+            resume, terminate, and snapshot.
           </p>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
@@ -119,6 +124,7 @@ export default function SandboxPage(): React.JSX.Element {
           ) : view === "instances" ? (
             <SandboxInstancesTable
               instances={instances}
+              machines={machines}
               projectId={projectId}
               observability={observability}
             />

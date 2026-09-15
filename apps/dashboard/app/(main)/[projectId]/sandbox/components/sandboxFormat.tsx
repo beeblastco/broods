@@ -2,6 +2,10 @@
 
 import { StatusDot, type StatusTone } from "@/app/components/StatusDot";
 import { Badge } from "@/app/components/ui/badge";
+import {
+  MACHINE_STATE_LABEL,
+  type MachineState,
+} from "@/app/lib/machineConnection";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 
 // Same four tones as the tracing panel: sky while the provider is still moving
@@ -13,6 +17,18 @@ const INSTANCE_TONE: Record<Doc<"sandboxInstances">["status"], StatusTone> = {
   suspended: "ended",
   terminating: "running",
   error: "error",
+};
+
+const MACHINE_TONE: Record<MachineState, StatusTone> = {
+  connected: "ok",
+  never: "ended",
+  offline: "ended",
+};
+
+// The values users see where the stored one is an implementation detail.
+const PROVIDER_LABEL: Record<string, string> = {
+  lambda: "managed-vm",
+  machine: "your computer",
 };
 
 const SNAPSHOT_TONE: Record<Doc<"sandboxSnapshots">["status"], StatusTone> = {
@@ -36,6 +52,22 @@ export function dashboardHref(
   for (const [key, value] of Object.entries(params)) next.set(key, value);
 
   return `/${projectId}/dashboard?${next.toString()}`;
+}
+
+/** One label and value row of a detail panel. */
+export function DetailField({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-border py-2 last:border-0">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-right text-xs text-foreground">{value}</span>
+    </div>
+  );
 }
 
 /**
@@ -67,12 +99,8 @@ export function egressBadge(
   return <span className="text-xs text-muted-foreground">—</span>;
 }
 
-/**
- * Display name for a sandbox provider. The `lambda` value is an internal
- * implementation detail. Users see the managed VM tier, not what backs it.
- */
 export function formatProvider(provider: string): string {
-  return provider === "lambda" ? "managed-vm" : provider;
+  return PROVIDER_LABEL[provider] ?? provider;
 }
 
 /** Footprint string, e.g. "1 vCPU · 2 GB · 8 GB". */
@@ -89,6 +117,12 @@ export function instanceStatusDot(
   status: Doc<"sandboxInstances">["status"],
 ): React.JSX.Element {
   return <StatusDot tone={INSTANCE_TONE[status]} label={status} />;
+}
+
+export function machineStatusDot(state: MachineState): React.JSX.Element {
+  return (
+    <StatusDot tone={MACHINE_TONE[state]} label={MACHINE_STATE_LABEL[state]} />
+  );
 }
 
 /** Em dash when the row predates the permission-mode mirror. */

@@ -20,7 +20,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { StatusDot } from "@/app/components/StatusDot";
 import { Separator } from "@/app/components/ui/separator";
+import { useMachineConnection } from "@/app/hooks/useMachineConnection";
+import { useNow } from "@/app/hooks/useNow";
+import {
+  MACHINE_STATE_LABEL,
+  machineStartCommand,
+  machineState,
+} from "@/app/lib/machineConnection";
 import { isPlainObject } from "@/app/lib/utils";
 import { useState } from "react";
 
@@ -177,37 +185,43 @@ export function SandboxResourceDetailsTab({
             { value: "bypass", label: "Bypass" },
           ]}
         />
-        <ToggleRow
-          label="Internet"
-          description="Allow public network access from the sandbox."
-          disabled={managedByCode || machine}
-          checked={
-            network.mode === "allow-all" || network.mode === "restricted"
-          }
-          onCheckedChange={(internet) =>
-            setConfig({
-              network: {
-                ...network,
-                // Preserve an existing `restricted` policy when toggling on;
-                // otherwise map the binary switch onto core's egress modes.
-                mode: internet
-                  ? network.mode === "restricted"
-                    ? "restricted"
-                    : "allow-all"
-                  : "deny-all",
-              },
-            })
-          }
-        />
-        <ToggleRow
-          label="Persistent"
-          description="Reserve a long-lived sandbox per workspace namespace."
-          disabled={managedByCode || machine}
-          checked={config.persistent === true}
-          onCheckedChange={(persistent) =>
-            setConfig({ persistent: persistent ? true : undefined })
-          }
-        />
+        {machine ? (
+          <MachineConnectionStatus name={data.label} />
+        ) : (
+          <>
+            <ToggleRow
+              label="Internet"
+              description="Allow public network access from the sandbox."
+              disabled={managedByCode}
+              checked={
+                network.mode === "allow-all" || network.mode === "restricted"
+              }
+              onCheckedChange={(internet) =>
+                setConfig({
+                  network: {
+                    ...network,
+                    // Preserve an existing `restricted` policy when toggling on;
+                    // otherwise map the binary switch onto core's egress modes.
+                    mode: internet
+                      ? network.mode === "restricted"
+                        ? "restricted"
+                        : "allow-all"
+                      : "deny-all",
+                  },
+                })
+              }
+            />
+            <ToggleRow
+              label="Persistent"
+              description="Reserve a long-lived sandbox per workspace namespace."
+              disabled={managedByCode}
+              checked={config.persistent === true}
+              onCheckedChange={(persistent) =>
+                setConfig({ persistent: persistent ? true : undefined })
+              }
+            />
+          </>
+        )}
       </div>
     </div>
   );
@@ -438,6 +452,38 @@ export function WorkspaceResourceDetailsTab({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/** A machine sandbox has no network or persistence to set, only a daemon to start. */
+function MachineConnectionStatus({
+  name,
+}: {
+  name: string;
+}): React.JSX.Element {
+  const connection = useMachineConnection(name);
+  const now = useNow();
+  const state = machineState(connection, now);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2 text-xs">
+        <StatusDot
+          tone={state === "connected" ? "ok" : "ended"}
+          label={MACHINE_STATE_LABEL[state]}
+        />
+        <span className="text-foreground">{MACHINE_STATE_LABEL[state]}</span>
+        {connection?.hostname && (
+          <span className="text-muted-foreground">{connection.hostname}</span>
+        )}
+      </div>
+      <code className="rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-2xs text-foreground">
+        {machineStartCommand(name, connection)}
+      </code>
+      <p className="text-2xs text-muted-foreground">
+        Run it on that computer. Internet and persistence don&apos;t apply.
+      </p>
     </div>
   );
 }

@@ -48,6 +48,7 @@ export function BaseNode({
   icon,
   agentStatus,
   cardStatus,
+  liveStatus,
   subtitle,
   featureRows,
   showSideHandles,
@@ -59,6 +60,8 @@ export function BaseNode({
   agentStatus?: AgentHealthStatus;
   /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
   cardStatus?: { enabled: boolean };
+  /** Live state shown once the node is wired, e.g. a machine sandbox's connection. */
+  liveStatus?: { color: string; text: string };
   /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
   subtitle?: React.ReactNode;
   /** Optional list of `+ feature` rows rendered between label and status pill. */
@@ -141,6 +144,9 @@ export function BaseNode({
   } else if (!isConnectedToAgent) {
     statusColor = "bg-destructive";
     statusText = "Unconnected";
+  } else if (liveStatus) {
+    statusColor = liveStatus.color;
+    statusText = liveStatus.text;
   } else if (cardStatus) {
     statusColor = cardStatus.enabled ? "bg-success" : "bg-destructive";
     statusText = cardStatus.enabled ? "Enabled" : "Disabled";

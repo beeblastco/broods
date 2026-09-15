@@ -5,6 +5,10 @@ import { Button } from "@/app/components/ui/button";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
+  machineState,
+  type MachineConnection,
+} from "@/app/lib/machineConnection";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,18 +39,22 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MachinePanel } from "./MachinePanel";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
   formatProvider,
   formatSpecs,
   instanceStatusDot,
+  machineStatusDot,
   relativeTime,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
 interface Props {
   instances: Array<Doc<"sandboxInstances">>;
+  /** The stage's computers that connected through `broods machine`. */
+  machines: MachineConnection[];
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
@@ -67,6 +75,7 @@ const PAGE_SIZE = 8;
 
 export function SandboxInstancesTable({
   instances,
+  machines,
   projectId,
   observability,
 }: Props): React.JSX.Element {
@@ -83,6 +92,11 @@ export function SandboxInstancesTable({
     null,
   );
   const selected = instances.find((instance) => instance._id === selectedId);
+  const [selectedMachineId, setSelectedMachineId] =
+    useState<Id<"machineConnections"> | null>(null);
+  const selectedMachine = machines.find(
+    (machine) => machine._id === selectedMachineId,
+  );
   const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
     null,
   );
@@ -112,6 +126,18 @@ export function SandboxInstancesTable({
       );
     });
   }, [instances, search, status]);
+
+  // A computer has no lifecycle status, so any status filter hides it.
+  const filteredMachines = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (status !== "all") return [];
+
+    return machines.filter(
+      (machine) =>
+        machine.name.toLowerCase().includes(needle) ||
+        (machine.hostname?.toLowerCase().includes(needle) ?? false),
+    );
+  }, [machines, search, status]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -187,13 +213,14 @@ export function SandboxInstancesTable({
     setPage(0);
   }
 
-  if (instances.length === 0) {
+  if (instances.length === 0 && machines.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-foreground">No running sandbox instances.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Run an agent against a sandbox and it appears here live. Per-call
           instances last the length of the call, reserved ones until suspended.
+          A computer running <code>broods machine</code> shows up here too.
         </p>
       </div>
     );
@@ -278,7 +305,7 @@ export function SandboxInstancesTable({
 
       <DetailSplit
         detail={
-          selected && (
+          selected ? (
             <SandboxInstancePanel
               key={selected._id}
               instance={selected}
@@ -287,6 +314,15 @@ export function SandboxInstancesTable({
               now={now}
               onClose={() => setSelectedId(null)}
             />
+          ) : (
+            selectedMachine && (
+              <MachinePanel
+                key={selectedMachine._id}
+                machine={selectedMachine}
+                now={now}
+                onClose={() => setSelectedMachineId(null)}
+              />
+            )
           )
         }
       >
@@ -305,6 +341,18 @@ export function SandboxInstancesTable({
             </tr>
           </thead>
           <tbody>
+            {safePage === 0 &&
+              filteredMachines.map((machine) => (
+                <MachineRow
+                  key={machine._id}
+                  machine={machine}
+                  now={now}
+                  onSelect={() => {
+                    setSelectedId(null);
+                    setSelectedMachineId(machine._id);
+                  }}
+                />
+              ))}
             {pageRows.map((instance) => {
               const running = instance.status === "running";
               const toggleable =
@@ -317,7 +365,10 @@ export function SandboxInstancesTable({
                 <tr
                   key={instance._id}
                   className="cursor-pointer border-t border-border hover:bg-muted/30"
-                  onClick={() => setSelectedId(instance._id)}
+                  onClick={() => {
+                    setSelectedMachineId(null);
+                    setSelectedId(instance._id);
+                  }}
                 >
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-foreground">
@@ -405,7 +456,7 @@ export function SandboxInstancesTable({
                 </tr>
               );
             })}
-            {pageRows.length === 0 && (
+            {pageRows.length === 0 && filteredMachines.length === 0 && (
               <tr>
                 <td
                   colSpan={9}
@@ -458,7 +509,7 @@ export function SandboxInstancesTable({
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      {!instances.some(controllable) && (
+      {instances.length > 0 && !instances.some(controllable) && (
         <p className="mt-2 text-xs text-muted-foreground">
           Per-call instances, and instances reserved before the registry linked
           their config, can be viewed but not controlled here.
@@ -514,4 +565,45 @@ function controllable(
   sandboxConfigId: Id<"sandboxConfigs">;
 } {
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
+}
+
+/** A computer has no size, image, trace or lifecycle switch to show. */
+function MachineRow({
+  machine,
+  now,
+  onSelect,
+}: {
+  machine: MachineConnection;
+  now: number;
+  onSelect: () => void;
+}): React.JSX.Element {
+  return (
+    <tr
+      className="cursor-pointer border-t border-border hover:bg-muted/30"
+      onClick={onSelect}
+    >
+      <td className="px-4 py-2.5">
+        <div className="font-medium text-foreground">{machine.name}</div>
+        <div className="font-mono text-xs text-muted-foreground">
+          {machine.hostname ?? "—"}
+        </div>
+      </td>
+      <td className="px-4 py-2.5 text-xs">{formatProvider("machine")}</td>
+      <td className="px-4 py-2.5">
+        {machineStatusDot(machineState(machine, now))}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {relativeTime(machine.connectedAt, now)}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {relativeTime(machine.lastSeenAt, now)}
+      </td>
+      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+        —
+      </td>
+    </tr>
+  );
 }
