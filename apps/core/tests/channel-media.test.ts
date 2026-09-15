@@ -14,10 +14,23 @@ import type { AccountModelProviderName } from "@broods/convex/model/modelProvide
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
-import { openMediaTicket } from "../src/shared/media-ticket.ts";
+import {
+  openMediaTicket,
+  sealMediaTicket,
+  type MediaTicket,
+} from "../src/shared/media-ticket.ts";
 import { unreadableMediaNote } from "../src/shared/media-types.ts";
+import type { S3ObjectHead } from "../src/shared/s3.ts";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+  type Storage,
+} from "../src/shared/storage.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
+const headS3ObjectMock = mock(
+  async (_bucket: string, _key: string): Promise<S3ObjectHead | null> => null,
+);
 const writeS3ObjectMock = mock(
   async (
     _bucket: string,
@@ -30,8 +43,8 @@ const writeS3ObjectMock = mock(
 
 mock.module("../src/shared/s3.ts", () => ({
   writeS3Object: writeS3ObjectMock,
+  headS3Object: headS3ObjectMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
-  headS3Object: mock(async () => undefined),
   readS3Bytes: mock(async () => new Uint8Array()),
   readS3Text: mock(async () => ""),
   s3ObjectExists: mock(async () => true),
@@ -95,6 +108,7 @@ beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.SERVICE_AUTH_SECRET = "service-auth-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
+  headS3ObjectMock.mockClear();
   writeS3ObjectMock.mockClear();
   transcribeAudioMock.mockClear();
 });
@@ -102,6 +116,7 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   globalThis.fetch = ORIGINAL_FETCH;
+  resetStorageForTests();
 });
 
 describe("resolveMediaType", () => {
@@ -594,6 +609,41 @@ describe("rehydrateStoredMedia", () => {
     ]);
   });
 
+  // The provider fetches the link itself, so a file the agent deleted from its
+  // workspace would 404 there and fail every later turn of the conversation.
+  it("says a workspace file that is gone is gone instead of failing the turn", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+
+    const messages = await rehydrateStoredMedia(
+      [sealedImageMessage(workspaceTicket())],
+      modelConfig("openai"),
+    );
+
+    expect(messages[0]?.content).toEqual([
+      { type: "text", text: "[0-image-1.jpeg is no longer available]" },
+    ]);
+  });
+
+  it("keeps a sealed link whose file is still there", async (): Promise<void> => {
+    setStorageForTests(storageWithWorkspace());
+    headS3ObjectMock.mockImplementationOnce(
+      async (): Promise<S3ObjectHead> => ({ contentLength: 12 }),
+    );
+    const stored = [
+      sealedImageMessage(workspaceTicket()),
+      sealedImageMessage({
+        accountId: ACCOUNT,
+        path: "media/cd34/0-image-1.jpeg",
+      }),
+    ];
+
+    expect(await rehydrateStoredMedia(stored, modelConfig("openai"))).toEqual(
+      stored,
+    );
+    // No sandbox mounts the attachment store, so only the workspace link is checked.
+    expect(headS3ObjectMock).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves a conversation with no references untouched", async () => {
     const messages = [
       {
@@ -632,6 +682,17 @@ function workspace(): ResolvedWorkspace {
     workspaceId: "ws_1",
     namespace: "fs-0123456789abcdef0123456789abcdef01234567",
     config: {} as WorkspaceConfig,
+  };
+}
+
+function workspaceTicket(): MediaTicket {
+  const { workspaceId, namespace } = workspace();
+
+  return {
+    accountId: ACCOUNT,
+    workspaceId: workspaceId,
+    namespace: namespace,
+    path: "media/ab12/0-image-1.jpeg",
   };
 }
 
@@ -849,6 +910,31 @@ function loopbackTransport(
       return [{ address: address, family: 4 }];
     },
   };
+}
+
+function sealedImageMessage(ticket: MediaTicket): ModelMessage {
+  const token = sealMediaTicket(ticket, "service-auth-secret");
+
+  return {
+    role: "user",
+    content: [
+      {
+        type: "image",
+        image: `https://core.example/v1/media/${token}`,
+        mediaType: "image/jpeg",
+      },
+    ],
+  };
+}
+
+function storageWithWorkspace(): Storage {
+  return {
+    workspaceConfigs: {
+      getById: async (): Promise<{
+        config: { storage: { provider: string } };
+      }> => ({ config: { storage: { provider: "s3" } } }),
+    },
+  } as never;
 }
 
 function storedMessage(fileId: string): ModelMessage {

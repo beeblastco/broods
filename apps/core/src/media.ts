@@ -116,7 +116,8 @@ export async function handleMediaRequest(
 // The object a ticket names, or null when it is gone. An attachment ticket reads
 // the managed bucket on the harness's own role; a workspace ticket goes through
 // the workspace's storage, which may be a tenant bucket behind an assumed role.
-async function locateMediaObject(
+// Conversation replay asks the same question before a provider fetches a link.
+export async function locateMediaObject(
   ticket: MediaTicket,
 ): Promise<MediaObject | null> {
   if (!("workspaceId" in ticket)) {
