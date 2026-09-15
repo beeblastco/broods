@@ -21,6 +21,7 @@ const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 /** Options whose value is a separate token, so both have to leave a prompt. */
 const VALUE_OPTIONS = new Set([
   "--base-url",
+  "--cwd",
   "--dashboard-url",
   "--stage",
   "--from",

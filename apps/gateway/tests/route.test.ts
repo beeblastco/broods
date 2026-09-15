@@ -315,6 +315,32 @@ test("the env config resolves the upstreams and limiters the router reads", () =
   }
 });
 
+test("a machine daemon upgrade needs a credential and is relayed to core's socket", async () => {
+  const gateway = createGateway(gatewayConfig());
+  const { server, upgrades } = fakeServer();
+
+  const refused = await gateway.fetch(
+    upgradeRequest("/v1/machines/ws"),
+    server,
+  );
+  expect(refused?.status).toBe(401);
+
+  const upgraded = await gateway.fetch(
+    upgradeRequest("/v1/machines/ws", { token: "runtime-key" }),
+    server,
+  );
+  expect(upgraded).toBeUndefined();
+  expect(upgrades).toEqual([
+    {
+      kind: "machine",
+      ticket: {
+        url: "wss://core.example/v1/machines/ws",
+        authorization: "Bearer runtime-key",
+      },
+    },
+  ]);
+});
+
 function fakeServer(): {
   server: Bun.Server<GatewayData>;
   upgrades: GatewayData[];

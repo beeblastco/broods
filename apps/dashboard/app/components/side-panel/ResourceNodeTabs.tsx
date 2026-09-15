@@ -100,9 +100,26 @@ export function SandboxResourceDetailsTab({
   const network: { mode?: string } = isPlainObject(config.network)
     ? (config.network as { mode?: string })
     : {};
+  // Convex rejects sizing, persistence and egress rules on a machine record.
+  const machine = config.provider === "machine";
 
   function setConfig(patch: Record<string, unknown>): void {
     onUpdateNodeData({ config: { ...config, ...patch } });
+  }
+
+  function setProvider(provider: string): void {
+    setConfig(
+      provider === "machine"
+        ? {
+            provider: provider,
+            network: { mode: "allow-all" },
+            persistent: undefined,
+            size: undefined,
+            snapshot: undefined,
+            memoryLimit: undefined,
+          }
+        : { provider: provider },
+    );
   }
 
   return (
@@ -134,12 +151,13 @@ export function SandboxResourceDetailsTab({
           value={
             typeof config.provider === "string" ? config.provider : "sandbox"
           }
-          onValueChange={(provider) => setConfig({ provider: provider })}
+          onValueChange={setProvider}
           options={[
             { value: "sandbox", label: "Sandbox" },
             { value: "lambda", label: "Managed VM" },
             { value: "e2b", label: "e2b" },
             { value: "daytona", label: "Daytona" },
+            { value: "machine", label: "Your computer" },
           ]}
         />
         <SelectField
@@ -162,7 +180,7 @@ export function SandboxResourceDetailsTab({
         <ToggleRow
           label="Internet"
           description="Allow public network access from the sandbox."
-          disabled={managedByCode}
+          disabled={managedByCode || machine}
           checked={
             network.mode === "allow-all" || network.mode === "restricted"
           }
@@ -184,7 +202,7 @@ export function SandboxResourceDetailsTab({
         <ToggleRow
           label="Persistent"
           description="Reserve a long-lived sandbox per workspace namespace."
-          disabled={managedByCode}
+          disabled={managedByCode || machine}
           checked={config.persistent === true}
           onCheckedChange={(persistent) =>
             setConfig({ persistent: persistent ? true : undefined })

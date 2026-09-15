@@ -52,11 +52,13 @@ flowchart LR
   Provider --> E2B["e2b"]
   Provider --> Daytona["daytona"]
   Provider --> Vercel["vercel"]
+  Provider --> Machine["machine"]
   Sandbox --> ExternalMount
   Lambda --> Mount["mount-s3<br/>/mnt/workspaces/&lt;namespace&gt;"]
   E2B --> Stateless["native FS<br/>(no S3 workspace mount)"]
   Daytona --> ExternalMount
   Vercel --> VercelFS["Vercel persistent FS<br/>(no S3 workspace mount)"]
+  Machine --> Daemon["broods machine daemon<br/>on the user's computer"]
   ExternalMount["mount-s3<br/>/mnt/workspaces/&lt;namespace&gt;"]
   Mount --> Bucket["S3 workspace bucket"]
   ExternalMount --> Bucket
@@ -72,8 +74,8 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 {
   "name": "default",
   "config": {
-    "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel
-    "fallbackProvider": "lambda", // ephemeral only: where a run goes when provider is out of capacity
+    "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel | machine
+    "fallbackProvider": "lambda", // ephemeral only: where a run goes when provider is out of capacity; not machine
     "size": "small", // tiny | xsmall | small | medium | large (see Snapshots & Sizes)
     "snapshot": "img_curated", // prebuilt image/snapshot to boot from (see Snapshots & Sizes); omit for the provider default
     "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted (see Networking)
@@ -123,6 +125,7 @@ Provider-specific behavior lives in the [Integration](lambda.md) pages:
 | `e2b`     | [E2B Details](e2b.md)         |
 | `daytona` | [Daytona Details](daytona.md) |
 | `vercel`  | [Vercel Details](vercel.md)   |
+| `machine` | [Machine Details](machine.md) |
 
 ## Storage capability matrix
 

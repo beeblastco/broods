@@ -11,6 +11,14 @@ export type TerminalGatewayData = {
   ticket: TerminalTicket | null;
 };
 
+/** A `broods machine` daemon, relayed to core, which checks its bearer. */
+export type MachineGatewayData = {
+  kind: "machine";
+  ticket: Pick<TerminalTicket, "url" | "authorization" | "authorizationHeader">;
+};
+
+export type RelayGatewayData = MachineGatewayData | TerminalGatewayData;
+
 /**
  * Application close code for a ticket the gateway could not open. A refused
  * HTTP upgrade reaches the browser as a bare 1006 with no reason, so the
@@ -28,7 +36,7 @@ type TerminalSocketState = {
 };
 
 const terminalState = new WeakMap<
-  Bun.ServerWebSocket<TerminalGatewayData>,
+  Bun.ServerWebSocket<RelayGatewayData>,
   TerminalSocketState
 >();
 
@@ -79,7 +87,7 @@ export function isSessionInitFrame(frame: string): boolean {
 }
 
 export function openTerminalUpstream(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
 ): void {
   const ticket = socket.data.ticket;
   if (!ticket) {
@@ -139,19 +147,25 @@ export function openTerminalUpstream(
     }
   };
 
-  upstream.onclose = () => {
-    if (socket.readyState === WebSocket.OPEN)
+  upstream.onclose = (event): void => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    // A daemon reads core's close code to decide whether to reconnect.
+    if (socket.data.kind === "machine") {
+      socket.close(relayCloseCode(event.code), event.reason);
+    } else {
       socket.close(1000, "terminal session ended");
+    }
   };
 
   upstream.onerror = () => {
-    if (socket.readyState === WebSocket.OPEN)
-      socket.close(1011, "sandbox terminal transport error");
+    if (socket.readyState !== WebSocket.OPEN || socket.data.kind === "machine")
+      return;
+    socket.close(1011, "sandbox terminal transport error");
   };
 }
 
 export function relayTerminalInput(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
   rawMessage: string | Buffer,
 ): void {
   const state = terminalState.get(socket);
@@ -179,7 +193,7 @@ export function relayTerminalInput(
 }
 
 export function cleanupTerminalSocket(
-  socket: Bun.ServerWebSocket<TerminalGatewayData>,
+  socket: Bun.ServerWebSocket<RelayGatewayData>,
 ): void {
   const state = terminalState.get(socket);
   if (!state) return;
@@ -192,4 +206,9 @@ export function cleanupTerminalSocket(
       return;
     }
   }
+}
+
+// A close frame can only carry 1000 or 4000-4999; the daemon retries on 1011.
+function relayCloseCode(code: number): number {
+  return code === 1000 || (code >= 4000 && code <= 4999) ? code : 1011;
 }

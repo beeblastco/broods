@@ -13,6 +13,7 @@ export const SANDBOX_PROVIDERS = [
   "e2b",
   "daytona",
   "vercel",
+  "machine",
 ] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
@@ -173,11 +174,15 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (fallbackProvider === provider) {
     throw new Error("config.fallbackProvider must differ from config.provider");
   }
+  if (fallbackProvider === "machine") {
+    throw new Error("config.fallbackProvider cannot be machine");
+  }
   if (fallbackProvider !== undefined && config.persistent === true) {
     throw new Error(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
+  assertMachineFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
   assertRuntimes(config.runtimes);
@@ -277,13 +282,28 @@ function assertEnvVarsAndOptions(
   }
 }
 
+function assertMachineFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (provider !== "machine") return;
+  for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
+    if (config[field] !== undefined) {
+      throw new Error(`config.${field} does not apply to the machine provider`);
+    }
+  }
+}
+
 function assertNetworkEnforceable(
   provider: SandboxProvider,
   network: SandboxNetworkConfig,
 ): void {
-  if (provider === "e2b" && network.mode !== "allow-all") {
+  if (
+    (provider === "e2b" || provider === "machine") &&
+    network.mode !== "allow-all"
+  ) {
     throw new Error(
-      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+      `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
   if (
@@ -585,6 +605,9 @@ function validateProviderOptions(
     throw new Error(
       "config.options.functionNames is not supported in account sandbox config",
     );
+  }
+  if (provider === "machine" && "cwd" in options) {
+    requireString(options.cwd, "config.options.cwd");
   }
   if (provider === "vercel") {
     if ("image" in options && typeof options.image !== "string") {

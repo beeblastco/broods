@@ -243,6 +243,47 @@ describe("sandbox config defaults & validation", () => {
     ).toEqual({ mode: "allow-all" });
   });
 
+  it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "machine",
+        network: { mode: "allow-all" },
+        options: { cwd: "/Users/me/app" },
+      }),
+    ).toMatchObject({ provider: "machine", options: { cwd: "/Users/me/app" } });
+    expect(() => normalizeSandboxConfig({ provider: "machine" })).toThrow(
+      "machine cannot enforce egress restrictions",
+    );
+    for (const [field, value] of Object.entries({
+      persistent: true,
+      size: "small",
+      snapshot: "img",
+      memoryLimit: 512,
+    })) {
+      expect(() =>
+        normalizeSandboxConfig({
+          provider: "machine",
+          network: { mode: "allow-all" },
+          [field]: value,
+        }),
+      ).toThrow(`config.${field} does not apply to the machine provider`);
+    }
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "machine",
+        network: { mode: "allow-all" },
+        options: { cwd: " " },
+      }),
+    ).toThrow("config.options.cwd must be a non-empty string");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        fallbackProvider: "machine",
+        network: { mode: "allow-all" },
+      }),
+    ).toThrow("config.fallbackProvider cannot be machine");
+  });
+
   it("round-trips runtimes/network/envVars and trims name/description through create input", () => {
     expect(
       normalizeCreateSandboxConfigInput({

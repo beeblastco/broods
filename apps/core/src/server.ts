@@ -166,6 +166,8 @@ if (import.meta.main) {
     await import("./harness/isolate/executor.ts");
   const { startSandboxSweeper, stopSandboxSweeper } =
     await import("./shared/sandbox-sweeper.ts");
+  const { isMachineUpgrade, machineWebSocketHandler, upgradeMachineSocket } =
+    await import("./harness/sandbox/machine-executor.ts");
 
   initOtel();
   // One warm isolate worker so the first uploaded-tool call does not pay Node
@@ -188,8 +190,12 @@ if (import.meta.main) {
     hostname: optionalEnv("HOSTNAME") ?? "0.0.0.0",
     idleTimeout: 255,
     maxRequestBodySize: 10 * 1024 * 1024,
+    // Core's only WebSocket: the machine sandbox daemon, relayed by the gateway.
     fetch: (request, bunServer) =>
-      route(request, bunServer.requestIP(request)?.address),
+      isMachineUpgrade(request)
+        ? upgradeMachineSocket(request, bunServer)
+        : route(request, bunServer.requestIP(request)?.address),
+    websocket: machineWebSocketHandler,
   });
 
   logInfo("Core server listening", { port: server.port });

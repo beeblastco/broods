@@ -22,7 +22,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 
 const CONVEX_IMAGE =
@@ -35,7 +35,16 @@ const PORT_BLOCK_SIZE = 10;
 // prepare work that grows or goes serial, not network latency.
 const PREPARE_BUDGET_MS = 100;
 const RUN_POLL_TIMEOUT_MS = 120_000;
+const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
+const ANTHROPIC_SMOKE_MODEL = "claude-haiku-4-5-20251001";
+const MODEL_KEY_HINT =
+  "set ANTHROPIC_API_KEY or OPENAI_API_KEY for the full run";
+// Without a key the smoke agent still exercises the run path; the model call fails.
+const NO_KEY_MODEL: SmokeModel = {
+  model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
+  provider: { anthropic: { apiKey: "sk-ant-local-smoke-no-key" } },
+};
 
 // The "Context prepared" line core logs once per run (apps/core harness.ts).
 interface ContextPreparedLog {
@@ -85,6 +94,15 @@ interface PerfRecord {
 interface PerfStep {
   ms: number;
   step: string;
+}
+
+interface SmokeModel {
+  model: {
+    provider: string;
+    modelId: string;
+    providerOptions?: Record<string, Record<string, unknown>>;
+  };
+  provider: Record<string, { apiKey: string }>;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -284,7 +302,7 @@ async function verify(): Promise<void> {
   const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
   const runId = Date.now().toString(36);
-  const modelKey = process.env.ANTHROPIC_API_KEY;
+  const smoke = smokeModel();
 
   await measureStep(perf, "gateway healthz", async () => {
     const health = await probeHttp(`${gatewayUrl}/healthz`);
@@ -314,13 +332,7 @@ async function verify(): Promise<void> {
       body: {
         name: `smoke-${runId}`,
         config: {
-          model: {
-            provider: "anthropic",
-            modelId: "claude-haiku-4-5-20251001",
-          },
-          provider: {
-            anthropic: { apiKey: modelKey ?? "sk-ant-local-smoke-no-key" },
-          },
+          ...(smoke ?? NO_KEY_MODEL),
           instructions: "Reply with the single word OK.",
         },
       },
@@ -336,12 +348,16 @@ async function verify(): Promise<void> {
   });
 
   // The 202 names the run by a server-issued id; polling follows its statusUrl.
-  const startRun = async (eventId: string, text: string): Promise<string> => {
+  const startRun = async (
+    eventId: string,
+    text: string,
+    runAgentId: string = agentId,
+  ): Promise<string> => {
     const response = await httpJson(`${gatewayUrl}/v1/runs`, {
       method: "POST",
       token: accountSecret,
       body: {
-        agentId: agentId,
+        agentId: runAgentId,
         eventId: eventId,
         conversationKey: `smoke-${runId}`,
         background: true,
@@ -365,12 +381,12 @@ async function verify(): Promise<void> {
 
   await measureStep(perf, "run to terminal state", async () => {
     const finalStatus = await pollRunStatus(statusUrl, accountSecret);
-    const expected = modelKey
+    const expected = smoke
       ? finalStatus.status === "completed"
       : finalStatus.status === "completed" || finalStatus.status === "failed";
-    const label = modelKey
-      ? "run completed with a real model key"
-      : "run reached a terminal state (no model key; set ANTHROPIC_API_KEY for a full run)";
+    const label = smoke
+      ? `run completed with a real model key (${smoke.model.modelId})`
+      : `run reached a terminal state (no model key; ${MODEL_KEY_HINT})`;
     assertStep(label, expected, JSON.stringify(finalStatus));
   });
 
@@ -399,6 +415,111 @@ async function verify(): Promise<void> {
     console.log(
       `prepare   ${prepared.durationMs}ms: history ${prepared.historyMs}ms over ${prepared.historyRows} rows, runtime ${prepared.runtimeMs}ms, memory ${prepared.memoryMs}ms, skills ${prepared.skillsMs}ms, subagents ${prepared.subagentsMs}ms, media ${prepared.mediaMs}ms`,
     );
+  });
+
+  // With a model key, the agent's bash runs here and its reply names this host.
+  await measureStep(perf, "machine sandbox", async () => {
+    const sandboxName = `machine-${runId}`;
+    const created = await httpJson(`${gatewayUrl}/v1/sandboxes`, {
+      method: "POST",
+      token: accountSecret,
+      body: {
+        name: sandboxName,
+        config: {
+          provider: "machine",
+          permissionMode: "bypass",
+          network: { mode: "allow-all" },
+        },
+      },
+    });
+    const sandboxId = (created.body as { sandboxId?: string }).sandboxId;
+    assertStep(
+      "create machine sandbox (config plane via gateway)",
+      created.status === 201 && typeof sandboxId === "string",
+      `status ${created.status}: ${JSON.stringify(created.body)}`,
+    );
+
+    let daemonOutput = "";
+    const daemon = spawn(
+      "bun",
+      ["packages/broods/src/cli/index.ts", "machine", sandboxName],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          BROODS_API_KEY: accountSecret,
+          BROODS_BASE_URL: gatewayUrl,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const collect = (chunk: Buffer): void => {
+      daemonOutput += chunk;
+    };
+    daemon.stdout.on("data", collect);
+    daemon.stderr.on("data", collect);
+    // assertStep calls process.exit, which skips `finally`.
+    const stopDaemon = (): void => {
+      daemon.kill("SIGINT");
+    };
+    process.once("exit", stopDaemon);
+    try {
+      const connected = await pollUntil(
+        {
+          initialIntervalMs: 100,
+          maxIntervalMs: 500,
+          timeoutMs: MACHINE_CONNECT_TIMEOUT_MS,
+        },
+        async () =>
+          daemonOutput.includes(`connected as ${sandboxName}`) ? true : null,
+      );
+      assertStep(
+        "broods machine connected through the gateway",
+        connected === true,
+        daemonOutput,
+      );
+      if (!smoke) {
+        console.log(`  skip agent bash on this machine (${MODEL_KEY_HINT})`);
+
+        return;
+      }
+
+      const agent = await httpJson(`${gatewayUrl}/v1/agents`, {
+        method: "POST",
+        token: accountSecret,
+        body: {
+          name: sandboxName,
+          config: {
+            ...smoke,
+            instructions:
+              "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
+            sandbox: sandboxId,
+          },
+        },
+      });
+      const machineAgentId = (agent.body as { agentId?: string }).agentId;
+      assertStep(
+        "create agent on the machine sandbox",
+        agent.status === 201 && typeof machineAgentId === "string",
+        `status ${agent.status}: ${JSON.stringify(agent.body)}`,
+      );
+      const statusUrl = await startRun(
+        `${eventId}-machine`,
+        "Run hostname.",
+        machineAgentId,
+      );
+      const finalStatus = await pollRunStatus(statusUrl, accountSecret);
+      assertStep(
+        "agent bash ran on this machine and the reply names this host",
+        finalStatus.status === "completed" &&
+          JSON.stringify(finalStatus.response ?? "").includes(hostname()) &&
+          daemonOutput.includes("$ "),
+        `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
+      );
+    } finally {
+      process.off("exit", stopDaemon);
+      stopDaemon();
+    }
   });
 
   const totalMs = Date.now() - startedAt;
@@ -692,6 +813,32 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
+// --- model --------------------------------------------------------------
+
+/** Anthropic when its key is set, then OpenAI; null without either. */
+function smokeModel(): SmokeModel | null {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    return {
+      model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
+      provider: { anthropic: { apiKey: anthropicKey } },
+    };
+  }
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    return {
+      model: {
+        provider: "openai",
+        modelId: "gpt-5.6-luna",
+        providerOptions: { openai: { reasoningEffort: "max" } },
+      },
+      provider: { openai: { apiKey: openaiKey } },
+    };
+  }
+
+  return null;
+}
+
 // --- http ---------------------------------------------------------------
 
 function assertStep(step: string, ok: boolean, detail: string): asserts ok {
@@ -731,7 +878,7 @@ async function httpJson(
 async function pollRunStatus(
   statusUrl: string,
   token: string,
-): Promise<{ status?: string }> {
+): Promise<{ status?: string; response?: unknown }> {
   const doc = await pollUntil(
     {
       initialIntervalMs: 200,
@@ -744,7 +891,7 @@ async function pollRunStatus(
           method: "GET",
           token: token,
         });
-        const body = response.body as { status?: string };
+        const body = response.body as { status?: string; response?: unknown };
 
         return body.status === "completed" || body.status === "failed"
           ? body

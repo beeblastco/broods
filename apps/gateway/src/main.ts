@@ -2,6 +2,10 @@ import {
   connectNats,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
+import {
+  MACHINE_WEBSOCKET_PATH,
+  machineSocketUrl,
+} from "../../core/src/shared/machine-socket.ts";
 import { TERMINAL_WEBSOCKET_PATH } from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
@@ -20,6 +24,8 @@ import {
   openTerminalUpstream,
   relayTerminalInput,
   terminalServiceSecretsFromEnv,
+  type MachineGatewayData,
+  type RelayGatewayData,
   type TerminalGatewayData,
 } from "./terminal.ts";
 import {
@@ -56,6 +62,7 @@ import {
 
 export type GatewayData =
   | AgentTestGatewayData
+  | MachineGatewayData
   | ObservabilityGatewayData
   | TerminalGatewayData;
 
@@ -178,6 +185,31 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
             kind: "terminal",
             ticket: ticket,
           } satisfies TerminalGatewayData,
+        });
+
+        return upgraded
+          ? undefined
+          : jsonError(400, "WebSocket upgrade failed");
+      }
+
+      // Core checks the daemon's bearer and refuses with a close code.
+      if (url.pathname === MACHINE_WEBSOCKET_PATH) {
+        if (activeSocketCount >= config.limits.maxConnections) {
+          return jsonError(503, "Gateway is at capacity");
+        }
+        const token = websocketToken(request, url);
+        if (!token) return jsonError(401, "Missing WebSocket token");
+
+        const data: MachineGatewayData = {
+          kind: "machine",
+          ticket: {
+            url: machineSocketUrl(config.coreBaseUrls[0]!),
+            authorization: `Bearer ${token}`,
+          },
+        };
+        const upgraded = server.upgrade(request, {
+          headers: websocketUpgradeHeaders(request),
+          data: data,
         });
 
         return upgraded
@@ -358,15 +390,13 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         openObservabilitySocket(
           socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
         );
-      if (socket.data.kind === "terminal")
-        openTerminalUpstream(
-          socket as Bun.ServerWebSocket<TerminalGatewayData>,
-        );
+      if (socket.data.kind === "terminal" || socket.data.kind === "machine")
+        openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
     },
     message: async function (socket, rawMessage): Promise<void> {
-      if (socket.data.kind === "terminal") {
+      if (socket.data.kind === "terminal" || socket.data.kind === "machine") {
         relayTerminalInput(
-          socket as Bun.ServerWebSocket<TerminalGatewayData>,
+          socket as Bun.ServerWebSocket<RelayGatewayData>,
           rawMessage,
         );
 
@@ -392,10 +422,8 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     },
     close: function (socket): void {
       activeSocketCount = Math.max(0, activeSocketCount - 1);
-      if (socket.data.kind === "terminal") {
-        cleanupTerminalSocket(
-          socket as Bun.ServerWebSocket<TerminalGatewayData>,
-        );
+      if (socket.data.kind === "terminal" || socket.data.kind === "machine") {
+        cleanupTerminalSocket(socket as Bun.ServerWebSocket<RelayGatewayData>);
 
         return;
       }
