@@ -1862,6 +1862,47 @@ test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", asy
   }
 });
 
+test("a traces backfill piece waits for the socket buffer to empty", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  // Live spans left 600 KB queued. A trace piece on top of that passes the
+  // socket's 1 MB backpressure limit, which closes the socket.
+  const { socket, sent } = observabilitySocket();
+  let queuedPolls = 3;
+  let sentWhileQueued = false;
+  Object.assign(socket, {
+    getBufferedAmount: (): number => (queuedPolls-- > 0 ? 600 * 1024 : 0),
+    send: (value: string): void => {
+      const message = JSON.parse(value) as Record<string, unknown>;
+      if (message.type === "backfill" && queuedPolls >= 0)
+        sentWhileQueued = true;
+      sent.push(message);
+    },
+  });
+  globalThis.fetch = tempoFetch(tempoSearchHits(1));
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "traces", backfill: 1 }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+    const pieces = sent.filter((message) => message.type === "backfill");
+    expect(pieces).toHaveLength(2);
+    expect(sentWhileQueued).toBe(false);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
 test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches", async () => {
   const originalFetch = globalThis.fetch;
   // Search finds two traces; the first detail loads, the second 503s. The
@@ -1955,7 +1996,7 @@ test("fetchTempoBackfill drops spans from other scopes in a matched trace", asyn
     globalThis.fetch = originalFetch;
   }
 });
-test("a traces backfill streams newest-first pieces and a closing message", async () => {
+test("a traces backfill streams newest-first pieces, one trace each, and a closing message", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
@@ -1985,15 +2026,13 @@ test("a traces backfill streams newest-first pieces and a closing message", asyn
 
     const pieces = sent.filter((message) => message.type === "backfill");
     expect(sent[0]).toEqual({ type: "ready" });
-    expect(pieces.map((piece) => piece.more)).toEqual([
-      true,
-      true,
-      true,
+    expect(pieces.map((piece): unknown => piece.more)).toEqual([
+      ...Array.from({ length: 25 }, (): boolean => true),
       undefined,
     ]);
-    expect(pieces.map((piece) => (piece.entries as unknown[]).length)).toEqual([
-      12, 12, 1, 0,
-    ]);
+    expect(
+      pieces.map((piece): number => (piece.entries as unknown[]).length),
+    ).toEqual([...Array.from({ length: 25 }, (): number => 1), 0]);
     expect((pieces[0]!.entries as Array<{ traceId: string }>)[0]!.traceId).toBe(
       "t24",
     );

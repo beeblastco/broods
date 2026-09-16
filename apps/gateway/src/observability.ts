@@ -546,18 +546,30 @@ async function sendBackfill(
         throw new Error("Trace history is not configured (TEMPO_URL)");
       let failures = 0;
       for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
-        // A re-subscribe or unsubscribe landed while this chunk was in
-        // flight: a newer backfill owns the stream now.
-        if (state.runs.traces !== run) return;
         failures += chunk.failures;
-        const sent = sendObs(socket, {
-          type: "backfill",
-          stream: "traces",
-          entries: chunk.rows,
-          more: true,
-        });
-        // The socket is gone: stop paying Tempo for a tab nobody is watching.
-        if (!sent) return;
+        const traces = new Map<string, ObservabilitySpanRow[]>();
+        for (const row of chunk.rows) {
+          const rows = traces.get(row.traceId);
+          if (rows) rows.push(row);
+          else traces.set(row.traceId, [row]);
+        }
+        // One trace per message, each once the buffer is empty: a chunk of LLM
+        // payloads nears the socket's backpressure limit, and passing it
+        // closes the socket.
+        for (const rows of traces.values()) {
+          await waitForObsDrain(socket, 0);
+          // A re-subscribe or unsubscribe landed meanwhile: a newer backfill
+          // owns the stream now.
+          if (state.runs.traces !== run) return;
+          const sent = sendObs(socket, {
+            type: "backfill",
+            stream: "traces",
+            entries: rows,
+            more: true,
+          });
+          // The socket is gone: stop paying Tempo for a tab nobody is watching.
+          if (!sent) return;
+        }
       }
       if (state.runs.traces !== run) return;
       sendObs(socket, {
@@ -933,11 +945,12 @@ function cleanupObservabilityStream(
 // sendObs shedding.
 async function waitForObsDrain(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  maxBufferedBytes = OBS_SHED_BUFFERED_BYTES,
 ): Promise<void> {
   const deadline = Date.now() + OBS_DRAIN_MAX_WAIT_MS;
   while (
     socket.readyState === WebSocket.OPEN &&
-    socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES &&
+    socket.getBufferedAmount() > maxBufferedBytes &&
     Date.now() < deadline
   ) {
     await new Promise((resolve) => setTimeout(resolve, OBS_DRAIN_POLL_MS));
