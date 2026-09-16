@@ -1,4 +1,4 @@
-/** Agent config normalizer parity tests for the Convex config plane. */
+/** Agent config rules, the one copy the config plane and core both run. */
 
 import { describe, expect, it } from "vitest";
 import {
@@ -138,6 +138,58 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.slack.allowedChannelIds must be an array of non-empty strings",
     );
+  });
+
+  it("validates the Discord mention settings", () => {
+    const discord = {
+      id: "dc",
+      botUserId: "bot-9",
+      mentionRoleIds: ["role-oncall"],
+    };
+    expect(normalizeAgentConfig({ channels: { discord: discord } })).toEqual({
+      channels: { discord: discord },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { discord: { id: "dc", botUserId: 9 } },
+      }),
+    ).toThrow("config.channels.discord.botUserId must be a string");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { discord: { id: "dc", mentionRoleIds: "role-oncall" } },
+      }),
+    ).toThrow(
+      "config.channels.discord.mentionRoleIds must be an array of non-empty strings",
+    );
+  });
+
+  it("accepts a system prompt as a string or AI SDK system messages", () => {
+    const system = [
+      {
+        role: "system",
+        content: "Be brief.",
+        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      },
+    ];
+    expect(normalizeAgentConfig({ agent: { system: system } })).toEqual({
+      agent: { system: system },
+    });
+    for (const invalid of [
+      { role: "user", content: "Be brief." },
+      { role: "system", content: ["Be brief."] },
+      { role: "system", content: "Be brief.", providerOptions: "anthropic" },
+      {
+        role: "system",
+        content: "Be brief.",
+        providerOptions: { anthropic: true },
+      },
+    ]) {
+      expect(() =>
+        normalizeAgentConfig({ agent: { system: invalid } }),
+      ).toThrow(
+        "config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: invalid system message",
+      );
+    }
   });
 
   it("normalizes empty configs and rejects non-objects", () => {
@@ -326,21 +378,81 @@ describe("agent rules", () => {
     );
     expect(() =>
       normalizeAgentConfig({
+        channels: {
+          slack: { id: "slack", workspaceIsolationScope: "channel" },
+        },
+      }),
+    ).toThrow(
+      "config.channels.slack.workspaceIsolationScope is no longer supported; use config.channels.slack.partition",
+    );
+    expect(() =>
+      normalizeAgentConfig({
         channels: { zalo: { id: "zalo", webhookSecret: "short" } },
       }),
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
   });
 
-  it("validates harness configs against core's contract", () => {
+  it("validates harness configs", () => {
+    const harness = {
+      activeTools: ["shell", "read"],
+      debug: { enabled: true, level: "debug", subsystems: ["bridge"] },
+      type: "codex",
+      permissionMode: "allow-all",
+      startupTimeoutMs: 180_000,
+      webSearch: true,
+    };
     expect(
+      normalizeAgentConfig({ harness: harness, sandboxes: ["sandbox_1"] }),
+    ).toEqual({ harness: harness, sandboxes: ["sandbox_1"] });
+    expect(() =>
+      normalizeAgentConfig({ harness: { type: "default" } }),
+    ).toThrow(
+      "config.harness.type must be one of: claude-code, codex, deepagents, opencode, pi",
+    );
+    expect(() =>
       normalizeAgentConfig({
-        harness: { type: "claude-code", permissionMode: "allow-edits" },
+        harness: { type: "claude-code", webSearch: true },
         sandboxes: ["sandbox_1"],
       }),
-    ).toEqual({
-      harness: { type: "claude-code", permissionMode: "allow-edits" },
-      sandboxes: ["sandbox_1"],
-    });
+    ).toThrow(
+      "config.harness.webSearch is only supported by the codex harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: {
+          type: "opencode",
+          activeTools: ["bash"],
+          inactiveTools: ["write"],
+        },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.harness must use either activeTools or inactiveTools, not both",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex", debug: { subystems: ["bridge"] } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow('config.harness.debug has unknown option "subystems"');
+    // The harness runs its own loop, so broods-side policy and structured
+    // output would silently not apply.
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
+        model: { output: { type: "object", schema: { type: "object" } } },
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow(
+      "config.model.output structured output is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex" },
+        policies: ["policy_1"],
+        sandboxes: ["sandbox_1"],
+      }),
+    ).toThrow("config.policies is not supported with config.harness");
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "claude-code", turbo: true },
@@ -373,6 +485,21 @@ describe("agent rules", () => {
     ).toThrow(
       "config.harness.startupTimeoutMs is not supported by the pi harness",
     );
+  });
+
+  it("keeps the scheduler opt-in a boolean on config and patches", () => {
+    expect(normalizeAgentConfig({ scheduler: { enabled: true } })).toEqual({
+      scheduler: { enabled: true },
+    });
+    expect(() =>
+      normalizeAgentConfigPatch({ scheduler: { enabled: "yes" } }),
+    ).toThrow("config.scheduler.enabled must be a boolean");
+  });
+
+  it("refuses whitespace-only entries in id lists", () => {
+    expect(() =>
+      normalizeAgentConfigPatch({ subagent: { allowed: ["  "] } }),
+    ).toThrow("config.subagent.allowed must be an array of non-empty strings");
   });
 
   it("validates subagent visibility and denyTools", () => {
@@ -417,22 +544,24 @@ describe("agent rules", () => {
     }
   });
 
-  it("accepts native Convex resource ids and rejects deprecated public ids", () => {
-    const toolId = "qs78zwc4z4q5ysxm74fgrhd13s88xxt";
+  it("accepts native Convex hook ids and rejects deprecated public ids", () => {
     const hookId = "k17zwc4z4q5ysxm74fgrhd13s88xxtv";
 
     expect(
-      normalizeAgentConfig({
-        tools: { [toolId]: { enabled: true } },
-        hooks: { code: [{ hookId: hookId }] },
-      }),
-    ).toMatchObject({
-      tools: { [toolId]: { enabled: true } },
-      hooks: { code: [{ hookId: hookId }] },
-    });
+      normalizeAgentConfig({ hooks: { code: [{ hookId: hookId }] } }),
+    ).toEqual({ hooks: { code: [{ hookId: hookId }] } });
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
+    // Custom tools keyed config.tools by their row id; they are gone, so a
+    // tool key is a provider tool name and nothing else.
+    expect(() =>
+      normalizeAgentConfig({
+        tools: { "1s78zwc4z4q5ysxm74fgrhd13s88xxt": { enabled: true } },
+      }),
+    ).toThrow(
+      "config.tools.1s78zwc4z4q5ysxm74fgrhd13s88xxt is not a supported tool",
+    );
     expect(() =>
       normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_legacy" }] } }),
     ).toThrow(
@@ -471,6 +600,17 @@ describe("agent rules", () => {
         provider: { openai: { apiKey: "sk_live_abc${OVH_API_KEY}" } },
       }),
     ).toEqual({ provider: { openai: { apiKey: "********" } } });
+  });
+
+  it("drops dangerous keys instead of rewriting the merged prototype", () => {
+    // JSON.parse makes "__proto__" an own key, so a plain assignment would
+    // route it to the setter and hide the value from every own-key walk,
+    // including the normalize pass that runs right after the merge.
+    const patch = JSON.parse('{"__proto__":{"polluted":"yes"},"name":"ok"}');
+    const merged = mergeAgentConfig({}, patch);
+
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect(merged.polluted).toBeUndefined();
   });
 
   it("collects and substitutes only valid account env placeholders recursively", () => {

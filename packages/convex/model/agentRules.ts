@@ -1,6 +1,8 @@
 /**
- * Agent config validation for Convex config HTTP. Pure module: safe for the
- * default Convex runtime. The public projection lives in ./responses.ts.
+ * Agent config validation, the only copy of it: Convex config HTTP checks a
+ * config on write and core re-checks the stored config on every run. Pure
+ * module: safe for the default Convex runtime. The public projection lives in
+ * ./responses.ts.
  */
 
 import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
@@ -72,23 +74,21 @@ export interface AgentWorkspaceRef {
 
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
-// Harness vocabulary mirrors core's apps/core/src/shared/domain/agent-config.ts
-// (the runtime source of truth for these rules); change both together.
-const AGENT_HARNESS_TYPES = [
+export const AGENT_HARNESS_TYPES = [
   "claude-code",
   "codex",
   "deepagents",
   "opencode",
   "pi",
 ] as const;
-const AGENT_HARNESS_DEBUG_LEVELS = [
+export const AGENT_HARNESS_DEBUG_LEVELS = [
   "error",
   "warn",
   "info",
   "debug",
   "trace",
 ] as const;
-const AGENT_HARNESS_PERMISSION_MODES = [
+export const AGENT_HARNESS_PERMISSION_MODES = [
   "allow-reads",
   "allow-edits",
   "allow-all",
@@ -143,7 +143,7 @@ const RETIRED_REACH_KEYS = [
   ["allowedGuildIds", "allowedChannelIds"],
   ["allowedRepos", "allowedChannelIds"],
 ] as const;
-const MODEL_CONFIG_SETTING_KEYS = [
+export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
   "transcriptionModelId",
@@ -161,7 +161,9 @@ const MODEL_CONFIG_SETTING_KEYS = [
   "maxRetries",
   "timeout",
 ] as const;
-const AGENT_LIFECYCLE_EVENT_NAMES = [
+// Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
+// full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points).
+export const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
   "agent.step.finished",
   "agent.finished",
@@ -351,6 +353,16 @@ export function assertAgentRuntimeRefs(
     );
 }
 
+// Provider-defined tool names are validated for shape only; whether the
+// configured provider actually ships the tool is resolved by core at run time.
+export function isProviderToolName(toolName: string): boolean {
+  return (
+    PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
+    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
+    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
+  );
+}
+
 /** The default sandbox id of a stored or nested config: the first of `sandboxes`. */
 export function defaultSandboxOf(
   config: Record<string, unknown>,
@@ -402,6 +414,8 @@ function assertOptionalMaxTurn(value: unknown): void {
   }
 }
 
+// The shape of the AI SDK's SystemModelMessage, checked by hand because Convex
+// cannot import `ai`. Provider option values arrive as parsed JSON already.
 function validateAgentSystemConfig(value: unknown): void {
   if (value === undefined || typeof value === "string") return;
   const values = Array.isArray(value) ? value : [value];
@@ -409,7 +423,12 @@ function validateAgentSystemConfig(value: unknown): void {
     if (
       !isPlainObject(entry) ||
       entry.role !== "system" ||
-      typeof entry.content !== "string"
+      typeof entry.content !== "string" ||
+      (entry.providerOptions !== undefined &&
+        !(
+          isPlainObject(entry.providerOptions) &&
+          Object.values(entry.providerOptions).every(isPlainObject)
+        ))
     ) {
       throw new Error(
         "config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: invalid system message",
@@ -418,8 +437,6 @@ function validateAgentSystemConfig(value: unknown): void {
   }
 }
 
-// Mirrors core's normalizeHarnessConfig in
-// apps/core/src/shared/domain/agent-config.ts; same messages on purpose.
 function normalizeHarnessConfig(value: unknown): void {
   if (value == null) return;
   if (!isPlainObject(value))
@@ -823,7 +840,7 @@ function normalizeToolsConfig(value: unknown): void {
 function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value))
     throw new Error(`config.tools.${toolName} must be an object`);
-  if (!isNativeConvexDocumentId(toolName) && !isProviderToolName(toolName)) {
+  if (!isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
   const config = value as Record<string, unknown>;
@@ -1004,6 +1021,11 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
+  assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
+  assertOptionalStringArray(
+    config.mentionRoleIds,
+    "config.channels.discord.mentionRoleIds",
+  );
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -1273,16 +1295,6 @@ function assertOptionalStringArray(
   ) {
     throw new Error(`${name} must be an array of non-empty strings`);
   }
-}
-
-// Provider-defined tool names are validated for shape only; whether the
-// configured provider actually ships the tool is resolved by core at run time.
-function isProviderToolName(toolName: string): boolean {
-  return (
-    PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
-    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
-    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
-  );
 }
 
 function isNativeConvexDocumentId(value: string): boolean {

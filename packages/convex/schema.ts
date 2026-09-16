@@ -76,10 +76,11 @@ export const agentConfigsFields = {
   ),
   /**
    * Broods AgentConfig branches that don't live as flat columns:
-   * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
-   * `subagent`, and `provider` settings. Stored verbatim so the Config tab
-   * can edit the full nested shape. Secrets should be expressed as
-   * `${ENV_NAME}` placeholders resolved from encrypted runtime secrets.
+   * `agent`, `sandboxes`, `workspaces`, `session`, `hooks`, `channels`,
+   * `tools`, `mcp`, `skills`, `subagent`, `scheduler`, and `provider`
+   * settings. Stored verbatim so the Config tab can edit the full nested
+   * shape. Secrets should be expressed as `${ENV_NAME}` placeholders resolved
+   * from encrypted runtime secrets.
    */
   extraConfig: v.optional(v.any()),
   /**

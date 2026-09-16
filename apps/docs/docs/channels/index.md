@@ -324,7 +324,7 @@ The normalized `InboundMessage` contains:
 ## Add a channel
 
 1. Add config types to [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts).
-2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()`.
+2. Validate the new `config.channels.<channel>` fields in `normalizeChannelsConfig()` in [`packages/convex/model/agentRules.ts`](https://github.com/beeblastco/broods/blob/dev/packages/convex/model/agentRules.ts).
 3. Create `src/shared/<channel>-channel.ts`.
 4. Implement `ChannelAdapter`.
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.

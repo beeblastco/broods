@@ -35,9 +35,9 @@ import {
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
+import { MODEL_CONFIG_SETTING_KEYS } from "@broods/convex/model/agentRules";
 import {
   applyRunOverrides,
-  MODEL_CONFIG_SETTING_KEYS,
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,

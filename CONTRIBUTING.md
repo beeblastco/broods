@@ -53,7 +53,7 @@ cd packages/demos/basic-stream && bun run start
 ## Adding features
 
 - **New channel.** Create `apps/core/src/shared/<channel>-channel.ts` implementing `ChannelAdapter`, then wire it into `apps/core/src/harness/integrations.ts`. Keep channel-specific logic inside the channel module.
-- **New tool.** Create `apps/core/src/harness/tools/<name>.tool.ts`, export a default factory, register it in `apps/core/src/harness/tools/index.ts`, and add config validation in `apps/core/src/shared/domain/agent-config.ts`.
+- **New tool.** Create `apps/core/src/harness/tools/<name>.tool.ts`, export a default factory, register it in `apps/core/src/harness/tools/index.ts`, and add config validation in `packages/convex/model/agentRules.ts`.
 - **New command.** Add an entry to `apps/core/src/shared/commands.ts`.
 
 ## Cross-workspace rules
