@@ -249,7 +249,7 @@ Options:
   --cwd <dir>           Working directory for commands (default: current directory)
   --computer            Serve the computer tool: screen, mouse and keyboard
   --mcp <file>          Serve the stdio MCP servers listed in this .mcp.json
-  --force               Take the record over from a daemon on another computer
+  --force               Take the record over from another daemon, even one on this computer
   --doctor [--request]  Check the macOS permissions computer use needs; --request prompts for them
 
 ${GLOBAL_OPTIONS}`,

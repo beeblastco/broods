@@ -35,10 +35,13 @@ export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set([
   "zoom",
 ] as const satisfies readonly (typeof COMPUTER_ACTIONS)[number][]);
 
+// The holder's host in an `occupied` reason, cut on a byte boundary: a close reason
+// is capped at 123 bytes, and one cut mid-character reaches the daemon as 1007.
+const HOLDER_MAX_BYTES = 40;
+
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
-  // Core appends the host that holds the record and the flag that overrides.
-  occupied: { code: 4423, reason: "Already connected from another computer" },
+  occupied: { code: 4423, reason: "Already connected from another daemon" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
   unauthorized: { code: 4401, reason: "Unauthorized; check BROODS_API_KEY" },
   unknownSandbox: {
@@ -129,7 +132,10 @@ const helloFrame = z.object({
   computer: z.boolean().optional(),
   // Names of the MCP servers in the daemon's --mcp file.
   mcp: z.array(z.string()).optional(),
-  // Take the record over from a daemon on another computer.
+  // One id per daemon process, so the same process reconnecting after a network
+  // drop reclaims its record and any other daemon does not.
+  instance: z.string().optional(),
+  // Take the record over from another daemon.
   force: z.boolean().optional(),
 });
 
@@ -215,6 +221,17 @@ export type MachineMcpResultFrame = z.infer<typeof mcpResultFrame>;
 export type MachineMcpToolsFrame = z.infer<typeof mcpToolsFrame>;
 export type MachineReadyFrame = z.infer<typeof readyFrame>;
 export type MachineResultFrame = z.infer<typeof resultFrame>;
+
+/** The reason core closes a refused claim with, naming who holds the record. */
+export function occupiedReason(holder: string | undefined): string {
+  const host = new TextDecoder().decode(
+    new TextEncoder()
+      .encode(holder ?? "unknown host")
+      .subarray(0, HOLDER_MAX_BYTES),
+  );
+
+  return `${MACHINE_CLOSE.occupied.reason} (${host}); pass --force to take it over`;
+}
 
 export function machineSocketUrl(baseUrl: string): string {
   const url = new URL(MACHINE_WEBSOCKET_PATH, baseUrl);

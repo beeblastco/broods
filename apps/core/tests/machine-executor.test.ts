@@ -18,6 +18,7 @@ import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.
 import {
   MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
+  occupiedReason,
   parseCoreFrame,
   parseDaemonFrame,
   type MachineComputerFrame,
@@ -32,6 +33,7 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import {
+  closeOf,
   MACHINE_ACCOUNT_ID,
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
@@ -50,9 +52,8 @@ const sockets: WebSocket[] = [];
 /** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
   force?: boolean;
-  // Every fake shares one host unless a test says otherwise, so a reconnect in
-  // a test reclaims the record the way a restart does.
   hostname?: string;
+  instance?: string;
   mcp?: string[];
   onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
   onMcp?: (
@@ -114,7 +115,7 @@ test("a run with no daemon connected names the command to fix it", async () => {
   );
 });
 
-test("a second daemon replaces the first, and a dropped daemon fails its in-flight run", async () => {
+test("a daemon reconnecting reclaims its record, and a dropped daemon fails its in-flight run", async () => {
   const server = core();
   const first = await connectDaemon(server, "my-mac", () => {});
   const firstClosed = closeOf(first.socket);
@@ -132,30 +133,27 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
   expect(await pending).toBe("Replaced by a newer connection");
 });
 
-test("a daemon on another computer is refused naming the holder, and --force takes over", async () => {
+test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {
     hostname: "phicks-mac",
   });
-  const other = openSocket(server);
-  other.onopen = (): void =>
-    other.send(
-      JSON.stringify({
-        type: "hello",
-        sandbox: "my-mac",
-        hostname: "kien-mac",
-      }),
-    );
-  const refused = await closeOf(other);
+  const hello = (extra: Record<string, unknown>): string =>
+    JSON.stringify({ type: "hello", sandbox: "my-mac", ...extra });
+
+  // A second daemon on the holder's own computer is the case a hostname check
+  // would have let through.
+  const local = openSocket(server);
+  local.onopen = (): void =>
+    local.send(hello({ hostname: "phicks-mac", instance: "second-daemon" }));
+  const refused = await closeOf(local);
 
   expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
-  expect(refused.reason).toContain("phicks-mac");
-  expect(refused.reason).toContain("--force");
+  expect(refused.reason).toBe(occupiedReason("phicks-mac"));
 
-  // No host named is not the same host.
+  // No instance is not the same daemon.
   const anonymous = openSocket(server);
-  anonymous.onopen = (): void =>
-    anonymous.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
+  anonymous.onopen = (): void => anonymous.send(hello({}));
 
   expect((await closeOf(anonymous)).code).toBe(MACHINE_CLOSE.occupied.code);
 
@@ -163,6 +161,7 @@ test("a daemon on another computer is refused naming the holder, and --force tak
   await connectDaemon(server, "my-mac", () => {}, {
     force: true,
     hostname: "kien-mac",
+    instance: "second-daemon",
   });
 
   expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
@@ -500,12 +499,6 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   };
 }
 
-function closeOf(socket: WebSocket): Promise<CloseEvent> {
-  return new Promise((resolve): void => {
-    socket.onclose = resolve;
-  });
-}
-
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   sandbox: string,
@@ -523,6 +516,8 @@ function connectDaemon(
           hostname: daemon.hostname ?? "test-host",
           computer: daemon.onComputer !== undefined,
           mcp: daemon.mcp,
+          // One shared instance, so a fake connecting twice is a reconnect.
+          instance: daemon.instance ?? "test-daemon",
           force: daemon.force,
         }),
       );

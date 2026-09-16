@@ -30,6 +30,12 @@ export type MachineConnectionWrite =
   | { kind: "connected"; ref: MachineConnectionRecord }
   | { kind: "disconnected" | "seen"; ref: MachineConnectionRef };
 
+export function closeOf(socket: WebSocket): Promise<CloseEvent> {
+  return new Promise((resolve): void => {
+    socket.onclose = resolve;
+  });
+}
+
 /** The executor config core builds for the `my-mac` record. */
 export function machineExecutorConfig(
   overrides: Partial<SandboxExecutorConfig> = {},
