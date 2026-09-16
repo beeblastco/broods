@@ -335,6 +335,9 @@ describe("agent rules", () => {
       normalizeAgentConfig({ subagent: { context: "same" } }),
     ).toThrow("config.subagent.context must be one of: new, inherited");
     expect(normalizeAgentConfig({ policies: [] }).policies).toBeUndefined();
+    expect(
+      normalizeAgentConfig({ policies: ["policy_a", "policy_a"] }).policies,
+    ).toEqual(["policy_a"]);
     expect(() =>
       normalizeAgentConfig({ policy: { policyIds: ["policy_1"] } }),
     ).toThrow("config.policy is no longer supported");
@@ -553,8 +556,8 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
-    // Custom tools keyed config.tools by their row id; they are gone, so a
-    // tool key is a provider tool name and nothing else.
+    // Custom tools keyed config.tools by row id and are gone. A row id that
+    // starts with a digit is no provider tool name, so it is refused.
     expect(() =>
       normalizeAgentConfig({
         tools: { "1s78zwc4z4q5ysxm74fgrhd13s88xxt": { enabled: true } },
@@ -606,7 +609,9 @@ describe("agent rules", () => {
     // JSON.parse makes "__proto__" an own key, so a plain assignment would
     // route it to the setter and hide the value from every own-key walk,
     // including the normalize pass that runs right after the merge.
-    const patch = JSON.parse('{"__proto__":{"polluted":"yes"},"name":"ok"}');
+    const patch: Record<string, unknown> = JSON.parse(
+      '{"__proto__":{"polluted":"yes"},"name":"ok"}',
+    );
     const merged = mergeAgentConfig({}, patch);
 
     expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
@@ -632,7 +637,9 @@ describe("agent rules", () => {
       list: ["prefix-eu", "${lowercase}"],
     });
     // Dangerous keys are dropped, not copied, when rebuilding the config.
-    const polluted = JSON.parse('{"__proto__": {"x": 1}, "safe": "${REGION}"}');
+    const polluted: Record<string, unknown> = JSON.parse(
+      '{"__proto__": {"x": 1}, "safe": "${REGION}"}',
+    );
     const substituted = substituteAccountEnvPlaceholders(polluted, {
       REGION: "eu",
     }) as Record<string, unknown>;

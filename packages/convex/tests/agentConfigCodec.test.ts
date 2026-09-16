@@ -67,6 +67,18 @@ describe("agent config codec", () => {
     expect(() => normalizeAgentConfig(nested)).toThrow(SANDBOX_REMOVED_MESSAGE);
   });
 
+  // A pre-#305 policy dropped on read would run the agent ungated. Carried, the
+  // validator refuses it by name.
+  test("carries a stored legacy policy into the nested config", () => {
+    const nested = toNestedAgentConfig({
+      extraConfig: { policy: { policyIds: ["policy_1"] } },
+    });
+
+    expect(() => normalizeAgentConfig(nested)).toThrow(
+      "config.policy is no longer supported",
+    );
+  });
+
   test("rejects the removed sandbox branch", () => {
     expect(() => fromNestedAgentConfig({ sandbox: "sb_default" })).toThrow(
       "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",

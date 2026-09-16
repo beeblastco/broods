@@ -35,6 +35,7 @@ const NESTED_BRANCHES = [
   "mcp",
   "skills",
   "subagent",
+  "policy",
   "scheduler",
 ] as const;
 
@@ -304,6 +305,9 @@ function assembleNestedConfig(
     ...(extra.mcp ? { mcp: extra.mcp } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
+    // Removed branch, carried so the validator refuses it by name instead of
+    // the agent silently running without the policy it expected.
+    ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
     // Top-level scalar carried in extraConfig so it flows through every
     // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
