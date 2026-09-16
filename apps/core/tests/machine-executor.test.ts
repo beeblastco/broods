@@ -167,6 +167,15 @@ test("another daemon is refused naming the holder, even on the same host, and --
   expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
 });
 
+test("the refusal reason fits a close frame however long the holder's host is", () => {
+  const reason = occupiedReason("ü".repeat(80));
+
+  // 123 bytes is the WebSocket cap; over it, or cut mid-character, the daemon
+  // sees 1007 instead of 4423.
+  expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(123);
+  expect(reason).toEndWith("pass --force to take it over");
+});
+
 test("an unknown record or a wrong provider closes the socket with 4404", async () => {
   const socket = openSocket(core());
   socket.onopen = (): void =>
