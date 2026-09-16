@@ -26,7 +26,7 @@ import {
 } from "./ObservabilityToolbar";
 
 const LEVEL_FILTER_OPTIONS: ToolbarFilterOption[] = [
-  { value: "all", label: "All levels" },
+  { value: "all", label: "Info and above" },
   { value: "ERROR", label: "error" },
   { value: "WARN", label: "warn" },
   { value: "INFO", label: "info" },
@@ -88,7 +88,8 @@ export function MonitoringPanel({
     stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
-    minLevel: "DEBUG",
+    // Debug lines stay on the server until the debug filter asks for them.
+    minLevel: level === "DEBUG" ? "DEBUG" : "INFO",
   });
 
   const fromMs = toEpochMs(fromTime);

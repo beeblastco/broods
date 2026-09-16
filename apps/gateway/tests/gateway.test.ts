@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { beforeEach, expect, setSystemTime, spyOn, test } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -31,6 +31,7 @@ import {
   quoteLabel,
   normalizeOtelId,
   relayNatsMessages,
+  resetTempoTraceCacheForTests,
   tempoTraceRowsFromResponse,
 } from "../src/observability.ts";
 import {
@@ -67,6 +68,9 @@ import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
+
+// Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
+beforeEach(resetTempoTraceCacheForTests);
 
 // The scope every observability fixture lives in: stage shop/dev of acct-1.
 const TEST_SCOPE: ObservabilityScope = {
@@ -1746,38 +1750,152 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
-  const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
-  const tempoTrace = (accountId: string): Response =>
-    json({
+  // Tempo's id lookup is not tenant-scoped, so another account's trace comes back.
+  const ownTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const otherTraceId = "5bf92f3577b34da6a3ce929d0e0e4736";
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    const traceId = url.endsWith(otherTraceId) ? otherTraceId : ownTraceId;
+
+    return json({
       batches: [
         tempoBatch({
           traceId: traceId,
           spanId: "root-1",
-          accountId: accountId,
+          accountId: traceId === otherTraceId ? "someone-else" : "acct-1",
         }),
       ],
     });
-  let accountId = "someone-else";
-  globalThis.fetch = (async () =>
-    tempoTrace(accountId)) as unknown as typeof fetch;
-  const fetchTrace = JSON.stringify({ type: "fetchTrace", traceId: traceId });
+  }) as unknown as typeof fetch;
+  const fetchTrace = (traceId: string): string =>
+    JSON.stringify({ type: "fetchTrace", traceId: traceId });
   const noNats = async (): Promise<never> => {
     throw new Error("fetchTrace never touches NATS");
   };
 
   openObservabilitySocket(socket);
   try {
-    await handleObservabilityMessage(socket, fetchTrace, noNats);
+    await handleObservabilityMessage(socket, fetchTrace(otherTraceId), noNats);
     expect(sent.at(-1)).toMatchObject({
       type: "backfill",
       entries: [],
       error: "Trace not found in this stage",
     });
 
-    accountId = "acct-1";
-    await handleObservabilityMessage(socket, fetchTrace, noNats);
+    await handleObservabilityMessage(socket, fetchTrace(ownTraceId), noNats);
     const last = sent.at(-1) as { entries: Array<{ traceId: string }> };
-    expect(last.entries.map((row) => row.traceId)).toEqual([traceId]);
+    expect(last.entries.map((row): string => row.traceId)).toEqual([
+      ownTraceId,
+    ]);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("fetchTempoBackfill shares trace lookups across backfills", async () => {
+  const originalFetch = globalThis.fetch;
+  // Two tabs open Tracing at once, then one reconnects: each trace reaches
+  // Tempo once. The second backfill joins the lookup in flight, the reconnect
+  // reads the shared answer.
+  const lookups: string[] = [];
+  const tempo = tempoFetch(tempoSearchHits(3));
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (!url.includes("/api/search")) lookups.push(url);
+
+    return tempo(input);
+  }) as unknown as typeof fetch;
+
+  try {
+    const traceIds = async (): Promise<string[]> =>
+      (
+        await Array.fromAsync(
+          fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
+        )
+      ).flatMap((chunk): string[] =>
+        chunk.rows.map((row): string => row.traceId),
+      );
+    const [first, second] = await Promise.all([traceIds(), traceIds()]);
+    const reconnect = await traceIds();
+    expect(first).toEqual(["t2", "t1", "t0"]);
+    expect(second).toEqual(first);
+    expect(reconnect).toEqual(first);
+    expect(lookups).toHaveLength(3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", async () => {
+  const originalFetch = globalThis.fetch;
+  // "bbb" fails once, so the next backfill retries it at once. "aaa" is shared
+  // until its lifetime ends, then read from Tempo again.
+  const lookups: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url.includes("/api/search"))
+      return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
+    const traceId = url.slice(url.lastIndexOf("/") + 1);
+    lookups.push(traceId);
+    if (traceId === "bbb" && lookups.length <= 2)
+      return new Response("overloaded", { status: 503 });
+
+    return json({
+      batches: [tempoBatch({ traceId: traceId, spanId: "root" })],
+    });
+  }) as unknown as typeof fetch;
+  const backfill = (): Promise<unknown[]> =>
+    Array.fromAsync(fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 2));
+
+  try {
+    await backfill();
+    await backfill();
+    expect(lookups.toSorted()).toEqual(["aaa", "bbb", "bbb"]);
+    setSystemTime(new Date(Date.now() + 5 * 60 * 1000 + 1));
+    await backfill();
+    expect(lookups.toSorted()).toEqual(["aaa", "aaa", "bbb", "bbb", "bbb"]);
+  } finally {
+    setSystemTime();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a traces backfill piece waits for the socket buffer to empty", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  // Live spans left 600 KB queued. A trace piece on top of that passes the
+  // socket's 1 MB backpressure limit, which closes the socket.
+  const { socket, sent } = observabilitySocket();
+  let queuedPolls = 3;
+  let sentWhileQueued = false;
+  Object.assign(socket, {
+    getBufferedAmount: (): number => (queuedPolls-- > 0 ? 600 * 1024 : 0),
+    send: (value: string): void => {
+      const message = JSON.parse(value) as Record<string, unknown>;
+      if (message.type === "backfill" && queuedPolls >= 0)
+        sentWhileQueued = true;
+      sent.push(message);
+    },
+  });
+  globalThis.fetch = tempoFetch(tempoSearchHits(1));
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "traces", backfill: 1 }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+    const pieces = sent.filter((message) => message.type === "backfill");
+    expect(pieces).toHaveLength(2);
+    expect(sentWhileQueued).toBe(false);
   } finally {
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
@@ -1878,7 +1996,7 @@ test("fetchTempoBackfill drops spans from other scopes in a matched trace", asyn
     globalThis.fetch = originalFetch;
   }
 });
-test("a traces backfill streams newest-first pieces and a closing message", async () => {
+test("a traces backfill streams newest-first pieces, one trace each, and a closing message", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
@@ -1908,15 +2026,13 @@ test("a traces backfill streams newest-first pieces and a closing message", asyn
 
     const pieces = sent.filter((message) => message.type === "backfill");
     expect(sent[0]).toEqual({ type: "ready" });
-    expect(pieces.map((piece) => piece.more)).toEqual([
-      true,
-      true,
-      true,
+    expect(pieces.map((piece): unknown => piece.more)).toEqual([
+      ...Array.from({ length: 25 }, (): boolean => true),
       undefined,
     ]);
-    expect(pieces.map((piece) => (piece.entries as unknown[]).length)).toEqual([
-      12, 12, 1, 0,
-    ]);
+    expect(
+      pieces.map((piece): number => (piece.entries as unknown[]).length),
+    ).toEqual([...Array.from({ length: 25 }, (): number => 1), 0]);
     expect((pieces[0]!.entries as Array<{ traceId: string }>)[0]!.traceId).toBe(
       "t24",
     );
