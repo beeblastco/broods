@@ -1,4 +1,4 @@
-import { beforeEach, expect, spyOn, test } from "bun:test";
+import { beforeEach, expect, setSystemTime, spyOn, test } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -1750,30 +1750,19 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
+  // Tempo's id lookup is not tenant-scoped, so another account's trace comes back.
   const ownTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
   const otherTraceId = "5bf92f3577b34da6a3ce929d0e0e4736";
-  // Tempo's id lookup is not tenant-scoped: another account's trace comes back
-  // whole, and a trace can carry spans from another scope next to ours.
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
-    if (url.endsWith(otherTraceId))
-      return json({
-        batches: [
-          tempoBatch({
-            traceId: otherTraceId,
-            spanId: "theirs",
-            accountId: "someone-else",
-          }),
-        ],
-      });
+    const traceId = url.endsWith(otherTraceId) ? otherTraceId : ownTraceId;
 
     return json({
       batches: [
-        tempoBatch({ traceId: ownTraceId, spanId: "ours" }),
         tempoBatch({
-          traceId: ownTraceId,
-          spanId: "theirs",
-          accountId: "someone-else",
+          traceId: traceId,
+          spanId: "root-1",
+          accountId: traceId === otherTraceId ? "someone-else" : "acct-1",
         }),
       ],
     });
@@ -1794,8 +1783,10 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
     });
 
     await handleObservabilityMessage(socket, fetchTrace(ownTraceId), noNats);
-    const last = sent.at(-1) as { entries: Array<{ spanId: string }> };
-    expect(last.entries.map((row) => row.spanId)).toEqual(["ours"]);
+    const last = sent.at(-1) as { entries: Array<{ traceId: string }> };
+    expect(last.entries.map((row): string => row.traceId)).toEqual([
+      ownTraceId,
+    ]);
   } finally {
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
@@ -1803,14 +1794,13 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   }
 });
 
-test("fetchTempoBackfill shares trace lookups across backfills and keeps finished traces", async () => {
+test("fetchTempoBackfill shares trace lookups across backfills", async () => {
   const originalFetch = globalThis.fetch;
-  // Two tabs open Tracing at once, then one reconnects. Tempo serialises
-  // lookups, so each trace must reach it once: the second backfill joins the
-  // lookup in flight, the reconnect reads the finished trace from the gateway.
+  // Two tabs open Tracing at once, then one reconnects: each trace reaches
+  // Tempo once. The second backfill joins the lookup in flight, the reconnect
+  // reads the shared answer.
   const lookups: string[] = [];
-  const hits = tempoSearchHits(3);
-  const tempo = tempoFetch(hits);
+  const tempo = tempoFetch(tempoSearchHits(3));
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
     if (!url.includes("/api/search")) lookups.push(url);
@@ -1838,52 +1828,36 @@ test("fetchTempoBackfill shares trace lookups across backfills and keeps finishe
   }
 });
 
-test("fetchTempoBackfill asks Tempo again for a trace that may still grow", async () => {
+test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", async () => {
   const originalFetch = globalThis.fetch;
-  // "aaa" is a run still going: only an ended child is in Tempo. "bbb" has its
-  // root, but a child batch may still be in the collector's retry. "ccc" is a
-  // 206, missing the spans of blocks Tempo failed to read. Keeping any of them
-  // would hide the rest of the trace from every later backfill.
+  // "bbb" fails once, so the next backfill retries it at once. "aaa" is shared
+  // until its lifetime ends, then read from Tempo again.
   const lookups: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
     if (url.includes("/api/search"))
-      return json({
-        traces: [{ traceID: "aaa" }, { traceID: "bbb" }, { traceID: "ccc" }],
-      });
-    lookups.push(url);
-    if (url.endsWith("aaa"))
-      return json({
-        batches: [
-          tempoBatch({ traceId: "aaa", spanId: "step", parentSpanId: "root" }),
-        ],
-      });
-    if (url.endsWith("ccc"))
-      return json(
-        { batches: [tempoBatch({ traceId: "ccc", spanId: "root" })] },
-        { status: 206 },
-      );
+      return json({ traces: [{ traceID: "aaa" }, { traceID: "bbb" }] });
+    const traceId = url.slice(url.lastIndexOf("/") + 1);
+    lookups.push(traceId);
+    if (traceId === "bbb" && lookups.length <= 2)
+      return new Response("overloaded", { status: 503 });
 
     return json({
-      batches: [
-        tempoBatch({
-          traceId: "bbb",
-          spanId: "root",
-          endTimeUnixNano: `${Date.now() * 1_000_000}`,
-        }),
-      ],
+      batches: [tempoBatch({ traceId: traceId, spanId: "root" })],
     });
   }) as unknown as typeof fetch;
+  const backfill = (): Promise<unknown[]> =>
+    Array.fromAsync(fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 2));
 
   try {
-    await Array.fromAsync(
-      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
-    );
-    await Array.fromAsync(
-      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
-    );
-    expect(lookups).toHaveLength(6);
+    await backfill();
+    await backfill();
+    expect(lookups.toSorted()).toEqual(["aaa", "bbb", "bbb"]);
+    setSystemTime(new Date(Date.now() + 5 * 60 * 1000 + 1));
+    await backfill();
+    expect(lookups.toSorted()).toEqual(["aaa", "aaa", "bbb", "bbb", "bbb"]);
   } finally {
+    setSystemTime();
     globalThis.fetch = originalFetch;
   }
 });
@@ -2997,15 +2971,11 @@ function tempoBatch({
   spanId,
   accountId = TEST_SCOPE.accountId,
   stage = TEST_SCOPE.stageSlug,
-  parentSpanId,
-  endTimeUnixNano = "2000000000",
 }: {
   traceId: string;
   spanId: string;
   accountId?: string;
   stage?: string;
-  parentSpanId?: string;
-  endTimeUnixNano?: string;
 }): unknown {
   return {
     resource: {
@@ -3021,10 +2991,9 @@ function tempoBatch({
           {
             traceId: traceId,
             spanId: spanId,
-            ...(parentSpanId ? { parentSpanId: parentSpanId } : {}),
             name: "agent.task",
             startTimeUnixNano: "1000000000",
-            endTimeUnixNano: endTimeUnixNano,
+            endTimeUnixNano: "2000000000",
             status: { code: 1 },
           },
         ],
