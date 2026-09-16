@@ -714,21 +714,13 @@ function CanvasInner({
           const failed = refWrites.find((r) => r.status === "rejected");
           if (failed?.status === "rejected") {
             refsFailed = true;
-            // The layout write above already landed, so the database holds
-            // what is on screen. Leave the canvas to it: without this a
-            // refused ref kept the sync off and later saves overwrote deploys.
-            if (editGeneration.current === generation) {
-              hasLocalChanges.current = false;
-            }
             throw failed.reason;
           }
         })
         .then(() => {
-          // Only the success path may clear the dirty flag, and only when no
-          // edit landed while this write was in flight. Clearing it in
-          // `finally` let a failed write be overwritten by the next DB sync;
-          // clearing it after a stale success let that sync overwrite the
-          // newer local state. Either way the edit vanished with no message.
+          // Clear the dirty flag only when no edit landed while this write was
+          // in flight: clearing it after a stale success let the DB sync
+          // overwrite the newer local state with no message.
           reportPerf("optimistic-save", performance.now() - startedAt, {
             attributes: { outcome: "committed", nodes: currentNodes.length },
           });
@@ -743,6 +735,13 @@ function CanvasInner({
               nodes: currentNodes.length,
             },
           });
+          // A failed save hands the canvas back to the database: the pill says
+          // what failed, and the next update replaces this graph. Holding the
+          // dirty flag instead kept the sync off for the tab, so a later save
+          // overwrote CLI deploys and other tabs. A newer edit keeps it.
+          if (editGeneration.current === generation) {
+            hasLocalChanges.current = false;
+          }
           setSaveError(toErrorMessage(error));
           setSaveState("error");
         });
@@ -831,7 +830,7 @@ function CanvasInner({
   const editGraph = useCallback(
     (
       edit: (nodes: Node[], edges: Edge[]) => { edges: Edge[]; nodes: Node[] },
-    ) => {
+    ): void => {
       const next = edit(nodesRef.current, edgesRef.current);
       const settled = reconcileFramePositions(
         {
@@ -871,7 +870,8 @@ function CanvasInner({
 
   // A server gaining or changing its transport moves its node to another
   // frame. Settle positions as for an edit; the first load moves nothing,
-  // since MCP nodes were not framed before it.
+  // since MCP nodes were not framed before it. Only a writer saves them: a
+  // member's save is refused, so their tab settles the drawing alone.
   const lastMcpServers = useRef(mcpServers);
   useEffect(() => {
     const before = lastMcpServers.current;
@@ -888,8 +888,8 @@ function CanvasInner({
     if (settled === nodesRef.current) return;
     nodesRef.current = settled;
     setNodes(settled);
-    scheduleSave();
-  }, [mcpServers, setNodes, scheduleSave]);
+    if (canWrite) scheduleSave();
+  }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
   // Route Delete key to the side-panel confirmation flow instead of immediate node deletion.
   useEffect(() => {
@@ -1675,29 +1675,34 @@ function FrameMemberMenuItems({
     <ContextMenuGroup>
       {actions.map((action) =>
         action.kind === "make-default" ? (
-          <ContextMenuItem
-            key={`default:${action.agentId}`}
-            disabled={action.disabledReason !== null}
-            title={action.disabledReason ?? undefined}
-            className={
-              action.disabledReason
-                ? "cursor-not-allowed flex-col items-start"
-                : "cursor-pointer"
-            }
-            onClick={() => onMakeDefault(action.agentId, memberId)}
-          >
-            <span className="flex items-center gap-2">
+          action.disabledReason ? (
+            // A disabled item takes no pointer events, so the cursor and the
+            // reason's tooltip sit on this wrapper.
+            <div
+              key={`default:${action.agentId}`}
+              className="cursor-not-allowed"
+              title={action.disabledReason}
+            >
+              <ContextMenuItem disabled className="flex-col items-start">
+                <span className="flex items-center gap-2">
+                  <Star />
+                  {makeDefaultLabel(action.agentLabel)}
+                </span>
+                <span className="text-2xs text-muted-foreground">
+                  {action.disabledReason}
+                </span>
+              </ContextMenuItem>
+            </div>
+          ) : (
+            <ContextMenuItem
+              key={`default:${action.agentId}`}
+              className="cursor-pointer"
+              onClick={() => onMakeDefault(action.agentId, memberId)}
+            >
               <Star />
-              {action.agentLabel
-                ? `Make default for ${action.agentLabel}`
-                : "Make default"}
-            </span>
-            {action.disabledReason && (
-              <span className="text-2xs text-muted-foreground">
-                {action.disabledReason}
-              </span>
-            )}
-          </ContextMenuItem>
+              {makeDefaultLabel(action.agentLabel)}
+            </ContextMenuItem>
+          )
         ) : (
           <ContextMenuItem
             key={`remove:${action.edgeId}`}
@@ -1711,4 +1716,8 @@ function FrameMemberMenuItems({
       )}
     </ContextMenuGroup>
   );
+}
+
+function makeDefaultLabel(agentLabel: string | null): string {
+  return agentLabel ? `Make default for ${agentLabel}` : "Make default";
 }

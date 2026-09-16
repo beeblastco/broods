@@ -175,14 +175,15 @@ export function frameMemberActions(
 /**
  * The first runtime-ref problem `after` has that `before` did not, or null.
  * Used to refuse an edit up front: a problem the graph already had is not
- * this edit's to block.
+ * this edit's to block. Problems match on resource ids, so renaming a sandbox
+ * or a workspace does not make an old problem look new.
  */
 export function introducedRuntimeRefsProblem(
   before: Pick<FlatGraph, "edges" | "nodes">,
   after: Pick<FlatGraph, "edges" | "nodes">,
 ): RuntimeRefsProblem | null {
   const keyOf = (problem: RuntimeRefsProblem): string =>
-    `${problem.agentId}\n${problem.workspaceName}\n${problem.sandboxLabel}`;
+    `${problem.agentId}\n${problem.workspaceId}\n${problem.sandboxId}`;
   const existing = new Set(
     runtimeRefsProblems(before.nodes, before.edges).map(keyOf),
   );

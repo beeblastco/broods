@@ -170,9 +170,37 @@ describe("runtime ref guards", () => {
       ),
     ).toEqual({
       agentId: "agent",
+      sandboxId: "sb_lone",
       sandboxLabel: "lone",
+      workspaceId: "ws_notes",
       workspaceName: "notes",
     });
+  });
+
+  test("renaming a sandbox or workspace in a graph that already breaks the rule is not refused", () => {
+    // bravo is second and backs notes: saved like this before the check existed.
+    const broken = EDGES.map((item) =>
+      item.type === "mount" ? { ...item, source: "bravo" } : item,
+    );
+    const renamed = NODES.map((item) =>
+      item.id === "bravo" || item.id === "notes"
+        ? {
+            ...item,
+            data: {
+              ...item.data,
+              label: `${item.id}-renamed`,
+              mountName: `${item.id}-renamed`,
+            },
+          }
+        : item,
+    );
+
+    expect(
+      introducedRuntimeRefsProblem(
+        { edges: broken, nodes: NODES },
+        { edges: broken, nodes: renamed },
+      ),
+    ).toBeNull();
   });
 });
 

@@ -53,6 +53,16 @@ describe("agent rules", () => {
     ).toThrow(
       'config.sandboxes[1] "sb_browser" also backs workspace "repo"; only the first sandbox can back a workspace',
     );
+    // Each index is judged in turn, so the later mount at [1] wins over the
+    // repeat at [2], as in core.
+    expect(() =>
+      normalizeAgentConfig({
+        sandboxes: ["sb_a", "sb_b", "sb_b"],
+        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
+      }),
+    ).toThrow(
+      'config.sandboxes[1] "sb_b" also backs workspace "repo"; only the first sandbox can back a workspace',
+    );
   });
 
   it("validates config.mcp entries", () => {

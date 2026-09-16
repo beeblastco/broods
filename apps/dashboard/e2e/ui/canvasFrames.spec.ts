@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
+type Box = { height: number; width: number; x: number; y: number };
+
+type Point = { x: number; y: number };
+
 // Chips are measured against frames on screen; a pixel of slack covers the
 // sub-pixel rounding of the fitted zoom.
 const SLACK = 1;
@@ -32,12 +36,14 @@ test("chips sit inside their frames and a collapsed frame is one card", async ({
   await expect(chips.filter({ hasText: /github|linear/ })).toHaveCount(0);
 
   const frameBoxes = await Promise.all(
-    (await expanded.all()).map(async (frame) => (await frame.boundingBox())!),
+    (await expanded.all()).map(
+      async (frame): Promise<Box> => (await frame.boundingBox())!,
+    ),
   );
   for (const chip of await chips.all()) {
     const box = (await chip.boundingBox())!;
     const inside = frameBoxes.some(
-      (frame) =>
+      (frame): boolean =>
         box.x >= frame.x - SLACK &&
         box.y >= frame.y - SLACK &&
         box.x + box.width <= frame.x + frame.width + SLACK &&
@@ -53,10 +59,10 @@ test("chip names and status lines fit without truncating", async ({ page }) => {
     .locator(
       '[data-fixture="canvas-frames"] [data-slot="resource-chip"] .truncate',
     )
-    .evaluateAll((spans) =>
+    .evaluateAll((spans): (string | null)[] =>
       spans
-        .filter((span) => span.scrollWidth > span.clientWidth)
-        .map((span) => span.textContent),
+        .filter((span): boolean => span.scrollWidth > span.clientWidth)
+        .map((span): string | null => span.textContent),
     );
 
   expect(clipped).toEqual([]);
@@ -74,12 +80,12 @@ test("the mount and runs-on edges end on the chips they join", async ({
   ] as const) {
     const endpoints = await fixture
       .locator(`.react-flow__edge-${kind} path.react-flow__edge-path`)
-      .evaluate((path: SVGPathElement) => {
+      .evaluate((path: SVGPathElement): Point[] => {
         const matrix = path.getScreenCTM();
         if (!matrix) return [];
         const length = path.getTotalLength();
 
-        return [0, length].map((at) => {
+        return [0, length].map((at): Point => {
           const point = path.getPointAtLength(at).matrixTransform(matrix);
 
           return { x: point.x, y: point.y };
@@ -88,7 +94,7 @@ test("the mount and runs-on edges end on the chips they join", async ({
     expect(endpoints).toHaveLength(2);
     const boxes = await Promise.all(
       ends.map(
-        async (id) =>
+        async (id): Promise<Box> =>
           (await fixture
             .locator(
               `.react-flow__node[data-id="${id}"] [data-slot="resource-chip"]`,
@@ -97,9 +103,9 @@ test("the mount and runs-on edges end on the chips they join", async ({
       ),
     );
     // Each end sits on one of the two chips' side edges, one end per chip.
-    const chipAt = endpoints.map((point) =>
+    const chipAt = endpoints.map((point): number =>
       boxes.findIndex(
-        (box) =>
+        (box): boolean =>
           point.y >= box.y &&
           point.y <= box.y + box.height &&
           (Math.abs(point.x - box.x) <= HANDLE_SLACK ||
@@ -119,10 +125,10 @@ test("no bundle edge crosses a frame other than the one it enters", async ({
     fixture.locator('.react-flow__edge[data-id^="bundle:"]'),
   ).toHaveCount(6);
 
-  const crossings = await fixture.evaluate((root, step) => {
+  const crossings = await fixture.evaluate((root, step): string[] => {
     const frames = [
       ...root.querySelectorAll<HTMLElement>(".react-flow__node-frame"),
-    ].map((frame) => ({
+    ].map((frame): { id: string; rect: DOMRect } => ({
       id: frame.dataset.id ?? "",
       rect: frame.getBoundingClientRect(),
     }));
@@ -132,7 +138,7 @@ test("no bundle edge crosses a frame other than the one it enters", async ({
       ),
     ];
 
-    return edges.flatMap((edge) => {
+    return edges.flatMap((edge): string[] => {
       const id = edge.dataset.id ?? "";
       // bundle:{agentId}:{frameId}, and frame ids start with "frame:".
       const targetId = id.slice(id.indexOf(":frame:") + 1);

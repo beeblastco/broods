@@ -368,10 +368,7 @@ export function findLaterSandboxMount(
   workspaces: readonly AgentWorkspaceRef[] | undefined,
 ): LaterSandboxMount | undefined {
   for (const [index, sandboxId] of sandboxes.entries()) {
-    const workspace =
-      index === 0
-        ? undefined
-        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
+    const workspace = workspaceOnLaterSandbox(sandboxes, index, workspaces);
     if (workspace) {
       return { index: index, sandboxId: sandboxId, workspace: workspace };
     }
@@ -669,18 +666,31 @@ function normalizeSandboxRefs(
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
+  // One index at a time, duplicate first, so mixed input reports the same
+  // error as core's copy of this rule.
   value.forEach((sandboxId, index): void => {
     if (seen.has(sandboxId))
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
+    const mounted = workspaceOnLaterSandbox(value, index, workspaces);
+    if (mounted)
+      throw new Error(
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
+      );
     seen.add(sandboxId);
   });
-  const mount = findLaterSandboxMount(value, workspaces);
-  if (mount)
-    throw new Error(
-      `config.sandboxes[${mount.index}] "${mount.sandboxId}" also backs workspace "${mount.workspace.name}"; only the first sandbox can back a workspace`,
-    );
+}
+
+/** The workspace backed by `sandboxes[index]` when that is not the first sandbox. */
+function workspaceOnLaterSandbox(
+  sandboxes: readonly string[],
+  index: number,
+  workspaces: readonly AgentWorkspaceRef[] | undefined,
+): AgentWorkspaceRef | undefined {
+  return index === 0
+    ? undefined
+    : workspaces?.find((ref): boolean => ref.sandbox === sandboxes[index]);
 }
 
 function normalizeWorkspaceRefs(value: unknown): void {

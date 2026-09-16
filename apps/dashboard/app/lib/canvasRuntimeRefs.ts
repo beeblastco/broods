@@ -49,8 +49,10 @@ export type CanvasInfraAnalysis = {
 /** A dashboard agent whose drawn refs the config API would refuse. */
 export type RuntimeRefsProblem = {
   agentId: string;
-  /** The sandbox the workspace is mounted on, which is not the agent's first. */
+  /** Resource id of the sandbox the workspace is mounted on, not the agent's first. */
+  sandboxId: string;
   sandboxLabel: string;
+  workspaceId: string;
   workspaceName: string;
 };
 
@@ -330,7 +332,9 @@ export function runtimeRefsProblems(
       return [
         {
           agentId: agent.id,
+          sandboxId: mount.sandboxId,
           sandboxLabel: sandboxLabels.get(mount.sandboxId) ?? mount.sandboxId,
+          workspaceId: mount.workspace.workspaceId,
           workspaceName: mount.workspace.name,
         },
       ];

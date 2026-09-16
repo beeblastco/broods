@@ -17,7 +17,8 @@ vi.mock("../auth", () => ({
 
 const modules = import.meta.glob("../**/*.ts");
 
-const refsTest = () => convexTest(schema, modules);
+const refsTest = (): ReturnType<typeof convexTest> =>
+  convexTest(schema, modules);
 
 type T = ReturnType<typeof refsTest>;
 
