@@ -26,7 +26,6 @@ const NESTED_BRANCHES = [
   "agent",
   "model",
   "provider",
-  "sandbox",
   "sandboxes",
   "workspaces",
   "session",
@@ -41,10 +40,13 @@ const NESTED_BRANCHES = [
 ] as const;
 
 // Removed branches, kept only so a write answers with a pointer instead of dropping
-// the value silently. `workspace` (singular) is the pre-records shape.
+// the value silently. `workspace` (singular) is the pre-records shape; `sandbox`
+// (singular) became the first entry of `sandboxes`.
 const REMOVED_BRANCH_HINTS: Record<string, string> = {
+  sandbox:
+    "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
   workspace:
-    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',
+    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandboxes: ["sb_…"]',
 };
 
 /** Encrypted blob shape persisted on the `agents` row. base64url-encoded. */
@@ -283,7 +285,6 @@ function assembleNestedConfig(
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
     ...(provider ? { provider: provider } : {}),
-    ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
     ...(extra.sandboxes ? { sandboxes: extra.sandboxes } : {}),
     ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
     ...(extra.session ? { session: extra.session } : {}),
@@ -407,14 +408,12 @@ function collectExtraConfig(
   const extra: Record<string, unknown> = {};
   if (agent && Object.keys(agent).length > 0) extra.agent = agent;
   if (model && Object.keys(model).length > 0) extra.model = model;
-  if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
   if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
   if (tools && Object.keys(tools).length > 0) extra.tools = tools;
   for (const branch of NESTED_BRANCHES) {
     if (
       branch === "agent" ||
       branch === "model" ||
-      branch === "sandbox" ||
       branch === "workspaces" ||
       branch === "tools"
     )

@@ -31,7 +31,7 @@ export const sandboxAgent = defineAgent({
   agent: {
     system: "You are testing the workspace sandbox.",
   },
-  sandbox: sandbox,
+  sandboxes: [sandbox],
   workspaces: [workspace],
   publicAccess: true,
 });

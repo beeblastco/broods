@@ -35,7 +35,6 @@ export type AgentConfig = Record<string, unknown> & {
   };
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
-  sandbox?: string;
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: Record<string, unknown>;
@@ -185,14 +184,18 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  normalizeSandboxRef(config.sandbox);
-  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
+  if (config.sandbox !== undefined) {
     throw new Error(
-      `config.sandbox is required for the ${String(config.harness.type)} harness`,
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(config.sandboxes, config.sandbox, config.workspaces);
+  normalizeSandboxRefs(config.sandboxes, config.workspaces);
+  if (isPlainObject(config.harness) && !config.sandboxes?.length) {
+    throw new Error(
+      `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
+    );
+  }
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -323,6 +326,27 @@ export function normalizeUpdateAgentInput(
       : {}),
     config: config,
   };
+}
+
+/**
+ * The agent's sandbox list once the canvas sets its default. The canvas draws only
+ * the default, so the extras already stored stay behind it. Clearing the default
+ * clears the list rather than promoting an extra into its place.
+ */
+export function sandboxesWithDefault(
+  stored: unknown,
+  defaultSandbox: string | null,
+): string[] {
+  if (!defaultSandbox) return [];
+  const extras = Array.isArray(stored)
+    ? stored
+        .slice(1)
+        .filter(
+          (id): id is string => typeof id === "string" && id !== defaultSandbox,
+        )
+    : [];
+
+  return [defaultSandbox, ...extras];
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
@@ -579,36 +603,29 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
   return trimmed || undefined;
 }
 
-function normalizeSandboxRef(value: unknown): void {
-  assertOptionalNonEmptyString(value, "config.sandbox");
-}
-
-// Extra sandboxes are bash targets beside the default, so repeating the default
-// or a workspace's sandbox would name one machine twice, once with a mount and
-// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+// The first sandbox is the default and may back a workspace. Any later one is a
+// bash target with nothing mounted, so a workspace naming it would put one
+// machine behind two roles. Runs after normalizeWorkspaceRefs, which proves the
+// refs' shape.
 function normalizeSandboxRefs(
   value: unknown,
-  defaultSandbox: unknown,
   workspaces: AgentWorkspaceRef[] | undefined,
 ): void {
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
   value.forEach((sandboxId, index): void => {
-    if (sandboxId === defaultSandbox)
-      throw new Error(
-        `config.sandboxes[${index}] repeats the default config.sandbox`,
-      );
     if (seen.has(sandboxId))
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
-    const mounted = workspaces?.find(
-      (ref): boolean => ref.sandbox === sandboxId,
-    );
+    const mounted =
+      index === 0
+        ? undefined
+        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
     if (mounted)
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
       );
     seen.add(sandboxId);
   });

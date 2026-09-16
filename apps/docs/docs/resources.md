@@ -179,7 +179,6 @@ export const runner = defineSandbox({
 
 const codexHarness = defineHarness({
   type: "codex",
-  sandbox: runner,
   permissionMode: "allow-all",
   startupTimeoutMs: 180_000,
 });
@@ -187,6 +186,7 @@ const codexHarness = defineHarness({
 export const codingAgent = defineAgent({
   name: "coding-agent",
   harness: codexHarness,
+  sandboxes: [runner],
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),
@@ -201,8 +201,8 @@ export const codingAgent = defineAgent({
 There is no default `defineHarness()` definition. Omit `harness` to use Broods.
 This serverless loop runs in Broods core and provides the normal Broods tool
 registry, including `bash`, `read`, `write`, `edit`, `glob`, and `grep` when
-their required sandbox or workspace is configured. An agent-level `sandbox` is
-a tool execution target; the serverless loop itself does not live inside it.
+their required sandbox or workspace is configured. The agent's `sandboxes` are
+tool execution targets; the serverless loop itself does not live inside them.
 
 The `<workspace>` prompt belongs to that default loop, so setting `harness`
 turns it off. Each adapter ships its own file-tool instructions and its own
@@ -211,8 +211,8 @@ run no longer has. Structured memory is unaffected: no adapter declares a
 `memory_save` builtin, so that tool and its `<memory>` block still apply. See
 [Memory and Session](./workspace/memory-and-session.md).
 
-Every AI SDK Harness adapter requires its `sandbox` on `defineHarness()`. The
-sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
+Every AI SDK Harness adapter runs on the agent's first entry in `sandboxes`, so an
+agent with a harness needs at least one. That sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
 (`lambda`) provider. Compute lifecycle belongs to `defineSandbox()`: use
 `onCreate` for one-time setup and `onResume` for per-acquisition setup.
 
@@ -377,9 +377,9 @@ export const notes = defineWorkspace({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  sandbox: mySandbox,
+  sandboxes: [mySandbox],
   workspaces: [
-    notes, // inherit agent sandbox
+    notes, // inherit the first sandbox
     { workspace: notes, sandbox: null }, // read-only
     { workspace: teamWorkspace, sandbox: reservedSandbox }, // per-workspace override
   ],
@@ -552,20 +552,23 @@ attached, and one per agent where none is. `options.reservationKey` pins that id
 yourself. Two sandboxes carrying the same key share one machine. Keys are scoped to
 your account; the same string on another account names a different machine.
 
-Attach extra sandboxes when one agent needs a specialized machine beside its default, such
-as a browser image, a deny-all network, or a stricter `permissionMode`:
+An agent lists its sandboxes in `sandboxes`. The first is the default: plain `bash` runs
+there, a workspace without its own `sandbox` mounts it, and a harness runs on it. Add more
+when one agent needs a specialized machine beside its default, such as a browser image, a
+deny-all network, or a stricter `permissionMode`:
 
 ```ts
 export const myAgent = defineAgent({
   name: "my-agent",
-  sandbox: lambdaSandbox, // default machine
-  sandboxes: [reservedSandbox], // extra machines, picked by name
+  sandboxes: [lambdaSandbox, reservedSandbox], // first is the default
 });
 ```
 
-Extras only get `bash`. The model passes `sandbox: "persistent"` to run there. No
-workspace is mounted, so nothing written reaches durable storage, and a persistent extra
-reserves its own machine for the agent.
+The model reaches a later entry by passing its name, here `sandbox: "persistent"`, to
+`bash`, or to `computer` when the entry is a machine. The file tools never run there.
+No workspace is mounted, so nothing written reaches durable storage, and a persistent one
+reserves its own machine for the agent. Each id may appear once, and only the first may
+also back a workspace.
 
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
 
@@ -656,7 +659,7 @@ export const blender = defineMcp({
 
 export const designer = defineAgent({
   name: "designer",
-  sandbox: mac,
+  sandboxes: [mac],
   mcp: { [blender.name]: { enabled: true, needsApproval: true } },
 });
 ```

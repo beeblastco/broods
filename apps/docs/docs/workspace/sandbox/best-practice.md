@@ -137,8 +137,8 @@ the bot must have **Send Messages** permission in the channel.
 
 `async_status` is auto-registered whenever the agent has a workspace whose effective sandbox
 is persistent, or any `config.tools` entry marked `async: true`, and only resolves a
-`statusId` for its own conversation. An agent-level persistent sandbox without a workspace
-reserves a machine of its own but does not register it: a background job reports back
+`statusId` for its own conversation. A persistent sandbox in the agent's `sandboxes`, used
+without a workspace, reserves a machine of its own but does not register it: a background job reports back
 against a workspace. Jobs are tracked in the `AsyncToolResult` table.
 
 **Ownership & limits.** `sandbox`, Daytona, and Vercel cap concurrent background jobs (10),

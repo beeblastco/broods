@@ -5,15 +5,16 @@ import type { ModelMessage, SystemModelMessage } from "ai";
 import * as actualAi from "ai";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
-import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
-import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   setStorageForTests,
   type Storage,
   type TaskUsageInput,
 } from "../src/shared/storage.ts";
-import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../src/shared/workspaces.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -630,8 +631,6 @@ describe("runAgentLoop", () => {
         eventId: "owner",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         renewConversationLease: async () => "renewed",
@@ -703,8 +702,6 @@ describe("runAgentLoop", () => {
         eventId: "owner",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         renewConversationLease: async () => "stopped",
@@ -745,8 +742,6 @@ describe("runAgentLoop", () => {
         eventId: "tg:900151472",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
@@ -814,8 +809,6 @@ describe("runAgentLoop", () => {
         eventId: "tg:900151472",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -870,8 +863,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -947,8 +938,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -1001,8 +990,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -1049,8 +1036,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -1109,9 +1094,12 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => ({ provider: "lambda" }),
-        agentSandboxPermissionMode: () => "ask",
-        sandboxes: () => [],
+        sandboxes: () => [
+          {
+            name: "agent-sandbox",
+            sandbox: { provider: "lambda", permissionMode: "ask" },
+          },
+        ],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
@@ -1212,9 +1200,12 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: (): string => "fs-test",
         resolvedWorkspaces: (): ResolvedWorkspace[] => [],
-        agentSandbox: (): SandboxExecutorConfig => ({ provider: "lambda" }),
-        agentSandboxPermissionMode: (): SandboxPermissionMode => "bypass",
-        sandboxes: () => [],
+        sandboxes: (): ResolvedAgentSandbox[] => [
+          {
+            name: "agent-sandbox",
+            sandbox: { provider: "lambda", permissionMode: "bypass" },
+          },
+        ],
         persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async (): Promise<{
           systemContextSnapshot: SystemContextSnapshot;
@@ -1282,8 +1273,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1353,8 +1342,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1420,8 +1407,6 @@ describe("runAgentLoop", () => {
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
-      agentSandbox: () => undefined,
-      agentSandboxPermissionMode: () => "ask",
       sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
@@ -1509,8 +1494,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1567,8 +1550,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1633,8 +1614,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1697,8 +1676,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1820,8 +1797,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -1891,8 +1866,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -1937,8 +1910,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -1990,8 +1961,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadSkillPrompt: loadSkillPrompt,
@@ -2059,8 +2028,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -2121,8 +2088,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => [],
         loadRefreshedSystemPromptParts: async () => ({
@@ -2208,8 +2173,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -2277,8 +2240,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -2334,8 +2295,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -2386,8 +2345,6 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        agentSandbox: () => undefined,
-        agentSandboxPermissionMode: () => "ask",
         sandboxes: () => [],
         persistModelMessages: async () => {},
         loadRefreshedSystemPromptParts: async () => ({
@@ -2438,8 +2395,6 @@ describe("runAgentLoop", () => {
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
-      agentSandbox: () => undefined,
-      agentSandboxPermissionMode: () => "ask",
       sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({
@@ -2487,8 +2442,6 @@ describe("runAgentLoop", () => {
       eventId: "direct-event",
       filesystemNamespace: () => "fs-test",
       resolvedWorkspaces: () => [],
-      agentSandbox: () => undefined,
-      agentSandboxPermissionMode: () => "ask",
       sandboxes: () => [],
       persistModelMessages: async () => {},
       loadRefreshedSystemPromptParts: async () => ({

@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
+import { sandboxesWithDefault } from "../model/agentRules";
 import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
@@ -347,17 +348,18 @@ export const update = mutation({
 
 /**
  * Updates the broods runtime resource references derived from the canvas graph.
- * This preserves unrelated extraConfig branches while replacing sandbox/workspaces.
+ * This preserves unrelated extraConfig branches while setting the default sandbox
+ * and replacing workspaces.
  */
 export const updateRuntimeRefs = mutation({
   args: {
     configId: v.id("agentConfigs"),
-    sandbox: v.union(v.string(), v.null()),
+    defaultSandbox: v.union(v.string(), v.null()),
     workspaces: v.union(v.array(workspaceRefValidator), v.null()),
   },
   returns: v.id("agentConfigs"),
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
-    const { configId, sandbox, workspaces } = args;
+    const { configId, defaultSandbox, workspaces } = args;
 
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
@@ -380,17 +382,23 @@ export const updateRuntimeRefs = mutation({
     }
 
     const extraConfig = { ...asRecord(existing.extraConfig) };
-    if (sandbox) {
-      extraConfig.sandbox = sandbox;
+    const sandboxes = sandboxesWithDefault(
+      extraConfig.sandboxes,
+      defaultSandbox,
+    );
+    if (sandboxes.length > 0) {
+      extraConfig.sandboxes = sandboxes;
     } else {
-      delete extraConfig.sandbox;
+      delete extraConfig.sandboxes;
     }
     if (workspaces && workspaces.length > 0) {
       extraConfig.workspaces = workspaces;
     } else {
       delete extraConfig.workspaces;
     }
-    // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
+    // Old nested AgentWorkspaceConfig and the single default `sandbox` are no
+    // longer part of broods's runtime contract.
+    delete extraConfig.sandbox;
     delete extraConfig.workspace;
 
     // Provisioning stays unconditional. A canvas save is where an agent whose

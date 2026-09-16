@@ -49,9 +49,11 @@ describe("createTools", () => {
     const tools = await createTools(
       {
         ...createToolContext(),
-        agentSandbox: { provider: "lambda" },
-        agentSandboxPermissionMode: "ask",
         sandboxes: [
+          {
+            name: "agent-sandbox",
+            sandbox: { provider: "lambda", permissionMode: "ask" },
+          },
           {
             name: "kien-mac",
             sandbox: { provider: "machine", permissionMode: "ask" },
@@ -73,8 +75,9 @@ describe("createTools", () => {
     const tools = await createTools(
       {
         ...createToolContext(),
-        agentSandbox: mac,
-        agentSandboxPermissionMode: "bypass",
+        sandboxes: [
+          { name: "my-mac", sandbox: { ...mac, permissionMode: "bypass" } },
+        ],
         // A mount is a way onto the machine's files; its screen stays reachable.
         workspaces: [
           {
@@ -1540,8 +1543,12 @@ function sandboxContext(
   return {
     accountId: "acct_test",
     conversationKey: "conversation",
-    agentSandbox: { provider: "lambda" },
-    agentSandboxPermissionMode: permissionMode,
+    sandboxes: [
+      {
+        name: "agent-sandbox",
+        sandbox: { provider: "lambda", permissionMode: permissionMode },
+      },
+    ],
     // Each workspace carries its own effective sandbox (its permissionMode lives on it).
     workspaces: workspaces.map((workspace) => ({
       ...workspace,
@@ -1558,8 +1565,7 @@ async function approvalStatus(
   input: Record<string, unknown>,
   ctx: {
     workspaces?: unknown[];
-    agentSandbox?: unknown;
-    agentSandboxPermissionMode?: unknown;
+    sandboxes?: unknown[];
     approvalRequirements?: Map<string, true>;
   },
 ): Promise<ToolApprovalStatus> {
@@ -1569,10 +1575,7 @@ async function approvalStatus(
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
-    ...(typeof ctx.agentSandboxPermissionMode === "string"
-      ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
-      : {}),
+    ...(ctx.sandboxes ? { sandboxes: ctx.sandboxes as never } : {}),
   });
 }
 

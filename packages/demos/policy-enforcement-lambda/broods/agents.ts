@@ -68,7 +68,7 @@ export const auditPolicyAgent = defineAgent({
   agent: {
     system: system,
   },
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   publicAccess: true,
   policies: [auditBashPolicy],
 });
@@ -88,7 +88,7 @@ export const enforcePolicyAgent = defineAgent({
   agent: {
     system: system,
   },
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   publicAccess: true,
   policies: [enforceBashPolicy],
 });

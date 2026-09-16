@@ -79,11 +79,12 @@ export const projectWorkspace = defineWorkspace({
 
 ## 5. Add a specialized sandbox
 
-Give one agent more than one machine with `sandboxes`. The model picks one per `bash` call
-by name, so a deny-all or browser sandbox can sit beside the default:
+Give one agent more than one machine by listing more than one in `sandboxes`. The first is
+the default; the model picks another per `bash` call by name, so a deny-all or browser
+sandbox can sit beside it:
 
 ```ts
-// on the agent: sandbox: generalSandbox, sandboxes: [offlineSandbox]
+// on the agent: sandboxes: [generalSandbox, offlineSandbox]
 ```
 
 ## Runnable examples
@@ -95,7 +96,7 @@ by name, so a deny-all or browser sandbox can sit beside the default:
 | [`sandbox-workspace-persistent`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace-persistent) | reserved (persistent) sandbox + background jobs |
 | [`sandbox-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-lambda)                             | stateless bash-only `lambda` (AWS MicroVM)      |
 | [`sandbox-workspace-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace-lambda)         | workspace-backed file tools on `lambda`         |
-| [`sandbox-multiple`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-multiple)                         | default sandbox plus an extra deny-all sandbox  |
+| [`sandbox-multiple`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-multiple)                         | default sandbox plus a second deny-all sandbox  |
 
 ## Next steps
 

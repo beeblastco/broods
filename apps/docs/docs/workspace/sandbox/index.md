@@ -37,7 +37,7 @@ export const persistentSandbox = defineSandbox({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   // ...,
 });
 ```

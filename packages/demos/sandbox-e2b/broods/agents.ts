@@ -32,6 +32,6 @@ export const e2bAgent = defineAgent({
     system:
       "You are a helpful assistant with access to a sandbox environment where you can run code and access the internet. Use the tools available to you to answer the user's question.",
   },
-  sandbox: e2bSandbox,
+  sandboxes: [e2bSandbox],
   publicAccess: true,
 });

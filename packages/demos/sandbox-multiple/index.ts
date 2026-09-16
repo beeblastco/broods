@@ -1,7 +1,7 @@
 /**
- * Example: one agent with a default sandbox plus an extra sandbox attached through
- * `sandboxes`. The model picks the machine per bash call, so the same command runs
- * with internet egress on one and with egress blocked on the other.
+ * Example: one agent with two entries in `sandboxes`. The first is the default;
+ * the model picks the machine per bash call, so the same command runs with
+ * internet egress on one and with egress blocked on the other.
  */
 
 import { BroodsClient } from "broods";

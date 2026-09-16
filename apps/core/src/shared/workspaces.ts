@@ -58,8 +58,8 @@ export interface ResolvedWorkspace {
   readMount?: SandboxConfig;
 }
 
-// An extra sandbox from `config.sandboxes`. `name` is the sandbox record name the
-// model picks with bash `sandbox`; `description` tells it what the sandbox is for.
+// A sandbox from `config.sandboxes`. `name` is the sandbox record name the model
+// picks with bash `sandbox`; `description` tells it what the sandbox is for.
 export interface ResolvedAgentSandbox {
   name: string;
   description?: string;
@@ -67,10 +67,9 @@ export interface ResolvedAgentSandbox {
 }
 
 export interface ResolvedAgentRuntime {
-  // Agent-level default sandbox. Powers stateless bash (no workspace) and is the
-  // fallback sandbox for workspaces that don't declare their own.
-  sandbox?: WorkspaceSandboxConfig;
-  // Extra sandboxes bash reaches by name with no workspace mounted. Never the default.
+  // Agent-level sandboxes. The first is the default: it powers stateless bash (no
+  // workspace) and backs workspaces that don't declare their own. The rest are
+  // reached by name with no workspace mounted.
   sandboxes: ResolvedAgentSandbox[];
   workspaces: ResolvedWorkspace[];
 }
@@ -97,7 +96,7 @@ interface LoadedSandbox {
 }
 
 /**
- * The key an agent-level sandbox (the default or an extra) reserves on, or
+ * The key an agent-level sandbox (any entry of `config.sandboxes`) reserves on, or
  * undefined when it reserves nothing. A pinned `options.reservationKey` wins over
  * the derived key, and both `resolveAgentRuntime` and account-deletion cleanup ask
  * this one function so the machine released is the machine reserved.
@@ -183,7 +182,7 @@ export function pinnedSandboxReservationKey(
 }
 
 /**
- * Resolve an agent's `sandbox`, `sandboxes` and `workspaces` references into
+ * Resolve an agent's `sandboxes` and `workspaces` references into
  * concrete records. Throws a clear error when a referenced record is missing
  * (misconfigured agent).
  */
@@ -194,27 +193,28 @@ export async function resolveAgentRuntime(
 ): Promise<ResolvedAgentRuntime> {
   const accountId = identity.accountId;
   const storage = getStorage();
-  // Keyed on the in-flight fetch, so a record the extras and a workspace share is
-  // fetched once even while both resolve concurrently.
+  // Keyed on the in-flight fetch, so a record the agent list and a workspace share
+  // is fetched once even while both resolve concurrently.
   const sandboxCache = new Map<string, Promise<LoadedSandbox>>();
 
-  // An extra never backs a workspace, so it keeps its record config and, when
-  // persistent, reserves per agent and sandbox exactly like the default one.
-  async function loadExtraSandbox(
-    extraId: string,
+  // Every agent-level entry, the default included, reserves per agent and sandbox
+  // when persistent. Workspaces that inherit the default load their own unreserved
+  // copy and key their reservation on the workspace namespace instead.
+  async function loadAgentSandbox(
+    sandboxId: string,
   ): Promise<ResolvedAgentSandbox> {
-    const extra = await loadSandbox(extraId);
+    const loaded = await loadSandbox(sandboxId);
 
     return {
-      name: extra.record.name,
-      ...(extra.record.description
-        ? { description: extra.record.description }
+      name: loaded.record.name,
+      ...(loaded.record.description
+        ? { description: loaded.record.description }
         : {}),
       sandbox: reservedAgentSandbox(
-        extra.sandbox,
+        loaded.sandbox,
         accountId,
         identity.agentId,
-        extraId,
+        sandboxId,
       ),
     };
   }
@@ -251,8 +251,11 @@ export async function resolveAgentRuntime(
   }
 
   async function loadWorkspaces(
-    sandbox: WorkspaceSandboxConfig | undefined,
+    defaultSandboxId: string | undefined,
   ): Promise<ResolvedWorkspace[]> {
+    const sandbox = defaultSandboxId
+      ? (await loadSandbox(defaultSandboxId)).sandbox
+      : undefined;
     const workspaces: ResolvedWorkspace[] = [];
     for (const ref of agentConfig.workspaces ?? []) {
       if (!accountId) {
@@ -319,33 +322,14 @@ export async function resolveAgentRuntime(
     return workspaces;
   }
 
-  const sandboxId =
-    typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
-      ? agentConfig.sandbox
-      : undefined;
-  const sandbox = sandboxId
-    ? (await loadSandbox(sandboxId)).sandbox
-    : undefined;
-  // The extras depend on nothing in the workspace loop, so they load alongside it.
+  const sandboxIds = agentConfig.sandboxes ?? [];
   const [sandboxes, workspaces] = await Promise.all([
-    Promise.all((agentConfig.sandboxes ?? []).map(loadExtraSandbox)),
-    loadWorkspaces(sandbox),
+    Promise.all(sandboxIds.map(loadAgentSandbox)),
+    loadWorkspaces(sandboxIds[0]),
   ]);
-  assertDistinctSandboxNames(sandbox, sandboxes);
+  assertDistinctSandboxNames(sandboxes);
 
-  // Only the agent-level copy carries the derived reservation key; the copies the
-  // workspaces inherit key their reservation on the workspace namespace instead.
   return {
-    ...(sandbox
-      ? {
-          sandbox: reservedAgentSandbox(
-            sandbox,
-            accountId,
-            identity.agentId,
-            sandboxId,
-          ),
-        }
-      : {}),
     sandboxes: sandboxes,
     workspaces: workspaces,
   };
@@ -381,38 +365,30 @@ export function workspaceNamespacesForAccount(
 
 // bash picks a sandbox by record name, so two records under one name would leave
 // the model no way to reach the second.
-function assertDistinctSandboxNames(
-  sandbox: WorkspaceSandboxConfig | undefined,
-  sandboxes: ResolvedAgentSandbox[],
-): void {
-  const seen = new Set(
-    sandbox?.controlPlane?.name ? [sandbox.controlPlane.name] : [],
-  );
-  for (const extra of sandboxes) {
-    if (seen.has(extra.name)) {
+function assertDistinctSandboxNames(sandboxes: ResolvedAgentSandbox[]): void {
+  const seen = new Set<string>();
+  for (const entry of sandboxes) {
+    if (seen.has(entry.name)) {
       throw new Error(
-        `Sandbox "${extra.name}" is attached twice; bash picks a sandbox by name`,
+        `Sandbox "${entry.name}" is attached twice; bash picks a sandbox by name`,
       );
     }
-    seen.add(extra.name);
+    seen.add(entry.name);
   }
 }
 
 /**
- * Give a persistent agent-level sandbox (the default or an extra) the reservation
- * key its workspace-less runs key persistence on, so `persistent: true` works
- * without the author also supplying `options.reservationKey`. A sandbox that
- * reserves nothing passes through untouched.
+ * Give a persistent agent-level sandbox the reservation key its workspace-less
+ * runs key persistence on, so `persistent: true` works without the author also
+ * supplying `options.reservationKey`. A sandbox that reserves nothing passes
+ * through untouched.
  */
 function reservedAgentSandbox(
   sandbox: WorkspaceSandboxConfig,
   accountId: string | undefined,
   agentId: string | undefined,
-  sandboxId: string | undefined,
+  sandboxId: string,
 ): WorkspaceSandboxConfig {
-  if (!sandboxId) {
-    return sandbox;
-  }
   const reservationKey = agentSandboxReservation(
     sandbox,
     accountId,

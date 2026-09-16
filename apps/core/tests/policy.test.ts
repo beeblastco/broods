@@ -120,6 +120,13 @@ describe("agent policy input", () => {
   it("describes a bash call on an extra sandbox by that sandbox, not a workspace", () => {
     const sandboxes = [
       {
+        name: "own-sandbox",
+        sandbox: {
+          provider: "lambda" as const,
+          permissionMode: "ask" as const,
+        },
+      },
+      {
         name: "browser-sandbox",
         sandbox: {
           provider: "lambda" as const,
@@ -148,7 +155,8 @@ describe("agent policy input", () => {
       { sandboxes: sandboxes },
     );
     expect(unknown.workspaceId).toBe("ws_123");
-    // Without extras the string form does not exist, so it is ignored as before.
+    // With no sandboxes attached the name resolves to nothing, so it stays a
+    // workspace run.
     const withoutExtras = policyInputForTool(
       "bash",
       { command: "ls", sandbox: "browser-sandbox" },

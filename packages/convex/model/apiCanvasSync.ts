@@ -406,9 +406,10 @@ async function wireAgentConfig(
   );
   sync.agentNodeByConfigId.set(config._id, agentNode.id);
 
+  const sandboxes = Array.isArray(nested.sandboxes) ? nested.sandboxes : [];
   const defaultSandboxNodeId = await resolveSandboxNode(
     sync,
-    nested.sandbox,
+    sandboxes[0],
     agent.accountId,
   );
   if (defaultSandboxNodeId)
@@ -416,10 +417,8 @@ async function wireAgentConfig(
   // An extra sandbox is still declared wiring, so its node must survive the
   // prune. It draws no edge: the canvas has no shape for a second agent→sandbox
   // link yet.
-  if (Array.isArray(nested.sandboxes)) {
-    for (const extra of nested.sandboxes) {
-      await resolveSandboxNode(sync, extra, agent.accountId);
-    }
+  for (const extra of sandboxes.slice(1)) {
+    await resolveSandboxNode(sync, extra, agent.accountId);
   }
 
   if (Array.isArray(nested.workspaces)) {

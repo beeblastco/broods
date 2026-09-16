@@ -1,6 +1,6 @@
 /**
  * Sandbox config: account-scoped, reusable sandbox definitions referenced by
- * agents via `config.sandbox`. A sandbox is a collection of Claude-Code-style
+ * agents via `config.sandboxes`. A sandbox is a collection of Claude-Code-style
  * tools (bash/read/write/edit/glob/grep) backed by a provider. Stored encrypted
  * at rest because `envVars`/`options` may hold secrets. Validation and the
  * public projection live in packages/convex/model/sandboxRules.ts.

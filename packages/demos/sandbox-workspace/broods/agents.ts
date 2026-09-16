@@ -36,7 +36,7 @@ export const myAgent = defineAgent({
       "Use a SEPARATE bash or file-tool call for each numbered step.",
     ].join(" "),
   },
-  sandbox: workspaceSandbox,
+  sandboxes: [workspaceSandbox],
   workspaces: [projectWorkspace],
   publicAccess: true,
 });

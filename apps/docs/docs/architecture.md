@@ -374,10 +374,11 @@ flowchart TD
 ## Sandbox and workspace boundaries
 
 **Sandbox** (compute) and **workspace** (persistent S3 files) are independent,
-account-scoped records, referenced from agent config by id (`sandbox`, `workspaces`). The
-handler resolves those references (`resolveAgentRuntime`) before the agent loop. A
-sandbox can be attached agent-wide (`config.sandbox`) or per workspace
-(`workspaces[].sandbox`, overriding the agent-level one). Each workspace's _effective_
+account-scoped records, referenced from agent config by id (`sandboxes`, `workspaces`). The
+handler resolves those references (`resolveAgentRuntime`) before the agent loop. The
+first id in `config.sandboxes` is the agent's default sandbox; a workspace can pin its own
+(`workspaces[].sandbox`, overriding the default). The other ids are `bash` targets the model
+picks by name. Each workspace's _effective_
 sandbox decides its tools: `read`/`write`/`edit`/`glob`/`grep`/`bash` when present, or
 read-only `read`/`glob` when absent (via a read-only mount by default, or direct S3 with the
 `sandbox: null` opt-out); `bash` is also exposed stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)

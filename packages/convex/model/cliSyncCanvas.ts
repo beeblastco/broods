@@ -218,7 +218,7 @@ function addAgentSubagentEdges(
 
 /**
  * Agent→workspace edges plus each workspace's writability tracking: a string
- * sandbox override or an inherited agent-level sandbox marks a writer, while an
+ * sandbox override or an inherited default sandbox marks a writer, while an
  * explicit `sandbox: null` keeps the workspace read-only.
  */
 function addAgentWorkspaceEdges(options: {
@@ -344,11 +344,14 @@ function collectDesiredAgentEdges(options: {
     if (!agentId || !isPlainObject(agent.config)) continue;
     // Agent→service edges are default (top/bottom handle) edges, like the
     // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
-    // mount edge (sandbox x=420 sits left of workspace x=760).
+    // mount edge (sandbox x=420 sits left of workspace x=760). Only the default
+    // sandbox, sandboxes[0], gets an edge; the canvas has no shape for the extras
+    // yet, so they stay unlinked nodes.
+    const defaultSandbox = Array.isArray(agent.config.sandboxes)
+      ? agent.config.sandboxes[0]
+      : undefined;
     const agentSandboxName =
-      typeof agent.config.sandbox === "string"
-        ? resourceName(agent.config.sandbox)
-        : null;
+      typeof defaultSandbox === "string" ? resourceName(defaultSandbox) : null;
     if (agentSandboxName) {
       const sandboxNodeId = nodeIdByKindName.get(`sandbox:${agentSandboxName}`);
       if (sandboxNodeId)

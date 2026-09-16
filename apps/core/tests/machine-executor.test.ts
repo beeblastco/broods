@@ -403,8 +403,12 @@ test("looking at the screen is free, anything else asks unless the sandbox is by
       {
         configuredApprovals: new Map(),
         workspaces: [],
-        agentSandbox: machineExecutorConfig(),
-        agentSandboxPermissionMode: mode,
+        sandboxes: [
+          {
+            name: "my-mac",
+            sandbox: { ...machineExecutorConfig(), permissionMode: mode },
+          },
+        ],
       },
     );
 
@@ -425,9 +429,11 @@ test("approval follows the computer a call names, not the agent's own", () => {
       {
         configuredApprovals: new Map(),
         workspaces: [],
-        agentSandbox: machineExecutorConfig(),
-        agentSandboxPermissionMode: "ask",
         sandboxes: [
+          {
+            name: "my-mac",
+            sandbox: { ...machineExecutorConfig(), permissionMode: "ask" },
+          },
           {
             name: "other-mac",
             sandbox: { provider: "machine", permissionMode: "bypass" },

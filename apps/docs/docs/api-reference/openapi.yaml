@@ -1004,7 +1004,7 @@ paths:
                       temperature: 0.2
                     agent:
                       system: You are a research assistant. Always cite sources.
-                    sandbox: sb_xxx
+                    sandboxes: [sb_xxx]
                     workspaces:
                       - name: notes
                         workspaceId: ws_aaa
@@ -1264,7 +1264,7 @@ paths:
       tags:
         - Sandboxes
       summary: Create sandbox
-      description: Create a standalone, account-scoped sandbox config. Reference its `sandboxId` from an agent config via `sandbox`. Config is encrypted at rest (it may carry `envVars`).
+      description: Create a standalone, account-scoped sandbox config. Reference its `sandboxId` from an agent config via `sandboxes`. Config is encrypted at rest (it may carry `envVars`).
       security:
         - BearerAuth: []
       requestBody:
@@ -3778,13 +3778,10 @@ components:
         publicAccess:
           type: boolean
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default, so the endpoint stays closed until you set it. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
-        sandbox:
-          type: string
-          description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
         sandboxes:
           type: array
           items: { type: string }
-          description: Ids of extra sandbox configs that `bash` can run on with no workspace mounted, such as a specialized image, a stricter network or a different permissionMode. The model selects one by name with the bash `sandbox` argument. Must not repeat `sandbox`. Nothing written there reaches durable storage, and a persistent one reserves one machine per agent and sandbox.
+          description: Ids of sandbox configs (POST /v1/sandboxes) this agent runs on. The first is the default. It powers stateless bash, backs every workspace that does not set its own sandbox, and runs the harness when one is set. The others are bash targets with no workspace mounted, such as a specialized image, a stricter network or a different permissionMode; the model selects one by name with the bash `sandbox` argument. Nothing written there reaches durable storage, and a persistent one reserves one machine per agent and sandbox. Each id may appear once, and only the first may also back a workspace.
         workspaces:
           type: array
           description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.
@@ -3799,7 +3796,7 @@ components:
                 type: string
               sandbox:
                 type: [string, "null"]
-                description: Optional per-workspace sandbox. A sandbox id overrides the agent-level `sandbox` for this workspace (and its permissionMode). `null` forces this workspace read-only even when an agent-level default exists. Omitted => inherit the agent-level `sandbox`; with no effective sandbox the workspace is read-only (read/glob served directly from S3).
+                description: Optional per-workspace sandbox. A sandbox id overrides the agent's first sandbox for this workspace (and its permissionMode); it must not be a later entry of `sandboxes`. `null` forces this workspace read-only even when the agent has a first sandbox. Omitted => inherit the agent's first sandbox; with no effective sandbox the workspace is read-only (read/glob served directly from S3).
         session:
           $ref: "#/components/schemas/SessionConfig"
         tools:
@@ -3810,7 +3807,7 @@ components:
     HarnessConfig:
       type: object
       required: [type]
-      description: Selects an AI SDK Harness adapter. Omit harness to use the Broods serverless loop. Every configured adapter requires the agent sandbox reference to resolve to a persistent Broods Workdir or Lambda MicroVM.
+      description: Selects an AI SDK Harness adapter. Omit harness to use the Broods serverless loop. The harness runs on the agent's first sandbox, so `sandboxes` must be set and its first id must resolve to a persistent Broods Workdir or Lambda MicroVM.
       properties:
         type:
           type: string

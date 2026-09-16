@@ -118,8 +118,9 @@ export function assertSupportedWorkspaceSandboxMounts(
           ? undefined
           : typeof workspace.sandbox === "string"
             ? workspace.sandbox
-            : typeof config.sandbox === "string"
-              ? config.sandbox
+            : Array.isArray(config.sandboxes) &&
+                typeof config.sandboxes[0] === "string"
+              ? config.sandboxes[0]
               : undefined;
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
@@ -414,9 +415,6 @@ export function rewriteIdsToNames(
     policies: policyNames = {},
   } = names;
   const result = { ...config };
-  if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
-    result.sandbox = sandboxNames[result.sandbox];
-  }
   if (Array.isArray(result.sandboxes)) {
     result.sandboxes = rewriteRefList(result.sandboxes, sandboxNames);
   }
@@ -510,9 +508,6 @@ export function rewriteResourceRefs(
     mcp: mcpIds = {},
   } = ids;
   const result = { ...config };
-  if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
-    result.sandbox = sandboxIds[result.sandbox];
-  }
   if (Array.isArray(result.sandboxes)) {
     result.sandboxes = rewriteRefList(result.sandboxes, sandboxIds);
   }

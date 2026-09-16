@@ -22,7 +22,6 @@ import type {
   ChannelPartition,
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
-import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
@@ -69,7 +68,6 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
-import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   listConfiguredSkillMetadata,
   loadConfiguredHarnessSkills,
@@ -698,20 +696,11 @@ export class Session {
   }
 
   /**
-   * The agent's own sandbox (`config.sandbox`). Backs bash when no workspace is
-   * attached, is the fallback sandbox for workspaces that declare none, and stays
-   * separately reachable when every workspace borrows a different one. Undefined
-   * when the agent references no sandbox.
+   * The agent's sandboxes (`config.sandboxes`). The first is its own: it backs
+   * bash when no workspace is attached, is the fallback for workspaces that
+   * declare none, and stays reachable when every workspace borrows a different
+   * one. The rest are reached by name with no workspace. Empty when none.
    */
-  agentSandbox(): SandboxExecutorConfig | undefined {
-    return this.resolvedRuntime?.sandbox;
-  }
-
-  agentSandboxPermissionMode(): SandboxPermissionMode {
-    return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
-  }
-
-  /** Extra sandboxes (`config.sandboxes`) bash reaches by name with no workspace. */
   sandboxes(): ResolvedAgentSandbox[] {
     return this.resolvedRuntime?.sandboxes ?? [];
   }

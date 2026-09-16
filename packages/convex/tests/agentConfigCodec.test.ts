@@ -37,16 +37,26 @@ describe("agent config codec", () => {
     expect(toNestedAgentConfig(flat).mcp).toEqual(mcp);
   });
 
-  // Extra sandboxes have no flat column either, so they only reach core through
+  // Sandboxes have no flat column either, so they only reach core through
   // extraConfig.
   test("round-trips the sandboxes branch", () => {
     const flat = fromNestedAgentConfig({
       model: { provider: "custom", modelId: "deepseek-v4-pro" },
-      sandbox: "sb_default",
-      sandboxes: ["sb_offline"],
+      sandboxes: ["sb_default", "sb_offline"],
     });
 
-    expect(flat.extraConfig).toMatchObject({ sandboxes: ["sb_offline"] });
-    expect(toNestedAgentConfig(flat).sandboxes).toEqual(["sb_offline"]);
+    expect(flat.extraConfig).toMatchObject({
+      sandboxes: ["sb_default", "sb_offline"],
+    });
+    expect(toNestedAgentConfig(flat).sandboxes).toEqual([
+      "sb_default",
+      "sb_offline",
+    ]);
+  });
+
+  test("rejects the removed sandbox branch", () => {
+    expect(() => fromNestedAgentConfig({ sandbox: "sb_default" })).toThrow(
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
+    );
   });
 });

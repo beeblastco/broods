@@ -24,7 +24,7 @@ export const writer = defineAgent({
     provider: "custom",
     modelId: "Qwen3.6-27B",
   },
-  sandbox: writerSandbox,
+  sandboxes: [writerSandbox],
   workspaces: [sharedWorkspace],
   publicAccess: true,
 });

@@ -148,7 +148,7 @@ const COMMAND_HELP: Record<string, string> = {
 
 Subcommands:
   list                 List the agents in the current project/stage scope
-  get <name>           Show an agent's model, sandbox, workspaces, tools and channels
+  get <name>           Show an agent's model, sandboxes, workspaces, tools and channels
 
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
@@ -2439,12 +2439,13 @@ async function agentGet(
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
   const config = agent.config;
-  const sandbox =
-    typeof config.sandbox === "string" ? config.sandbox : undefined;
   // `[x].flat()` reads an absent list as empty without another branch here.
   const sandboxes = [config.sandboxes]
     .flat()
-    .filter((entry): entry is string => typeof entry === "string");
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry, index): string =>
+      index === 0 ? `${entry} (default)` : entry,
+    );
   const workspaces = Array.isArray(config.workspaces)
     ? config.workspaces
         .map((ref) =>
@@ -2480,7 +2481,6 @@ async function agentGet(
     `  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`,
   );
   console.log(`  Model:        ${agentModelLabel(config)}`);
-  console.log(`  Sandbox:      ${sandbox ?? "none"}`);
   console.log(
     `  Sandboxes:    ${sandboxes.length > 0 ? sandboxes.join(", ") : "none"}`,
   );
@@ -2827,7 +2827,7 @@ function starterAgent(): string {
     `  agent: {\n` +
     `    system: "You are a helpful assistant.",\n` +
     `  },\n` +
-    `  sandbox: lambdaSandbox,\n` +
+    `  sandboxes: [lambdaSandbox],\n` +
     `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
     `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
     `  // only reachable via internal endpoints or channel webhooks.\n` +

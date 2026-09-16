@@ -52,9 +52,9 @@ const THROWAWAY_NOTE =
 interface BashInput {
   command: string;
   workspace?: string;
-  // `true` or the agent's own sandbox name picks its own sandbox; any other name
-  // picks an extra. A name that matches nothing is refused.
-  sandbox?: boolean | string;
+  // The agent's own sandbox name picks its own sandbox; any other name picks an
+  // extra. A name that matches nothing, or a value that is no name, is refused.
+  sandbox?: unknown;
   background?: boolean;
   pty?: boolean;
 }
@@ -78,6 +78,9 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
         }
         try {
           const selected = bashSandboxTarget(onSandbox);
+          if (onSandbox !== undefined && selected === undefined) {
+            return toolError("Error: sandbox must be the name of a sandbox");
+          }
           // Silently preferring one would let the policy layer be told a workspace
           // that the run never touches, so an incoherent selection is refused.
           if (workspace !== undefined && selected !== undefined) {
@@ -95,16 +98,13 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           const ws = targetsAgentSandbox(context, target)
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const sandbox = ws?.sandbox ?? agentSandbox.sandbox;
+          const sandbox = ws?.sandbox ?? agentSandbox?.sandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
           const outsideWorkspace = ws
             ? outsideWorkspaceCommand(trimmed, {
-                persistentOwnSandbox: writesOutsideAllowed(
-                  ws,
-                  context.agentSandbox,
-                ),
+                persistentOwnSandbox: writesOutsideAllowed(ws, context),
               })
             : undefined;
           if (outsideWorkspace) {
@@ -171,17 +171,8 @@ function backgroundNote(context: SandboxToolContext): string {
 }
 
 function description(context: SandboxToolContext): string {
-  if (extrasOnly(context)) {
-    return `Executes a bash command on one of your sandboxes (bash, python3, and node on PATH).
-
-Usage notes:
-- Every call names the sandbox to run on with \`sandbox\`.
-- Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
-- Shell state (working directory, environment variables, background processes) resets every call. Keep the whole task in a single command, chaining steps with && or ;.${sandboxesNote(context)}`;
-  }
   if (context.workspaces.length === 0) {
-    const runtimes = runtimeDescription(context.agentSandbox);
+    const runtimes = runtimeDescription(resolveAgentSandbox(context)?.sandbox);
 
     return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
 
@@ -318,16 +309,6 @@ async function dispatchBackground(
   );
 }
 
-// An agent whose only sandboxes are extras has no default place to run, so a call
-// that names none would fail after approval. The schema makes the name mandatory.
-function extrasOnly(context: SandboxToolContext): boolean {
-  return (
-    context.workspaces.length === 0 &&
-    !context.agentSandbox &&
-    (context.sandboxes?.length ?? 0) > 0
-  );
-}
-
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
   const sandboxProp = sandboxParamSchema(context);
@@ -356,7 +337,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
           }
         : {}),
     },
-    required: extrasOnly(context) ? ["command", "sandbox"] : ["command"],
+    required: ["command"],
     additionalProperties: false,
   };
 }
@@ -365,9 +346,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
 // machine around them is the agent's too and the durability guard steps aside.
 function ownSandboxNote(context: SandboxToolContext): string {
   const names = context.workspaces
-    .filter((workspace) =>
-      writesOutsideAllowed(workspace, context.agentSandbox),
-    )
+    .filter((workspace): boolean => writesOutsideAllowed(workspace, context))
     .map((workspace) => workspace.name);
   if (names.length === 0) {
     return "";
@@ -390,9 +369,9 @@ function ptyCommand(command: string): string {
 function reservedNote(context: SandboxToolContext): string {
   const names = context.workspaces
     .filter(
-      (workspace) =>
+      (workspace): boolean =>
         workspace.sandbox?.persistent === true &&
-        !isAgentOwnSandbox(workspace, context.agentSandbox),
+        !isAgentOwnSandbox(workspace, context),
     )
     .map((workspace) => workspace.name);
   if (names.length === 0) {
@@ -405,12 +384,10 @@ function reservedNote(context: SandboxToolContext): string {
 
 // A workspace-less run reconnects on options.reservationKey (derived per agent by
 // resolveAgentRuntime, or pinned). No key means nothing survives, no note.
-function reservedStandaloneNote(context: SandboxToolContext): string {
-  const options = isPlainObject(context.agentSandbox?.options)
-    ? context.agentSandbox.options
-    : {};
+function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
+  const options = isPlainObject(sandbox.options) ? sandbox.options : {};
   const reserved =
-    context.agentSandbox?.persistent === true &&
+    sandbox.persistent === true &&
     typeof options.reservationKey === "string" &&
     options.reservationKey.trim().length > 0;
 
@@ -430,7 +407,7 @@ function sandboxesNote(context: SandboxToolContext): string {
   }
   const entries = choices.map((choice): string => {
     const label = choice.description ?? (choice.own ? "your own sandbox" : "");
-    const reserved = choice.own ? reservedStandaloneNote(context) : "";
+    const reserved = choice.own ? reservedStandaloneNote(choice.sandbox) : "";
 
     return `${choice.name}${label ? `: ${label}.` : ""}${reserved}`;
   });
@@ -476,7 +453,7 @@ function sandboxParamSchema(
 // then works around. Stay silent when every workspace is exempt.
 function writeGuardNote(context: SandboxToolContext): string {
   const guarded = context.workspaces.filter(
-    (workspace) => !writesOutsideAllowed(workspace, context.agentSandbox),
+    (workspace): boolean => !writesOutsideAllowed(workspace, context),
   );
   if (guarded.length === 0) {
     return "";

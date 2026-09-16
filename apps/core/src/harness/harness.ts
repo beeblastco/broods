@@ -313,7 +313,6 @@ export async function runAgentLoop(
     conversationKey: session.conversationKey,
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
-  const agentSandbox = session.agentSandbox();
   const sandboxes = session.sandboxes();
   // A subagent run is its own top-level trace (kind "subtask"), a scheduler run
   // a "cron", anything a person asked for a "task". All three are roots, so
@@ -355,7 +354,6 @@ export async function runAgentLoop(
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([
       agentConfig,
-      agentSandbox,
       sandboxes,
       resolvedWorkspaces,
     ]),
@@ -532,8 +530,6 @@ export async function runAgentLoop(
         accountId: session.accountId,
         conversationKey: session.conversationKey,
         workspaces: resolvedWorkspaces,
-        agentSandbox: agentSandbox,
-        agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
         sandboxes: sandboxes,
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
@@ -607,15 +603,12 @@ export async function runAgentLoop(
     resolvedWorkspaces,
     {
       mcpIdsByName: policyMcpIdsByName,
-      ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
       ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
     },
   );
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals: configuredApprovals,
     workspaces: resolvedWorkspaces,
-    ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
-    agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
     ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
     ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
   });
@@ -1794,7 +1787,7 @@ export async function runAgentLoop(
     harnessRuntime = usesAiSdkHarness
       ? createConfiguredHarnessAgent({
           agentConfig: agentConfig,
-          compute: requireHarnessSandbox(agentSandbox),
+          compute: requireHarnessSandbox(sandboxes[0]?.sandbox),
           id: session.agentId,
           instructions: turnContext.system
             .map((message) => message.content)
@@ -2114,7 +2107,7 @@ function requireHarnessSandbox(
 ): SandboxExecutorConfig {
   if (!sandbox) {
     throw new Error(
-      "config.harness requires an agent-level persistent sandbox reference",
+      "config.harness needs a sandbox to run on; list one first in config.sandboxes",
     );
   }
 

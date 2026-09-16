@@ -109,7 +109,7 @@ describe("agent config validation", () => {
           startupTimeoutMs: 180_000,
           webSearch: true,
         },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toEqual({
       harness: {
@@ -124,7 +124,7 @@ describe("agent config validation", () => {
         startupTimeoutMs: 180_000,
         webSearch: true,
       },
-      sandbox: "persistent-sandbox",
+      sandboxes: ["persistent-sandbox"],
     });
     expect(() => normalizeAgentConfig({ harness: { type: "other" } })).toThrow(
       "config.harness.type must be one of: claude-code, codex, deepagents, opencode, pi",
@@ -138,7 +138,7 @@ describe("agent config validation", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex", permissionMode: "allow-edits" },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow(
       "config.harness.permissionMode must be allow-all for the codex harness",
@@ -146,7 +146,7 @@ describe("agent config validation", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "claude-code", webSearch: true },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow(
       "config.harness.webSearch is only supported by the codex harness",
@@ -154,7 +154,7 @@ describe("agent config validation", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
         model: {
           output: {
             type: "object",
@@ -169,7 +169,7 @@ describe("agent config validation", () => {
       normalizeAgentConfig({
         harness: { type: "codex" },
         policies: ["policy-1"],
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow("config.policies is not supported with config.harness");
     // The wrapper is gone, so a config still carrying it must say so rather
@@ -184,7 +184,7 @@ describe("agent config validation", () => {
           activeTools: ["bash"],
           inactiveTools: ["write"],
         },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow(
       "config.harness must use either activeTools or inactiveTools, not both",
@@ -195,7 +195,7 @@ describe("agent config validation", () => {
           type: "codex",
           webSerch: true,
         },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow('config.harness has unknown option "webSerch"');
     expect(() =>
@@ -204,40 +204,52 @@ describe("agent config validation", () => {
           type: "codex",
           debug: { enabled: true, subystems: ["bridge"] },
         },
-        sandbox: "persistent-sandbox",
+        sandboxes: ["persistent-sandbox"],
       }),
     ).toThrow('config.harness.debug has unknown option "subystems"');
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "pi" },
       }),
-    ).toThrow("config.sandbox is required for the pi harness");
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the pi harness; the first runs it",
+    );
+    expect(() =>
+      normalizeAgentConfig({ harness: { type: "pi" }, sandboxes: [] }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the pi harness; the first runs it",
+    );
   });
 
-  it("validates extra sandbox references", () => {
-    expect(
-      normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_browser"] }),
-    ).toEqual({ sandbox: "sb_1", sandboxes: ["sb_browser"] });
+  it("validates sandbox references", () => {
+    expect(normalizeAgentConfig({ sandboxes: ["sb_1", "sb_browser"] })).toEqual(
+      { sandboxes: ["sb_1", "sb_browser"] },
+    );
+    expect(() => normalizeAgentConfig({ sandbox: "sb_1" })).toThrow(
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
+    );
     expect(() => normalizeAgentConfig({ sandboxes: "sb_1" })).toThrow(
       "config.sandboxes must be an array of non-empty strings",
     );
     expect(() => normalizeAgentConfig({ sandboxes: [""] })).toThrow(
       "config.sandboxes must be an array of non-empty strings",
     );
-    // Two names for one machine: the default is already reachable on its own.
-    expect(() =>
-      normalizeAgentConfig({ sandbox: "sb_1", sandboxes: ["sb_1"] }),
-    ).toThrow("config.sandboxes[0] repeats the default config.sandbox");
     expect(() => normalizeAgentConfig({ sandboxes: ["sb_a", "sb_a"] })).toThrow(
-      'config.sandboxes[1] "sb_a" is used more than once',
+      'config.sandboxes[1] "sb_a" is listed more than once',
     );
-    // An extra never mounts a workspace, so a workspace's sandbox cannot be one.
+    // The default may back a workspace; an extra never mounts one.
+    const workspaces = [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_a" }];
+    expect(
+      normalizeAgentConfig({ sandboxes: ["sb_a"], workspaces: workspaces }),
+    ).toEqual({ sandboxes: ["sb_a"], workspaces: workspaces });
     expect(() =>
       normalizeAgentConfig({
-        sandboxes: ["sb_a"],
-        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_a" }],
+        sandboxes: ["sb_default", "sb_a"],
+        workspaces: workspaces,
       }),
-    ).toThrow('config.sandboxes[0] "sb_a" also backs workspace "repo"');
+    ).toThrow(
+      'config.sandboxes[1] "sb_a" also backs workspace "repo"; only the first sandbox can back a workspace',
+    );
   });
 
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {

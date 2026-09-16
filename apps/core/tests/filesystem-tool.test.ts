@@ -163,12 +163,17 @@ function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
 function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [],
-    agentSandbox: {
-      provider: "lambda",
-      network: { mode: "allow-all" },
-      ...sandboxOverrides,
-    },
-    agentSandboxPermissionMode: "ask",
+    sandboxes: [
+      {
+        name: "own-sandbox",
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          permissionMode: "ask",
+          ...sandboxOverrides,
+        },
+      },
+    ],
   } as never;
 }
 
@@ -192,14 +197,21 @@ function ownSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
         sandbox: sandbox,
       },
     ],
-    agentSandbox: sandbox,
-    agentSandboxPermissionMode: "ask",
+    sandboxes: [
+      {
+        name: "own-sandbox",
+        sandbox: { ...sandbox, permissionMode: "ask" },
+      },
+    ],
   } as never;
 }
 
 // The workspace borrows a different sandbox as its execution layer; the agent's own
 // sandbox stays beside it, mounted by nothing.
-function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
+function borrowedSandboxCtx(
+  sandboxOverrides: Record<string, unknown> = {},
+  ownOverrides: Record<string, unknown> = {},
+) {
   return {
     workspaces: [
       {
@@ -215,13 +227,19 @@ function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
         },
       },
     ],
-    agentSandbox: {
-      provider: "lambda",
-      network: { mode: "allow-all" },
-      // Named, as every real record is: the name is how a call picks it.
-      controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
-    },
-    agentSandboxPermissionMode: "ask",
+    sandboxes: [
+      {
+        // Named, as every real record is: the name is how a call picks it.
+        name: "own-sandbox",
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
+          permissionMode: "ask",
+          ...ownOverrides,
+        },
+      },
+    ],
   } as never;
 }
 
@@ -230,13 +248,16 @@ function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
 function extraSandboxCtx(extraOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [],
-    agentSandbox: {
-      provider: "lambda",
-      network: { mode: "allow-all" },
-      controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
-    },
-    agentSandboxPermissionMode: "ask",
     sandboxes: [
+      {
+        name: "own-sandbox",
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
+          permissionMode: "ask",
+        },
+      },
       {
         name: "browser-sandbox",
         description: "Headless Chromium.",
@@ -291,8 +312,6 @@ async function approvalStatus(
   input: Record<string, unknown>,
   ctx: {
     workspaces?: unknown[];
-    agentSandbox?: unknown;
-    agentSandboxPermissionMode?: unknown;
     sandboxes?: unknown[];
   },
 ): Promise<ToolApprovalStatus> {
@@ -303,10 +322,6 @@ async function approvalStatus(
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
     ...(ctx.sandboxes ? { sandboxes: ctx.sandboxes as never } : {}),
-    ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
-    ...(typeof ctx.agentSandboxPermissionMode === "string"
-      ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
-      : {}),
   });
 }
 
@@ -637,15 +652,19 @@ describe("sandbox tool set", () => {
     expect(bare.description).toContain("reaches durable storage");
     expect(bare.description).not.toContain("That sandbox is reserved");
 
-    const ctx = borrowedSandboxCtx() as unknown as {
-      agentSandbox: Record<string, unknown>;
-    };
-    ctx.agentSandbox.persistent = true;
-    const unkeyed = await tool("bash", ctx as never);
+    const unkeyed = await tool(
+      "bash",
+      borrowedSandboxCtx({}, { persistent: true }),
+    );
     expect(unkeyed.description).not.toContain("That sandbox is reserved");
 
-    ctx.agentSandbox.options = { reservationKey: "agent-scratch" };
-    const keyed = await tool("bash", ctx as never);
+    const keyed = await tool(
+      "bash",
+      borrowedSandboxCtx(
+        {},
+        { persistent: true, options: { reservationKey: "agent-scratch" } },
+      ),
+    );
     expect(keyed.description).toContain("That sandbox is reserved");
     expect(keyed.description).toContain("only the workspace outlives it");
   });
@@ -670,15 +689,14 @@ describe("sandbox tool set", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
     const resolved = await resolveAgentRuntime(
-      { sandbox: "sb_reserved" },
+      { sandboxes: ["sb_reserved"] },
       { accountId: "acct_reserved", agentId: "ag_reserved" },
     );
     setStorageForTests(null);
 
     const bash = await tool("bash", {
       workspaces: [],
-      agentSandbox: resolved.sandbox,
-      agentSandboxPermissionMode: "bypass",
+      sandboxes: resolved.sandboxes,
     } as never);
     await bash.execute({ command: "echo one > state.txt" });
     await bash.execute({ command: "cat state.txt" });
@@ -720,17 +738,17 @@ describe("sandbox tool set", () => {
     expect(borrowed.description).toContain("survive across calls");
   });
 
-  it("bash offers the standalone sandbox flag only when it is unmounted", async () => {
+  it("bash offers the own sandbox by name only when it is unmounted", async () => {
     const borrowed = await tool("bash", borrowedSandboxCtx());
     const schema = borrowed.inputSchema as unknown as {
       jsonSchema: { properties: { sandbox?: unknown } };
     };
     expect(schema.jsonSchema.properties.sandbox).toBeDefined();
 
-    // Asking for it runs with no workspace mounted, so no namespace is sent.
+    // Naming it runs with no workspace mounted, so no namespace is sent.
     const result = await borrowed.execute({
       command: "echo hi",
-      sandbox: true,
+      sandbox: "own-sandbox",
     });
     expect(result).toBeString();
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
@@ -754,6 +772,7 @@ describe("sandbox tool set", () => {
       type: "string",
       enum: ["own-sandbox", "browser-sandbox"],
     });
+    expect(bash.description).toContain("own-sandbox: your own sandbox.");
     expect(bash.description).toContain("browser-sandbox: Headless Chromium.");
 
     await bash.execute({
@@ -767,8 +786,7 @@ describe("sandbox tool set", () => {
     // An extra mounts nothing, so the exec carries no workspace namespace.
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
 
-    // `true` still means the agent's own sandbox, so replayed calls keep working.
-    await bash.execute({ command: "echo hi", sandbox: true });
+    await bash.execute({ command: "echo hi", sandbox: "own-sandbox" });
     const onOwn = microvmCommandsOfType("RunMicrovm").at(-1) as {
       input: { imageIdentifier: string };
     };
@@ -782,8 +800,6 @@ describe("sandbox tool set", () => {
   it("an extra sandbox is approved on its own permissionMode", async () => {
     const ctx = extraSandboxCtx({ permissionMode: "bypass" }) as unknown as {
       workspaces: unknown[];
-      agentSandbox: unknown;
-      agentSandboxPermissionMode: string;
       sandboxes: unknown[];
     };
 
@@ -796,16 +812,19 @@ describe("sandbox tool set", () => {
     ).resolves.toBeUndefined();
     // A bypassing extra must not lift the gate on the agent's own sandbox.
     await expect(
-      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
+      approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, ctx),
     ).resolves.toBe("user-approval");
   });
 
   it("bash drops the own sandbox from the enum once a workspace mounts it", async () => {
-    const mounted = ownSandboxCtx() as unknown as Record<string, unknown>;
+    const mounted = ownSandboxCtx() as unknown as {
+      workspaces: unknown[];
+      sandboxes: unknown[];
+    };
     const extras = extraSandboxCtx() as unknown as { sandboxes: unknown[] };
     const bash = await tool("bash", {
-      ...mounted,
-      sandboxes: extras.sandboxes,
+      workspaces: mounted.workspaces,
+      sandboxes: [...mounted.sandboxes, ...extras.sandboxes.slice(1)],
     } as never);
     const schema = bash.inputSchema as unknown as {
       jsonSchema: { properties: { sandbox?: { enum?: string[] } } };
@@ -818,10 +837,11 @@ describe("sandbox tool set", () => {
     expect(bash.description).not.toContain("your own sandbox");
   });
 
-  it("an agent with only extra sandboxes still gets bash, gated by their permissionMode", async () => {
+  it("the first sandbox listed is the default bash runs on unnamed", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const extras = extraSandboxCtx() as unknown as { sandboxes: unknown[] };
-    const ctx = { workspaces: [], sandboxes: extras.sandboxes };
+    // The browser record first: it is now the default, and the other one an extra.
+    const ctx = { workspaces: [], sandboxes: [...extras.sandboxes].reverse() };
     const tools = await createTools(
       {
         ...ctx,
@@ -834,25 +854,24 @@ describe("sandbox tool set", () => {
 
     expect(Object.keys(tools)).toEqual(["bash"]);
     await expect(
-      approvalStatus(
-        "bash",
-        { command: "ls", sandbox: "browser-sandbox" },
-        ctx as never,
-      ),
+      approvalStatus("bash", { command: "ls" }, ctx as never),
     ).resolves.toBe("user-approval");
-    // With no default sandbox there is nowhere to land without a name, so the
-    // schema makes the name mandatory instead of promising an ephemeral sandbox.
     const bash = await tool("bash", ctx as never);
     const schema = bash.inputSchema as unknown as {
-      jsonSchema: { required: string[] };
+      jsonSchema: {
+        properties: { sandbox?: { enum?: string[] } };
+        required: string[];
+      };
     };
-    expect(schema.jsonSchema.required).toEqual(["command", "sandbox"]);
-    expect(bash.description).not.toContain("ephemeral Linux sandbox");
+    expect(schema.jsonSchema.properties.sandbox?.enum).toEqual([
+      "browser-sandbox",
+      "own-sandbox",
+    ]);
+    expect(schema.jsonSchema.required).toEqual(["command"]);
+    expect(bash.description).toContain("ephemeral Linux sandbox");
+    // The default's own record description is what the model reads, not a stock label.
     expect(bash.description).toContain("browser-sandbox: Headless Chromium.");
-    await bash.execute({
-      command: "chromium --version",
-      sandbox: "browser-sandbox",
-    });
+    await bash.execute({ command: "chromium --version" });
     const run = microvmCommandsOfType("RunMicrovm").at(-1) as {
       input: { imageIdentifier: string };
     };
@@ -873,13 +892,16 @@ describe("sandbox tool set", () => {
 
     // Extras present: the same refusal, before any workspace default could
     // absorb it.
+    const borrowedCtx = borrowedSandboxCtx() as unknown as {
+      workspaces: unknown[];
+      sandboxes: unknown[];
+    };
+    const extras = extraSandboxCtx({ permissionMode: "bypass" }) as unknown as {
+      sandboxes: unknown[];
+    };
     const ctx = {
-      ...(borrowedSandboxCtx() as unknown as Record<string, unknown>),
-      sandboxes: (
-        extraSandboxCtx({ permissionMode: "bypass" }) as unknown as {
-          sandboxes: unknown[];
-        }
-      ).sandboxes,
+      workspaces: borrowedCtx.workspaces,
+      sandboxes: [...borrowedCtx.sandboxes, ...extras.sandboxes.slice(1)],
     };
     const bash = await tool("bash", ctx as never);
     await expect(
@@ -1108,26 +1130,27 @@ describe("write/edit approval policy", () => {
   // workspace. Policy input has to name the same target execution picked.
   it("policy input drops workspace identity when the run is on the agent sandbox", async () => {
     const { policyInputForTool } = await import("../src/harness/policy.ts");
-    const ctx = borrowedSandboxCtx() as unknown as {
+    const ctx = borrowedSandboxCtx({ permissionMode: "bypass" }) as unknown as {
       workspaces: never;
-      agentSandbox: never;
+      sandboxes: never;
     };
     const onSandbox = policyInputForTool(
       "bash",
-      { command: "ls", sandbox: true },
+      { command: "ls", sandbox: "own-sandbox" },
       ctx.workspaces,
-      { agentSandbox: ctx.agentSandbox },
+      { sandboxes: ctx.sandboxes },
     );
     expect(onSandbox.workspaceId).toBeUndefined();
     expect(onSandbox.workspaceName).toBeUndefined();
-    expect(onSandbox.sandboxPermissionMode).toBeUndefined();
+    // The mode reported is the named sandbox's, never the workspace's.
+    expect(onSandbox.sandboxPermissionMode).toBe("ask");
 
     // A real workspace run still reports it, or workspace-scoped rules stop working.
     const onWorkspace = policyInputForTool(
       "bash",
       { command: "ls", workspace: "notes" },
       ctx.workspaces,
-      { agentSandbox: ctx.agentSandbox },
+      { sandboxes: ctx.sandboxes },
     );
     expect(onWorkspace.workspaceName).toBe("notes");
 
@@ -1135,13 +1158,13 @@ describe("write/edit approval policy", () => {
     // already mounts the agent's sandbox, the run IS the workspace.
     const own = ownSandboxCtx() as unknown as {
       workspaces: never;
-      agentSandbox: never;
+      sandboxes: never;
     };
     const mounted = policyInputForTool(
       "bash",
-      { command: "ls", sandbox: true },
+      { command: "ls", sandbox: "own-sandbox" },
       own.workspaces,
-      { agentSandbox: own.agentSandbox },
+      { sandboxes: own.sandboxes },
     );
     expect(mounted.workspaceName).toBe("notes");
   });
@@ -1152,42 +1175,42 @@ describe("write/edit approval policy", () => {
       bash.execute({
         command: "echo hi",
         workspace: "notes",
-        sandbox: true,
+        sandbox: "own-sandbox",
       }),
     ).rejects.toThrow("not both");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {
-    const ctx = borrowedSandboxCtx() as unknown as {
-      workspaces: unknown[];
-      agentSandbox: unknown;
-      agentSandboxPermissionMode: string;
-    };
-    await expect(
-      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
-    ).resolves.toBe("user-approval");
     await expect(
       approvalStatus(
         "bash",
-        { command: "ls", sandbox: true },
-        {
-          ...ctx,
-          agentSandboxPermissionMode: "bypass",
-        },
+        { command: "ls", sandbox: "own-sandbox" },
+        borrowedSandboxCtx(),
       ),
+    ).resolves.toBe("user-approval");
+    const bypass = borrowedSandboxCtx({}, { permissionMode: "bypass" });
+    await expect(
+      approvalStatus("bash", { command: "ls", sandbox: "own-sandbox" }, bypass),
     ).resolves.toBeUndefined();
     // The workspace keeps its own mode; the agent's bypass does not leak into it.
     await expect(
-      approvalStatus(
-        "bash",
-        { command: "ls", workspace: "notes" },
-        {
-          ...ctx,
-          agentSandboxPermissionMode: "bypass",
-        },
-      ),
+      approvalStatus("bash", { command: "ls", workspace: "notes" }, bypass),
     ).resolves.toBe("user-approval");
+  });
+
+  it("a sandbox that is not a name is refused and gated", async () => {
+    // Even with the own sandbox on bypass, a value that names nothing cannot be
+    // resolved, so the gate asks and the tool refuses before running anything.
+    const ctx = borrowedSandboxCtx({}, { permissionMode: "bypass" });
+    await expect(
+      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
+    ).resolves.toBe("user-approval");
+    const bash = await tool("bash", ctx);
+    await expect(
+      bash.execute({ command: "ls", sandbox: true }),
+    ).rejects.toThrow("Error: sandbox must be the name of a sandbox");
+    expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
 

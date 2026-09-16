@@ -308,8 +308,6 @@ function session(): Session {
     eventId: `evt_${Date.now()}`,
     filesystemNamespace: (): string => "fs-bench",
     resolvedWorkspaces: (): never[] => [],
-    agentSandbox: (): undefined => undefined,
-    agentSandboxPermissionMode: (): "ask" => "ask",
     sandboxes: (): never[] => [],
     persistModelMessages: async (): Promise<never[]> => [],
     renewConversationLease: async (): Promise<"renewed"> => "renewed",

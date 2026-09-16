@@ -8,13 +8,14 @@
   Agents that reference the **same** `workspaceId` read and write the **same files** unless
   the workspace opts into hierarchical alias partitioning.
 
-A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
-(`workspaces[].sandbox`). A workspace's **effective sandbox** follows this cascade:
+An agent lists its sandboxes in `config.sandboxes`. The **first** is the agent's default,
+and a workspace can pin its own with `workspaces[].sandbox`. A workspace's **effective
+sandbox** follows this cascade:
 
 ```text
 workspaces[].sandbox === null   → read-only, S3-direct reads (opt out of compute entirely)
 workspaces[].sandbox === "sb_…" → that sandbox (override)
-workspaces[].sandbox omitted    → inherit config.sandbox (read-only via mount if there is none)
+workspaces[].sandbox omitted    → inherit config.sandboxes[0] (read-only via mount if there is none)
 ```
 
 This is what lets one agent give different workspaces different sandboxes and
@@ -22,9 +23,10 @@ This is what lets one agent give different workspaces different sandboxes and
 sandboxes, and lets a single workspace be **read-only**. A read-only workspace reads through
 a service-managed read-only mount by default (so it sees committed writes immediately);
 `sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
-reads lag mount writes, see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
+reads lag mount writes, see [Lambda](sandbox/lambda.md)). The first sandbox also powers
 stateless `bash` when there is no workspace at all, and stays directly reachable when
-every attached workspace borrows a different sandbox. See
+every attached workspace borrows a different sandbox. The other entries in
+`config.sandboxes` are `bash` targets the model picks by name. See
 [Whose sandbox is it?](#whose-sandbox-is-it) below.
 
 ```mermaid
@@ -34,7 +36,7 @@ flowchart LR
     WS["workspaceConfig (ws_…)<br/>storage · harness"]
   end
   subgraph AgentA["Agent A config"]
-    A["sandbox: sb_…<br/>workspaces: [notes → ws_…]"]
+    A["sandboxes: [sb_…]<br/>workspaces: [notes → ws_…]"]
   end
   subgraph AgentB["Agent B config"]
     B["workspaces: [notes → ws_…, sandbox: sb_…]<br/>(per-workspace override)"]
@@ -93,9 +95,9 @@ export const myAgent = defineAgent({
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
   connections: [slack, github],
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   workspaces: [
-    notes, // inherit agent sandbox
+    notes, // inherit the first sandbox
     { workspace: notes, sandbox: null }, // read-only, S3-direct
   ],
 });
@@ -106,7 +108,7 @@ The CLI compiles these into a manifest, resolves references, and syncs them. You
 ## Tool surface
 
 Tool availability is per workspace, from that workspace's _effective_ sandbox
-(`workspaces[].sandbox` → else `config.sandbox` → else none). The agent's tool set is the
+(`workspaces[].sandbox` → else `config.sandboxes[0]` → else none). The agent's tool set is the
 union across its workspaces:
 
 | Workspace's effective sandbox | Tools for that workspace                                                                    |
@@ -117,11 +119,11 @@ union across its workspaces:
 
 Plus the agent-level cases:
 
-| Agent references                                         | Tools exposed                                                                |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| sandbox, **no** workspace                                | `bash` only. A fresh container each call, unless the sandbox is `persistent` |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox` argument naming it (see below)  |
-| neither sandbox nor workspace                            | none                                                                         |
+| Agent references                                               | Tools exposed                                                                |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| sandboxes, **no** workspace                                    | `bash` only. A fresh container each call, unless the sandbox is `persistent` |
+| sandboxes + workspaces that all borrow a **different** machine | the workspace tools, plus a `bash` `sandbox` argument naming it (see below)  |
+| neither sandboxes nor workspace                                | none                                                                         |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -140,27 +142,29 @@ implementation details for logs and debugging.
 
 Two agents can reach the same workspace through different arrangements, and the
 difference decides how much of the machine the agent gets. What matters is whether the
-workspace's effective sandbox **is the one the agent itself references**:
+workspace's effective sandbox **is the agent's first sandbox**:
 
-| Arrangement                                                 | What the agent gets                                                                                                                                                                                               |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.                                                |
-| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                                                   |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: "<its name>"` (`true` means the same). No workspace is mounted there, so nothing reaches durable storage.    |
-| `config.sandboxes: [sb_c]`                                  | Extra machines beside the default. `bash` reaches each by name with `sandbox: "<name>"`, and each keeps its own image, network and `permissionMode`. No workspace is mounted, so nothing reaches durable storage. |
+| Arrangement                                                     | What the agent gets                                                                                                                                                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.sandboxes: [sb_a]` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.                                                        |
+| `workspaces[].sandbox: sb_b`, **no** `config.sandboxes`         | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                                                           |
+| `config.sandboxes: [sb_a]` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: "<its name>"`. No workspace is mounted there, so nothing reaches durable storage.                                    |
+| `config.sandboxes: [sb_a, sb_c]`                                | `sb_c` is a second machine beside the default. `bash` reaches it by name with `sandbox: "<name>"`, and it keeps its own image, network and `permissionMode`. No workspace is mounted, so nothing reaches durable storage. |
 
-Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
-resolves both to the same record, so both land in the first row. An agent that references
-the very sandbox its workspace runs on lands there too. Identity is the sandbox record, so
-`config.sandbox: sb_b` + workspace on `sb_b` is the agent's own machine, not a borrowed one.
-Row two is only reached when the agent references **no** sandbox of its own.
+Inheriting the first sandbox and naming it explicitly are the same case: the cascade
+resolves both to the same record, so both land in the first row. Identity is the sandbox
+record, so `config.sandboxes: [sb_b]` + workspace on `sb_b` is the agent's own machine, not a
+borrowed one. Row two is only reached when the agent lists **no** sandboxes.
+
+Each id may appear in `config.sandboxes` once, and only the first may also back a
+workspace. `config.sandboxes: [sb_a, sb_b]` + workspace on `sb_b` is rejected: `sb_b` would
+be one machine reachable both with the mount and without it.
 
 `workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
 own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
 keep landing in durable storage unless the model deliberately names a sandbox with
-`sandbox`. The argument is always a name; `true` is still read as the agent's own sandbox,
-so calls stored before names existed keep working. A name that matches nothing is refused
-rather than quietly landing in the workspace.
+`sandbox`. The argument is always a name. A name that matches nothing is refused rather
+than quietly landing in the workspace.
 
 "Nothing reaches durable storage" is about the **mount**, not about the machine. A run
 that names a sandbox gets a fresh container each call, unless that sandbox is `persistent`,
@@ -168,8 +172,8 @@ in which case its filesystem survives between calls until the reservation ends. 
 no workspace has no filesystem namespace to key that reservation on, so the harness derives
 one from `accountId:agentId:sandboxId`: each agent gets its own reserved machine, and
 re-pointing an agent at a different sandbox record gives it that record's machine rather
-than one built from the old record's image. Each record in `config.sandboxes` gets its own
-reservation the same way.
+than one built from the old record's image. Every other record in `config.sandboxes` gets
+its own reservation the same way.
 
 Set `options.reservationKey` to name the reservation yourself. Two sandboxes carrying the
 same key share one machine, which is the way to put several agents on one deliberately.
