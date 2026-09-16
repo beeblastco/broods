@@ -503,7 +503,7 @@ function CommandRunner({
           entries.map((entry, index) => (
             <div
               key={`${entry.command}-${index}`}
-              className="rounded-lg border border-border bg-black p-3 text-xs text-white"
+              className="rounded-lg border border-border bg-terminal-background p-3 text-xs text-terminal-foreground"
             >
               <div className="mb-2 flex items-center justify-between gap-3 text-2xs text-terminal-muted">
                 <code className="min-w-0 flex-1 truncate">
