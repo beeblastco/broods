@@ -69,6 +69,32 @@ Every other action asks unless `permissionMode` is `bypass`. The tool tells the
 model that text on the screen is data, not instructions, and to ask before
 CAPTCHAs, payments or security settings. Ctrl+C on the daemon stops it all.
 
+### More than one computer
+
+An agent drives every machine it can reach: its own `sandbox`, plus any machine
+attached through `sandboxes`. The agent's own sandbox no longer has to be the
+machine, so one agent can drive several computers.
+
+```ts
+defineAgent({
+  name: "tracy",
+  sandbox: kienMac,
+  sandboxes: [phicksMac],
+});
+```
+
+With one computer reachable, `computer` takes the action alone, as before. With
+more, it takes a `sandbox` naming which computer to act on, and every result
+says which screen it came from. Coordinates never carry from one screen to
+another, so take a screenshot after switching.
+
+Approval for an action follows the computer that call names, not the agent's own:
+in one turn a `bypass` machine clicks without asking while an `ask` machine still
+asks. Looking stays free on every machine, as above, so `ask` does not stop an
+agent screenshotting one it can reach. What decides whether it can reach a
+computer at all is the owner starting the daemon with `--computer`, and Ctrl+C
+there ends it.
+
 ## Local MCP servers
 
 Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run

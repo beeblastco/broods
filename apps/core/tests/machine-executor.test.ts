@@ -13,6 +13,7 @@ import {
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
 import computerTool from "../src/harness/tools/computer.tool.ts";
+import type { MachineSandbox } from "../src/harness/tools/filesystem-utils.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   MACHINE_WEBSOCKET_PATH,
@@ -36,6 +37,7 @@ import {
   machineExecutorConfig,
   machineMcpRecord,
   machineStorage,
+  otherMachineExecutorConfig,
   startMachineCore,
   waitFor,
   type MachineConnectionWrite,
@@ -196,7 +198,7 @@ test("the computer tool reaches a daemon started with --computer, and names the 
       );
     },
   });
-  const execute = computerTool(machineExecutorConfig()).computer
+  const execute = computerTool([machine()]).computer
     ?.execute as ToolExecuteFunction<
     Record<string, unknown>,
     unknown,
@@ -216,6 +218,58 @@ test("the computer tool reaches a daemon started with --computer, and names the 
   ).toEqual({
     type: "text",
     value: "X=10,Y=20 (frontmost app: com.apple.Safari)",
+  });
+});
+
+test("with two computers attached, a call reaches the one it names", async () => {
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: answersWith("mine"),
+  });
+  await connectDaemon(server, "other-mac", () => {}, {
+    onComputer: answersWith("theirs"),
+  });
+  const execute = computerTool([machine(), machine("other-mac", "bypass")])
+    .computer?.execute as ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+  const options = { toolCallId: "call-1", messages: [], context: {} };
+
+  expect(
+    await execute({ action: "cursor_position", sandbox: "other-mac" }, options),
+  ).toEqual({ type: "text", value: "theirs on other-mac" });
+  expect(
+    await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
+  ).toEqual({ type: "text", value: "mine on my-mac" });
+  // Two screens and no name is ambiguous, so it is refused rather than guessed.
+  await expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
+    "pass sandbox with the computer to act on: my-mac, other-mac",
+  );
+});
+
+test("a name from a longer list is refused once one computer is left", async () => {
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: answersWith("mine"),
+  });
+  const execute = computerTool([machine()]).computer
+    ?.execute as ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+  const options = { toolCallId: "call-1", messages: [], context: {} };
+
+  // An approval replayed after the agent lost a machine still carries the name it
+  // was granted for. That must not land on the machine that is left.
+  await expect(
+    execute({ action: "cursor_position", sandbox: "other-mac" }, options),
+  ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
+  expect(await execute({ action: "cursor_position" }, options)).toEqual({
+    type: "text",
+    value: "mine",
   });
 });
 
@@ -312,6 +366,35 @@ test("looking at the screen is free, anything else asks unless the sandbox is by
   expect(approval("type", "bypass")).toBeUndefined();
 });
 
+test("approval follows the computer a call names, not the agent's own", () => {
+  const approval = (
+    sandbox?: string,
+  ): ReturnType<typeof compatibilityApprovalStatus> =>
+    compatibilityApprovalStatus(
+      "computer",
+      { action: "type", ...(sandbox ? { sandbox: sandbox } : {}) },
+      {
+        configuredApprovals: new Map(),
+        workspaces: [],
+        agentSandbox: machineExecutorConfig(),
+        agentSandboxPermissionMode: "ask",
+        sandboxes: [
+          {
+            name: "other-mac",
+            sandbox: { provider: "machine", permissionMode: "bypass" },
+          },
+        ],
+      },
+    );
+
+  expect(approval("my-mac")).toBe("user-approval");
+  expect(approval("other-mac")).toBeUndefined();
+  // Naming none, or naming one that is not attached, cannot silently land on the
+  // machine that happens to be `bypass`.
+  expect(approval()).toBe("user-approval");
+  expect(approval("nope")).toBe("user-approval");
+});
+
 test("each side's parser drops a frame whose fields do not match its type", () => {
   expect(parseCoreFrame('{"type":"exec","id":"1","code":"yes"}')).toBeNull();
   expect(
@@ -367,6 +450,15 @@ test("each side's parser drops a frame whose fields do not match its type", () =
   });
 });
 
+/** A fake daemon that answers every computer frame with one fixed text. */
+function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
+  return (frame, socket): void => {
+    socket.send(
+      JSON.stringify({ type: "computer-result", id: frame.id, text: text }),
+    );
+  };
+}
+
 function closeOf(socket: WebSocket): Promise<CloseEvent> {
   return new Promise((resolve): void => {
     socket.onclose = resolve;
@@ -414,6 +506,21 @@ function core(): Bun.Server<MachineSocketData> {
   servers.push(server);
 
   return server;
+}
+
+/** One of the two machine records, as the computer tool sees it. */
+function machine(
+  name: "my-mac" | "other-mac" = "my-mac",
+  permissionMode: SandboxPermissionMode = "ask",
+): MachineSandbox {
+  return {
+    name: name,
+    permissionMode: permissionMode,
+    sandbox:
+      name === "my-mac"
+        ? machineExecutorConfig()
+        : otherMachineExecutorConfig(),
+  };
 }
 
 function openSocket(

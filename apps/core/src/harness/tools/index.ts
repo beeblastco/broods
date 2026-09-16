@@ -60,8 +60,10 @@ import {
 import editTool from "./edit.tool.ts";
 import {
   hasStandaloneSandbox,
+  machineSandboxes,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
 import getSubagentStatusTool from "./get-subagent-status.tool.ts";
@@ -182,31 +184,40 @@ export async function createTools(
         }
       : undefined;
 
+  // What bash and computer both select from: the agent's own sandbox, and the
+  // extra sandboxes a call can name.
+  const sandboxContext: SandboxToolContext = {
+    workspaces: workspaces,
+    ...(agentSandbox
+      ? {
+          agentSandbox: agentSandbox,
+          agentSandboxPermissionMode:
+            context.agentSandboxPermissionMode ?? "ask",
+        }
+      : {}),
+    ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
+  };
   // bash: the agent's own sandbox, or any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace.
+  // of silently selecting the first writable workspace. Background jobs and CPU
+  // metering are bash's alone.
   if (agentSandbox || sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
-        workspaces: workspaces,
-        ...(agentSandbox
-          ? {
-              agentSandbox: agentSandbox,
-              agentSandboxPermissionMode:
-                context.agentSandboxPermissionMode ?? "ask",
-            }
-          : {}),
-        ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
+        ...sandboxContext,
         ...(backgroundContext ? { background: backgroundContext } : {}),
         ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
       }),
     );
   }
-  // computer: only the user's own computer has a screen to drive.
-  if (agentSandbox?.provider === "machine") {
-    Object.assign(sandboxTools, computerTool(agentSandbox));
+  // computer: only a computer has a screen to drive. The agent's own sandbox is
+  // one way to reach one, an attached machine sandbox is another, and an agent
+  // that reaches several names which per call.
+  const machines = machineSandboxes(sandboxContext);
+  if (machines.length > 0) {
+    Object.assign(sandboxTools, computerTool(machines));
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
