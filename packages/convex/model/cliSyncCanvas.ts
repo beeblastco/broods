@@ -8,6 +8,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
+import { defaultSandboxOf } from "./agentRules";
 import { applyTidyLayout } from "./canvasLayout";
 import {
   authIdForAccount,
@@ -224,7 +225,7 @@ function addAgentSubagentEdges(
 function addAgentWorkspaceEdges(options: {
   agentConfig: Record<string, unknown>;
   agentNodeId: string;
-  agentSandboxName: string | null;
+  defaultSandboxName: string | null;
   nodeIdByKindName: Map<string, string>;
   desiredEdges: Map<string, CanvasEdge>;
   workspaceWriters: WorkspaceWriterState;
@@ -232,7 +233,7 @@ function addAgentWorkspaceEdges(options: {
   const {
     agentConfig,
     agentNodeId,
-    agentSandboxName,
+    defaultSandboxName,
     nodeIdByKindName,
     desiredEdges,
     workspaceWriters,
@@ -263,8 +264,8 @@ function addAgentWorkspaceEdges(options: {
           sandboxNodeId,
           "right",
         );
-    } else if (workspaceRef.sandbox !== null && agentSandboxName) {
-      // Omitted sandbox inherits the agent-level default (writable).
+    } else if (workspaceRef.sandbox !== null && defaultSandboxName) {
+      // Omitted sandbox inherits the default sandbox, sandboxes[0] (writable).
       // `null` explicitly forces read-only, so it stays a non-writer.
       workspaceWriters.writers.add(workspaceNodeId);
     }
@@ -347,20 +348,21 @@ function collectDesiredAgentEdges(options: {
     // mount edge (sandbox x=420 sits left of workspace x=760). Only the default
     // sandbox, sandboxes[0], gets an edge; the canvas has no shape for the extras
     // yet, so they stay unlinked nodes.
-    const defaultSandbox = Array.isArray(agent.config.sandboxes)
-      ? agent.config.sandboxes[0]
-      : undefined;
-    const agentSandboxName =
-      typeof defaultSandbox === "string" ? resourceName(defaultSandbox) : null;
-    if (agentSandboxName) {
-      const sandboxNodeId = nodeIdByKindName.get(`sandbox:${agentSandboxName}`);
+    const defaultSandbox = defaultSandboxOf(agent.config);
+    const defaultSandboxName = defaultSandbox
+      ? resourceName(defaultSandbox)
+      : null;
+    if (defaultSandboxName) {
+      const sandboxNodeId = nodeIdByKindName.get(
+        `sandbox:${defaultSandboxName}`,
+      );
       if (sandboxNodeId)
         addDesiredDefaultEdge(desiredEdges, agentId, sandboxNodeId);
     }
     addAgentWorkspaceEdges({
       agentConfig: agent.config,
       agentNodeId: agentId,
-      agentSandboxName: agentSandboxName,
+      defaultSandboxName: defaultSandboxName,
       nodeIdByKindName: nodeIdByKindName,
       desiredEdges: desiredEdges,
       workspaceWriters: workspaceWriters,

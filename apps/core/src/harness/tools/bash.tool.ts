@@ -10,7 +10,10 @@ import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../../shared/workspaces.ts";
 import {
   bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
@@ -41,7 +44,6 @@ import {
   workspaceParamSchema,
   writesOutsideAllowed,
   type SandboxToolContext,
-  type SelectableSandbox,
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
@@ -52,8 +54,7 @@ const THROWAWAY_NOTE =
 interface BashInput {
   command: string;
   workspace?: string;
-  // The agent's own sandbox name picks its own sandbox; any other name picks an
-  // extra. A name that matches nothing, or a value that is no name, is refused.
+  // A sandbox name; anything else is refused.
   sandbox?: unknown;
   background?: boolean;
   pty?: boolean;
@@ -88,17 +89,18 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
               "Error: pass either workspace or sandbox, not both — they select different places to run",
             );
           }
-          // Resolved before the workspace fallback so an unknown name is refused
-          // instead of quietly landing in the default workspace.
-          const agentSandbox = resolveAgentSandbox(context, selected);
-          const target = {
-            ...(workspace ? { workspace: workspace } : {}),
-            ...(selected !== undefined ? { sandbox: selected } : {}),
-          };
-          const ws = targetsAgentSandbox(context, target)
+          // Resolved before the workspace fallback so a name that picks nothing
+          // selectable is refused instead of quietly landing in the default workspace.
+          const picked = resolveAgentSandbox(context, selected);
+          const ws = targetsAgentSandbox(context, {
+            workspace: workspace,
+            sandbox: selected,
+          })
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const sandbox = ws?.sandbox ?? agentSandbox?.sandbox;
+          // A read-only workspace must not fall through to the default sandbox: the
+          // approval gate skipped it expecting this refusal.
+          const sandbox = ws ? ws.sandbox : picked?.sandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
@@ -172,7 +174,7 @@ function backgroundNote(context: SandboxToolContext): string {
 
 function description(context: SandboxToolContext): string {
   if (context.workspaces.length === 0) {
-    const runtimes = runtimeDescription(resolveAgentSandbox(context)?.sandbox);
+    const runtimes = runtimeDescription(context.sandboxes?.[0]?.sandbox);
 
     return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
 
@@ -398,7 +400,7 @@ function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
-// Scenario note: the sandboxes a call can pick by name, the agent's own first when
+// Scenario note: the sandboxes a call can pick by name, the default first when
 // nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
   const choices = sandboxParamChoices(context);
@@ -406,8 +408,9 @@ function sandboxesNote(context: SandboxToolContext): string {
     return "";
   }
   const entries = choices.map((choice): string => {
-    const label = choice.description ?? (choice.own ? "your own sandbox" : "");
-    const reserved = choice.own ? reservedStandaloneNote(choice.sandbox) : "";
+    const isDefault = choice === context.sandboxes?.[0];
+    const label = choice.description ?? (isDefault ? "your own sandbox" : "");
+    const reserved = isDefault ? reservedStandaloneNote(choice.sandbox) : "";
 
     return `${choice.name}${label ? `: ${label}.` : ""}${reserved}`;
   });
@@ -417,13 +420,15 @@ function sandboxesNote(context: SandboxToolContext): string {
 ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
-// What the `sandbox` param offers. A lone own sandbox with no workspace is where
-// bash already runs, so it earns no field; beside a workspace or an extra it is a
+// What the `sandbox` param offers. A lone default with no workspace is where bash
+// already runs, so it earns no field; beside a workspace or another sandbox it is a
 // choice.
-function sandboxParamChoices(context: SandboxToolContext): SelectableSandbox[] {
+function sandboxParamChoices(
+  context: SandboxToolContext,
+): ResolvedAgentSandbox[] {
   const choices = selectableSandboxes(context);
   const onlyTheDefault =
-    choices.length === 1 && choices[0]?.own && context.workspaces.length === 0;
+    choices.length === 1 && context.workspaces.length === 0;
 
   return onlyTheDefault ? [] : choices;
 }

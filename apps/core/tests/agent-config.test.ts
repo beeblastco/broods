@@ -252,6 +252,28 @@ describe("agent config validation", () => {
     );
   });
 
+  it("refuses a stored config that still carries the removed sandbox key", () => {
+    // Dropping the key would quietly make sb_b the default.
+    const stored = { sandbox: "sb_a", sandboxes: ["sb_b"] };
+
+    expect(() => toRuntimeAgentConfig(stored)).toThrow(
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
+    );
+  });
+
+  it("checks the harness sandbox rule on the merged config, not the patch", () => {
+    // The agent already lists a sandbox, so a patch naming only the harness is valid.
+    const patch = normalizeAgentConfigPatch({ harness: { type: "codex" } });
+
+    expect(mergeAgentConfig({ sandboxes: ["sb_1"] }, patch)).toEqual({
+      harness: { type: "codex" },
+      sandboxes: ["sb_1"],
+    });
+    expect(() => mergeAgentConfig({}, patch)).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
+    );
+  });
+
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
     expect(resolveSubagentMode({})).toBe("persistent");
     expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(

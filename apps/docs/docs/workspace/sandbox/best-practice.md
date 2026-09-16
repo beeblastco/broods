@@ -30,7 +30,7 @@ immediately instead of waiting out the suspended grace period.
 ## Reserved (persistent) sandboxes
 
 Set `persistent: true` to **reserve a long-lived sandbox per workspace**, or, for a sandbox
-an agent reaches with no workspace attached, one per agent. For `lambda` this reserves a
+an agent reaches with no workspace attached, one per agent and sandbox. For `lambda` this reserves a
 snapshot-resumable MicroVM (suspend/resume on idle, 8 h max lifetime).
 
 ```jsonc
@@ -138,8 +138,8 @@ the bot must have **Send Messages** permission in the channel.
 `async_status` is auto-registered whenever the agent has a workspace whose effective sandbox
 is persistent, or any `config.tools` entry marked `async: true`, and only resolves a
 `statusId` for its own conversation. A persistent sandbox in the agent's `sandboxes`, used
-without a workspace, reserves a machine of its own but does not register it: a background job reports back
-against a workspace. Jobs are tracked in the `AsyncToolResult` table.
+without a workspace, reserves a machine of its own, but `async_status` is not registered: a
+background job reports back against a workspace. Jobs are tracked in the `AsyncToolResult` table.
 
 **Ownership & limits.** `sandbox`, Daytona, and Vercel cap concurrent background jobs (10),
 and a job that is killed when the sandbox is recreated/scaled-to-0 reports as `failed` (it

@@ -288,7 +288,7 @@ export class Session {
   // two later, so the run would get the same index back.
   private memoryFilesPromise: Promise<MemoryFile[]> | undefined;
   private skillMetadataPromise: Promise<SkillMetadata[]> | undefined;
-  // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
+  // Resolved sandbox + workspace records (from the agent's `sandboxes`/`workspaces`
   // refs). Resolved once per session at turn-context construction; the sync
   // getters below read the cached value.
   private resolvedRuntime: ResolvedAgentRuntime | undefined;
@@ -695,12 +695,7 @@ export class Session {
     return loaded;
   }
 
-  /**
-   * The agent's sandboxes (`config.sandboxes`). The first is its own: it backs
-   * bash when no workspace is attached, is the fallback for workspaces that
-   * declare none, and stays reachable when every workspace borrows a different
-   * one. The rest are reached by name with no workspace. Empty when none.
-   */
+  // Resolved config.sandboxes; the first is the default. Empty when none.
   sandboxes(): ResolvedAgentSandbox[] {
     return this.resolvedRuntime?.sandboxes ?? [];
   }

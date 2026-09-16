@@ -194,6 +194,50 @@ export const coding = defineAgent({
   );
 });
 
+test("compileProject rejects a harness agent with an empty sandboxes list", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness } from "${RESOURCES_MODULE}";
+
+export const coding = defineAgent({
+  name: "coding",
+  harness: defineHarness({ type: "opencode" }),
+  sandboxes: [],
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "coding" runs a harness, so it needs sandboxes; the first runs the harness',
+  );
+});
+
+test("compileProject rejects a sandbox listed twice", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({ name: "runner", provider: "lambda" });
+export const browser = defineSandbox({ name: "browser", provider: "lambda" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: [runner, browser, "runner"],
+});
+`,
+  );
+
+  // The resource and the bare name map to the same record, so the repeat only
+  // shows after mapping.
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" sandboxes[2] "runner" is listed more than once',
+  );
+});
+
 test("compileProject maps agent sandboxes to their names in order", async () => {
   const cwd = await fixtureProject(
     "",

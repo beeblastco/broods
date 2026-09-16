@@ -6,7 +6,11 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
-import { sandboxesWithDefault } from "../model/agentRules";
+import { toNestedAgentConfig } from "../model/agentConfigCodec";
+import {
+  assertAgentRuntimeRefs,
+  sandboxesWithDefault,
+} from "../model/agentRules";
 import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
@@ -417,6 +421,11 @@ export const updateRuntimeRefs = mutation({
       return configId;
     }
 
+    // A drawn edge can still name refs the config API refuses, like a
+    // workspace mounted on a later sandbox. Refuse them here, not at run time.
+    assertAgentRuntimeRefs(
+      toNestedAgentConfig({ ...existing, extraConfig: extraConfig }),
+    );
     await ctx.db.patch(configId, {
       extraConfig: extraConfig,
       updatedAt: Date.now(),

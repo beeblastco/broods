@@ -67,9 +67,7 @@ export interface ResolvedAgentSandbox {
 }
 
 export interface ResolvedAgentRuntime {
-  // Agent-level sandboxes. The first is the default: it powers stateless bash (no
-  // workspace) and backs workspaces that don't declare their own. The rest are
-  // reached by name with no workspace mounted.
+  // Resolved config.sandboxes; the first is the default.
   sandboxes: ResolvedAgentSandbox[];
   workspaces: ResolvedWorkspace[];
 }

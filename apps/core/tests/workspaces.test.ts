@@ -429,6 +429,39 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
+  it("backs an unsandboxed workspace with the first listed sandbox, unreserved", async () => {
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async (_accountId: string, id: string) => ({
+          sandboxId: id,
+          name: id,
+          config: { provider: "lambda", persistent: true },
+        }),
+      },
+      workspaceConfigs: {
+        getById: async () => ({ config: { storage: { provider: "s3" } } }),
+      },
+    } as never);
+
+    const resolved = await resolveAgentRuntime(
+      {
+        sandboxes: ["sb_1", "sb_2"],
+        workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+      },
+      { accountId: "acct_1", agentId: "ag_1" },
+    );
+
+    expect(resolved.sandboxes[0]?.sandbox.options?.reservationKey).toBe(
+      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
+    );
+    // The workspace inherits the first entry, never a later one, and keys its
+    // reservation on its own namespace.
+    expect(resolved.workspaces[0]?.sandbox?.controlPlane?.sandboxConfigId).toBe(
+      "sb_1",
+    );
+    expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
+  });
+
   it("resolves sandboxes by record name and reserves each on its own key", async () => {
     setStorageForTests({
       sandboxConfigs: {

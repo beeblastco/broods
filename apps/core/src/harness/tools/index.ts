@@ -98,10 +98,7 @@ export interface ToolContext {
   // Each workspace carries its own effective sandbox + permissionMode (or no
   // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // The agent-level sandboxes (`config.sandboxes`). The first is the agent's own:
-  // it backs bash outright when no workspace is attached, and stays reachable as
-  // its own bash target when the attached workspaces all borrow a different
-  // sandbox. The rest bash reaches by name, each with no workspace mounted.
+  // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
@@ -132,26 +129,24 @@ export async function createTools(
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
   const sandboxes = context.sandboxes ?? [];
-  const agentSandbox = sandboxes[0]?.sandbox;
-  // What bash and computer both select from: the agent's own sandbox, and the
-  // extra sandboxes a call can name.
+  const defaultSandbox = sandboxes[0]?.sandbox;
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
-    ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
+    sandboxes: sandboxes,
   };
   const sandboxOptions =
-    typeof agentSandbox?.options === "object" && agentSandbox.options !== null
-      ? (agentSandbox.options as Record<string, unknown>)
+    typeof defaultSandbox?.options === "object" &&
+    defaultSandbox.options !== null
+      ? (defaultSandbox.options as Record<string, unknown>)
       : {};
   const hasSandboxReservation =
     typeof sandboxOptions.reservationKey === "string" &&
     sandboxOptions.reservationKey.trim().length > 0;
   // Persistence keys on the workspace namespace, or without one on the key
   // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
-  const runsWithoutNamespace =
-    workspaces.length === 0 || hasStandaloneSandbox(sandboxContext);
+  const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);
   if (
-    agentSandbox?.persistent === true &&
+    defaultSandbox?.persistent === true &&
     runsWithoutNamespace &&
     !hasSandboxReservation
   ) {
@@ -198,10 +193,9 @@ export async function createTools(
       }),
     );
   }
-  // computer: only a computer has a screen to drive. The agent's own sandbox is
-  // one way to reach one, an attached machine sandbox is another, and an agent
-  // that reaches several names which per call.
-  const machines = machineSandboxes(sandboxContext);
+  // computer: every machine in `sandboxes` is a computer target, and an agent that
+  // reaches several names which per call.
+  const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
   }

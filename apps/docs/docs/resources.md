@@ -211,10 +211,11 @@ run no longer has. Structured memory is unaffected: no adapter declares a
 `memory_save` builtin, so that tool and its `<memory>` block still apply. See
 [Memory and Session](./workspace/memory-and-session.md).
 
-Every AI SDK Harness adapter runs on the agent's first entry in `sandboxes`, so an
-agent with a harness needs at least one. That sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
-(`lambda`) provider. Compute lifecycle belongs to `defineSandbox()`: use
-`onCreate` for one-time setup and `onResume` for per-acquisition setup.
+Every AI SDK Harness adapter runs on the agent's first entry in `sandboxes`, so
+an agent with a harness needs at least one. That sandbox must be persistent and
+use the Workdir (`sandbox`) or Lambda MicroVM (`lambda`) provider. Compute
+lifecycle belongs to `defineSandbox()`: use `onCreate` for one-time setup and
+`onResume` for per-acquisition setup.
 
 Broods stores the adapter's opaque checkpoint after each turn so the same native
 session continues across requests. The checkpoint contains identifiers and
@@ -552,10 +553,10 @@ attached, and one per agent where none is. `options.reservationKey` pins that id
 yourself. Two sandboxes carrying the same key share one machine. Keys are scoped to
 your account; the same string on another account names a different machine.
 
-An agent lists its sandboxes in `sandboxes`. The first is the default: plain `bash` runs
-there, a workspace without its own `sandbox` mounts it, and a harness runs on it. Add more
-when one agent needs a specialized machine beside its default, such as a browser image, a
-deny-all network, or a stricter `permissionMode`:
+An agent lists its sandboxes in `sandboxes`. The first is the default: `bash` with no
+workspace runs there, a workspace without its own `sandbox` mounts it, and a harness runs
+on it. Add more when one agent needs a specialized machine beside its default, such as a
+browser image, a deny-all network, or a stricter `permissionMode`:
 
 ```ts
 export const myAgent = defineAgent({
@@ -564,11 +565,12 @@ export const myAgent = defineAgent({
 });
 ```
 
-The model reaches a later entry by passing its name, here `sandbox: "persistent"`, to
-`bash`, or to `computer` when the entry is a machine. The file tools never run there.
-No workspace is mounted, so nothing written reaches durable storage, and a persistent one
-reserves its own machine for the agent. Each id may appear once, and only the first may
-also back a workspace.
+The model reaches a later entry by passing its name to `bash`, here
+`sandbox: "persistent"`. The file tools never run there. No workspace is mounted, so
+nothing written reaches durable storage, and a persistent one reserves its own machine for
+the agent. `computer` drives every machine in `sandboxes`, the first included, and takes a
+`sandbox` name when the agent reaches more than one machine. Each id may appear once, and
+only the first may also back a workspace.
 
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
 
@@ -758,6 +760,7 @@ The CLI validates resource configs at compile time:
 - Hosted MCP server bundles must build as ESM and default-export a fetch-style MCP handler.
 - Workspace storage provider must be `s3`.
 - Sandbox mounts must support S3 workspace access.
+- `sandbox` is rejected: list ids in `sandboxes`, the first is the default. Each id appears once, a harness needs a first sandbox, and only the first may back a workspace.
 
 These checks run during `broods dev` and `broods deploy`, so a broken config fails before it reaches a stage.
 

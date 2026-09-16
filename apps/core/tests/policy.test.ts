@@ -157,12 +157,26 @@ describe("agent policy input", () => {
     expect(unknown.workspaceId).toBe("ws_123");
     // With no sandboxes attached the name resolves to nothing, so it stays a
     // workspace run.
-    const withoutExtras = policyInputForTool(
+    const withoutSandboxes = policyInputForTool(
       "bash",
       { command: "ls", sandbox: "browser-sandbox" },
       workspaces,
     );
-    expect(withoutExtras.workspaceId).toBe("ws_123");
+    expect(withoutSandboxes.workspaceId).toBe("ws_123");
+
+    // With no workspace an unnamed call runs on the default, so a policy must see
+    // the same mode as when the call names it.
+    const unnamed = policyInputForTool("bash", { command: "ls" }, [], {
+      sandboxes: sandboxes,
+    });
+    const named = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: "own-sandbox" },
+      [],
+      { sandboxes: sandboxes },
+    );
+    expect(unnamed.sandboxPermissionMode).toBe("ask");
+    expect(unnamed.sandboxPermissionMode).toBe(named.sandboxPermissionMode);
   });
 
   it("defaults unknown tools to generic tool calls", () => {

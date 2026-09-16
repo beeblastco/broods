@@ -280,7 +280,7 @@ The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the stag
 ```ts
 export const myAgent = defineAgent({
   name: "my-agent",
-  // …model, provider, sandbox…
+  // …model, provider, sandboxes…
   publicAccess: true, // expose the public SSE/WebSocket endpoint,
 });
 ```
@@ -299,7 +299,7 @@ Inspect and test agents from the CLI:
 
 ```bash
 broods agent list            # name, public/private, model, deploy status
-broods agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
+broods agent get <name>      # model, sandboxes, workspaces, tools, channels, webhook
 broods run <name>            # terminal UI chat session
 broods run <name> "<prompt>" # same session, with the prompt sent as the first turn
 broods run <name> "<prompt>" > out.txt  # redirected output streams plain text instead

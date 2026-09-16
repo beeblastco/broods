@@ -934,7 +934,10 @@ describe("SubagentCoordinator", () => {
       stageSlug: "development",
       filesystemNamespace: () => "ns",
       resolvedWorkspaces: () => [],
-      sandboxes: () => [{ name: "browser-sandbox", sandbox: {} }],
+      sandboxes: () => [
+        { name: "own-sandbox", sandbox: {} },
+        { name: "browser-sandbox", sandbox: {} },
+      ],
       loadSkillPrompt: async () => "",
       createEphemeralTurnContext: async () => ({ system: [] }),
     } as never;
@@ -942,7 +945,8 @@ describe("SubagentCoordinator", () => {
     const ephemeral = createEphemeralChildSession(childSession, []);
 
     // A child reaches the same sandboxes as the agent it runs for.
-    expect(ephemeral.sandboxes().map((extra) => extra.name)).toEqual([
+    expect(ephemeral.sandboxes().map((entry): string => entry.name)).toEqual([
+      "own-sandbox",
       "browser-sandbox",
     ]);
 

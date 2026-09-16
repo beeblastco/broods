@@ -1094,7 +1094,7 @@ describe("runAgentLoop", () => {
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",
         resolvedWorkspaces: () => [],
-        sandboxes: () => [
+        sandboxes: (): ResolvedAgentSandbox[] => [
           {
             name: "agent-sandbox",
             sandbox: { provider: "lambda", permissionMode: "ask" },

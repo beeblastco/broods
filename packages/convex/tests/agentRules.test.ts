@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  assertAgentRuntimeRefs,
+  defaultSandboxOf,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
@@ -547,6 +549,79 @@ describe("sandboxesWithDefault", () => {
 
   it("clears the list with the default instead of promoting an extra", () => {
     expect(sandboxesWithDefault(["sb_old", "sb_mac"], null)).toEqual([]);
+  });
+
+  it("starts a list when none is stored", () => {
     expect(sandboxesWithDefault(undefined, "sb_new")).toEqual(["sb_new"]);
+  });
+
+  it("returns the same list when the default is redrawn", () => {
+    expect(sandboxesWithDefault(["sb_a", "sb_b"], "sb_a")).toEqual([
+      "sb_a",
+      "sb_b",
+    ]);
+  });
+});
+
+describe("defaultSandboxOf", () => {
+  it("reads the first of sandboxes", () => {
+    expect(defaultSandboxOf({ sandboxes: ["sb_a", "sb_b"] })).toBe("sb_a");
+  });
+
+  it("finds no default without a string first entry", () => {
+    expect(defaultSandboxOf({})).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: [] })).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: "sb_a" })).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: [42] })).toBeUndefined();
+  });
+});
+
+// The rules a canvas save checks before it stores the refs it drew.
+describe("assertAgentRuntimeRefs", () => {
+  it("refuses a workspace drawn onto a later sandbox", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({
+        sandboxes: sandboxesWithDefault(["sb_a", "sb_b"], "sb_a"),
+        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
+      }),
+    ).toThrow(
+      'config.sandboxes[1] "sb_b" also backs workspace "repo"; only the first sandbox can back a workspace',
+    );
+  });
+
+  it("refuses a harness left without its default", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({ harness: { type: "codex" } }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
+    );
+  });
+
+  it("leaves branches a canvas save never touches to their owner", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({
+        provider: { custom: { base_url: "${BASE_URL}" } },
+        sandboxes: ["sb_a"],
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("config patch pre-validation", () => {
+  it("lets a patch add a harness to an agent that already has sandboxes", () => {
+    expect(
+      normalizeUpdateAgentInput(
+        { sandboxes: ["sb_a"] },
+        { config: { harness: { type: "codex" } } },
+      ).config,
+    ).toEqual({ harness: { type: "codex" }, sandboxes: ["sb_a"] });
+  });
+
+  it("still refuses the merged config when no sandbox is stored", () => {
+    expect(() =>
+      normalizeUpdateAgentInput({}, { config: { harness: { type: "codex" } } }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
+    );
   });
 });

@@ -619,14 +619,21 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
-    const agentSandbox = Array.isArray(config.sandboxes)
-      ? resolveLocalSandbox(config.sandboxes[0], sandboxes)
-      : undefined;
+    // Resource files are transpiled without a typecheck, so a string `sandboxes`
+    // must not yield its first character.
+    const defaultSandbox = resolveLocalSandbox(
+      Array.isArray(config.sandboxes) ? config.sandboxes[0] : undefined,
+      sandboxes,
+    );
     const workspaces = config.workspaces;
     if (!Array.isArray(workspaces)) continue;
     for (const entry of workspaces) {
       const workspaceName = workspaceNameFor(entry);
-      const sandbox = effectiveWorkspaceSandbox(entry, agentSandbox, sandboxes);
+      const sandbox = effectiveWorkspaceSandbox(
+        entry,
+        defaultSandbox,
+        sandboxes,
+      );
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
       throw new Error(
         `Agent "${resource.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" (${sandboxProvider(sandbox)}) ` +
@@ -649,7 +656,7 @@ function resolveLocalSandbox(
 
 function effectiveWorkspaceSandbox(
   entry: unknown,
-  agentSandbox: SandboxResource | undefined,
+  defaultSandbox: SandboxResource | undefined,
   sandboxes: Map<string, SandboxResource>,
 ): SandboxResource | undefined {
   if (entry && typeof entry === "object" && "sandbox" in entry) {
@@ -659,7 +666,7 @@ function effectiveWorkspaceSandbox(
     return resolveLocalSandbox(sandbox, sandboxes);
   }
 
-  return agentSandbox;
+  return defaultSandbox;
 }
 
 function workspaceNameFor(entry: unknown): string {
@@ -706,7 +713,11 @@ function assertExportedAgentSandboxes(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     for (const sandbox of resource.config.sandboxes ?? []) {
-      if (isResource(sandbox) && !exportedSandboxNames.has(sandbox.name)) {
+      if (
+        isResource(sandbox) &&
+        sandbox.kind === "sandbox" &&
+        !exportedSandboxNames.has(sandbox.name)
+      ) {
         throw new Error(
           `Agent "${resource.name}" sandboxes references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
         );
@@ -1301,11 +1312,13 @@ function normalizeAgentConfig(
       )
     : undefined;
   if (sandboxes) config.sandboxes = sandboxes;
-  if (config.harness && !sandboxes?.length) {
+  // CLI sync never runs the Convex validator, so this mirrors its repeat check.
+  sandboxes?.forEach((sandbox, index): void => {
+    if (sandboxes.indexOf(sandbox) === index) return;
     throw new Error(
-      `Agent "${resource.name}" runs a harness, so it needs sandboxes; the first runs the harness`,
+      `Agent "${resource.name}" sandboxes[${index}] "${String(sandbox)}" is listed more than once`,
     );
-  }
+  });
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;
@@ -1356,6 +1369,12 @@ function normalizeAgentConfig(
       }
     }
     config.workspaces = workspaces;
+  }
+  // After the workspace-backing check, in the same order as core and Convex.
+  if (config.harness && !sandboxes?.length) {
+    throw new Error(
+      `Agent "${resource.name}" runs a harness, so it needs sandboxes; the first runs the harness`,
+    );
   }
   if (config.policies !== undefined) {
     const policies = normalizePolicyRefs(config.policies, resource.name);

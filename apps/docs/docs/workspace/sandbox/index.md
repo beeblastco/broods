@@ -190,8 +190,8 @@ bash   python3 notes/run.py # run programs directly
 that refuse to run without a terminal. See
 [Best Practice → Live terminal & real TTY runs](best-practice.md#live-terminal--real-tty-runs).
 
-With no workspace, only `bash` is available and each call is a fresh container, so
-write-and-run in one command:
+With no workspace, only `bash` (and `computer` on a machine) is available and each call is
+a fresh container, so write-and-run in one command:
 
 ```bash
 cat <<'EOF' > /tmp/run.py

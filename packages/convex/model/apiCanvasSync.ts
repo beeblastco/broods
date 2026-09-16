@@ -22,6 +22,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
+import { defaultSandboxOf } from "./agentRules";
 import { applyTidyLayout } from "./canvasLayout";
 import { isPlainObject } from "./objects";
 
@@ -406,10 +407,9 @@ async function wireAgentConfig(
   );
   sync.agentNodeByConfigId.set(config._id, agentNode.id);
 
-  const sandboxes = Array.isArray(nested.sandboxes) ? nested.sandboxes : [];
   const defaultSandboxNodeId = await resolveSandboxNode(
     sync,
-    sandboxes[0],
+    defaultSandboxOf(nested),
     agent.accountId,
   );
   if (defaultSandboxNodeId)
@@ -417,6 +417,9 @@ async function wireAgentConfig(
   // An extra sandbox is still declared wiring, so its node must survive the
   // prune. It draws no edge: the canvas has no shape for a second agent→sandbox
   // link yet.
+  const sandboxes: unknown[] = Array.isArray(nested.sandboxes)
+    ? nested.sandboxes
+    : [];
   for (const extra of sandboxes.slice(1)) {
     await resolveSandboxNode(sync, extra, agent.accountId);
   }

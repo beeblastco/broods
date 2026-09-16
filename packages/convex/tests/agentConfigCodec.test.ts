@@ -2,8 +2,10 @@
 import { describe, expect, test } from "vitest";
 import {
   fromNestedAgentConfig,
+  SANDBOX_REMOVED_MESSAGE,
   toNestedAgentConfig,
 } from "../model/agentConfigCodec";
+import { normalizeAgentConfig } from "../model/agentRules";
 
 describe("agent config codec", () => {
   // `scheduler` has no flat column, so it only survives a sync by riding in
@@ -52,6 +54,17 @@ describe("agent config codec", () => {
       "sb_default",
       "sb_offline",
     ]);
+  });
+
+  // Dropping a stored `sandbox` would push a config with no default and no error.
+  // Carried, it reaches core, which refuses it by name.
+  test("carries a stored legacy sandbox into the nested config", () => {
+    const nested = toNestedAgentConfig({
+      extraConfig: { sandbox: "sb_default", sandboxes: ["sb_offline"] },
+    });
+
+    expect(nested.sandbox).toBe("sb_default");
+    expect(() => normalizeAgentConfig(nested)).toThrow(SANDBOX_REMOVED_MESSAGE);
   });
 
   test("rejects the removed sandbox branch", () => {

@@ -603,13 +603,13 @@ export async function runAgentLoop(
     resolvedWorkspaces,
     {
       mcpIdsByName: policyMcpIdsByName,
-      ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
+      sandboxes: sandboxes,
     },
   );
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals: configuredApprovals,
     workspaces: resolvedWorkspaces,
-    ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
+    sandboxes: sandboxes,
     ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
   });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;

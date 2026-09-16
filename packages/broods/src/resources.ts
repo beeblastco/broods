@@ -593,9 +593,9 @@ export type AgentDefinitionConfig = EnvRefString<
   };
   connections?: readonly AnyConnectionDefinition[];
   /**
-   * Sandboxes this agent runs on. The first is the default: plain bash runs
-   * there, workspaces without their own sandbox mount it, and a harness runs on
-   * it. The model reaches the others by name.
+   * Sandboxes this agent runs on. The first is the default: bash with no
+   * workspace runs there, workspaces without their own sandbox mount it, and a
+   * harness runs on it. The model reaches the others by name.
    */
   sandboxes?: readonly (SandboxResource | string)[];
   workspaces?: readonly AgentWorkspaceInput[];

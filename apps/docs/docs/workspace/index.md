@@ -24,10 +24,10 @@ sandboxes, and lets a single workspace be **read-only**. A read-only workspace r
 a service-managed read-only mount by default (so it sees committed writes immediately);
 `sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
 reads lag mount writes, see [Lambda](sandbox/lambda.md)). The first sandbox also powers
-stateless `bash` when there is no workspace at all, and stays directly reachable when
-every attached workspace borrows a different sandbox. The other entries in
-`config.sandboxes` are `bash` targets the model picks by name. See
-[Whose sandbox is it?](#whose-sandbox-is-it) below.
+stateless `bash` when there is no workspace at all, and stays reachable by name when no
+attached workspace mounts it. The other entries in
+`config.sandboxes` are `bash` targets the model picks by name, and `computer` targets when
+they are machines. See [Whose sandbox is it?](#whose-sandbox-is-it) below.
 
 ```mermaid
 flowchart LR
@@ -119,11 +119,12 @@ union across its workspaces:
 
 Plus the agent-level cases:
 
-| Agent references                                               | Tools exposed                                                                |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| sandboxes, **no** workspace                                    | `bash` only. A fresh container each call, unless the sandbox is `persistent` |
-| sandboxes + workspaces that all borrow a **different** machine | the workspace tools, plus a `bash` `sandbox` argument naming it (see below)  |
-| neither sandboxes nor workspace                                | none                                                                         |
+| Agent references                                               | Tools exposed                                                                                           |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| sandboxes, **no** workspace                                    | `bash` (plus `computer` for a machine). A fresh container each call, unless the sandbox is `persistent` |
+| sandboxes + workspaces that all borrow a **different** machine | the workspace tools, plus a `bash` `sandbox` argument naming it (see below)                             |
+| sandboxes whose first backs a workspace, plus later entries    | the workspace tools, plus a `bash` `sandbox` argument naming the later entries                          |
+| neither sandboxes nor workspace                                | none                                                                                                    |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -160,11 +161,16 @@ Each id may appear in `config.sandboxes` once, and only the first may also back 
 workspace. `config.sandboxes: [sb_a, sb_b]` + workspace on `sb_b` is rejected: `sb_b` would
 be one machine reachable both with the mount and without it.
 
-`workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
-own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
-keep landing in durable storage unless the model deliberately names a sandbox with
-`sandbox`. The argument is always a name. A name that matches nothing is refused rather
-than quietly landing in the workspace.
+`workspace` and `sandbox` are orthogonal: `workspace` names a mount, and `sandbox` names an
+agent-level sandbox to run on with no mount. `workspace` keeps defaulting to the **default
+workspace**, so relative paths keep landing in durable storage unless the model
+deliberately names a sandbox with `sandbox`. The argument is always a name. A name that
+matches nothing is refused rather than quietly landing in the workspace.
+
+Naming the first sandbox while a workspace mounts it is refused too, with
+`sandbox "<name>" is mounted by workspace "<ws>"; pass workspace "<ws>" instead`. That
+machine is reached through its mount. A name that matches nothing, or names a mounted first
+sandbox, also makes the approval gate ask, so a bad name never skips approval.
 
 "Nothing reaches durable storage" is about the **mount**, not about the machine. A run
 that names a sandbox gets a fresh container each call, unless that sandbox is `persistent`,

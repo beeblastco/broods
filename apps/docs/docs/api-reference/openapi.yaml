@@ -1090,7 +1090,7 @@ paths:
       tags:
         - Agents
       summary: Update agent
-      description: Config patch is a deep merge against encrypted config-plane storage. Redacted secret placeholders (`********`) preserve existing secrets. Set a config field to `null` to delete it. Set `description` to `null` to clear it. `status` accepts `active` or `disabled` for compatibility; config-plane responses currently report existing agents as `active`.
+      description: Config patch is a deep merge against encrypted config-plane storage. Redacted secret placeholders (`********`) preserve existing secrets. Set a config field to `null` to delete it. Set `description` to `null` to clear it. A config that still stores the removed `sandbox` key must set `sandbox` to `null` in the same patch. `status` accepts `active` or `disabled` for compatibility; config-plane responses currently report existing agents as `active`.
       security:
         - BearerAuth: []
       parameters:
@@ -3781,7 +3781,7 @@ components:
         sandboxes:
           type: array
           items: { type: string }
-          description: Ids of sandbox configs (POST /v1/sandboxes) this agent runs on. The first is the default. It powers stateless bash, backs every workspace that does not set its own sandbox, and runs the harness when one is set. The others are bash targets with no workspace mounted, such as a specialized image, a stricter network or a different permissionMode; the model selects one by name with the bash `sandbox` argument. Nothing written there reaches durable storage, and a persistent one reserves one machine per agent and sandbox. Each id may appear once, and only the first may also back a workspace.
+          description: Ids of sandbox configs (POST /v1/sandboxes) this agent runs on. The first is the default. It powers stateless bash, backs every workspace that does not set its own sandbox, and runs the harness when one is set. The others are bash targets with no workspace mounted, such as a specialized image, a stricter network or a different permissionMode; the model selects one by name with the bash `sandbox` argument. `computer` drives every machine entry, the first included, and takes a `sandbox` name when the agent reaches more than one machine. Nothing written there reaches durable storage, and a persistent one reserves one machine per agent and sandbox. Each id may appear once, and only the first may also back a workspace.
         workspaces:
           type: array
           description: References to account-scoped workspace configs. Agents sharing a workspaceId share files.

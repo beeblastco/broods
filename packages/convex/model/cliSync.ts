@@ -14,6 +14,7 @@ import {
   decryptAgentConfigBlob,
   toNestedAgentConfig,
 } from "./agentConfigCodec";
+import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 
@@ -111,6 +112,7 @@ export function assertSupportedWorkspaceSandboxMounts(
     const config = plainRecord(agent.config);
     const workspaces = config.workspaces;
     if (!Array.isArray(workspaces)) continue;
+    const defaultSandbox = defaultSandboxOf(config);
     for (const ref of workspaces) {
       const workspace = plainRecord(ref);
       const sandboxName =
@@ -118,10 +120,7 @@ export function assertSupportedWorkspaceSandboxMounts(
           ? undefined
           : typeof workspace.sandbox === "string"
             ? workspace.sandbox
-            : Array.isArray(config.sandboxes) &&
-                typeof config.sandboxes[0] === "string"
-              ? config.sandboxes[0]
-              : undefined;
+            : defaultSandbox;
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;

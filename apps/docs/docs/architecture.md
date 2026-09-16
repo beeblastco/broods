@@ -375,10 +375,10 @@ flowchart TD
 
 **Sandbox** (compute) and **workspace** (persistent S3 files) are independent,
 account-scoped records, referenced from agent config by id (`sandboxes`, `workspaces`). The
-handler resolves those references (`resolveAgentRuntime`) before the agent loop. The
-first id in `config.sandboxes` is the agent's default sandbox; a workspace can pin its own
+handler resolves those references (`resolveAgentRuntime`) before the agent loop. The first
+id in `config.sandboxes` is the agent's default sandbox; a workspace can pin its own
 (`workspaces[].sandbox`, overriding the default). The other ids are `bash` targets the model
-picks by name. Each workspace's _effective_
+picks by name, and `computer` targets when they are machines. Each workspace's _effective_
 sandbox decides its tools: `read`/`write`/`edit`/`glob`/`grep`/`bash` when present, or
 read-only `read`/`glob` when absent (via a read-only mount by default, or direct S3 with the
 `sandbox: null` opt-out); `bash` is also exposed stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)
@@ -395,7 +395,7 @@ sandbox still serves `memory/MEMORY.md` via the S3 API. The harness is per-featu
 
 ```mermaid
 flowchart LR
-  Agents["Agent A / Agent B<br/>sandbox + workspaces refs"] --> Resolve["resolveAgentRuntime"]
+  Agents["Agent A / Agent B<br/>sandboxes + workspaces refs"] --> Resolve["resolveAgentRuntime"]
   Resolve --> SB["sandboxConfig record"]
   Resolve --> WS["workspaceConfig record"]
   WS --> NS["namespace = hash(accountId:workspaceId)<br/>shared across agents"]
@@ -405,7 +405,7 @@ See [Workspace & Sandbox](workspace/index.md) for the full model.
 
 ## Model and tool configuration
 
-Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` exposes the sandbox tools from a referenced `sandbox` (+ `workspaces`), subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
+Agents control model selection, channel credentials, optional skills, subagents, and tool access through encrypted agent config. `harness.ts` resolves `config.model`; `tools/index.ts` exposes the sandbox tools from `config.sandboxes` (+ `workspaces`), subagent dispatch from `config.subagent`, search/research tools from `config.tools`, and `load_skill` when `config.skills.enabled` is true and `config.skills.allowed` has paths. See the [API Reference](/api-reference) for the complete `AgentConfig` schema.
 
 ## Storage boundaries
 

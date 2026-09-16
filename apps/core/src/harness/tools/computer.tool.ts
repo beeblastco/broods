@@ -12,11 +12,9 @@ import {
   computerInput,
   type ComputerInput,
 } from "../../shared/machine-socket.ts";
+import type { ResolvedAgentSandbox } from "../../shared/workspaces.ts";
 import { runMachineComputerAction } from "../sandbox/machine-executor.ts";
-import {
-  computerSandboxTarget,
-  type SelectableSandbox,
-} from "./filesystem-utils.ts";
+import { computerSandboxTarget } from "./filesystem-utils.ts";
 import { toolError } from "./utils.ts";
 
 const DESCRIPTION = `Use the mouse and keyboard of the user's computer and see its screen.
@@ -34,7 +32,9 @@ interface ComputerCall extends ComputerInput {
   sandbox?: string;
 }
 
-export default function computerTool(machines: SelectableSandbox[]): ToolSet {
+export default function computerTool(
+  machines: ResolvedAgentSandbox[],
+): ToolSet {
   const names = machines.map((machine): string => machine.name);
   const picks = machines.length > 1;
 
@@ -91,7 +91,7 @@ export default function computerTool(machines: SelectableSandbox[]): ToolSet {
 
 // Scenario note: which computer each name is, so the model picks without guessing.
 // Switching screens invalidates the coordinates it was just given.
-function machinesNote(machines: SelectableSandbox[]): string {
+function machinesNote(machines: ResolvedAgentSandbox[]): string {
   const entries = machines.map(
     (machine): string =>
       `  - ${machine.name}${machine.description ? `: ${machine.description}` : ""}`,
