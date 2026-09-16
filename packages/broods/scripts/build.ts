@@ -13,7 +13,9 @@ const result = await Bun.build({
   minify: true,
   sourcemap: "none",
   // Installed with the package, not bundled: the MCP client alone would double the CLI.
-  external: ["esbuild", "@modelcontextprotocol/client"],
+  // `ai` is a required peer, so the CLI shares the project's copy. `@ai-sdk/tui`
+  // stays bundled: its exact `ai` pin would install a second copy.
+  external: ["esbuild", "@modelcontextprotocol/client", "ai"],
 });
 
 if (!result.success) {
