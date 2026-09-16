@@ -64,6 +64,10 @@ type OtelValue = {
   arrayValue?: { values?: OtelValue[] };
 };
 type OtelAttribute = { key?: string; value?: OtelValue };
+type TempoTraceEntry = {
+  rows: Promise<ObservabilitySpanRow[]>;
+  expiresAtMs: number;
+};
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   DEBUG: 0,
@@ -80,6 +84,10 @@ const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 // a busy stage and left the Tracing tab "waiting" with no history at all.
 const TEMPO_SEARCH_TIMEOUT_MS = 15_000;
 const TEMPO_TRACE_TIMEOUT_MS = 5_000;
+// How long a trace lookup is shared. A trace still growing is inside the 30 min
+// NATS replay (OBS_REPLAY_WINDOW_MS) every subscribe gets, so a shared answer
+// that misses its newest spans never shows.
+const TEMPO_TRACE_SHARE_MS = 5 * 60 * 1000;
 // Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
 // polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
 // timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
@@ -111,6 +119,9 @@ const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
 >();
+// Trace lookups shared by every socket on this gateway, so a reopen, reconnect
+// or second panel does not send Tempo the same reads again.
+const tempoTraces = new Map<string, TempoTraceEntry>();
 
 export async function handleObservabilityMessage(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
@@ -413,6 +424,11 @@ export function tempoTraceRowsFromResponse(
   return rows;
 }
 
+/** Tests only: forget every shared trace lookup. */
+export function resetTempoTraceCacheForTests(): void {
+  tempoTraces.clear();
+}
+
 async function handleObservabilitySubscribe(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -713,7 +729,34 @@ export async function* fetchTempoBackfill(
   }
 }
 
-async function fetchTempoTrace(
+// Unfiltered rows: callers scope them. A failed lookup leaves the map, so the
+// next ask goes back to Tempo.
+function fetchTempoTrace(
+  tempoUrl: string,
+  traceId: string,
+): Promise<ObservabilitySpanRow[]> {
+  const nowMs = Date.now();
+  // Entries are only appended and share one lifetime, so expired ones lead.
+  for (const [cachedId, entry] of tempoTraces) {
+    if (entry.expiresAtMs > nowMs) break;
+    tempoTraces.delete(cachedId);
+  }
+  const cached = tempoTraces.get(traceId);
+  if (cached) return cached.rows;
+
+  const rows = requestTempoTrace(tempoUrl, traceId);
+  tempoTraces.set(traceId, {
+    rows: rows,
+    expiresAtMs: nowMs + TEMPO_TRACE_SHARE_MS,
+  });
+  rows.catch((): void => {
+    if (tempoTraces.get(traceId)?.rows === rows) tempoTraces.delete(traceId);
+  });
+
+  return rows;
+}
+
+async function requestTempoTrace(
   tempoUrl: string,
   traceId: string,
 ): Promise<ObservabilitySpanRow[]> {

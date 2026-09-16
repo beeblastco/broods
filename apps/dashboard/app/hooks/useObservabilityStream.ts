@@ -113,9 +113,10 @@ export function useObservabilityStream(
     sandboxId,
   } = options;
 
-  // Cache key for this stream + scope; entries are seeded from / written back to
-  // STREAM_CACHE so remounts (tab switches) are instant.
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}`;
+  // Cache key for this stream + scope + level; entries are seeded from / written
+  // back to STREAM_CACHE so remounts (tab switches) are instant, and a level
+  // change never keeps rows the new level excludes.
+  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
