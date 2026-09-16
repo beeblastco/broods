@@ -36,7 +36,9 @@ import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   bashNeedsApproval,
   bashSandboxTarget,
+  computerSandboxTarget,
   editNeedsApproval,
+  machineSandboxes,
   resolveWorkspace,
   targetsAgentSandbox,
 } from "./tools/filesystem-utils.ts";
@@ -120,12 +122,25 @@ export function compatibilityApprovalStatus(
       : undefined;
   }
 
-  // Looking is free; any other action asks like bash does.
+  // Looking is free; any other action asks like bash does, on the computer the
+  // call names rather than on whatever the agent's own sandbox happens to be.
   if (toolName === "computer") {
-    return !COMPUTER_READ_ACTIONS.has(String(record.action)) &&
-      options.agentSandboxPermissionMode !== "bypass"
-      ? "user-approval"
-      : undefined;
+    if (COMPUTER_READ_ACTIONS.has(String(record.action))) {
+      return undefined;
+    }
+    const machine = computerSandboxTarget(
+      machineSandboxes({
+        workspaces: options.workspaces,
+        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+        ...(options.agentSandboxPermissionMode
+          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
+          : {}),
+        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
+      }),
+      record.sandbox,
+    );
+
+    return machine?.permissionMode !== "bypass" ? "user-approval" : undefined;
   }
 
   // memory_save writes workspace files (memory/*.md + the index), so it follows

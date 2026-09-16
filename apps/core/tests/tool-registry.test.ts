@@ -44,6 +44,26 @@ describe("createTools", () => {
     expect(urlContextMock).not.toHaveBeenCalled();
   });
 
+  it("registers computer for any machine it reaches, not only its own sandbox", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        agentSandbox: { provider: "lambda" },
+        agentSandboxPermissionMode: "ask",
+        sandboxes: [
+          {
+            name: "kien-mac",
+            sandbox: { provider: "machine", permissionMode: "ask" },
+          },
+        ],
+      },
+      {},
+    );
+
+    expect(Object.keys(tools)).toContain("computer");
+  });
+
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sendImages = mock(async function (): Promise<void> {});
