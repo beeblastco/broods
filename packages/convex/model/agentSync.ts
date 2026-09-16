@@ -29,6 +29,7 @@ import {
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
 import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
+import { loadMcpTransportsByNode } from "./mcp";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -132,7 +133,11 @@ export async function backSyncCanvasFromAgentRow(
 
   if (layout) {
     await ctx.db.patch(layout._id, {
-      nodes: applyTidyLayout([...layout.nodes, nextNode], layout.edges),
+      nodes: applyTidyLayout(
+        [...layout.nodes, nextNode],
+        layout.edges,
+        await loadMcpTransportsByNode(ctx, stage._id),
+      ),
       updatedAt: now,
     });
   } else {

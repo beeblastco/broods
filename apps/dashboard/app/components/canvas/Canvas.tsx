@@ -50,6 +50,9 @@ import {
   applyTidyLayout,
   findFreePosition,
   GRID,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  type LayoutRect,
 } from "@broods/convex/model/canvasLayout";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -337,6 +340,16 @@ function agentHasDirectSandbox(
   });
 }
 
+/** The box a standalone card covers, for the free-spot search. */
+function cardRect(position: FlowPosition): LayoutRect {
+  return {
+    x: position.x,
+    y: position.y,
+    height: NODE_HEIGHT,
+    width: NODE_WIDTH,
+  };
+}
+
 /** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
  * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
 function dedupeEdges(edges: Edge[]): Edge[] {
@@ -411,6 +424,17 @@ function CanvasInner({
   const canvasLayout = useQuery(
     api.canvas.getByProject,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
+  const mcpServers = useQuery(
+    api.mcp.listByStage,
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  );
+  const mcpTransports = useMemo(
+    () =>
+      new Map(
+        (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
+      ),
+    [mcpServers],
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -560,7 +584,7 @@ function CanvasInner({
               (ref) =>
                 updateRuntimeRefs({
                   configId: ref.configId,
-                  defaultSandbox: ref.defaultSandbox,
+                  sandboxes: ref.sandboxes,
                   workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
                 }),
             ),
@@ -849,7 +873,7 @@ function CanvasInner({
 
     return findFreePosition(
       requested,
-      nodesRef.current.map((node) => node.position),
+      nodesRef.current.map((node) => cardRect(node.position)),
     );
   }, [getViewportCenterPosition]);
 
@@ -897,10 +921,10 @@ function CanvasInner({
    * a lane below. Cards you dragged yourself move too. That is the point.
    */
   const tidyLayout = useCallback(() => {
-    setNodes((nds) => applyTidyLayout(nds, edgesRef.current));
+    setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpTransports));
     scheduleSave();
     window.requestAnimationFrame(() => fitView(FIT_VIEW_OPTIONS));
-  }, [setNodes, scheduleSave, fitView]);
+  }, [setNodes, scheduleSave, fitView, mcpTransports]);
 
   /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
   const onNodeDragStart: OnNodeDrag = useCallback(() => {
@@ -919,7 +943,7 @@ function CanvasInner({
       const draggedIds = new Set(dragged.map((node) => node.id));
       const occupied = nodesRef.current
         .filter((node) => !draggedIds.has(node.id))
-        .map((node) => node.position);
+        .map((node) => cardRect(node.position));
       const settled = new Map<string, FlowPosition>();
       const ordered = [
         grabbed,
@@ -927,7 +951,7 @@ function CanvasInner({
       ];
       for (const node of ordered) {
         const position = findFreePosition(node.position, occupied);
-        occupied.push(position);
+        occupied.push(cardRect(position));
         settled.set(node.id, position);
       }
       setNodes((nds) => applyPositions(nds, settled));

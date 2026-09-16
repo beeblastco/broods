@@ -10,6 +10,8 @@
  * and refreshToken must be ${NAME} refs, so the row never holds a secret.
  */
 
+import type { Id } from "../_generated/dataModel";
+import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 
@@ -141,6 +143,28 @@ export function authorizationHeaderName(
   return Object.keys(headers ?? {}).find(
     (name) => name.toLowerCase() === "authorization",
   );
+}
+
+/**
+ * Transport of each active server in a stage, keyed by the canvas node it
+ * owns. Canvas frames group MCP nodes by it, so every tidy writer passes it.
+ */
+export async function loadMcpTransportsByNode(
+  ctx: QueryCtx,
+  stageId: Id<"stages">,
+): Promise<Map<string, McpTransport>> {
+  const servers = await ctx.db
+    .query("mcp")
+    .withIndex("by_stageId_and_status", (q) =>
+      q.eq("stageId", stageId).eq("status", "active"),
+    )
+    .collect();
+  const transports = new Map<string, McpTransport>();
+  for (const server of servers) {
+    if (server.nodeId) transports.set(server.nodeId, server.transport);
+  }
+
+  return transports;
 }
 
 /**

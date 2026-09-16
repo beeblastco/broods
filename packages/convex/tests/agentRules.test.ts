@@ -8,8 +8,8 @@ import {
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   normalizeCreateAgentInput,
+  mergeCanvasSandboxes,
   normalizeUpdateAgentInput,
-  sandboxesWithDefault,
 } from "../model/agentRules";
 import { redactConfigSecrets } from "../model/configValues";
 import {
@@ -534,31 +534,24 @@ describe("agent rules", () => {
   });
 });
 
-describe("sandboxesWithDefault", () => {
-  it("replaces the default a canvas draws and keeps the stored extras", () => {
+describe("mergeCanvasSandboxes", () => {
+  const onCanvas = new Set(["sb_a", "sb_b", "sb_c"]);
+
+  it("stores the canvas order, so reordering changes the default", () => {
     expect(
-      sandboxesWithDefault(["sb_old", "sb_mac", "sb_gpu"], "sb_new"),
-    ).toEqual(["sb_new", "sb_mac", "sb_gpu"]);
+      mergeCanvasSandboxes(["sb_b", "sb_a"], ["sb_a", "sb_b"], onCanvas),
+    ).toEqual(["sb_b", "sb_a"]);
   });
 
-  it("drops an extra that is drawn as the new default, so no id repeats", () => {
-    expect(sandboxesWithDefault(["sb_old", "sb_mac"], "sb_mac")).toEqual([
-      "sb_mac",
-    ]);
+  it("keeps a stored sandbox the canvas has no node for, after the drawn ones", () => {
+    expect(
+      mergeCanvasSandboxes(["sb_b"], ["sb_hidden", "sb_b"], onCanvas),
+    ).toEqual(["sb_b", "sb_hidden"]);
   });
 
-  it("clears the list with the default instead of promoting an extra", () => {
-    expect(sandboxesWithDefault(["sb_old", "sb_mac"], null)).toEqual([]);
-  });
-
-  it("starts a list when none is stored", () => {
-    expect(sandboxesWithDefault(undefined, "sb_new")).toEqual(["sb_new"]);
-  });
-
-  it("returns the same list when the default is redrawn", () => {
-    expect(sandboxesWithDefault(["sb_a", "sb_b"], "sb_a")).toEqual([
+  it("drops a sandbox whose node is on the canvas but no longer wired", () => {
+    expect(mergeCanvasSandboxes(["sb_a"], ["sb_a", "sb_c"], onCanvas)).toEqual([
       "sb_a",
-      "sb_b",
     ]);
   });
 });
@@ -581,7 +574,7 @@ describe("assertAgentRuntimeRefs", () => {
   it("refuses a workspace drawn onto a later sandbox", () => {
     expect(() =>
       assertAgentRuntimeRefs({
-        sandboxes: sandboxesWithDefault(["sb_a", "sb_b"], "sb_a"),
+        sandboxes: ["sb_a", "sb_b"],
         workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
       }),
     ).toThrow(

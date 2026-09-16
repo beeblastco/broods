@@ -363,24 +363,18 @@ export function defaultSandboxOf(
 }
 
 /**
- * The agent's sandbox list once the canvas sets its default. The canvas draws only
- * the default, so the extras already stored stay behind it. Clearing the default
- * clears the list rather than promoting an extra into its place.
+ * The agent's sandbox list after a canvas save. The canvas order wins, and a
+ * stored id no sandbox node on the stage canvas stands for is kept after it:
+ * the canvas cannot draw that sandbox, so it cannot mean to remove it.
  */
-export function sandboxesWithDefault(
-  stored: unknown,
-  defaultSandbox: string | null,
+export function mergeCanvasSandboxes(
+  canvas: readonly string[],
+  stored: readonly string[],
+  canvasSandboxIds: ReadonlySet<string>,
 ): string[] {
-  if (!defaultSandbox) return [];
-  const extras = Array.isArray(stored)
-    ? stored
-        .slice(1)
-        .filter(
-          (id): id is string => typeof id === "string" && id !== defaultSandbox,
-        )
-    : [];
+  const hidden = stored.filter((id) => !canvasSandboxIds.has(id));
 
-  return [defaultSandbox, ...extras];
+  return [...new Set([...canvas, ...hidden])];
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
