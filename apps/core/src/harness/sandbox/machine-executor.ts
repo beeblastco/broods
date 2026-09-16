@@ -61,6 +61,7 @@ type MachineRequest =
 
 interface MachineConnection {
   computer: boolean;
+  hostname?: string;
   mcp: ReadonlySet<string>;
   name: string;
   pending: Map<string, PendingReply>;
@@ -310,6 +311,29 @@ async function claimSandbox(
   }
   const key = registryKey(accountId, record.sandboxId);
   const previous = connections.get(key);
+  // A restart from the same computer reclaims its record. Another computer is
+  // refused, or the first owner would lose the machine in silence, unless it
+  // passes --force. A daemon that names no host counts as another computer.
+  const sameHost =
+    hello.hostname !== undefined && hello.hostname === previous?.hostname;
+  if (previous && hello.force !== true && !sameHost) {
+    logWarn("Machine sandbox claim refused", {
+      accountId: accountId,
+      sandbox: record.name,
+      holder: previous.hostname,
+      host: hello.hostname,
+    });
+    // A close reason is capped at 123 bytes.
+    socket.close(
+      MACHINE_CLOSE.occupied.code,
+      `${MACHINE_CLOSE.occupied.reason} (${previous.hostname ?? "unknown host"}); pass --force to take it over`.slice(
+        0,
+        120,
+      ),
+    );
+
+    return;
+  }
   if (previous) {
     rejectPending(previous, MACHINE_CLOSE.replaced.reason);
     previous.socket.close(
@@ -325,6 +349,7 @@ async function claimSandbox(
   };
   connections.set(key, {
     computer: hello.computer === true,
+    ...(hello.hostname ? { hostname: hello.hostname } : {}),
     mcp: new Set(hello.mcp),
     name: record.name,
     pending: new Map(),

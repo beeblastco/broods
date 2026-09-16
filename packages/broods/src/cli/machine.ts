@@ -28,6 +28,7 @@ import type { McpHost } from "./mcp-host.ts";
 
 // Refusals a reconnect would only repeat.
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  MACHINE_CLOSE.occupied.code,
   MACHINE_CLOSE.replaced.code,
   MACHINE_CLOSE.unauthorized.code,
   MACHINE_CLOSE.unknownSandbox.code,
@@ -43,6 +44,8 @@ export interface MachineDaemonOptions {
   computer?: boolean;
   /** Working directory for an exec that names none. */
   cwd: string;
+  /** Take the record over from a daemon on another computer. */
+  force?: boolean;
   log: (line: string) => void;
   /** A `.mcp.json` whose stdio servers agents may call. */
   mcpFile?: string;
@@ -290,6 +293,7 @@ function serveOnce(
         platform: process.platform,
         computer: desktop !== null,
         mcp: mcp?.names(),
+        ...(options.force ? { force: true } : {}),
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);

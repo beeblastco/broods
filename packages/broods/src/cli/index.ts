@@ -249,6 +249,7 @@ Options:
   --cwd <dir>           Working directory for commands (default: current directory)
   --computer            Serve the computer tool: screen, mouse and keyboard
   --mcp <file>          Serve the stdio MCP servers listed in this .mcp.json
+  --force               Take the record over from a daemon on another computer
   --doctor [--request]  Check the macOS permissions computer use needs; --request prompts for them
 
 ${GLOBAL_OPTIONS}`,
@@ -2236,6 +2237,7 @@ async function machine(args: string[]): Promise<void> {
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
   const computer = hasFlag(args, "--computer");
   const mcpFile = optionValue(args, "--mcp");
+  const force = hasFlag(args, "--force");
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
@@ -2249,6 +2251,7 @@ async function machine(args: string[]): Promise<void> {
       baseUrl: baseUrl,
       computer: computer,
       cwd: cwd,
+      force: force,
       log: (line: string): void => console.log(line),
       mcpFile: mcpFile ? resolve(mcpFile) : undefined,
       sandbox: sandbox,

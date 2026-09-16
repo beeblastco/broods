@@ -37,6 +37,8 @@ export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set([
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },
+  // Core appends the host that holds the record and the flag that overrides.
+  occupied: { code: 4423, reason: "Already connected from another computer" },
   replaced: { code: 4409, reason: "Replaced by a newer connection" },
   unauthorized: { code: 4401, reason: "Unauthorized; check BROODS_API_KEY" },
   unknownSandbox: {
@@ -127,6 +129,8 @@ const helloFrame = z.object({
   computer: z.boolean().optional(),
   // Names of the MCP servers in the daemon's --mcp file.
   mcp: z.array(z.string()).optional(),
+  // Take the record over from a daemon on another computer.
+  force: z.boolean().optional(),
 });
 
 const mcpCallFrame = z.object({

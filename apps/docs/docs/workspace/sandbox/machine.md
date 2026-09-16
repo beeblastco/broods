@@ -39,9 +39,16 @@ broods machine my-mac --cwd ~/Projects/app
 ```
 
 The daemon prints each command with its exit code and reconnects after a
-network drop. It exits with core's reason on an invalid key, on a name with no
-`machine` record, or when a newer daemon claims the same record. The newest
-daemon always wins, so a restart never waits for the old one.
+network drop. A restart from the same computer reclaims its record at once. A
+daemon on a different computer is refused, and the refusal names the host that
+holds the record, so nobody takes over someone else's machine by mistake:
+
+```bash
+broods machine my-mac --force    # take the record over from another computer
+```
+
+It exits with core's reason on an invalid key, on a name with no `machine`
+record, when refused, or when another daemon takes the record over.
 
 ## Computer use
 

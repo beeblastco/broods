@@ -16,6 +16,7 @@ import computerTool from "../src/harness/tools/computer.tool.ts";
 import type { MachineSandbox } from "../src/harness/tools/filesystem-utils.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
+  MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
   parseCoreFrame,
   parseDaemonFrame,
@@ -46,8 +47,12 @@ import {
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
-/** The services a fake daemon advertises in its hello, and how it answers. */
+/** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
+  force?: boolean;
+  // Every fake shares one host unless a test says otherwise, so a reconnect in
+  // a test reclaims the record the way a restart does.
+  hostname?: string;
   mcp?: string[];
   onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
   onMcp?: (
@@ -125,6 +130,42 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
 
   expect((await firstClosed).code).toBe(4409);
   expect(await pending).toBe("Replaced by a newer connection");
+});
+
+test("a daemon on another computer is refused naming the holder, and --force takes over", async () => {
+  const server = core();
+  const holder = await connectDaemon(server, "my-mac", () => {}, {
+    hostname: "phicks-mac",
+  });
+  const other = openSocket(server);
+  other.onopen = (): void =>
+    other.send(
+      JSON.stringify({
+        type: "hello",
+        sandbox: "my-mac",
+        hostname: "kien-mac",
+      }),
+    );
+  const refused = await closeOf(other);
+
+  expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
+  expect(refused.reason).toContain("phicks-mac");
+  expect(refused.reason).toContain("--force");
+
+  // No host named is not the same host.
+  const anonymous = openSocket(server);
+  anonymous.onopen = (): void =>
+    anonymous.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
+
+  expect((await closeOf(anonymous)).code).toBe(MACHINE_CLOSE.occupied.code);
+
+  const holderClosed = closeOf(holder.socket);
+  await connectDaemon(server, "my-mac", () => {}, {
+    force: true,
+    hostname: "kien-mac",
+  });
+
+  expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
 });
 
 test("an unknown record or a wrong provider closes the socket with 4404", async () => {
@@ -479,8 +520,10 @@ function connectDaemon(
         JSON.stringify({
           type: "hello",
           sandbox: sandbox,
+          hostname: daemon.hostname ?? "test-host",
           computer: daemon.onComputer !== undefined,
           mcp: daemon.mcp,
+          force: daemon.force,
         }),
       );
     socket.onmessage = (event): void => {
