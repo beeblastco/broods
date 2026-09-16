@@ -102,6 +102,8 @@ export function MonitoringPanel({
 
     return entries.filter((e) => {
       if (level !== "all" && e.level !== level) return false;
+      // A debug backfill outlives a switch back to "Info and above".
+      if (level === "all" && e.level === "DEBUG") return false;
       if (fromMs !== null && e.ts < fromMs) return false;
       if (toMs !== null && e.ts > toMs) return false;
       if (!needle) return true;

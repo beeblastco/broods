@@ -1754,7 +1754,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const otherTraceId = "5bf92f3577b34da6a3ce929d0e0e4736";
   // Tempo's id lookup is not tenant-scoped: another account's trace comes back
   // whole, and a trace can carry spans from another scope next to ours.
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
     if (url.endsWith(otherTraceId))
       return json({
@@ -1811,7 +1811,7 @@ test("fetchTempoBackfill shares trace lookups across backfills and keeps finishe
   const lookups: string[] = [];
   const hits = tempoSearchHits(3);
   const tempo = tempoFetch(hits);
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
     if (!url.includes("/api/search")) lookups.push(url);
 
@@ -1824,7 +1824,9 @@ test("fetchTempoBackfill shares trace lookups across backfills and keeps finishe
         await Array.fromAsync(
           fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
         )
-      ).flatMap((chunk) => chunk.rows.map((row) => row.traceId));
+      ).flatMap((chunk): string[] =>
+        chunk.rows.map((row): string => row.traceId),
+      );
     const [first, second] = await Promise.all([traceIds(), traceIds()]);
     const reconnect = await traceIds();
     expect(first).toEqual(["t2", "t1", "t0"]);
@@ -1836,33 +1838,51 @@ test("fetchTempoBackfill shares trace lookups across backfills and keeps finishe
   }
 });
 
-test("fetchTempoBackfill asks Tempo again for a trace whose root has not landed", async () => {
+test("fetchTempoBackfill asks Tempo again for a trace that may still grow", async () => {
   const originalFetch = globalThis.fetch;
-  // A run still going has only its ended children in Tempo. Keeping that
-  // partial trace would hide the rest of the run from every later backfill.
-  let lookups = 0;
-  const child = tempoBatch({ traceId: "aaa", spanId: "step" });
-  const span = (
-    child as { scopeSpans: Array<{ spans: Array<Record<string, unknown>> }> }
-  ).scopeSpans[0].spans[0];
-  span.parentSpanId = "root";
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  // "aaa" is a run still going: only an ended child is in Tempo. "bbb" has its
+  // root, but a child batch may still be in the collector's retry. "ccc" is a
+  // 206, missing the spans of blocks Tempo failed to read. Keeping any of them
+  // would hide the rest of the trace from every later backfill.
+  const lookups: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
     if (url.includes("/api/search"))
-      return json({ traces: [{ traceID: "aaa" }] });
-    lookups += 1;
+      return json({
+        traces: [{ traceID: "aaa" }, { traceID: "bbb" }, { traceID: "ccc" }],
+      });
+    lookups.push(url);
+    if (url.endsWith("aaa"))
+      return json({
+        batches: [
+          tempoBatch({ traceId: "aaa", spanId: "step", parentSpanId: "root" }),
+        ],
+      });
+    if (url.endsWith("ccc"))
+      return json(
+        { batches: [tempoBatch({ traceId: "ccc", spanId: "root" })] },
+        { status: 206 },
+      );
 
-    return json({ batches: [child] });
+    return json({
+      batches: [
+        tempoBatch({
+          traceId: "bbb",
+          spanId: "root",
+          endTimeUnixNano: `${Date.now() * 1_000_000}`,
+        }),
+      ],
+    });
   }) as unknown as typeof fetch;
 
   try {
     await Array.fromAsync(
-      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1),
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
     );
     await Array.fromAsync(
-      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1),
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
     );
-    expect(lookups).toBe(2);
+    expect(lookups).toHaveLength(6);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2977,11 +2997,15 @@ function tempoBatch({
   spanId,
   accountId = TEST_SCOPE.accountId,
   stage = TEST_SCOPE.stageSlug,
+  parentSpanId,
+  endTimeUnixNano = "2000000000",
 }: {
   traceId: string;
   spanId: string;
   accountId?: string;
   stage?: string;
+  parentSpanId?: string;
+  endTimeUnixNano?: string;
 }): unknown {
   return {
     resource: {
@@ -2997,9 +3021,10 @@ function tempoBatch({
           {
             traceId: traceId,
             spanId: spanId,
+            ...(parentSpanId ? { parentSpanId: parentSpanId } : {}),
             name: "agent.task",
             startTimeUnixNano: "1000000000",
-            endTimeUnixNano: "2000000000",
+            endTimeUnixNano: endTimeUnixNano,
             status: { code: 1 },
           },
         ],

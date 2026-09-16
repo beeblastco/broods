@@ -64,9 +64,10 @@ type OtelValue = {
   arrayValue?: { values?: OtelValue[] };
 };
 type OtelAttribute = { key?: string; value?: OtelValue };
-// One trace-by-id lookup shared across sockets. `bytes` is 0 while the lookup is
-// in flight or the trace may still grow, and the Tempo response size once it is
-// kept for good.
+// One Tempo trace-by-id answer. `bytes` is the body size of a full (200) answer,
+// and 0 for a missing or partial one, which is never kept.
+type TempoTraceLookup = { rows: ObservabilitySpanRow[]; bytes: number };
+// A shared lookup: `bytes` is 0 while in flight, then the kept answer's size.
 type TempoTraceEntry = { rows: Promise<ObservabilitySpanRow[]>; bytes: number };
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
@@ -84,13 +85,13 @@ const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 // a busy stage and left the Tracing tab "waiting" with no history at all.
 const TEMPO_SEARCH_TIMEOUT_MS = 15_000;
 const TEMPO_TRACE_TIMEOUT_MS = 5_000;
-// A finished run's trace never gains spans (continue and resume start new
-// traces), but Tempo exports spans as they end, root last. A trace counts as
-// finished once its root is in and its newest span is older than the exporter
-// batch delay plus ingest lag.
-const TEMPO_TRACE_SETTLE_MS = 60_000;
-// Finished traces kept in memory, oldest evicted first.
-const TEMPO_TRACE_CACHE_BYTES = 32 * 1024 * 1024;
+// A finished run's trace never gains spans: continue and resume start new
+// traces. Its batches can still reach Tempo out of order, so a trace is kept
+// only once its root is in and its newest span is older than the collector's
+// 5 min export retry.
+const TEMPO_TRACE_SETTLE_MS = 6 * 60 * 1000;
+// Response bytes of kept traces; the parsed rows take a small multiple of this.
+const TEMPO_TRACE_CACHE_BYTES = 16 * 1024 * 1024;
 // Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
 // polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
 // timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
@@ -122,10 +123,9 @@ const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
 >();
-// Trace lookups shared by every socket on this gateway. Tempo serialises
-// lookups, so without this every Tracing open, reconnect and second panel
-// queues up to 100 more behind the ones still running, until Tempo stops
-// answering. A repeat joins the lookup in flight or reads the finished trace.
+// Trace lookups shared by every socket on this gateway, so a reopen or a
+// reconnect joins the lookup in flight or reads the kept trace instead of
+// sending Tempo the same 100 lookups again.
 const tempoTraces = new Map<string, TempoTraceEntry>();
 let tempoTraceBytes = 0;
 
@@ -430,6 +430,12 @@ export function tempoTraceRowsFromResponse(
   return rows;
 }
 
+/** Tests only: forget every shared trace lookup. */
+export function resetTempoTraceCacheForTests(): void {
+  tempoTraces.clear();
+  tempoTraceBytes = 0;
+}
+
 async function handleObservabilitySubscribe(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -730,8 +736,19 @@ export async function* fetchTempoBackfill(
   }
 }
 
-// Unfiltered rows: callers scope them. A failed or unfinished lookup leaves the
-// map once it settles, so the next ask goes back to Tempo.
+// Drops kept traces, least recently read first, until the cache fits its budget.
+// Lookups still in flight hold no bytes and stay.
+function evictTempoTraces(): void {
+  for (const [traceId, entry] of tempoTraces) {
+    if (tempoTraceBytes <= TEMPO_TRACE_CACHE_BYTES) return;
+    if (entry.bytes === 0) continue;
+    tempoTraces.delete(traceId);
+    tempoTraceBytes -= entry.bytes;
+  }
+}
+
+// Unfiltered rows: callers scope them. A lookup that fails or is not kept leaves
+// the map once it settles, so the next ask goes back to Tempo.
 function fetchTempoTrace(
   tempoUrl: string,
   traceId: string,
@@ -747,14 +764,14 @@ function fetchTempoTrace(
 
   const lookup = requestTempoTrace(tempoUrl, traceId);
   const entry: TempoTraceEntry = {
-    rows: lookup.then((result) => result.rows),
+    rows: lookup.then((result): ObservabilitySpanRow[] => result.rows),
     bytes: 0,
   };
   tempoTraces.set(traceId, entry);
   lookup.then(
-    (result) => {
+    (result): void => {
       if (tempoTraces.get(traceId) !== entry) return;
-      if (!isFinishedTrace(result.rows)) {
+      if (!shouldKeepTrace(result)) {
         tempoTraces.delete(traceId);
 
         return;
@@ -763,7 +780,7 @@ function fetchTempoTrace(
       tempoTraceBytes += result.bytes;
       evictTempoTraces();
     },
-    () => {
+    (): void => {
       if (tempoTraces.get(traceId) === entry) tempoTraces.delete(traceId);
     },
   );
@@ -771,36 +788,10 @@ function fetchTempoTrace(
   return entry.rows;
 }
 
-/** Tests only: forget every shared trace lookup. */
-export function resetTempoTraceCacheForTests(): void {
-  tempoTraces.clear();
-  tempoTraceBytes = 0;
-}
-
-// Drops kept traces, least recently read first, until the cache fits its budget.
-// Lookups still in flight hold no bytes and stay.
-function evictTempoTraces(): void {
-  for (const [traceId, entry] of tempoTraces) {
-    if (tempoTraceBytes <= TEMPO_TRACE_CACHE_BYTES) return;
-    if (entry.bytes === 0) continue;
-    tempoTraces.delete(traceId);
-    tempoTraceBytes -= entry.bytes;
-  }
-}
-
-// The root span ends last, so a trace holding it, quiet past the settle margin,
-// has every span it will ever have.
-function isFinishedTrace(rows: ObservabilitySpanRow[]): boolean {
-  if (!rows.some((row) => !row.parentSpanId)) return false;
-  const lastEndMs = Math.max(...rows.map((row) => row.endTimeMs));
-
-  return Date.now() - lastEndMs > TEMPO_TRACE_SETTLE_MS;
-}
-
 async function requestTempoTrace(
   tempoUrl: string,
   traceId: string,
-): Promise<{ rows: ObservabilitySpanRow[]; bytes: number }> {
+): Promise<TempoTraceLookup> {
   const response = await fetch(
     `${tempoUrl}/api/traces/${encodeURIComponent(traceId)}`,
     { signal: AbortSignal.timeout(TEMPO_TRACE_TIMEOUT_MS) },
@@ -811,9 +802,24 @@ async function requestTempoTrace(
   const text = await response.text();
 
   return {
-    rows: tempoTraceRowsFromResponse(JSON.parse(text), traceId),
-    bytes: text.length,
+    rows: tempoTraceRowsFromResponse(JSON.parse(text) as unknown, traceId),
+    // 206 is a partial trace from tolerated failed blocks.
+    bytes: response.status === 200 ? Buffer.byteLength(text) : 0,
   };
+}
+
+// The root span ends after every child, so a full answer holding it, quiet past
+// the settle margin and within budget, has every span the trace will ever have.
+function shouldKeepTrace(result: TempoTraceLookup): boolean {
+  if (result.bytes === 0 || result.bytes > TEMPO_TRACE_CACHE_BYTES)
+    return false;
+  if (!result.rows.some((row): boolean => !row.parentSpanId)) return false;
+  const lastEndMs = result.rows.reduce(
+    (latest, row): number => Math.max(latest, row.endTimeMs),
+    0,
+  );
+
+  return Date.now() - lastEndMs > TEMPO_TRACE_SETTLE_MS;
 }
 
 // Opens the NATS consumer for `run`, the stream generation the subscribe holds.
