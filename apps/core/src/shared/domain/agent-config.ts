@@ -162,7 +162,9 @@ export interface AgentSubagentConfig {
 export interface AgentModelConfig
   extends
     LanguageModelCallOptions,
-    Pick<RequestOptions, "maxRetries" | "timeout"> {
+    // Partial keeps these optional when a consumer lacks the optional `ai`
+    // peer: `Pick<any, K>` would otherwise make both keys required.
+    Partial<Pick<RequestOptions, "maxRetries" | "timeout">> {
   provider?: AccountModelProviderName;
   modelId?: string;
   /**
