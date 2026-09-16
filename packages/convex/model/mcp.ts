@@ -107,6 +107,11 @@ export function assertMcpRow(row: {
   if (row.transport === "machine" && !row.sandbox) {
     throw new Error("a machine MCP server needs the sandbox that serves it");
   }
+  // A patch that carries headers alone leaves `transport` unset, so the body
+  // normalizer's own check never sees it.
+  if (row.transport === "machine" && row.headers !== undefined) {
+    throw new Error("headers do not apply to a machine server");
+  }
   if (row.oauth === undefined) return;
   if (row.transport !== "http") {
     throw new Error(

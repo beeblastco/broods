@@ -54,12 +54,19 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
     computer: true,
     mcp: ["echo"],
   });
+  const afterSecond = await t.run(
+    async (ctx) => await ctx.db.query("machineConnections").unique(),
+  );
+  // Both writes stamp Date.now(), so let the clock move first: a heartbeat that
+  // got through would push lastSeenAt past what the successor's connect wrote.
+  await new Promise((resolve) => setTimeout(resolve, 10));
   await t.mutation(internal.sandbox.machines.seen, first);
   await t.mutation(internal.sandbox.machines.disconnected, first);
   const held = await t.run(
     async (ctx) => await ctx.db.query("machineConnections").unique(),
   );
 
+  expect(held?.lastSeenAt).toBe(afterSecond?.lastSeenAt);
   expect(held).toMatchObject({
     connectionId: "second",
     hostname: "phicks-mbp",

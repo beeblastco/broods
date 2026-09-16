@@ -33,7 +33,7 @@ export const COMPUTER_READ_ACTIONS: ReadonlySet<string> = new Set([
   "screenshot",
   "wait",
   "zoom",
-]);
+] as const satisfies readonly (typeof COMPUTER_ACTIONS)[number][]);
 
 export const MACHINE_CLOSE = {
   badFrame: { code: 4400, reason: "Malformed frame" },

@@ -121,14 +121,14 @@ export function openTerminalUpstream(
   upstream.binaryType = "arraybuffer";
   state.upstream = upstream;
 
-  upstream.onopen = () => {
+  upstream.onopen = (): void => {
     for (const chunk of state.pending) upstream.send(chunk);
     state.pending = [];
     state.pendingBytes = 0;
   };
 
   let firstFrame = true;
-  upstream.onmessage = (event) => {
+  upstream.onmessage = (event): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
     if (firstFrame) {
       firstFrame = false;
@@ -157,7 +157,10 @@ export function openTerminalUpstream(
     }
   };
 
-  upstream.onerror = () => {
+  upstream.onerror = (): void => {
+    // An error arrives with the close that follows it, and a daemon decides
+    // whether to reconnect from that close code, so leave machine sockets to
+    // `onclose` rather than closing them with one it does not read.
     if (socket.readyState !== WebSocket.OPEN || socket.data.kind === "machine")
       return;
     socket.close(1011, "sandbox terminal transport error");

@@ -1,11 +1,13 @@
 /**
  * Sandbox execution contracts.
  *
- * The sandbox is a single uniform Linux compute backend (real bash + python3 +
- * node on PATH). All providers expose ONE `run` method that executes a piece of
- * code in an optionally named sandbox. The harness tools
+ * Every provider but `machine` is a uniform Linux compute backend (real bash +
+ * python3 + node on PATH). All providers expose ONE `run` method that executes
+ * a piece of code in an optionally named sandbox. The harness tools
  * (bash/read/write/edit/glob/grep) all compile down to a bash `code` string.
- * Per-runtime routing no longer exists.
+ * Per-runtime routing no longer exists. `machine` is the user's own computer:
+ * bash and whatever that computer has, and no workspace mount, so it serves
+ * `run` alone.
  */
 
 import type { Readable } from "node:stream";

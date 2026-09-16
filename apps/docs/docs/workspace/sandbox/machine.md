@@ -103,4 +103,7 @@ results, never the file or the commands in it. `allowedTools` and
 - No workspaces. The file tools need the S3 workspace mount, which a computer
   does not have. Use `bash` to read and write files.
 - No background jobs, snapshots, suspend or resume.
-- The dashboard instance list does not show machines.
+- The dashboard lists a connected computer in Sandboxes > Instances with its
+  connection state, when it connected and when it was last seen, plus the
+  command that starts it. It has no size, image, trace or lifecycle switch
+  there, and no snapshot.

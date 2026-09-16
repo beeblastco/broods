@@ -88,12 +88,12 @@ export function reconnectDelay(
   ms: number,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve): void => {
     if (signal?.aborted) return resolve();
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener(
       "abort",
-      () => {
+      (): void => {
         clearTimeout(timer);
         resolve();
       },

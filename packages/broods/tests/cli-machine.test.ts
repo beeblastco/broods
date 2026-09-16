@@ -76,7 +76,9 @@ test("the daemon says hello, answers an exec, and stops on a refusal", async () 
       apiKey: "key",
       baseUrl: core.url,
       cwd: process.cwd(),
-      log: (line) => lines.push(line),
+      log: (line: string): void => {
+        lines.push(line);
+      },
       sandbox: "my-mac",
       signal: new AbortController().signal,
     }),

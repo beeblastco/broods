@@ -56,10 +56,7 @@ export class McpHost {
   ): Promise<CallToolResult> {
     const client = await this.#client(server);
 
-    return (await client.callTool({
-      name: tool,
-      arguments: args,
-    })) as CallToolResult;
+    return await client.callTool({ name: tool, arguments: args });
   }
 
   async listTools(server: string): Promise<Tool[]> {

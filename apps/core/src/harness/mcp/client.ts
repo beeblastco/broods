@@ -15,6 +15,7 @@
 
 import {
   Client,
+  isCallToolResult,
   StreamableHTTPClientTransport,
   type CallToolResult,
   type DiscoverResult,
@@ -118,13 +119,17 @@ export async function callMcpToolResult(
   if (testOverrides?.callTool) {
     return await testOverrides.callTool(connection, toolName, args);
   }
-  // The daemon's own SDK client produced this; the frame parser checks it.
   if (connection.record.transport === "machine") {
-    return (await runMachineMcpCall(
-      connection.record,
-      toolName,
-      args,
-    )) as CallToolResult;
+    // The daemon's own SDK client produced this, but it crossed a socket and
+    // the frame parser only checks the envelope, so the payload is checked here.
+    const relayed = await runMachineMcpCall(connection.record, toolName, args);
+    if (!isCallToolResult(relayed)) {
+      throw new Error(
+        `MCP tool ${connection.record.name}.${toolName} answered with a result this SDK does not accept`,
+      );
+    }
+
+    return relayed;
   }
 
   return await withClient(
