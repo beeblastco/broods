@@ -24,6 +24,7 @@ import { useState } from "react";
 import { LiveSandboxTerminal } from "./LiveSandboxTerminal";
 import {
   dashboardHref,
+  DetailField,
   formatProvider,
   formatSpecs,
   instanceStatusDot,
@@ -502,7 +503,7 @@ function CommandRunner({
           entries.map((entry, index) => (
             <div
               key={`${entry.command}-${index}`}
-              className="rounded-lg border border-border bg-black p-3 text-xs text-white"
+              className="rounded-lg border border-border bg-terminal-background p-3 text-xs text-terminal-foreground"
             >
               <div className="mb-2 flex items-center justify-between gap-3 text-2xs text-terminal-muted">
                 <code className="min-w-0 flex-1 truncate">
@@ -552,21 +553,6 @@ function CommandRunner({
   );
 }
 
-function Field({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <div className="flex items-start justify-between gap-4 border-b border-border py-2 last:border-0">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-right text-xs text-foreground">{value}</span>
-    </div>
-  );
-}
-
 function InstanceDetailFields({
   instance,
   now,
@@ -578,17 +564,17 @@ function InstanceDetailFields({
 }): React.JSX.Element {
   return (
     <div className="rounded-lg border border-border bg-card px-4">
-      <Field label="Provider" value={formatProvider(instance.provider)} />
-      <Field label="Status" value={instance.status} />
+      <DetailField label="Provider" value={formatProvider(instance.provider)} />
+      <DetailField label="Status" value={instance.status} />
       {instance.errorMessage && (
-        <Field label="Reason" value={instance.errorMessage} />
+        <DetailField label="Reason" value={instance.errorMessage} />
       )}
-      <Field label="Size" value={formatSpecs(instance.specs)} />
-      <Field
+      <DetailField label="Size" value={formatSpecs(instance.specs)} />
+      <DetailField
         label="External ID"
         value={<code className="font-mono">{instance.externalId}</code>}
       />
-      <Field
+      <DetailField
         label="Reservation key"
         value={
           <span className="inline-flex items-center gap-1">
@@ -603,13 +589,13 @@ function InstanceDetailFields({
         }
       />
       {instance.agentId && (
-        <Field
+        <DetailField
           label="Agent"
           value={<code className="font-mono">{instance.agentId}</code>}
         />
       )}
       {instance.conversationKey && (
-        <Field
+        <DetailField
           label="Conversation"
           value={
             <code className="font-mono break-all">
@@ -619,7 +605,7 @@ function InstanceDetailFields({
         />
       )}
       {instance.workspaceName && (
-        <Field label="Workspace" value={instance.workspaceName} />
+        <DetailField label="Workspace" value={instance.workspaceName} />
       )}
       {[
         { label: "Created trace", traceId: instance.createdByTraceId },
@@ -627,7 +613,7 @@ function InstanceDetailFields({
       ].map(
         ({ label, traceId }) =>
           traceId && (
-            <Field
+            <DetailField
               key={label}
               label={label}
               value={
@@ -639,15 +625,21 @@ function InstanceDetailFields({
           ),
       )}
       {instance.snapshotId && (
-        <Field
+        <DetailField
           label="Snapshot"
           value={<code className="font-mono">{instance.snapshotId}</code>}
         />
       )}
-      <Field label="Created" value={relativeTime(instance.createdAt, now)} />
-      <Field label="Last used" value={relativeTime(instance.lastUsedAt, now)} />
+      <DetailField
+        label="Created"
+        value={relativeTime(instance.createdAt, now)}
+      />
+      <DetailField
+        label="Last used"
+        value={relativeTime(instance.lastUsedAt, now)}
+      />
       {instance.suspendedAt && (
-        <Field
+        <DetailField
           label="Suspended"
           value={relativeTime(instance.suspendedAt, now)}
         />

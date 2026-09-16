@@ -5,6 +5,10 @@ import { Button } from "@/app/components/ui/button";
 import { useNow } from "@/app/hooks/useNow";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import {
+  machineState,
+  type MachineConnection,
+} from "@/app/lib/machineConnection";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,23 +39,32 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MachinePanel } from "./MachinePanel";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   dashboardHref,
   formatProvider,
   formatSpecs,
   instanceStatusDot,
+  machineStatusDot,
   relativeTime,
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
 interface Props {
   instances: Array<Doc<"sandboxInstances">>;
+  /** The stage's computers that connected through `broods machine`. */
+  machines: MachineConnection[];
   /** Builds the trace deep links. */
   projectId: Id<"projects">;
   /** Stage-scoped observability WS inputs, handed to the panel's Logs tab. */
   observability: SandboxObservabilityScope | null;
 }
+
+/** One row of the table: a connected computer, or a cloud instance. */
+type TableRow =
+  | { kind: "machine"; machine: MachineConnection }
+  | { kind: "instance"; instance: Doc<"sandboxInstances"> };
 
 /** Status filter values; "all" disables the status predicate. */
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
@@ -67,6 +80,7 @@ const PAGE_SIZE = 8;
 
 export function SandboxInstancesTable({
   instances,
+  machines,
   projectId,
   observability,
 }: Props): React.JSX.Element {
@@ -83,6 +97,11 @@ export function SandboxInstancesTable({
     null,
   );
   const selected = instances.find((instance) => instance._id === selectedId);
+  const [selectedMachineId, setSelectedMachineId] =
+    useState<Id<"machineConnections"> | null>(null);
+  const selectedMachine = machines.find(
+    (machine) => machine._id === selectedMachineId,
+  );
   const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
     null,
   );
@@ -113,15 +132,49 @@ export function SandboxInstancesTable({
     });
   }, [instances, search, status]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // A computer has no lifecycle status, so any status filter hides it.
+  const filteredMachines = useMemo(() => {
+    if (status !== "all") return [];
+    const needle = search.trim().toLowerCase();
+
+    return machines.filter(
+      (machine) =>
+        machine.name.toLowerCase().includes(needle) ||
+        (machine.hostname?.toLowerCase().includes(needle) ?? false),
+    );
+  }, [machines, search, status]);
+
+  // Computers sort above the instances and paginate with them, so the count
+  // under the table matches what is on screen.
+  const rows = useMemo(
+    (): TableRow[] => [
+      ...filteredMachines.map((machine): TableRow => ({
+        kind: "machine",
+        machine: machine,
+      })),
+      ...filtered.map((instance): TableRow => ({
+        kind: "instance",
+        instance: instance,
+      })),
+    ],
+    [filtered, filteredMachines],
+  );
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = useMemo(
+    () => rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [rows, safePage],
+  );
+  // Only instances have a lifecycle, so the refresh controls work off these.
+  const pageInstances = useMemo(
     () =>
-      filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [filtered, safePage],
+      pageRows.flatMap((row) =>
+        row.kind === "instance" ? [row.instance] : [],
+      ),
+    [pageRows],
   );
   const hasFilters = search.trim() !== "" || status !== "all";
-  const refreshKey = pageRows
+  const refreshKey = pageInstances
     .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
@@ -150,7 +203,7 @@ export function SandboxInstancesTable({
   }
 
   const refreshVisible = useCallback(async (): Promise<void> => {
-    const targets = pageRows.filter(controllable);
+    const targets = pageInstances.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
     setError(null);
@@ -168,7 +221,7 @@ export function SandboxInstancesTable({
     } finally {
       setRefreshing(false);
     }
-  }, [pageRows, refresh]);
+  }, [pageInstances, refresh]);
 
   useEffect(() => {
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
@@ -187,13 +240,14 @@ export function SandboxInstancesTable({
     setPage(0);
   }
 
-  if (instances.length === 0) {
+  if (instances.length === 0 && machines.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-foreground">No running sandbox instances.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Run an agent against a sandbox and it appears here live. Per-call
           instances last the length of the call, reserved ones until suspended.
+          A computer running <code>broods machine</code> shows up here too.
         </p>
       </div>
     );
@@ -247,7 +301,7 @@ export function SandboxInstancesTable({
           variant="outline"
           size="sm"
           onClick={refreshVisible}
-          disabled={refreshing || !pageRows.some(controllable)}
+          disabled={refreshing || !pageInstances.some(controllable)}
           className="cursor-pointer disabled:cursor-not-allowed"
         >
           <RefreshCw
@@ -278,7 +332,7 @@ export function SandboxInstancesTable({
 
       <DetailSplit
         detail={
-          selected && (
+          selected ? (
             <SandboxInstancePanel
               key={selected._id}
               instance={selected}
@@ -287,6 +341,15 @@ export function SandboxInstancesTable({
               now={now}
               onClose={() => setSelectedId(null)}
             />
+          ) : (
+            selectedMachine && (
+              <MachinePanel
+                key={selectedMachine._id}
+                machine={selectedMachine}
+                now={now}
+                onClose={() => setSelectedMachineId(null)}
+              />
+            )
           )
         }
       >
@@ -305,7 +368,21 @@ export function SandboxInstancesTable({
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((instance) => {
+            {pageRows.map((row) => {
+              if (row.kind === "machine") {
+                return (
+                  <MachineRow
+                    key={row.machine._id}
+                    machine={row.machine}
+                    now={now}
+                    onSelect={() => {
+                      setSelectedId(null);
+                      setSelectedMachineId(row.machine._id);
+                    }}
+                  />
+                );
+              }
+              const instance = row.instance;
               const running = instance.status === "running";
               const toggleable =
                 controllable(instance) &&
@@ -317,7 +394,10 @@ export function SandboxInstancesTable({
                 <tr
                   key={instance._id}
                   className="cursor-pointer border-t border-border hover:bg-muted/30"
-                  onClick={() => setSelectedId(instance._id)}
+                  onClick={() => {
+                    setSelectedMachineId(null);
+                    setSelectedId(instance._id);
+                  }}
                 >
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-foreground">
@@ -411,7 +491,7 @@ export function SandboxInstancesTable({
                   colSpan={9}
                   className="px-4 py-10 text-center text-xs text-muted-foreground"
                 >
-                  No instances match the current filters.
+                  Nothing matches the current filters.
                 </td>
               </tr>
             )}
@@ -419,12 +499,11 @@ export function SandboxInstancesTable({
         </table>
       </DetailSplit>
 
-      {filtered.length > PAGE_SIZE && (
+      {rows.length > PAGE_SIZE && (
         <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
           <span>
             {safePage * PAGE_SIZE + 1}-
-            {Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of{" "}
-            {filtered.length}
+            {Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of {rows.length}
           </span>
           <div className="flex items-center gap-1">
             <Button
@@ -458,7 +537,7 @@ export function SandboxInstancesTable({
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      {!instances.some(controllable) && (
+      {instances.length > 0 && !instances.some(controllable) && (
         <p className="mt-2 text-xs text-muted-foreground">
           Per-call instances, and instances reserved before the registry linked
           their config, can be viewed but not controlled here.
@@ -514,4 +593,45 @@ function controllable(
   sandboxConfigId: Id<"sandboxConfigs">;
 } {
   return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
+}
+
+/** A computer has no size, image, trace or lifecycle switch to show. */
+function MachineRow({
+  machine,
+  now,
+  onSelect,
+}: {
+  machine: MachineConnection;
+  now: number;
+  onSelect: () => void;
+}): React.JSX.Element {
+  return (
+    <tr
+      className="cursor-pointer border-t border-border hover:bg-muted/30"
+      onClick={onSelect}
+    >
+      <td className="px-4 py-2.5">
+        <div className="font-medium text-foreground">{machine.name}</div>
+        <div className="font-mono text-xs text-muted-foreground">
+          {machine.hostname ?? "—"}
+        </div>
+      </td>
+      <td className="px-4 py-2.5 text-xs">{formatProvider("machine")}</td>
+      <td className="px-4 py-2.5">
+        {machineStatusDot(machineState(machine, now))}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">—</td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {relativeTime(machine.connectedAt, now)}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {relativeTime(machine.lastSeenAt, now)}
+      </td>
+      <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+        —
+      </td>
+    </tr>
+  );
 }

@@ -166,7 +166,7 @@ export function LiveSandboxTerminal({
           </Button>
         )}
       </div>
-      <div className="overflow-hidden rounded-lg border border-border bg-black p-2">
+      <div className="overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
         <div ref={containerRef} className="h-80 w-full" />
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

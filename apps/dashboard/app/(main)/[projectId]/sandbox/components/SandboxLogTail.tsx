@@ -96,7 +96,7 @@ export function SandboxLogTail({
           <StatusDot tone={CONNECTION_TONE[status]} label={status} />
         </span>
       </div>
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-black p-3 font-mono text-xs text-terminal-foreground">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-terminal-background p-3 font-mono text-xs text-terminal-foreground">
         {entries.length === 0 ? (
           <p className="text-terminal-muted">
             No output yet. Guest stdout and stderr appear here a few seconds
