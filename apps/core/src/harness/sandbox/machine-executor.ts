@@ -12,6 +12,7 @@ import { logInfo, logWarn } from "../../shared/log.ts";
 import {
   MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
+  occupiedReason,
   parseDaemonFrame,
   type ComputerInput,
   type MachineComputerFrame,
@@ -43,7 +44,8 @@ const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 const MCP_REPLY_MS = 60_000;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
 const REPLY_GRACE_MS = 5_000;
-// Keyed by registryKey; the last daemon to claim a record wins.
+// Keyed by registryKey; a record's daemon holds it until it disconnects, reconnects
+// with the same instance, or is taken over with --force.
 const connections = new Map<string, MachineConnection>();
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 
@@ -61,6 +63,8 @@ type MachineRequest =
 
 interface MachineConnection {
   computer: boolean;
+  hostname?: string;
+  instance?: string;
   mcp: ReadonlySet<string>;
   name: string;
   pending: Map<string, PendingReply>;
@@ -310,6 +314,28 @@ async function claimSandbox(
   }
   const key = registryKey(accountId, record.sandboxId);
   const previous = connections.get(key);
+  // The same daemon process reconnecting after a network drop reclaims its
+  // record. Any other daemon, on any computer, is refused unless it passes
+  // --force, or the holder would lose the machine in silence. A daemon that
+  // sends no instance counts as another daemon.
+  if (
+    previous &&
+    hello.force !== true &&
+    !(hello.instance && hello.instance === previous.instance)
+  ) {
+    logWarn("Machine sandbox claim refused", {
+      accountId: accountId,
+      sandbox: record.name,
+      holder: previous.hostname,
+      host: hello.hostname,
+    });
+    socket.close(
+      MACHINE_CLOSE.occupied.code,
+      occupiedReason(previous.hostname),
+    );
+
+    return;
+  }
   if (previous) {
     rejectPending(previous, MACHINE_CLOSE.replaced.reason);
     previous.socket.close(
@@ -325,6 +351,8 @@ async function claimSandbox(
   };
   connections.set(key, {
     computer: hello.computer === true,
+    ...(hello.hostname ? { hostname: hello.hostname } : {}),
+    ...(hello.instance ? { instance: hello.instance } : {}),
     mcp: new Set(hello.mcp),
     name: record.name,
     pending: new Map(),

@@ -16,7 +16,9 @@ import computerTool from "../src/harness/tools/computer.tool.ts";
 import type { MachineSandbox } from "../src/harness/tools/filesystem-utils.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
+  MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
+  occupiedReason,
   parseCoreFrame,
   parseDaemonFrame,
   type MachineComputerFrame,
@@ -31,6 +33,7 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import {
+  closeOf,
   MACHINE_ACCOUNT_ID,
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
@@ -46,8 +49,11 @@ import {
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
-/** The services a fake daemon advertises in its hello, and how it answers. */
+/** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
+  force?: boolean;
+  hostname?: string;
+  instance?: string;
   mcp?: string[];
   onComputer?: (frame: MachineComputerFrame, socket: WebSocket) => void;
   onMcp?: (
@@ -109,7 +115,7 @@ test("a run with no daemon connected names the command to fix it", async () => {
   );
 });
 
-test("a second daemon replaces the first, and a dropped daemon fails its in-flight run", async () => {
+test("a daemon reconnecting reclaims its record, and a dropped daemon fails its in-flight run", async () => {
   const server = core();
   const first = await connectDaemon(server, "my-mac", () => {});
   const firstClosed = closeOf(first.socket);
@@ -125,6 +131,49 @@ test("a second daemon replaces the first, and a dropped daemon fails its in-flig
 
   expect((await firstClosed).code).toBe(4409);
   expect(await pending).toBe("Replaced by a newer connection");
+});
+
+test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
+  const server = core();
+  const holder = await connectDaemon(server, "my-mac", () => {}, {
+    hostname: "phicks-mac",
+  });
+  const hello = (extra: Record<string, unknown>): string =>
+    JSON.stringify({ type: "hello", sandbox: "my-mac", ...extra });
+
+  // A second daemon on the holder's own computer is the case a hostname check
+  // would have let through.
+  const local = openSocket(server);
+  local.onopen = (): void =>
+    local.send(hello({ hostname: "phicks-mac", instance: "second-daemon" }));
+  const refused = await closeOf(local);
+
+  expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
+  expect(refused.reason).toBe(occupiedReason("phicks-mac"));
+
+  // No instance is not the same daemon.
+  const anonymous = openSocket(server);
+  anonymous.onopen = (): void => anonymous.send(hello({}));
+
+  expect((await closeOf(anonymous)).code).toBe(MACHINE_CLOSE.occupied.code);
+
+  const holderClosed = closeOf(holder.socket);
+  await connectDaemon(server, "my-mac", () => {}, {
+    force: true,
+    hostname: "kien-mac",
+    instance: "second-daemon",
+  });
+
+  expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
+});
+
+test("the refusal reason fits a close frame however long the holder's host is", () => {
+  const reason = occupiedReason("ü".repeat(80));
+
+  // 123 bytes is the WebSocket cap; over it, or cut mid-character, the daemon
+  // sees 1007 instead of 4423.
+  expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(123);
+  expect(reason).toEndWith("pass --force to take it over");
 });
 
 test("an unknown record or a wrong provider closes the socket with 4404", async () => {
@@ -459,12 +508,6 @@ function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   };
 }
 
-function closeOf(socket: WebSocket): Promise<CloseEvent> {
-  return new Promise((resolve): void => {
-    socket.onclose = resolve;
-  });
-}
-
 function connectDaemon(
   server: Bun.Server<MachineSocketData>,
   sandbox: string,
@@ -479,8 +522,12 @@ function connectDaemon(
         JSON.stringify({
           type: "hello",
           sandbox: sandbox,
+          hostname: daemon.hostname ?? "test-host",
           computer: daemon.onComputer !== undefined,
           mcp: daemon.mcp,
+          // One shared instance, so a fake connecting twice is a reconnect.
+          instance: daemon.instance ?? "test-daemon",
+          force: daemon.force,
         }),
       );
     socket.onmessage = (event): void => {

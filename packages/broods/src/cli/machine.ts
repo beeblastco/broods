@@ -28,6 +28,7 @@ import type { McpHost } from "./mcp-host.ts";
 
 // Refusals a reconnect would only repeat.
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  MACHINE_CLOSE.occupied.code,
   MACHINE_CLOSE.replaced.code,
   MACHINE_CLOSE.unauthorized.code,
   MACHINE_CLOSE.unknownSandbox.code,
@@ -43,6 +44,8 @@ export interface MachineDaemonOptions {
   computer?: boolean;
   /** Working directory for an exec that names none. */
   cwd: string;
+  /** Take the record over from another daemon. */
+  force?: boolean;
   log: (line: string) => void;
   /** A `.mcp.json` whose stdio servers agents may call. */
   mcpFile?: string;
@@ -118,6 +121,9 @@ export async function runMachineDaemon(
   options: MachineDaemonOptions,
 ): Promise<void> {
   const WebSocketImpl = resolveWebSocket();
+  // What lets this process, and only this process, reclaim its record after a
+  // network drop. A restart is a new daemon to core.
+  const instance = crypto.randomUUID();
   // MCP first: a bad file fails before the desktop helper starts.
   const mcp = options.mcpFile
     ? await openMcpHost(options.mcpFile, options.log)
@@ -127,7 +133,13 @@ export async function runMachineDaemon(
   try {
     while (!options.signal.aborted) {
       const startedAt = Date.now();
-      const closed = await serveOnce(options, WebSocketImpl, desktop, mcp);
+      const closed = await serveOnce(
+        options,
+        instance,
+        WebSocketImpl,
+        desktop,
+        mcp,
+      );
       if (options.signal.aborted) return;
       if (FATAL_CLOSE_CODES.has(closed.code)) {
         throw new Error(
@@ -260,6 +272,7 @@ async function serveMcp(
 /** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
+  instance: string,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
   desktop: DesktopDriver | null,
   mcp: McpHost | null,
@@ -290,6 +303,8 @@ function serveOnce(
         platform: process.platform,
         computer: desktop !== null,
         mcp: mcp?.names(),
+        instance: instance,
+        force: options.force,
       });
     socket.onmessage = (event): void => {
       const frame = parseCoreFrame(event.data);

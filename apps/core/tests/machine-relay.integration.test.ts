@@ -19,12 +19,15 @@ import {
   MACHINE_CLOSE,
   MACHINE_WEBSOCKET_PATH,
   machineSocketUrl,
+  occupiedReason,
+  parseCoreFrame,
 } from "../src/shared/machine-socket.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import {
+  closeOf,
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
@@ -126,6 +129,45 @@ test("a bad key reaches the daemon as core's 4401 and stops it", async () => {
   ).rejects.toThrow(MACHINE_CLOSE.unauthorized.reason);
 });
 
+test("the daemon exits when another daemon holds the record, and --force takes it", async () => {
+  setStorageForTests(machineStorage());
+  const core = coreUrl();
+  const door = startDoor(core);
+  const holder = await holdRecord(core, "another-desk");
+  const lines: string[] = [];
+
+  await expect(
+    runMachineDaemon({
+      apiKey: MACHINE_RUNTIME_KEY,
+      baseUrl: door,
+      cwd: "/tmp",
+      log: (line) => lines.push(line),
+      sandbox: "my-mac",
+      signal: daemonController().signal,
+    }),
+  ).rejects.toThrow(occupiedReason("another-desk"));
+
+  const holderClosed = closeOf(holder);
+  const controller = daemonController();
+  const daemon = runMachineDaemon({
+    apiKey: MACHINE_RUNTIME_KEY,
+    baseUrl: door,
+    cwd: "/tmp",
+    force: true,
+    log: (line) => lines.push(line),
+    sandbox: "my-mac",
+    signal: controller.signal,
+  });
+  await waitFor(() =>
+    lines.includes(`connected as my-mac (${MACHINE_SANDBOX_ID})`),
+  );
+
+  expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
+
+  controller.abort();
+  await daemon;
+});
+
 test("an unreachable core is a reconnect, not a refusal", async () => {
   const gone = Bun.serve({ port: 0, fetch: () => new Response("gone") });
   const goneUrl = `http://127.0.0.1:${gone.port}`;
@@ -158,6 +200,29 @@ function daemonController(): AbortController {
   controllers.push(controller);
 
   return controller;
+}
+
+/** A raw socket from `host` that claims `my-mac` straight into core and holds it. */
+function holdRecord(coreBaseUrl: string, host: string): Promise<WebSocket> {
+  return new Promise((resolve, reject): void => {
+    const socket = new WebSocket(machineSocketUrl(coreBaseUrl), {
+      headers: { authorization: `Bearer ${MACHINE_RUNTIME_KEY}` },
+    } as unknown as string[]);
+    socket.onopen = (): void =>
+      socket.send(
+        JSON.stringify({
+          type: "hello",
+          sandbox: "my-mac",
+          hostname: host,
+          instance: "another-daemon",
+        }),
+      );
+    socket.onclose = (event): void =>
+      reject(new Error(`closed ${event.code} ${event.reason}`));
+    socket.onmessage = (event): void => {
+      if (parseCoreFrame(event.data)?.type === "ready") resolve(socket);
+    };
+  });
 }
 
 function mcpServersFile(): string {
