@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { beforeEach, expect, spyOn, test } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -31,6 +31,7 @@ import {
   quoteLabel,
   normalizeOtelId,
   relayNatsMessages,
+  resetTempoTraceCacheForTests,
   tempoTraceRowsFromResponse,
 } from "../src/observability.ts";
 import {
@@ -67,6 +68,9 @@ import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
+
+// Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
+beforeEach(resetTempoTraceCacheForTests);
 
 // The scope every observability fixture lives in: stage shop/dev of acct-1.
 const TEST_SCOPE: ObservabilityScope = {
@@ -1746,42 +1750,121 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
   const { socket, sent } = observabilitySocket();
-  const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
-  const tempoTrace = (accountId: string): Response =>
-    json({
+  const ownTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const otherTraceId = "5bf92f3577b34da6a3ce929d0e0e4736";
+  // Tempo's id lookup is not tenant-scoped: another account's trace comes back
+  // whole, and a trace can carry spans from another scope next to ours.
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith(otherTraceId))
+      return json({
+        batches: [
+          tempoBatch({
+            traceId: otherTraceId,
+            spanId: "theirs",
+            accountId: "someone-else",
+          }),
+        ],
+      });
+
+    return json({
       batches: [
+        tempoBatch({ traceId: ownTraceId, spanId: "ours" }),
         tempoBatch({
-          traceId: traceId,
-          spanId: "root-1",
-          accountId: accountId,
+          traceId: ownTraceId,
+          spanId: "theirs",
+          accountId: "someone-else",
         }),
       ],
     });
-  let accountId = "someone-else";
-  globalThis.fetch = (async () =>
-    tempoTrace(accountId)) as unknown as typeof fetch;
-  const fetchTrace = JSON.stringify({ type: "fetchTrace", traceId: traceId });
+  }) as unknown as typeof fetch;
+  const fetchTrace = (traceId: string): string =>
+    JSON.stringify({ type: "fetchTrace", traceId: traceId });
   const noNats = async (): Promise<never> => {
     throw new Error("fetchTrace never touches NATS");
   };
 
   openObservabilitySocket(socket);
   try {
-    await handleObservabilityMessage(socket, fetchTrace, noNats);
+    await handleObservabilityMessage(socket, fetchTrace(otherTraceId), noNats);
     expect(sent.at(-1)).toMatchObject({
       type: "backfill",
       entries: [],
       error: "Trace not found in this stage",
     });
 
-    accountId = "acct-1";
-    await handleObservabilityMessage(socket, fetchTrace, noNats);
-    const last = sent.at(-1) as { entries: Array<{ traceId: string }> };
-    expect(last.entries.map((row) => row.traceId)).toEqual([traceId]);
+    await handleObservabilityMessage(socket, fetchTrace(ownTraceId), noNats);
+    const last = sent.at(-1) as { entries: Array<{ spanId: string }> };
+    expect(last.entries.map((row) => row.spanId)).toEqual(["ours"]);
   } finally {
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
     process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("fetchTempoBackfill shares trace lookups across backfills and keeps finished traces", async () => {
+  const originalFetch = globalThis.fetch;
+  // Two tabs open Tracing at once, then one reconnects. Tempo serialises
+  // lookups, so each trace must reach it once: the second backfill joins the
+  // lookup in flight, the reconnect reads the finished trace from the gateway.
+  const lookups: string[] = [];
+  const hits = tempoSearchHits(3);
+  const tempo = tempoFetch(hits);
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (!url.includes("/api/search")) lookups.push(url);
+
+    return tempo(input);
+  }) as unknown as typeof fetch;
+
+  try {
+    const traceIds = async (): Promise<string[]> =>
+      (
+        await Array.fromAsync(
+          fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 3),
+        )
+      ).flatMap((chunk) => chunk.rows.map((row) => row.traceId));
+    const [first, second] = await Promise.all([traceIds(), traceIds()]);
+    const reconnect = await traceIds();
+    expect(first).toEqual(["t2", "t1", "t0"]);
+    expect(second).toEqual(first);
+    expect(reconnect).toEqual(first);
+    expect(lookups).toHaveLength(3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchTempoBackfill asks Tempo again for a trace whose root has not landed", async () => {
+  const originalFetch = globalThis.fetch;
+  // A run still going has only its ended children in Tempo. Keeping that
+  // partial trace would hide the rest of the run from every later backfill.
+  let lookups = 0;
+  const child = tempoBatch({ traceId: "aaa", spanId: "step" });
+  const span = (
+    child as { scopeSpans: Array<{ spans: Array<Record<string, unknown>> }> }
+  ).scopeSpans[0].spans[0];
+  span.parentSpanId = "root";
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/search"))
+      return json({ traces: [{ traceID: "aaa" }] });
+    lookups += 1;
+
+    return json({ batches: [child] });
+  }) as unknown as typeof fetch;
+
+  try {
+    await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1),
+    );
+    await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1),
+    );
+    expect(lookups).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 
