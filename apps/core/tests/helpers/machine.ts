@@ -1,6 +1,7 @@
 /**
- * Storage with a `my-mac` machine record and a `cloud-box` lambda record, and
- * a core server that serves only the daemon socket.
+ * Storage with `my-mac` and `other-mac` machine records and a `cloud-box` lambda
+ * record, and a core server that serves only the daemon socket. `other-mac` is
+ * `bypass` so a test can tell two machines' approval apart.
  */
 
 import {
@@ -22,6 +23,7 @@ import type {
 export const MACHINE_ACCOUNT_ID = "acct_machine";
 export const MACHINE_RUNTIME_KEY = "runtime-key";
 export const MACHINE_SANDBOX_ID = "sbx_machine";
+export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
 
 /** One connection status write core sent to storage. */
 export type MachineConnectionWrite =
@@ -85,6 +87,18 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
     },
     {
       accountId: MACHINE_ACCOUNT_ID,
+      sandboxId: OTHER_MACHINE_SANDBOX_ID,
+      name: "other-mac",
+      config: {
+        provider: "machine",
+        permissionMode: "bypass",
+        network: { mode: "allow-all" },
+      },
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    },
+    {
+      accountId: MACHINE_ACCOUNT_ID,
       sandboxId: "sbx_cloud",
       name: "cloud-box",
       config: {
@@ -135,6 +149,21 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
       removeAllForAccount: async () => 0,
     },
   } as unknown as Storage;
+}
+
+/** The executor config core builds for the `other-mac` record. */
+export function otherMachineExecutorConfig(
+  overrides: Partial<SandboxExecutorConfig> = {},
+): SandboxExecutorConfig {
+  return machineExecutorConfig({
+    controlPlane: {
+      accountId: MACHINE_ACCOUNT_ID,
+      sandboxConfigId: OTHER_MACHINE_SANDBOX_ID,
+      name: "other-mac",
+      specs: { vcpu: 0, memoryMb: 0, storageGb: 0 },
+    },
+    ...overrides,
+  });
 }
 
 export function startMachineCore(): Bun.Server<MachineSocketData> {

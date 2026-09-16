@@ -84,6 +84,16 @@ export interface BashTarget {
   sandbox?: boolean | string;
 }
 
+// One computer an agent can drive, resolved for a turn. `permissionMode` is the
+// mode of that machine's own record, not the agent's, so approval follows the
+// computer a call lands on.
+export interface MachineSandbox {
+  description?: string;
+  name: string;
+  permissionMode: SandboxPermissionMode;
+  sandbox: SandboxExecutorConfig;
+}
+
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
 // may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
 // backs `bash` outright when no workspace is attached, and stays separately
@@ -414,6 +424,56 @@ export function bashSandboxTarget(
   }
 
   return undefined;
+}
+
+/**
+ * The machine a `computer` call lands on. One reachable computer needs no choice,
+ * so the field is absent from the schema and ignored here; with more, the call
+ * names one, and a name that matches none resolves to nothing — which the tool
+ * refuses and the approval gate reads as "ask".
+ */
+export function computerSandboxTarget(
+  machines: MachineSandbox[],
+  requested: unknown,
+): MachineSandbox | undefined {
+  if (machines.length <= 1) {
+    return machines[0];
+  }
+
+  return machines.find((machine): boolean => machine.name === requested);
+}
+
+/**
+ * The computers this agent can drive, its own sandbox first. Only a machine has a
+ * screen, so this is both what registers the `computer` tool and the list a call
+ * picks from. The agent's own sandbox no longer has to be the machine: attaching
+ * one through `config.sandboxes` is enough.
+ */
+export function machineSandboxes(
+  context: SandboxToolContext,
+): MachineSandbox[] {
+  const own = context.agentSandbox;
+  const ownName = own?.controlPlane?.name;
+
+  return [
+    ...(own?.provider === "machine" && ownName
+      ? [
+          {
+            name: ownName,
+            permissionMode: context.agentSandboxPermissionMode ?? "ask",
+            sandbox: own,
+          },
+        ]
+      : []),
+    ...(context.sandboxes ?? [])
+      .filter((entry): boolean => entry.sandbox.provider === "machine")
+      .map((entry): MachineSandbox => ({
+        ...(entry.description ? { description: entry.description } : {}),
+        name: entry.name,
+        permissionMode: entry.sandbox.permissionMode ?? "ask",
+        sandbox: entry.sandbox,
+      })),
+  ];
 }
 
 /**
