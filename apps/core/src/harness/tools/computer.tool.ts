@@ -15,7 +15,7 @@ import {
 import { runMachineComputerAction } from "../sandbox/machine-executor.ts";
 import {
   computerSandboxTarget,
-  type MachineSandbox,
+  type SelectableSandbox,
 } from "./filesystem-utils.ts";
 import { toolError } from "./utils.ts";
 
@@ -34,7 +34,7 @@ interface ComputerCall extends ComputerInput {
   sandbox?: string;
 }
 
-export default function computerTool(machines: MachineSandbox[]): ToolSet {
+export default function computerTool(machines: SelectableSandbox[]): ToolSet {
   const names = machines.map((machine): string => machine.name);
   const picks = machines.length > 1;
 
@@ -91,7 +91,7 @@ export default function computerTool(machines: MachineSandbox[]): ToolSet {
 
 // Scenario note: which computer each name is, so the model picks without guessing.
 // Switching screens invalidates the coordinates it was just given.
-function machinesNote(machines: MachineSandbox[]): string {
+function machinesNote(machines: SelectableSandbox[]): string {
   const entries = machines.map(
     (machine): string =>
       `  - ${machine.name}${machine.description ? `: ${machine.description}` : ""}`,

@@ -101,7 +101,7 @@ export function compatibilityApprovalStatus(
       : {};
   const workspace =
     typeof record.workspace === "string" ? record.workspace : undefined;
-  const onSandbox = bashSandboxTarget(record.sandbox, options.sandboxes);
+  const onSandbox = bashSandboxTarget(record.sandbox);
 
   if (toolName === "bash") {
     return bashNeedsApproval(
@@ -404,7 +404,7 @@ export function policyInputForTool(
     input && typeof input === "object"
       ? (input as Record<string, unknown>)
       : {};
-  const sandboxTarget = bashSandboxTarget(record.sandbox, options.sandboxes);
+  const sandboxTarget = bashSandboxTarget(record.sandbox);
   // A bash call that runs on an agent-level sandbox touches no workspace, so it must
   // not be described to the policy as if it did. A workspace-scoped rule would then
   // authorize a run that never lands there. Resolve the same target execution will.

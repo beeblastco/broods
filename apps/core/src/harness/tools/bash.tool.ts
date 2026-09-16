@@ -26,7 +26,6 @@ import {
   bashSandboxTarget,
   disallowedRuntimeCommand,
   formatRunText,
-  hasStandaloneSandbox,
   isAgentOwnSandbox,
   outsideWorkspaceCommand,
   resolveAgentSandbox,
@@ -37,10 +36,12 @@ import {
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  selectableSandboxes,
   targetsAgentSandbox,
   workspaceParamSchema,
   writesOutsideAllowed,
   type SandboxToolContext,
+  type SelectableSandbox,
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
@@ -51,8 +52,8 @@ const THROWAWAY_NOTE =
 interface BashInput {
   command: string;
   workspace?: string;
-  // `true` (or the agent's own sandbox name) picks its own sandbox; any other name
-  // picks one of `config.sandboxes`.
+  // `true` or the agent's own sandbox name picks its own sandbox; any other name
+  // picks an extra. A name that matches nothing is refused.
   sandbox?: boolean | string;
   background?: boolean;
   pty?: boolean;
@@ -76,7 +77,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           return toolError("Error: command is required");
         }
         try {
-          const selected = bashSandboxTarget(onSandbox, context.sandboxes);
+          const selected = bashSandboxTarget(onSandbox);
           // Silently preferring one would let the policy layer be told a workspace
           // that the run never touches, so an incoherent selection is refused.
           if (workspace !== undefined && selected !== undefined) {
@@ -201,7 +202,7 @@ Usage notes:
 - Each command starts in the current workspace directory; use relative paths.
 - DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxTargetNote(context)}${sandboxesNote(context)}${backgroundNote(context)}`;
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxesNote(context)}${backgroundNote(context)}`;
 }
 
 async function dispatchBackground(
@@ -420,44 +421,43 @@ function reservedStandaloneNote(context: SandboxToolContext): string {
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
+// The sandboxes worth naming. A lone own sandbox with no workspace is where bash
+// already runs, so it earns no field; beside a workspace or an extra it is a choice.
+function sandboxChoices(context: SandboxToolContext): SelectableSandbox[] {
+  const selectable = selectableSandboxes(context);
+  const lone = selectable.length === 1 && selectable[0]?.own === true;
+
+  return lone && context.workspaces.length === 0 ? [] : selectable;
+}
+
 // Scenario note: the sandboxes a call can pick by name, the agent's own first when
-// no workspace mounts it. One list, so `sandbox` never means two different things.
+// nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
-  const extras = context.sandboxes ?? [];
-  if (extras.length === 0) {
+  const choices = sandboxChoices(context);
+  if (choices.length === 0) {
     return "";
   }
-  const ownName = standaloneSandboxName(context);
-  const entries = [
-    ...(ownName
-      ? [`${ownName}: your own sandbox.${reservedStandaloneNote(context)}`]
-      : []),
-    ...extras.map(
-      (extra): string =>
-        `${extra.name}${extra.description ? `: ${extra.description}` : ""}`,
-    ),
-  ];
+  const entries = choices.map((choice): string => {
+    const what = choice.description ?? (choice.own ? "your own sandbox." : "");
+    const kept = choice.own ? reservedStandaloneNote(context) : "";
+
+    return `${choice.name}${what ? `: ${what}` : ""}${kept}`;
+  });
 
   return `
 - sandbox:"<name>" runs on that sandbox with no workspace mounted. ${THROWAWAY_NOTE}:
 ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
-// `sandbox` is a flag while the agent's own sandbox is the only one a call can pick.
-// Attaching extras makes it the name of the sandbox to run on, own sandbox first.
+// `sandbox` names the sandbox to run on. `true` is still read as the agent's own,
+// so a call replayed from before names existed keeps landing where it did.
 function sandboxParamSchema(
   context: SandboxToolContext,
 ): JSONSchema7 | undefined {
-  const extras = context.sandboxes ?? [];
-  if (extras.length === 0) {
-    return hasStandaloneSandbox(context.workspaces, context.agentSandbox)
-      ? {
-          type: "boolean",
-          description: `Run on your own sandbox with no workspace mounted, instead of in a workspace. ${THROWAWAY_NOTE}. Mutually exclusive with \`workspace\`.`,
-        }
-      : undefined;
+  const choices = sandboxChoices(context);
+  if (choices.length === 0) {
+    return undefined;
   }
-  const ownName = standaloneSandboxName(context);
   const mutuallyExclusive =
     context.workspaces.length > 0
       ? " Mutually exclusive with `workspace`."
@@ -465,37 +465,9 @@ function sandboxParamSchema(
 
   return {
     type: "string",
-    enum: [
-      ...(ownName ? [ownName] : []),
-      ...extras.map((extra): string => extra.name),
-    ],
+    enum: choices.map((choice): string => choice.name),
     description: `Sandbox to run on, with no workspace mounted. ${THROWAWAY_NOTE}.${mutuallyExclusive}`,
   };
-}
-
-// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
-// only way onto it is to ask for it. What it keeps is reservedStandaloneNote's job.
-// With extras attached the flag is a name instead, and sandboxesNote lists them.
-function sandboxTargetNote(context: SandboxToolContext): string {
-  if (
-    (context.sandboxes?.length ?? 0) > 0 ||
-    !hasStandaloneSandbox(context.workspaces, context.agentSandbox)
-  ) {
-    return "";
-  }
-
-  return `
-- sandbox:true runs on your own sandbox instead, with no workspace mounted. ${THROWAWAY_NOTE} and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
-}
-
-// The agent's own sandbox as the model names it, when a call can still pick it with
-// no workspace mounted. Undefined once a workspace mounts that same sandbox.
-function standaloneSandboxName(
-  context: SandboxToolContext,
-): string | undefined {
-  return targetsAgentSandbox(context, { sandbox: true })
-    ? context.agentSandbox?.controlPlane?.name
-    : undefined;
 }
 
 // The write guard is not on everywhere: it steps aside on the agent's own reserved

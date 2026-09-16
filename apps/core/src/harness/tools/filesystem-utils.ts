@@ -84,12 +84,13 @@ export interface BashTarget {
   sandbox?: boolean | string;
 }
 
-// One computer an agent can drive, resolved for a turn. `permissionMode` is the
-// mode of that machine's own record, not the agent's, so approval follows the
-// computer a call lands on.
-export interface MachineSandbox {
+// One sandbox a call can pick by name, resolved for a turn: the agent's own while
+// nothing mounts it, and every extra. `permissionMode` is that record's own, so
+// approval follows the sandbox a call lands on. `own` marks the agent's default.
+export interface SelectableSandbox {
   description?: string;
   name: string;
+  own: boolean;
   permissionMode: SandboxPermissionMode;
   sandbox: SandboxExecutorConfig;
 }
@@ -407,23 +408,19 @@ export function bashNeedsApproval(
 
 /**
  * The `sandbox` field of a bash call, normalized: `true` selects the agent's own
- * sandbox, and a name selects one of the agent-level sandboxes. The name form only
- * exists once extras are attached, so without them a string is ignored the way it
- * always was. The tool and the policy layer read the field through this one function
- * so they never disagree about where a call lands.
+ * sandbox and a name selects any sandbox the call can pick. A name that matches
+ * nothing is refused downstream instead of quietly becoming a workspace run. The
+ * tool and the policy layer read the field through this one function so they
+ * never disagree about where a call lands.
  */
 export function bashSandboxTarget(
   value: unknown,
-  sandboxes: ResolvedAgentSandbox[] | undefined,
 ): boolean | string | undefined {
   if (value === true) {
     return true;
   }
-  if (typeof value === "string" && (sandboxes?.length ?? 0) > 0) {
-    return value;
-  }
 
-  return undefined;
+  return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -436,9 +433,9 @@ export function bashSandboxTarget(
  * nothing, which the tool refuses and the approval gate reads as "ask".
  */
 export function computerSandboxTarget(
-  machines: MachineSandbox[],
+  machines: SelectableSandbox[],
   requested: unknown,
-): MachineSandbox | undefined {
+): SelectableSandbox | undefined {
   if (typeof requested === "string") {
     return machines.find((machine): boolean => machine.name === requested);
   }
@@ -449,33 +446,49 @@ export function computerSandboxTarget(
 /**
  * The computers this agent can drive, its own sandbox first. Only a machine has a
  * screen, so this is both what registers the `computer` tool and the list a call
- * picks from. The agent's own sandbox no longer has to be the machine: attaching
- * one through `config.sandboxes` is enough.
+ * picks from.
  */
 export function machineSandboxes(
   context: SandboxToolContext,
-): MachineSandbox[] {
+): SelectableSandbox[] {
+  return selectableSandboxes(context).filter(
+    (entry): boolean => entry.sandbox.provider === "machine",
+  );
+}
+
+/**
+ * Every sandbox a call can pick by name, the agent's own first. The own sandbox is
+ * nameable while no workspace mounts it; once one does, the workspace is the way
+ * in. Extras are always nameable. bash and computer both build their choices here,
+ * so the two tools cannot offer the model different lists.
+ */
+export function selectableSandboxes(
+  context: SandboxToolContext,
+): SelectableSandbox[] {
   const own = context.agentSandbox;
   const ownName = own?.controlPlane?.name;
 
   return [
-    ...(own?.provider === "machine" && ownName
+    ...(own && ownName && targetsAgentSandbox(context, { sandbox: true })
       ? [
           {
+            ...(own.controlPlane?.description
+              ? { description: own.controlPlane.description }
+              : {}),
             name: ownName,
+            own: true,
             permissionMode: context.agentSandboxPermissionMode ?? "ask",
             sandbox: own,
           },
         ]
       : []),
-    ...(context.sandboxes ?? [])
-      .filter((entry): boolean => entry.sandbox.provider === "machine")
-      .map((entry): MachineSandbox => ({
-        ...(entry.description ? { description: entry.description } : {}),
-        name: entry.name,
-        permissionMode: entry.sandbox.permissionMode ?? "ask",
-        sandbox: entry.sandbox,
-      })),
+    ...(context.sandboxes ?? []).map((entry): SelectableSandbox => ({
+      ...(entry.description ? { description: entry.description } : {}),
+      name: entry.name,
+      own: false,
+      permissionMode: entry.sandbox.permissionMode ?? "ask",
+      sandbox: entry.sandbox,
+    })),
   ];
 }
 

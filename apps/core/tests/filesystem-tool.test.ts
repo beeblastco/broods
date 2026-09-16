@@ -218,7 +218,8 @@ function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
     agentSandbox: {
       provider: "lambda",
       network: { mode: "allow-all" },
-      controlPlane: { sandboxConfigId: "sb_own" },
+      // Named, as every real record is: the name is how a call picks it.
+      controlPlane: { sandboxConfigId: "sb_own", name: "own-sandbox" },
     },
     agentSandboxPermissionMode: "ask",
   } as never;
@@ -858,14 +859,24 @@ describe("sandbox tool set", () => {
     expect(run.input.imageIdentifier).toContain("microvm-image:browser");
   });
 
-  it("only a known extra name leaves the workspace; anything else stays a workspace run", async () => {
-    // No extras: the name form does not exist, so a string is ignored as before.
-    const borrowed = await tool("bash", borrowedSandboxCtx());
-    await borrowed.execute({ command: "ls", sandbox: "true" });
-    expect(lastSandboxExec().payload.namespace).toBe(NS);
+  it("an unknown sandbox name is refused, with or without extras attached", async () => {
+    // No extras: a name that matches nothing used to slip into the workspace as
+    // if nothing had been asked. Now it is refused, and the gate stays closed.
+    const plain = borrowedSandboxCtx() as unknown as Record<string, unknown>;
+    const borrowed = await tool("bash", plain as never);
+    await expect(
+      borrowed.execute({ command: "ls", sandbox: "true" }),
+    ).rejects.toThrow("unknown sandbox true");
+    await expect(
+      approvalStatus(
+        "bash",
+        { command: "ls", sandbox: "true" },
+        plain as never,
+      ),
+    ).resolves.toBe("user-approval");
 
-    // Extras present: an unknown name is refused before any workspace default
-    // could absorb it, and the approval gate stays closed on it.
+    // Extras present: the same refusal, before any workspace default could
+    // absorb it.
     const ctx = {
       ...(borrowedSandboxCtx() as unknown as Record<string, unknown>),
       sandboxes: (

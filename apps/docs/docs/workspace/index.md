@@ -120,7 +120,7 @@ Plus the agent-level cases:
 | Agent references                                         | Tools exposed                                                                |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | sandbox, **no** workspace                                | `bash` only. A fresh container each call, unless the sandbox is `persistent` |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)          |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox` argument naming it (see below)  |
 | neither sandbox nor workspace                            | none                                                                         |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
@@ -146,7 +146,7 @@ workspace's effective sandbox **is the one the agent itself references**:
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.                                                |
 | `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                                                   |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true`. No workspace is mounted there, so nothing reaches durable storage.                                    |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: "<its name>"` (`true` means the same). No workspace is mounted there, so nothing reaches durable storage.    |
 | `config.sandboxes: [sb_c]`                                  | Extra machines beside the default. `bash` reaches each by name with `sandbox: "<name>"`, and each keeps its own image, network and `permissionMode`. No workspace is mounted, so nothing reaches durable storage. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
@@ -157,10 +157,13 @@ Row two is only reached when the agent references **no** sandbox of its own.
 
 `workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
 own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
-keep landing in durable storage unless the model deliberately passes `sandbox: true`.
+keep landing in durable storage unless the model deliberately names a sandbox with
+`sandbox`. The argument is always a name; `true` is still read as the agent's own sandbox,
+so calls stored before names existed keep working. A name that matches nothing is refused
+rather than quietly landing in the workspace.
 
-"Nothing reaches durable storage" is about the **mount**, not about the machine. A
-`sandbox: true` run gets a fresh container each call, unless that sandbox is `persistent`,
+"Nothing reaches durable storage" is about the **mount**, not about the machine. A run
+that names a sandbox gets a fresh container each call, unless that sandbox is `persistent`,
 in which case its filesystem survives between calls until the reservation ends. A run with
 no workspace has no filesystem namespace to key that reservation on, so the harness derives
 one from `accountId:agentId:sandboxId`: each agent gets its own reserved machine, and
