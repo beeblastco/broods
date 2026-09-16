@@ -24,8 +24,23 @@ import type { LayoutEdge, LayoutNode } from "@broods/convex/model/canvasLayout";
 import type { Edge, EdgeChange, Node, XYPosition } from "@xyflow/react";
 import type { FunctionReturnType } from "convex/server";
 
+/** Id prefix of the one edge drawn from an agent to a frame. */
+export const BUNDLE_EDGE_PREFIX = "bundle:";
+
 /** A collapsed frame is one compact card: header, member names, summary. */
 export const COLLAPSED_FRAME_HEIGHT = 84;
+
+/** How far below the agent a bundle edge turns sideways: the middle of the gap above the first row. */
+const BUNDLE_BUS_DROP = 24;
+
+const BUNDLE_CORNER_RADIUS = 8;
+
+/**
+ * How far left of its frame a bundle edge runs down. The column gutter is 40
+ * wide and mount and runs-on edges cross it at its centre, so the trunk keeps
+ * to the frame's side of that.
+ */
+const BUNDLE_TRUNK_INSET = 10;
 
 /**
  * What a right-click on a chip can do, per agent that wires it directly.
@@ -83,6 +98,34 @@ export function buildFramedGraph(
     frames: frames,
     nodes: framedNodes(nodes, byId, frameOf, collapsed),
   };
+}
+
+/**
+ * Path of a bundle edge from the agent's bottom handle to a frame's left
+ * handle, as `[path, labelX, labelY]` like React Flow's path helpers. It drops
+ * to a bus under the agent, runs along it to the frame's gutter, then down the
+ * gutter and into the frame, so it never crosses a frame stacked above its
+ * target. A generic step path turns at the midpoint instead, through whatever
+ * sits there.
+ */
+export function bundleEdgePath(
+  source: XYPosition,
+  target: XYPosition,
+): [string, number, number] {
+  const busY = source.y + BUNDLE_BUS_DROP;
+  const trunkX = target.x - BUNDLE_TRUNK_INSET;
+  const path = roundedPath(
+    [
+      source,
+      { x: source.x, y: busY },
+      { x: trunkX, y: busY },
+      { x: trunkX, y: target.y },
+      target,
+    ],
+    BUNDLE_CORNER_RADIUS,
+  );
+
+  return [path, trunkX, (busY + target.y) / 2];
 }
 
 /** Removing a bundle edge removes every agent→member edge it stands for. */
@@ -266,7 +309,7 @@ function addBundle(
   frameId: string,
   edge: Edge,
 ): void {
-  const id = `bundle:${agentId}:${frameId}`;
+  const id = `${BUNDLE_EDGE_PREFIX}${agentId}:${frameId}`;
   const edgeIds = bundles.get(id);
   const locked = edge.deletable === false;
   if (!edgeIds) {
@@ -275,7 +318,7 @@ function addBundle(
       id: id,
       source: agentId,
       target: frameId,
-      targetHandle: "top",
+      targetHandle: "left",
       ...(locked ? { deletable: false, reconnectable: false } : {}),
     });
 
@@ -408,6 +451,47 @@ function framedNodes(
   });
 }
 
+/** Length of an axis-aligned leg. */
+function legLength(a: XYPosition, b: XYPosition): number {
+  return Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+}
+
+/**
+ * An orthogonal polyline with its corners rounded. Repeated points are
+ * dropped, and a corner's radius shrinks to fit the shorter of its two legs.
+ */
+function roundedPath(points: readonly XYPosition[], radius: number): string {
+  const [first, ...rest] = points.filter(
+    (point, index) =>
+      index === 0 ||
+      point.x !== points[index - 1].x ||
+      point.y !== points[index - 1].y,
+  );
+  const commands = [`M${first.x} ${first.y}`];
+  rest.forEach((point, index) => {
+    const previous = index === 0 ? first : rest[index - 1];
+    const next = rest[index + 1];
+    if (!next) {
+      commands.push(`L${point.x} ${point.y}`);
+
+      return;
+    }
+    const corner = Math.min(
+      radius,
+      legLength(previous, point) / 2,
+      legLength(point, next) / 2,
+    );
+    const before = stepToward(point, previous, corner);
+    const after = stepToward(point, next, corner);
+    commands.push(
+      `L${before.x} ${before.y}`,
+      `Q${point.x} ${point.y} ${after.x} ${after.y}`,
+    );
+  });
+
+  return commands.join(" ");
+}
+
 /**
  * Dotted edge from a machine MCP server to the sandbox it runs on, the one
  * named by the row's `sandbox`. It leaves from the side facing that sandbox.
@@ -457,4 +541,16 @@ function sameNode(a: Node, b: Node): boolean {
       ? a.position.x === b.position.x && a.position.y === b.position.y
       : a[key as keyof Node] === b[key as keyof Node],
   );
+}
+
+/** The point `distance` along the axis-aligned leg from `from` to `to`. */
+function stepToward(
+  from: XYPosition,
+  to: XYPosition,
+  distance: number,
+): XYPosition {
+  return {
+    x: from.x + Math.sign(to.x - from.x) * distance,
+    y: from.y + Math.sign(to.y - from.y) * distance,
+  };
 }

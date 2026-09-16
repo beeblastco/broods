@@ -89,6 +89,13 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
  * transport and a session store. Laid out by the same tidy layout the canvas
  * button runs, so the frames land where a real stage puts them.
  */
+const FRAME_MCP_SERVERS: StageMcpServer[] = [
+  fixtureServer("github", "http", null),
+  fixtureServer("linear", "http", null),
+  fixtureServer("search", "hosted", null),
+  fixtureServer("blender", "machine", "kien-mac"),
+];
+
 const FRAME_EDGES: Edge[] = [
   ...[
     "session",
@@ -137,22 +144,10 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     fixtureNode("blender", "mcp"),
   ],
   FRAME_EDGES,
-  new Map([
-    ["github", "http"],
-    ["linear", "http"],
-    ["search", "hosted"],
-    ["blender", "machine"],
-  ]),
+  new Map(FRAME_MCP_SERVERS.map((server) => [server.nodeId, server.transport])),
 );
 
 const FRAME_ANALYSIS = analyzeCanvasInfra(FRAME_NODES, FRAME_EDGES);
-
-const FRAME_MCP_SERVERS: StageMcpServer[] = [
-  fixtureServer("github", "http", null),
-  fixtureServer("linear", "http", null),
-  fixtureServer("search", "hosted", null),
-  fixtureServer("blender", "machine", "kien-mac"),
-];
 
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
 const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";

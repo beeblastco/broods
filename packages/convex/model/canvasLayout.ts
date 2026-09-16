@@ -28,6 +28,7 @@ import {
   edgeKind,
   frameMemberPositions,
   frameSize,
+  FRAME_WIDTH,
   type CanvasFrame,
   type McpTransportsByNode,
 } from "./canvasFrames";
@@ -39,8 +40,12 @@ export const NODE_HEIGHT = 96;
 /** Background dot pitch. Drags snap to it, and cell sizes are multiples of it. */
 export const GRID = 24;
 
-/** One tidy-layout cell: a card plus the gap to the next one. */
-export const CELL_WIDTH = NODE_WIDTH + 40;
+/**
+ * One tidy-layout cell: a frame (the widest box) plus the gutter to the next
+ * column. An agent's edge into a stacked frame runs down that gutter, so it
+ * has to stay clear of both columns.
+ */
+export const CELL_WIDTH = FRAME_WIDTH + 40;
 export const CELL_HEIGHT = NODE_HEIGHT + 48;
 
 /** Empty cells between two agent clusters, and above each lane. */
@@ -54,9 +59,10 @@ const NODE_MARGIN = 16;
 const MAX_NUDGE_RINGS = 48;
 
 /**
- * Column order for an agent's services, mirroring the dashboard's "Add service"
- * menu. Sandbox and workspace stay adjacent so the mount edge between them
- * stays short. Exhaustive over the node types on purpose: adding one to
+ * Column order for an agent's services. Every edge that runs between two
+ * columns has them side by side, so it crosses one gutter and no frame: MCP
+ * sits left of sandbox for the runs-on edge, workspace right of sandbox for
+ * the mount edge. Exhaustive over the node types on purpose: adding one to
  * `canvasNodeValidator` without giving it a column is a compile error here.
  */
 const SERVICE_COLUMN_ORDER: Record<
@@ -64,10 +70,10 @@ const SERVICE_COLUMN_ORDER: Record<
   number
 > = {
   database: 0,
-  sandbox: 1,
-  workspace: 2,
-  skill: 3,
-  mcp: 4,
+  mcp: 1,
+  sandbox: 2,
+  workspace: 3,
+  skill: 4,
 };
 
 const COLUMN_RANKS: ReadonlyMap<string, number> = new Map(

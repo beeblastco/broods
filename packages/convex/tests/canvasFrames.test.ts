@@ -145,8 +145,8 @@ describe("frame geometry", () => {
     const origin = { x: 432, y: 288 };
     const slots = frameMemberPositions(origin, ["s1", "s2", "s3"]);
 
-    expect(slots.get("s2")).toEqual({ x: 444, y: 368 });
+    expect(slots.get("s2")).toEqual({ x: 440, y: 368 });
     expect(frameOriginOf([...slots.values()])).toEqual(origin);
-    expect(frameSize(3)).toEqual({ height: 188, width: 174 });
+    expect(frameSize(3)).toEqual({ height: 184, width: 200 });
   });
 });

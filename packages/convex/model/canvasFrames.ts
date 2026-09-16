@@ -13,8 +13,8 @@
 import type { LayoutEdge, LayoutNode, LayoutPosition } from "./canvasLayout";
 import type { McpTransport } from "./mcp";
 
-/** Member chip box inside a frame. */
-export const FRAME_CHIP_WIDTH = 150;
+/** Member chip box inside a frame: room for a 20 character name and its status line. */
+export const FRAME_CHIP_WIDTH = 184;
 export const FRAME_CHIP_HEIGHT = 44;
 
 /** Vertical gap between two chips. */
@@ -24,7 +24,7 @@ export const FRAME_GAP = 8;
 export const FRAME_HEADER_HEIGHT = 28;
 
 /** Inset left and right of the chips, and below the last one. */
-export const FRAME_PADDING = 12;
+export const FRAME_PADDING = 8;
 
 export const FRAME_WIDTH = FRAME_CHIP_WIDTH + FRAME_PADDING * 2;
 

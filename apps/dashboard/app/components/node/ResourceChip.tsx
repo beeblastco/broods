@@ -8,7 +8,7 @@ import { Handle, Position } from "@xyflow/react";
 export type ChipStatus = { color: string; text: string };
 
 /**
- * A sandbox, workspace or MCP node drawn inside a frame: a 150x44 chip with
+ * A sandbox, workspace or MCP node drawn inside a frame: a 184x44 chip with
  * its icon, name and one status line. Side handles are always mounted so
  * mount and runs-on edges can attach; only sandbox and workspace chips
  * (`mountable`) accept a new mount drawn onto them.
@@ -34,8 +34,8 @@ export function ResourceChip({
   return (
     <div
       data-slot="resource-chip"
-      // h-11 w-37.5 is FRAME_CHIP_HEIGHT x FRAME_CHIP_WIDTH, the slot the frame leaves.
-      className="relative flex h-11 w-37.5 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-2 hover:border-foreground/25"
+      // h-11 w-46 is FRAME_CHIP_HEIGHT x FRAME_CHIP_WIDTH, the slot the frame leaves.
+      className="relative flex h-11 w-46 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-1.5 hover:border-foreground/25"
     >
       {(["left", "right"] as const).map((side) => (
         <Handle
@@ -48,7 +48,7 @@ export function ResourceChip({
           className="bg-transparent! w-2.5! h-2.5! border-transparent!"
         />
       ))}
-      <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground">
+      <div className="flex min-w-0 items-center gap-1 text-xs font-medium text-foreground">
         {orderNumber !== undefined && (
           <span className="w-2.5 shrink-0 text-2xs tabular-nums text-muted-foreground">
             {orderNumber}
@@ -59,7 +59,7 @@ export function ResourceChip({
           {label}
         </span>
       </div>
-      <div className="flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
         <span className={cn("size-1.5 shrink-0 rounded-full", status.color)} />
         <span className="truncate">{status.text}</span>
       </div>

@@ -71,6 +71,6 @@ function workspaceChipStatus(
   return {
     color:
       state.kind === "override" ? "bg-canvas-mount" : "bg-muted-foreground",
-    text: `${sandbox} · ${WORKSPACE_STATE_LABEL[state.kind]}`,
+    text: `↳ ${sandbox} · ${WORKSPACE_STATE_LABEL[state.kind]}`,
   };
 }

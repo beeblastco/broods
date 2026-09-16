@@ -131,10 +131,10 @@ describe("tidyCanvasLayout", () => {
   });
 
   it("orders an agent's services into typed columns", () => {
-    // database, sandbox, mcp for `support`: the session column sits left of the
-    // sandbox column, which sits left of the mcp column.
-    expect(positions.get("d1")!.x).toBeLessThan(positions.get("s1")!.x);
-    expect(positions.get("s1")!.x).toBeLessThan(positions.get("m1")!.x);
+    // database, mcp, sandbox for `support`: the session column sits left of the
+    // mcp column, which sits next to the sandbox column its runs-on edge reaches.
+    expect(positions.get("d1")!.x).toBeLessThan(positions.get("m1")!.x);
+    expect(positions.get("m1")!.x).toBeLessThan(positions.get("s1")!.x);
   });
 
   it("drops a shared service below both clusters, and an unwired one lower still", () => {

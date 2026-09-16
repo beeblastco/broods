@@ -7,6 +7,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import { BUNDLE_EDGE_PREFIX, bundleEdgePath } from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -55,8 +56,10 @@ export function DeletableEdge({
   });
   const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
 
-  // Fan parallel edges apart so their vertical trunks don't stack (flow is vertical → offset X).
-  const [sourceFan, targetFan] = useEdgeFanOffset(
+  // Fan edges that land on one handle apart (flow is vertical → offset X). The source end is
+  // not fanned: an agent's edges leave its bottom as one trunk and split along the way, where
+  // fanned starts drew a row of stubs that curled into each other.
+  const [, targetFan] = useEdgeFanOffset(
     id,
     source,
     sourceHandleId,
@@ -65,16 +68,20 @@ export function DeletableEdge({
     "default",
   );
 
-  // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling.
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX: sourceX + sourceFan,
-    sourceY: sourceY,
-    targetX: targetX + targetFan,
-    targetY: targetY,
-    sourcePosition: sourcePosition,
-    targetPosition: targetPosition,
-    borderRadius: 16,
-  });
+  // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling. A bundle edge
+  // into a frame takes the column gutter instead, and several agents' bundles into one frame
+  // share its handle rather than fan.
+  const [edgePath, labelX, labelY] = id.startsWith(BUNDLE_EDGE_PREFIX)
+    ? bundleEdgePath({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+    : getSmoothStepPath({
+        sourceX: sourceX,
+        sourceY: sourceY,
+        targetX: targetX + targetFan,
+        targetY: targetY,
+        sourcePosition: sourcePosition,
+        targetPosition: targetPosition,
+        borderRadius: 16,
+      });
 
   // Code-managed edges can't be deleted here: no red delete-hover, no trash. Canvas marks
   // them, and bundles of them, `deletable: false`.

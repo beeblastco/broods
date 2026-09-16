@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
   buildFramedGraph,
+  bundleEdgePath,
   expandBundleEdgeRemoval,
   flattenFramedNodes,
   frameMemberActions,
@@ -14,7 +15,7 @@ const NONE = new Set<string>();
 /** An agent with two sandboxes, one mounted workspace and one machine MCP server. */
 const NODES: Node[] = [
   node("agent", "agent", { x: 200, y: 0 }),
-  node("cloud", "sandbox", { x: 12, y: 172 }),
+  node("cloud", "sandbox", { x: 8, y: 172 }),
   node(
     "mac",
     "sandbox",
@@ -62,7 +63,7 @@ describe("buildFramedGraph", () => {
     expect(nodes.find((item) => item.id === "cloud")).toMatchObject({
       draggable: false,
       parentId: CLOUD_FRAME,
-      position: { x: 12, y: 28 },
+      position: { x: 8, y: 28 },
     });
     expect(flattenFramedNodes(nodes)).toStrictEqual(NODES);
   });
@@ -77,11 +78,11 @@ describe("buildFramedGraph", () => {
 
     expect(
       flattenFramedNodes(moved).find((item) => item.id === "cloud")?.position,
-    ).toEqual({ x: 60, y: 52 });
+    ).toEqual({ x: 56, y: 52 });
   });
 
   test("bundles an agent's edges into one frame and removing it removes each", () => {
-    const twoClouds = [...NODES, node("spare", "sandbox", { x: 12, y: 224 })];
+    const twoClouds = [...NODES, node("spare", "sandbox", { x: 8, y: 224 })];
     const edges = [...EDGES, edge("agent", "spare")];
     const { bundles, edges: display } = buildFramedGraph(
       twoClouds,
@@ -96,7 +97,7 @@ describe("buildFramedGraph", () => {
         id: bundleId,
         source: "agent",
         target: CLOUD_FRAME,
-        targetHandle: "top",
+        targetHandle: "left",
       },
     ]);
     expect(
@@ -158,6 +159,20 @@ describe("buildFramedGraph", () => {
         type: "runsOn",
       },
     ]);
+  });
+});
+
+describe("bundleEdgePath", () => {
+  test("turns under the agent and runs down the gutter left of the frame", () => {
+    const [path, labelX, labelY] = bundleEdgePath(
+      { x: 300, y: 96 },
+      { x: 480, y: 200 },
+    );
+
+    expect(path).toBe(
+      "M300 96 L300 112 Q300 120 308 120 L462 120 Q470 120 470 128 L470 195 Q470 200 475 200 L480 200",
+    );
+    expect([labelX, labelY]).toEqual([470, 160]);
   });
 });
 
