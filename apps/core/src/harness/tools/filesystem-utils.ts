@@ -427,20 +427,23 @@ export function bashSandboxTarget(
 }
 
 /**
- * The machine a `computer` call lands on. One reachable computer needs no choice,
- * so the field is absent from the schema and ignored here; with more, the call
- * names one. A name matching none resolves to nothing, which the tool refuses
- * and the approval gate reads as "ask".
+ * The machine a `computer` call lands on. A name always decides, even when only
+ * one computer is reachable: the schema drops the field in that case, but a
+ * replayed approval still carries the input as it was stored, so a name from when
+ * the list was longer can arrive after it shrank. Honouring it there is what stops
+ * a click landing on whichever machine happens to be left. Only an unnamed call
+ * falls back, and only when there is no choice to make; anything else resolves to
+ * nothing, which the tool refuses and the approval gate reads as "ask".
  */
 export function computerSandboxTarget(
   machines: MachineSandbox[],
   requested: unknown,
 ): MachineSandbox | undefined {
-  if (machines.length <= 1) {
-    return machines[0];
+  if (typeof requested === "string") {
+    return machines.find((machine): boolean => machine.name === requested);
   }
 
-  return machines.find((machine): boolean => machine.name === requested);
+  return machines.length <= 1 ? machines[0] : undefined;
 }
 
 /**

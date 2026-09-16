@@ -249,6 +249,30 @@ test("with two computers attached, a call reaches the one it names", async () =>
   );
 });
 
+test("a name from a longer list is refused once one computer is left", async () => {
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: answersWith("mine"),
+  });
+  const execute = computerTool([machine()]).computer
+    ?.execute as ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+  const options = { toolCallId: "call-1", messages: [], context: {} };
+
+  // An approval replayed after the agent lost a machine still carries the name it
+  // was granted for. That must not land on the machine that is left.
+  await expect(
+    execute({ action: "cursor_position", sandbox: "other-mac" }, options),
+  ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
+  expect(await execute({ action: "cursor_position" }, options)).toEqual({
+    type: "text",
+    value: "mine",
+  });
+});
+
 test("an MCP row lists and calls through the daemon that serves that server", async () => {
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
