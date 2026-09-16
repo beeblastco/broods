@@ -480,15 +480,8 @@ export function rewriteIdsToNames(
       }),
     };
   }
-  if (isPlainObject(result.policy) && Array.isArray(result.policy.policyIds)) {
-    result.policy = {
-      ...result.policy,
-      policyIds: result.policy.policyIds.map((entry) =>
-        typeof entry === "string" && policyNames[entry]
-          ? policyNames[entry]
-          : entry,
-      ),
-    };
+  if (Array.isArray(result.policies)) {
+    result.policies = rewriteRefList(result.policies, policyNames);
   }
 
   return result;
@@ -535,15 +528,8 @@ export function rewriteResourceRefs(
       };
     });
   }
-  if (isPlainObject(result.policy) && Array.isArray(result.policy.policyIds)) {
-    result.policy = {
-      ...result.policy,
-      policyIds: result.policy.policyIds.map((entry) =>
-        typeof entry === "string" && policyIds[entry]
-          ? policyIds[entry]
-          : entry,
-      ),
-    };
+  if (Array.isArray(result.policies)) {
+    result.policies = rewriteRefList(result.policies, policyIds);
   }
   // `config.mcp` keys must end up as mcp row ids; a name that fails to
   // map fails normalizeMcpConfig loudly rather than being left behind.
