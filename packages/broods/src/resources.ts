@@ -175,8 +175,9 @@ export interface McpDefinitionConfig {
   handler?: McpHandler;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
-   * X-Api-Key, ...) must reference an account env var, e.g.
-   * `Bearer ${env("TOKEN")}`. Never carry an inline secret.
+   * X-Api-Key, ...) must reference an account env var by name inside a plain
+   * string, e.g. `"Bearer ${TOKEN}"`. `env()` returns an object, so a template
+   * literal around it sends `[object Object]`. Never carry an inline secret.
    */
   headers?: Record<string, string>;
   /**

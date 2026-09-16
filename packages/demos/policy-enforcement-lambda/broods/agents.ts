@@ -1,4 +1,10 @@
-import { defineAgent, definePolicy, defineSandbox, env } from "broods";
+import {
+  defineAgent,
+  definePolicy,
+  defineSandbox,
+  env,
+  type PolicyDefinitionConfig,
+} from "broods";
 
 const system = [
   "You are validating Broods agent policy behavior.",
@@ -16,7 +22,7 @@ export const lambdaSandbox = defineSandbox({
 
 // Mode rides on the policy, so comparing the two rollout stages means two
 // policies over one shared rule set rather than one policy read two ways.
-const denySmokeCommandRules = [
+const denySmokeCommandRules: PolicyDefinitionConfig["rules"] = [
   {
     id: "deny-policy-smoke-command",
     effect: "deny",
@@ -36,21 +42,21 @@ const denySmokeCommandRules = [
     actions: ["workspace.exec"],
     resources: { toolNames: ["bash"] },
   },
-] as const;
+];
 
 export const auditBashPolicy = definePolicy({
   name: "audit-bash-exec",
   description:
     "Records the policy smoke-test bash command it would have denied, without blocking it.",
   mode: "audit",
-  rules: [...denySmokeCommandRules],
+  rules: denySmokeCommandRules,
 });
 
 export const enforceBashPolicy = definePolicy({
   name: "deny-bash-exec",
   description: "Blocks the policy smoke-test bash command outright.",
   mode: "enforce",
-  rules: [...denySmokeCommandRules],
+  rules: denySmokeCommandRules,
 });
 
 export const auditPolicyAgent = defineAgent({
