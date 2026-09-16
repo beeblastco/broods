@@ -184,12 +184,8 @@ export async function createTools(
         }
       : undefined;
 
-  // bash: the agent's own sandbox, or any sandbox-backed workspace.
-  // Pass the full workspace list so omitting `workspace` preserves the configured
-  // default; if that default is read-only, the tool returns a clear error instead
-  // of silently selecting the first writable workspace.
-  // What bash and computer both select from. bash adds the run plumbing (background
-  // jobs, CPU metering) that driving a screen has no use for.
+  // What bash and computer both select from: the agent's own sandbox, and the
+  // extra sandboxes a call can name.
   const sandboxContext: SandboxToolContext = {
     workspaces: workspaces,
     ...(agentSandbox
@@ -201,6 +197,11 @@ export async function createTools(
       : {}),
     ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
   };
+  // bash: the agent's own sandbox, or any sandbox-backed workspace.
+  // Pass the full workspace list so omitting `workspace` preserves the configured
+  // default; if that default is read-only, the tool returns a clear error instead
+  // of silently selecting the first writable workspace. Background jobs and CPU
+  // metering are bash's alone.
   if (agentSandbox || sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,

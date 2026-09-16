@@ -223,18 +223,11 @@ test("the computer tool reaches a daemon started with --computer, and names the 
 
 test("with two computers attached, a call reaches the one it names", async () => {
   const server = core();
-  const answer =
-    (text: string) =>
-    (frame: MachineComputerFrame, socket: WebSocket): void => {
-      socket.send(
-        JSON.stringify({ type: "computer-result", id: frame.id, text: text }),
-      );
-    };
   await connectDaemon(server, "my-mac", () => {}, {
-    onComputer: answer("mine"),
+    onComputer: answersWith("mine"),
   });
   await connectDaemon(server, "other-mac", () => {}, {
-    onComputer: answer("theirs"),
+    onComputer: answersWith("theirs"),
   });
   const execute = computerTool([machine(), machine("other-mac", "bypass")])
     .computer?.execute as ToolExecuteFunction<
@@ -432,6 +425,15 @@ test("each side's parser drops a frame whose fields do not match its type", () =
     region: [0, 0, 10, 10],
   });
 });
+
+/** A fake daemon that answers every computer frame with one fixed text. */
+function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
+  return (frame, socket): void => {
+    socket.send(
+      JSON.stringify({ type: "computer-result", id: frame.id, text: text }),
+    );
+  };
+}
 
 function closeOf(socket: WebSocket): Promise<CloseEvent> {
   return new Promise((resolve): void => {

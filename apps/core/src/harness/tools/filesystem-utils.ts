@@ -429,8 +429,8 @@ export function bashSandboxTarget(
 /**
  * The machine a `computer` call lands on. One reachable computer needs no choice,
  * so the field is absent from the schema and ignored here; with more, the call
- * names one, and a name that matches none resolves to nothing — which the tool
- * refuses and the approval gate reads as "ask".
+ * names one. A name matching none resolves to nothing, which the tool refuses
+ * and the approval gate reads as "ask".
  */
 export function computerSandboxTarget(
   machines: MachineSandbox[],
