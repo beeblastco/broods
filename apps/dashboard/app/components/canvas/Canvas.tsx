@@ -8,6 +8,7 @@ import {
   CanvasSaveStatus,
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
+import { CanvasFramesProvider } from "@/app/components/canvas/CanvasFramesContext";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import {
   isCodeManagedEdgeId,
@@ -17,10 +18,12 @@ import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
+import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { AgentNode } from "@/app/components/node/Agent";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { DatabaseNode } from "@/app/components/node/Database";
+import { FrameNode } from "@/app/components/node/FrameNode";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { McpNode } from "@/app/components/node/Mcp";
@@ -35,6 +38,18 @@ import {
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
+import {
+  buildFramedGraph,
+  expandBundleEdgeRemoval,
+  flattenFramedNodes,
+  frameMemberActions,
+  joinedFramePosition,
+  makeDefaultSandbox,
+  reuseUnchangedNodes,
+  type FrameMemberAction,
+  type FramedGraph,
+  type StageMcpServer,
+} from "@/app/lib/canvasFrameNodes";
 import { reportPerf } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
@@ -45,6 +60,7 @@ import {
   serializeSubagentRefs,
   writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
+import { sandboxOrderNumbers } from "@broods/convex/model/canvasFrames";
 import {
   applyPositions,
   applyTidyLayout,
@@ -58,6 +74,8 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
   Background,
   ConnectionMode,
   Panel,
@@ -71,10 +89,21 @@ import {
   type Node,
   type NodeMouseHandler,
   type OnConnect,
+  type OnEdgesChange,
   type OnNodeDrag,
+  type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Box, Database, FolderOpen, Plug, Sparkles } from "lucide-react";
+import {
+  Bot,
+  Box,
+  Database,
+  FolderOpen,
+  Plug,
+  Sparkles,
+  Star,
+  Unlink,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import {
@@ -111,18 +140,21 @@ const SkillSourcePickerDialog = dynamic(() =>
   ),
 );
 
-const nodeTypes = {
+/** Node and edge components by type; the UI gallery draws its canvas fixture with them too. */
+export const CANVAS_NODE_TYPES = {
   agent: AgentNode,
   database: DatabaseNode,
+  frame: FrameNode,
   sandbox: SandboxNode,
   workspace: WorkspaceNode,
   mcp: McpNode,
   skill: SkillNode,
 };
 
-const edgeTypes = {
+export const CANVAS_EDGE_TYPES = {
   default: DeletableEdge,
   mount: MountEdge,
+  runsOn: RunsOnEdge,
   subagent: SubagentEdge,
 };
 
@@ -147,6 +179,8 @@ const SNAP_GRID: [number, number] = [GRID, GRID];
  */
 const dimmedNodeCache = new WeakMap<Node, Node>();
 const dimmedEdgeCache = new WeakMap<Edge, Edge>();
+
+const NO_MCP_SERVERS: StageMcpServer[] = [];
 
 // Once per document: a later client-side navigation mounts a new canvas, but
 // performance.now() still counts from the first navigation.
@@ -321,32 +355,17 @@ function isSideConnection(c: {
 }
 
 /**
- * Whether an agent already has a direct (non-mount) sandbox edge, the default sandbox
- * (sandboxes[0]). `exceptSandboxId` ignores one sandbox so a re-check of the same pair passes.
+ * The box a top-level node covers, for the free-spot search: a frame by its
+ * own size, a card by the card size.
  */
-function agentHasDirectSandbox(
-  edges: Edge[],
-  nodes: Node[],
-  agentId: string,
-  exceptSandboxId?: string,
-): boolean {
-  return edges.some((e) => {
-    if (e.type === "mount") return false;
-    const other =
-      e.source === agentId ? e.target : e.target === agentId ? e.source : null;
-    if (!other || other === exceptSandboxId) return false;
-
-    return nodes.find((n) => n.id === other)?.type === "sandbox";
-  });
-}
-
-/** The box a standalone card covers, for the free-spot search. */
-function cardRect(position: FlowPosition): LayoutRect {
+function nodeRect(
+  node: Pick<Node, "height" | "position" | "width">,
+): LayoutRect {
   return {
-    x: position.x,
-    y: position.y,
-    height: NODE_HEIGHT,
-    width: NODE_WIDTH,
+    x: node.position.x,
+    y: node.position.y,
+    height: node.height ?? NODE_HEIGHT,
+    width: node.width ?? NODE_WIDTH,
   };
 }
 
@@ -393,6 +412,31 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
+/** Collapsed frame ids for one project and stage. Per browser, so a failed read is just "none". */
+function readCollapsedFrames(key: string): ReadonlySet<string> {
+  try {
+    const stored: unknown = JSON.parse(
+      window.localStorage.getItem(key) ?? "[]",
+    );
+
+    return new Set(
+      Array.isArray(stored)
+        ? stored.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedFrames(key: string, ids: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...ids]));
+  } catch {
+    // Storage blocked or full: the toggle still holds for this visit.
+  }
+}
+
 function findNearestAgentNode(
   nodes: Node[],
   position: { x: number; y: number },
@@ -421,20 +465,27 @@ function CanvasInner({
   projectId: Id<"projects">;
 }): React.JSX.Element {
   const { stageId } = useStage();
-  const canvasLayout = useQuery(
-    api.canvas.getByProject,
-    stageId ? { projectId: projectId, stageId: stageId } : "skip",
-  );
-  const mcpServers = useQuery(
-    api.mcp.listByStage,
-    stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  const stageArgs = stageId
+    ? { projectId: projectId, stageId: stageId }
+    : ("skip" as const);
+  const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
+  const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
+  const mcpServerRows = useMemo(
+    () => mcpServers ?? NO_MCP_SERVERS,
+    [mcpServers],
   );
   const mcpTransports = useMemo(
     () =>
-      new Map(
-        (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
-      ),
-    [mcpServers],
+      new Map(mcpServerRows.map((server) => [server.nodeId, server.transport])),
+    [mcpServerRows],
+  );
+  const mcpServersByNode = useMemo(
+    () => new Map(mcpServerRows.map((server) => [server.nodeId, server])),
+    [mcpServerRows],
+  );
+  const machineConnections = useQuery(
+    api.sandbox.machines.listForActiveOrg,
+    stageArgs,
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -454,8 +505,16 @@ function CanvasInner({
     [isDark],
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
+  // Flat state, the shape that is saved. React Flow draws `framedGraph`.
+  const [nodes, setNodes] = useNodesState<Node>([]);
+  const [edges, setEdges] = useEdgesState<Edge>([]);
+  // The canvas remounts per stage, so the key is fixed for this instance.
+  const collapsedKey = `canvas-collapsed-frames:${projectId}:${stageId}`;
+  const [collapsedFrames, setCollapsedFrames] = useState(() =>
+    readCollapsedFrames(collapsedKey),
+  );
+  const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
+  const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
@@ -474,11 +533,80 @@ function CanvasInner({
   const edgesRef = useRef(edges);
   const isDraggingNode = useRef(false);
   const didInitialFit = useRef(false);
+  const framedGraphRef = useRef<FramedGraph | null>(null);
+
+  const framedGraph = useMemo(() => {
+    const built = buildFramedGraph(
+      nodes,
+      edges,
+      mcpServerRows,
+      collapsedFrames,
+    );
+
+    return {
+      ...built,
+      nodes: reuseUnchangedNodes(
+        framedGraphRef.current?.nodes ?? [],
+        built.nodes,
+      ),
+    };
+  }, [nodes, edges, mcpServerRows, collapsedFrames]);
 
   useEffect(() => {
     nodesRef.current = nodes;
     edgesRef.current = edges;
-  }, [nodes, edges]);
+    framedGraphRef.current = framedGraph;
+  }, [nodes, edges, framedGraph]);
+
+  /**
+   * React Flow reports changes against the drawn graph, so apply them there and
+   * flatten back: a dragged frame moves its members, and a frame's own
+   * selection or size never reaches state.
+   */
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => {
+      setNodes((current) =>
+        reuseUnchangedNodes(
+          current,
+          flattenFramedNodes(
+            applyNodeChanges(
+              changes,
+              buildFramedGraph(
+                current,
+                edgesRef.current,
+                mcpServerRows,
+                collapsedFrames,
+              ).nodes,
+            ),
+          ),
+        ),
+      );
+    },
+    [setNodes, mcpServerRows, collapsedFrames],
+  );
+
+  /** Deleting a bundle edge deletes every agent→member edge it stands for. */
+  const onEdgesChange: OnEdgesChange = useCallback(
+    (changes) => {
+      const bundles =
+        framedGraphRef.current?.bundles ?? new Map<string, string[]>();
+      setEdges((current) =>
+        applyEdgeChanges(expandBundleEdgeRemoval(changes, bundles), current),
+      );
+    },
+    [setEdges],
+  );
+
+  /** Collapsing is a per-browser view choice: stored locally, never saved. */
+  const toggleFrame = useCallback(
+    (frameId: string) => {
+      const next = new Set(collapsedFrames);
+      if (!next.delete(frameId)) next.add(frameId);
+      setCollapsedFrames(next);
+      writeCollapsedFrames(collapsedKey, next);
+    },
+    [collapsedFrames, collapsedKey],
+  );
   const saveLayoutMutation = useMutation(
     api.canvas.saveLayout,
   ).withOptimisticUpdate((localStore, args) => {
@@ -750,10 +878,12 @@ function CanvasInner({
 
     const srcNode = nodesRef.current.find((n) => n.id === connection.source);
     const tgtNode = nodesRef.current.find((n) => n.id === connection.target);
+    // Frames are drawn, not stored, so nothing connects to one.
+    if (!srcNode || !tgtNode) return false;
     const isMountPair =
-      (srcNode?.type === "workspace" || srcNode?.type === "sandbox") &&
-      (tgtNode?.type === "workspace" || tgtNode?.type === "sandbox");
-    const isAgentPair = srcNode?.type === "agent" && tgtNode?.type === "agent";
+      (srcNode.type === "workspace" || srcNode.type === "sandbox") &&
+      (tgtNode.type === "workspace" || tgtNode.type === "sandbox");
+    const isAgentPair = srcNode.type === "agent" && tgtNode.type === "agent";
 
     // Subagent links are directional (A→B and B→A coexist), so dedupe by direction; every other
     // pair allows a single edge either way.
@@ -779,32 +909,6 @@ function CanvasInner({
       return sourceIsSide && targetIsSide && (isMountPair || isAgentPair);
     }
     if (isMountPair || isAgentPair) return false;
-
-    // D: an agent draws only the default sandbox, sandboxes[0]; block a 2nd direct one.
-    const agentNode =
-      srcNode?.type === "agent"
-        ? srcNode
-        : tgtNode?.type === "agent"
-          ? tgtNode
-          : null;
-    const sandboxNode =
-      srcNode?.type === "sandbox"
-        ? srcNode
-        : tgtNode?.type === "sandbox"
-          ? tgtNode
-          : null;
-    if (
-      agentNode &&
-      sandboxNode &&
-      agentHasDirectSandbox(
-        edgesRef.current,
-        nodesRef.current,
-        agentNode.id,
-        sandboxNode.id,
-      )
-    ) {
-      return false;
-    }
 
     return true;
   }, []);
@@ -857,6 +961,11 @@ function CanvasInner({
         x: event.clientX,
         y: event.clientY,
       });
+      const nodeElement =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>(".react-flow__node")
+          : null;
+      setMenuNodeId(nodeElement?.dataset.id ?? null);
     },
     [screenToFlowPosition],
   );
@@ -873,7 +982,9 @@ function CanvasInner({
 
     return findFreePosition(
       requested,
-      nodesRef.current.map((node) => cardRect(node.position)),
+      (framedGraphRef.current?.nodes ?? [])
+        .filter((node) => node.parentId === undefined)
+        .map(nodeRect),
     );
   }, [getViewportCenterPosition]);
 
@@ -890,30 +1001,30 @@ function CanvasInner({
         position: position,
         data: { ...defaultRuntimeNodeData(type, nodeLabel, id), ...extraData },
       };
-      setNodes((nds) => [...nds, newNode]);
 
-      // Auto-connect to nearest agent, unless it would wire a 2nd default sandbox.
+      // Auto-connect to the nearest agent. A sandbox it gets lands last in
+      // that agent's order.
       const nearest = findNearestAgentNode(nodesRef.current, position);
-      const wouldDoubleSandbox =
-        type === "sandbox" && nearest
-          ? agentHasDirectSandbox(
-              edgesRef.current,
-              nodesRef.current,
-              nearest.id,
-            )
-          : false;
-      if (nearest && !wouldDoubleSandbox) {
-        const newEdge: Edge = {
-          id: `e${nearest.id}-${id}`,
-          source: nearest.id,
-          target: id,
-        };
-        setEdges((eds) => [...eds, newEdge]);
-      }
+      const newEdge: Edge | null = nearest
+        ? { id: `e${nearest.id}-${id}`, source: nearest.id, target: id }
+        : null;
+      // Joining a frame that has members takes the next slot, so the frame
+      // does not jump to wherever the card was dropped.
+      const slot = joinedFramePosition(
+        [...nodesRef.current, newNode],
+        newEdge ? [...edgesRef.current, newEdge] : edgesRef.current,
+        mcpTransports,
+        id,
+      );
+      setNodes((nds) => [
+        ...nds,
+        slot ? { ...newNode, position: slot } : newNode,
+      ]);
+      if (newEdge) setEdges((eds) => [...eds, newEdge]);
 
       scheduleSave();
     },
-    [getFreeAddPosition, setNodes, setEdges, scheduleSave],
+    [getFreeAddPosition, setNodes, setEdges, scheduleSave, mcpTransports],
   );
 
   /**
@@ -926,6 +1037,24 @@ function CanvasInner({
     window.requestAnimationFrame(() => fitView(FIT_VIEW_OPTIONS));
   }, [setNodes, scheduleSave, fitView, mcpTransports]);
 
+  const makeDefault = useCallback(
+    (agentId: string, sandboxId: string) => {
+      setNodes((nds) =>
+        makeDefaultSandbox(nds, edgesRef.current, agentId, sandboxId),
+      );
+      scheduleSave();
+    },
+    [setNodes, scheduleSave],
+  );
+
+  const removeEdge = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
+      scheduleSave();
+    },
+    [setEdges, scheduleSave],
+  );
+
   /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
   const onNodeDragStart: OnNodeDrag = useCallback(() => {
     isDraggingNode.current = true;
@@ -934,24 +1063,28 @@ function CanvasInner({
   /**
    * Settle a drop. ReactFlow snaps the grabbed card to the dot grid and moves
    * the rest of the selection by the same offset, so nothing stops a card from
-   * landing on top of another. The grabbed card keeps its spot; every other
-   * dragged card steps to the nearest clear one.
+   * landing on top of another. Every dragged card steps to the nearest clear
+   * spot, grabbed card first. A dragged frame stays where it snapped and its
+   * members already moved with it.
    */
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, grabbed, dragged) => {
       isDraggingNode.current = false;
       const draggedIds = new Set(dragged.map((node) => node.id));
-      const occupied = nodesRef.current
-        .filter((node) => !draggedIds.has(node.id))
-        .map((node) => cardRect(node.position));
+      const occupied = [
+        ...(framedGraphRef.current?.nodes ?? []).filter(
+          (node) => node.parentId === undefined && !draggedIds.has(node.id),
+        ),
+        ...dragged.filter((node) => node.type === "frame"),
+      ].map(nodeRect);
       const settled = new Map<string, FlowPosition>();
       const ordered = [
         grabbed,
         ...dragged.filter((node) => node.id !== grabbed.id),
-      ];
+      ].filter((node) => node.type !== "frame");
       for (const node of ordered) {
         const position = findFreePosition(node.position, occupied);
-        occupied.push(cardRect(position));
+        occupied.push(nodeRect({ position: position }));
         settled.set(node.id, position);
       }
       setNodes((nds) => applyPositions(nds, settled));
@@ -967,13 +1100,27 @@ function CanvasInner({
   }, [scheduleSave]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
+    // A frame focuses its members like a selected node, with no panel and no Delete.
+    if (node.type === "frame") {
+      setSelectedNode(null);
+      setFocusedFrameId(node.id);
+
+      return;
+    }
+    setFocusedFrameId(null);
     // Stamped here so the panel can report how long it took to appear. Most of
     // that window is its own dynamic import, not React.
     setSelectedAt(performance.now());
-    setSelectedNode(node);
+    // The flat node, so the panel and the re-centre read absolute positions.
+    setSelectedNode(
+      nodesRef.current.find((item) => item.id === node.id) ?? node,
+    );
   }, []);
 
-  const onPaneClick = useCallback(() => setSelectedNode(null), []);
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+    setFocusedFrameId(null);
+  }, []);
   const onOpenCreateConfig = useCallback(
     (position?: FlowPosition) => {
       setAgentCreatePosition(position ?? getFreeAddPosition());
@@ -1073,17 +1220,40 @@ function CanvasInner({
             d?.label,
             d?.mountName,
             d?.readOnly === true,
+            n.data.sandboxOrder,
           ];
         }),
         e: edges.map((e) => [e.source, e.target, e.type]),
       }),
     [nodes, edges],
   );
-  const infraAnalysis = useMemo(
-    () => analyzeCanvasInfra(nodes, edges),
+  const { infraAnalysis, orderNumbers } = useMemo(
+    () => ({
+      infraAnalysis: analyzeCanvasInfra(nodes, edges),
+      orderNumbers: sandboxOrderNumbers(nodes, edges),
+    }),
     // Recompute only when the structural signature changes (positions excluded).
     [infraKey],
   );
+  const framesContext = useMemo(
+    () => ({
+      machineConnections: machineConnections,
+      mcpServers: mcpServersByNode,
+      onToggleFrame: toggleFrame,
+      sandboxOrderNumbers: orderNumbers,
+    }),
+    [machineConnections, mcpServersByNode, toggleFrame, orderNumbers],
+  );
+  // The right-clicked chip and what it offers; null falls back to "Add service".
+  const chipMenu = useMemo(() => {
+    const actions = menuNodeId
+      ? frameMemberActions(nodes, edges, menuNodeId)
+      : [];
+
+    return menuNodeId && actions.length > 0
+      ? { actions: actions, memberId: menuNodeId }
+      : null;
+  }, [menuNodeId, nodes, edges]);
 
   // Commit-to-paint for a topology change: measured from the effect to the next
   // frame, so it covers ReactFlow's own layout, which is what scales with the
@@ -1108,8 +1278,22 @@ function CanvasInner({
   // lights up the agent wired INTO it; mount edges (workspace↔sandbox) flow both ways. Traversal
   // stops at any agent other than the selected one, so a subagent callee is highlighted but its
   // own resources (which belong to the callee) are not. A node wired to nothing highlights alone.
+  // A focused frame starts from all of its members at once.
+  const focusedFrameMembers = useMemo(
+    () =>
+      framedGraph.frames.find((frame) => frame.id === focusedFrameId)
+        ?.memberIds ?? [],
+    [framedGraph.frames, focusedFrameId],
+  );
+  // Joined, so the traversal below does not rerun each time a drag rebuilds the frames.
+  const focusedFrameKey = focusedFrameMembers.join("\n");
   const focusedIds = useMemo(() => {
-    if (!selectedNode) return null;
+    const seeds = selectedNode
+      ? [selectedNode.id]
+      : focusedFrameKey
+        ? focusedFrameKey.split("\n")
+        : [];
+    if (seeds.length === 0) return null;
 
     const byId = new Map(nodes.map((n) => [n.id, n]));
 
@@ -1126,13 +1310,13 @@ function CanvasInner({
       if (e.type === "mount") link(e.target, e.source);
     }
 
-    const reachable = new Set<string>([selectedNode.id]);
-    const queue = [selectedNode.id];
+    const reachable = new Set<string>(seeds);
+    const queue = [...seeds];
     while (queue.length > 0) {
       const current = queue.shift()!;
       // Don't expand out of a foreign agent (callee): its resources are its own, not the
       // selected node's. The selected node itself always expands.
-      if (current !== selectedNode.id && byId.get(current)?.type === "agent") {
+      if (!seeds.includes(current) && byId.get(current)?.type === "agent") {
         continue;
       }
       for (const next of out.get(current) ?? []) {
@@ -1145,13 +1329,24 @@ function CanvasInner({
     return reachable;
     // BFS reads only node ids/types and edge endpoints, all captured by infraKey, so skip
     // the per-drag-frame recompute that `nodes` position churn would otherwise cause.
-  }, [selectedNode, infraKey]);
+  }, [selectedNode, focusedFrameKey, infraKey]);
+
+  // Focus runs on flat ids; a frame is lit when any member is.
+  const litIds = useMemo(() => {
+    if (!focusedIds) return null;
+    const lit = new Set(focusedIds);
+    for (const frame of framedGraph.frames) {
+      if (frame.memberIds.some((id) => focusedIds.has(id))) lit.add(frame.id);
+    }
+
+    return lit;
+  }, [focusedIds, framedGraph.frames]);
 
   const displayNodes = useMemo(() => {
-    if (!focusedIds) return nodes;
+    if (!litIds) return framedGraph.nodes;
 
-    return nodes.map((n) => {
-      if (focusedIds.has(n.id)) return n;
+    return framedGraph.nodes.map((n) => {
+      if (litIds.has(n.id)) return n;
       let dimmed = dimmedNodeCache.get(n);
       if (!dimmed) {
         dimmed = { ...n, style: { ...n.style, opacity: 0.25 } };
@@ -1160,16 +1355,16 @@ function CanvasInner({
 
       return dimmed;
     });
-  }, [nodes, focusedIds]);
+  }, [framedGraph.nodes, litIds]);
 
   const displayEdges = useMemo(() => {
     // Dedupe defensively so legacy data with a stale-id edge can't crash the renderer
     // with duplicate React keys before a reload rewrites it.
-    const base = dedupeEdges(edges);
-    if (!focusedIds) return base;
+    const base = dedupeEdges(framedGraph.edges);
+    if (!litIds) return base;
 
     return base.map((e) => {
-      if (focusedIds.has(e.source) && focusedIds.has(e.target)) return e;
+      if (litIds.has(e.source) && litIds.has(e.target)) return e;
       let dimmed = dimmedEdgeCache.get(e);
       if (!dimmed) {
         dimmed = { ...e, style: { ...e.style, opacity: 0.12 } };
@@ -1178,7 +1373,7 @@ function CanvasInner({
 
       return dimmed;
     });
-  }, [edges, focusedIds]);
+  }, [framedGraph.edges, litIds]);
 
   const flow = (
     <>
@@ -1199,8 +1394,8 @@ function CanvasInner({
         nodesConnectable={canWrite}
         snapToGrid
         snapGrid={SNAP_GRID}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
+        nodeTypes={CANVAS_NODE_TYPES}
+        edgeTypes={CANVAS_EDGE_TYPES}
         connectionMode={ConnectionMode.Loose}
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
@@ -1249,9 +1444,21 @@ function CanvasInner({
               className="size-full"
               onContextMenu={onContextMenu}
             >
-              {flow}
+              <CanvasFramesProvider value={framesContext}>
+                {flow}
+              </CanvasFramesProvider>
             </ContextMenuTrigger>
-            {canWrite && (
+            {canWrite && chipMenu && (
+              <ContextMenuContent className="w-48">
+                <FrameMemberMenuItems
+                  actions={chipMenu.actions}
+                  memberId={chipMenu.memberId}
+                  onMakeDefault={makeDefault}
+                  onRemoveEdge={removeEdge}
+                />
+              </ContextMenuContent>
+            )}
+            {canWrite && !chipMenu && (
               <ContextMenuContent className="w-48">
                 <ContextMenuGroup>
                   <ContextMenuLabel
@@ -1351,4 +1558,45 @@ function useEverTrue(flag: boolean): boolean {
   if (flag && !seen) setSeen(true);
 
   return seen || flag;
+}
+
+/** Right-click entries for a framed chip, one set per agent that wires it directly. */
+function FrameMemberMenuItems({
+  actions,
+  memberId,
+  onMakeDefault,
+  onRemoveEdge,
+}: {
+  actions: readonly FrameMemberAction[];
+  memberId: string;
+  onMakeDefault: (agentId: string, sandboxId: string) => void;
+  onRemoveEdge: (edgeId: string) => void;
+}): React.JSX.Element {
+  return (
+    <ContextMenuGroup>
+      {actions.map((action) =>
+        action.kind === "make-default" ? (
+          <ContextMenuItem
+            key={`default:${action.agentId}`}
+            className="cursor-pointer"
+            onClick={() => onMakeDefault(action.agentId, memberId)}
+          >
+            <Star />
+            {action.agentLabel
+              ? `Make default for ${action.agentLabel}`
+              : "Make default"}
+          </ContextMenuItem>
+        ) : (
+          <ContextMenuItem
+            key={`remove:${action.edgeId}`}
+            className="cursor-pointer"
+            onClick={() => onRemoveEdge(action.edgeId)}
+          >
+            <Unlink />
+            Remove from {action.agentLabel ?? "agent"}
+          </ContextMenuItem>
+        ),
+      )}
+    </ContextMenuGroup>
+  );
 }

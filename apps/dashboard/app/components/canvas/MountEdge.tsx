@@ -36,6 +36,7 @@ export function MountEdge({
   sourcePosition,
   targetPosition,
   style,
+  deletable,
 }: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const endpointOwnership = useStore((s) => {
@@ -71,12 +72,14 @@ export function MountEdge({
   });
 
   // Code-managed edges can't be deleted here, so they never show the red
-  // delete-hover or the trash button, only a lock badge.
+  // delete-hover or the trash button, only a lock badge. A mount re-pointed to
+  // a collapsed frame is drawn, not stored, so it shows neither.
   const locked =
     isCodeManagedEdgeId(id) ||
     (isCodeManagedOwner(sourceManagedBy) &&
       isCodeManagedOwner(targetManagedBy));
-  const deleteHover = hovered && !locked;
+  const removable = !locked && deletable !== false;
+  const deleteHover = hovered && removable;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -129,12 +132,14 @@ export function MountEdge({
             onHoverChange={setHovered}
           />
         ) : (
-          <EdgeDeleteButton
-            edgeId={id}
-            labelX={labelX}
-            labelY={labelY}
-            onHoverChange={setHovered}
-          />
+          removable && (
+            <EdgeDeleteButton
+              edgeId={id}
+              labelX={labelX}
+              labelY={labelY}
+              onHoverChange={setHovered}
+            />
+          )
         )}
       </EdgeLabelRenderer>
     </>

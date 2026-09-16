@@ -1,44 +1,53 @@
 "use client";
 
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
-import { useStage } from "@/app/hooks/useStage";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { ResourceChip } from "@/app/components/node/ResourceChip";
+import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import type { NodeProps } from "@xyflow/react";
-import { useQuery } from "convex/react";
 import { Plug } from "lucide-react";
-import { useParams } from "next/navigation";
 
-const TRANSPORT_SUBTITLE: Record<Doc<"mcp">["transport"], string> = {
+const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
   hosted: "hosted · node",
   http: "external · url",
   machine: "your computer · stdio",
 };
 
-/** MCP server node: one registered server exposing its tools to wired agents. */
-export function McpNode({ id, data }: NodeProps): React.JSX.Element {
-  const { projectId } = useParams<{ projectId: string }>();
-  const { stageId } = useStage();
+/**
+ * MCP server node: one registered server exposing its tools to wired agents.
+ * Reads its row from the stage's server list the Canvas queries once. Inside
+ * a frame it draws as a chip naming the computer a machine server runs on.
+ */
+export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
+  const nodeData = data as BaseNodeData;
+  const server = useCanvasFrames().mcpServers.get(id);
+  const enabled = server !== undefined && !server.disabled;
 
-  const server = useQuery(
-    api.mcp.getByNode,
-    projectId && stageId
-      ? {
-          projectId: projectId as Id<"projects">,
-          stageId: stageId,
-          nodeId: id,
-        }
-      : "skip",
-  );
+  if (parentId !== undefined) {
+    const state = enabled ? "Enabled" : "Disabled";
+
+    return (
+      <ResourceChip
+        icon={<Plug className="size-3.5" />}
+        label={nodeData.label}
+        mountable={false}
+        nodeType="mcp"
+        status={{
+          color: enabled ? "bg-success" : "bg-destructive",
+          text: server?.sandbox ? `${state} · ${server.sandbox}` : state,
+        }}
+      />
+    );
+  }
 
   return (
     <BaseNode
       id={id}
       nodeType="mcp"
-      data={data as BaseNodeData}
+      data={nodeData}
       icon={<Plug className="size-3.5" />}
       subtitle={server ? TRANSPORT_SUBTITLE[server.transport] : undefined}
-      cardStatus={{ enabled: !!server && server.disabled !== true }}
+      cardStatus={{ enabled: enabled }}
     />
   );
 }

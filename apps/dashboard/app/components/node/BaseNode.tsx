@@ -72,26 +72,7 @@ export function BaseNode({
   const zoom = useStore(zoomSelector);
   const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 
-  // Side handles must stay mounted at all times. Existing mount/subagent edges attach to
-  // them, and ReactFlow drops any edge whose handle disappears (edges used to vanish
-  // mid-drag). Instead we gate `isConnectableEnd` so mid-drag only the sides matching the
-  // drag's intent accept the drop: workspace/sandbox sides serve mounts; agent sides serve
-  // subagent (agent↔agent) links. Plain agent→service edges still land on the top handle.
-  const sideHandlesConnectable = useConnection((connection) => {
-    if (!connection.inProgress) return true;
-    const fromType = connection.fromNode?.type;
-    const fromSide =
-      connection.fromHandle?.id === "left" ||
-      connection.fromHandle?.id === "right";
-
-    // Gate by THIS node's type so the two side-handle relationships stay isolated: an agent's
-    // sides serve only subagent links (another agent dragging from a side), and a
-    // workspace/sandbox's sides serve only mounts. This way an agent never accepts an edge
-    // during a mount drag, and a service never does during a subagent drag.
-    if (nodeType === "agent") return fromType === "agent" && fromSide;
-
-    return fromType === "workspace" || fromType === "sandbox";
-  });
+  const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
 
   // Infra badges: workspace effective-sandbox state (B) and shared-agent count (F).
   const infraAnalysis = useInfraAnalysis();
@@ -343,4 +324,31 @@ export function BaseNode({
       )}
     </div>
   );
+}
+
+/**
+ * Whether a node's side handles accept the connection being drawn. Side
+ * handles must stay mounted at all times: existing mount/subagent edges attach
+ * to them, and ReactFlow drops any edge whose handle disappears (edges used to
+ * vanish mid-drag). So instead of unmounting them, mid-drag only the sides
+ * matching the drag's intent accept the drop: workspace/sandbox sides serve
+ * mounts; agent sides serve subagent (agent↔agent) links. Plain agent→service
+ * edges still land on the top handle.
+ */
+export function useSideHandlesConnectable(nodeType: string): boolean {
+  return useConnection((connection) => {
+    if (!connection.inProgress) return true;
+    const fromType = connection.fromNode?.type;
+    const fromSide =
+      connection.fromHandle?.id === "left" ||
+      connection.fromHandle?.id === "right";
+
+    // Gate by THIS node's type so the two side-handle relationships stay isolated: an agent's
+    // sides serve only subagent links (another agent dragging from a side), and a
+    // workspace/sandbox's sides serve only mounts. This way an agent never accepts an edge
+    // during a mount drag, and a service never does during a subagent drag.
+    if (nodeType === "agent") return fromType === "agent" && fromSide;
+
+    return fromType === "workspace" || fromType === "sandbox";
+  });
 }
