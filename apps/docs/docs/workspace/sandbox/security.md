@@ -46,7 +46,7 @@ and **workspace scoping** (a run can only touch its own files).
   release. `persistent` is what makes the filesystem outlive the call; nothing makes it
   outlive the reservation. So the mount is still the only storage that survives the sandbox
   itself. The gate is about that, not about how long the machine happens to stick around.
-  (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so it
+  (A workspace-less run that names a sandbox has no namespace to key a reservation on, so it
   reserves on a key derived per agent, or on the `options.reservationKey` you pin. Both
   forms are account-scoped before they reach the reservation registry, so no key an
   author writes can name another account's machine.)

@@ -84,12 +84,13 @@ export interface BashTarget {
   sandbox?: boolean | string;
 }
 
-// One computer an agent can drive, resolved for a turn. `permissionMode` is the
-// mode of that machine's own record, not the agent's, so approval follows the
-// computer a call lands on.
-export interface MachineSandbox {
+// One sandbox a call can pick by name, resolved for a turn: the agent's own while
+// nothing mounts it, and every extra. `permissionMode` is that record's own, so
+// approval follows the sandbox a call lands on. `own` marks the agent's default.
+export interface SelectableSandbox {
   description?: string;
   name: string;
+  own: boolean;
   permissionMode: SandboxPermissionMode;
   sandbox: SandboxExecutorConfig;
 }
@@ -406,24 +407,17 @@ export function bashNeedsApproval(
 }
 
 /**
- * The `sandbox` field of a bash call, normalized: `true` selects the agent's own
- * sandbox, and a name selects one of the agent-level sandboxes. The name form only
- * exists once extras are attached, so without them a string is ignored the way it
- * always was. The tool and the policy layer read the field through this one function
- * so they never disagree about where a call lands.
+ * Narrows a stored `sandbox` field: `true` is the agent's own sandbox, a string is
+ * a name resolved downstream. The tool and the policy layer both read it here.
  */
 export function bashSandboxTarget(
   value: unknown,
-  sandboxes: ResolvedAgentSandbox[] | undefined,
 ): boolean | string | undefined {
   if (value === true) {
     return true;
   }
-  if (typeof value === "string" && (sandboxes?.length ?? 0) > 0) {
-    return value;
-  }
 
-  return undefined;
+  return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -436,9 +430,9 @@ export function bashSandboxTarget(
  * nothing, which the tool refuses and the approval gate reads as "ask".
  */
 export function computerSandboxTarget(
-  machines: MachineSandbox[],
+  machines: SelectableSandbox[],
   requested: unknown,
-): MachineSandbox | undefined {
+): SelectableSandbox | undefined {
   if (typeof requested === "string") {
     return machines.find((machine): boolean => machine.name === requested);
   }
@@ -449,34 +443,30 @@ export function computerSandboxTarget(
 /**
  * The computers this agent can drive, its own sandbox first. Only a machine has a
  * screen, so this is both what registers the `computer` tool and the list a call
- * picks from. The agent's own sandbox no longer has to be the machine: attaching
- * one through `config.sandboxes` is enough.
+ * picks from. The own machine stays even when a workspace mounts it: a workspace
+ * is a way onto its files, never onto its screen.
  */
 export function machineSandboxes(
   context: SandboxToolContext,
-): MachineSandbox[] {
-  const own = context.agentSandbox;
-  const ownName = own?.controlPlane?.name;
+): SelectableSandbox[] {
+  return agentSandboxes(context).filter(
+    (entry): boolean => entry.sandbox.provider === "machine",
+  );
+}
 
-  return [
-    ...(own?.provider === "machine" && ownName
-      ? [
-          {
-            name: ownName,
-            permissionMode: context.agentSandboxPermissionMode ?? "ask",
-            sandbox: own,
-          },
-        ]
-      : []),
-    ...(context.sandboxes ?? [])
-      .filter((entry): boolean => entry.sandbox.provider === "machine")
-      .map((entry): MachineSandbox => ({
-        ...(entry.description ? { description: entry.description } : {}),
-        name: entry.name,
-        permissionMode: entry.sandbox.permissionMode ?? "ask",
-        sandbox: entry.sandbox,
-      })),
-  ];
+/**
+ * Every sandbox a bash call can pick by name, the agent's own first. The own
+ * sandbox is nameable while no workspace mounts it; once one does, the workspace
+ * is the way in. Extras are always nameable.
+ */
+export function selectableSandboxes(
+  context: SandboxToolContext,
+): SelectableSandbox[] {
+  const standalone = targetsAgentSandbox(context, { sandbox: true });
+
+  return agentSandboxes(context).filter(
+    (entry): boolean => !entry.own || standalone,
+  );
 }
 
 /**
@@ -833,6 +823,34 @@ function permissionModeFor(
   workspace: ResolvedWorkspace | undefined,
 ): SandboxPermissionMode {
   return workspace?.sandbox?.permissionMode ?? "ask";
+}
+
+// The agent's own sandbox and its extras as one list, each with the permissionMode
+// its own record carries. bash and computer both start from this, so the two
+// tools cannot describe the same sandbox differently.
+function agentSandboxes(context: SandboxToolContext): SelectableSandbox[] {
+  const own = context.agentSandbox;
+  const ownName = own?.controlPlane?.name;
+
+  return [
+    ...(own && ownName
+      ? [
+          {
+            name: ownName,
+            own: true,
+            permissionMode: context.agentSandboxPermissionMode ?? "ask",
+            sandbox: own,
+          },
+        ]
+      : []),
+    ...(context.sandboxes ?? []).map((entry): SelectableSandbox => ({
+      ...(entry.description ? { description: entry.description } : {}),
+      name: entry.name,
+      own: false,
+      permissionMode: entry.sandbox.permissionMode ?? "ask",
+      sandbox: entry.sandbox,
+    })),
+  ];
 }
 
 // `true`, nothing, and the own record name all mean the agent's own sandbox; only

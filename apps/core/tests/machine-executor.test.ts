@@ -13,7 +13,7 @@ import {
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
 import computerTool from "../src/harness/tools/computer.tool.ts";
-import type { MachineSandbox } from "../src/harness/tools/filesystem-utils.ts";
+import type { SelectableSandbox } from "../src/harness/tools/filesystem-utils.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   MACHINE_CLOSE,
@@ -559,9 +559,10 @@ function core(): Bun.Server<MachineSocketData> {
 function machine(
   name: "my-mac" | "other-mac" = "my-mac",
   permissionMode: SandboxPermissionMode = "ask",
-): MachineSandbox {
+): SelectableSandbox {
   return {
     name: name,
+    own: name === "my-mac",
     permissionMode: permissionMode,
     sandbox:
       name === "my-mac"

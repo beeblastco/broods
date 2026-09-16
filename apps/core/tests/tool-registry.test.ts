@@ -64,6 +64,34 @@ describe("createTools", () => {
     expect(Object.keys(tools)).toContain("computer");
   });
 
+  it("keeps computer registered when a workspace inherits the agent's own machine", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const mac = {
+      provider: "machine",
+      controlPlane: { sandboxConfigId: "sb_mac", name: "my-mac" },
+    };
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        agentSandbox: mac,
+        agentSandboxPermissionMode: "bypass",
+        // A mount is a way onto the machine's files; its screen stays reachable.
+        workspaces: [
+          {
+            name: "notes",
+            workspaceId: "ws_a",
+            namespace: "fs-notes",
+            config: { storage: { provider: "s3" } },
+            sandbox: mac,
+          },
+        ],
+      } as never,
+      {},
+    );
+
+    expect(Object.keys(tools)).toContain("computer");
+  });
+
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sendImages = mock(async function (): Promise<void> {});
