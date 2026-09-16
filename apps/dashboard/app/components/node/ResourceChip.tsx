@@ -37,6 +37,14 @@ export function ResourceChip({
       // h-11 w-46 is FRAME_CHIP_HEIGHT x FRAME_CHIP_WIDTH, the slot the frame leaves.
       className="relative flex h-11 w-46 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-1.5 hover:border-foreground/25"
     >
+      {/* Like a card's: an agent dragged onto a chip wires it too. */}
+      <Handle
+        id="top"
+        type="target"
+        position={Position.Top}
+        isConnectableStart={false}
+        className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+      />
       {(["left", "right"] as const).map((side) => (
         <Handle
           key={side}

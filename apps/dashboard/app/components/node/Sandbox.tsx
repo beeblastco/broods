@@ -6,6 +6,7 @@
  * frame it draws as a chip numbered by its place in the agent's `sandboxes`.
  */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
+import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import {
   BaseNode,
   statusConfig,
@@ -115,7 +116,11 @@ function MachineSandboxNode({
   );
 }
 
-/** The first sandbox in an agent's order is its default, so its chip says so. */
+/**
+ * A chip numbered by its place in its agents' order; the first is the default,
+ * so its chip says so. A shared sandbox whose agents order it differently has
+ * no one number, so it says how many agents share it instead.
+ */
 function SandboxChip({
   id,
   data,
@@ -128,6 +133,13 @@ function SandboxChip({
   status: ChipStatus;
 }): React.JSX.Element {
   const orderNumber = useCanvasFrames().sandboxOrderNumbers.get(id);
+  const sharedCount = useInfraAnalysis().agentRefCounts[id] ?? 0;
+  const note =
+    orderNumber === 1
+      ? " · default"
+      : orderNumber === undefined && sharedCount > 1
+        ? ` · shared ×${sharedCount}`
+        : "";
 
   return (
     <ResourceChip
@@ -136,11 +148,7 @@ function SandboxChip({
       mountable={true}
       nodeType="sandbox"
       orderNumber={orderNumber}
-      status={
-        orderNumber === 1
-          ? { color: status.color, text: `${status.text} · default` }
-          : status
-      }
+      status={{ color: status.color, text: `${status.text}${note}` }}
     />
   );
 }

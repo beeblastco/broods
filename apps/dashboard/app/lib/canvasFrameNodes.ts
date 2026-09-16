@@ -3,14 +3,12 @@
  * and MCP nodes an agent reaches sit as chips inside frame nodes.
  *
  * The saved layout stays flat (one node per resource, absolute positions, one
- * edge per agent→member link), so every edit is applied to the display graph
- * and flattened back before it lands in state. Frames and every edge drawn
- * here that is not in the flat list exist only on screen.
+ * edge per agent→member link). Frames, their slots and every edge drawn here
+ * that is not in the flat list exist only on screen; `canvasFrameEdits.ts`
+ * keeps flat positions in step with them when an edit changes a frame.
  */
-import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { api } from "@broods/convex/_generated/api";
 import {
-  agentSandboxOrder,
   deriveCanvasFrames,
   edgeKind,
   frameMemberPositions,
@@ -18,10 +16,15 @@ import {
   frameSize,
   FRAME_WIDTH,
   type CanvasFrame,
-  type McpTransportsByNode,
 } from "@broods/convex/model/canvasFrames";
-import type { LayoutEdge, LayoutNode } from "@broods/convex/model/canvasLayout";
-import type { Edge, EdgeChange, Node, XYPosition } from "@xyflow/react";
+import {
+  applyNodeChanges,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
+  type XYPosition,
+} from "@xyflow/react";
 import type { FunctionReturnType } from "convex/server";
 
 /** Id prefix of the one edge drawn from an agent to a frame. */
@@ -41,14 +44,6 @@ const BUNDLE_CORNER_RADIUS = 8;
  * to the frame's side of that.
  */
 const BUNDLE_TRUNK_INSET = 10;
-
-/**
- * What a right-click on a chip can do, per agent that wires it directly.
- * `agentLabel` names the agent only when several do, so the entries differ.
- */
-export type FrameMemberAction =
-  | { kind: "make-default"; agentId: string; agentLabel: string | null }
-  | { kind: "remove"; agentLabel: string | null; edgeId: string };
 
 /** The display graph plus what the canvas needs to map edits back to flat state. */
 export type FramedGraph = {
@@ -73,30 +68,61 @@ export type StageMcpServer = FunctionReturnType<
 >[number];
 
 /**
+ * Flat nodes after React Flow's node changes. A measurement or selection
+ * applies by id and moves nothing, so a layout saved before frames keeps its
+ * stored positions until someone edits it. A position change is a drag: it
+ * applies to the drawn graph and flattens back, so a dragged frame carries its
+ * members and every member lands on its slot, which that drag then saves.
+ */
+export function applyFramedNodeChanges(
+  changes: NodeChange[],
+  nodes: Node[],
+  edges: readonly Edge[],
+  mcpServers: readonly StageMcpServer[] | undefined,
+  collapsed: ReadonlySet<string>,
+): Node[] {
+  if (!changes.some((change) => change.type === "position")) {
+    return applyNodeChanges(changes, nodes);
+  }
+  const graph = buildFramedGraph(nodes, edges, mcpServers, collapsed, null);
+
+  return reuseUnchanged(
+    nodes,
+    flattenFramedNodes(applyNodeChanges(changes, graph.nodes)),
+    sameNode,
+  );
+}
+
+/**
  * React Flow nodes and edges for display. Each frame comes right before its
  * first member, so React Flow sees every parent ahead of its children and
- * flattening restores the flat order.
+ * flattening restores the flat order. Members sit at their slots whatever
+ * their stored positions. Every node and edge equal to one in `previous`
+ * is that same object, so an unchanged frame or edge does not re-render.
  */
 export function buildFramedGraph(
   nodes: readonly Node[],
   edges: readonly Edge[],
-  mcpServers: readonly StageMcpServer[],
+  mcpServers: readonly StageMcpServer[] | undefined,
   collapsed: ReadonlySet<string>,
+  previous: FramedGraph | null,
 ): FramedGraph {
-  const transports = new Map(
-    mcpServers.map((server) => [server.nodeId, server.transport]),
-  );
-  const frames = deriveCanvasFrames(nodes, edges, transports);
-  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const frames = deriveFrames(nodes, edges, mcpServers);
   const frameOf = new Map<string, CanvasFrame>();
   for (const frame of frames) {
     for (const id of frame.memberIds) frameOf.set(id, frame);
   }
+  const drawn = framedEdges(nodes, edges, mcpServers ?? [], frameOf, collapsed);
 
   return {
-    ...framedEdges(nodes, edges, mcpServers, frameOf, collapsed),
+    bundles: drawn.bundles,
+    edges: reuseUnchanged(previous?.edges ?? [], drawn.edges, sameEdge),
     frames: frames,
-    nodes: framedNodes(nodes, byId, frameOf, collapsed),
+    nodes: reuseUnchanged(
+      previous?.nodes ?? [],
+      framedNodes(nodes, frames, frameOf, collapsed),
+      sameNode,
+    ),
   };
 }
 
@@ -126,6 +152,27 @@ export function bundleEdgePath(
   );
 
   return [path, trunkX, (busY + target.y) / 2];
+}
+
+/**
+ * The frames of a flat graph. MCP nodes stay cards until the stage's server
+ * list has loaded: before that each one looks unsaved, so all of them would
+ * pack into one "MCP" frame and split into overlapping frames when it lands.
+ */
+export function deriveFrames(
+  nodes: readonly Node[],
+  edges: readonly Edge[],
+  mcpServers: readonly StageMcpServer[] | undefined,
+): CanvasFrame[] {
+  const transports = new Map(
+    (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
+  );
+
+  return deriveCanvasFrames(
+    mcpServers ? nodes : nodes.filter((node) => node.type !== "mcp"),
+    edges,
+    transports,
+  );
 }
 
 /** Removing a bundle edge removes every agent→member edge it stands for. */
@@ -170,136 +217,6 @@ export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
 
     return [{ ...flat, position: position }];
   });
-}
-
-/**
- * Chip context menu entries. Make default only where the sandbox is not
- * already first and the agent is not code-managed (code owns its order);
- * remove only where the edge is not locked.
- */
-export function frameMemberActions(
-  nodes: readonly Node[],
-  edges: readonly Edge[],
-  memberId: string,
-): FrameMemberAction[] {
-  const member = nodes.find((node) => node.id === memberId);
-  if (!member) return [];
-  const agents = new Map(
-    nodes
-      .filter((node) => node.type === "agent")
-      .map((node) => [node.id, node]),
-  );
-  const wired = edges.flatMap((edge) => {
-    if (edgeKind(edge) !== "default") return [];
-    const otherId =
-      edge.source === memberId
-        ? edge.target
-        : edge.target === memberId
-          ? edge.source
-          : null;
-    const agent = otherId === null ? undefined : agents.get(otherId);
-
-    return agent ? [{ agent: agent, edge: edge }] : [];
-  });
-  const labelFor = (agent: Node): string | null =>
-    wired.length > 1 && typeof agent.data.label === "string"
-      ? agent.data.label
-      : null;
-
-  return wired.flatMap(({ agent, edge }): FrameMemberAction[] => {
-    const actions: FrameMemberAction[] = [];
-    if (
-      member.type === "sandbox" &&
-      !isCodeManagedOwner(agent.data.managedBy) &&
-      agentSandboxOrder(agent, nodes, edges)[0] !== memberId
-    ) {
-      actions.push({
-        agentId: agent.id,
-        agentLabel: labelFor(agent),
-        kind: "make-default",
-      });
-    }
-    if (edge.deletable !== false) {
-      actions.push({
-        agentLabel: labelFor(agent),
-        edgeId: edge.id,
-        kind: "remove",
-      });
-    }
-
-    return actions;
-  });
-}
-
-/**
- * Where a node that just joined a frame should sit: its slot under the origin
- * the frame's other members already give it, so adding a card never moves the
- * frame. Null when the node frames alone or stays a card.
- */
-export function joinedFramePosition(
-  nodes: readonly Node[],
-  edges: readonly Edge[],
-  mcpTransports: McpTransportsByNode,
-  nodeId: string,
-): XYPosition | null {
-  const frame = deriveCanvasFrames(nodes, edges, mcpTransports).find((item) =>
-    item.memberIds.includes(nodeId),
-  );
-  const others = nodes.filter(
-    (node) => node.id !== nodeId && frame?.memberIds.includes(node.id),
-  );
-  if (!frame || others.length === 0) return null;
-
-  return (
-    frameMemberPositions(
-      frameOriginOf(others.map((node) => node.position)),
-      frame.memberIds,
-    ).get(nodeId) ?? null
-  );
-}
-
-/** Put a sandbox first in an agent's stored `sandboxOrder`, keeping the rest in order. */
-export function makeDefaultSandbox<T extends LayoutNode>(
-  nodes: readonly T[],
-  edges: readonly LayoutEdge[],
-  agentId: string,
-  sandboxId: string,
-): T[] {
-  return nodes.map((node) => {
-    if (node.id !== agentId) return node;
-    const rest = agentSandboxOrder(node, nodes, edges).filter(
-      (id) => id !== sandboxId,
-    );
-
-    return {
-      ...node,
-      data: { ...node.data, sandboxOrder: [sandboxId, ...rest] },
-    };
-  });
-}
-
-/**
- * `next` with every node that did not really change swapped for its previous
- * object, and `previous` itself when nothing changed. Rebuilding the display
- * graph copies every member; handing React Flow the old objects keeps it
- * from re-rendering every chip on each drag frame.
- */
-export function reuseUnchangedNodes(previous: Node[], next: Node[]): Node[] {
-  const byId = new Map(previous.map((node) => [node.id, node]));
-  let unchanged = previous.length === next.length;
-  const reused = next.map((node, index) => {
-    const prior = byId.get(node.id);
-    if (!prior || !sameNode(prior, node)) {
-      unchanged = false;
-
-      return node;
-    }
-    if (previous[index] !== prior) unchanged = false;
-
-    return prior;
-  });
-
-  return unchanged ? previous : reused;
 }
 
 function addBundle(
@@ -406,46 +323,52 @@ function framedEdges(
 /** Members get their frame as parent and a slot-relative position; frames go in before them. */
 function framedNodes(
   nodes: readonly Node[],
-  byId: ReadonlyMap<string, Node>,
+  frames: readonly CanvasFrame[],
   frameOf: ReadonlyMap<string, CanvasFrame>,
   collapsed: ReadonlySet<string>,
 ): Node[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const frameNodes = new Map<string, FrameNodeType>();
+  const slots = new Map<string, XYPosition>();
+  for (const frame of frames) {
+    const members = frame.memberIds.flatMap((id) => byId.get(id) ?? []);
+    const isCollapsed = collapsed.has(frame.id);
+    const size = isCollapsed
+      ? { height: COLLAPSED_FRAME_HEIGHT, width: FRAME_WIDTH }
+      : frameSize(frame.memberIds.length);
+    frameNodes.set(frame.id, {
+      data: { collapsed: isCollapsed, frame: frame, members: members },
+      height: size.height,
+      id: frame.id,
+      // Set up front: a frame object without `measured` makes React Flow
+      // drop its handle bounds and measure it again.
+      measured: size,
+      position: frameOriginOf(members.map((member) => member.position)),
+      type: "frame",
+      width: size.width,
+    });
+    for (const [id, slot] of frameMemberPositions(
+      { x: 0, y: 0 },
+      frame.memberIds,
+    )) {
+      slots.set(id, slot);
+    }
+  }
   const placed = new Set<string>();
 
   return nodes.flatMap((node): Node[] => {
     const frame = frameOf.get(node.id);
-    if (!frame) return [node];
-    const members = frame.memberIds
-      .map((id) => byId.get(id))
-      .filter((member): member is Node => member !== undefined);
-    const isCollapsed = collapsed.has(frame.id);
-    const slot = frameMemberPositions({ x: 0, y: 0 }, frame.memberIds).get(
-      node.id,
-    ) ?? { x: 0, y: 0 };
+    const frameNode = frame ? frameNodes.get(frame.id) : undefined;
+    if (!frame || !frameNode) return [node];
     const member: Node = {
       ...node,
       draggable: false,
       parentId: frame.id,
-      position: slot,
-      ...(isCollapsed ? { hidden: true } : {}),
+      position: slots.get(node.id) ?? { x: 0, y: 0 },
+      ...(collapsed.has(frame.id) ? { hidden: true } : {}),
     };
     if (placed.has(frame.id)) return [member];
     placed.add(frame.id);
-    const size = isCollapsed
-      ? { height: COLLAPSED_FRAME_HEIGHT, width: FRAME_WIDTH }
-      : frameSize(frame.memberIds.length);
-    const frameNode: FrameNodeType = {
-      data: { collapsed: isCollapsed, frame: frame, members: members },
-      height: size.height,
-      id: frame.id,
-      // Set up front: a frame object is rebuilt on every change, and one
-      // without `measured` makes React Flow drop its handle bounds and
-      // measure it again.
-      measured: size,
-      position: frameOriginOf(members.map((item) => item.position)),
-      type: "frame",
-      width: size.width,
-    };
 
     return [frameNode, member];
   });
@@ -454,6 +377,32 @@ function framedNodes(
 /** Length of an axis-aligned leg. */
 function legLength(a: XYPosition, b: XYPosition): number {
   return Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+}
+
+/**
+ * `next` with every item equal to one in `previous` swapped for that object,
+ * and `previous` itself when nothing changed at all.
+ */
+function reuseUnchanged<T extends { id: string }>(
+  previous: T[],
+  next: T[],
+  same: (a: T, b: T) => boolean,
+): T[] {
+  const byId = new Map(previous.map((item) => [item.id, item]));
+  let unchanged = previous.length === next.length;
+  const reused = next.map((item, index) => {
+    const prior = byId.get(item.id);
+    if (!prior || !same(prior, item)) {
+      unchanged = false;
+
+      return item;
+    }
+    if (previous[index] !== prior) unchanged = false;
+
+    return prior;
+  });
+
+  return unchanged ? previous : reused;
 }
 
 /**
@@ -532,14 +481,52 @@ function runsOnEdges(
   });
 }
 
-/** Same fields by reference, positions by value. */
-function sameNode(a: Node, b: Node): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+/** An edge's fields, and its style or data one level down. */
+function sameEdge(a: Edge, b: Edge): boolean {
+  return sameValue(a, b, 2);
+}
 
-  return [...keys].every((key) =>
-    key === "position"
-      ? a.position.x === b.position.x && a.position.y === b.position.y
-      : a[key as keyof Node] === b[key as keyof Node],
+/**
+ * A node's fields by value one level down (position, measured, style). A
+ * frame's data is compared down to its member list, since it is rebuilt on
+ * every change; any other node's data is the flat node's own object.
+ */
+function sameNode(a: Node, b: Node): boolean {
+  return sameValue(a, b, a.type === "frame" && b.type === "frame" ? 4 : 2);
+}
+
+/**
+ * Equal by identity, or arrays and plain objects whose entries are equal
+ * this way, down to `depth` levels. Past that only identity counts.
+ */
+function sameValue(a: unknown, b: unknown, depth: number): boolean {
+  if (a === b) return true;
+  if (
+    depth === 0 ||
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    a === null ||
+    b === null
+  ) {
+    return false;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => sameValue(item, b[index], depth - 1))
+    );
+  }
+  const entriesA = Object.entries(a);
+  const entriesB = new Map<string, unknown>(Object.entries(b));
+
+  return (
+    entriesA.length === entriesB.size &&
+    entriesA.every(
+      ([key, value]) =>
+        entriesB.has(key) && sameValue(value, entriesB.get(key), depth - 1),
+    )
   );
 }
 

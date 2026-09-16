@@ -2,8 +2,10 @@
  * Derives broods AgentConfig sandbox/workspace references from canvas
  * runtime-resource nodes and edges.
  */
+import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { findLaterSandboxMount } from "@broods/convex/model/agentRules";
 import { agentSandboxOrder } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
@@ -42,6 +44,14 @@ export type CanvasInfraAnalysis = {
   agentRefCounts: Record<string, number>;
   /** Node id → whether an agent is reachable from it (drives the unwired badge). */
   connectedToAgent: Record<string, boolean>;
+};
+
+/** A dashboard agent whose drawn refs the config API would refuse. */
+export type RuntimeRefsProblem = {
+  agentId: string;
+  /** The sandbox the workspace is mounted on, which is not the agent's first. */
+  sandboxLabel: string;
+  workspaceName: string;
 };
 
 /** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
@@ -286,6 +296,46 @@ export function deriveAgentRuntimeRefs(
       },
     ];
   });
+}
+
+/**
+ * Dashboard agents whose derived refs `updateRuntimeRefs` would refuse, by the
+ * same rule it applies: only the first sandbox backs a workspace. The canvas
+ * checks an edit with this before it saves. Code-managed agents are skipped,
+ * as the mutation leaves their refs alone.
+ */
+export function runtimeRefsProblems(
+  nodes: Node[],
+  edges: Edge[],
+): RuntimeRefsProblem[] {
+  const agentsByConfig = new Map(
+    nodes
+      .filter((node) => node.type === "agent")
+      .map((node) => [node.data.agentConfigId, node]),
+  );
+  const sandboxLabels = new Map(
+    (nodes as RuntimeNode[])
+      .filter((node) => node.type === "sandbox")
+      .map((node) => [resourceIdFor(node, "sandbox"), nodeLabel(node)]),
+  );
+
+  return deriveAgentRuntimeRefs(nodes, edges).flatMap(
+    (refs): RuntimeRefsProblem[] => {
+      const agent = agentsByConfig.get(refs.configId);
+      const mount = findLaterSandboxMount(refs.sandboxes, refs.workspaces);
+      if (!agent || !mount || isCodeManagedOwner(agent.data.managedBy)) {
+        return [];
+      }
+
+      return [
+        {
+          agentId: agent.id,
+          sandboxLabel: sandboxLabels.get(mount.sandboxId) ?? mount.sandboxId,
+          workspaceName: mount.workspace.name,
+        },
+      ];
+    },
+  );
 }
 
 /** Stable serialization for change detection before writing Convex mutations. */

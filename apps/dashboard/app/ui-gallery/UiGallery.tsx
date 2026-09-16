@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { agreedSandboxOrderNumbers } from "@/app/lib/canvasFrameEdits";
 import {
   buildFramedGraph,
   type StageMcpServer,
@@ -36,7 +37,6 @@ import {
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { sandboxOrderNumbers } from "@broods/convex/model/canvasFrames";
 import { applyTidyLayout, GRID } from "@broods/convex/model/canvasLayout";
 import {
   Background,
@@ -381,7 +381,13 @@ function CanvasFramesFixture(): React.JSX.Element {
   );
   const graph = useMemo(
     () =>
-      buildFramedGraph(FRAME_NODES, FRAME_EDGES, FRAME_MCP_SERVERS, collapsed),
+      buildFramedGraph(
+        FRAME_NODES,
+        FRAME_EDGES,
+        FRAME_MCP_SERVERS,
+        collapsed,
+        null,
+      ),
     [collapsed],
   );
   const frames = useMemo(
@@ -400,7 +406,7 @@ function CanvasFramesFixture(): React.JSX.Element {
 
           return next;
         }),
-      sandboxOrderNumbers: sandboxOrderNumbers(FRAME_NODES, FRAME_EDGES),
+      sandboxOrderNumbers: agreedSandboxOrderNumbers(FRAME_NODES, FRAME_EDGES),
     }),
     [],
   );

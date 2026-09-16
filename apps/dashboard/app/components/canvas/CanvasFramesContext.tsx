@@ -16,7 +16,7 @@ export type CanvasFramesValue = {
   /** By canvas node id. */
   mcpServers: ReadonlyMap<string, StageMcpServer>;
   onToggleFrame: (frameId: string) => void;
-  /** Sandbox node id → 1-based place in its agent's `sandboxes`. */
+  /** Sandbox node id → 1-based place in `sandboxes`, where all its agents agree. */
   sandboxOrderNumbers: ReadonlyMap<string, number>;
 };
 

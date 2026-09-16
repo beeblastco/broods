@@ -5,6 +5,9 @@ import { openGallery } from "../lib/gallery";
 // sub-pixel rounding of the fitted zoom.
 const SLACK = 1;
 
+// How far an edge's end may sit from a chip's side: the handle straddles it.
+const HANDLE_SLACK = 8;
+
 // Distance between the points sampled along an edge path, in flow units.
 const PATH_STEP = 4;
 
@@ -59,18 +62,52 @@ test("chip names and status lines fit without truncating", async ({ page }) => {
   expect(clipped).toEqual([]);
 });
 
-test("the mount and runs-on edges are drawn between chips", async ({
+test("the mount and runs-on edges end on the chips they join", async ({
   page,
 }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
 
-  await expect(
-    fixture.locator(".react-flow__edge-mount path.react-flow__edge-path"),
-  ).toHaveAttribute("d", /\S/);
-  await expect(
-    fixture.locator(".react-flow__edge-runsOn path.react-flow__edge-path"),
-  ).toHaveAttribute("d", /\S/);
+  for (const [kind, ends] of [
+    ["mount", ["internal-sandbox", "notes"]],
+    ["runsOn", ["blender", "kien-mac"]],
+  ] as const) {
+    const endpoints = await fixture
+      .locator(`.react-flow__edge-${kind} path.react-flow__edge-path`)
+      .evaluate((path: SVGPathElement) => {
+        const matrix = path.getScreenCTM();
+        if (!matrix) return [];
+        const length = path.getTotalLength();
+
+        return [0, length].map((at) => {
+          const point = path.getPointAtLength(at).matrixTransform(matrix);
+
+          return { x: point.x, y: point.y };
+        });
+      });
+    expect(endpoints).toHaveLength(2);
+    const boxes = await Promise.all(
+      ends.map(
+        async (id) =>
+          (await fixture
+            .locator(
+              `.react-flow__node[data-id="${id}"] [data-slot="resource-chip"]`,
+            )
+            .boundingBox())!,
+      ),
+    );
+    // Each end sits on one of the two chips' side edges, one end per chip.
+    const chipAt = endpoints.map((point) =>
+      boxes.findIndex(
+        (box) =>
+          point.y >= box.y &&
+          point.y <= box.y + box.height &&
+          (Math.abs(point.x - box.x) <= HANDLE_SLACK ||
+            Math.abs(point.x - (box.x + box.width)) <= HANDLE_SLACK),
+      ),
+    );
+    expect([...chipAt].sort(), `${kind} ends`).toEqual([0, 1]);
+  }
 });
 
 test("no bundle edge crosses a frame other than the one it enters", async ({

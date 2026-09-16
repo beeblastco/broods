@@ -70,6 +70,13 @@ export interface AgentWorkspaceRef {
   sandbox?: string | null;
 }
 
+/** A workspace mounted on a sandbox that is not the agent's first. */
+export type LaterSandboxMount = {
+  index: number;
+  sandboxId: string;
+  workspace: AgentWorkspaceRef;
+};
+
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 // Harness vocabulary mirrors core's apps/core/src/shared/domain/agent-config.ts
@@ -349,6 +356,28 @@ export function assertAgentRuntimeRefs(
     throw new Error(
       `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
     );
+}
+
+/**
+ * The first sandbox after the default that also backs a workspace, which the
+ * config API refuses: only the first sandbox mounts workspaces, a later one runs
+ * with none. The dashboard checks a canvas edit with this before saving it.
+ */
+export function findLaterSandboxMount(
+  sandboxes: readonly string[],
+  workspaces: readonly AgentWorkspaceRef[] | undefined,
+): LaterSandboxMount | undefined {
+  for (const [index, sandboxId] of sandboxes.entries()) {
+    const workspace =
+      index === 0
+        ? undefined
+        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
+    if (workspace) {
+      return { index: index, sandboxId: sandboxId, workspace: workspace };
+    }
+  }
+
+  return undefined;
 }
 
 /** The default sandbox id of a stored or nested config: the first of `sandboxes`. */
@@ -645,16 +674,13 @@ function normalizeSandboxRefs(
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
-    const mounted =
-      index === 0
-        ? undefined
-        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
-    if (mounted)
-      throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
-      );
     seen.add(sandboxId);
   });
+  const mount = findLaterSandboxMount(value, workspaces);
+  if (mount)
+    throw new Error(
+      `config.sandboxes[${mount.index}] "${mount.sandboxId}" also backs workspace "${mount.workspace.name}"; only the first sandbox can back a workspace`,
+    );
 }
 
 function normalizeWorkspaceRefs(value: unknown): void {

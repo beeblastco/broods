@@ -39,17 +39,21 @@ import {
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
 import {
+  agreedSandboxOrderNumbers,
+  boardRects,
+  frameMemberActions,
+  introducedRuntimeRefsProblem,
+  makeDefaultSandbox,
+  reconcileFramePositions,
+  type FrameMemberAction,
+} from "@/app/lib/canvasFrameEdits";
+import {
+  applyFramedNodeChanges,
   buildFramedGraph,
   expandBundleEdgeRemoval,
-  flattenFramedNodes,
-  frameMemberActions,
-  joinedFramePosition,
-  makeDefaultSandbox,
-  reuseUnchangedNodes,
-  type FrameMemberAction,
   type FramedGraph,
-  type StageMcpServer,
 } from "@/app/lib/canvasFrameNodes";
+import { toErrorMessage } from "@/app/lib/errors";
 import { reportPerf } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
@@ -60,22 +64,17 @@ import {
   serializeSubagentRefs,
   writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
-import { sandboxOrderNumbers } from "@broods/convex/model/canvasFrames";
 import {
   applyPositions,
   applyTidyLayout,
   findFreePosition,
   GRID,
-  NODE_HEIGHT,
-  NODE_WIDTH,
-  type LayoutRect,
 } from "@broods/convex/model/canvasLayout";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   addEdge,
   applyEdgeChanges,
-  applyNodeChanges,
   Background,
   ConnectionMode,
   Panel,
@@ -86,6 +85,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeChange,
   type Node,
   type NodeMouseHandler,
   type OnConnect,
@@ -179,8 +179,6 @@ const SNAP_GRID: [number, number] = [GRID, GRID];
  */
 const dimmedNodeCache = new WeakMap<Node, Node>();
 const dimmedEdgeCache = new WeakMap<Edge, Edge>();
-
-const NO_MCP_SERVERS: StageMcpServer[] = [];
 
 // Once per document: a later client-side navigation mounts a new canvas, but
 // performance.now() still counts from the first navigation.
@@ -354,21 +352,6 @@ function isSideConnection(c: {
   );
 }
 
-/**
- * The box a top-level node covers, for the free-spot search: a frame by its
- * own size, a card by the card size.
- */
-function nodeRect(
-  node: Pick<Node, "height" | "position" | "width">,
-): LayoutRect {
-  return {
-    x: node.position.x,
-    y: node.position.y,
-    height: node.height ?? NODE_HEIGHT,
-    width: node.width ?? NODE_WIDTH,
-  };
-}
-
 /** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
  * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
 function dedupeEdges(edges: Edge[]): Edge[] {
@@ -470,18 +453,16 @@ function CanvasInner({
     : ("skip" as const);
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
-  const mcpServerRows = useMemo(
-    () => mcpServers ?? NO_MCP_SERVERS,
-    [mcpServers],
-  );
   const mcpTransports = useMemo(
     () =>
-      new Map(mcpServerRows.map((server) => [server.nodeId, server.transport])),
-    [mcpServerRows],
+      new Map(
+        (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
+      ),
+    [mcpServers],
   );
   const mcpServersByNode = useMemo(
-    () => new Map(mcpServerRows.map((server) => [server.nodeId, server])),
-    [mcpServerRows],
+    () => new Map((mcpServers ?? []).map((server) => [server.nodeId, server])),
+    [mcpServers],
   );
   const machineConnections = useQuery(
     api.sandbox.machines.listForActiveOrg,
@@ -518,6 +499,9 @@ function CanvasInner({
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Bumped to make the DB-sync effect run again when no new layout arrived.
+  const [resyncToken, setResyncToken] = useState(0);
   const [deleteRequestToken, setDeleteRequestToken] = useState(0);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -534,23 +518,21 @@ function CanvasInner({
   const isDraggingNode = useRef(false);
   const didInitialFit = useRef(false);
   const framedGraphRef = useRef<FramedGraph | null>(null);
+  // The last layout the database sent, for telling an edit's ref problems
+  // from ones the saved graph already had.
+  const savedLayoutRef = useRef(canvasLayout);
 
-  const framedGraph = useMemo(() => {
-    const built = buildFramedGraph(
-      nodes,
-      edges,
-      mcpServerRows,
-      collapsedFrames,
-    );
-
-    return {
-      ...built,
-      nodes: reuseUnchangedNodes(
-        framedGraphRef.current?.nodes ?? [],
-        built.nodes,
+  const framedGraph = useMemo(
+    () =>
+      buildFramedGraph(
+        nodes,
+        edges,
+        mcpServers,
+        collapsedFrames,
+        framedGraphRef.current,
       ),
-    };
-  }, [nodes, edges, mcpServerRows, collapsedFrames]);
+    [nodes, edges, mcpServers, collapsedFrames],
+  );
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -559,42 +541,23 @@ function CanvasInner({
   }, [nodes, edges, framedGraph]);
 
   /**
-   * React Flow reports changes against the drawn graph, so apply them there and
-   * flatten back: a dragged frame moves its members, and a frame's own
-   * selection or size never reaches state.
+   * React Flow reports changes against the drawn graph. A drag moves frames
+   * and their members; a measurement or selection never moves anything, and a
+   * frame's own selection or size never reaches state.
    */
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
       setNodes((current) =>
-        reuseUnchangedNodes(
+        applyFramedNodeChanges(
+          changes,
           current,
-          flattenFramedNodes(
-            applyNodeChanges(
-              changes,
-              buildFramedGraph(
-                current,
-                edgesRef.current,
-                mcpServerRows,
-                collapsedFrames,
-              ).nodes,
-            ),
-          ),
+          edgesRef.current,
+          mcpServers,
+          collapsedFrames,
         ),
       );
     },
-    [setNodes, mcpServerRows, collapsedFrames],
-  );
-
-  /** Deleting a bundle edge deletes every agent→member edge it stands for. */
-  const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => {
-      const bundles =
-        framedGraphRef.current?.bundles ?? new Map<string, string[]>();
-      setEdges((current) =>
-        applyEdgeChanges(expandBundleEdgeRemoval(changes, bundles), current),
-      );
-    },
-    [setEdges],
+    [setNodes, mcpServers, collapsedFrames],
   );
 
   /** Collapsing is a per-browser view choice: stored locally, never saved. */
@@ -637,6 +600,29 @@ function CanvasInner({
     debounceTimer.current = setTimeout(() => {
       if (!stageId) return;
       const generation = editGeneration.current;
+      const currentNodes = nodesRef.current;
+      const currentEdges = edgesRef.current;
+      // The config API would refuse these refs after the layout had already
+      // landed. Save nothing and put the last saved graph back instead.
+      const saved = savedLayoutRef.current;
+      const problem = introducedRuntimeRefsProblem(
+        {
+          edges: (saved?.edges ?? []) as Edge[],
+          nodes: (saved?.nodes ?? []) as Node[],
+        },
+        { edges: currentEdges, nodes: currentNodes },
+      );
+      if (problem) {
+        setSaveError(
+          `${problem.workspaceName} is mounted on ${problem.sandboxLabel}, and only an agent's default sandbox can back a workspace`,
+        );
+        setSaveState("error");
+        hasLocalChanges.current = false;
+        setResyncToken((token) => token + 1);
+
+        return;
+      }
+      setSaveError(null);
       setSaveState("saving");
       // The layout write is optimistic (withOptimisticUpdate above), so this
       // latency and its outcome are what a rollback rate is computed from.
@@ -644,8 +630,6 @@ function CanvasInner({
       // The layout write is optimistic; a reference write is not. Tracking them
       // apart keeps the rollback rate from counting ref failures as rollbacks.
       let refsFailed = false;
-      const currentNodes = nodesRef.current;
-      const currentEdges = edgesRef.current;
       saveLayoutMutation({
         projectId: projectId,
         stageId: stageId,
@@ -730,6 +714,12 @@ function CanvasInner({
           const failed = refWrites.find((r) => r.status === "rejected");
           if (failed?.status === "rejected") {
             refsFailed = true;
+            // The layout write above already landed, so the database holds
+            // what is on screen. Leave the canvas to it: without this a
+            // refused ref kept the sync off and later saves overwrote deploys.
+            if (editGeneration.current === generation) {
+              hasLocalChanges.current = false;
+            }
             throw failed.reason;
           }
         })
@@ -746,13 +736,14 @@ function CanvasInner({
           hasLocalChanges.current = false;
           setSaveState("saved");
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           reportPerf("optimistic-save", performance.now() - startedAt, {
             attributes: {
               outcome: refsFailed ? "refs-failed" : "rolled-back",
               nodes: currentNodes.length,
             },
           });
+          setSaveError(toErrorMessage(error));
           setSaveState("error");
         });
     }, 500);
@@ -774,6 +765,7 @@ function CanvasInner({
   // Sync nodes/edges from the database. Skip when local changes are pending or a drag is in
   // progress, and skip updates that already match local state (the echo of our own save).
   useEffect(() => {
+    savedLayoutRef.current = canvasLayout;
     if (hasLocalChanges.current || isDraggingNode.current) return;
 
     if (canvasLayout) {
@@ -829,7 +821,75 @@ function CanvasInner({
       setEdges([]);
       nextId.current = 1;
     }
-  }, [canvasLayout, setNodes, setEdges, fitView]);
+  }, [canvasLayout, resyncToken, setNodes, setEdges, fitView]);
+
+  /**
+   * Apply an edit to the flat graph and save it. Positions settle first, so a
+   * frame an edit joins or leaves stays where it was drawn. The refs update
+   * at once, so a second edit in the same event reads this one.
+   */
+  const editGraph = useCallback(
+    (
+      edit: (nodes: Node[], edges: Edge[]) => { edges: Edge[]; nodes: Node[] },
+    ) => {
+      const next = edit(nodesRef.current, edgesRef.current);
+      const settled = reconcileFramePositions(
+        {
+          edges: edgesRef.current,
+          mcpServers: mcpServers,
+          nodes: nodesRef.current,
+        },
+        { edges: next.edges, mcpServers: mcpServers, nodes: next.nodes },
+      );
+      nodesRef.current = settled;
+      edgesRef.current = next.edges;
+      setNodes(settled);
+      setEdges(next.edges);
+      scheduleSave();
+    },
+    [mcpServers, setNodes, setEdges, scheduleSave],
+  );
+
+  /** Deleting a bundle edge deletes every agent→member edge it stands for. */
+  const onEdgesChange: OnEdgesChange = useCallback(
+    (changes) => {
+      const bundles =
+        framedGraphRef.current?.bundles ?? new Map<string, string[]>();
+      const expanded: EdgeChange[] = expandBundleEdgeRemoval(changes, bundles);
+      if (!expanded.some((change) => change.type === "remove")) {
+        setEdges((current) => applyEdgeChanges(expanded, current));
+
+        return;
+      }
+      editGraph((nodes, edges) => ({
+        edges: applyEdgeChanges(expanded, edges),
+        nodes: nodes,
+      }));
+    },
+    [setEdges, editGraph],
+  );
+
+  // A server gaining or changing its transport moves its node to another
+  // frame. Settle positions as for an edit; the first load moves nothing,
+  // since MCP nodes were not framed before it.
+  const lastMcpServers = useRef(mcpServers);
+  useEffect(() => {
+    const before = lastMcpServers.current;
+    lastMcpServers.current = mcpServers;
+    if (before === undefined || mcpServers === undefined) return;
+    const settled = reconcileFramePositions(
+      { edges: edgesRef.current, mcpServers: before, nodes: nodesRef.current },
+      {
+        edges: edgesRef.current,
+        mcpServers: mcpServers,
+        nodes: nodesRef.current,
+      },
+    );
+    if (settled === nodesRef.current) return;
+    nodesRef.current = settled;
+    setNodes(settled);
+    scheduleSave();
+  }, [mcpServers, setNodes, scheduleSave]);
 
   // Route Delete key to the side-panel confirmation flow instead of immediate node deletion.
   useEffect(() => {
@@ -906,11 +966,45 @@ function CanvasInner({
         connection.targetHandle === "left" ||
         connection.targetHandle === "right";
 
-      return sourceIsSide && targetIsSide && (isMountPair || isAgentPair);
+      // A mount that would back a workspace from an agent's later sandbox is refused too.
+      return (
+        sourceIsSide &&
+        targetIsSide &&
+        (isAgentPair ||
+          (isMountPair &&
+            !introducedRuntimeRefsProblem(
+              { edges: edgesRef.current, nodes: nodesRef.current },
+              {
+                edges: [
+                  ...edgesRef.current,
+                  {
+                    id: "mount:candidate",
+                    source: connection.source,
+                    target: connection.target,
+                    type: "mount",
+                  },
+                ],
+                nodes: nodesRef.current,
+              },
+            )))
+      );
     }
     if (isMountPair || isAgentPair) return false;
 
-    return true;
+    return !introducedRuntimeRefsProblem(
+      { edges: edgesRef.current, nodes: nodesRef.current },
+      {
+        edges: [
+          ...edgesRef.current,
+          {
+            id: "candidate",
+            source: connection.source,
+            target: connection.target,
+          },
+        ],
+        nodes: nodesRef.current,
+      },
+    );
   }, []);
 
   const onConnect: OnConnect = useCallback(
@@ -932,10 +1026,12 @@ function CanvasInner({
         };
       }
 
-      setEdges((eds) => addEdge(edge, eds));
-      scheduleSave();
+      editGraph((nodes, edges) => ({
+        edges: addEdge(edge, edges),
+        nodes: nodes,
+      }));
     },
-    [setEdges, scheduleSave],
+    [editGraph],
   );
 
   /** Compute the current viewport center in flow coordinates. */
@@ -980,11 +1076,11 @@ function CanvasInner({
     const requested = lastRightClick.current ?? getViewportCenterPosition();
     lastRightClick.current = null;
 
+    const graph = framedGraphRef.current;
+
     return findFreePosition(
       requested,
-      (framedGraphRef.current?.nodes ?? [])
-        .filter((node) => node.parentId === undefined)
-        .map(nodeRect),
+      graph ? boardRects(graph.nodes, graph.frames) : [],
     );
   }, [getViewportCenterPosition]);
 
@@ -1008,23 +1104,13 @@ function CanvasInner({
       const newEdge: Edge | null = nearest
         ? { id: `e${nearest.id}-${id}`, source: nearest.id, target: id }
         : null;
-      // Joining a frame that has members takes the next slot, so the frame
-      // does not jump to wherever the card was dropped.
-      const slot = joinedFramePosition(
-        [...nodesRef.current, newNode],
-        newEdge ? [...edgesRef.current, newEdge] : edgesRef.current,
-        mcpTransports,
-        id,
-      );
-      setNodes((nds) => [
-        ...nds,
-        slot ? { ...newNode, position: slot } : newNode,
-      ]);
-      if (newEdge) setEdges((eds) => [...eds, newEdge]);
-
-      scheduleSave();
+      // A card that joins a frame takes its next slot (see editGraph).
+      editGraph((nodes, edges) => ({
+        edges: newEdge ? [...edges, newEdge] : edges,
+        nodes: [...nodes, newNode],
+      }));
     },
-    [getFreeAddPosition, setNodes, setEdges, scheduleSave, mcpTransports],
+    [getFreeAddPosition, editGraph],
   );
 
   /**
@@ -1039,20 +1125,22 @@ function CanvasInner({
 
   const makeDefault = useCallback(
     (agentId: string, sandboxId: string) => {
-      setNodes((nds) =>
-        makeDefaultSandbox(nds, edgesRef.current, agentId, sandboxId),
-      );
-      scheduleSave();
+      editGraph((nodes, edges) => ({
+        edges: edges,
+        nodes: makeDefaultSandbox(nodes, edges, agentId, sandboxId),
+      }));
     },
-    [setNodes, scheduleSave],
+    [editGraph],
   );
 
   const removeEdge = useCallback(
     (edgeId: string) => {
-      setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
-      scheduleSave();
+      editGraph((nodes, edges) => ({
+        edges: edges.filter((edge) => edge.id !== edgeId),
+        nodes: nodes,
+      }));
     },
-    [setEdges, scheduleSave],
+    [editGraph],
   );
 
   /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
@@ -1071,12 +1159,16 @@ function CanvasInner({
     (_event, grabbed, dragged) => {
       isDraggingNode.current = false;
       const draggedIds = new Set(dragged.map((node) => node.id));
-      const occupied = [
-        ...(framedGraphRef.current?.nodes ?? []).filter(
-          (node) => node.parentId === undefined && !draggedIds.has(node.id),
-        ),
-        ...dragged.filter((node) => node.type === "frame"),
-      ].map(nodeRect);
+      const graph = framedGraphRef.current;
+      // Dragged frames count where they were dropped, which the graph from the
+      // last render does not know yet.
+      const occupied = boardRects(
+        [
+          ...(graph?.nodes ?? []).filter((node) => !draggedIds.has(node.id)),
+          ...dragged.filter((node) => node.type === "frame"),
+        ],
+        graph?.frames ?? [],
+      );
       const settled = new Map<string, FlowPosition>();
       const ordered = [
         grabbed,
@@ -1084,7 +1176,7 @@ function CanvasInner({
       ].filter((node) => node.type !== "frame");
       for (const node of ordered) {
         const position = findFreePosition(node.position, occupied);
-        occupied.push(nodeRect({ position: position }));
+        occupied.push(...boardRects([{ ...node, position: position }], []));
         settled.set(node.id, position);
       }
       setNodes((nds) => applyPositions(nds, settled));
@@ -1156,50 +1248,50 @@ function CanvasInner({
   /** Remove a node and its connected edges from the canvas. */
   const removeNode = useCallback(
     (nodeId: string) => {
-      setEdges((eds) =>
-        eds.filter((e) => e.source !== nodeId && e.target !== nodeId),
-      );
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      editGraph((nodes, edges) => ({
+        edges: edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
+        nodes: nodes.filter((n) => n.id !== nodeId),
+      }));
       setSelectedNode(null);
-      scheduleSave();
     },
-    [setNodes, setEdges, scheduleSave],
+    [editGraph],
   );
 
   /** Update a node's label in the canvas layout. */
   const updateNodeLabel = useCallback(
     (nodeId: string, label: string) => {
-      setNodes((nds) =>
-        nds.map((n) =>
+      editGraph((nodes, edges) => ({
+        edges: edges,
+        nodes: nodes.map((n) =>
           n.id === nodeId ? { ...n, data: { ...n.data, label: label } } : n,
         ),
-      );
+      }));
       setSelectedNode((current) =>
         current?.id === nodeId
           ? { ...current, data: { ...current.data, label: label } }
           : current,
       );
-      scheduleSave();
     },
-    [setNodes, scheduleSave],
+    [editGraph],
   );
 
   /** Update a node's persisted data payload. */
   const updateNodeData = useCallback(
     (nodeId: string, patch: Partial<BaseNodeData>) => {
-      setNodes((nds) =>
-        nds.map((n) =>
+      // A sandbox's provider or a workspace's storage picks its frame.
+      editGraph((nodes, edges) => ({
+        edges: edges,
+        nodes: nodes.map((n) =>
           n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n,
         ),
-      );
+      }));
       setSelectedNode((current) =>
         current?.id === nodeId
           ? { ...current, data: { ...current.data, ...patch } }
           : current,
       );
-      scheduleSave();
     },
-    [setNodes, scheduleSave],
+    [editGraph],
   );
 
   const isLoading = canvasLayout === undefined;
@@ -1230,7 +1322,7 @@ function CanvasInner({
   const { infraAnalysis, orderNumbers } = useMemo(
     () => ({
       infraAnalysis: analyzeCanvasInfra(nodes, edges),
-      orderNumbers: sandboxOrderNumbers(nodes, edges),
+      orderNumbers: agreedSandboxOrderNumbers(nodes, edges),
     }),
     // Recompute only when the structural signature changes (positions excluded).
     [infraKey],
@@ -1244,16 +1336,19 @@ function CanvasInner({
     }),
     [machineConnections, mcpServersByNode, toggleFrame, orderNumbers],
   );
-  // The right-clicked chip and what it offers; null falls back to "Add service".
+  // The right-clicked chip and what it offers; null falls back to "Add service",
+  // which is also what a card outside every frame gets.
   const chipMenu = useMemo(() => {
-    const actions = menuNodeId
-      ? frameMemberActions(nodes, edges, menuNodeId)
-      : [];
+    const framed = framedGraph.frames.some((frame) =>
+      frame.memberIds.some((id) => id === menuNodeId),
+    );
+    const actions =
+      menuNodeId && framed ? frameMemberActions(nodes, edges, menuNodeId) : [];
 
     return menuNodeId && actions.length > 0
       ? { actions: actions, memberId: menuNodeId }
       : null;
-  }, [menuNodeId, nodes, edges]);
+  }, [menuNodeId, framedGraph.frames, nodes, edges]);
 
   // Commit-to-paint for a topology change: measured from the effect to the next
   // frame, so it covers ReactFlow's own layout, which is what scales with the
@@ -1417,7 +1512,11 @@ function CanvasInner({
         {/* Save status lives away from the controls so it never crowds or
             reflows them; it clears itself once a save lands. */}
         <Panel position="bottom-left">
-          <CanvasSaveStatus state={saveState} onRetry={scheduleSave} />
+          <CanvasSaveStatus
+            state={saveState}
+            message={saveError}
+            onRetry={scheduleSave}
+          />
         </Panel>
       </ReactFlow>
     </>
@@ -1449,7 +1548,7 @@ function CanvasInner({
               </CanvasFramesProvider>
             </ContextMenuTrigger>
             {canWrite && chipMenu && (
-              <ContextMenuContent className="w-48">
+              <ContextMenuContent className="w-56">
                 <FrameMemberMenuItems
                   actions={chipMenu.actions}
                   memberId={chipMenu.memberId}
@@ -1578,13 +1677,26 @@ function FrameMemberMenuItems({
         action.kind === "make-default" ? (
           <ContextMenuItem
             key={`default:${action.agentId}`}
-            className="cursor-pointer"
+            disabled={action.disabledReason !== null}
+            title={action.disabledReason ?? undefined}
+            className={
+              action.disabledReason
+                ? "cursor-not-allowed flex-col items-start"
+                : "cursor-pointer"
+            }
             onClick={() => onMakeDefault(action.agentId, memberId)}
           >
-            <Star />
-            {action.agentLabel
-              ? `Make default for ${action.agentLabel}`
-              : "Make default"}
+            <span className="flex items-center gap-2">
+              <Star />
+              {action.agentLabel
+                ? `Make default for ${action.agentLabel}`
+                : "Make default"}
+            </span>
+            {action.disabledReason && (
+              <span className="text-2xs text-muted-foreground">
+                {action.disabledReason}
+              </span>
+            )}
           </ContextMenuItem>
         ) : (
           <ContextMenuItem
