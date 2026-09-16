@@ -761,6 +761,7 @@ The CLI validates resource configs at compile time:
 - Workspace storage provider must be `s3`.
 - Sandbox mounts must support S3 workspace access.
 - `sandbox` is rejected: list ids in `sandboxes`, the first is the default. Each id appears once, a harness needs a first sandbox, and only the first may back a workspace.
+  A stored agent that still carries `sandbox` refuses to run. Move the id into `sandboxes` and run `broods dev` or `broods deploy`, which rewrites the stored config.
 
 These checks run during `broods dev` and `broods deploy`, so a broken config fails before it reaches a stage.
 

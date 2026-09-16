@@ -174,15 +174,23 @@ function backgroundNote(context: SandboxToolContext): string {
 
 function description(context: SandboxToolContext): string {
   if (context.workspaces.length === 0) {
-    const runtimes = runtimeDescription(context.sandboxes?.[0]?.sandbox);
+    const defaultSandbox = context.sandboxes?.[0]?.sandbox;
+    const runtimes = runtimeDescription(defaultSandbox);
+    // A reserved default reconnects every call, so calling it stateless would
+    // contradict what the model sees persist.
+    const reserved = isReservedStandalone(defaultSandbox);
+    const kind = reserved ? "a reserved" : "an ephemeral";
+    const state = reserved
+      ? "The sandbox is reserved: files persist across calls until the reservation ends, but nothing reaches durable storage. Shell state (working directory, environment variables, background processes) resets every call, so chain dependent steps with && or ;."
+      : "The sandbox is stateless: each call runs in a fresh container with no persistent storage. Files do NOT persist across calls, and shell state (working directory, environment variables, background processes) resets every call — keep the whole task in a single command, chaining steps with && or ;.";
 
-    return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
+    return `Executes a bash command in ${kind} Linux sandbox (bash, python3, and node on PATH).
 
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
-- The sandbox is stateless: each call runs in a fresh container with no persistent storage. Files do NOT persist across calls, and shell state (working directory, environment variables, background processes) resets every call — keep the whole task in a single command, chaining steps with && or ;.${sandboxesNote(context)}`;
+- ${state}${sandboxesNote(context)}`;
   }
 
   return `Executes a bash command on the attached workspace in a Linux sandbox (bash, python3, and node on PATH).
@@ -344,6 +352,20 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   };
 }
 
+// A workspace-less run reconnects on options.reservationKey (derived per agent by
+// resolveAgentRuntime, or pinned). No key means nothing survives.
+function isReservedStandalone(
+  sandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  const options = isPlainObject(sandbox?.options) ? sandbox.options : {};
+
+  return (
+    sandbox?.persistent === true &&
+    typeof options.reservationKey === "string" &&
+    options.reservationKey.trim().length > 0
+  );
+}
+
 // Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
 // machine around them is the agent's too and the durability guard steps aside.
 function ownSandboxNote(context: SandboxToolContext): string {
@@ -384,16 +406,8 @@ function reservedNote(context: SandboxToolContext): string {
 - ${names.join(", ")} run on a reserved (persistent) sandbox: packages installed under $HOME (e.g. a uv/venv or npm prefix) survive across calls until the reservation ends. It is an execution layer you borrow, so writes outside the workspace directory are still rejected — keep results in the workspace.`;
 }
 
-// A workspace-less run reconnects on options.reservationKey (derived per agent by
-// resolveAgentRuntime, or pinned). No key means nothing survives, no note.
 function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
-  const options = isPlainObject(sandbox.options) ? sandbox.options : {};
-  const reserved =
-    sandbox.persistent === true &&
-    typeof options.reservationKey === "string" &&
-    options.reservationKey.trim().length > 0;
-
-  if (!reserved) {
+  if (!isReservedStandalone(sandbox)) {
     return "";
   }
 
@@ -410,7 +424,11 @@ function sandboxesNote(context: SandboxToolContext): string {
   const entries = choices.map((choice): string => {
     const isDefault = choice === context.sandboxes?.[0];
     const label = choice.description ?? (isDefault ? "your own sandbox" : "");
-    const reserved = isDefault ? reservedStandaloneNote(choice.sandbox) : "";
+    // With no workspace the description already covers the default's persistence.
+    const reserved =
+      isDefault && context.workspaces.length > 0
+        ? reservedStandaloneNote(choice.sandbox)
+        : "";
 
     return `${choice.name}${label ? `: ${label}.` : ""}${reserved}`;
   });

@@ -687,6 +687,41 @@ describe("sandbox tool set", () => {
     expect(keyed.description).toContain("only the workspace outlives it");
   });
 
+  it("bash never calls a reserved default stateless when no workspace is attached", async () => {
+    const reserved: SandboxToolContext = {
+      workspaces: [],
+      sandboxes: [
+        {
+          name: "own-sandbox",
+          sandbox: {
+            provider: "lambda",
+            network: { mode: "allow-all" },
+            persistent: true,
+            options: { reservationKey: "agent-scratch" },
+          },
+        },
+      ],
+    };
+    const alone = await tool("bash", reserved);
+    const withExtra = await tool("bash", {
+      workspaces: [],
+      sandboxes: [
+        ...(reserved.sandboxes ?? []),
+        ...(statelessCtx().sandboxes ?? []).map((entry) => ({
+          ...entry,
+          name: "scratch",
+        })),
+      ],
+    });
+
+    for (const bash of [alone, withExtra]) {
+      expect(bash.description).not.toContain("stateless");
+      expect(bash.description).not.toContain("ephemeral");
+      expect(bash.description).not.toContain("only the workspace outlives it");
+      expect(bash.description).toContain("files persist across calls");
+    }
+  });
+
   it("keeps two calls on one MicroVM when a persistent agent sandbox has no workspace", async () => {
     // The point of `persistent: true`: without the derived key both calls boot
     // their own VM and the file the first one wrote is gone.

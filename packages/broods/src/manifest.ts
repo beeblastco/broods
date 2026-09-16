@@ -162,7 +162,7 @@ export async function compileProject(
     }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
-  assertExportedAgentSandboxes(resources);
+  assertAgentSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
   const reach = declaredReach(resources);
   for (const resource of resources) assertKnownConfigKeys(resource);
@@ -700,9 +700,11 @@ function sandboxProvider(sandbox: SandboxResource): string {
     : "sandbox";
 }
 
-// A sandbox referenced as a resource but never exported is not compiled into the
-// manifest, so the name the agent config carries would resolve to nothing at sync.
-function assertExportedAgentSandboxes(resources: AnyResource[]): void {
+// Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
+// wrong shape here would reach a stage as a sandbox id. A sandbox referenced as a
+// resource but never exported is not compiled into the manifest either, so its
+// name would resolve to nothing at sync.
+function assertAgentSandboxes(resources: AnyResource[]): void {
   const exportedSandboxNames = new Set(
     resources
       .filter(
@@ -712,12 +714,23 @@ function assertExportedAgentSandboxes(resources: AnyResource[]): void {
   );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
-    for (const sandbox of resource.config.sandboxes ?? []) {
-      if (
-        isResource(sandbox) &&
-        sandbox.kind === "sandbox" &&
-        !exportedSandboxNames.has(sandbox.name)
-      ) {
+    const value: unknown = resource.config.sandboxes;
+    if (value === undefined) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(
+        `Agent "${resource.name}" sandboxes must be an array of sandbox resources or names`,
+      );
+    }
+    const sandboxes: unknown[] = value;
+    for (const [index, sandbox] of sandboxes.entries()) {
+      const isName = typeof sandbox === "string" && sandbox.trim().length > 0;
+      const isSandbox = isResource(sandbox) && sandbox.kind === "sandbox";
+      if (!isName && !isSandbox) {
+        throw new Error(
+          `Agent "${resource.name}" sandboxes[${index}] must be a sandbox resource or a non-empty name`,
+        );
+      }
+      if (isSandbox && !exportedSandboxNames.has(sandbox.name)) {
         throw new Error(
           `Agent "${resource.name}" sandboxes references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
         );

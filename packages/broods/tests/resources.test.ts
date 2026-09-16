@@ -272,6 +272,48 @@ export const support = defineAgent({
   ).toMatchObject({ sandboxes: ["runner", "browser", "offline"] });
 });
 
+test("compileProject rejects sandboxes that are not sandbox names", async (): Promise<void> => {
+  // Resource files skip the typecheck, so these shapes reach the manifest.
+  const cases: Array<{ value: string; message: string }> = [
+    {
+      value: `"runner"`,
+      message:
+        'Agent "support" sandboxes must be an array of sandbox resources or names',
+    },
+    {
+      value: `[runner, notes]`,
+      message:
+        'Agent "support" sandboxes[1] must be a sandbox resource or a non-empty name',
+    },
+    {
+      value: `[runner, ""]`,
+      message:
+        'Agent "support" sandboxes[1] must be a sandbox resource or a non-empty name',
+    },
+  ];
+  for (const entry of cases) {
+    const cwd = await fixtureProject(
+      "",
+      `
+import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({ name: "runner", provider: "lambda" });
+export const notes = defineWorkspace({ name: "notes" });
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  sandboxes: ${entry.value} as never,
+});
+`,
+    );
+
+    await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+      entry.message,
+    );
+  }
+});
+
 test("compileProject rejects an unexported sandbox", async () => {
   const cwd = await fixtureProject(
     "",

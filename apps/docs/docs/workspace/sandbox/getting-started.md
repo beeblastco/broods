@@ -30,7 +30,7 @@ export const myAgent = defineAgent({
   provider: { minimax: { apiKey: env("MINIMAX_API_KEY") } },
   model: { provider: "minimax", modelId: "MiniMax-M3" },
   agent: { system: "Use bash to write files and run code in the sandbox." },
-  sandbox,
+  sandboxes: [sandbox],
   publicAccess: true,
 });
 ```
