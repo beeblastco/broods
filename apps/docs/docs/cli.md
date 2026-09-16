@@ -63,6 +63,12 @@ project and stage the next command will act on. It also compares the local
 when they disagree, which is what happens after switching organizations without
 resyncing.
 
+Before a project is chosen, `whoami` prints `Project: none` with the folder name
+`broods dev` would suggest, and skips the key and project checks. `broods login`
+does not pick a project: it writes `BROODS_PROJECT`, `BROODS_STAGE` and
+`BROODS_REGION` to `.env.local` only when passed `--project`, `--stage` or
+`--region`.
+
 ## org
 
 ```bash
