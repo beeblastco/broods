@@ -48,8 +48,6 @@ export interface SandboxControlPlane {
   /** The owning sandbox config row, so the dashboard can drive its write-path. */
   sandboxConfigId?: string;
   name: string;
-  /** The record's description, so a tool can tell the model what it is for. */
-  description?: string;
   specs: SandboxSpecs;
   /** Snapshot/image the instance launched from, when pinned. */
   snapshotId?: string;

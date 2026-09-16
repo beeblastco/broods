@@ -421,27 +421,18 @@ function reservedStandaloneNote(context: SandboxToolContext): string {
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
-// The sandboxes worth naming. A lone own sandbox with no workspace is where bash
-// already runs, so it earns no field; beside a workspace or an extra it is a choice.
-function sandboxChoices(context: SandboxToolContext): SelectableSandbox[] {
-  const selectable = selectableSandboxes(context);
-  const lone = selectable.length === 1 && selectable[0]?.own === true;
-
-  return lone && context.workspaces.length === 0 ? [] : selectable;
-}
-
 // Scenario note: the sandboxes a call can pick by name, the agent's own first when
 // nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
-  const choices = sandboxChoices(context);
+  const choices = sandboxParamChoices(context);
   if (choices.length === 0) {
     return "";
   }
   const entries = choices.map((choice): string => {
-    const what = choice.description ?? (choice.own ? "your own sandbox." : "");
-    const kept = choice.own ? reservedStandaloneNote(context) : "";
+    const label = choice.description ?? (choice.own ? "your own sandbox" : "");
+    const reserved = choice.own ? reservedStandaloneNote(context) : "";
 
-    return `${choice.name}${what ? `: ${what}` : ""}${kept}`;
+    return `${choice.name}${label ? `: ${label}.` : ""}${reserved}`;
   });
 
   return `
@@ -449,12 +440,22 @@ function sandboxesNote(context: SandboxToolContext): string {
 ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
-// `sandbox` names the sandbox to run on. `true` is still read as the agent's own,
-// so a call replayed from before names existed keeps landing where it did.
+// What the `sandbox` param offers. A lone own sandbox with no workspace is where
+// bash already runs, so it earns no field; beside a workspace or an extra it is a
+// choice.
+function sandboxParamChoices(context: SandboxToolContext): SelectableSandbox[] {
+  const choices = selectableSandboxes(context);
+  const onlyTheDefault =
+    choices.length === 1 && choices[0]?.own && context.workspaces.length === 0;
+
+  return onlyTheDefault ? [] : choices;
+}
+
+// `sandbox` names the sandbox to run on.
 function sandboxParamSchema(
   context: SandboxToolContext,
 ): JSONSchema7 | undefined {
-  const choices = sandboxChoices(context);
+  const choices = sandboxParamChoices(context);
   if (choices.length === 0) {
     return undefined;
   }

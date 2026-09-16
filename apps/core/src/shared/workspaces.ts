@@ -447,7 +447,6 @@ function sandboxControlPlane(
     ...(record.stageId ? { stageId: record.stageId } : {}),
     sandboxConfigId: record.sandboxId,
     name: record.name,
-    ...(record.description ? { description: record.description } : {}),
     specs: resolveSandboxSpecs({
       size: record.config.size,
       options: record.config.options,

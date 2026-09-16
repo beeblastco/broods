@@ -407,11 +407,8 @@ export function bashNeedsApproval(
 }
 
 /**
- * The `sandbox` field of a bash call, normalized: `true` selects the agent's own
- * sandbox and a name selects any sandbox the call can pick. A name that matches
- * nothing is refused downstream instead of quietly becoming a workspace run. The
- * tool and the policy layer read the field through this one function so they
- * never disagree about where a call lands.
+ * Narrows a stored `sandbox` field: `true` is the agent's own sandbox, a string is
+ * a name resolved downstream. The tool and the policy layer both read it here.
  */
 export function bashSandboxTarget(
   value: unknown,
@@ -446,50 +443,30 @@ export function computerSandboxTarget(
 /**
  * The computers this agent can drive, its own sandbox first. Only a machine has a
  * screen, so this is both what registers the `computer` tool and the list a call
- * picks from.
+ * picks from. The own machine stays even when a workspace mounts it: a workspace
+ * is a way onto its files, never onto its screen.
  */
 export function machineSandboxes(
   context: SandboxToolContext,
 ): SelectableSandbox[] {
-  return selectableSandboxes(context).filter(
+  return agentSandboxes(context).filter(
     (entry): boolean => entry.sandbox.provider === "machine",
   );
 }
 
 /**
- * Every sandbox a call can pick by name, the agent's own first. The own sandbox is
- * nameable while no workspace mounts it; once one does, the workspace is the way
- * in. Extras are always nameable. bash and computer both build their choices here,
- * so the two tools cannot offer the model different lists.
+ * Every sandbox a bash call can pick by name, the agent's own first. The own
+ * sandbox is nameable while no workspace mounts it; once one does, the workspace
+ * is the way in. Extras are always nameable.
  */
 export function selectableSandboxes(
   context: SandboxToolContext,
 ): SelectableSandbox[] {
-  const own = context.agentSandbox;
-  const ownName = own?.controlPlane?.name;
+  const standalone = targetsAgentSandbox(context, { sandbox: true });
 
-  return [
-    ...(own && ownName && targetsAgentSandbox(context, { sandbox: true })
-      ? [
-          {
-            ...(own.controlPlane?.description
-              ? { description: own.controlPlane.description }
-              : {}),
-            name: ownName,
-            own: true,
-            permissionMode: context.agentSandboxPermissionMode ?? "ask",
-            sandbox: own,
-          },
-        ]
-      : []),
-    ...(context.sandboxes ?? []).map((entry): SelectableSandbox => ({
-      ...(entry.description ? { description: entry.description } : {}),
-      name: entry.name,
-      own: false,
-      permissionMode: entry.sandbox.permissionMode ?? "ask",
-      sandbox: entry.sandbox,
-    })),
-  ];
+  return agentSandboxes(context).filter(
+    (entry): boolean => !entry.own || standalone,
+  );
 }
 
 /**
@@ -846,6 +823,34 @@ function permissionModeFor(
   workspace: ResolvedWorkspace | undefined,
 ): SandboxPermissionMode {
   return workspace?.sandbox?.permissionMode ?? "ask";
+}
+
+// The agent's own sandbox and its extras as one list, each with the permissionMode
+// its own record carries. bash and computer both start from this, so the two
+// tools cannot describe the same sandbox differently.
+function agentSandboxes(context: SandboxToolContext): SelectableSandbox[] {
+  const own = context.agentSandbox;
+  const ownName = own?.controlPlane?.name;
+
+  return [
+    ...(own && ownName
+      ? [
+          {
+            name: ownName,
+            own: true,
+            permissionMode: context.agentSandboxPermissionMode ?? "ask",
+            sandbox: own,
+          },
+        ]
+      : []),
+    ...(context.sandboxes ?? []).map((entry): SelectableSandbox => ({
+      ...(entry.description ? { description: entry.description } : {}),
+      name: entry.name,
+      own: false,
+      permissionMode: entry.sandbox.permissionMode ?? "ask",
+      sandbox: entry.sandbox,
+    })),
+  ];
 }
 
 // `true`, nothing, and the own record name all mean the agent's own sandbox; only

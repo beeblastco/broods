@@ -862,17 +862,13 @@ describe("sandbox tool set", () => {
   it("an unknown sandbox name is refused, with or without extras attached", async () => {
     // No extras: a name that matches nothing used to slip into the workspace as
     // if nothing had been asked. Now it is refused, and the gate stays closed.
-    const plain = borrowedSandboxCtx() as unknown as Record<string, unknown>;
-    const borrowed = await tool("bash", plain as never);
+    const plain = borrowedSandboxCtx();
+    const borrowed = await tool("bash", plain);
     await expect(
       borrowed.execute({ command: "ls", sandbox: "true" }),
     ).rejects.toThrow("unknown sandbox true");
     await expect(
-      approvalStatus(
-        "bash",
-        { command: "ls", sandbox: "true" },
-        plain as never,
-      ),
+      approvalStatus("bash", { command: "ls", sandbox: "true" }, plain),
     ).resolves.toBe("user-approval");
 
     // Extras present: the same refusal, before any workspace default could
