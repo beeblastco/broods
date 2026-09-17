@@ -8,9 +8,6 @@ import type { ChannelConnection } from "@broods/convex/channel/connections";
 import type { ConfigPlane } from "../../discord-forwarder/src/config.ts";
 import { logWarn } from "../../discord-forwarder/src/log.ts";
 
-/** `apiUrl` is optional until every row carries its homeserver. */
-type ConnectionRow = ChannelConnection & { apiUrl?: string };
-
 /** A config-plane row with its homeserver and its plane's gateway joined on. */
 export interface MatrixConnection {
   agentId: string;
@@ -26,7 +23,7 @@ export interface MatrixConnection {
  */
 export function planeMatrixConnections(
   plane: ConfigPlane,
-  rows: readonly ConnectionRow[],
+  rows: readonly ChannelConnection[],
 ): MatrixConnection[] {
   const connections: MatrixConnection[] = [];
   for (const row of rows) {

@@ -117,14 +117,14 @@ describe("grouping connections", () => {
     });
   });
 
-  it("keeps the first homeserver when one token names two", () => {
+  it("drops the connection when one token names a second homeserver", () => {
     const grouped = groupConnectionsByToken([
       connection(),
       connection({ agentId: "agent-2", apiUrl: "https://other.example.org" }),
     ]);
 
     expect(grouped.get("token-a")?.apiUrl).toBe("https://matrix.example.org");
-    expect(grouped.get("token-a")?.targets).toHaveLength(2);
+    expect(grouped.get("token-a")?.targets).toHaveLength(1);
   });
 });
 

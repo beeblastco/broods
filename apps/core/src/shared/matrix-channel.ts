@@ -124,11 +124,9 @@ export function createMatrixActions(
         body: name,
         filename: name,
         info: { mimetype: mimeType, size: bytes.byteLength },
+        "m.relates_to": replyRelation(source),
         msgtype: attachment.type === "image" ? "m.image" : "m.file",
         [MATRIX_BOT_MARKER]: true,
-        ...(source.threadRootId
-          ? { "m.relates_to": threadRelation(source, source.threadRootId) }
-          : {}),
       });
     }
   };
@@ -322,6 +320,44 @@ async function downloadMedia(
   );
 }
 
+/**
+ * Why this event never reaches the agent, or null to keep it. `m.notice` is how
+ * other bots talk, and the marker is how this channel's own replies are known:
+ * the account sends both the agent's messages and its owner's.
+ */
+function droppedReason(
+  payload: MatrixForwardedEvent,
+  options: MatrixChannelOptions,
+): string | null {
+  const { event, roomId } = payload;
+  const content = event.content;
+  const msgtype = String(content.msgtype);
+  const relation = content["m.relates_to"] as
+    | { rel_type?: unknown }
+    | undefined;
+  if (content[MATRIX_BOT_MARKER] === true || msgtype === "m.notice") {
+    return "bot_message";
+  }
+  if (relation?.rel_type === "m.replace") {
+    return "edit";
+  }
+  if (!TEXT_MSGTYPES.has(msgtype) && !MEDIA_MSGTYPES[msgtype]) {
+    return `unsupported_msgtype:${msgtype}`;
+  }
+  if (!isAllowedId(options.allowedChannelIds, roomId)) {
+    logWarn("Matrix room not in allow list", { roomId: roomId });
+
+    return "channel_not_allowed";
+  }
+  if (!isAllowedId(options.allowedUserIds, event.sender)) {
+    logWarn("Matrix sender not in allow list", { userId: event.sender });
+
+    return "user_not_allowed";
+  }
+
+  return null;
+}
+
 // Matrix encrypted attachments: AES-256-CTR, a random 8-byte counter prefix,
 // and a SHA-256 of the ciphertext so the receiver can check it first.
 async function encryptMedia(
@@ -377,9 +413,6 @@ function formatReply(
     strikethrough: true,
     tables: true,
   });
-  const relation = source.threadRootId
-    ? threadRelation(source, source.threadRootId)
-    : { "m.in_reply_to": { event_id: source.messageId } };
   const content: Record<string, unknown> = {
     body: botName ? `${botName}: ${markdown}` : markdown,
     format: "org.matrix.custom.html",
@@ -387,7 +420,7 @@ function formatReply(
       ? `<strong data-mx-profile-fallback>${Bun.escapeHTML(botName)}: </strong>${html}`
       : html,
     "m.mentions": {},
-    "m.relates_to": relation,
+    "m.relates_to": replyRelation(source),
     // m.text rather than m.notice: clients strip the profile fallback from m.text only.
     msgtype: "m.text",
     [MATRIX_BOT_MARKER]: true,
@@ -401,44 +434,6 @@ function formatReply(
   }
 
   return content;
-}
-
-/**
- * Why this event never reaches the agent, or null to keep it. `m.notice` is how
- * other bots talk, and the marker is how this channel's own replies are known:
- * the account sends both the agent's messages and its owner's.
- */
-function droppedReason(
-  payload: MatrixForwardedEvent,
-  options: MatrixChannelOptions,
-): string | null {
-  const { event, roomId } = payload;
-  const content = event.content;
-  const msgtype = String(content.msgtype);
-  const relation = content["m.relates_to"] as
-    | { rel_type?: unknown }
-    | undefined;
-  if (content[MATRIX_BOT_MARKER] === true || msgtype === "m.notice") {
-    return "bot_message";
-  }
-  if (relation?.rel_type === "m.replace") {
-    return "edit";
-  }
-  if (!TEXT_MSGTYPES.has(msgtype) && !MEDIA_MSGTYPES[msgtype]) {
-    return `unsupported_msgtype:${msgtype}`;
-  }
-  if (!isAllowedId(options.allowedChannelIds, roomId)) {
-    logWarn("Matrix room not in allow list", { roomId: roomId });
-
-    return "channel_not_allowed";
-  }
-  if (!isAllowedId(options.allowedUserIds, event.sender)) {
-    logWarn("Matrix sender not in allow list", { userId: event.sender });
-
-    return "user_not_allowed";
-  }
-
-  return null;
 }
 
 function homeserver(apiUrl: string): string {
@@ -613,6 +608,23 @@ function parseRoomMessage(
   };
 }
 
+/**
+ * Where a reply hangs: inside the thread when the message it answers was in
+ * one, otherwise on the message itself.
+ */
+function replyRelation(source: MatrixSource): Record<string, unknown> {
+  if (source.threadRootId === undefined) {
+    return { "m.in_reply_to": { event_id: source.messageId } };
+  }
+
+  return {
+    event_id: source.threadRootId,
+    is_falling_back: false,
+    "m.in_reply_to": { event_id: source.messageId },
+    rel_type: "m.thread",
+  };
+}
+
 async function sendMessage(
   accessToken: string,
   source: MatrixSource,
@@ -624,18 +636,6 @@ async function sendMessage(
     type: "m.room.message",
   };
   await callForwarder(accessToken, "/v1/send", request);
-}
-
-function threadRelation(
-  source: MatrixSource,
-  threadRootId: string,
-): Record<string, unknown> {
-  return {
-    event_id: threadRootId,
-    is_falling_back: false,
-    "m.in_reply_to": { event_id: source.messageId },
-    rel_type: "m.thread",
-  };
 }
 
 function toMatrixSource(source: Record<string, unknown>): MatrixSource {
@@ -697,6 +697,9 @@ async function uploadMedia(
         "Content-Type": mimeType,
       },
       method: "POST",
+      // The download below follows redirects because authenticated media may
+      // point at a CDN. An upload never does, and the token rides the request.
+      redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
   );

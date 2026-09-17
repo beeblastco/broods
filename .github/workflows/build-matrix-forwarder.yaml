@@ -21,6 +21,13 @@ on:
       - ".github/workflows/build-matrix-forwarder.yaml"
   workflow_dispatch:
 
+# Each build dispatches its own sha to infra once it finishes, so two builds on
+# one branch can roll out in the order they end rather than the order they were
+# pushed. Superseded builds are cancelled instead.
+concurrency:
+  group: build-matrix-forwarder-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE_NAME: ghcr.io/beeblastco/broods-matrix-forwarder
 

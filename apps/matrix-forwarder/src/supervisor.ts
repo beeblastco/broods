@@ -61,6 +61,8 @@ interface ManagedAccount {
 
 export class Forwarder {
   private readonly createAccount: AccountFactory;
+  /** Accounts removed by a reconcile, still closing their crypto store. */
+  private readonly detached = new Set<Promise<void>>();
   private readonly managed = new Map<string, ManagedAccount>();
   private readonly storeDir: string;
 
@@ -86,7 +88,7 @@ export class Forwarder {
       const next = desired.get(accessToken);
       if (next?.apiUrl === entry.apiUrl) continue;
       this.managed.delete(accessToken);
-      void entry.account.stop();
+      this.detach(entry.account);
       logInfo(
         next ? "Matrix account moved homeserver" : "Matrix account removed",
         { tokenHint: tokenHint(accessToken) },
@@ -134,7 +136,8 @@ export class Forwarder {
       entry.account.stop(),
     );
     this.managed.clear();
-    await Promise.all(stopping);
+
+    await Promise.all([...stopping, ...this.detached]);
   }
 
   private async deliver(
@@ -146,6 +149,25 @@ export class Forwarder {
     if (!targets?.length) return;
 
     await forwardRoomEvent(event, accessToken, targets);
+  }
+
+  /**
+   * Lets a removed account close in its own time. The replacement for its
+   * device waits on the store lock anyway, so only shutdown needs to know the
+   * close is still in flight.
+   */
+  private detach(account: ForwarderAccount): void {
+    const closing = account
+      .stop()
+      .catch((error: unknown): void => {
+        logWarn("Matrix account did not stop cleanly", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally((): void => {
+        this.detached.delete(closing);
+      });
+    this.detached.add(closing);
   }
 
   private open(accessToken: string, group: AccountGroup): void {
@@ -172,8 +194,9 @@ export class Forwarder {
 
 /**
  * One account per access token, fanned out to every webhook the token serves,
- * across planes. A token naming two homeservers is a config error: the first
- * one wins and the rest are logged.
+ * across planes. A token naming two homeservers is a config error, and the
+ * later one is dropped rather than folded in: its agent would otherwise be fed
+ * the first homeserver's rooms.
  */
 export function groupConnectionsByToken(
   connections: readonly MatrixConnection[],
@@ -186,12 +209,13 @@ export function groupConnectionsByToken(
     };
     if (group.apiUrl !== connection.apiUrl) {
       logWarn(
-        "One Matrix access token names two homeservers, using the first",
+        "One Matrix access token names two homeservers, skipping the second",
         {
           agentId: connection.agentId,
           tokenHint: tokenHint(connection.botToken),
         },
       );
+      continue;
     }
     group.targets.push({
       agentId: connection.agentId,

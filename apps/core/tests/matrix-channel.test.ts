@@ -263,6 +263,31 @@ describe("matrix channel actions", () => {
     });
   });
 
+  it("hangs a file it sends off the message it answers", async () => {
+    const sent = captureForwarder();
+    const actions = createMatrixActions(API_URL, TOKEN, source(), "Georgi");
+
+    await actions.sendFiles!([
+      {
+        fetchData: (): Promise<Buffer> => Promise.resolve(Buffer.from("notes")),
+        mimeType: "text/plain",
+        name: "notes.txt",
+        type: "file",
+        url: "https://example.org/notes.txt",
+      },
+    ]);
+
+    expect(sent.at(-1)!.body).toMatchObject({
+      content: {
+        filename: "notes.txt",
+        "m.relates_to": { "m.in_reply_to": { event_id: "$event-1" } },
+        msgtype: "m.file",
+        url: "mxc://example.org/media",
+      },
+      type: "m.room.message",
+    });
+  });
+
   it("reacts to the inbound message", async () => {
     const sent = captureForwarder();
 
@@ -299,13 +324,18 @@ function captureForwarder(): CapturedCall[] {
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> => {
+    const body = init?.body;
     calls.push({
-      body: JSON.parse(String(init?.body)),
+      // Forwarder calls carry JSON; a media upload carries the bytes.
+      body: typeof body === "string" ? JSON.parse(body) : body,
       token: new Headers(init?.headers).get(MATRIX_ACCESS_TOKEN_HEADER),
       url: String(input),
     });
 
-    return Response.json({ eventId: "$sent" });
+    return Response.json({
+      content_uri: "mxc://example.org/media",
+      eventId: "$sent",
+    });
   }) as typeof fetch;
 
   return calls;

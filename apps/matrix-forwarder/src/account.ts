@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   MatrixForwardedEvent,
@@ -297,7 +297,7 @@ export class MatrixAccount {
             await this.forwardSync(session, response);
           }
           since = response.next_batch;
-          await writeFile(session.syncTokenPath, since, { mode: 0o600 });
+          await writeSyncToken(session.syncTokenPath, since);
           attempt = 0;
         } catch (error) {
           if (signal.aborted) break;
@@ -328,11 +328,16 @@ export class MatrixAccount {
       }
     } finally {
       this.crypto = null;
-      if (session !== null) {
-        await session.crypto.close();
-        session.release();
-      }
       if (this.state !== "failed") this.state = "stopped";
+      if (session !== null) {
+        // Released even when the close fails, or the next account for this
+        // device waits in claimStore for a holder that is already gone.
+        try {
+          await session.crypto.close();
+        } finally {
+          session.release();
+        }
+      }
     }
   }
 
@@ -427,4 +432,16 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+/**
+ * Renamed over the old token rather than written in place. A process that dies
+ * mid-write would otherwise leave a truncated token, and the next sync with it
+ * fails until someone deletes the file by hand.
+ */
+async function writeSyncToken(path: string, token: string): Promise<void> {
+  const pending = `${path}.pending`;
+  await writeFile(pending, token, { mode: 0o600 });
+
+  await rename(pending, path);
 }

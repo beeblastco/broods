@@ -193,6 +193,9 @@ export class MatrixClient {
         "Content-Type": "application/json",
       },
       method: method,
+      // The account's token rides every call, and the client-server API never
+      // redirects, so a redirect here would hand it to another host.
+      redirect: "error",
       signal: signal,
     });
     const text = await response.text();
