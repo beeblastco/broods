@@ -18,18 +18,14 @@
 import type { LayoutEdge, LayoutNode, LayoutPosition } from "./canvasLayout";
 import type { McpPlacement, McpTransport } from "./mcp";
 
-/** Member chip width inside a frame: room for a 20 character name. */
-export const FRAME_CHIP_WIDTH = 184;
-
 /**
- * Chip height per kind. A workspace chip carries a third line (the agents
- * sharing it) under its mount state, so it is taller.
+ * Member chip width inside a frame: `NODE_WIDTH` from `canvasLayout.ts`, so a
+ * row and a card are the same width. Inlined; that module imports this one.
  */
-export const FRAME_CHIP_HEIGHTS: Record<FrameKind, number> = {
-  sandbox: 44,
-  workspace: 60,
-  mcp: 44,
-};
+export const FRAME_CHIP_WIDTH = 176;
+
+/** Member chip height: a name line and a status line, the same for every kind. */
+export const FRAME_CHIP_HEIGHT = 44;
 
 /** Vertical gap between two chips. */
 export const FRAME_GAP = 8;
@@ -375,7 +371,7 @@ export function frameMemberPositions(
   origin: LayoutPosition,
   frame: FrameShape,
 ): Map<string, LayoutPosition> {
-  const step = FRAME_CHIP_HEIGHTS[frame.kind] + FRAME_GAP;
+  const step = FRAME_CHIP_HEIGHT + FRAME_GAP;
 
   return new Map(
     frame.memberIds.map((id, index) => [
@@ -406,8 +402,7 @@ export function framesOf(groups: readonly CanvasFrame[]): CanvasFrame[] {
 /** Expanded frame box for its kind and member count. */
 export function frameSize(frame: FrameShape): FrameSize {
   const count = frame.memberIds.length;
-  const chips =
-    count * FRAME_CHIP_HEIGHTS[frame.kind] + Math.max(count - 1, 0) * FRAME_GAP;
+  const chips = count * FRAME_CHIP_HEIGHT + Math.max(count - 1, 0) * FRAME_GAP;
 
   return {
     height: FRAME_HEADER_HEIGHT + chips + FRAME_PADDING,

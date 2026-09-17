@@ -36,6 +36,10 @@ const HANDLE_OFFSET = 6;
 // Distance between the points sampled along an edge path, in flow units.
 const PATH_STEP = 4;
 
+// NODE_WIDTH by NODE_HEIGHT and FRAME_CHIP_HEIGHT, the one size each box draws.
+const CARD_SIZE = { height: 96, width: 176 };
+const CHIP_HEIGHT = 44;
+
 test("groups of one are cards, chips sit inside frames, a collapsed frame is one card", async ({
   page,
 }) => {
@@ -85,6 +89,48 @@ test("groups of one are cards, chips sit inside frames, a collapsed frame is one
     );
     expect(inside, await chip.innerText()).toBe(true);
   }
+});
+
+test("every card is one size, every group row another, whatever the card says", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-frames"]');
+  await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
+  const zoom = await flowScale(fixture);
+
+  // Cards: agents, the lone sandbox, the session store, the ungrouped servers.
+  const cards = await fixture.locator('[data-slot="card"]').all();
+  expect(cards.length).toBeGreaterThan(4);
+  for (const card of cards) {
+    const box = await boxOf(card);
+    expect(
+      [round(box.width / zoom), round(box.height / zoom)],
+      await card.innerText(),
+    ).toEqual([CARD_SIZE.width, CARD_SIZE.height]);
+  }
+
+  // Rows inside a group: a card's width, and one height for every kind.
+  const chips = await fixture.locator('[data-slot="resource-chip"]').all();
+  expect(chips.length).toBeGreaterThan(4);
+  for (const chip of chips) {
+    const box = await boxOf(chip);
+    expect(
+      [round(box.width / zoom), round(box.height / zoom)],
+      await chip.innerText(),
+    ).toEqual([CARD_SIZE.width, CHIP_HEIGHT]);
+  }
+
+  // A collapsed group is a card, at a card's size.
+  const frame = fixture.locator(
+    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+  );
+  await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
+  const collapsedBox = await boxOf(frame);
+  expect([
+    round(collapsedBox.width / zoom),
+    round(collapsedBox.height / zoom),
+  ]).toEqual([CARD_SIZE.width, CARD_SIZE.height]);
 });
 
 test("chip names and status lines fit without truncating", async ({ page }) => {
@@ -533,6 +579,16 @@ function dotColor(className: string | null): string {
   );
 }
 
+/** React Flow's current zoom, so a measured box compares against its flow size. */
+async function flowScale(fixture: Locator): Promise<number> {
+  return fixture
+    .locator(".react-flow__viewport")
+    .evaluate(
+      (viewport): number =>
+        new DOMMatrix(getComputedStyle(viewport).transform).a,
+    );
+}
+
 /**
  * Hovers each drawn edge on its line, never on its control (hovering a control
  * reveals it on its own), and returns which control that reveals. Fails an edge
@@ -626,4 +682,9 @@ async function hoverEveryEdge(
   expect(unreachable).toEqual([]);
 
   return controls;
+}
+
+/** Flow units, to the pixel: a fitted zoom leaves sub-pixel rounding behind. */
+function round(value: number): number {
+  return Math.round(value);
 }

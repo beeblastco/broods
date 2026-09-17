@@ -31,7 +31,7 @@ export function WorkspaceNode({
   const infraAnalysis = useInfraAnalysis();
   const state = infraAnalysis.workspaceStates[id];
   const sharedCount = infraAnalysis.agentRefCounts[id] ?? 0;
-  const status = workspaceChipStatus(state);
+  const status = workspaceChipStatus(state, sharedCount);
 
   if (parentId !== undefined) {
     return (
@@ -40,7 +40,6 @@ export function WorkspaceNode({
         label={nodeData.label}
         mountable={true}
         nodeType="workspace"
-        note={sharedCount > 1 ? `shared ×${sharedCount}` : undefined}
         status={status}
       />
     );
@@ -63,18 +62,23 @@ export function WorkspaceNode({
   );
 }
 
-/** The member status, with the sandbox it runs on in front of mounted or inherited. */
+/**
+ * The member status on one line: the sandbox it runs on in front of mounted or
+ * inherited, then how many agents share it.
+ */
 function workspaceChipStatus(
   state: WorkspaceSandboxState | undefined,
+  sharedCount: number,
 ): ChipStatus {
   const status = workspaceMemberStatus(state);
+  const shared = sharedCount > 1 ? ` · shared ×${sharedCount}` : "";
   if (!state || state.kind === "readonly") {
-    return { color: status.color, text: status.label };
+    return { color: status.color, text: `${status.label}${shared}` };
   }
 
   return {
     color: status.color,
-    text: `↳ ${workspaceStateText(state.kind, state.sandboxLabels)}`,
+    text: `↳ ${workspaceStateText(state.kind, state.sandboxLabels)}${shared}`,
     title: state.sandboxLabels.join(", "),
   };
 }

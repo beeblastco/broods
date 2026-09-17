@@ -24,17 +24,15 @@ import {
 import {
   deriveCanvasGroups,
   edgeKind,
-  FRAME_CHIP_HEIGHTS,
+  FRAME_CHIP_HEIGHT,
   FRAME_CHIP_WIDTH,
   frameMemberPositions,
   frameOriginOf,
   framesOf,
   frameSize,
-  FRAME_WIDTH,
   runsOnSandboxIds,
   workspaceSandboxIds,
   type CanvasFrame,
-  type FrameKind,
   type McpServersByNode,
 } from "@broods/convex/model/canvasFrames";
 import {
@@ -55,8 +53,8 @@ import type { FunctionReturnType } from "convex/server";
 /** Id prefix of the one edge drawn from an agent to a frame. */
 export const BUNDLE_EDGE_PREFIX = "bundle:";
 
-/** A collapsed frame is one compact card: header, member names, summary. */
-export const COLLAPSED_FRAME_HEIGHT = 84;
+/** A collapsed frame is one card: header, member names, summary, at a card's size. */
+export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
 
 const EDGE_CORNER_RADIUS = 8;
 
@@ -329,11 +327,9 @@ function displayBoxes(displayNodes: readonly Node[]): {
     }
     const parent = byId.get(node.parentId);
     if (!parent) continue;
-    const kind: FrameKind =
-      node.type === "workspace" || node.type === "mcp" ? node.type : "sandbox";
     handleBoxes.set(node.id, {
       box: {
-        height: FRAME_CHIP_HEIGHTS[kind],
+        height: FRAME_CHIP_HEIGHT,
         width: FRAME_CHIP_WIDTH,
         x: parent.position.x + node.position.x,
         y: parent.position.y + node.position.y,
@@ -455,7 +451,7 @@ function framedNodes(
     const members = frame.memberIds.flatMap((id) => byId.get(id) ?? []);
     const isCollapsed = collapsed.has(frame.id);
     const size = isCollapsed
-      ? { height: COLLAPSED_FRAME_HEIGHT, width: FRAME_WIDTH }
+      ? { height: COLLAPSED_FRAME_HEIGHT, width: NODE_WIDTH }
       : frameSize(frame);
     frameNodes.set(frame.id, {
       data: { collapsed: isCollapsed, frame: frame, members: members },

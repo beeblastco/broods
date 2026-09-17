@@ -47,10 +47,12 @@ export function FrameNode({
       data-slot="canvas-frame"
       data-collapsed={collapsed}
       className={cn(
-        "relative flex size-full flex-col rounded-md border border-border",
+        "relative flex size-full flex-col rounded-md border",
         collapsed
-          ? "bg-card hover:border-foreground/25"
-          : "border-dashed bg-transparent",
+          ? "border-border bg-card hover:border-foreground/25"
+          : // Dashed and lighter than a card's, so a group reads as one box without
+            // drawing harder than the cards inside it.
+            "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
       )}
     >
       {/* Bundle edges from the agent land on top; mount and runs-on edges
