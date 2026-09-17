@@ -25,7 +25,7 @@ so Daytona matches Lambda and the `sandbox` provider.
 }
 ```
 
-Reference the resulting `sandboxId` from `config.sandbox` or `config.workspaces[].sandbox`.
+Reference the resulting `sandboxId` from `config.sandboxes` or `config.workspaces[].sandbox`.
 `apiKey`, `organizationId`, `apiUrl`, and `target` can be omitted when
 `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, and `DAYTONA_TARGET` are set.
 

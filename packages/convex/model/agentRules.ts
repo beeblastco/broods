@@ -3,6 +3,7 @@
  * default Convex runtime. The public projection lives in ./responses.ts.
  */
 
+import { SANDBOX_REMOVED_MESSAGE } from "./agentConfigCodec";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
@@ -35,7 +36,6 @@ export type AgentConfig = Record<string, unknown> & {
   };
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
-  sandbox?: string;
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: Record<string, unknown>;
@@ -57,6 +57,12 @@ export type AgentConfig = Record<string, unknown> & {
   policies?: string[];
   publicAccess?: boolean;
 };
+
+/**
+ * `patch` marks a partial config checked alone before the merge. A rule that
+ * needs another branch skips it, since the merged config is checked in full.
+ */
+export type AgentConfigCheckOptions = { patch?: boolean };
 
 export interface AgentWorkspaceRef {
   name: string;
@@ -170,9 +176,13 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
 
 /**
  * @param value unknown config value
+ * @param options `patch` when value is a partial config checked before its merge
  * @returns normalized agent config
  */
-export function normalizeAgentConfig(value: unknown): AgentConfig {
+export function normalizeAgentConfig(
+  value: unknown,
+  options: AgentConfigCheckOptions = {},
+): AgentConfig {
   if (value == null) {
     return {};
   }
@@ -185,14 +195,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  normalizeSandboxRef(config.sandbox);
-  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
-    throw new Error(
-      `config.sandbox is required for the ${String(config.harness.type)} harness`,
-    );
-  }
-  normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(config.sandboxes, config.sandbox, config.workspaces);
+  assertAgentRuntimeRefs(config, options);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -323,6 +326,61 @@ export function normalizeUpdateAgentInput(
       : {}),
     config: config,
   };
+}
+
+/**
+ * The sandbox and workspace rules of {@link normalizeAgentConfig}, alone. A canvas
+ * save changes only these refs, so it checks them without re-judging branches the
+ * dashboard never validated, like a custom provider's `${BASE_URL}` placeholder.
+ */
+export function assertAgentRuntimeRefs(
+  config: AgentConfig,
+  options: AgentConfigCheckOptions = {},
+): void {
+  if (config.sandbox !== undefined) throw new Error(SANDBOX_REMOVED_MESSAGE);
+  normalizeWorkspaceRefs(config.workspaces);
+  normalizeSandboxRefs(config.sandboxes, config.workspaces);
+  // A patch may add a harness to an agent whose sandboxes are already stored.
+  if (
+    !options.patch &&
+    isPlainObject(config.harness) &&
+    !config.sandboxes?.length
+  )
+    throw new Error(
+      `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
+    );
+}
+
+/** The default sandbox id of a stored or nested config: the first of `sandboxes`. */
+export function defaultSandboxOf(
+  config: Record<string, unknown>,
+): string | undefined {
+  const first: unknown = Array.isArray(config.sandboxes)
+    ? config.sandboxes[0]
+    : undefined;
+
+  return typeof first === "string" ? first : undefined;
+}
+
+/**
+ * The agent's sandbox list once the canvas sets its default. The canvas draws only
+ * the default, so the extras already stored stay behind it. Clearing the default
+ * clears the list rather than promoting an extra into its place.
+ */
+export function sandboxesWithDefault(
+  stored: unknown,
+  defaultSandbox: string | null,
+): string[] {
+  if (!defaultSandbox) return [];
+  const extras = Array.isArray(stored)
+    ? stored
+        .slice(1)
+        .filter(
+          (id): id is string => typeof id === "string" && id !== defaultSandbox,
+        )
+    : [];
+
+  return [defaultSandbox, ...extras];
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
@@ -579,36 +637,27 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
   return trimmed || undefined;
 }
 
-function normalizeSandboxRef(value: unknown): void {
-  assertOptionalNonEmptyString(value, "config.sandbox");
-}
-
-// Extra sandboxes are bash targets beside the default, so repeating the default
-// or a workspace's sandbox would name one machine twice, once with a mount and
-// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+// The first sandbox is the default and may back a workspace. A later one runs
+// with no mount, so it never backs one. Each id appears once.
 function normalizeSandboxRefs(
   value: unknown,
-  defaultSandbox: unknown,
   workspaces: AgentWorkspaceRef[] | undefined,
 ): void {
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
   value.forEach((sandboxId, index): void => {
-    if (sandboxId === defaultSandbox)
-      throw new Error(
-        `config.sandboxes[${index}] repeats the default config.sandbox`,
-      );
     if (seen.has(sandboxId))
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
-    const mounted = workspaces?.find(
-      (ref): boolean => ref.sandbox === sandboxId,
-    );
+    const mounted =
+      index === 0
+        ? undefined
+        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
     if (mounted)
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
       );
     seen.add(sandboxId);
   });
@@ -1052,7 +1101,7 @@ function validateConfigPatch(value: unknown, path: string): void {
   const candidate = value as Record<string, unknown>;
   const withoutNulls = removeNullConfigValues(candidate);
   if (path === "config") {
-    normalizeAgentConfig(withoutNulls);
+    normalizeAgentConfig(withoutNulls, { patch: true });
 
     return;
   }

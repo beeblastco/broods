@@ -501,7 +501,7 @@ async function verify(): Promise<void> {
             instructions: computer
               ? "Use the computer tool to take one screenshot, then reply with exactly the frontmost app it reported and nothing else."
               : "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
-            sandbox: sandboxId,
+            sandboxes: [sandboxId],
           },
         },
       });

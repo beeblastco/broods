@@ -14,6 +14,7 @@ import {
   decryptAgentConfigBlob,
   toNestedAgentConfig,
 } from "./agentConfigCodec";
+import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
 
@@ -111,6 +112,7 @@ export function assertSupportedWorkspaceSandboxMounts(
     const config = plainRecord(agent.config);
     const workspaces = config.workspaces;
     if (!Array.isArray(workspaces)) continue;
+    const defaultSandbox = defaultSandboxOf(config);
     for (const ref of workspaces) {
       const workspace = plainRecord(ref);
       const sandboxName =
@@ -118,9 +120,7 @@ export function assertSupportedWorkspaceSandboxMounts(
           ? undefined
           : typeof workspace.sandbox === "string"
             ? workspace.sandbox
-            : typeof config.sandbox === "string"
-              ? config.sandbox
-              : undefined;
+            : defaultSandbox;
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
@@ -414,9 +414,6 @@ export function rewriteIdsToNames(
     policies: policyNames = {},
   } = names;
   const result = { ...config };
-  if (typeof result.sandbox === "string" && sandboxNames[result.sandbox]) {
-    result.sandbox = sandboxNames[result.sandbox];
-  }
   if (Array.isArray(result.sandboxes)) {
     result.sandboxes = rewriteRefList(result.sandboxes, sandboxNames);
   }
@@ -503,9 +500,6 @@ export function rewriteResourceRefs(
     mcp: mcpIds = {},
   } = ids;
   const result = { ...config };
-  if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
-    result.sandbox = sandboxIds[result.sandbox];
-  }
   if (Array.isArray(result.sandboxes)) {
     result.sandboxes = rewriteRefList(result.sandboxes, sandboxIds);
   }

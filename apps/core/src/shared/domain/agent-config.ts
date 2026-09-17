@@ -126,9 +126,9 @@ export interface AgentConfig {
   // References to standalone, account-scoped sandbox / workspace records. The
   // concrete configs live in their own tables (see sandbox-config.ts /
   // workspace-config.ts) and are resolved by the handler before the agent loop.
-  sandbox?: string;
-  // Extra sandboxes bash reaches by name with no workspace mounted. Never repeats
-  // `sandbox`.
+  // The first is the default: `bash` with no workspace runs there, a workspace
+  // without its own sandbox inherits it, and a harness runs on it. The others are
+  // reached by name.
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: AgentSessionConfig;
@@ -309,10 +309,10 @@ export interface AgentWorkspaceRef {
   // Account-scoped workspaceConfig record id. Agents that reference the same
   // workspaceId read and write the SAME files (shared workspace).
   workspaceId: string;
-  // Optional per-workspace sandbox. A sandbox id overrides the agent-level
-  // `sandbox` for this workspace (and inherits its permissionMode). Omitted =>
-  // inherit the agent-level `sandbox`; if there is none, the workspace is read-only
-  // and read/glob run through a service-managed read-only mount (so they see
+  // Optional per-workspace sandbox. A sandbox id overrides the agent's default
+  // sandbox for this workspace (and inherits its permissionMode). Omitted =>
+  // inherit the default (first of `sandboxes`); if there is none, the workspace is
+  // read-only and read/glob run through a service-managed read-only mount (so they see
   // committed writes immediately). `null` forces this workspace read-only AND opts
   // out of that mount: read/glob then read straight from S3 (no compute, but reads
   // lag mount writes by the S3 export delay). See docs/workspace/sandbox/lambda.md.
@@ -602,7 +602,6 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     harness,
     model,
     provider,
-    sandbox,
     sandboxes,
     workspaces,
     session,
@@ -618,11 +617,16 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   } = config;
 
   return normalizeAgentConfig({
+    // A stored config from before `sandboxes` absorbed `sandbox` would otherwise
+    // lose the key here and quietly promote its first extra to the default, so it
+    // is carried through for the normalizer to refuse.
+    ...("sandbox" in config && config.sandbox !== undefined
+      ? { sandbox: config.sandbox }
+      : {}),
     ...(agent !== undefined ? { agent: agent } : {}),
     ...(harness !== undefined ? { harness: harness } : {}),
     ...(model !== undefined ? { model: model } : {}),
     ...(provider !== undefined ? { provider: provider } : {}),
-    ...(sandbox !== undefined ? { sandbox: sandbox } : {}),
     ...(sandboxes !== undefined ? { sandboxes: sandboxes } : {}),
     ...(workspaces !== undefined ? { workspaces: workspaces } : {}),
     ...(session !== undefined ? { session: session } : {}),
@@ -697,7 +701,15 @@ export function resolveSubagentMode(
   return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
 }
 
-export function normalizeAgentConfig(value: unknown): AgentConfig {
+/**
+ * Validates an agent config. `patch` checks a partial update alone, so it skips the
+ * harness-needs-sandboxes rule, which only holds for the merged config; the merged
+ * result is validated in full.
+ */
+export function normalizeAgentConfig(
+  value: unknown,
+  options: { patch?: boolean } = {},
+): AgentConfig {
   if (value == null) {
     return {};
   }
@@ -711,13 +723,22 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
-  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
+  if (config.sandbox !== undefined) {
     throw new Error(
-      `config.sandbox is required for the ${String(config.harness.type)} harness`,
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
     );
   }
   normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(config.sandbox, config.sandboxes, config.workspaces);
+  normalizeSandboxRefs(config.sandboxes, config.workspaces);
+  if (
+    !options.patch &&
+    isPlainObject(config.harness) &&
+    !config.sandboxes?.length
+  ) {
+    throw new Error(
+      `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
+    );
+  }
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
@@ -1099,18 +1120,12 @@ function baseUrlTypoHint(config: Record<string, unknown>): string {
     : "";
 }
 
-// The concrete sandbox/workspace configs live in their own account-scoped tables;
-// the agent config only carries references. Validation of the referenced records
-// themselves lives in sandbox-config.ts / workspace-config.ts.
-// Extra sandboxes are bash targets beside the default, so repeating the default
-// or a workspace's sandbox would name one machine twice, once with a mount and
-// once without. Runs after normalizeWorkspaceRefs, which proves the refs' shape.
+// The first sandbox is the default and may back a workspace. A later one runs
+// with no mount, so it never backs one. Each id appears once.
 function normalizeSandboxRefs(
-  sandbox: unknown,
   sandboxes: unknown,
   workspaces: AgentWorkspaceRef[] | undefined,
-): void {
-  assertOptionalNonEmptyString(sandbox, "config.sandbox");
+): asserts sandboxes is string[] | undefined {
   assertOptionalStringArray(sandboxes, "config.sandboxes");
   if (sandboxes === undefined) {
     return;
@@ -1118,22 +1133,18 @@ function normalizeSandboxRefs(
 
   const seen = new Set<string>();
   sandboxes.forEach((sandboxId, index): void => {
-    if (sandboxId === sandbox) {
-      throw new Error(
-        `config.sandboxes[${index}] repeats the default config.sandbox`,
-      );
-    }
     if (seen.has(sandboxId)) {
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" is used more than once`,
+        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
     }
-    const mounted = workspaces?.find(
-      (ref): boolean => ref.sandbox === sandboxId,
-    );
+    const mounted =
+      index === 0
+        ? undefined
+        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
     if (mounted) {
       throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"`,
+        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
       );
     }
     seen.add(sandboxId);
@@ -1175,7 +1186,7 @@ function normalizeWorkspaceRefs(
         `config.workspaces[${index}].workspaceId must be a non-empty string`,
       );
     }
-    // `null` is allowed: it forces this workspace read-only even when config.sandbox is set.
+    // `null` is allowed: it forces this workspace read-only even when config.sandboxes is set.
     if (ref.sandbox !== null && ref.sandbox !== undefined) {
       if (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0) {
         throw new Error(
@@ -1466,7 +1477,7 @@ function validateConfigPatch(value: unknown, path: string): void {
   const withoutNulls = removeNullConfigValues(candidate);
 
   if (path === "config") {
-    normalizeAgentConfig(withoutNulls);
+    normalizeAgentConfig(withoutNulls, { patch: true });
 
     return;
   }

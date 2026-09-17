@@ -93,7 +93,7 @@ export const myAgent = defineAgent({
   agent: {
     system: "You are a helpful assistant.",
   },
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   publicAccess: true,
 });
 ```

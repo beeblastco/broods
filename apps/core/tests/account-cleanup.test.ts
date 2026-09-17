@@ -121,8 +121,8 @@ it("registers agent/crons.remove as an internal mutation", () => {
   );
 });
 
-// A reserved extra sandbox is a machine per agent and record, so cleanup has to
-// release every id the agent attaches, not only config.sandbox. One list serves
+// A reserved agent-level sandbox is a machine per agent and record, so cleanup has
+// to release every id the agent attaches, not only the first. One list serves
 // every agent; a record nobody references, or an id no record answers, is skipped.
 it("collects reservation keys from an agent's default and extra sandboxes", async () => {
   let listed = 0;
@@ -133,11 +133,10 @@ it("collects reservation keys from an agent's default and extra sandboxes", asyn
           {
             agentId: "ag_1",
             config: {
-              sandbox: "sb_default",
-              sandboxes: ["sb_browser", "sb_missing"],
+              sandboxes: ["sb_default", "sb_browser", "sb_missing"],
             },
           },
-          { agentId: "ag_2", config: { sandbox: "sb_default" } },
+          { agentId: "ag_2", config: { sandboxes: ["sb_default"] } },
         ];
       },
     },

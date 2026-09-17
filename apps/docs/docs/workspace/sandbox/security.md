@@ -37,10 +37,11 @@ and **workspace scoping** (a run can only touch its own files).
   storage that outlives the sandbox, so writes to an absolute path outside it are rejected
   with the workspace path to use instead. `/tmp` and `/var/tmp` are exempt. Writing there
   is a deliberate "this is throwaway". The gate also steps aside when the workspace runs on
-  the agent's **own** `persistent` sandbox, because that filesystem survives between calls
-  (see [Whose sandbox is it?](../index.md)). A `persistent` sandbox the workspace only
-  **borrows** keeps its filesystem between calls too, but stays gated. It is an execution
-  layer, not the agent's machine.
+  the agent's **own** `persistent` sandbox (the first in its `sandboxes`), because that
+  filesystem survives between calls (see
+  [Whose sandbox is it?](../index.md#whose-sandbox-is-it)). A `persistent` sandbox the
+  workspace only **borrows** keeps its filesystem between calls too, but stays gated. It
+  is an execution layer, not the agent's machine.
   Two lifetimes are in play and they are not the same: a single **call** ends when the
   command returns, while a **reservation** spans many calls and ends on idle expiry or
   release. `persistent` is what makes the filesystem outlive the call; nothing makes it

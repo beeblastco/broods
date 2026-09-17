@@ -112,7 +112,7 @@ export async function deleteWorkspaceFilesystem(
 }
 
 /**
- * The reservation keys this account's agents hold on their own and extra
+ * The reservation keys this account's agents hold on their agent-level
  * sandboxes. Asks `agentSandboxReservation` so a pinned key releases the machine
  * actually reserved.
  */
@@ -133,25 +133,20 @@ export async function agentSandboxReservationKeys(
   );
 
   return agents.flatMap((agent): string[] =>
-    [agent.config.sandbox, ...(agent.config.sandboxes ?? [])].flatMap(
-      (sandboxId): string[] => {
-        const record =
-          typeof sandboxId === "string"
-            ? recordsById.get(sandboxId)
-            : undefined;
-        if (!record) {
-          return [];
-        }
-        const key = agentSandboxReservation(
-          record.config,
-          accountId,
-          agent.agentId,
-          record.sandboxId,
-        );
+    (agent.config.sandboxes ?? []).flatMap((sandboxId): string[] => {
+      const record = recordsById.get(sandboxId);
+      if (!record) {
+        return [];
+      }
+      const key = agentSandboxReservation(
+        record.config,
+        accountId,
+        agent.agentId,
+        record.sandboxId,
+      );
 
-        return key ? [key] : [];
-      },
-    ),
+      return key ? [key] : [];
+    }),
   );
 }
 

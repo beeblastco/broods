@@ -19,13 +19,14 @@ export type WorkspaceRef = {
 /** Runtime reference patch for one agent config. */
 export type AgentRuntimeRefs = {
   configId: Id<"agentConfigs">;
-  sandbox?: string;
+  /** The agent's default sandbox, sandboxes[0]. The canvas draws only the default. */
+  defaultSandbox: string | null;
   workspaces: WorkspaceRef[];
 };
 
 /**
  * Effective-sandbox state for a workspace, resolved from the broods cascade
- * `ws.sandbox (override) ?? config.sandbox (inherited) ?? none (read-only)`.
+ * `ws.sandbox (override) ?? config.sandboxes[0] (inherited) ?? none (read-only)`.
  */
 export type WorkspaceSandboxState =
   | { kind: "override"; sandboxLabels: string[] }
@@ -118,7 +119,7 @@ export function analyzeCanvasInfra(
   const adjacency = buildAdjacency(edges);
   const agents = runtimeNodes.filter((node) => node.type === "agent");
 
-  // agentId → its directly-attached default sandbox node (config.sandbox)
+  // agentId → its directly-attached default sandbox node (config.sandboxes[0])
   const agentDefaultSandbox = new Map<string, RuntimeNode | undefined>();
   // resource node id → set of agent ids that reference it (for shared counts)
   const refAgents = new Map<string, Set<string>>();
@@ -218,8 +219,9 @@ export function deriveAgentRuntimeRefs(
     }
 
     // An agent's resources come from its DIRECT edges (explicit model): the sandbox it
-    // points at is its default; the workspaces it points at are its workspaces. Workspaces
-    // are no longer inferred transitively through a shared sandbox.
+    // points at is its default, sandboxes[0]; the workspaces it points at are its workspaces.
+    // Workspaces are no longer inferred transitively through a shared sandbox. The canvas
+    // allows one direct sandbox edge, so extras never come from here.
     const directNodes = neighbors(agent.id, adjacency)
       .map((nodeId) => byId.get(nodeId))
       .filter((node): node is RuntimeNode => !!node);
@@ -227,7 +229,7 @@ export function deriveAgentRuntimeRefs(
       .filter((node) => node.type === "sandbox")
       .map((node) => resourceIdFor(node, "sandbox"))
       .filter((value): value is string => !!value);
-    const defaultSandbox = directSandboxIds[0];
+    const defaultSandbox = directSandboxIds[0] ?? null;
     const workspaceNodes = directNodes.filter(
       (node) => node.type === "workspace",
     );
@@ -275,7 +277,7 @@ export function deriveAgentRuntimeRefs(
     return [
       {
         configId: agentConfigId,
-        ...(defaultSandbox ? { sandbox: defaultSandbox } : {}),
+        defaultSandbox: defaultSandbox,
         workspaces: workspaces,
       },
     ];
@@ -285,7 +287,7 @@ export function deriveAgentRuntimeRefs(
 /** Stable serialization for change detection before writing Convex mutations. */
 export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   return JSON.stringify({
-    sandbox: refs.sandbox ?? null,
+    defaultSandbox: refs.defaultSandbox,
     workspaces: refs.workspaces,
   });
 }

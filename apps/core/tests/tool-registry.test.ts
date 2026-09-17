@@ -12,6 +12,11 @@ import {
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
+import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
+import type {
+  ResolvedWorkspace,
+  WorkspaceSandboxConfig,
+} from "../src/shared/workspaces.ts";
 
 interface ChannelTestTool {
   execute: ToolExecuteFunction<
@@ -49,9 +54,11 @@ describe("createTools", () => {
     const tools = await createTools(
       {
         ...createToolContext(),
-        agentSandbox: { provider: "lambda" },
-        agentSandboxPermissionMode: "ask",
         sandboxes: [
+          {
+            name: "agent-sandbox",
+            sandbox: { provider: "lambda", permissionMode: "ask" },
+          },
           {
             name: "kien-mac",
             sandbox: { provider: "machine", permissionMode: "ask" },
@@ -66,28 +73,32 @@ describe("createTools", () => {
 
   it("keeps computer registered when a workspace inherits the agent's own machine", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const mac = {
+    const mac: WorkspaceSandboxConfig = {
       provider: "machine",
-      controlPlane: { sandboxConfigId: "sb_mac", name: "my-mac" },
+      controlPlane: {
+        accountId: "acct_test",
+        sandboxConfigId: "sb_mac",
+        name: "my-mac",
+        specs: { vcpu: 2, memoryMb: 2048, storageGb: 10 },
+      },
     };
-    const tools = await createTools(
-      {
-        ...createToolContext(),
-        agentSandbox: mac,
-        agentSandboxPermissionMode: "bypass",
-        // A mount is a way onto the machine's files; its screen stays reachable.
-        workspaces: [
-          {
-            name: "notes",
-            workspaceId: "ws_a",
-            namespace: "fs-notes",
-            config: { storage: { provider: "s3" } },
-            sandbox: mac,
-          },
-        ],
-      } as never,
-      {},
-    );
+    const context: Omit<ToolContext, "config"> = {
+      ...createToolContext(),
+      sandboxes: [
+        { name: "my-mac", sandbox: { ...mac, permissionMode: "bypass" } },
+      ],
+      // A mount is a way onto the machine's files; its screen stays reachable.
+      workspaces: [
+        {
+          name: "notes",
+          workspaceId: "ws_a",
+          namespace: "fs-notes",
+          config: { storage: { provider: "s3" } },
+          sandbox: mac,
+        },
+      ],
+    };
+    const tools = await createTools(context, {});
 
     expect(Object.keys(tools)).toContain("computer");
   });
@@ -353,15 +364,23 @@ describe("createTools", () => {
   it("drops memory_save when the workspace harness memory opts out", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
-    const context = sandboxContext(
+    const base = sandboxContext(
       [{ name: "notes", workspaceId: "ws_a", namespace: "fs-a" }],
       "bypass",
-    ) as { workspaces: Array<{ config: Record<string, unknown> }> };
-    context.workspaces[0]!.config = {
-      storage: { provider: "s3" },
-      harness: { memory: { enabled: false } },
+    );
+    const context: Omit<ToolContext, "config"> = {
+      ...base,
+      workspaces: (base.workspaces ?? []).map(
+        (workspace): ResolvedWorkspace => ({
+          ...workspace,
+          config: {
+            storage: { provider: "s3" },
+            harness: { memory: { enabled: false } },
+          },
+        }),
+      ),
     };
-    const tools = await createTools(context as never, {});
+    const tools = await createTools(context, {});
 
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
@@ -1535,22 +1554,26 @@ function sandboxContext(
     workspaceId: string;
     namespace: string;
   }> = [],
-  permissionMode = "ask",
-) {
+  permissionMode: SandboxPermissionMode = "ask",
+): Omit<ToolContext, "config"> {
   return {
     accountId: "acct_test",
     conversationKey: "conversation",
-    agentSandbox: { provider: "lambda" },
-    agentSandboxPermissionMode: permissionMode,
+    sandboxes: [
+      {
+        name: "agent-sandbox",
+        sandbox: { provider: "lambda", permissionMode: permissionMode },
+      },
+    ],
     // Each workspace carries its own effective sandbox (its permissionMode lives on it).
-    workspaces: workspaces.map((workspace) => ({
+    workspaces: workspaces.map((workspace): ResolvedWorkspace => ({
       ...workspace,
       config: { storage: { provider: "s3" } },
       sandbox: { provider: "lambda", permissionMode: permissionMode },
     })),
     modelProviderName: "google",
     modelProvider: { tools: { urlContext: urlContextMock } },
-  } as never;
+  };
 }
 
 async function approvalStatus(
@@ -1558,8 +1581,7 @@ async function approvalStatus(
   input: Record<string, unknown>,
   ctx: {
     workspaces?: unknown[];
-    agentSandbox?: unknown;
-    agentSandboxPermissionMode?: unknown;
+    sandboxes?: unknown[];
     approvalRequirements?: Map<string, true>;
   },
 ): Promise<ToolApprovalStatus> {
@@ -1569,10 +1591,7 @@ async function approvalStatus(
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
-    ...(typeof ctx.agentSandboxPermissionMode === "string"
-      ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
-      : {}),
+    ...(ctx.sandboxes ? { sandboxes: ctx.sandboxes as never } : {}),
   });
 }
 

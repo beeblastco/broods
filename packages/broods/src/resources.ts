@@ -126,13 +126,8 @@ export type SandboxDefinitionConfig = Omit<
 
 export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
 
-export type HarnessDefinition = Omit<
-  NonNullable<AgentConfig["harness"]>,
-  "type"
-> & {
-  type: HarnessType;
-  sandbox: SandboxResource | string;
-};
+/** Harness settings. The harness runs on the agent's first sandbox. */
+export type HarnessDefinition = NonNullable<AgentConfig["harness"]>;
 
 export interface SkillDefinitionConfig {
   /**
@@ -180,8 +175,9 @@ export interface McpDefinitionConfig {
   handler?: McpHandler;
   /**
    * Extra request headers. Credential-bearing headers (Authorization,
-   * X-Api-Key, ...) must reference an account env var, e.g.
-   * `Bearer ${env("TOKEN")}`. Never carry an inline secret.
+   * X-Api-Key, ...) must reference an account env var by name inside a plain
+   * string, e.g. `"Bearer ${TOKEN}"`. `env()` returns an object, so a template
+   * literal around it sends `[object Object]`. Never carry an inline secret.
    */
   headers?: Record<string, string>;
   /**
@@ -428,7 +424,7 @@ export type PancakeChannelInput = ChannelRulesInput & {
 
 /**
  * Per-agent workspace mount with an optional sandbox override. A bare
- * `defineWorkspace(...)` inherits the agent-level sandbox; the object form lets
+ * `defineWorkspace(...)` inherits the agent's first sandbox; the object form lets
  * a single workspace pin its own sandbox, or set `sandbox: null` to force the
  * workspace read-only (no compute attached).
  */
@@ -597,10 +593,10 @@ export type AgentDefinitionConfig = EnvRefString<
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
   connections?: readonly AnyConnectionDefinition[];
-  sandbox?: SandboxResource | string;
   /**
-   * Extra sandboxes bash picks by name with no workspace mounted, each with its
-   * own image, size, network and permissionMode. Never repeat `sandbox` here.
+   * Sandboxes this agent runs on. The first is the default: bash with no
+   * workspace runs there, workspaces without their own sandbox mount it, and a
+   * harness runs on it. The model reaches the others by name.
    */
   sandboxes?: readonly (SandboxResource | string)[];
   workspaces?: readonly AgentWorkspaceInput[];

@@ -77,37 +77,21 @@ const ABSOLUTE_WRITE_PATTERNS = [
 ];
 
 // What a bash call picked to run on. The two are orthogonal, not two spellings of
-// one field: `workspace` names a mount, `sandbox` says "no mount". `true` and the
-// agent's own sandbox name both pick that one; any other name picks an extra.
+// one field: `workspace` names a mount, `sandbox` names an agent-level sandbox to
+// run on with no mount.
 export interface BashTarget {
   workspace?: string;
-  sandbox?: boolean | string;
-}
-
-// One sandbox a call can pick by name, resolved for a turn: the agent's own while
-// nothing mounts it, and every extra. `permissionMode` is that record's own, so
-// approval follows the sandbox a call lands on. `own` marks the agent's default.
-export interface SelectableSandbox {
-  description?: string;
-  name: string;
-  own: boolean;
-  permissionMode: SandboxPermissionMode;
-  sandbox: SandboxExecutorConfig;
+  sandbox?: string;
 }
 
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
-// may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
-// backs `bash` outright when no workspace is attached, and stays separately
-// reachable when workspaces are. See hasStandaloneSandbox.
+// may operate on.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
   // Present when the tool needs the account's model settings rather than the
   // workspace alone. `read` transcribes audio with them.
   agentConfig?: AgentConfig;
-  agentSandbox?: SandboxExecutorConfig;
-  agentSandboxPermissionMode?: SandboxPermissionMode;
-  // Extra sandboxes (`config.sandboxes`) bash reaches by name with no workspace
-  // mounted. Each follows its own permissionMode.
+  // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
   // Set when the parent session can track background jobs: bash exposes a
   // `background` flag for persistent workspaces and records each job as an
@@ -134,21 +118,14 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-/**
- * Whether the agent's own sandbox needs a way in of its own. It does not when there
- * are no workspaces (bash already runs there), nor when a workspace mounts that same
- * sandbox. The workspace IS the way in, and reaches the same machine with storage.
- */
-export function hasStandaloneSandbox(
-  workspaces: ResolvedWorkspace[],
-  agentSandbox: SandboxExecutorConfig | undefined,
-): boolean {
-  if (!agentSandbox || workspaces.length === 0) {
+/** Whether bash reaches the default sandbox by name: it exists and no workspace mounts it. */
+export function hasStandaloneSandbox(context: SandboxToolContext): boolean {
+  if (!context.sandboxes?.[0]) {
     return false;
   }
 
-  return !workspaces.some((workspace) =>
-    isAgentOwnSandbox(workspace, agentSandbox),
+  return !context.workspaces.some((workspace): boolean =>
+    isAgentOwnSandbox(workspace, context),
   );
 }
 
@@ -159,9 +136,9 @@ export function hasStandaloneSandbox(
  */
 export function isAgentOwnSandbox(
   workspace: ResolvedWorkspace,
-  agentSandbox: SandboxExecutorConfig | undefined,
+  context: SandboxToolContext,
 ): boolean {
-  const owned = agentSandbox?.controlPlane?.sandboxConfigId;
+  const owned = context.sandboxes?.[0]?.sandbox.controlPlane?.sandboxConfigId;
 
   return Boolean(
     owned && workspace.sandbox?.controlPlane?.sandboxConfigId === owned,
@@ -181,35 +158,37 @@ export function sandboxSupportsJobControls(
 }
 
 /**
- * The agent-level sandbox a no-mount call runs on, and the permissionMode that
- * gates it: a named extra from `config.sandboxes`, else the agent's own sandbox,
- * which `true` and its own record name both select. Throws when a requested name
- * matches neither, the way an unknown workspace name does.
+ * The agent-level sandbox a no-mount call runs on: the selectable one a name picks,
+ * else the default. Undefined when nothing is named and the agent has no sandbox.
+ * Throws when a name picks nothing selectable, the way an unknown workspace name
+ * does, so a mounted default never silently runs in its workspace instead.
  */
 export function resolveAgentSandbox(
   context: SandboxToolContext,
-  requested?: boolean | string,
-): {
-  sandbox: SandboxExecutorConfig | undefined;
-  permissionMode: SandboxPermissionMode;
-} {
-  if (picksOwnSandbox(context, requested)) {
-    return {
-      sandbox: context.agentSandbox,
-      permissionMode: context.agentSandboxPermissionMode ?? "ask",
-    };
+  requested?: string,
+): ResolvedAgentSandbox | undefined {
+  if (requested === undefined) {
+    return context.sandboxes?.[0];
   }
-  const extra = context.sandboxes?.find(
-    (entry): boolean => entry.name === requested,
+  const entry = selectableSandboxes(context).find(
+    (candidate): boolean => candidate.name === requested,
   );
-  if (!extra) {
-    throw new Error(`unknown sandbox ${requested}`);
+  if (entry) {
+    return entry;
+  }
+  const mountedBy =
+    context.sandboxes?.[0]?.name === requested
+      ? context.workspaces.find((workspace): boolean =>
+          isAgentOwnSandbox(workspace, context),
+        )
+      : undefined;
+  if (mountedBy) {
+    throw new Error(
+      `sandbox "${requested}" is mounted by workspace "${mountedBy.name}"; pass workspace "${mountedBy.name}" instead`,
+    );
   }
 
-  return {
-    sandbox: extra.sandbox,
-    permissionMode: extra.sandbox.permissionMode ?? "ask",
-  };
+  throw new Error(`unknown sandbox ${requested}`);
 }
 
 /**
@@ -383,9 +362,9 @@ export function bashNeedsApproval(
   selection: BashTarget = {},
 ): boolean {
   try {
-    // An unknown name throws here, so the gate stays closed on a call the tool
-    // will refuse anyway.
-    const agentSandbox = resolveAgentSandbox(context, selection.sandbox);
+    // A name that picks nothing selectable throws here, so the gate stays closed on
+    // a call the tool will refuse anyway.
+    const picked = resolveAgentSandbox(context, selection.sandbox);
     if (!targetsAgentSandbox(context, selection)) {
       const workspace = resolveWorkspace(
         context.workspaces,
@@ -400,23 +379,17 @@ export function bashNeedsApproval(
       return permissionModeFor(workspace) !== "bypass";
     }
 
-    return agentSandbox.permissionMode !== "bypass";
+    return picked?.sandbox.permissionMode !== "bypass";
   } catch {
     return true;
   }
 }
 
 /**
- * Narrows a stored `sandbox` field: `true` is the agent's own sandbox, a string is
- * a name resolved downstream. The tool and the policy layer both read it here.
+ * Narrows a stored `sandbox` field to the name resolved downstream. The tool and
+ * the policy layer both read it here, and both refuse a present non-name.
  */
-export function bashSandboxTarget(
-  value: unknown,
-): boolean | string | undefined {
-  if (value === true) {
-    return true;
-  }
-
+export function bashSandboxTarget(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
@@ -430,9 +403,9 @@ export function bashSandboxTarget(
  * nothing, which the tool refuses and the approval gate reads as "ask".
  */
 export function computerSandboxTarget(
-  machines: SelectableSandbox[],
+  machines: ResolvedAgentSandbox[],
   requested: unknown,
-): SelectableSandbox | undefined {
+): ResolvedAgentSandbox | undefined {
   if (typeof requested === "string") {
     return machines.find((machine): boolean => machine.name === requested);
   }
@@ -441,40 +414,34 @@ export function computerSandboxTarget(
 }
 
 /**
- * The computers this agent can drive, its own sandbox first. Only a machine has a
+ * The computers this agent can drive, in config order. Only a machine has a
  * screen, so this is both what registers the `computer` tool and the list a call
- * picks from. The own machine stays even when a workspace mounts it: a workspace
- * is a way onto its files, never onto its screen.
+ * picks from. The default machine stays even when a workspace mounts it: a
+ * workspace is a way onto its files, never onto its screen.
  */
 export function machineSandboxes(
-  context: SandboxToolContext,
-): SelectableSandbox[] {
-  return agentSandboxes(context).filter(
+  sandboxes: ResolvedAgentSandbox[] = [],
+): ResolvedAgentSandbox[] {
+  return sandboxes.filter(
     (entry): boolean => entry.sandbox.provider === "machine",
   );
 }
 
-/**
- * Every sandbox a bash call can pick by name, the agent's own first. The own
- * sandbox is nameable while no workspace mounts it; once one does, the workspace
- * is the way in. Extras are always nameable.
- */
+/** Every sandbox a bash call can name: the default while standalone, then the rest. */
 export function selectableSandboxes(
   context: SandboxToolContext,
-): SelectableSandbox[] {
-  const standalone = targetsAgentSandbox(context, { sandbox: true });
+): ResolvedAgentSandbox[] {
+  const sandboxes = context.sandboxes ?? [];
 
-  return agentSandboxes(context).filter(
-    (entry): boolean => !entry.own || standalone,
-  );
+  return hasStandaloneSandbox(context) ? sandboxes : sandboxes.slice(1);
 }
 
 /**
  * Whether this call runs on an agent-level sandbox with no workspace mounted: the
- * agent has no workspaces at all, it named one of its extra sandboxes, or it asked
- * for its own sandbox and that one is standalone. A name that is neither is a
- * workspace run here; the tool refuses it. `sandbox` wins over `workspace`; the
- * two never both apply.
+ * agent has no workspaces at all, or it named a selectable sandbox. Any other name
+ * resolves to a workspace run here, and both the tool and the approval gate refuse
+ * it (see resolveAgentSandbox). `sandbox` wins over `workspace`; the two never both
+ * apply.
  */
 export function targetsAgentSandbox(
   context: SandboxToolContext,
@@ -483,20 +450,13 @@ export function targetsAgentSandbox(
   if (context.workspaces.length === 0) {
     return true;
   }
-  if (selection.sandbox === undefined || selection.sandbox === false) {
+  if (selection.sandbox === undefined) {
     return false;
   }
-  // An extra is only ever reachable with no mount; the agent's own sandbox, named
-  // or asked for with `true`, belongs to the workspace once one mounts it.
-  if (!picksOwnSandbox(context, selection.sandbox)) {
-    return (
-      context.sandboxes?.some(
-        (extra): boolean => extra.name === selection.sandbox,
-      ) ?? false
-    );
-  }
 
-  return hasStandaloneSandbox(context.workspaces, context.agentSandbox);
+  return selectableSandboxes(context).some(
+    (entry): boolean => entry.name === selection.sandbox,
+  );
 }
 
 // S3-direct read-only path (workspaces with neither a sandbox nor a readMount).
@@ -730,11 +690,11 @@ export function outsideWorkspaceCommand(
  */
 export function writesOutsideAllowed(
   workspace: ResolvedWorkspace,
-  agentSandbox: SandboxExecutorConfig | undefined,
+  context: SandboxToolContext,
 ): boolean {
   return (
     workspace.sandbox?.persistent === true &&
-    isAgentOwnSandbox(workspace, agentSandbox)
+    isAgentOwnSandbox(workspace, context)
   );
 }
 
@@ -823,46 +783,6 @@ function permissionModeFor(
   workspace: ResolvedWorkspace | undefined,
 ): SandboxPermissionMode {
   return workspace?.sandbox?.permissionMode ?? "ask";
-}
-
-// The agent's own sandbox and its extras as one list, each with the permissionMode
-// its own record carries. bash and computer both start from this, so the two
-// tools cannot describe the same sandbox differently.
-function agentSandboxes(context: SandboxToolContext): SelectableSandbox[] {
-  const own = context.agentSandbox;
-  const ownName = own?.controlPlane?.name;
-
-  return [
-    ...(own && ownName
-      ? [
-          {
-            name: ownName,
-            own: true,
-            permissionMode: context.agentSandboxPermissionMode ?? "ask",
-            sandbox: own,
-          },
-        ]
-      : []),
-    ...(context.sandboxes ?? []).map((entry): SelectableSandbox => ({
-      ...(entry.description ? { description: entry.description } : {}),
-      name: entry.name,
-      own: false,
-      permissionMode: entry.sandbox.permissionMode ?? "ask",
-      sandbox: entry.sandbox,
-    })),
-  ];
-}
-
-// `true`, nothing, and the own record name all mean the agent's own sandbox; only
-// another name means an extra. One rule, so the tool and the gate cannot drift.
-function picksOwnSandbox(
-  context: SandboxToolContext,
-  requested: boolean | string | undefined,
-): boolean {
-  return (
-    typeof requested !== "string" ||
-    requested === context.agentSandbox?.controlPlane?.name
-  );
 }
 
 async function runSandboxOn(

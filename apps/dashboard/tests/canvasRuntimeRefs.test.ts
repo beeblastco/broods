@@ -3,6 +3,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Edge, Node } from "@xyflow/react";
 import {
   analyzeCanvasInfra,
+  deriveAgentRuntimeRefs,
   deriveSubagentRefs,
   writeChangedRefs,
 } from "../app/lib/canvasRuntimeRefs";
@@ -93,6 +94,27 @@ describe("analyzeCanvasInfra workspace state", () => {
     expect(workspaceStates.scratch.kind).toBe("inherited");
     expect(workspaceStates.secure.kind).toBe("override");
     expect(workspaceStates.reference).toEqual({ kind: "readonly" });
+  });
+});
+
+describe("deriveAgentRuntimeRefs", () => {
+  test("the direct sandbox edge becomes the default, sandboxes[0]", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("sb", "sandbox", { resourceId: "sb_default" }),
+    ];
+
+    const [refs] = deriveAgentRuntimeRefs(nodes, [edge("agent", "sb")]);
+
+    expect(refs.defaultSandbox).toBe("sb_default");
+  });
+
+  test("no sandbox edge derives no default", () => {
+    const nodes = [node("agent", "agent", { agentConfigId: "cfg" })];
+
+    const [refs] = deriveAgentRuntimeRefs(nodes, []);
+
+    expect(refs.defaultSandbox).toBeNull();
   });
 });
 

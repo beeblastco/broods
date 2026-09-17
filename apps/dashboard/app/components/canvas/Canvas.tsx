@@ -318,8 +318,8 @@ function isSideConnection(c: {
 }
 
 /**
- * Whether an agent already has a direct (non-mount) sandbox edge, its single default sandbox
- * (config.sandbox). `exceptSandboxId` ignores one sandbox so a re-check of the same pair passes.
+ * Whether an agent already has a direct (non-mount) sandbox edge, the default sandbox
+ * (sandboxes[0]). `exceptSandboxId` ignores one sandbox so a re-check of the same pair passes.
  */
 function agentHasDirectSandbox(
   edges: Edge[],
@@ -560,7 +560,7 @@ function CanvasInner({
               (ref) =>
                 updateRuntimeRefs({
                   configId: ref.configId,
-                  sandbox: ref.sandbox ?? null,
+                  defaultSandbox: ref.defaultSandbox,
                   workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
                 }),
             ),
@@ -756,7 +756,7 @@ function CanvasInner({
     }
     if (isMountPair || isAgentPair) return false;
 
-    // D: an agent has a single default sandbox (config.sandbox); block a 2nd direct one.
+    // D: an agent draws only the default sandbox, sandboxes[0]; block a 2nd direct one.
     const agentNode =
       srcNode?.type === "agent"
         ? srcNode

@@ -55,7 +55,7 @@ export const overrideAgent = defineAgent({
       "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
     ].join("\n"),
   },
-  sandbox: defaultSandbox,
+  sandboxes: [defaultSandbox],
   workspaces: [
     { workspace: scratchWorkspace },
     { workspace: secureWorkspace, sandbox: secureSandbox },

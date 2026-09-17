@@ -307,7 +307,7 @@ describe("syncApiAgentCanvasWiring", () => {
       agentId: agentId,
       config: {
         model: { provider: "custom", modelId: "Qwen3.6-27B" },
-        sandbox: sandboxId,
+        sandboxes: [sandboxId],
         workspaces: [{ name: "memory", workspaceId: workspaceId }],
         skills: { enabled: true, allowed: ["beeblast/crm-sync"] },
       },
@@ -378,10 +378,10 @@ describe("syncApiAgentCanvasWiring", () => {
         config: config,
       });
     await seed({
-      sandbox: sandboxId,
+      sandboxes: [sandboxId],
       workspaces: [{ name: "memory", workspaceId: workspaceId }],
     });
-    await seed({ sandbox: sandboxId });
+    await seed({ sandboxes: [sandboxId] });
 
     const config = await configFor(tt, agentId);
     const layout = await layoutFor(tt, config!);
@@ -400,7 +400,7 @@ describe("syncApiAgentCanvasWiring", () => {
     expect(edges).toHaveLength(1);
   });
 
-  test("keeps a sandbox the config only references through sandboxes", async () => {
+  test("keeps an extra sandbox node without an edge", async () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const tt = t();
     const { accountId } = await seedOrg(tt, {
@@ -410,6 +410,14 @@ describe("syncApiAgentCanvasWiring", () => {
       email: "owner@example.com",
     });
     const { sandboxId } = await seedWiringFixtures(tt, accountId);
+    const defaultSandboxId = await tt.run(async (ctx) =>
+      ctx.db.insert("sandboxConfigs", {
+        accountId: accountId,
+        name: "beeblast-default-sandbox",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
     const seed = (config: Record<string, unknown>) =>
@@ -417,11 +425,11 @@ describe("syncApiAgentCanvasWiring", () => {
         agentId: agentId,
         config: config,
       });
-    await seed({ sandbox: sandboxId });
+    await seed({ sandboxes: [sandboxId] });
     // A PATCH that turns the default into an extra still declares the sandbox,
     // so the node survives the prune. It draws no edge: the canvas has no shape
     // for that link yet.
-    await seed({ sandboxes: [sandboxId] });
+    await seed({ sandboxes: [defaultSandboxId, sandboxId] });
 
     const config = await configFor(tt, agentId);
     const layout = await layoutFor(tt, config!);
@@ -430,10 +438,13 @@ describe("syncApiAgentCanvasWiring", () => {
       type: string;
       data: Record<string, unknown>;
     }>;
-    const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
-    expect(sandboxNode.data.resourceId).toBe(sandboxId);
+    const extraNode = nodes.find((n) => n.data.resourceId === sandboxId)!;
+    const defaultNode = nodes.find(
+      (n) => n.data.resourceId === defaultSandboxId,
+    )!;
     const edges = layout!.edges as Array<{ source: string; target: string }>;
-    expect(edges.some((e) => e.target === sandboxNode.id)).toBe(false);
+    expect(edges.some((e) => e.target === extraNode.id)).toBe(false);
+    expect(edges.some((e) => e.target === defaultNode.id)).toBe(true);
   });
 
   test("preserves an agent's wiring while its blob cannot be decrypted", async () => {
@@ -451,7 +462,7 @@ describe("syncApiAgentCanvasWiring", () => {
     await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
       agentId: first,
       config: {
-        sandbox: sandboxId,
+        sandboxes: [sandboxId],
         workspaces: [{ name: "memory", workspaceId: workspaceId }],
       },
     });
@@ -468,7 +479,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
     await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
       agentId: second,
-      config: { sandbox: sandboxId },
+      config: { sandboxes: [sandboxId] },
     });
 
     const config = await configFor(tt, first);
