@@ -147,13 +147,11 @@ function orderSubtitle(
   workspaceOnly: boolean,
 ): string | undefined {
   const parts = [
-    ...(where === null ? [] : [where]),
-    ...(orderNumber !== undefined
-      ? [String(orderNumber), ...(orderNumber === 1 ? ["default"] : [])]
-      : workspaceOnly
-        ? [WORKSPACE_ONLY_NOTE]
-        : []),
-  ];
+    where,
+    orderNumber?.toString(),
+    orderNumber === 1 ? "default" : null,
+    orderNumber === undefined && workspaceOnly ? WORKSPACE_ONLY_NOTE : null,
+  ].filter((part): part is string => typeof part === "string");
 
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }

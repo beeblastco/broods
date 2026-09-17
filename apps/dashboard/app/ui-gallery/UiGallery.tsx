@@ -30,10 +30,6 @@ import {
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import {
-  agreedSandboxOrderNumbers,
-  workspaceOnlySandboxIds,
-} from "@/app/lib/canvasFrameEdits";
-import {
   buildFramedGraph,
   serversByNode,
   type StageMcpServer,
@@ -41,6 +37,10 @@ import {
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  agreedSandboxOrderNumbers,
+  workspaceOnlySandboxIds,
+} from "@broods/convex/model/canvasFrames";
 import { applyTidyLayout, GRID } from "@broods/convex/model/canvasLayout";
 import {
   Background,

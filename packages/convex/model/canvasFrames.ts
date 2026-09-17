@@ -214,6 +214,38 @@ export function agentSandboxOrders(
   );
 }
 
+/**
+ * The place each sandbox card shows: its 1-based place in its agents'
+ * `sandboxes`, only where every agent that wires it gives it the same place
+ * and at least one of them lists more than one sandbox. A shared sandbox that
+ * is first for one agent and second for another has no number, and neither
+ * does an agent's only sandbox: with nothing to order, "1 · default" says
+ * nothing. Frames sort by `sandboxOrderNumbers` instead, which always numbers.
+ */
+export function agreedSandboxOrderNumbers(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, number> {
+  const numbers = new Map<string, number | null>();
+  const ordered = new Set<string>();
+  for (const sandboxIds of agentSandboxOrders(nodes, edges).values()) {
+    sandboxIds.forEach((id, index): void => {
+      const current = numbers.get(id);
+      numbers.set(
+        id,
+        current === undefined || current === index + 1 ? index + 1 : null,
+      );
+      if (sandboxIds.length > 1) ordered.add(id);
+    });
+  }
+
+  return new Map(
+    [...numbers].flatMap(([id, number]): [string, number][] =>
+      number === null || !ordered.has(id) ? [] : [[id, number]],
+    ),
+  );
+}
+
 export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
   return labelOf(a).localeCompare(labelOf(b));
 }
@@ -430,6 +462,29 @@ export function sandboxOrderNumbers(
   }
 
   return numbers;
+}
+
+/**
+ * Sandboxes no agent wires that a workspace mounts: they run only that
+ * workspace's files, so they have no place in any `sandboxes` to number.
+ */
+export function workspaceOnlySandboxIds(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Set<string> {
+  const listed = new Set([...agentSandboxOrders(nodes, edges).values()].flat());
+  const sandboxIds = new Set(
+    nodes
+      .filter((node): boolean => node.type === "sandbox")
+      .map((node): string => node.id),
+  );
+
+  return new Set(
+    edges
+      .filter((edge): boolean => edgeKind(edge) === "mount")
+      .flatMap((edge): string[] => [edge.source, edge.target])
+      .filter((id): boolean => sandboxIds.has(id) && !listed.has(id)),
+  );
 }
 
 /**
