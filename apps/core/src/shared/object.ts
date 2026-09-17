@@ -16,18 +16,3 @@ export function isStringRecord(
     Object.values(value).every((entry) => typeof entry === "string")
   );
 }
-
-export function assertOptionalStringArray(
-  value: unknown,
-  name: string,
-): asserts value is string[] | undefined {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) ||
-      !value.every(
-        (entry) => typeof entry === "string" && entry.trim().length > 0,
-      ))
-  ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
-  }
-}
