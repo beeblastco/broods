@@ -249,6 +249,17 @@ describe("agreedSandboxOrderNumbers", () => {
       ["alpha", 1],
     ]);
   });
+
+  test("leaves an agent's only sandbox unnumbered", () => {
+    const nodes = [
+      node("solo", "agent", { x: 0, y: 0 }),
+      node("lambda", "sandbox", { x: 0, y: 172 }),
+    ];
+
+    expect([
+      ...agreedSandboxOrderNumbers(nodes, [edge("solo", "lambda")]),
+    ]).toEqual([]);
+  });
 });
 
 describe("workspaceOnlySandboxIds", () => {

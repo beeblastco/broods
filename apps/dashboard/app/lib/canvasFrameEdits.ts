@@ -58,27 +58,31 @@ export type FrameMemberAction =
 
 /**
  * Each directly wired sandbox's 1-based place in its agents' `sandboxes`,
- * only where every agent that wires it gives it the same place. A shared
- * sandbox that is first for one agent and second for another has no number.
+ * only where every agent that wires it gives it the same place and at least
+ * one of them lists more than one sandbox. A shared sandbox that is first for
+ * one agent and second for another has no number, and neither does an
+ * agent's only sandbox: with nothing to order, "1 · default" says nothing.
  */
 export function agreedSandboxOrderNumbers(
   nodes: readonly Node[],
   edges: readonly Edge[],
 ): Map<string, number> {
   const numbers = new Map<string, number | null>();
+  const ordered = new Set<string>();
   for (const sandboxIds of agentSandboxOrders(nodes, edges).values()) {
-    sandboxIds.forEach((id, index) => {
+    sandboxIds.forEach((id, index): void => {
       const current = numbers.get(id);
       numbers.set(
         id,
         current === undefined || current === index + 1 ? index + 1 : null,
       );
+      if (sandboxIds.length > 1) ordered.add(id);
     });
   }
 
   return new Map(
     [...numbers].flatMap(([id, number]): [string, number][] =>
-      number === null ? [] : [[id, number]],
+      number === null || !ordered.has(id) ? [] : [[id, number]],
     ),
   );
 }

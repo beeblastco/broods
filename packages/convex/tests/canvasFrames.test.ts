@@ -50,7 +50,7 @@ describe("frameGroupOf", () => {
         node("w1", "workspace", { config: { storage: { provider: "s3" } } }),
         NO_SERVERS,
       ),
-    ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces · S3" });
+    ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces" });
   });
 
   it("groups MCP servers by saved transport, and unsaved ones apart", () => {

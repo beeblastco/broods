@@ -321,14 +321,11 @@ export function frameGroupOf(
       typeof storage === "object" && storage !== null && "provider" in storage
         ? storage.provider
         : undefined;
-    // A workspace saved without storage is materialized as S3.
+    // A workspace saved without storage is materialized as S3. The provider
+    // splits groups but stays out of the label while S3 is the only one.
     const key = typeof provider === "string" && provider ? provider : "s3";
 
-    return {
-      key: key,
-      kind: "workspace",
-      label: `Workspaces · ${key.toUpperCase()}`,
-    };
+    return { key: key, kind: "workspace", label: "Workspaces" };
   }
   if (node.type === "mcp") {
     const transport = mcpServers.get(node.id)?.transport;
