@@ -51,6 +51,7 @@ import {
   applyFramedNodeChanges,
   buildFramedGraph,
   expandBundleEdgeRemoval,
+  serversByNode,
   type FramedGraph,
 } from "@/app/lib/canvasFrameNodes";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -453,15 +454,8 @@ function CanvasInner({
     : ("skip" as const);
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
-  const mcpTransports = useMemo(
-    () =>
-      new Map(
-        (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
-      ),
-    [mcpServers],
-  );
   const mcpServersByNode = useMemo(
-    () => new Map((mcpServers ?? []).map((server) => [server.nodeId, server])),
+    () => serversByNode(mcpServers ?? []),
     [mcpServers],
   );
   const machineConnections = useQuery(
@@ -1114,14 +1108,15 @@ function CanvasInner({
   );
 
   /**
-   * Re-lay the whole graph: agent clusters of typed columns, shared services in
-   * a lane below. Cards you dragged yourself move too. That is the point.
+   * Re-lay the whole graph: each agent over a row of its services, shared
+   * services between the agents that use them, unwired cards parked below.
+   * Cards you dragged yourself move too. That is the point.
    */
   const tidyLayout = useCallback(() => {
-    setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpTransports));
+    setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpServersByNode));
     scheduleSave();
     window.requestAnimationFrame(() => fitView(FIT_VIEW_OPTIONS));
-  }, [setNodes, scheduleSave, fitView, mcpTransports]);
+  }, [setNodes, scheduleSave, fitView, mcpServersByNode]);
 
   const makeDefault = useCallback(
     (agentId: string, sandboxId: string) => {
@@ -1336,19 +1331,23 @@ function CanvasInner({
     }),
     [machineConnections, mcpServersByNode, toggleFrame, orderNumbers],
   );
-  // The right-clicked chip and what it offers; null falls back to "Add service",
-  // which is also what a card outside every frame gets.
+  // The right-clicked chip, or card that would be one, and what it offers; null
+  // falls back to "Add service", which is what every other card gets.
   const chipMenu = useMemo(() => {
-    const framed = framedGraph.frames.some((frame) =>
-      frame.memberIds.some((id) => id === menuNodeId),
-    );
+    const menuNode = nodes.find((node) => node.id === menuNodeId);
+    const groupable =
+      menuNode?.type === "sandbox" ||
+      menuNode?.type === "workspace" ||
+      menuNode?.type === "mcp";
     const actions =
-      menuNodeId && framed ? frameMemberActions(nodes, edges, menuNodeId) : [];
+      menuNode && groupable
+        ? frameMemberActions(nodes, edges, menuNode.id)
+        : [];
 
-    return menuNodeId && actions.length > 0
-      ? { actions: actions, memberId: menuNodeId }
+    return menuNode && actions.length > 0
+      ? { actions: actions, memberId: menuNode.id }
       : null;
-  }, [menuNodeId, framedGraph.frames, nodes, edges]);
+  }, [menuNodeId, nodes, edges]);
 
   // Commit-to-paint for a topology change: measured from the effect to the next
   // frame, so it covers ReactFlow's own layout, which is what scales with the
@@ -1659,7 +1658,7 @@ function useEverTrue(flag: boolean): boolean {
   return seen || flag;
 }
 
-/** Right-click entries for a framed chip, one set per agent that wires it directly. */
+/** Right-click entries for a chip or lone resource card, one set per agent that wires it directly. */
 function FrameMemberMenuItems({
   actions,
   memberId,

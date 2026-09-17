@@ -3,6 +3,15 @@
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
+import type { MemberStatus } from "@/app/lib/memberStatus";
+import {
+  CARD_STATUS_ROW,
+  cardHeaderMaxHeight,
+  cardHeight,
+  workspaceStateText,
+  type CardFacts,
+} from "@broods/convex/model/canvasLayout";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -38,6 +47,20 @@ export const agentStatusConfig: Record<
   unhealthy: { color: "bg-destructive", text: "Unhealthy" },
 };
 
+/** Text color of a workspace card's state line, per state. */
+const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
+  inherited: "text-muted-foreground",
+  override: "text-canvas-mount/90",
+  readonly: "text-warning/90",
+};
+
+/** Arrow color on that line; read-only draws a lock instead. */
+const STATE_ICON_TONE: Record<WorkspaceSandboxState["kind"], string> = {
+  inherited: "text-muted-foreground",
+  override: "text-canvas-mount/80",
+  readonly: "text-warning/80",
+};
+
 const zoomSelector = (state: { transform: [number, number, number] }): number =>
   state.transform[2];
 
@@ -47,7 +70,6 @@ export function BaseNode({
   data,
   icon,
   agentStatus,
-  cardStatus,
   liveStatus,
   subtitle,
   featureRows,
@@ -58,10 +80,8 @@ export function BaseNode({
   data: BaseNodeData;
   icon: React.ReactNode;
   agentStatus?: AgentHealthStatus;
-  /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
-  cardStatus?: { enabled: boolean };
-  /** Live state shown once the node is wired, e.g. a machine sandbox's connection. */
-  liveStatus?: { color: string; text: string };
+  /** State shown once the node is wired: a machine's connection, an MCP server or skill's enabled flag, a workspace's mount. */
+  liveStatus?: Pick<MemberStatus, "color" | "label">;
   /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
   subtitle?: React.ReactNode;
   /** Optional list of `+ feature` rows rendered between label and status pill. */
@@ -127,10 +147,7 @@ export function BaseNode({
     statusText = "Unconnected";
   } else if (liveStatus) {
     statusColor = liveStatus.color;
-    statusText = liveStatus.text;
-  } else if (cardStatus) {
-    statusColor = cardStatus.enabled ? "bg-success" : "bg-destructive";
-    statusText = cardStatus.enabled ? "Enabled" : "Disabled";
+    statusText = liveStatus.label;
   } else {
     const config = statusConfig[data.status ?? "idle"];
     statusColor = config.color;
@@ -140,10 +157,23 @@ export function BaseNode({
   const borderClass = !isConnectedToAgent
     ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
+  const stateText = stateLine(workspaceState);
+  // The tidy layout stacks cards at this height, so the card draws exactly this tall.
+  const facts: CardFacts = {
+    features: featureRows?.length ?? 0,
+    refCount: sharedAgentCount,
+    stateText: stateText,
+    subtitle: subtitle !== undefined,
+  };
+  const minHeight = cardHeight(data.label, facts);
+  const headerScale = fittedScale(scale, minHeight, facts);
 
   return (
     <div
-      className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
+      data-slot="card"
+      data-min-height={minHeight}
+      className={`relative w-44 min-h-(--card-height) flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
+      style={{ "--card-height": `${minHeight}px` }}
     >
       {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
                 handle to the node's FIRST handle (sources before targets) for the snap preview,
@@ -171,62 +201,48 @@ export function BaseNode({
 
       {showSideHandles && (
         <>
+          {/* Held 48px down (SIDE_HANDLE_TOP in canvasEdgeRoutes.ts), so side edges between
+              cards of different heights in one row run straight. An MCP card's sides only
+              anchor its drawn runs-on edge; nothing mounts there. */}
           <Handle
             id="left"
             type="source"
             position={Position.Left}
+            isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
-            className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+            className="top-12! bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
           <Handle
             id="right"
             type="source"
             position={Position.Right}
+            isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
-            className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+            className="top-12! bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
         </>
       )}
-
-      {(nodeType === "agent" || nodeType === "sandbox") &&
-        (() => {
-          // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-          // when network egress is allowed. Core models this as `network.mode`
-          // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
-          // fall back to a muted, slashed globe when off.
-          const networkMode = (
-            data.config?.network as { mode?: string } | undefined
-          )?.mode;
-          const isOn =
-            nodeType === "sandbox"
-              ? networkMode === "allow-all" || networkMode === "restricted"
-              : data.config?.publicAccess === true;
-
-          return (
-            <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
-              <Globe
-                className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
-              />
-              {!isOn && (
-                <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
-              )}
-            </span>
-          );
-        })()}
 
       <div
         className="h-(--content-height)"
         style={{
           "--content-height":
-            contentHeight != null ? `${contentHeight * scale}px` : undefined,
+            contentHeight != null
+              ? `${contentHeight * headerScale}px`
+              : undefined,
         }}
       >
+        {/* Narrowed by the same scale, so the scaled header still ends at the card's edge. */}
         <div
           ref={contentRef}
-          className="px-3 pt-2.5 origin-top-left scale-(--node-scale)"
-          style={{ "--node-scale": scale }}
+          data-slot="card-header"
+          className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
+          style={{
+            "--content-width": `${100 / headerScale}%`,
+            "--node-scale": headerScale,
+          }}
         >
-          <div className="flex items-center gap-1.5 pr-7 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
             {nodeType === "agent" ? (
               <DitherAvatarSVG
                 seed={data.label}
@@ -242,7 +258,8 @@ export function BaseNode({
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
             <span
-              className="text-xs font-medium text-foreground truncate min-w-0"
+              // Two lines before it clips, so a long resource name reads whole.
+              className="text-xs font-medium text-foreground line-clamp-2 wrap-anywhere min-w-0"
               title={data.label}
             >
               {data.label}
@@ -268,41 +285,27 @@ export function BaseNode({
             </div>
           )}
 
-          {/* B: workspace effective-sandbox state from the cascade */}
-          {workspaceState && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-2xs min-w-0">
+          {/* B: workspace effective-sandbox state from the cascade. It wraps rather than
+              clipping, so a long sandbox name reads whole. */}
+          {workspaceState && stateText !== null && (
+            <div className="mt-1.5 flex items-start gap-1.5 text-2xs min-w-0">
               {workspaceState.kind === "readonly" ? (
-                <>
-                  <Lock className="size-3 shrink-0 text-warning/80" />
-                  <span className="text-warning/90">read-only</span>
-                </>
-              ) : workspaceState.kind === "override" ? (
-                <>
-                  <CornerDownRight className="size-3 shrink-0 text-canvas-mount/80" />
-                  <span
-                    className="truncate text-canvas-mount/90"
-                    title={workspaceState.sandboxLabels.join(", ")}
-                  >
-                    {workspaceState.sandboxLabels.join(", ")}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    · mounted
-                  </span>
-                </>
+                <Lock className="mt-0.5 size-3 shrink-0 text-warning/80" />
               ) : (
-                <>
-                  <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
-                  <span
-                    className="truncate text-muted-foreground"
-                    title={workspaceState.sandboxLabel}
-                  >
-                    {workspaceState.sandboxLabel}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    · inherited
-                  </span>
-                </>
+                <CornerDownRight
+                  className={`mt-0.5 size-3 shrink-0 ${STATE_ICON_TONE[workspaceState.kind]}`}
+                />
               )}
+              <span
+                className={`min-w-0 line-clamp-2 wrap-anywhere ${STATE_TEXT_TONE[workspaceState.kind]}`}
+                title={
+                  workspaceState.kind === "readonly"
+                    ? stateText
+                    : workspaceState.sandboxLabels.join(", ")
+                }
+              >
+                {stateText}
+              </span>
             </div>
           )}
 
@@ -317,9 +320,38 @@ export function BaseNode({
       </div>
 
       {showStatus && (
-        <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
+        <div
+          data-slot="card-status"
+          className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5"
+        >
           <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-2xs text-muted-foreground">{statusText}</span>
+          {/* Down here, not in the title's corner, so a long name keeps the full width. */}
+          {(nodeType === "agent" || nodeType === "sandbox") &&
+            (() => {
+              // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
+              // when network egress is allowed. Core models this as `network.mode`
+              // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
+              // fall back to a muted, slashed globe when off.
+              const networkMode = (
+                data.config?.network as { mode?: string } | undefined
+              )?.mode;
+              const isOn =
+                nodeType === "sandbox"
+                  ? networkMode === "allow-all" || networkMode === "restricted"
+                  : data.config?.publicAccess === true;
+
+              return (
+                <span className="relative ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90">
+                  <Globe
+                    className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
+                  />
+                  {!isOn && (
+                    <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
+                  )}
+                </span>
+              );
+            })()}
         </div>
       )}
     </div>
@@ -351,4 +383,34 @@ export function useSideHandlesConnectable(nodeType: string): boolean {
 
     return fromType === "workspace" || fromType === "sandbox";
   });
+}
+
+/**
+ * The header's counter-scale, grown only as far as the header's two-line
+ * worst case still fits the card's height, so a fuller card keeps scale 1
+ * rather than drawing taller than the layout placed it. Read from the rows,
+ * not the measured header, so the narrower text of a larger scale can never
+ * feed back into the scale.
+ */
+function fittedScale(
+  scale: number,
+  minHeight: number,
+  facts: CardFacts,
+): number {
+  if (scale <= 1) return scale;
+
+  return Math.min(
+    scale,
+    Math.max(1, (minHeight - CARD_STATUS_ROW) / cardHeaderMaxHeight(facts)),
+  );
+}
+
+/** The text of a workspace card's state line, or null for any other card. */
+function stateLine(state: WorkspaceSandboxState | undefined): string | null {
+  if (!state) return null;
+
+  return workspaceStateText(
+    state.kind,
+    state.kind === "readonly" ? [] : state.sandboxLabels,
+  );
 }

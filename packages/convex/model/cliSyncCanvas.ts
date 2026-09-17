@@ -16,7 +16,7 @@ import {
   snapshotExternalConfig,
   type CliResource,
 } from "./cliSync";
-import { loadMcpTransportsByNode } from "./mcp";
+import { loadMcpServersByNode } from "./mcp";
 import { isPlainObject } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
@@ -670,7 +670,7 @@ async function persistCanvasLayout(
   const nextNodes = applyTidyLayout(
     options.nextNodes,
     options.nextEdges,
-    await loadMcpTransportsByNode(ctx, options.stageId),
+    await loadMcpServersByNode(ctx, options.stageId),
   );
   if (options.layout) {
     await ctx.db.patch(options.layout._id, {

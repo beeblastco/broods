@@ -2,17 +2,13 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
-import {
-  isCodeManagedEdgeId,
-  isCodeManagedOwner,
-} from "@/app/components/canvas/edgeOwnership";
-import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
-import { BUNDLE_EDGE_PREFIX, bundleEdgePath } from "@/app/lib/canvasFrameNodes";
+import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
+import { agentEdgePath, type AgentEdgeData } from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
-  useStore,
+  type Edge,
   type EdgeProps,
 } from "@xyflow/react";
 import { useTheme } from "next-themes";
@@ -28,8 +24,7 @@ export function DeletableEdge({
   id,
   source,
   target,
-  sourceHandleId,
-  targetHandleId,
+  data,
   sourceX,
   sourceY,
   targetX,
@@ -38,45 +33,25 @@ export function DeletableEdge({
   targetPosition,
   style,
   deletable,
-}: EdgeProps): React.JSX.Element {
+}: EdgeProps<Edge<AgentEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  // Endpoint ownership as a single primitive so the selector stays referentially stable.
-  const endpointOwnership = useStore((s) => {
-    const sourceData = s.nodeLookup.get(source)?.data as
-      | { managedBy?: string }
-      | undefined;
-    const targetData = s.nodeLookup.get(target)?.data as
-      | { managedBy?: string }
-      | undefined;
+  const codeManaged = useCodeManagedEdge(id, source, target);
 
-    return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
-  });
-  const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
-
-  // Fan edges that land on one handle apart (flow is vertical → offset X). The source end is
-  // not fanned: an agent's edges leave its bottom as one trunk and split along the way, where
-  // fanned starts drew a row of stubs that curled into each other.
-  const [, targetFan] = useEdgeFanOffset(
-    id,
-    source,
-    sourceHandleId,
-    target,
-    targetHandleId,
-    "default",
-  );
-
-  // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling. A bundle edge
-  // into a frame takes the column gutter instead, and several agents' bundles into one frame
-  // share its handle rather than fan.
-  const [edgePath, labelX, labelY] = id.startsWith(BUNDLE_EDGE_PREFIX)
-    ? bundleEdgePath({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+  // Agent to resource, bottom to top along the lanes the canvas routed for it. An edge the
+  // router skipped (a target above its agent) falls back to a step path.
+  const [edgePath, labelX, labelY] = data?.route
+    ? agentEdgePath(
+        { x: sourceX, y: sourceY },
+        { x: targetX, y: targetY },
+        data.route,
+      )
     : getSmoothStepPath({
         sourceX: sourceX,
         sourceY: sourceY,
-        targetX: targetX + targetFan,
+        targetX: targetX,
         targetY: targetY,
         sourcePosition: sourcePosition,
         targetPosition: targetPosition,
@@ -85,11 +60,7 @@ export function DeletableEdge({
 
   // Code-managed edges can't be deleted here: no red delete-hover, no trash. Canvas marks
   // them, and bundles of them, `deletable: false`.
-  const locked =
-    deletable === false ||
-    isCodeManagedEdgeId(id) ||
-    (isCodeManagedOwner(sourceManagedBy) &&
-      isCodeManagedOwner(targetManagedBy));
+  const locked = deletable === false || codeManaged;
   const deleteHover = hovered && !locked;
   const arrowColor = isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)";
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
@@ -130,6 +101,7 @@ export function DeletableEdge({
       <EdgeLabelRenderer>
         {locked ? (
           <LockedEdgeBadge
+            edgeId={id}
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}

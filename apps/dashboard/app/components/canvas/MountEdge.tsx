@@ -2,17 +2,14 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
-import {
-  isCodeManagedEdgeId,
-  isCodeManagedOwner,
-} from "@/app/components/canvas/edgeOwnership";
-import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
+import { sideEdgePath, type SideEdgeData } from "@/app/lib/canvasFrameNodes";
 import { cn } from "@/app/lib/utils";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
-  useStore,
+  type Edge,
   type EdgeProps,
 } from "@xyflow/react";
 import { useState } from "react";
@@ -20,15 +17,15 @@ import { useState } from "react";
 const ARROW_ID_PREFIX = "mount-arrow";
 
 /**
- * Edge for workspace↔sandbox mount relationships.
- * Renders via side handles with bidirectional arrows to show data flows in both directions.
+ * Edge for workspace↔sandbox mount relationships, and the drawn edge from a workspace to the
+ * sandbox it inherits. Renders via side handles with bidirectional arrows to show data flows
+ * in both directions, along the lanes the canvas routed for it.
  */
 export function MountEdge({
   id,
   source,
   target,
-  sourceHandleId,
-  targetHandleId,
+  data,
   sourceX,
   sourceY,
   targetX,
@@ -37,48 +34,33 @@ export function MountEdge({
   targetPosition,
   style,
   deletable,
-}: EdgeProps): React.JSX.Element {
+}: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
-  const endpointOwnership = useStore((s) => {
-    const sourceData = s.nodeLookup.get(source)?.data as
-      | { managedBy?: string }
-      | undefined;
-    const targetData = s.nodeLookup.get(target)?.data as
-      | { managedBy?: string }
-      | undefined;
+  const codeManaged = useCodeManagedEdge(id, source, target);
 
-    return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
-  });
-  const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
+  // An edge the router skipped (no measured handle yet) falls back to a step path.
+  const [edgePath, labelX, labelY] = data?.route
+    ? sideEdgePath(
+        { x: sourceX, y: sourceY },
+        { x: targetX, y: targetY },
+        data.route,
+      )
+    : getSmoothStepPath({
+        sourceX: sourceX,
+        sourceY: sourceY,
+        targetX: targetX,
+        targetY: targetY,
+        sourcePosition: sourcePosition,
+        targetPosition: targetPosition,
+        borderRadius: 16,
+      });
 
-  // Fan parallel mounts apart so their trunks don't stack (flow is horizontal → offset Y).
-  const [sourceFan, targetFan] = useEdgeFanOffset(
-    id,
-    source,
-    sourceHandleId,
-    target,
-    targetHandleId,
-    "mount",
-  );
-
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX: sourceX,
-    sourceY: sourceY + sourceFan,
-    targetX: targetX,
-    targetY: targetY + targetFan,
-    sourcePosition: sourcePosition,
-    targetPosition: targetPosition,
-    borderRadius: 16,
-  });
-
-  // Code-managed edges can't be deleted here, so they never show the red
-  // delete-hover or the trash button, only a lock badge. A mount re-pointed to
-  // a collapsed frame is drawn, not stored, so it shows neither.
-  const locked =
-    isCodeManagedEdgeId(id) ||
-    (isCodeManagedOwner(sourceManagedBy) &&
-      isCodeManagedOwner(targetManagedBy));
-  const removable = !locked && deletable !== false;
+  // A drawn edge (a mount re-pointed to a collapsed frame, an inherited sandbox) is not
+  // stored, so it offers neither a lock nor a trash. A stored code-managed mount shows the
+  // lock and never the red delete-hover.
+  const displayOnly = data?.displayOnly === true;
+  const locked = codeManaged && !displayOnly;
+  const removable = !codeManaged && !displayOnly && deletable !== false;
   const deleteHover = hovered && removable;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
@@ -127,6 +109,7 @@ export function MountEdge({
       <EdgeLabelRenderer>
         {locked ? (
           <LockedEdgeBadge
+            edgeId={id}
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}

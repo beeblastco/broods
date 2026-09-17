@@ -1,28 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveCanvasFrames,
+  agentEdgePoints,
+  crossedBoxIds,
+  handlePoint,
+  routeCanvasEdges,
+} from "../model/canvasEdgeRoutes";
+import {
+  deriveCanvasGroups,
   FRAME_HEADER_HEIGHT,
   FRAME_PADDING,
   frameMemberPositions,
   frameOriginOf,
+  framesOf,
   frameSize,
-  type McpTransportsByNode,
+  type McpServersByNode,
 } from "../model/canvasFrames";
 import {
-  CELL_HEIGHT,
-  CELL_WIDTH,
+  cardHeight,
   findFreePosition,
   GRID,
   NODE_HEIGHT,
   NODE_WIDTH,
+  SERVICE_TOP,
   tidyCanvasLayout,
+  workspaceStateText,
   type LayoutEdge,
   type LayoutNode,
   type LayoutPosition,
   type LayoutRect,
 } from "../model/canvasLayout";
 
-const NO_TRANSPORTS: McpTransportsByNode = new Map();
+const NO_SERVERS: McpServersByNode = new Map();
 
 function node(
   id: string,
@@ -55,11 +63,11 @@ function boardBoxes(
 ): Map<string, LayoutRect> {
   const boxes = new Map<string, LayoutRect>();
   const framed = new Set<string>();
-  for (const frame of deriveCanvasFrames(nodes, edges, NO_TRANSPORTS)) {
+  for (const frame of framesOf(deriveCanvasGroups(nodes, edges, NO_SERVERS))) {
     const origin = frameOriginOf(
       frame.memberIds.map((id) => positions.get(id)!),
     );
-    boxes.set(frame.id, { ...origin, ...frameSize(frame.memberIds.length) });
+    boxes.set(frame.id, { ...origin, ...frameSize(frame) });
     for (const id of frame.memberIds) framed.add(id);
   }
   for (const [id, position] of positions) {
@@ -115,7 +123,7 @@ describe("tidyCanvasLayout", () => {
     edge("a1", "a2", "subagent"),
   ];
   // The layout is pure, so one run covers every assertion below.
-  const positions = tidyCanvasLayout(nodes, edges, NO_TRANSPORTS);
+  const positions = tidyCanvasLayout(nodes, edges, NO_SERVERS);
 
   it("places every node exactly once, with no frame or card overlapping another", () => {
     expect([...positions.keys()].sort()).toEqual(nodes.map((n) => n.id).sort());
@@ -137,15 +145,13 @@ describe("tidyCanvasLayout", () => {
     expect(positions.get("m1")!.x).toBeLessThan(positions.get("s1")!.x);
   });
 
-  it("drops a shared service below both clusters, and an unwired one lower still", () => {
-    const clusterBottom = Math.max(
-      positions.get("s1")!.y,
-      positions.get("s2")!.y,
-      positions.get("k1")!.y,
+  it("puts a shared service in the row between its agents, and an unwired one below", () => {
+    expect(positions.get("w1")!.x).toBeGreaterThan(positions.get("s1")!.x);
+    expect(positions.get("w1")!.x).toBeLessThan(positions.get("s2")!.x);
+    expect(positions.get("w1")!.y).toBe(positions.get("s1")!.y);
+    expect(positions.get("x1")!.y).toBeGreaterThan(
+      positions.get("w1")!.y + NODE_HEIGHT,
     );
-
-    expect(positions.get("w1")!.y).toBeGreaterThan(clusterBottom);
-    expect(positions.get("x1")!.y).toBeGreaterThan(positions.get("w1")!.y);
   });
 
   it("keeps a sub-agent next to its parent", () => {
@@ -158,28 +164,26 @@ describe("tidyCanvasLayout", () => {
         node("s1", "sandbox", "py-sbx"),
       ],
       [edge("a1", "s1"), edge("a1", "a2", "subagent")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(positions.get("a1")!.x).toBeLessThan(positions.get("a2")!.x);
     expect(reversed.get("a1")!.x).toBeLessThan(reversed.get("a2")!.x);
   });
 
-  it("is deterministic and puts every frame and lone card on a whole cell", () => {
+  it("is deterministic and puts every frame and lone card on the dot grid", () => {
     const second = tidyCanvasLayout(
       [...nodes].reverse(),
       [...edges].reverse(),
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
-    expect(CELL_WIDTH % GRID).toBe(0);
-    expect(CELL_HEIGHT % GRID).toBe(0);
     for (const [id, position] of positions) {
       expect(second.get(id)).toEqual(position);
     }
     for (const box of boardBoxes(nodes, edges, positions).values()) {
-      expect(box.x % CELL_WIDTH).toBe(0);
-      expect(box.y % CELL_HEIGHT).toBe(0);
+      expect(box.x % GRID).toBe(0);
+      expect(box.y % GRID).toBe(0);
     }
   });
 
@@ -197,18 +201,15 @@ describe("tidyCanvasLayout", () => {
       edge("a1", "s3"),
       edge("a1", "w1"),
     ];
-    const laid = tidyCanvasLayout(threeSandboxes, wiring, NO_TRANSPORTS);
+    const laid = tidyCanvasLayout(threeSandboxes, wiring, NO_SERVERS);
 
-    for (const frame of deriveCanvasFrames(
-      threeSandboxes,
-      wiring,
-      NO_TRANSPORTS,
-    )) {
+    const frames = framesOf(
+      deriveCanvasGroups(threeSandboxes, wiring, NO_SERVERS),
+    );
+    expect(frames).toHaveLength(1);
+    for (const frame of frames) {
       const members = frame.memberIds.map((id) => laid.get(id)!);
-      const slots = frameMemberPositions(
-        frameOriginOf(members),
-        frame.memberIds,
-      );
+      const slots = frameMemberPositions(frameOriginOf(members), frame);
 
       expect(members).toEqual([...slots.values()]);
     }
@@ -217,29 +218,151 @@ describe("tidyCanvasLayout", () => {
     );
   });
 
-  it("stacks sandbox frames by their lowest order number", () => {
-    const sandboxes = (order: string[]): LayoutNode[] => [
-      node("a1", "agent", "support", { sandboxOrder: order }),
-      node("cloud", "sandbox", "cloud"),
-      node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
-    ];
-    const wiring = [edge("a1", "cloud"), edge("a1", "mac")];
-    const macFirst = tidyCanvasLayout(
-      sandboxes(["mac", "cloud"]),
-      wiring,
-      NO_TRANSPORTS,
-    );
-    const cloudFirst = tidyCanvasLayout(
-      sandboxes(["cloud", "mac"]),
-      wiring,
-      NO_TRANSPORTS,
-    );
+  it("puts the sandbox a workspace mounts next to the workspaces, whatever runs where", () => {
+    const layout = (
+      mountOn: string,
+      order: string[],
+    ): Map<string, LayoutPosition> =>
+      tidyCanvasLayout(
+        [
+          node("a1", "agent", "support", { sandboxOrder: order }),
+          node("cloud", "sandbox", "cloud"),
+          node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+          node("w1", "workspace", "notes"),
+        ],
+        [
+          edge("a1", "cloud"),
+          edge("a1", "mac"),
+          edge("a1", "w1"),
+          edge("w1", mountOn, "mount"),
+        ],
+        NO_SERVERS,
+      );
 
-    expect(macFirst.get("mac")!.y).toBeLessThan(macFirst.get("cloud")!.y);
-    expect(cloudFirst.get("cloud")!.y).toBeLessThan(cloudFirst.get("mac")!.y);
+    for (const [mountOn, other] of [
+      ["mac", "cloud"],
+      ["cloud", "mac"],
+    ]) {
+      for (const order of [
+        ["mac", "cloud"],
+        ["cloud", "mac"],
+      ]) {
+        const laid = layout(mountOn, order);
+        expect(laid.get(mountOn)!.x, `${mountOn} ${order}`).toBeGreaterThan(
+          laid.get(other)!.x,
+        );
+        expect(laid.get("w1")!.x).toBeGreaterThan(laid.get(mountOn)!.x);
+      }
+    }
   });
 
-  it("keeps a mounted pair together: beside its agent, or in the shared lane", () => {
+  it("moves a sandbox nothing links out from between a computer and its workspaces", () => {
+    // Mac first, a server running on it and a workspace mounted on it: the
+    // unlinked cloud sandbox must not sit between them.
+    const laid = tidyCanvasLayout(
+      [
+        node("a1", "agent", "tracy", { sandboxOrder: ["mac", "cloud"] }),
+        node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+        node("cloud", "sandbox", "cloud"),
+        node("tool", "mcp", "tool"),
+        node("w1", "workspace", "notes"),
+      ],
+      [
+        edge("a1", "mac"),
+        edge("a1", "cloud"),
+        edge("a1", "tool"),
+        edge("a1", "w1"),
+        edge("w1", "mac", "mount"),
+      ],
+      new Map([["tool", { sandbox: "mac", transport: "machine" }]]),
+    );
+    const between = (x: number, a: string, b: string): boolean =>
+      x > Math.min(laid.get(a)!.x, laid.get(b)!.x) &&
+      x < Math.max(laid.get(a)!.x, laid.get(b)!.x);
+
+    expect(between(laid.get("cloud")!.x, "tool", "mac")).toBe(false);
+    expect(between(laid.get("cloud")!.x, "mac", "w1")).toBe(false);
+  });
+
+  it("puts a machine MCP server next to the computer it runs on", () => {
+    const laid = tidyCanvasLayout(
+      [
+        node("a1", "agent", "support"),
+        node("cloud", "sandbox", "cloud"),
+        node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+        node("tool", "mcp", "tool"),
+        node("api", "mcp", "api"),
+        node("w1", "workspace", "notes"),
+      ],
+      [
+        edge("a1", "cloud"),
+        edge("a1", "mac"),
+        edge("a1", "tool"),
+        edge("a1", "api"),
+        edge("a1", "w1"),
+        edge("w1", "cloud", "mount"),
+      ],
+      new Map([
+        ["tool", { sandbox: "mac", transport: "machine" }],
+        ["api", { sandbox: null, transport: "http" }],
+      ]),
+    );
+    const order = ["api", "tool", "mac", "cloud", "w1"].map(
+      (id) => laid.get(id)!.x,
+    );
+
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("puts a service several agents share after the middle one of them", () => {
+    const laid = tidyCanvasLayout(
+      [
+        node("a", "agent", "alpha"),
+        node("b", "agent", "bravo"),
+        node("c", "agent", "charlie"),
+        node("sa", "sandbox", "alpha-box"),
+        node("sb", "sandbox", "bravo-box"),
+        node("sc", "sandbox", "charlie-box"),
+        node("wiki", "workspace", "wiki"),
+      ],
+      [
+        edge("a", "sa"),
+        edge("b", "sb"),
+        edge("c", "sc"),
+        edge("a", "wiki"),
+        edge("b", "wiki"),
+        edge("c", "wiki"),
+      ],
+      NO_SERVERS,
+    );
+
+    expect(laid.get("wiki")!.x).toBeGreaterThan(laid.get("sb")!.x);
+    expect(laid.get("wiki")!.x).toBeLessThan(laid.get("sc")!.x);
+  });
+
+  it("stacks cards at the height their rows draw at", () => {
+    // Unwired workspaces park in one column; a long name wraps and the state
+    // line adds a row, so each card is taller than the minimum.
+    const long = "a-workspace-name-that-wraps";
+    const laid = tidyCanvasLayout(
+      [node("w1", "workspace", long), node("w2", "workspace", `${long}-too`)],
+      [],
+      NO_SERVERS,
+    );
+    const height = cardHeight(long, {
+      features: 0,
+      refCount: 0,
+      stateText: "read-only",
+      subtitle: false,
+    });
+
+    expect(height).toBeGreaterThan(NODE_HEIGHT);
+    expect(laid.get("w2")!.y - laid.get("w1")!.y).toBeGreaterThanOrEqual(
+      height + 48,
+    );
+  });
+
+  it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
     // `tracy` reaches `browser-sandbox` only through the workspace that mounts
     // it, so the sandbox belongs in tracy's cluster, not the unwired lane.
     const cluster = tidyCanvasLayout(
@@ -250,7 +373,7 @@ describe("tidyCanvasLayout", () => {
         node("w1", "workspace", "browser-workspace"),
       ],
       [edge("a1", "s2"), edge("a1", "w1"), edge("s1", "w1", "mount")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
     // A sandbox mounted into a workspace two agents reach is reached by both,
     // so the pair drops to the shared lane side by side.
@@ -267,34 +390,167 @@ describe("tidyCanvasLayout", () => {
         edge("a2", "w1"),
         edge("s1", "w1", "mount"),
       ],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     // Both sandboxes share tracy's cloud frame in the first column; the one
-    // tracy lists comes first, the mounted one takes the next slot.
-    expect(cluster.get("s2")).toEqual({
-      x: FRAME_PADDING,
-      y: CELL_HEIGHT + FRAME_HEADER_HEIGHT,
-    });
+    // tracy lists comes first, the mounted one takes the next slot. The lone
+    // workspace is a card in the next column, level with the frame.
+    const frameTop = cluster.get("s2")!.y - FRAME_HEADER_HEIGHT;
+    expect(cluster.get("s2")!.x).toBe(FRAME_PADDING);
+    expect(frameTop).toBeGreaterThanOrEqual(SERVICE_TOP);
     expect(cluster.get("s1")!.x).toBe(FRAME_PADDING);
     expect(cluster.get("s1")!.y).toBeGreaterThan(cluster.get("s2")!.y);
-    expect(cluster.get("w1")).toEqual({
-      x: CELL_WIDTH + FRAME_PADDING,
-      y: CELL_HEIGHT + FRAME_HEADER_HEIGHT,
-    });
+    expect(cluster.get("w1")!.y).toBe(frameTop);
+    expect(cluster.get("w1")!.x).toBeGreaterThan(cluster.get("s2")!.x);
     expect(shared.get("s1")!.y).toBe(shared.get("w1")!.y);
-    expect(shared.get("s1")!.y).toBeGreaterThan(CELL_HEIGHT);
-    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBe(CELL_WIDTH);
+    expect(shared.get("s1")!.y).toBeGreaterThanOrEqual(SERVICE_TOP);
+    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBeGreaterThan(
+      NODE_WIDTH,
+    );
+  });
+
+  it("keeps a group of one as a card on its cell", () => {
+    const laid = tidyCanvasLayout(
+      [node("a1", "agent", "tracy"), node("s1", "sandbox", "internal")],
+      [edge("a1", "s1")],
+      NO_SERVERS,
+    );
+
+    expect(laid.get("s1")!.x).toBe(0);
+    expect(laid.get("s1")!.y % GRID).toBe(0);
+  });
+
+  it("leaves room for every lane: under the agent and in the gutters", () => {
+    // Seven edges out of one agent, two frames stacked under it and a
+    // service deep in a column, so buses pile up and gutters carry lanes.
+    const many = [
+      node("a1", "agent", "tracy"),
+      node("d1", "database", "session"),
+      node("m1", "mcp", "github"),
+      node("m2", "mcp", "linear"),
+      node("s1", "sandbox", "cloud-a"),
+      node("s2", "sandbox", "cloud-b"),
+      node("s3", "sandbox", "mac-a", { config: { provider: "machine" } }),
+      node("s4", "sandbox", "mac-b", { config: { provider: "machine" } }),
+      node("w1", "workspace", "notes"),
+      node("w2", "workspace", "repos"),
+      node("k1", "skill", "pdf"),
+    ];
+    const wiring = [
+      ...["d1", "m1", "m2", "s1", "s2", "s3", "s4", "w1", "w2", "k1"].map(
+        (id) => edge("a1", id),
+      ),
+      edge("w1", "s1", "mount"),
+    ];
+    const laid = tidyCanvasLayout(many, wiring, NO_SERVERS);
+    const boxes = boardBoxes(many, wiring, laid);
+    const agentEdges = [...boxes.keys()]
+      .filter((id) => id !== "a1")
+      .map((id) => ({ id: id, source: "a1", target: id }));
+    const routes = routeCanvasEdges(boxes, agentEdges, []);
+
+    expect(overlappingPairs(boxes)).toEqual([]);
+    expect(routes.agent.size).toBe(agentEdges.length);
+    // One row under the agent, so every edge is a straight drop off the bus.
+    expect(
+      [...routes.agent.values()].filter((route) => route.gutter !== null),
+    ).toEqual([]);
+    for (const [id, route] of routes.agent) {
+      const points = agentEdgePoints(
+        handlePoint(boxes.get("a1")!, "bottom"),
+        handlePoint(boxes.get(id)!, "top"),
+        route,
+      );
+      // Every segment stays out of every box but the two the edge joins.
+      expect(crossedBoxIds(points, boxes, new Set(["a1", id])), id).toEqual([]);
+    }
+  });
+
+  it("grows the gap under the agents until every bus fits", () => {
+    // Three agents reach one service after the middle one, so all three buses
+    // cross the same stretch and need three lanes.
+    const agents = ["a", "b", "c"];
+    const laid = tidyCanvasLayout(
+      [
+        ...agents.map((id) => node(id, "agent", id)),
+        ...agents.map((id) => node(`k${id}`, "skill", `${id}-skill`)),
+        node("wiki", "workspace", "wiki"),
+      ],
+      [
+        ...agents.map((id) => edge(id, `k${id}`)),
+        ...agents.map((id) => edge(id, "wiki")),
+      ],
+      NO_SERVERS,
+    );
+
+    expect(laid.get("wiki")!.y).toBeGreaterThan(SERVICE_TOP);
+  });
+
+  it("routes deep stacked cards down gutters that cross no box", () => {
+    const skills = ["k1", "k2", "k3"];
+    const nodes = [
+      node("a1", "agent", "support"),
+      node("d1", "database", "session"),
+      ...skills.map((id) => node(id, "skill", id)),
+    ];
+    const edges = [edge("a1", "d1"), ...skills.map((id) => edge("a1", id))];
+    const laid = tidyCanvasLayout(nodes, edges, NO_SERVERS);
+    const boxes = boardBoxes(nodes, edges, laid);
+    const routes = routeCanvasEdges(
+      boxes,
+      [...boxes.keys()]
+        .filter((id) => id !== "a1")
+        .map((id) => ({ id: id, source: "a1", target: id })),
+      [],
+    );
+
+    expect(
+      [...routes.agent.values()].filter((route) => route.gutter !== null),
+    ).toHaveLength(2);
+    for (const [id, route] of routes.agent) {
+      const points = agentEdgePoints(
+        handlePoint(boxes.get("a1")!, "bottom"),
+        handlePoint(boxes.get(id)!, "top"),
+        route,
+      );
+      expect(crossedBoxIds(points, boxes, new Set(["a1", id])), id).toEqual([]);
+    }
   });
 
   it("survives a sub-agent cycle without dropping an agent", () => {
     const positions = tidyCanvasLayout(
       [node("a1", "agent", "one"), node("a2", "agent", "two")],
       [edge("a1", "a2", "subagent"), edge("a2", "a1", "subagent")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(positions.size).toBe(2);
+  });
+});
+
+describe("cardHeight", () => {
+  it("adds the rows a card draws, measured: title, state line and shared row", () => {
+    expect(
+      cardHeight("notes", {
+        features: 0,
+        refCount: 2,
+        stateText: "cloud · inherited",
+        subtitle: false,
+      }),
+    ).toBe(10 + 16 + 6 + 17 + 4 + 17 + 38);
+  });
+});
+
+describe("workspaceStateText", () => {
+  it("names one sandbox, and counts several", () => {
+    expect(workspaceStateText("inherited", ["cloud"])).toBe(
+      "cloud · inherited",
+    );
+    expect(workspaceStateText("inherited", ["cloud", "coder"])).toBe(
+      "2 sandboxes · inherited",
+    );
+    expect(workspaceStateText("readonly", [])).toBe("read-only");
   });
 });
 
@@ -332,7 +588,11 @@ describe("findFreePosition", () => {
   });
 
   it("steps clear of a whole frame, not just its first card", () => {
-    const frame = { x: 240, y: 96, ...frameSize(4) };
+    const frame = {
+      x: 240,
+      y: 96,
+      ...frameSize({ kind: "sandbox", memberIds: ["s1", "s2", "s3", "s4"] }),
+    };
     const placed = findFreePosition({ x: 240, y: 240 }, [frame]);
 
     // Below the frame: a card-sized check at the origin alone would allow y 240.

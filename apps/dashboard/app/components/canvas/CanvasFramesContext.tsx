@@ -3,7 +3,7 @@
 /**
  * Stage data the canvas node cards read, queried once by the Canvas instead of
  * once per card: the stage's MCP servers, its machine connections and each
- * framed sandbox's order number. Also carries the frame collapse toggle. The
+ * wired sandbox's order number. Also carries the frame collapse toggle. The
  * UI gallery provides a static value, so cards render with no Convex behind them.
  */
 import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";

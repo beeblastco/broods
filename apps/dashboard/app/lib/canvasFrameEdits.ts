@@ -4,16 +4,18 @@
  * the order numbers chips show. Pure, so each rule is unit-tested here.
  */
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
-import { deriveFrames, type StageMcpServer } from "@/app/lib/canvasFrameNodes";
+import { deriveGroups, type StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import {
   runtimeRefsProblems,
   type RuntimeRefsProblem,
 } from "@/app/lib/canvasRuntimeRefs";
 import {
   agentSandboxOrder,
+  agentSandboxOrders,
   edgeKind,
   frameMemberPositions,
   frameOriginOf,
+  framesOf,
   frameSize,
   type CanvasFrame,
   type FrameSize,
@@ -63,9 +65,8 @@ export function agreedSandboxOrderNumbers(
   edges: readonly Edge[],
 ): Map<string, number> {
   const numbers = new Map<string, number | null>();
-  for (const agent of nodes) {
-    if (agent.type !== "agent") continue;
-    agentSandboxOrder(agent, nodes, edges).forEach((id, index) => {
+  for (const sandboxIds of agentSandboxOrders(nodes, edges).values()) {
+    sandboxIds.forEach((id, index) => {
       const current = numbers.get(id);
       numbers.set(
         id,
@@ -90,9 +91,7 @@ export function boardRects(
   displayNodes: readonly Node[],
   frames: readonly CanvasFrame[],
 ): LayoutRect[] {
-  const sizes = new Map(
-    frames.map((frame) => [frame.id, frameSize(frame.memberIds.length)]),
-  );
+  const sizes = new Map(frames.map((frame) => [frame.id, frameSize(frame)]));
 
   return displayNodes
     .filter((node) => node.parentId === undefined)
@@ -218,22 +217,29 @@ export function makeDefaultSandbox<T extends LayoutNode>(
 /**
  * Flat nodes of `next` with positions settled after an edit that may change
  * frame membership. A frame that was already drawn keeps its origin whoever
- * joins or leaves it, and its members take its slots. A new frame starts
- * where its members stand, stepped clear of every other box. A card that left
- * all frames steps clear of the frame it sat in. Frames whose members did not
- * change, and cards that stay cards, are not moved. Returns `next.nodes`
- * itself when nothing moves.
+ * joins or leaves it, and its members take its slots. A frame that grows out
+ * of a lone card starts where that card stood, so the card's box becomes the
+ * frame's; any other new frame starts where its members stand. Either steps
+ * clear of every other box. A frame that shrinks to one member hands its
+ * origin to that member's card. Any other card that left all frames steps
+ * clear of the frame it sat in. Frames whose members did not change, and
+ * cards that stay cards, are not moved. Returns `next.nodes` itself when
+ * nothing moves.
  */
 export function reconcileFramePositions(
   previous: FlatGraph,
   next: FlatGraph,
 ): Node[] {
-  const before = deriveFrames(
+  const groupsBefore = deriveGroups(
     previous.nodes,
     previous.edges,
     previous.mcpServers,
   );
-  const after = deriveFrames(next.nodes, next.edges, next.mcpServers);
+  const groupsAfter = deriveGroups(next.nodes, next.edges, next.mcpServers);
+  const before = framesOf(groupsBefore);
+  const after = framesOf(groupsAfter);
+  const groupBefore = new Map(groupsBefore.map((group) => [group.id, group]));
+  const groupAfter = new Map(groupsAfter.map((group) => [group.id, group]));
   const beforeById = new Map(before.map((frame) => [frame.id, frame]));
   const framedBefore = new Set(before.flatMap((frame) => frame.memberIds));
   const framedAfter = new Set(after.flatMap((frame) => frame.memberIds));
@@ -247,14 +253,11 @@ export function reconcileFramePositions(
     move: boolean,
   ): void => {
     if (move) {
-      for (const [id, position] of frameMemberPositions(
-        origin,
-        frame.memberIds,
-      )) {
+      for (const [id, position] of frameMemberPositions(origin, frame)) {
         moves.set(id, position);
       }
     }
-    occupied.push({ ...origin, ...frameSize(frame.memberIds.length) });
+    occupied.push({ ...origin, ...frameSize(frame) });
   };
 
   for (const frame of after) {
@@ -269,16 +272,40 @@ export function reconcileFramePositions(
   }
   for (const frame of after) {
     if (beforeById.has(frame.id)) continue;
-    const size = frameSize(frame.memberIds.length);
+    const [card] = groupBefore.get(frame.id)?.memberIds ?? [];
+    const cardPosition =
+      card === undefined ? undefined : previousPositions.get(card);
     place(
       frame,
-      findFreeBox(originOf(frame.memberIds, nextPositions), size, occupied),
+      findFreeBox(
+        cardPosition ?? originOf(frame.memberIds, nextPositions),
+        frameSize(frame),
+        occupied,
+      ),
       true,
     );
   }
-  for (const node of next.nodes) {
-    if (!framedBefore.has(node.id) || framedAfter.has(node.id)) continue;
-    const position = findFreePosition(node.position, occupied);
+  // A frame's last member first, so it keeps the frame's spot over a leaver.
+  const leavers = next.nodes
+    .filter((node) => framedBefore.has(node.id) && !framedAfter.has(node.id))
+    .map((node) => {
+      const dissolved = before.find(
+        (frame) =>
+          frame.memberIds.includes(node.id) &&
+          groupAfter.get(frame.id)?.memberIds[0] === node.id,
+      );
+
+      return {
+        desired: dissolved
+          ? originOf(dissolved.memberIds, previousPositions)
+          : node.position,
+        first: dissolved !== undefined,
+        node: node,
+      };
+    })
+    .sort((a, b) => Number(b.first) - Number(a.first));
+  for (const { desired, node } of leavers) {
+    const position = findFreePosition(desired, occupied);
     moves.set(node.id, position);
     occupied.push({ ...position, ...CARD_SIZE });
   }

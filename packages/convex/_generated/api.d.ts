@@ -70,6 +70,7 @@ import type * as model_apiError from "../model/apiError.js";
 import type * as model_auditEvents from "../model/auditEvents.js";
 import type * as model_aws from "../model/aws.js";
 import type * as model_bundles from "../model/bundles.js";
+import type * as model_canvasEdgeRoutes from "../model/canvasEdgeRoutes.js";
 import type * as model_canvasFrames from "../model/canvasFrames.js";
 import type * as model_canvasLayout from "../model/canvasLayout.js";
 import type * as model_cascade from "../model/cascade.js";
@@ -204,6 +205,7 @@ declare const fullApi: ApiFromModules<{
   "model/auditEvents": typeof model_auditEvents;
   "model/aws": typeof model_aws;
   "model/bundles": typeof model_bundles;
+  "model/canvasEdgeRoutes": typeof model_canvasEdgeRoutes;
   "model/canvasFrames": typeof model_canvasFrames;
   "model/canvasLayout": typeof model_canvasLayout;
   "model/cascade": typeof model_cascade;

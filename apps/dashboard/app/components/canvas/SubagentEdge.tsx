@@ -1,6 +1,8 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
+import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
+import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import { cn } from "@/app/lib/utils";
 import {
@@ -15,7 +17,8 @@ const ARROW_ID_PREFIX = "subagent-arrow";
 
 /**
  * Edge for agent→agent subagent relationships. Renders via side handles in a distinct
- * violet, with a single arrowhead pointing at the callee (source can call target).
+ * violet, with a single arrowhead pointing at the callee (source can call target). Like
+ * every other edge, a code-managed or undeletable link shows a lock, never a trash.
  */
 export function SubagentEdge({
   id,
@@ -30,8 +33,11 @@ export function SubagentEdge({
   sourcePosition,
   targetPosition,
   style,
+  deletable,
 }: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
+  const locked = useCodeManagedEdge(id, source, target) || deletable === false;
+  const deleteHover = hovered && !locked;
 
   // Fan parallel subagent edges apart so their trunks don't stack (horizontal flow → offset Y).
   const [sourceFan, targetFan] = useEdgeFanOffset(
@@ -72,7 +78,7 @@ export function SubagentEdge({
           <path
             d="M -10,-4 L 0,0 L -10,4 Z"
             className={
-              hovered ? "fill-destructive/90" : "fill-canvas-subagent/65"
+              deleteHover ? "fill-destructive/90" : "fill-canvas-subagent/65"
             }
           />
         </marker>
@@ -87,7 +93,7 @@ export function SubagentEdge({
         // and the width goes through xyflow's own variable.
         className={cn(
           "opacity-(--edge-opacity)",
-          hovered ? "stroke-destructive/90!" : "stroke-canvas-subagent/65!",
+          deleteHover ? "stroke-destructive/90!" : "stroke-canvas-subagent/65!",
         )}
         style={{
           "--edge-opacity": style?.opacity,
@@ -97,12 +103,21 @@ export function SubagentEdge({
       />
 
       <EdgeLabelRenderer>
-        <EdgeDeleteButton
-          edgeId={id}
-          labelX={labelX}
-          labelY={labelY}
-          onHoverChange={setHovered}
-        />
+        {locked ? (
+          <LockedEdgeBadge
+            edgeId={id}
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        ) : (
+          <EdgeDeleteButton
+            edgeId={id}
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+          />
+        )}
       </EdgeLabelRenderer>
     </>
   );

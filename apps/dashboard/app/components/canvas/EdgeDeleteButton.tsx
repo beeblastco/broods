@@ -27,6 +27,8 @@ export function EdgeDeleteButton({
   return (
     // 64×64 hit zone centered on the edge midpoint, with no child div intercepting clicks
     <div
+      data-edge-control="delete"
+      data-edge-id={edgeId}
       className="nodrag nopan group pointer-events-auto absolute top-(--label-y) left-(--label-x) flex size-16 -translate-1/2 items-center justify-center"
       style={{ "--label-x": `${labelX}px`, "--label-y": `${labelY}px` }}
       onMouseEnter={() => onHoverChange?.(true)}

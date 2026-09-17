@@ -5,17 +5,31 @@
  * and the tidy layout packs their members into slots, both from this module,
  * so the two agree on membership, order and geometry. A member node keeps
  * its absolute position in the saved layout; a frame's origin is read back
- * from its members.
+ * from its members. A group with one member is no frame: that node stays a
+ * card, and becomes a chip once a second member joins its group.
+ *
+ * Also the relations frames and layout both read off the flat graph: which
+ * agents reference a resource, which sandbox a workspace resolves to, and
+ * which computer a machine MCP server runs on.
  *
  * Pure on purpose: the dashboard imports it, so no Convex server imports.
  */
 
 import type { LayoutEdge, LayoutNode, LayoutPosition } from "./canvasLayout";
-import type { McpTransport } from "./mcp";
+import type { McpPlacement, McpTransport } from "./mcp";
 
-/** Member chip box inside a frame: room for a 20 character name and its status line. */
+/** Member chip width inside a frame: room for a 20 character name. */
 export const FRAME_CHIP_WIDTH = 184;
-export const FRAME_CHIP_HEIGHT = 44;
+
+/**
+ * Chip height per kind. A workspace chip carries a third line (the agents
+ * sharing it) under its mount state, so it is taller.
+ */
+export const FRAME_CHIP_HEIGHTS: Record<FrameKind, number> = {
+  sandbox: 44,
+  workspace: 60,
+  mcp: 44,
+};
 
 /** Vertical gap between two chips. */
 export const FRAME_GAP = 8;
@@ -40,13 +54,18 @@ const MCP_FRAME_LABELS: Record<McpTransport, string> = {
   machine: "MCP · your computer",
 };
 
-/** One derived frame and the member nodes it holds. */
+/** One derived group and the member nodes it holds; drawn as a frame from two members. */
 export type CanvasFrame = {
   /** `frame:{owners}:{kind}:{key}`, stable while membership rules hold. */
   id: string;
+  /** What splits groups of one kind: where a sandbox runs, a workspace's storage, an MCP transport. */
+  key: string;
   kind: FrameKind;
   label: string;
-  /** Sandboxes by order number then label; other kinds by label. */
+  /**
+   * Sandboxes by order number, machine MCP servers by their computer's order
+   * number, then by label.
+   */
   memberIds: string[];
   /** Sorted ids of the agents that reach every member. */
   ownerIds: string[];
@@ -61,13 +80,27 @@ export type FrameGroup = {
 
 export type FrameKind = "sandbox" | "workspace" | "mcp";
 
+/** What frame geometry reads from a group. */
+export type FrameShape = Pick<CanvasFrame, "kind" | "memberIds">;
+
 export type FrameSize = {
   height: number;
   width: number;
 };
 
-/** MCP transport of each saved server, keyed by the canvas node id it owns. */
-export type McpTransportsByNode = ReadonlyMap<string, McpTransport>;
+/** Each saved MCP server's placement, keyed by the canvas node id it owns. */
+export type McpServersByNode = ReadonlyMap<string, McpPlacement>;
+
+/**
+ * A workspace's effective sandbox, by the broods cascade
+ * `ws.sandbox (override) ?? config.sandboxes[0] (inherited) ?? none (read-only)`.
+ * Inherited lists every distinct default of the agents wired to it: each agent
+ * runs the workspace on its own default.
+ */
+export type WorkspaceSandboxIds =
+  | { kind: "inherited"; sandboxIds: string[] }
+  | { kind: "override"; sandboxIds: string[] }
+  | { kind: "readonly" };
 
 /**
  * Agents that reach each non-agent node, keyed by node id. Ownership is read
@@ -114,6 +147,46 @@ export function agentOwners(
 }
 
 /**
+ * How many distinct agents reference each sandbox and workspace: a sandbox in
+ * an agent's `sandboxes`, a workspace an agent wires, and a sandbox mounted
+ * into such a workspace.
+ */
+export function agentRefCounts(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, number> {
+  const types = new Map(nodes.map((node) => [node.id, node.type]));
+  const refs = new Map<string, Set<string>>();
+  const addRef = (nodeId: string, agentId: string): void => {
+    const agents = refs.get(nodeId);
+    if (agents) agents.add(agentId);
+    else refs.set(nodeId, new Set([agentId]));
+  };
+  const neighbours = new Map<string, string[]>();
+  const link = (from: string, to: string): void => {
+    const list = neighbours.get(from);
+    if (list) list.push(to);
+    else neighbours.set(from, [to]);
+  };
+  for (const edge of edges) {
+    link(edge.source, edge.target);
+    link(edge.target, edge.source);
+  }
+  for (const [agentId, sandboxIds] of agentSandboxOrders(nodes, edges)) {
+    for (const sandboxId of sandboxIds) addRef(sandboxId, agentId);
+    for (const workspaceId of neighbours.get(agentId) ?? []) {
+      if (types.get(workspaceId) !== "workspace") continue;
+      addRef(workspaceId, agentId);
+      for (const mountId of neighbours.get(workspaceId) ?? []) {
+        if (types.get(mountId) === "sandbox") addRef(mountId, agentId);
+      }
+    }
+  }
+
+  return new Map([...refs].map(([id, agents]) => [id, agents.size]));
+}
+
+/**
  * Sandbox node ids an agent reaches over a direct edge, in `sandboxes` order:
  * the agent node's stored `sandboxOrder` first, then any other direct sandbox
  * edge in edge order, so a freshly drawn sandbox lands last.
@@ -123,28 +196,22 @@ export function agentSandboxOrder(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
 ): string[] {
-  const sandboxIds = new Set(
-    nodes.filter((node) => node.type === "sandbox").map((node) => node.id),
-  );
-  const wired = new Set<string>();
-  for (const edge of edges) {
-    if (edgeKind(edge) !== "default") continue;
-    const otherId =
-      edge.source === agent.id
-        ? edge.target
-        : edge.target === agent.id
-          ? edge.source
-          : null;
-    if (otherId !== null && sandboxIds.has(otherId)) wired.add(otherId);
-  }
-  const stored: unknown = agent.data.sandboxOrder;
-  const ordered = Array.isArray(stored)
-    ? stored.filter(
-        (id): id is string => typeof id === "string" && wired.has(id),
-      )
-    : [];
+  return sandboxOrdersFor([agent], nodes, edges).get(agent.id) ?? [];
+}
 
-  return [...new Set([...ordered, ...wired])];
+/**
+ * {@link agentSandboxOrder} for every agent at once, in one pass over the
+ * edges, for the readers that need all of them.
+ */
+export function agentSandboxOrders(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, string[]> {
+  return sandboxOrdersFor(
+    nodes.filter((node) => node.type === "agent"),
+    nodes,
+    edges,
+  );
 }
 
 export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
@@ -152,21 +219,29 @@ export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
 }
 
 /**
- * Every frame on the canvas. Only sandbox, workspace and MCP nodes at least
- * one agent reaches are framed; unreached ones stay standalone cards.
+ * Every group on the canvas, one-member groups included. Only sandbox,
+ * workspace and MCP nodes at least one agent reaches are grouped; unreached
+ * ones stay standalone cards.
  */
-export function deriveCanvasFrames(
+export function deriveCanvasGroups(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
-  mcpTransports: McpTransportsByNode,
+  mcpServers: McpServersByNode,
 ): CanvasFrame[] {
   const owners = agentOwners(nodes, edges);
-  const numbers = sandboxOrderNumbers(nodes, edges);
+  const sandboxNumbers = sandboxOrderNumbers(nodes, edges);
+  // A machine MCP server sorts by the place of the computer it runs on, so
+  // servers line up with their computers and runs-on edges never cross.
+  const numbers = new Map(sandboxNumbers);
+  for (const [mcpId, sandboxId] of runsOnSandboxIds(nodes, mcpServers)) {
+    const number = sandboxNumbers.get(sandboxId);
+    if (number !== undefined) numbers.set(mcpId, number);
+  }
   const frames = new Map<string, CanvasFrame>();
   const members = new Map<string, LayoutNode[]>();
 
   for (const node of nodes) {
-    const group = frameGroupOf(node, mcpTransports);
+    const group = frameGroupOf(node, mcpServers);
     const nodeOwners = owners.get(node.id);
     if (!group || !nodeOwners) continue;
     const ownerIds = [...nodeOwners].sort();
@@ -179,6 +254,7 @@ export function deriveCanvasFrames(
     members.set(id, [node]);
     frames.set(id, {
       id: id,
+      key: group.key,
       kind: group.kind,
       label: group.label,
       memberIds: [],
@@ -223,7 +299,7 @@ export function edgeKind(edge: LayoutEdge): "mount" | "subagent" | "default" {
  */
 export function frameGroupOf(
   node: LayoutNode,
-  mcpTransports: McpTransportsByNode,
+  mcpServers: McpServersByNode,
 ): FrameGroup | null {
   const config: unknown = node.data.config;
   if (node.type === "sandbox") {
@@ -255,7 +331,7 @@ export function frameGroupOf(
     };
   }
   if (node.type === "mcp") {
-    const transport = mcpTransports.get(node.id);
+    const transport = mcpServers.get(node.id)?.transport;
 
     return transport
       ? { key: transport, kind: "mcp", label: MCP_FRAME_LABELS[transport] }
@@ -268,17 +344,16 @@ export function frameGroupOf(
 /** Absolute top-left of each member's slot, filled in `memberIds` order. */
 export function frameMemberPositions(
   origin: LayoutPosition,
-  memberIds: readonly string[],
+  frame: FrameShape,
 ): Map<string, LayoutPosition> {
+  const step = FRAME_CHIP_HEIGHTS[frame.kind] + FRAME_GAP;
+
   return new Map(
-    memberIds.map((id, index) => [
+    frame.memberIds.map((id, index) => [
       id,
       {
         x: origin.x + FRAME_PADDING,
-        y:
-          origin.y +
-          FRAME_HEADER_HEIGHT +
-          index * (FRAME_CHIP_HEIGHT + FRAME_GAP),
+        y: origin.y + FRAME_HEADER_HEIGHT + index * step,
       },
     ]),
   );
@@ -294,14 +369,49 @@ export function frameOriginOf(
   return { x: x - FRAME_PADDING, y: y - FRAME_HEADER_HEIGHT };
 }
 
-/** Expanded frame box for a member count. */
-export function frameSize(count: number): FrameSize {
-  const chips = count * FRAME_CHIP_HEIGHT + Math.max(count - 1, 0) * FRAME_GAP;
+/** The groups drawn as frames: those with two members or more. */
+export function framesOf(groups: readonly CanvasFrame[]): CanvasFrame[] {
+  return groups.filter((group) => group.memberIds.length >= 2);
+}
+
+/** Expanded frame box for its kind and member count. */
+export function frameSize(frame: FrameShape): FrameSize {
+  const count = frame.memberIds.length;
+  const chips =
+    count * FRAME_CHIP_HEIGHTS[frame.kind] + Math.max(count - 1, 0) * FRAME_GAP;
 
   return {
     height: FRAME_HEADER_HEIGHT + chips + FRAME_PADDING,
     width: FRAME_WIDTH,
   };
+}
+
+/**
+ * The sandbox node each machine MCP server runs on, by the server's node id:
+ * the sandbox whose mount name, or else label, is the server's `sandbox`.
+ */
+export function runsOnSandboxIds(
+  nodes: readonly LayoutNode[],
+  mcpServers: McpServersByNode,
+): Map<string, string> {
+  const byName = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.type !== "sandbox") continue;
+    const name = node.data.mountName ?? node.data.label;
+    if (typeof name === "string" && !byName.has(name))
+      byName.set(name, node.id);
+  }
+
+  return new Map(
+    [...mcpServers].flatMap(([nodeId, server]): [string, string][] => {
+      const sandboxId =
+        server.transport === "machine" && server.sandbox !== null
+          ? byName.get(server.sandbox)
+          : undefined;
+
+      return sandboxId === undefined ? [] : [[nodeId, sandboxId]];
+    }),
+  );
 }
 
 /**
@@ -313,9 +423,8 @@ export function sandboxOrderNumbers(
   edges: readonly LayoutEdge[],
 ): Map<string, number> {
   const numbers = new Map<string, number>();
-  for (const agent of nodes) {
-    if (agent.type !== "agent") continue;
-    agentSandboxOrder(agent, nodes, edges).forEach((id, index) => {
+  for (const sandboxIds of agentSandboxOrders(nodes, edges).values()) {
+    sandboxIds.forEach((id, index) => {
       const current = numbers.get(id);
       if (current === undefined || index + 1 < current) {
         numbers.set(id, index + 1);
@@ -324,6 +433,77 @@ export function sandboxOrderNumbers(
   }
 
   return numbers;
+}
+
+/**
+ * Each workspace's effective sandboxes. A sandbox wired to it is a mount; with
+ * none, a `readOnly` flag forces read-only (the pure graph cannot express a
+ * `sandbox: null` ref); otherwise it inherits the default of every agent wired
+ * to it that has one, and is read-only when none does.
+ */
+export function workspaceSandboxIds(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, WorkspaceSandboxIds> {
+  const types = new Map(nodes.map((node) => [node.id, node.type]));
+  const mounts = new Map<string, string[]>();
+  const agents = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    for (const [workspaceId, otherId] of [
+      [edge.source, edge.target],
+      [edge.target, edge.source],
+    ]) {
+      if (types.get(workspaceId) !== "workspace") continue;
+      if (types.get(otherId) === "sandbox") {
+        const mounted = mounts.get(workspaceId);
+        if (mounted) mounted.push(otherId);
+        else mounts.set(workspaceId, [otherId]);
+      }
+      if (types.get(otherId) === "agent") {
+        const wired = agents.get(workspaceId);
+        if (wired) wired.add(otherId);
+        else agents.set(workspaceId, new Set([otherId]));
+      }
+    }
+  }
+  const defaults = new Map(
+    [...agentSandboxOrders(nodes, edges)].flatMap(
+      ([agentId, [first]]): [string, string][] =>
+        first === undefined ? [] : [[agentId, first]],
+    ),
+  );
+
+  return new Map(
+    nodes.flatMap((workspace): [string, WorkspaceSandboxIds][] => {
+      if (workspace.type !== "workspace") return [];
+      const mounted = mounts.get(workspace.id);
+      if (mounted) {
+        return [
+          [
+            workspace.id,
+            { kind: "override", sandboxIds: [...new Set(mounted)] },
+          ],
+        ];
+      }
+      // Sorted, so the list does not depend on the order edges arrive in.
+      const inherited = [
+        ...new Set(
+          [...(agents.get(workspace.id) ?? [])]
+            .sort()
+            .flatMap((agentId) => defaults.get(agentId) ?? []),
+        ),
+      ];
+
+      return [
+        [
+          workspace.id,
+          workspace.data.readOnly === true || inherited.length === 0
+            ? { kind: "readonly" }
+            : { kind: "inherited", sandboxIds: inherited },
+        ],
+      ];
+    }),
+  );
 }
 
 function labelOf(node: LayoutNode): string {
@@ -343,6 +523,45 @@ function orderNumberOf(
   nodeId: string,
 ): number {
   return numbers.get(nodeId) ?? Number.MAX_SAFE_INTEGER;
+}
+
+/** The `sandboxes` order of each of `agents`, reading every edge once. */
+function sandboxOrdersFor(
+  agents: readonly LayoutNode[],
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, string[]> {
+  const agentIds = new Set(agents.map((agent) => agent.id));
+  const sandboxIds = new Set(
+    nodes.filter((node) => node.type === "sandbox").map((node) => node.id),
+  );
+  const wired = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    if (edgeKind(edge) !== "default") continue;
+    for (const [agentId, otherId] of [
+      [edge.source, edge.target],
+      [edge.target, edge.source],
+    ]) {
+      if (!agentIds.has(agentId) || !sandboxIds.has(otherId)) continue;
+      const sandboxes = wired.get(agentId);
+      if (sandboxes) sandboxes.add(otherId);
+      else wired.set(agentId, new Set([otherId]));
+    }
+  }
+
+  return new Map(
+    agents.map((agent): [string, string[]] => {
+      const sandboxes = wired.get(agent.id) ?? new Set<string>();
+      const stored: unknown = agent.data.sandboxOrder;
+      const ordered = Array.isArray(stored)
+        ? stored.filter(
+            (id): id is string => typeof id === "string" && sandboxes.has(id),
+          )
+        : [];
+
+      return [agent.id, [...new Set([...ordered, ...sandboxes])]];
+    }),
+  );
 }
 
 /**

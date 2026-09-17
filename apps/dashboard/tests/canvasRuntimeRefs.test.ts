@@ -112,7 +112,28 @@ describe("analyzeCanvasInfra workspace state", () => {
 
     expect(workspaceStates.ws).toEqual({
       kind: "inherited",
-      sandboxLabel: "b",
+      sandboxLabels: ["b"],
+    });
+  });
+
+  test("a workspace two agents share inherits each agent's own default", () => {
+    const nodes = [
+      node("one", "agent", { agentConfigId: "cfg-one" }),
+      node("two", "agent", { agentConfigId: "cfg-two" }),
+      node("a", "sandbox"),
+      node("b", "sandbox"),
+      node("ws", "workspace"),
+    ];
+    const edges = [
+      edge("one", "a"),
+      edge("two", "b"),
+      edge("one", "ws"),
+      edge("two", "ws"),
+    ];
+
+    expect(analyzeCanvasInfra(nodes, edges).workspaceStates.ws).toEqual({
+      kind: "inherited",
+      sandboxLabels: ["a", "b"],
     });
   });
 });

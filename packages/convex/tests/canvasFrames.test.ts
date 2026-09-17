@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveCanvasFrames,
+  deriveCanvasGroups,
   frameGroupOf,
   frameMemberPositions,
   frameOriginOf,
+  framesOf,
   frameSize,
+  agentRefCounts,
+  runsOnSandboxIds,
   sandboxOrderNumbers,
-  type McpTransportsByNode,
+  workspaceSandboxIds,
+  type McpServersByNode,
 } from "../model/canvasFrames";
 import type { LayoutEdge, LayoutNode } from "../model/canvasLayout";
 
-const NO_TRANSPORTS: McpTransportsByNode = new Map();
+const NO_SERVERS: McpServersByNode = new Map();
 
 function node(
   id: string,
@@ -29,13 +33,13 @@ describe("frameGroupOf", () => {
     expect(
       frameGroupOf(
         node("s1", "sandbox", { config: { provider: "machine" } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "machine", kind: "sandbox", label: "Your computer" });
     expect(
       frameGroupOf(
         node("s2", "sandbox", { config: { provider: "lambda" } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "cloud", kind: "sandbox", label: "Cloud sandbox" });
   });
@@ -44,13 +48,15 @@ describe("frameGroupOf", () => {
     expect(
       frameGroupOf(
         node("w1", "workspace", { config: { storage: { provider: "s3" } } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces · S3" });
   });
 
   it("groups MCP servers by saved transport, and unsaved ones apart", () => {
-    const transports = new Map([["m1", "machine" as const]]);
+    const transports: McpServersByNode = new Map([
+      ["m1", { sandbox: null, transport: "machine" }],
+    ]);
 
     expect(frameGroupOf(node("m1", "mcp"), transports)).toEqual({
       key: "machine",
@@ -65,14 +71,14 @@ describe("frameGroupOf", () => {
   });
 
   it("never frames a database or a skill", () => {
-    expect(frameGroupOf(node("d1", "database"), NO_TRANSPORTS)).toBeNull();
-    expect(frameGroupOf(node("k1", "skill"), NO_TRANSPORTS)).toBeNull();
+    expect(frameGroupOf(node("d1", "database"), NO_SERVERS)).toBeNull();
+    expect(frameGroupOf(node("k1", "skill"), NO_SERVERS)).toBeNull();
   });
 });
 
-describe("deriveCanvasFrames", () => {
-  it("gives each agent its own frame and several agents a shared one", () => {
-    const frames = deriveCanvasFrames(
+describe("deriveCanvasGroups", () => {
+  it("gives each agent its own group and several agents a shared one", () => {
+    const groups = deriveCanvasGroups(
       [
         node("a1", "agent"),
         node("a2", "agent"),
@@ -81,18 +87,36 @@ describe("deriveCanvasFrames", () => {
         node("s3", "sandbox"),
       ],
       [edge("a1", "s1"), edge("a2", "s2"), edge("a1", "s3"), edge("a2", "s3")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
-    expect(frames.map((frame) => [frame.id, frame.memberIds])).toEqual([
+    expect(groups.map((group) => [group.id, group.memberIds])).toEqual([
       ["frame:a1:sandbox:cloud", ["s1"]],
       ["frame:a2:sandbox:cloud", ["s2"]],
       ["frame:a1,a2:sandbox:cloud", ["s3"]],
     ]);
   });
 
-  it("leaves unreached resources unframed, and frames a mounted sandbox with its agent", () => {
-    const frames = deriveCanvasFrames(
+  it("frames a group only once it has a second member", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("mac", "sandbox", { config: { provider: "machine" } }),
+    ];
+    const one = [edge("a1", "s1"), edge("a1", "mac")];
+    const two = [...one, edge("a1", "s2")];
+
+    expect(framesOf(deriveCanvasGroups(nodes, one, NO_SERVERS))).toEqual([]);
+    expect(
+      framesOf(deriveCanvasGroups(nodes, two, NO_SERVERS)).map(
+        (frame) => frame.memberIds,
+      ),
+    ).toEqual([["s1", "s2"]]);
+  });
+
+  it("leaves unreached resources ungrouped, and groups a mounted sandbox with its agent", () => {
+    const frames = deriveCanvasGroups(
       [
         node("a1", "agent"),
         node("w1", "workspace"),
@@ -103,7 +127,7 @@ describe("deriveCanvasFrames", () => {
         edge("a1", "w1"),
         { id: "mount:w1-left-s1-right", source: "w1", target: "s1" },
       ],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(frames.flatMap((frame) => frame.memberIds).sort()).toEqual([
@@ -126,7 +150,7 @@ describe("deriveCanvasFrames", () => {
     ];
 
     expect(
-      deriveCanvasFrames(nodes, edges, NO_TRANSPORTS).map(
+      deriveCanvasGroups(nodes, edges, NO_SERVERS).map(
         (frame) => frame.memberIds,
       ),
     ).toEqual([["mac"], ["cloud-b", "cloud-a"]]);
@@ -140,13 +164,140 @@ describe("deriveCanvasFrames", () => {
   });
 });
 
+describe("machine MCP members", () => {
+  it("line up with the order of the computers they run on", () => {
+    const nodes = [
+      node("a1", "agent", { sandboxOrder: ["phicks", "kien"] }),
+      node("kien", "sandbox", { config: { provider: "machine" } }),
+      node("phicks", "sandbox", { config: { provider: "machine" } }),
+      node("blender", "mcp"),
+      node("photos", "mcp"),
+    ];
+    const edges = [
+      edge("a1", "kien"),
+      edge("a1", "phicks"),
+      edge("a1", "blender"),
+      edge("a1", "photos"),
+    ];
+    const servers: McpServersByNode = new Map([
+      ["blender", { sandbox: "kien", transport: "machine" }],
+      ["photos", { sandbox: "phicks", transport: "machine" }],
+    ]);
+    const frames = framesOf(deriveCanvasGroups(nodes, edges, servers));
+
+    expect(frames.map((frame) => frame.memberIds)).toEqual([
+      ["phicks", "kien"],
+      ["photos", "blender"],
+    ]);
+  });
+});
+
 describe("frame geometry", () => {
   it("round-trips a frame origin through its member slots", () => {
     const origin = { x: 432, y: 288 };
-    const slots = frameMemberPositions(origin, ["s1", "s2", "s3"]);
+    const frame = { kind: "sandbox" as const, memberIds: ["s1", "s2", "s3"] };
+    const slots = frameMemberPositions(origin, frame);
 
     expect(slots.get("s2")).toEqual({ x: 440, y: 368 });
     expect(frameOriginOf([...slots.values()])).toEqual(origin);
-    expect(frameSize(3)).toEqual({ height: 184, width: 200 });
+    expect(frameSize(frame)).toEqual({ height: 184, width: 200 });
+  });
+
+  it("gives workspace chips taller slots", () => {
+    const frame = { kind: "workspace" as const, memberIds: ["w1", "w2"] };
+
+    expect(frameMemberPositions({ x: 0, y: 0 }, frame).get("w2")).toEqual({
+      x: 8,
+      y: 96,
+    });
+    expect(frameSize(frame)).toEqual({ height: 164, width: 200 });
+  });
+});
+
+describe("workspaceSandboxIds", () => {
+  it("reads a mount, a read-only flag, and otherwise the agent's default", () => {
+    const nodes = [
+      node("a1", "agent", { sandboxOrder: ["s2", "s1"] }),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("w1", "workspace"),
+      node("w2", "workspace"),
+      node("w3", "workspace", { readOnly: true }),
+    ];
+    const edges = [
+      edge("a1", "s1"),
+      edge("a1", "s2"),
+      edge("a1", "w1"),
+      edge("a1", "w2"),
+      edge("a1", "w3"),
+      { id: "mount:w2-left-s1-right", source: "w2", target: "s1" },
+    ];
+
+    expect([...workspaceSandboxIds(nodes, edges)]).toEqual([
+      ["w1", { kind: "inherited", sandboxIds: ["s2"] }],
+      ["w2", { kind: "override", sandboxIds: ["s1"] }],
+      ["w3", { kind: "readonly" }],
+    ]);
+  });
+
+  it("lists each wired agent's own default when agents differ", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("a2", "agent"),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("w1", "workspace"),
+    ];
+    const edges = [
+      edge("a2", "s2"),
+      edge("a1", "s1"),
+      edge("a2", "w1"),
+      edge("a1", "w1"),
+    ];
+
+    expect(workspaceSandboxIds(nodes, edges).get("w1")).toEqual({
+      kind: "inherited",
+      sandboxIds: ["s1", "s2"],
+    });
+  });
+});
+
+describe("agentRefCounts", () => {
+  it("counts agents by sandboxes, workspaces and the sandboxes those mount", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("a2", "agent"),
+      node("s1", "sandbox"),
+      node("w1", "workspace"),
+    ];
+    const edges = [
+      edge("a1", "s1"),
+      edge("a1", "w1"),
+      edge("a2", "w1"),
+      { id: "mount:w1-left-s1-right", source: "w1", target: "s1" },
+    ];
+
+    expect(agentRefCounts(nodes, edges)).toEqual(
+      new Map([
+        ["s1", 2],
+        ["w1", 2],
+      ]),
+    );
+  });
+});
+
+describe("runsOnSandboxIds", () => {
+  it("finds a machine server's sandbox by mount name or label", () => {
+    const nodes = [
+      node("mac", "sandbox", { mountName: "kien-mac" }),
+      node("m1", "mcp"),
+      node("m2", "mcp"),
+    ];
+    const servers: McpServersByNode = new Map([
+      ["m1", { sandbox: "kien-mac", transport: "machine" }],
+      ["m2", { sandbox: null, transport: "http" }],
+    ]);
+
+    expect([...runsOnSandboxIds(nodes, servers)]).toEqual([["m1", "mac"]]);
   });
 });
