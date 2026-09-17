@@ -90,8 +90,7 @@ export type SideEdgeData = { displayOnly?: boolean; route?: SideEdgeRoute };
 
 export type StageMcpServer = FunctionReturnType<
   typeof api.mcp.listByStage
->[number]; /**
- * Path of an agent edge from the agent's bottom handle to its target's top
+>[number]; /** * Path of an agent edge from the agent's bottom handle to its target's top
  * handle along its lanes, as `[path, labelX, labelY]` like React Flow's path
  * helpers. The label sits on the gutter run, or on the final drop.
  */
@@ -340,6 +339,22 @@ function displayBoxes(displayNodes: readonly Node[]): {
   return { boxes: boxes, handleBoxes: handleBoxes };
 }
 
+/** The side handles two nodes face each other with: left and right by where they stand. */
+function facingHandles(
+  source: Node | undefined,
+  target: Node | undefined,
+): Pick<Edge, "sourceHandle" | "targetHandle"> {
+  const sourceOnRight =
+    source !== undefined &&
+    target !== undefined &&
+    source.position.x >= target.position.x;
+
+  return {
+    sourceHandle: sourceOnRight ? "left" : "right",
+    targetHandle: sourceOnRight ? "right" : "left",
+  };
+}
+
 /**
  * Agent→member edges collapse into one bundle edge per agent and frame. Mount
  * and runs-on edges touching a collapsed frame's member re-point to the frame
@@ -362,6 +377,7 @@ function framedEdges(
 
     return frame && collapsed.has(frame.id) ? frame.id : id;
   };
+  const byId = new Map(nodes.map((node) => [node.id, node]));
   const bundles = new Map<string, string[]>();
   const display: Edge[] = [];
   const seen = new Set<string>();
@@ -379,20 +395,25 @@ function framedEdges(
       addBundle(display, bundles, agentId, frame.id, edge);
       continue;
     }
-    const source = endpoint(edge.source);
-    const target = endpoint(edge.target);
-    if (
-      kind !== "mount" ||
-      (source === edge.source && target === edge.target)
-    ) {
+    if (kind !== "mount") {
       display.push(edge);
       continue;
     }
-    const id = `collapsed:${source}-${edge.sourceHandle}-${target}-${edge.targetHandle}`;
+    // A mount is drawn from the sides its two ends face, whichever handles
+    // it was drawn or synced with, so it steps straight wherever tidy puts it.
+    const handles = facingHandles(byId.get(edge.source), byId.get(edge.target));
+    const source = endpoint(edge.source);
+    const target = endpoint(edge.target);
+    if (source === edge.source && target === edge.target) {
+      display.push({ ...edge, ...handles });
+      continue;
+    }
+    const id = `collapsed:${source}-${handles.sourceHandle}-${target}-${handles.targetHandle}`;
     if (source === target || seen.has(id)) continue;
     seen.add(id);
     display.push({
       ...edge,
+      ...handles,
       data: { ...edge.data, displayOnly: true },
       deletable: false,
       id: id,
@@ -494,7 +515,7 @@ function inheritedEdges(
                 `inherits:${source}-${target}`,
                 source,
                 target,
-                workspace.position.x >= sandbox.position.x,
+                facingHandles(workspace, sandbox),
                 "mount",
               ),
             ];
@@ -626,7 +647,13 @@ function routeEdges(
     const source = endOf(edge.source, edge.sourceHandle);
     const target = endOf(edge.target, edge.targetHandle);
     if (edge.type === "subagent" || !source || !target) continue;
-    sideEdges.push({ id: edge.id, source: source, target: target });
+    sideEdges.push({
+      id: edge.id,
+      // Drawn edge ids lead with their kind: mount, inherits, runs-on, collapsed.
+      kind: edge.id.slice(0, edge.id.indexOf(":")),
+      source: source,
+      target: target,
+    });
   }
   const routes = routeCanvasEdges(boxes, agentEdges, sideEdges);
 
@@ -661,7 +688,7 @@ function runsOnEdges(
           `runs-on:${source}-${target}`,
           source,
           target,
-          mcp.position.x >= sandbox.position.x,
+          facingHandles(mcp, sandbox),
           "runsOn",
         ),
       ];
@@ -718,27 +745,23 @@ function sameValue(a: unknown, b: unknown, depth: number): boolean {
   );
 }
 
-/**
- * A drawn side edge nobody stores, deletes or reconnects, leaving the side of
- * its source that faces its target.
- */
+/** A drawn side edge nobody stores, deletes or reconnects. */
 function sideEdge(
   id: string,
   source: string,
   target: string,
-  sourceOnRight: boolean,
+  handles: Pick<Edge, "sourceHandle" | "targetHandle">,
   type: "mount" | "runsOn",
 ): Edge {
   return {
+    ...handles,
     data: { displayOnly: true },
     deletable: false,
     id: id,
     reconnectable: false,
     selectable: false,
     source: source,
-    sourceHandle: sourceOnRight ? "left" : "right",
     target: target,
-    targetHandle: sourceOnRight ? "right" : "left",
     type: type,
   };
 }

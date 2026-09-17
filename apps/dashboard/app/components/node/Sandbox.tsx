@@ -108,15 +108,16 @@ function MachineSandboxNode({
   );
 }
 
-/** A card's subtitle: where it runs, then its place in `sandboxes`, as its chip would say. */
+/** A card's subtitle: where it runs, then its place in `sandboxes`: "1 · default", "2 · sandbox". */
 function orderSubtitle(
   where: string | null,
   orderNumber: number | undefined,
 ): string | undefined {
   const parts = [
     ...(where === null ? [] : [where]),
-    ...(orderNumber === undefined ? [] : [String(orderNumber)]),
-    ...(orderNumber === 1 ? ["default"] : []),
+    ...(orderNumber === undefined
+      ? []
+      : [String(orderNumber), orderNumber === 1 ? "default" : "sandbox"]),
   ];
 
   return parts.length > 0 ? parts.join(" · ") : undefined;

@@ -161,6 +161,98 @@ describe("routeCanvasEdges", () => {
   });
 });
 
+describe("side edge legs", () => {
+  it("keep a lane apart where a mount and an inherited edge meet one handle", () => {
+    // A sandbox chip left of two workspace chips, the upper inheriting it and
+    // the lower mounted on it: the upper's lead-in must not run along the
+    // lower's last leg.
+    const boxes = new Map([
+      ["sandbox", { height: 44, width: 184, x: 0, y: 0 }],
+      ["upper", { height: 60, width: 184, x: 240, y: 0 }],
+      ["lower", { height: 60, width: 184, x: 240, y: 68 }],
+    ]);
+    const edges = [
+      sideEdge(
+        "inherits:upper-sandbox",
+        boxes,
+        "upper",
+        "left",
+        "sandbox",
+        "right",
+      ),
+      sideEdge(
+        "mount:lower-left-sandbox-right",
+        boxes,
+        "lower",
+        "left",
+        "sandbox",
+        "right",
+      ),
+    ];
+    const { side } = routeCanvasEdges(boxes, [], edges);
+    const [first, second] = edges.map((edge) =>
+      sideEdgePoints(
+        handlePoint(edge.source.box, edge.source.side),
+        handlePoint(edge.target.box, edge.target.side),
+        side.get(edge.id)!,
+      ),
+    );
+    const runs = (points: { x: number; y: number }[]): number[][] =>
+      points
+        .slice(1)
+        .flatMap((point, index) =>
+          point.y === points[index].y
+            ? [
+                [
+                  point.y,
+                  Math.min(point.x, points[index].x),
+                  Math.max(point.x, points[index].x),
+                ],
+              ]
+            : [],
+        );
+    const touching = runs(first).flatMap(([y, from, to]) =>
+      runs(second).filter(
+        ([otherY, otherFrom, otherTo]) =>
+          Math.abs(y - otherY) < LANE_SPACING &&
+          from < otherTo &&
+          otherFrom < to,
+      ),
+    );
+
+    expect(touching).toEqual([]);
+  });
+});
+
+describe("crowded handles", () => {
+  it("merge edges of one kind into a trunk where a chip is too short to fan them", () => {
+    // Five workspace chips inheriting one sandbox chip: 44px cannot hold five
+    // ends a lane apart, so they share one end and one lane.
+    const boxes = new Map([
+      ["sandbox", { height: 44, width: 184, x: 0, y: 0 }],
+      ...Array.from({ length: 5 }, (_, index): [string, LayoutRect] => [
+        `w${index}`,
+        { height: 60, width: 184, x: 240, y: index * 68 },
+      ]),
+    ]);
+    const edges = Array.from({ length: 5 }, (_, index) =>
+      sideEdge(
+        `inherits:w${index}-sandbox`,
+        boxes,
+        `w${index}`,
+        "left",
+        "sandbox",
+        "right",
+      ),
+    );
+    const { side } = routeCanvasEdges(boxes, [], edges);
+    const routes = edges.map((edge) => side.get(edge.id)!);
+
+    expect(new Set(routes.map((route) => route.targetFan)).size).toBe(1);
+    expect(routes.every((route) => route.underY === null)).toBe(true);
+  });
+});
+
 describe("crossedBoxIds", () => {
   it("counts a segment through a box whose corners all sit outside it", () => {
     const boxes = new Map([["wide", box(100, 0)]]);
@@ -193,6 +285,7 @@ function sideEdge(
 ): SideEdgeRequest {
   return {
     id: id,
+    kind: id.split(":")[0],
     source: {
       box: boxes.get(source)!,
       nodeId: source,

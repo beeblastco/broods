@@ -5,7 +5,8 @@ import { cn } from "@/app/lib/utils";
 import { Handle, Position } from "@xyflow/react";
 
 /** Dot color class and text for a chip's status line. */
-export type ChipStatus = { color: string; text: string };
+/** Dot color class, text, and the full text for the tooltip when the line says less. */
+export type ChipStatus = { color: string; text: string; title?: string };
 
 /**
  * A sandbox, workspace or MCP node drawn inside a frame: a chip with its icon,
@@ -78,7 +79,9 @@ export function ResourceChip({
           data-slot="chip-status"
           className={cn("size-1.5 shrink-0 rounded-full", status.color)}
         />
-        <span className="truncate">{status.text}</span>
+        <span className="truncate" title={status.title ?? status.text}>
+          {status.text}
+        </span>
       </div>
       {note && (
         <div className="truncate pl-2.5 text-3xs text-muted-foreground">

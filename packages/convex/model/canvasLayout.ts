@@ -9,16 +9,17 @@
  * would cover another card.
  *
  * Each agent owns a cluster: the agent card sits over the middle of a block of
- * columns holding the services only that agent uses. Every sandbox, workspace
- * and MCP group (a frame, or a card when it has one member) takes its own
- * column; sessions and skills stack in one column each. Sub-agents follow
- * their parent, so the side-handle link between them stays short. Services
- * several agents reach sit in a block after the middle one of those agents,
- * so their edges stay short from both sides; services no agent reaches park
- * in a lane below. A mount edge ties its two cards together: an agent that
- * reaches one reaches the other, so a mounted pair always lands in the same
- * block. Groups come from `canvasFrames.ts`, so the dashboard reads back the
- * same frames the layout packed.
+ * columns holding the services that agent uses, plus the services several
+ * agents share when it is the middle one of them, so shared edges stay short
+ * from both sides. Every sandbox, workspace and MCP group (a frame, or a card
+ * when it has one member) takes its own column, moved along the block until
+ * its mount, inherited and runs-on edges cross as few columns as they can;
+ * sessions and skills stack in one column each. Sub-agents follow their
+ * parent, so the side-handle link between them stays short. Services no agent
+ * reaches park in a lane below. A mount edge ties its two cards together: an
+ * agent that reaches one reaches the other, so a mounted pair always lands in
+ * the same block. Groups come from `canvasFrames.ts`, so the dashboard reads
+ * back the same frames the layout packed.
  *
  * Columns are as wide as their widest box plus a gutter, and cards as tall as
  * {@link cardHeight} says, the height the dashboard renders them at. The gap
@@ -56,6 +57,7 @@ import {
   workspaceSandboxIds,
   type CanvasFrame,
   type McpServersByNode,
+  type WorkspaceSandboxIds,
 } from "./canvasFrames";
 
 /** Card box, matching `w-44 min-h-24` on the node shell in `BaseNode.tsx`. */
@@ -72,19 +74,21 @@ const STACK_GAP = 48;
 export const SERVICE_TOP = NODE_HEIGHT + STACK_GAP;
 
 /**
- * A card's rows, in px at the card's own scale, as `BaseNode.tsx` renders
- * them: top padding, one title line, the status row (with its globe badge),
- * and the extra rows. A title or workspace state line wraps at about the
- * character counts below, at most twice.
+ * A card's rows, in px, as `BaseNode.tsx` renders them at scale 1 (measured):
+ * top padding, 16px title lines (text-xs), 17px lines for every text-2xs row
+ * after it (subtitle, feature, state, shared) with the margin above each, and
+ * the status row with its globe badge. A title or state line wraps at about
+ * the character counts below, kept low so an estimate is never short, and
+ * clamps at two lines.
  */
-const CARD_FEATURE_ROW = 18;
-const CARD_LINE = 16;
-const CARD_ROW_GAP = 6;
-const CARD_SHARED_ROW = 20;
-const CARD_STATE_CHARS = 22;
-const CARD_STATUS_ROW = 38;
-const CARD_SUBTITLE_ROW = 20;
+const CARD_FEATURE_GAP = 2;
+const CARD_ROW_LINE = 17;
+const CARD_STATE_CHARS = 24;
+const CARD_STATE_MARGIN = 6;
+export const CARD_STATUS_ROW = 38;
+const CARD_SUBTITLE_MARGIN = 4;
 const CARD_TITLE_CHARS = 20;
+const CARD_TITLE_LINE = 16;
 const CARD_TOP_PADDING = 10;
 
 /**
@@ -110,11 +114,11 @@ const MAX_LANE_PASSES = 32;
 
 /**
  * Column order of an agent's service types. Within the MCP, sandbox and
- * workspace types each group takes a column, ordered by the side edges between
- * them (see {@link orderByLinks}), so a runs-on edge and a mount or inherited
- * edge each cross one gutter. Exhaustive over the node types on purpose:
- * adding one to `canvasNodeValidator` without giving it a column is a compile
- * error here.
+ * workspace types each group takes a column, then moves along the block by
+ * its side edges (see {@link orderColumns}), so a runs-on, mount or inherited
+ * edge crosses as few gutters as it can. Exhaustive over the node types on
+ * purpose: adding one to `canvasNodeValidator` without giving it a column is a
+ * compile error here.
  */
 const SERVICE_COLUMN_ORDER: Record<
   Exclude<CanvasNode["type"], "agent">,
@@ -192,12 +196,20 @@ type LaneRoom = {
 
 /** The facts every block reads while it places services. */
 type LayoutContext = {
-  groups: readonly CanvasFrame[];
+  /** Each grouped node's group, and each group's place in group order. */
+  groupOf: ReadonlyMap<string, CanvasFrame>;
+  groupRanks: ReadonlyMap<CanvasFrame, number>;
   heights: ReadonlyMap<string, number>;
-  /** Side-edge ends, as node id pairs. */
-  sidePairs: readonly (readonly [string, string])[];
+  /** Side-edge ends, as node id pairs, with the edge's kind. */
+  sidePairs: readonly (readonly [string, string, string])[];
   types: ReadonlyMap<string, string | undefined>;
 };
+
+/**
+ * Where a block sits among the others: its agent's place, and every placed
+ * service's block place, so a side edge leaving the block knows its side.
+ */
+type BlockPlace = { rank: number; ranks: ReadonlyMap<string, number> };
 
 /** A block of columns, and how far down it reaches. */
 type LayoutBlock = {
@@ -230,8 +242,10 @@ export type LayoutNode = {
 export type LayoutPosition = CanvasNode["position"];
 
 /** A box already on the board: a card or a frame. */
-export type LayoutRect = LayoutPosition & { height: number; width: number };
-/** Overlay new positions by node id, leaving every other node field untouched. */
+export type LayoutRect = LayoutPosition & {
+  height: number;
+  width: number;
+}; /** Overlay new positions by node id, leaving every other node field untouched. */
 export function applyPositions<
   T extends LayoutNode & { position: LayoutPosition },
 >(nodes: readonly T[], positions: ReadonlyMap<string, LayoutPosition>): T[] {
@@ -253,27 +267,29 @@ export function applyTidyLayout<
 }
 
 /**
- * A card's height from its rows, as `BaseNode.tsx` renders it at its own
- * scale. The card takes this as its minimum height, so as long as the rows fit
- * (the estimate is generous) the canvas measures exactly this, and the tidy
+ * The most a card's header (every row above the status row) can grow to at
+ * scale 1: its title and state line both wrapped to their two-line clamp.
+ * A card counter-scales its header up only while this still fits its height.
+ */
+export function cardHeaderMaxHeight(facts: CardFacts): number {
+  return headerRows(2, facts.stateText === null ? 0 : 2, facts);
+}
+
+/**
+ * A card's height from its rows, as `BaseNode.tsx` renders it at scale 1.
+ * The card takes this as its minimum height, and as long as the rows fit (the
+ * line estimate is generous) the canvas measures exactly this, so the tidy
  * layout stacks cards at the heights they draw at.
  */
 export function cardHeight(label: string, facts: CardFacts): number {
   const titleLines = lineCount(label, CARD_TITLE_CHARS);
   const stateLines =
     facts.stateText === null ? 0 : lineCount(facts.stateText, CARD_STATE_CHARS);
-  const rows =
-    CARD_TOP_PADDING +
-    titleLines * CARD_LINE +
-    (facts.subtitle ? CARD_SUBTITLE_ROW : 0) +
-    (facts.features > 0
-      ? CARD_ROW_GAP + facts.features * CARD_FEATURE_ROW
-      : 0) +
-    (stateLines > 0 ? CARD_ROW_GAP + stateLines * CARD_LINE : 0) +
-    (facts.refCount >= 2 ? CARD_SHARED_ROW : 0) +
-    CARD_STATUS_ROW;
 
-  return Math.max(NODE_HEIGHT, rows);
+  return Math.max(
+    NODE_HEIGHT,
+    headerRows(titleLines, stateLines, facts) + CARD_STATUS_ROW,
+  );
 }
 
 /**
@@ -313,10 +329,16 @@ export function tidyCanvasLayout(
 ): Map<string, LayoutPosition> {
   const groups = deriveCanvasGroups(nodes, edges, mcpServers);
   const frames = framesOf(groups);
+  const states = workspaceSandboxIds(nodes, edges);
   const context: LayoutContext = {
-    groups: groups,
-    heights: cardHeights(nodes, edges, mcpServers),
-    sidePairs: sidePairs(nodes, edges, mcpServers),
+    groupOf: new Map(
+      groups.flatMap((group) =>
+        group.memberIds.map((id): [string, CanvasFrame] => [id, group]),
+      ),
+    ),
+    groupRanks: new Map(groups.map((group, index) => [group, index])),
+    heights: cardHeights(nodes, edges, mcpServers, states),
+    sidePairs: sidePairs(nodes, edges, mcpServers, states),
     types: new Map(nodes.map((node) => [node.id, node.type])),
   };
   const cells = cellLayout(nodes, edges, context);
@@ -339,17 +361,23 @@ export function tidyCanvasLayout(
 }
 
 /**
- * The state line a workspace card shows after its arrow: "a, b · mounted",
- * "a · inherited" or "read-only". Shared with the card, so the height estimate
- * counts the text the card draws.
+ * The state line a workspace chip or card shows after its arrow: "a ·
+ * mounted", "a · inherited", "2 sandboxes · inherited" when several agents
+ * give it different sandboxes (their names go in the tooltip), or
+ * "read-only". Shared with the chip and the card, so every place says the
+ * same, and the height estimate counts the text the card draws.
  */
 export function workspaceStateText(
   kind: "inherited" | "override" | "readonly",
   sandboxLabels: readonly string[],
 ): string {
   if (kind === "readonly") return "read-only";
+  const sandboxes =
+    sandboxLabels.length === 1
+      ? sandboxLabels[0]
+      : `${sandboxLabels.length} sandboxes`;
 
-  return `${sandboxLabels.join(", ")} · ${kind === "override" ? "mounted" : "inherited"}`;
+  return `${sandboxes} · ${kind === "override" ? "mounted" : "inherited"}`;
 }
 
 /** How far the deepest bus lane under any agent runs past the gap below it. */
@@ -384,10 +412,10 @@ function cardHeights(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
   mcpServers: McpServersByNode,
+  states: ReadonlyMap<string, WorkspaceSandboxIds>,
 ): Map<string, number> {
   const orderNumbers = sandboxOrderNumbers(nodes, edges);
   const refCounts = agentRefCounts(nodes, edges);
-  const states = workspaceSandboxIds(nodes, edges);
   const labels = new Map(nodes.map((node) => [node.id, labelOf(node)]));
 
   return new Map(
@@ -452,13 +480,24 @@ function cellLayout(
   const graph = indexGraph(nodes, edges);
   const agents = orderAgents(graph);
   const rank = new Map(agents.map((agent, index) => [agent.id, index]));
-  const sharedAfter = new Map<string, LayoutNode[]>();
+  // Each service's block, by its agent's place: its one owner, or the middle
+  // of the agents that share it.
+  const blockRanks = new Map<string, number>();
+  const servicesOf = new Map<string, LayoutNode[]>();
+  const assign = (agentId: string, node: LayoutNode): void => {
+    blockRanks.set(node.id, rank.get(agentId) ?? 0);
+    const services = servicesOf.get(agentId);
+    if (services) services.push(node);
+    else servicesOf.set(agentId, [node]);
+  };
+  for (const [agentId, services] of graph.exclusiveServices) {
+    for (const node of services) assign(agentId, node);
+  }
   for (const { node, owners } of graph.sharedServices) {
     const ranked = [...owners].sort(
       (a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0),
     );
-    const anchor = ranked[Math.floor((ranked.length - 1) / 2)];
-    sharedAfter.set(anchor, [...(sharedAfter.get(anchor) ?? []), node]);
+    assign(ranked[Math.floor((ranked.length - 1) / 2)], node);
   }
   const serviceTop = roundUpToGrid(
     Math.max(
@@ -477,28 +516,23 @@ function cellLayout(
   };
 
   for (const agent of agents) {
-    const services = graph.exclusiveServices.get(agent.id) ?? [];
-    const block = layoutBlock(services, context, cursorColumn, serviceTop);
+    const block = layoutBlock(
+      servicesOf.get(agent.id) ?? [],
+      context,
+      { ranks: blockRanks, rank: rank.get(agent.id) ?? 0 },
+      cursorColumn,
+      serviceTop,
+    );
     // Middle column of the block; the left one of the two when the count is even.
     const column = cursorColumn + Math.floor((block.columns - 1) / 2);
     positions.set(agent.id, { x: column * COLUMN_UNIT, y: 0 });
     place(block);
     cursorColumn += block.columns;
-    const shared = sharedAfter.get(agent.id);
-    if (shared) {
-      const sharedBlock = layoutBlock(
-        shared,
-        context,
-        cursorColumn,
-        serviceTop,
-      );
-      place(sharedBlock);
-      cursorColumn += sharedBlock.columns;
-    }
   }
   const parked = layoutBlock(
     graph.orphanServices,
     context,
+    null,
     0,
     deepestY + STACK_GAP,
   );
@@ -516,19 +550,24 @@ function cellLayout(
 /** A typed column's groups in group order, then its ungrouped cards by label. */
 function columnItems(
   column: readonly LayoutNode[],
-  groups: readonly CanvasFrame[],
+  context: LayoutContext,
 ): ColumnItem[] {
-  const ids = new Set(column.map((node) => node.id));
-  const grouped = groups.filter((group) =>
-    group.memberIds.some((id) => ids.has(id)),
-  );
-  const groupedIds = new Set(grouped.flatMap((group) => group.memberIds));
+  const grouped = new Set<CanvasFrame>();
+  const loose: LayoutNode[] = [];
+  for (const node of column) {
+    const group = context.groupOf.get(node.id);
+    if (group) grouped.add(group);
+    else loose.push(node);
+  }
 
   return [
-    ...grouped.map((group) => ({ group: group })),
-    ...column
-      .filter((node) => !groupedIds.has(node.id))
-      .map((node) => ({ node: node })),
+    ...[...grouped]
+      .sort(
+        (a, b) =>
+          (context.groupRanks.get(a) ?? 0) - (context.groupRanks.get(b) ?? 0),
+      )
+      .map((group) => ({ group: group })),
+    ...loose.map((node) => ({ node: node })),
   ];
 }
 
@@ -644,29 +683,32 @@ function edgeRequests(
         }
       : boxes.get(id);
   };
-  const sideEdges = context.sidePairs.flatMap(([a, b]): SideEdgeRequest[] => {
-    const boxA = handleBox(a);
-    const boxB = handleBox(b);
-    if (!boxA || !boxB) return [];
+  const sideEdges = context.sidePairs.flatMap(
+    ([a, b, kind]): SideEdgeRequest[] => {
+      const boxA = handleBox(a);
+      const boxB = handleBox(b);
+      if (!boxA || !boxB) return [];
 
-    return [
-      {
-        id: `${a}|${b}`,
-        source: {
-          box: boxA,
-          nodeId: a,
-          outerId: frameOf.get(a)?.id ?? a,
-          side: facingSide(boxA, boxB),
+      return [
+        {
+          id: `${a}|${b}`,
+          kind: kind,
+          source: {
+            box: boxA,
+            nodeId: a,
+            outerId: frameOf.get(a)?.id ?? a,
+            side: facingSide(boxA, boxB),
+          },
+          target: {
+            box: boxB,
+            nodeId: b,
+            outerId: frameOf.get(b)?.id ?? b,
+            side: facingSide(boxB, boxA),
+          },
         },
-        target: {
-          box: boxB,
-          nodeId: b,
-          outerId: frameOf.get(b)?.id ?? b,
-          side: facingSide(boxB, boxA),
-        },
-      },
-    ];
-  });
+      ];
+    },
+  );
 
   return {
     agentEdges: [...agentEdges.values()],
@@ -727,6 +769,26 @@ function gutterRoom(routes: EdgeRoutes, room: LaneRoom): Map<number, number> {
   }
 
   return gutters;
+}
+
+/** A card's rows above its status row, for the given title and state line counts. */
+function headerRows(
+  titleLines: number,
+  stateLines: number,
+  facts: CardFacts,
+): number {
+  return (
+    CARD_TOP_PADDING +
+    titleLines * CARD_TITLE_LINE +
+    (facts.subtitle ? CARD_SUBTITLE_MARGIN + CARD_ROW_LINE : 0) +
+    (facts.features > 0
+      ? CARD_STATE_MARGIN +
+        facts.features * (CARD_ROW_LINE + CARD_FEATURE_GAP) -
+        CARD_FEATURE_GAP
+      : 0) +
+    (stateLines > 0 ? CARD_STATE_MARGIN + stateLines * CARD_ROW_LINE : 0) +
+    (facts.refCount >= 2 ? CARD_SUBTITLE_MARGIN + CARD_ROW_LINE : 0)
+  );
 }
 
 function indexGraph(
@@ -827,14 +889,14 @@ function laneRoom(
 function layoutBlock(
   services: readonly LayoutNode[],
   context: LayoutContext,
+  place: BlockPlace | null,
   originColumn: number,
   originY: number,
 ): LayoutBlock {
-  const columns = orderByLinks(
-    groupIntoColumns(services).map((column) =>
-      columnItems(column, context.groups),
-    ),
+  const columns = orderColumns(
+    groupIntoColumns(services).map((column) => columnItems(column, context)),
     context,
+    place,
   );
   const positions = new Map<string, LayoutPosition>();
   const stackIndex = new Map<string, number>();
@@ -911,75 +973,95 @@ function orderAgents(graph: CanvasGraph): LayoutNode[] {
 }
 
 /**
- * A block's columns, one per MCP, sandbox and workspace group, ordered so side
- * edges cross one gutter: the sandbox group most linked to workspaces sits
- * rightmost, next to the workspace group most linked to it; the sandbox group
- * most linked to MCP servers sits leftmost, next to the MCP group most linked
- * to it. Other types keep one stacked column. Sorts are stable, so unlinked
- * groups keep their group order.
+ * A block's columns, one per MCP, sandbox and workspace group and one stacked
+ * column per other type, ordered so side edges run short. Starting from type
+ * order (sessions, MCP, sandbox, workspace, skills), each group column moves
+ * to wherever the block's side edges cross the fewest columns, until no move
+ * helps: an edge inside the block costs the columns between its ends, an edge
+ * to another block the columns between its end and that block's side. Moves
+ * are taken only when they strictly help, so without side edges the type
+ * order holds.
  */
-function orderByLinks(
+function orderColumns(
   typed: readonly ColumnItem[][],
   context: LayoutContext,
+  place: BlockPlace | null,
 ): ColumnItem[][] {
-  const membersOf = (item: ColumnItem): Set<string> =>
-    new Set("node" in item ? [item.node.id] : item.group.memberIds);
-  const links = (item: ColumnItem, test: (id: string) => boolean): number => {
-    const members = membersOf(item);
-
-    return context.sidePairs.filter(
-      ([a, b]) => (members.has(a) && test(b)) || (members.has(b) && test(a)),
-    ).length;
-  };
-  const ofType = (type: string): ((id: string) => boolean) => {
-    return (id) => context.types.get(id) === type;
-  };
-  const ofItem = (item: ColumnItem | undefined): ((id: string) => boolean) => {
-    const members = item ? membersOf(item) : new Set<string>();
-
-    return (id) => members.has(id);
-  };
-  const itemsOf = (type: string): ColumnItem[] =>
-    typed.find((column) => {
-      const [first] = column;
-
-      return (
-        first !== undefined &&
-        "group" in first &&
-        column.every((item) => "group" in item) &&
-        first.group.kind === type
-      );
-    }) ?? [];
-
-  const sandboxes = [...itemsOf("sandbox")].sort(
-    (a, b) =>
-      links(a, ofType("workspace")) -
-      links(a, ofType("mcp")) -
-      (links(b, ofType("workspace")) - links(b, ofType("mcp"))),
+  let order = typed.flatMap((column): ColumnItem[][] =>
+    column.every((item) => "group" in item)
+      ? column.map((item) => [item])
+      : [column],
   );
-  const mcps = [...itemsOf("mcp")].sort(
-    (a, b) => links(a, ofItem(sandboxes[0])) - links(b, ofItem(sandboxes[0])),
+  const movable = order.flatMap((column, index) =>
+    column.length === 1 && "group" in column[0] ? [index] : [],
   );
-  const workspaces = [...itemsOf("workspace")].sort(
-    (a, b) =>
-      links(b, ofItem(sandboxes.at(-1))) - links(a, ofItem(sandboxes.at(-1))),
+  if (movable.length < 2) return order;
+  const [first, last] = [movable[0], movable[movable.length - 1]];
+  // Columns are moved whole, so each node's column object is fixed; a
+  // candidate order only renumbers them.
+  const columnOf = new Map<string, readonly ColumnItem[]>();
+  for (const column of order) {
+    for (const item of column) {
+      for (const id of "node" in item ? [item.node.id] : item.group.memberIds) {
+        columnOf.set(id, column);
+      }
+    }
+  }
+  const pairs = context.sidePairs.filter(
+    ([a, b]) => columnOf.has(a) || columnOf.has(b),
   );
-  const ordered = new Map([
-    ["mcp", mcps],
-    ["sandbox", sandboxes],
-    ["workspace", workspaces],
-  ]);
+  if (pairs.length === 0) return order;
+  // Only a column an edge ends in gains by moving; the rest move out of its
+  // way when a linked column moves past them.
+  const linked = new Set(
+    pairs.flatMap(([a, b]) => [columnOf.get(a), columnOf.get(b)]),
+  );
+  const cost = (candidate: readonly (readonly ColumnItem[])[]): number => {
+    const indexOf = new Map(candidate.map((column, index) => [column, index]));
+    const at = (id: string): number | undefined => {
+      const column = columnOf.get(id);
 
-  return typed.flatMap((column) => {
-    const [first] = column;
-    const kind =
-      first !== undefined && "group" in first ? first.group.kind : "";
-    const reordered = ordered.get(kind);
+      return column === undefined ? undefined : indexOf.get(column);
+    };
+    let total = 0;
+    for (const [a, b] of pairs) {
+      const [atA, atB] = [at(a), at(b)];
+      if (atA !== undefined && atB !== undefined) {
+        total += Math.max(0, Math.abs(atA - atB) - 1);
+        continue;
+      }
+      const inside = atA ?? atB ?? 0;
+      const outsideRank = place?.ranks.get(atA === undefined ? a : b);
+      if (!place || outsideRank === undefined || outsideRank === place.rank) {
+        continue;
+      }
+      total +=
+        outsideRank < place.rank ? inside : candidate.length - 1 - inside;
+    }
 
-    return reordered && reordered.length === column.length
-      ? reordered.map((item) => [item])
-      : [column];
-  });
+    return total;
+  };
+  let best = cost(order);
+  for (let improved = true; improved;) {
+    improved = false;
+    for (let from = first; from <= last; from++) {
+      if (!linked.has(order[from]) || !("group" in order[from][0])) continue;
+      for (let to = first; to <= last; to++) {
+        if (to === from) continue;
+        const next = [...order];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        const score = cost(next);
+        if (score < best) {
+          order = next;
+          best = score;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return order;
 }
 
 /**
@@ -1021,32 +1103,43 @@ function sameRoom(a: LaneRoom, b: LaneRoom): boolean {
 }
 
 /**
- * Node id pairs every side edge joins: a mount between two services, a
- * workspace and each sandbox it inherits, and a machine MCP server and the
- * sandbox it runs on.
+ * Node id pairs every side edge joins, with its kind: a mount between two
+ * services, a workspace and each sandbox it inherits, and a machine MCP
+ * server and the sandbox it runs on.
  */
 function sidePairs(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
   mcpServers: McpServersByNode,
-): [string, string][] {
+  states: ReadonlyMap<string, WorkspaceSandboxIds>,
+): [string, string, string][] {
   const types = new Map(nodes.map((node) => [node.id, node.type]));
 
   return [
-    ...edges.flatMap((edge): [string, string][] =>
+    ...edges.flatMap((edge): [string, string, string][] =>
       edgeKind(edge) === "mount" &&
       types.get(edge.source) !== "agent" &&
       types.get(edge.target) !== "agent"
-        ? [[edge.source, edge.target]]
+        ? [[edge.source, edge.target, "mount"]]
         : [],
     ),
-    ...[...workspaceSandboxIds(nodes, edges)].flatMap(
-      ([workspaceId, state]): [string, string][] =>
+    ...[...states].flatMap(
+      ([workspaceId, state]): [string, string, string][] =>
         state.kind === "inherited"
-          ? state.sandboxIds.map((sandboxId) => [workspaceId, sandboxId])
+          ? state.sandboxIds.map((sandboxId): [string, string, string] => [
+              workspaceId,
+              sandboxId,
+              "inherits",
+            ])
           : [],
     ),
-    ...runsOnSandboxIds(nodes, mcpServers),
+    ...[...runsOnSandboxIds(nodes, mcpServers)].map(
+      ([mcpId, sandboxId]): [string, string, string] => [
+        mcpId,
+        sandboxId,
+        "runs-on",
+      ],
+    ),
   ];
 }
 

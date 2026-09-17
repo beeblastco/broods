@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Edge, Node } from "@xyflow/react";
+import type { Edge, Node, XYPosition } from "@xyflow/react";
 import {
   agentEdgePoints,
   crossedBoxIds,
@@ -195,6 +195,33 @@ describe("buildFramedGraph", () => {
     ).toBeGreaterThanOrEqual(8);
   });
 
+  test("draws a mount from the sides its ends face, whatever handles it was stored with", () => {
+    // Stored workspace-left to sandbox-right, as the CLI writes it, but the
+    // workspace stands left of the sandbox.
+    const nodes = [
+      node("agent", "agent", { x: 0, y: 0 }),
+      node("docs", "workspace", { x: 0, y: 144 }),
+      node("box", "sandbox", { x: 240, y: 144 }),
+    ];
+    const edges: Edge[] = [
+      edge("agent", "docs"),
+      edge("agent", "box"),
+      {
+        id: "mount:docs-left-box-right",
+        source: "docs",
+        sourceHandle: "left",
+        target: "box",
+        targetHandle: "right",
+        type: "mount",
+      },
+    ];
+    const { edges: display } = buildFramedGraph(nodes, edges, [], NONE, null);
+
+    expect(
+      display.find((item) => item.id === "mount:docs-left-box-right"),
+    ).toMatchObject({ sourceHandle: "right", targetHandle: "left" });
+  });
+
   test("draws one inherited edge per distinct default of the agents sharing a workspace", () => {
     const nodes = [
       node("one", "agent", { x: 0, y: 0 }),
@@ -245,8 +272,8 @@ describe("buildFramedGraph", () => {
     expect(Math.abs(fans[0] - fans[1])).toBeGreaterThanOrEqual(8);
   });
 
-  test.each(["tracy", "large"] as const)(
-    "the tidy layout of the deployed %s stage draws no edge through a box",
+  test.each(["tracy", "tracymac", "macmount", "single", "large"] as const)(
+    "the tidy layout of the deployed %s stage draws no edge through a box or over another",
     (stage) => {
       const { edges, mcpServers, nodes } = deployedStages[stage];
       const servers: StageMcpServer[] = mcpServers;
@@ -261,8 +288,26 @@ describe("buildFramedGraph", () => {
         position: positions.get(item.id) ?? item.position,
       }));
       const graph = buildFramedGraph(laid, flatEdges, servers, NONE, null);
+      const paths = drawnPaths(graph.nodes, graph.edges);
+      const shared = paths.flatMap((a, index) =>
+        paths
+          .slice(index + 1)
+          .filter(
+            (b) =>
+              a.owner !== b.owner && sharedRunLength(a.points, b.points) > 8,
+          )
+          .map((b) => `${a.id} / ${b.id}`),
+      );
 
-      expect(crossings(graph.nodes, graph.edges)).toEqual([]);
+      expect(paths.length).toBeGreaterThan(0);
+      expect(
+        paths.flatMap((path) =>
+          crossedBoxIds(path.points, path.boxes, path.ignore).map(
+            (box) => `${path.id} crosses ${box}`,
+          ),
+        ),
+      ).toEqual([]);
+      expect(shared).toEqual([]);
     },
   );
 
@@ -450,11 +495,21 @@ function node(
 }
 
 /**
- * Every drawn edge that runs through a top-level box other than the two
- * holding its ends, with each node at its drawn size: frames as set, cards at
- * the minimum, chips at their slot.
+ * Every routed edge as drawn, with each node at its drawn size (frames as
+ * set, cards at the minimum, chips at their slot): its corner points, the
+ * top-level boxes on the board, the two holding its ends, and who owns its
+ * lanes (an agent edge its agent, a side edge its source node).
  */
-function crossings(nodes: readonly Node[], edges: readonly Edge[]): string[] {
+function drawnPaths(
+  nodes: readonly Node[],
+  edges: readonly Edge[],
+): {
+  boxes: Map<string, LayoutRect>;
+  id: string;
+  ignore: Set<string>;
+  owner: string;
+  points: XYPosition[];
+}[] {
   const byId = new Map(nodes.map((item) => [item.id, item]));
   const boxes = new Map<string, LayoutRect>();
   const handles = new Map<string, { box: LayoutRect; outer: string }>();
@@ -485,7 +540,7 @@ function crossings(nodes: readonly Node[], edges: readonly Edge[]): string[] {
     });
   }
 
-  return edges.flatMap((item): string[] => {
+  return edges.flatMap((item) => {
     const source = handles.get(item.source);
     const target = handles.get(item.target);
     const route: unknown = item.data?.route;
@@ -511,11 +566,15 @@ function crossings(nodes: readonly Node[], edges: readonly Edge[]): string[] {
             sideRouteOf(item),
           );
 
-    return crossedBoxIds(
-      points,
-      boxes,
-      new Set([source.outer, target.outer]),
-    ).map((box) => `${item.id} crosses ${box}`);
+    return [
+      {
+        boxes: boxes,
+        id: item.id,
+        ignore: new Set([source.outer, target.outer]),
+        owner: item.source,
+        points: points,
+      },
+    ];
   });
 }
 
@@ -544,4 +603,33 @@ function hydrateEdge(item: {
 
 function sideRouteOf(item: Edge): SideEdgeRoute {
   return (item.data as { route: SideEdgeRoute }).route;
+}
+
+/**
+ * The longest stretch two orthogonal polylines run along each other within
+ * 2px, on parallel segments.
+ */
+function sharedRunLength(
+  a: readonly XYPosition[],
+  b: readonly XYPosition[],
+): number {
+  let longest = 0;
+  for (let i = 1; i < a.length; i++) {
+    for (let j = 1; j < b.length; j++) {
+      const [p, q, r, t] = [a[i - 1], a[i], b[j - 1], b[j]];
+      const horizontal = p.y === q.y && r.y === t.y && Math.abs(p.y - r.y) <= 2;
+      const vertical = p.x === q.x && r.x === t.x && Math.abs(p.x - r.x) <= 2;
+      if (!horizontal && !vertical) continue;
+      const [from1, to1, from2, to2] = horizontal
+        ? [p.x, q.x, r.x, t.x]
+        : [p.y, q.y, r.y, t.y];
+      longest = Math.max(
+        longest,
+        Math.min(Math.max(from1, to1), Math.max(from2, to2)) -
+          Math.max(Math.min(from1, to1), Math.min(from2, to2)),
+      );
+    }
+  }
+
+  return longest;
 }

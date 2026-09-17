@@ -4,10 +4,7 @@
       {
         "id": "cli-agent-coder",
         "type": "agent",
-        "position": {
-          "x": 1392,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "coder",
           "sandboxOrder": ["cli-sandbox-coder-sandbox"],
@@ -18,10 +15,7 @@
       {
         "id": "cli-agent-tracy",
         "type": "agent",
-        "position": {
-          "x": 456,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "tracy",
           "sandboxOrder": [
@@ -36,189 +30,139 @@
       {
         "id": "cli-sandbox-coder-sandbox",
         "type": "sandbox",
-        "position": {
-          "x": 1392,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "coder-sandbox",
           "mountName": "coder-sandbox",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-internal-sandbox",
         "type": "sandbox",
-        "position": {
-          "x": 696,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "internal-sandbox",
           "mountName": "internal-sandbox",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-kien-mac",
         "type": "sandbox",
-        "position": {
-          "x": 464,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "kien-mac",
           "mountName": "kien-mac",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-phicks-mac",
         "type": "sandbox",
-        "position": {
-          "x": 464,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "phicks-mac",
           "mountName": "phicks-mac",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-workspace-handbook",
         "type": "workspace",
-        "position": {
-          "x": 1160,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "handbook",
           "mountName": "handbook",
           "readOnly": true,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-notes",
         "type": "workspace",
-        "position": {
-          "x": 920,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "notes",
           "mountName": "notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-playbook",
         "type": "workspace",
-        "position": {
-          "x": 1160,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "playbook",
           "mountName": "playbook",
           "readOnly": true,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-repos",
         "type": "workspace",
-        "position": {
-          "x": 920,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "repos",
           "mountName": "repos",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-workspace-scratch",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "scratch",
+          "mountName": "scratch",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-mcp-blender",
         "type": "mcp",
-        "position": {
-          "x": 240,
-          "y": 144
-        },
-        "data": {
-          "label": "blender",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "blender", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-github",
         "type": "mcp",
-        "position": {
-          "x": 8,
-          "y": 172
-        },
-        "data": {
-          "label": "github",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "github", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-linear",
         "type": "mcp",
-        "position": {
-          "x": 8,
-          "y": 224
-        },
-        "data": {
-          "label": "linear",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "linear", "managedBy": "cli", "status": "idle" }
+      },
+      {
+        "id": "cli-mcp-sculpt",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "sculpt", "managedBy": "cli", "status": "idle" }
       }
     ],
     "edges": [
@@ -236,6 +180,11 @@
         "id": "xy-edge__cli-agent-coder-cli-workspace-playbook",
         "source": "cli-agent-coder",
         "target": "cli-workspace-playbook"
+      },
+      {
+        "id": "xy-edge__cli-agent-coder-cli-workspace-scratch",
+        "source": "cli-agent-coder",
+        "target": "cli-workspace-scratch"
       },
       {
         "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
@@ -278,14 +227,14 @@
         "target": "cli-workspace-playbook"
       },
       {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-scratch",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-scratch"
+      },
+      {
         "id": "subagent:cli-agent-tracy-right-cli-agent-coder-left",
         "source": "cli-agent-tracy",
         "target": "cli-agent-coder"
-      },
-      {
-        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
-        "source": "cli-agent-tracy",
-        "target": "cli-mcp-blender"
       },
       {
         "id": "xy-edge__cli-agent-tracy-cli-mcp-github",
@@ -293,12 +242,29 @@
         "target": "cli-mcp-github"
       },
       {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-blender"
+      },
+      {
         "id": "xy-edge__cli-agent-tracy-cli-mcp-linear",
         "source": "cli-agent-tracy",
         "target": "cli-mcp-linear"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-sculpt",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-sculpt"
       }
     ],
     "mcpServers": [
+      {
+        "nodeId": "cli-mcp-sculpt",
+        "name": "sculpt",
+        "transport": "machine",
+        "sandbox": "kien-mac",
+        "disabled": false
+      },
       {
         "nodeId": "cli-mcp-linear",
         "name": "linear",
@@ -322,15 +288,399 @@
       }
     ]
   },
+  "tracymac": {
+    "nodes": [
+      {
+        "id": "cli-agent-tracy",
+        "type": "agent",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "tracy",
+          "sandboxOrder": [
+            "cli-sandbox-phicks-mac",
+            "cli-sandbox-internal-sandbox",
+            "cli-sandbox-kien-mac"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-sandbox-internal-sandbox",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "internal-sandbox",
+          "mountName": "internal-sandbox",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "sandbox" }
+        }
+      },
+      {
+        "id": "cli-sandbox-kien-mac",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "kien-mac",
+          "mountName": "kien-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "machine" }
+        }
+      },
+      {
+        "id": "cli-sandbox-phicks-mac",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "phicks-mac",
+          "mountName": "phicks-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "machine" }
+        }
+      },
+      {
+        "id": "cli-workspace-notes",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "notes",
+          "mountName": "notes",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-workspace-repos",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "repos",
+          "mountName": "repos",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-mcp-blender",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "blender", "managedBy": "cli", "status": "idle" }
+      },
+      {
+        "id": "cli-mcp-photos",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "photos", "managedBy": "cli", "status": "idle" }
+      }
+    ],
+    "edges": [
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-phicks-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-internal-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-kien-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-notes"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-repos"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-photos",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-photos"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-blender"
+      }
+    ],
+    "mcpServers": [
+      {
+        "nodeId": "cli-mcp-photos",
+        "name": "photos",
+        "transport": "machine",
+        "sandbox": "phicks-mac",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-blender",
+        "name": "blender",
+        "transport": "machine",
+        "sandbox": "kien-mac",
+        "disabled": false
+      }
+    ]
+  },
+  "macmount": {
+    "nodes": [
+      {
+        "id": "cli-agent-tracy",
+        "type": "agent",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "tracy",
+          "sandboxOrder": [
+            "cli-sandbox-phicks-mac",
+            "cli-sandbox-internal-sandbox",
+            "cli-sandbox-kien-mac"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-sandbox-internal-sandbox",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "internal-sandbox",
+          "mountName": "internal-sandbox",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "sandbox" }
+        }
+      },
+      {
+        "id": "cli-sandbox-kien-mac",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "kien-mac",
+          "mountName": "kien-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "machine" }
+        }
+      },
+      {
+        "id": "cli-sandbox-phicks-mac",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "phicks-mac",
+          "mountName": "phicks-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "machine" }
+        }
+      },
+      {
+        "id": "cli-workspace-notes",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "notes",
+          "mountName": "notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-workspace-repos",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "repos",
+          "mountName": "repos",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-mcp-blender",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "blender", "managedBy": "cli", "status": "idle" }
+      },
+      {
+        "id": "cli-mcp-photos",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "photos", "managedBy": "cli", "status": "idle" }
+      },
+      {
+        "id": "cli-workspace-inbox",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "inbox",
+          "mountName": "inbox",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-phicks-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-internal-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-kien-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-notes"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-repos"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-photos",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-photos"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-blender"
+      },
+      {
+        "id": "mount:cli-workspace-notes-left-cli-sandbox-phicks-mac-right",
+        "source": "cli-workspace-notes",
+        "target": "cli-sandbox-phicks-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-inbox",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-inbox"
+      }
+    ],
+    "mcpServers": [
+      {
+        "nodeId": "cli-mcp-photos",
+        "name": "photos",
+        "transport": "machine",
+        "sandbox": "phicks-mac",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-blender",
+        "name": "blender",
+        "transport": "machine",
+        "sandbox": "kien-mac",
+        "disabled": false
+      }
+    ]
+  },
+  "single": {
+    "nodes": [
+      {
+        "id": "cli-agent-solo",
+        "type": "agent",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "solo",
+          "sandboxOrder": ["cli-sandbox-solo-sandbox"],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-sandbox-solo-sandbox",
+        "type": "sandbox",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "solo-sandbox",
+          "mountName": "solo-sandbox",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "provider": "sandbox" }
+        }
+      },
+      {
+        "id": "cli-workspace-solo-files",
+        "type": "workspace",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "solo-files",
+          "mountName": "solo-files",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": { "storage": { "provider": "s3" } }
+        }
+      },
+      {
+        "id": "cli-mcp-docs",
+        "type": "mcp",
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "docs", "managedBy": "cli", "status": "idle" }
+      }
+    ],
+    "edges": [
+      {
+        "id": "xy-edge__cli-agent-solo-cli-sandbox-solo-sandbox",
+        "source": "cli-agent-solo",
+        "target": "cli-sandbox-solo-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-solo-cli-workspace-solo-files",
+        "source": "cli-agent-solo",
+        "target": "cli-workspace-solo-files"
+      },
+      {
+        "id": "xy-edge__cli-agent-solo-cli-mcp-docs",
+        "source": "cli-agent-solo",
+        "target": "cli-mcp-docs"
+      }
+    ],
+    "mcpServers": [
+      {
+        "nodeId": "cli-mcp-docs",
+        "name": "docs",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      }
+    ]
+  },
   "large": {
     "nodes": [
       {
         "id": "cli-agent-alpha",
         "type": "agent",
-        "position": {
-          "x": 216,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha",
           "sandboxOrder": [
@@ -345,10 +695,7 @@
       {
         "id": "cli-agent-bravo",
         "type": "agent",
-        "position": {
-          "x": 1800,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo",
           "sandboxOrder": [
@@ -364,10 +711,7 @@
       {
         "id": "cli-agent-charlie",
         "type": "agent",
-        "position": {
-          "x": 3192,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie",
           "sandboxOrder": [
@@ -384,10 +728,7 @@
       {
         "id": "cli-agent-delta",
         "type": "agent",
-        "position": {
-          "x": 4128,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta",
           "sandboxOrder": [
@@ -402,10 +743,7 @@
       {
         "id": "cli-agent-echo",
         "type": "agent",
-        "position": {
-          "x": 5496,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo",
           "sandboxOrder": [
@@ -421,10 +759,7 @@
       {
         "id": "cli-agent-foxtrot",
         "type": "agent",
-        "position": {
-          "x": 6672,
-          "y": 0
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot",
           "sandboxOrder": [
@@ -441,770 +776,514 @@
       {
         "id": "cli-sandbox-alpha-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 456,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha-cloud-1",
           "mountName": "alpha-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-alpha-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 224,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha-mac-1",
           "mountName": "alpha-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-alpha-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 224,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha-mac-2",
           "mountName": "alpha-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-bravo-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 2048,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-cloud-1",
           "mountName": "bravo-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-bravo-cloud-2",
         "type": "sandbox",
-        "position": {
-          "x": 2048,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-cloud-2",
           "mountName": "bravo-cloud-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-bravo-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 1808,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-mac-1",
           "mountName": "bravo-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-bravo-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 1808,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-mac-2",
           "mountName": "bravo-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-charlie-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 3440,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-cloud-1",
           "mountName": "charlie-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-charlie-cloud-2",
         "type": "sandbox",
-        "position": {
-          "x": 3440,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-cloud-2",
           "mountName": "charlie-cloud-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-charlie-cloud-3",
         "type": "sandbox",
-        "position": {
-          "x": 3440,
-          "y": 276
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-cloud-3",
           "mountName": "charlie-cloud-3",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-charlie-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 3200,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-mac-1",
           "mountName": "charlie-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-charlie-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 3200,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-mac-2",
           "mountName": "charlie-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-delta-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 4368,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta-cloud-1",
           "mountName": "delta-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-delta-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 4136,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta-mac-1",
           "mountName": "delta-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-delta-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 4136,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta-mac-2",
           "mountName": "delta-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-echo-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 5744,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-cloud-1",
           "mountName": "echo-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-echo-cloud-2",
         "type": "sandbox",
-        "position": {
-          "x": 5744,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-cloud-2",
           "mountName": "echo-cloud-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-echo-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 5504,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-mac-1",
           "mountName": "echo-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-echo-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 5504,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-mac-2",
           "mountName": "echo-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-foxtrot-cloud-1",
         "type": "sandbox",
-        "position": {
-          "x": 6920,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-cloud-1",
           "mountName": "foxtrot-cloud-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-foxtrot-cloud-2",
         "type": "sandbox",
-        "position": {
-          "x": 6920,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-cloud-2",
           "mountName": "foxtrot-cloud-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-foxtrot-cloud-3",
         "type": "sandbox",
-        "position": {
-          "x": 6920,
-          "y": 276
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-cloud-3",
           "mountName": "foxtrot-cloud-3",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "sandbox"
-          }
+          "config": { "provider": "sandbox" }
         }
       },
       {
         "id": "cli-sandbox-foxtrot-mac-1",
         "type": "sandbox",
-        "position": {
-          "x": 6680,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-mac-1",
           "mountName": "foxtrot-mac-1",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-sandbox-foxtrot-mac-2",
         "type": "sandbox",
-        "position": {
-          "x": 6680,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-mac-2",
           "mountName": "foxtrot-mac-2",
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "provider": "machine"
-          }
+          "config": { "provider": "machine" }
         }
       },
       {
         "id": "cli-workspace-alpha-data",
         "type": "workspace",
-        "position": {
-          "x": 680,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha-data",
           "mountName": "alpha-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-alpha-notes",
         "type": "workspace",
-        "position": {
-          "x": 680,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "alpha-notes",
           "mountName": "alpha-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-bravo-data",
         "type": "workspace",
-        "position": {
-          "x": 2288,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-data",
           "mountName": "bravo-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-bravo-notes",
         "type": "workspace",
-        "position": {
-          "x": 2288,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "bravo-notes",
           "mountName": "bravo-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-charlie-data",
         "type": "workspace",
-        "position": {
-          "x": 3680,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-data",
           "mountName": "charlie-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-charlie-notes",
         "type": "workspace",
-        "position": {
-          "x": 3680,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-notes",
           "mountName": "charlie-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-delta-data",
         "type": "workspace",
-        "position": {
-          "x": 4592,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta-data",
           "mountName": "delta-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-delta-notes",
         "type": "workspace",
-        "position": {
-          "x": 4592,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "delta-notes",
           "mountName": "delta-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-echo-data",
         "type": "workspace",
-        "position": {
-          "x": 5984,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-data",
           "mountName": "echo-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-echo-notes",
         "type": "workspace",
-        "position": {
-          "x": 5984,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "echo-notes",
           "mountName": "echo-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-foxtrot-data",
         "type": "workspace",
-        "position": {
-          "x": 7160,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-data",
           "mountName": "foxtrot-data",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-foxtrot-notes",
         "type": "workspace",
-        "position": {
-          "x": 7160,
-          "y": 240
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-notes",
           "mountName": "foxtrot-notes",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-shared-assets",
         "type": "workspace",
-        "position": {
-          "x": 4824,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "shared-assets",
           "mountName": "shared-assets",
           "readOnly": false,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-shared-docs",
         "type": "workspace",
-        "position": {
-          "x": 1128,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "shared-docs",
           "mountName": "shared-docs",
           "readOnly": true,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-workspace-team-wiki",
         "type": "workspace",
-        "position": {
-          "x": 2520,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "team-wiki",
           "mountName": "team-wiki",
           "readOnly": true,
           "managedBy": "cli",
           "status": "idle",
-          "config": {
-            "storage": {
-              "provider": "s3"
-            }
-          }
+          "config": { "storage": { "provider": "s3" } }
         }
       },
       {
         "id": "cli-mcp-alpha-tool",
         "type": "mcp",
-        "position": {
-          "x": 0,
-          "y": 144
-        },
-        "data": {
-          "label": "alpha-tool",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "alpha-tool", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-bravo-api-1",
         "type": "mcp",
-        "position": {
-          "x": 1352,
-          "y": 172
-        },
-        "data": {
-          "label": "bravo-api-1",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "bravo-api-1", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-bravo-api-2",
         "type": "mcp",
-        "position": {
-          "x": 1352,
-          "y": 224
-        },
-        "data": {
-          "label": "bravo-api-2",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "bravo-api-2", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-bravo-tool",
         "type": "mcp",
-        "position": {
-          "x": 1584,
-          "y": 144
-        },
-        "data": {
-          "label": "bravo-tool",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "bravo-tool", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-charlie-api-1",
         "type": "mcp",
-        "position": {
-          "x": 2744,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-api-1",
           "managedBy": "cli",
@@ -1214,10 +1293,7 @@
       {
         "id": "cli-mcp-charlie-api-2",
         "type": "mcp",
-        "position": {
-          "x": 2744,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-api-2",
           "managedBy": "cli",
@@ -1227,10 +1303,7 @@
       {
         "id": "cli-mcp-charlie-tool",
         "type": "mcp",
-        "position": {
-          "x": 2976,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "charlie-tool",
           "managedBy": "cli",
@@ -1240,62 +1313,31 @@
       {
         "id": "cli-mcp-delta-tool",
         "type": "mcp",
-        "position": {
-          "x": 3912,
-          "y": 144
-        },
-        "data": {
-          "label": "delta-tool",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "delta-tool", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-echo-api-1",
         "type": "mcp",
-        "position": {
-          "x": 5048,
-          "y": 172
-        },
-        "data": {
-          "label": "echo-api-1",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "echo-api-1", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-echo-api-2",
         "type": "mcp",
-        "position": {
-          "x": 5048,
-          "y": 224
-        },
-        "data": {
-          "label": "echo-api-2",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "echo-api-2", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-echo-tool",
         "type": "mcp",
-        "position": {
-          "x": 5280,
-          "y": 144
-        },
-        "data": {
-          "label": "echo-tool",
-          "managedBy": "cli",
-          "status": "idle"
-        }
+        "position": { "x": 0, "y": 0 },
+        "data": { "label": "echo-tool", "managedBy": "cli", "status": "idle" }
       },
       {
         "id": "cli-mcp-foxtrot-api-1",
         "type": "mcp",
-        "position": {
-          "x": 6224,
-          "y": 172
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-api-1",
           "managedBy": "cli",
@@ -1305,10 +1347,7 @@
       {
         "id": "cli-mcp-foxtrot-api-2",
         "type": "mcp",
-        "position": {
-          "x": 6224,
-          "y": 224
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-api-2",
           "managedBy": "cli",
@@ -1318,10 +1357,7 @@
       {
         "id": "cli-mcp-foxtrot-api-3",
         "type": "mcp",
-        "position": {
-          "x": 6224,
-          "y": 276
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-api-3",
           "managedBy": "cli",
@@ -1331,10 +1367,7 @@
       {
         "id": "cli-mcp-foxtrot-tool",
         "type": "mcp",
-        "position": {
-          "x": 6456,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "foxtrot-tool",
           "managedBy": "cli",
@@ -1344,10 +1377,7 @@
       {
         "id": "cli-mcp-shared-search",
         "type": "mcp",
-        "position": {
-          "x": 912,
-          "y": 144
-        },
+        "position": { "x": 0, "y": 0 },
         "data": {
           "label": "shared-search",
           "managedBy": "cli",
@@ -1512,24 +1542,24 @@
         "target": "cli-workspace-shared-docs"
       },
       {
-        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-tool",
-        "source": "cli-agent-charlie",
-        "target": "cli-mcp-charlie-tool"
-      },
-      {
         "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-api-1",
         "source": "cli-agent-charlie",
         "target": "cli-mcp-charlie-api-1"
       },
       {
-        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-api-2",
-        "source": "cli-agent-charlie",
-        "target": "cli-mcp-charlie-api-2"
-      },
-      {
         "id": "xy-edge__cli-agent-charlie-cli-mcp-shared-search",
         "source": "cli-agent-charlie",
         "target": "cli-mcp-shared-search"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-tool",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-charlie-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-api-2",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-charlie-api-2"
       },
       {
         "id": "xy-edge__cli-agent-delta-cli-sandbox-delta-cloud-1",
@@ -1627,14 +1657,14 @@
         "target": "cli-workspace-shared-assets"
       },
       {
-        "id": "xy-edge__cli-agent-echo-cli-mcp-echo-api-2",
-        "source": "cli-agent-echo",
-        "target": "cli-mcp-echo-api-2"
-      },
-      {
         "id": "xy-edge__cli-agent-echo-cli-mcp-echo-api-1",
         "source": "cli-agent-echo",
         "target": "cli-mcp-echo-api-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-mcp-echo-api-2",
+        "source": "cli-agent-echo",
+        "target": "cli-mcp-echo-api-2"
       },
       {
         "id": "xy-edge__cli-agent-echo-cli-mcp-echo-tool",
@@ -1697,6 +1727,11 @@
         "target": "cli-mcp-foxtrot-api-2"
       },
       {
+        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-tool",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-mcp-foxtrot-tool"
+      },
+      {
         "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-api-3",
         "source": "cli-agent-foxtrot",
         "target": "cli-mcp-foxtrot-api-3"
@@ -1705,11 +1740,6 @@
         "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-api-1",
         "source": "cli-agent-foxtrot",
         "target": "cli-mcp-foxtrot-api-1"
-      },
-      {
-        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-tool",
-        "source": "cli-agent-foxtrot",
-        "target": "cli-mcp-foxtrot-tool"
       }
     ],
     "mcpServers": [

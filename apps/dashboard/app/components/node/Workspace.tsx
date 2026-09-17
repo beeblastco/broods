@@ -7,7 +7,11 @@
  * status row says the same.
  */
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
-import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
+import {
+  BaseNode,
+  statusConfig,
+  type BaseNodeData,
+} from "@/app/components/node/BaseNode";
 import {
   ResourceChip,
   type ChipStatus,
@@ -48,7 +52,12 @@ export function WorkspaceNode({
       nodeType="workspace"
       data={nodeData}
       icon={<FolderOpen className="size-3.5" />}
-      liveStatus={workspaceMemberStatus(state)}
+      // The state line already says mounted, inherited or read-only; the status
+      // row says only the run state, in the state's color.
+      liveStatus={{
+        color: status.color,
+        label: statusConfig[nodeData.status ?? "idle"].text,
+      }}
       showSideHandles={true}
     />
   );
@@ -66,5 +75,6 @@ function workspaceChipStatus(
   return {
     color: status.color,
     text: `↳ ${workspaceStateText(state.kind, state.sandboxLabels)}`,
+    title: state.sandboxLabels.join(", "),
   };
 }

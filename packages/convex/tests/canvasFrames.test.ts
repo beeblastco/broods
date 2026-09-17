@@ -164,6 +164,34 @@ describe("deriveCanvasGroups", () => {
   });
 });
 
+describe("machine MCP members", () => {
+  it("line up with the order of the computers they run on", () => {
+    const nodes = [
+      node("a1", "agent", { sandboxOrder: ["phicks", "kien"] }),
+      node("kien", "sandbox", { config: { provider: "machine" } }),
+      node("phicks", "sandbox", { config: { provider: "machine" } }),
+      node("blender", "mcp"),
+      node("photos", "mcp"),
+    ];
+    const edges = [
+      edge("a1", "kien"),
+      edge("a1", "phicks"),
+      edge("a1", "blender"),
+      edge("a1", "photos"),
+    ];
+    const servers: McpServersByNode = new Map([
+      ["blender", { sandbox: "kien", transport: "machine" }],
+      ["photos", { sandbox: "phicks", transport: "machine" }],
+    ]);
+    const frames = framesOf(deriveCanvasGroups(nodes, edges, servers));
+
+    expect(frames.map((frame) => frame.memberIds)).toEqual([
+      ["phicks", "kien"],
+      ["photos", "blender"],
+    ]);
+  });
+});
+
 describe("frame geometry", () => {
   it("round-trips a frame origin through its member slots", () => {
     const origin = { x: 432, y: 288 };

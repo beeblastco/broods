@@ -6,8 +6,11 @@ import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
 import {
+  CARD_STATUS_ROW,
+  cardHeaderMaxHeight,
   cardHeight,
   workspaceStateText,
+  type CardFacts,
 } from "@broods/convex/model/canvasLayout";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
@@ -154,14 +157,16 @@ export function BaseNode({
   const borderClass = !isConnectedToAgent
     ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
-  const stateText = workspaceState ? stateLine(workspaceState) : null;
-  // The tidy layout stacks cards at this height, so the card never draws shorter.
-  const minHeight = cardHeight(data.label, {
+  const stateText = stateLine(workspaceState);
+  // The tidy layout stacks cards at this height, so the card draws exactly this tall.
+  const facts: CardFacts = {
     features: featureRows?.length ?? 0,
     refCount: sharedAgentCount,
     stateText: stateText,
     subtitle: subtitle !== undefined,
-  });
+  };
+  const minHeight = cardHeight(data.label, facts);
+  const headerScale = fittedScale(scale, minHeight, facts);
 
   return (
     <div
@@ -196,14 +201,16 @@ export function BaseNode({
 
       {showSideHandles && (
         <>
-          {/* An MCP card's sides only anchor its drawn runs-on edge; nothing mounts there. */}
+          {/* Held 48px down (SIDE_HANDLE_TOP in canvasEdgeRoutes.ts), so side edges between
+              cards of different heights in one row run straight. An MCP card's sides only
+              anchor its drawn runs-on edge; nothing mounts there. */}
           <Handle
             id="left"
             type="source"
             position={Position.Left}
             isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
-            className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+            className="top-12! bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
           <Handle
             id="right"
@@ -211,7 +218,7 @@ export function BaseNode({
             position={Position.Right}
             isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
-            className="bg-transparent! w-2.5! h-2.5! border-transparent!"
+            className="top-12! bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
         </>
       )}
@@ -220,7 +227,9 @@ export function BaseNode({
         className="h-(--content-height)"
         style={{
           "--content-height":
-            contentHeight != null ? `${contentHeight * scale}px` : undefined,
+            contentHeight != null
+              ? `${contentHeight * headerScale}px`
+              : undefined,
         }}
       >
         {/* Narrowed by the same scale, so the scaled header still ends at the card's edge. */}
@@ -229,8 +238,8 @@ export function BaseNode({
           data-slot="card-header"
           className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
           style={{
-            "--content-width": `${100 / scale}%`,
-            "--node-scale": scale,
+            "--content-width": `${100 / headerScale}%`,
+            "--node-scale": headerScale,
           }}
         >
           <div className="flex items-center gap-1.5 min-w-0">
@@ -289,7 +298,11 @@ export function BaseNode({
               )}
               <span
                 className={`min-w-0 line-clamp-2 wrap-anywhere ${STATE_TEXT_TONE[workspaceState.kind]}`}
-                title={stateText}
+                title={
+                  workspaceState.kind === "readonly"
+                    ? stateText
+                    : workspaceState.sandboxLabels.join(", ")
+                }
               >
                 {stateText}
               </span>
@@ -372,8 +385,30 @@ export function useSideHandlesConnectable(nodeType: string): boolean {
   });
 }
 
-/** The text of a workspace card's state line. */
-function stateLine(state: WorkspaceSandboxState): string {
+/**
+ * The header's counter-scale, grown only as far as the header's two-line
+ * worst case still fits the card's height, so a fuller card keeps scale 1
+ * rather than drawing taller than the layout placed it. Read from the rows,
+ * not the measured header, so the narrower text of a larger scale can never
+ * feed back into the scale.
+ */
+function fittedScale(
+  scale: number,
+  minHeight: number,
+  facts: CardFacts,
+): number {
+  if (scale <= 1) return scale;
+
+  return Math.min(
+    scale,
+    Math.max(1, (minHeight - CARD_STATUS_ROW) / cardHeaderMaxHeight(facts)),
+  );
+}
+
+/** The text of a workspace card's state line, or null for any other card. */
+function stateLine(state: WorkspaceSandboxState | undefined): string | null {
+  if (!state) return null;
+
   return workspaceStateText(
     state.kind,
     state.kind === "readonly" ? [] : state.sandboxLabels,

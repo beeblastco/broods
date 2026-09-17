@@ -23,6 +23,7 @@ import {
   NODE_WIDTH,
   SERVICE_TOP,
   tidyCanvasLayout,
+  workspaceStateText,
   type LayoutEdge,
   type LayoutNode,
   type LayoutPosition,
@@ -253,6 +254,34 @@ describe("tidyCanvasLayout", () => {
         expect(laid.get("w1")!.x).toBeGreaterThan(laid.get(mountOn)!.x);
       }
     }
+  });
+
+  it("moves a sandbox nothing links out from between a computer and its workspaces", () => {
+    // Mac first, a server running on it and a workspace mounted on it: the
+    // unlinked cloud sandbox must not sit between them.
+    const laid = tidyCanvasLayout(
+      [
+        node("a1", "agent", "tracy", { sandboxOrder: ["mac", "cloud"] }),
+        node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+        node("cloud", "sandbox", "cloud"),
+        node("tool", "mcp", "tool"),
+        node("w1", "workspace", "notes"),
+      ],
+      [
+        edge("a1", "mac"),
+        edge("a1", "cloud"),
+        edge("a1", "tool"),
+        edge("a1", "w1"),
+        edge("w1", "mac", "mount"),
+      ],
+      new Map([["tool", { sandbox: "mac", transport: "machine" }]]),
+    );
+    const between = (x: number, a: string, b: string): boolean =>
+      x > Math.min(laid.get(a)!.x, laid.get(b)!.x) &&
+      x < Math.max(laid.get(a)!.x, laid.get(b)!.x);
+
+    expect(between(laid.get("cloud")!.x, "tool", "mac")).toBe(false);
+    expect(between(laid.get("cloud")!.x, "mac", "w1")).toBe(false);
   });
 
   it("puts a machine MCP server next to the computer it runs on", () => {
@@ -497,6 +526,31 @@ describe("tidyCanvasLayout", () => {
     );
 
     expect(positions.size).toBe(2);
+  });
+});
+
+describe("cardHeight", () => {
+  it("adds the rows a card draws, measured: title, state line and shared row", () => {
+    expect(
+      cardHeight("notes", {
+        features: 0,
+        refCount: 2,
+        stateText: "cloud · inherited",
+        subtitle: false,
+      }),
+    ).toBe(10 + 16 + 6 + 17 + 4 + 17 + 38);
+  });
+});
+
+describe("workspaceStateText", () => {
+  it("names one sandbox, and counts several", () => {
+    expect(workspaceStateText("inherited", ["cloud"])).toBe(
+      "cloud · inherited",
+    );
+    expect(workspaceStateText("inherited", ["cloud", "coder"])).toBe(
+      "2 sandboxes · inherited",
+    );
+    expect(workspaceStateText("readonly", [])).toBe("read-only");
   });
 });
 

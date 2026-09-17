@@ -62,7 +62,10 @@ export type CanvasFrame = {
   key: string;
   kind: FrameKind;
   label: string;
-  /** Sandboxes by order number then label; other kinds by label. */
+  /**
+   * Sandboxes by order number, machine MCP servers by their computer's order
+   * number, then by label.
+   */
   memberIds: string[];
   /** Sorted ids of the agents that reach every member. */
   ownerIds: string[];
@@ -226,7 +229,14 @@ export function deriveCanvasGroups(
   mcpServers: McpServersByNode,
 ): CanvasFrame[] {
   const owners = agentOwners(nodes, edges);
-  const numbers = sandboxOrderNumbers(nodes, edges);
+  const sandboxNumbers = sandboxOrderNumbers(nodes, edges);
+  // A machine MCP server sorts by the place of the computer it runs on, so
+  // servers line up with their computers and runs-on edges never cross.
+  const numbers = new Map(sandboxNumbers);
+  for (const [mcpId, sandboxId] of runsOnSandboxIds(nodes, mcpServers)) {
+    const number = sandboxNumbers.get(sandboxId);
+    if (number !== undefined) numbers.set(mcpId, number);
+  }
   const frames = new Map<string, CanvasFrame>();
   const members = new Map<string, LayoutNode[]>();
 

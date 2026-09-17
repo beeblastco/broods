@@ -35,7 +35,7 @@ export const BUS_INSET = 12;
 /** Distance between two agents' buses, wider than other lanes so each reads as its own line. */
 const BUS_SPACING = 16;
 
-/** Kept clear at both ends of a box side that several edges fan across. */
+/** Kept clear at both ends of a box's top that several agent edges fan across. */
 const FAN_INSET = 16;
 
 /** Between a box's side and the gutter lane nearest it. */
@@ -44,8 +44,22 @@ const GUTTER_INSET = 8;
 /** Distance between two parallel runs. */
 export const LANE_SPACING = 8;
 
+/** Kept clear at both ends of a box's side that several side edges fan along. */
+const SIDE_FAN_INSET = 8;
+
 /** How far apart edges sharing a side handle spread at most. */
 const SIDE_FAN_SPACING = 24;
+
+/**
+ * How far below a box's top its side handles sit at most: a card's side
+ * handles hold at `top-12` in `BaseNode.tsx`, so cards of different heights
+ * in one row line up; a chip or collapsed frame is shorter, so its handles
+ * sit at its middle.
+ */
+const SIDE_HANDLE_TOP = 48;
+
+/** Lane candidates a straight side step tries before it detours. */
+const STEP_TRIES = 5;
 
 /** How far apart edges entering one target's top spread at most. */
 const TARGET_FAN_SPACING = 16;
@@ -75,7 +89,16 @@ export type EdgeRoutes = {
 export type HandleSide = "bottom" | "left" | "right" | "top";
 
 /** A side edge between two side handles. */
-export type SideEdgeRequest = { id: string; source: SideEnd; target: SideEnd };
+/**
+ * A side edge between two side handles. `kind` (mount, inherits, runs-on)
+ * says which edges may merge where a handle is too crowded to fan them apart.
+ */
+export type SideEdgeRequest = {
+  id: string;
+  kind: string;
+  source: SideEnd;
+  target: SideEnd;
+};
 
 /**
  * A side edge's lanes: how far along its side each end fans, and the x of the
@@ -121,6 +144,13 @@ type Leg = {
  * `from`..`to` its extent, `owner` the agent (or side edge) it belongs to.
  */
 type Run = { at: number; from: number; owner: string; to: number };
+
+/**
+ * Runs taken so far on one axis, bucketed by `at` in LANE_SPACING steps, so a
+ * lane check reads only the runs near it rather than every run on the board.
+ */
+type Runs = Map<number, Run[]>;
+
 /** The corner points of an agent edge, from the agent's bottom handle to the target's top handle. */
 export function agentEdgePoints(
   source: LayoutPosition,
@@ -172,7 +202,7 @@ export function facingSide(
   return other.x + other.width / 2 < box.x + box.width / 2 ? "left" : "right";
 }
 
-/** Centre of one side of a box, where React Flow puts that handle. */
+/** Where React Flow puts a box's handle on one side. */
 export function handlePoint(box: LayoutRect, side: HandleSide): LayoutPosition {
   if (side === "top") return { x: box.x + box.width / 2, y: box.y };
   if (side === "bottom") {
@@ -181,7 +211,7 @@ export function handlePoint(box: LayoutRect, side: HandleSide): LayoutPosition {
 
   return {
     x: side === "left" ? box.x : box.x + box.width,
-    y: box.y + box.height / 2,
+    y: box.y + Math.min(box.height / 2, SIDE_HANDLE_TOP),
   };
 }
 
@@ -197,8 +227,8 @@ export function routeCanvasEdges(
   agentEdges: readonly AgentEdgeRequest[],
   sideEdges: readonly SideEdgeRequest[],
 ): EdgeRoutes {
-  const verticals: Run[] = [];
-  const horizontals: Run[] = [];
+  const verticals: Runs = new Map();
+  const horizontals: Runs = new Map();
   const legs = agentLegs(boxes, agentEdges);
 
   for (const leg of legs
@@ -218,7 +248,7 @@ export function routeCanvasEdges(
     );
   }
 
-  const fans = sideFans(sideEdges);
+  const { fans, owners } = sideFans(sideEdges);
   const side = new Map(
     [...sideEdges]
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -226,6 +256,7 @@ export function routeCanvasEdges(
         edge.id,
         routeSide(
           edge,
+          owners.get(edge.id) ?? edge.id,
           fans.get(`${edge.id}:source`) ?? 0,
           fans.get(`${edge.id}:target`) ?? 0,
           boxes,
@@ -243,11 +274,14 @@ export function routeCanvasEdges(
         (a.gutterX ?? a.start.x) - (b.gutterX ?? b.start.x) ||
         a.id.localeCompare(b.id),
     );
-    fanOffsets(group.length, group[0].target.width, TARGET_FAN_SPACING).forEach(
-      (offset, index) => {
-        group[index].targetFan = offset;
-      },
-    );
+    fanOffsets(
+      group.length,
+      group[0].target.width,
+      FAN_INSET,
+      TARGET_FAN_SPACING,
+    ).forEach((offset, index) => {
+      group[index].targetFan = offset;
+    });
   }
 
   placeBuses(legs, horizontals);
@@ -308,6 +342,13 @@ export function sideEdgePoints(
   ];
 }
 
+function addRun(runs: Runs, run: Run): void {
+  const bucket = Math.floor(run.at / LANE_SPACING);
+  const list = runs.get(bucket);
+  if (list) list.push(run);
+  else runs.set(bucket, [run]);
+}
+
 /** Agent edges with a box at both ends and room below the agent for a bus. */
 function agentLegs(
   boxes: ReadonlyMap<string, LayoutRect>,
@@ -358,10 +399,16 @@ function directionOf(side: SideEnd["side"]): -1 | 1 {
 
 /**
  * Offsets that spread `count` edges across a box side `length` long, centred,
- * `spacing` apart, or closer when the side is too short for that.
+ * `spacing` apart, or closer when the side is too short for that, keeping
+ * `inset` clear at both ends.
  */
-function fanOffsets(count: number, length: number, spacing: number): number[] {
-  const room = Math.max(length - FAN_INSET * 2, 0);
+function fanOffsets(
+  count: number,
+  length: number,
+  inset: number,
+  spacing: number,
+): number[] {
+  const room = Math.max(length - inset * 2, 0);
   const step = count < 2 ? 0 : Math.min(spacing, room / (count - 1));
 
   return Array.from(
@@ -376,7 +423,7 @@ function fanOffsets(count: number, length: number, spacing: number): number[] {
  * alternating around `base` (0). Does not record it.
  */
 function findLane(
-  runs: readonly Run[],
+  runs: Runs,
   owner: string,
   base: number,
   direction: -1 | 0 | 1,
@@ -391,14 +438,9 @@ function findLane(
         ? (step % 2 === 1 ? 1 : -1) * Math.ceil(step / 2)
         : direction * step;
     const at = base + offset * spacing;
-    const clear = runs.every(
-      (run) =>
-        run.owner === owner ||
-        Math.abs(run.at - at) >= spacing ||
-        run.to <= from ||
-        to <= run.from,
-    );
-    if (clear) return at;
+    if (runClear(runs, { at: at, from: from, owner: owner, to: to }, spacing)) {
+      return at;
+    }
   }
 }
 
@@ -434,7 +476,7 @@ function overlaps(a: LayoutRect, b: LayoutRect): boolean {
  * shallowest lane; another agent's bus keeps BUS_SPACING from it anywhere
  * within BUS_END_GAP of its ends, so two buses never read as one line.
  */
-function placeBuses(legs: readonly Leg[], horizontals: Run[]): void {
+function placeBuses(legs: readonly Leg[], horizontals: Runs): void {
   const buses = groupBy(legs, (leg) => leg.request.source)
     .map((group) => {
       const turns = group.flatMap((leg) => [
@@ -471,16 +513,19 @@ function placeBuses(legs: readonly Leg[], horizontals: Run[]): void {
 
 /**
  * One side edge's lanes. A straight step when its handles face each other and
- * the step crosses no box but the two it joins; otherwise a detour under the
- * boxes between them.
+ * some lane between them keeps its runs, lead-in legs included, off every
+ * other edge's and clear of every box but the two it joins; otherwise a detour
+ * under the boxes between them. Its runs belong to its source node, so side
+ * edges leaving one node share their lanes, one line that branches.
  */
 function routeSide(
   edge: SideEdgeRequest,
+  owner: string,
   sourceFan: number,
   targetFan: number,
   boxes: ReadonlyMap<string, LayoutRect>,
-  verticals: Run[],
-  horizontals: Run[],
+  verticals: Runs,
+  horizontals: Runs,
 ): SideEdgeRoute {
   const sourceHandle = handlePoint(edge.source.box, edge.source.side);
   const targetHandle = handlePoint(edge.target.box, edge.target.side);
@@ -490,49 +535,64 @@ function routeSide(
   const facing =
     directionOf(edge.source.side) * (end.x - start.x) > 0 &&
     directionOf(edge.target.side) * (start.x - end.x) > 0;
-  const recordLegs = (sourceX: number, targetX: number): void => {
-    horizontals.push(
-      {
-        at: start.y,
-        from: Math.min(start.x, sourceX),
-        owner: edge.id,
-        to: Math.max(start.x, sourceX),
-      },
-      {
-        at: end.y,
-        from: Math.min(end.x, targetX),
-        owner: edge.id,
-        to: Math.max(end.x, targetX),
-      },
-    );
-  };
+  const legs = (sourceX: number, targetX: number): Run[] => [
+    {
+      at: start.y,
+      from: Math.min(start.x, sourceX),
+      owner: owner,
+      to: Math.max(start.x, sourceX),
+    },
+    {
+      at: end.y,
+      from: Math.min(end.x, targetX),
+      owner: owner,
+      to: Math.max(end.x, targetX),
+    },
+  ];
 
   if (facing) {
     // A lane's width past each end, so two steps that meet end to end at one
     // x do not read as one line with a jog.
     const top = Math.min(start.y, end.y) - LANE_SPACING;
     const bottom = Math.max(start.y, end.y) + LANE_SPACING;
-    const x = findLane(
-      verticals,
-      edge.id,
-      Math.round((start.x + end.x) / 2),
-      0,
-      top,
-      bottom,
-      LANE_SPACING,
-    );
-    const step = [start, { x: x, y: start.y }, { x: x, y: end.y }, end];
-    if (crossedBoxIds(step, boxes, ignore).length === 0) {
-      verticals.push({ at: x, from: top, owner: edge.id, to: bottom });
-      recordLegs(x, x);
+    const middle = Math.round((start.x + end.x) / 2);
+    // Only boxes in the step's span can be crossed, whichever lane it takes.
+    const span: LayoutRect = {
+      height: bottom - top,
+      width: Math.abs(end.x - start.x),
+      x: Math.min(start.x, end.x),
+      y: top,
+    };
+    const nearby: LayoutRect[] = [];
+    for (const [id, box] of boxes) {
+      if (!ignore.has(id) && overlaps(box, span)) nearby.push(box);
+    }
+    for (let step = 0; step < STEP_TRIES; step++) {
+      // Alternating around the middle: 0, +1, -1, +2, -2 lanes.
+      const offset = (step % 2 === 1 ? 1 : -1) * Math.ceil(step / 2);
+      const x = middle + offset * LANE_SPACING;
+      const run = { at: x, from: top, owner: owner, to: bottom };
+      const path = [start, { x: x, y: start.y }, { x: x, y: end.y }, end];
+      if (
+        runsClear(verticals, [run]) &&
+        runsClear(horizontals, legs(x, x)) &&
+        !path
+          .slice(1)
+          .some((point, index) =>
+            nearby.some((box) => segmentCrosses(path[index], point, box)),
+          )
+      ) {
+        addRun(verticals, run);
+        for (const leg of legs(x, x)) addRun(horizontals, leg);
 
-      return {
-        sourceFan: sourceFan,
-        sourceX: x,
-        targetFan: targetFan,
-        targetX: x,
-        underY: null,
-      };
+        return {
+          sourceFan: sourceFan,
+          sourceX: x,
+          targetFan: targetFan,
+          targetX: x,
+          underY: null,
+        };
+      }
     }
   }
 
@@ -552,15 +612,13 @@ function routeSide(
     x: left,
     y: Math.min(start.y, end.y),
   };
-  const floor = Math.max(
-    band.y + band.height,
-    ...[...boxes.values()]
-      .filter((box) => overlaps(box, band))
-      .map((box) => box.y + box.height),
-  );
+  let floor = band.y + band.height;
+  for (const box of boxes.values()) {
+    if (overlaps(box, band)) floor = Math.max(floor, box.y + box.height);
+  }
   const underY = takeLane(
     horizontals,
-    edge.id,
+    owner,
     floor + APPROACH_INSET,
     1,
     left - LANE_SPACING,
@@ -569,7 +627,7 @@ function routeSide(
   );
   const sourceX = takeLane(
     verticals,
-    edge.id,
+    owner,
     sourceBase,
     directionOf(edge.source.side),
     start.y,
@@ -578,14 +636,14 @@ function routeSide(
   );
   const targetX = takeLane(
     verticals,
-    edge.id,
+    owner,
     targetBase,
     directionOf(edge.target.side),
     end.y,
     underY,
     LANE_SPACING,
   );
-  recordLegs(sourceX, targetX);
+  for (const leg of legs(sourceX, targetX)) addRun(horizontals, leg);
 
   return {
     sourceFan: sourceFan,
@@ -594,6 +652,42 @@ function routeSide(
     targetX: targetX,
     underY: underY,
   };
+}
+
+/**
+ * Whether a candidate run keeps `spacing` from every run of another owner it
+ * shares a stretch with, reading only the buckets within `spacing` of it.
+ */
+function runClear(runs: Runs, candidate: Run, spacing: number): boolean {
+  const last = Math.floor((candidate.at + spacing) / LANE_SPACING);
+  for (
+    let bucket = Math.floor((candidate.at - spacing) / LANE_SPACING);
+    bucket <= last;
+    bucket++
+  ) {
+    for (const run of runs.get(bucket) ?? []) {
+      if (
+        run.owner !== candidate.owner &&
+        Math.abs(run.at - candidate.at) < spacing &&
+        run.from < candidate.to &&
+        candidate.from < run.to
+      ) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Whether every candidate run keeps LANE_SPACING from each run of another
+ * owner it shares a stretch with.
+ */
+function runsClear(runs: Runs, candidates: readonly Run[]): boolean {
+  return candidates.every((candidate) =>
+    runClear(runs, candidate, LANE_SPACING),
+  );
 }
 
 /** Whether an axis-aligned segment passes through a box's inside. */
@@ -621,35 +715,77 @@ function segmentCrosses(
 
 /**
  * Fan offsets for side edges sharing a handle, keyed `{edgeId}:source` or
- * `{edgeId}:target`: spread along the handle's side in the order their other
- * ends sit, top to bottom.
+ * `{edgeId}:target`, spread along the handle's side in the order their other
+ * ends sit, top to bottom; and who owns each edge's lanes. Edges leaving one
+ * node share a slot and an owner, one line that branches. Where a handle is
+ * too short to keep its slots a lane apart, edges of one kind there merge
+ * into one slot and one owner too, a trunk rather than lines run together.
  */
-function sideFans(sideEdges: readonly SideEdgeRequest[]): Map<string, number> {
+function sideFans(sideEdges: readonly SideEdgeRequest[]): {
+  fans: Map<string, number>;
+  owners: Map<string, string>;
+} {
+  const parents = new Map(sideEdges.map((edge) => [edge.id, edge.id]));
+  const find = (id: string): string => {
+    let root = id;
+    while (parents.get(root) !== root) root = parents.get(root) ?? root;
+    parents.set(id, root);
+
+    return root;
+  };
+  const union = (ids: readonly string[]): void => {
+    const [first, ...rest] = ids.map(find);
+    for (const root of rest) {
+      if (root !== first) parents.set(root, first);
+    }
+  };
   const ends = sideEdges.flatMap((edge) => [
-    { end: edge.source, key: `${edge.id}:source`, other: edge.target },
-    { end: edge.target, key: `${edge.id}:target`, other: edge.source },
+    {
+      edge: edge,
+      end: edge.source,
+      key: `${edge.id}:source`,
+      other: edge.target,
+      slot: `source:${edge.source.nodeId}`,
+    },
+    {
+      edge: edge,
+      end: edge.target,
+      key: `${edge.id}:target`,
+      other: edge.source,
+      slot: `target:${edge.id}`,
+    },
   ]);
   const fans = new Map<string, number>();
   for (const group of groupBy(
     ends,
     (item) => `${item.end.nodeId}:${item.end.side}`,
   )) {
-    group.sort(
+    const sorted = [...group].sort(
       (a, b) => a.other.box.y - b.other.box.y || a.key.localeCompare(b.key),
     );
-    fanOffsets(group.length, group[0].end.box.height, SIDE_FAN_SPACING).forEach(
+    const length = Math.min(group[0].end.box.height, SIDE_HANDLE_TOP * 2);
+    let slots = groupBy(sorted, (item) => item.slot);
+    const room = Math.max(length - SIDE_FAN_INSET * 2, 0);
+    if (slots.length > 1 && room / (slots.length - 1) <= LANE_SPACING) {
+      slots = groupBy(sorted, (item) => `kind:${item.edge.kind}`);
+    }
+    fanOffsets(slots.length, length, SIDE_FAN_INSET, SIDE_FAN_SPACING).forEach(
       (offset, index) => {
-        fans.set(group[index].key, offset);
+        for (const item of slots[index]) fans.set(item.key, offset);
+        union(slots[index].map((item) => item.edge.id));
       },
     );
   }
 
-  return fans;
+  return {
+    fans: fans,
+    owners: new Map(sideEdges.map((edge) => [edge.id, find(edge.id)])),
+  };
 }
 
 /** {@link findLane}, and record the run it takes. */
 function takeLane(
-  runs: Run[],
+  runs: Runs,
   owner: string,
   base: number,
   direction: -1 | 0 | 1,
@@ -658,7 +794,7 @@ function takeLane(
   spacing: number,
 ): number {
   const at = findLane(runs, owner, base, direction, from, to, spacing);
-  runs.push({ at: at, from: from, owner: owner, to: to });
+  addRun(runs, { at: at, from: from, owner: owner, to: to });
 
   return at;
 }
