@@ -149,7 +149,7 @@ flowchart LR
   `normalizeFilesystemNamespace()`.
 - `filesystemNamespace()` returns the default workspace namespace for existing single-workspace callers.
 
-The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/runtime-keys.ts). The config interface and validation live in [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts).
+The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/runtime-keys.ts). The config interface lives in [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts) and its validation in [`packages/convex/model/agentRules.ts`](https://github.com/beeblastco/broods/blob/dev/packages/convex/model/agentRules.ts).
 
 ## Configure it
 

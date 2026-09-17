@@ -179,7 +179,7 @@ export async function decryptAgentConfigBlob(
 
 /**
  * AES-256-GCM encrypt the JSON-serialised config with a key derived from
- * SHA-256(secret). Matches broods's `encryptAgentConfig` so the harness
+ * SHA-256(secret). Matches core's `encryptConfigObject` so the harness
  * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
  */
 export async function encryptAgentConfigBlob(
@@ -312,6 +312,8 @@ function assembleNestedConfig(
     ...(extra.denyTools ? { denyTools: extra.denyTools } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
+    // Removed branch, carried so the validator refuses it by name instead of
+    // the agent silently running without the policy it expected.
     ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
     ...(extra.policies ? { policies: extra.policies } : {}),
@@ -407,8 +409,7 @@ function buildNestedToolsBranch(
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let bin = "";
-  for (let i = 0; i < bytes.byteLength; i++)
-    bin += String.fromCharCode(bytes[i]);
+  for (const byte of bytes) bin += String.fromCharCode(byte);
 
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -557,9 +558,9 @@ function substitutePlaceholders<T>(
 ): T {
   if (typeof config === "string") {
     return config.replace(pattern, (match, key: string) => {
-      return Object.prototype.hasOwnProperty.call(variables, key)
-        ? variables[key]
-        : match;
+      const value = Object.hasOwn(variables, key) ? variables[key] : undefined;
+
+      return value ?? match;
     }) as unknown as T;
   }
   if (Array.isArray(config)) {

@@ -8,9 +8,9 @@
 
 import {
   decodeStoredAgentConfig,
-  encryptAgentConfig,
-  normalizeAgentConfig,
+  encryptConfigObject,
 } from "../../apps/core/src/shared/domain/agent-config.ts";
+import { normalizeAgentConfig } from "../../packages/convex/model/agentRules.ts";
 import { envCodec } from "../../packages/convex/bench/harness.bench.ts";
 import type { BenchCase } from "../runner.ts";
 
@@ -106,7 +106,7 @@ export const coreConfigCases: readonly BenchCase[] = [
     },
     // Write then read, the round trip an agent record makes through storage.
     run: (): unknown =>
-      decodeStoredAgentConfig(encryptAgentConfig(NORMALIZED_CONFIG)),
+      decodeStoredAgentConfig(encryptConfigObject(NORMALIZED_CONFIG)),
   },
   {
     name: "core/config-env-inject",

@@ -12,7 +12,7 @@ import {
   resolveTranscriptionModel,
 } from "../src/harness/provider.ts";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
-import { normalizeAgentConfig } from "../src/shared/domain/agent-config.ts";
+import { normalizeAgentConfig } from "@broods/convex/model/agentRules";
 
 describe("model provider registry", () => {
   it("has a live AI SDK factory for every supported provider name", () => {
