@@ -31,10 +31,9 @@ broods dev
 `broods update` installs the newest release over the copy you are running, and
 `broods dev` says so when one is out.
 
-The published types import from `ai` directly, and it is an optional peer so a
-global CLI install stays small. A project that uses the SDK installs it next to
-`broods`, or `defineAgent`'s model options resolve to error types and a valid
-agent config fails to compile:
+`ai` is a peer dependency that bun, npm and pnpm install automatically, so the
+CLI and your project share one copy. On a package manager that does not
+auto-install peers, add it yourself:
 
 ```bash
 npm install broods ai

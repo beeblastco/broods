@@ -77,7 +77,6 @@ import {
   printReadyLine,
   printWarning,
 } from "./output.ts";
-import { runAgentTui, streamAgentText } from "./tui.ts";
 import {
   isNewerVersion,
   latestPublishedVersion,
@@ -2618,6 +2617,8 @@ async function run(args: string[]): Promise<void> {
     ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
     ...(runtimeKey?.stageSlug ? { stageSlug: runtimeKey.stageSlug } : {}),
   };
+  // Lazy, so `ai` and the terminal UI load for this command only.
+  const { runAgentTui, streamAgentText } = await import("./tui.ts");
   try {
     if (interactive) {
       await runAgentTui({
