@@ -22,8 +22,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
-import { defaultSandboxOf } from "./agentRules";
 import { applyTidyLayout } from "./canvasLayout";
+import { loadMcpTransportsByNode } from "./mcp";
 import { isPlainObject } from "./objects";
 
 /** The stored layout normalized and indexed by id and back-references. */
@@ -121,7 +121,11 @@ export async function syncApiAgentCanvasWiring(
   const reconciled = reconcileApiWiring(sync);
 
   await ctx.db.patch(layout._id, {
-    nodes: applyTidyLayout(reconciled.nextNodes, reconciled.nextEdges),
+    nodes: applyTidyLayout(
+      reconciled.nextNodes,
+      reconciled.nextEdges,
+      await loadMcpTransportsByNode(ctx, stageId),
+    ),
     edges: reconciled.nextEdges,
     updatedAt: Date.now(),
   });
@@ -407,22 +411,25 @@ async function wireAgentConfig(
   );
   sync.agentNodeByConfigId.set(config._id, agentNode.id);
 
-  const defaultSandboxNodeId = await resolveSandboxNode(
-    sync,
-    defaultSandboxOf(nested),
-    agent.accountId,
-  );
-  if (defaultSandboxNodeId)
-    addDefaultEdge(sync.desiredEdges, agentNode.id, defaultSandboxNodeId);
-  // An extra sandbox is still declared wiring, so its node must survive the
-  // prune. It draws no edge: the canvas has no shape for a second agent→sandbox
-  // link yet.
+  // Every listed sandbox gets an edge, and the agent node keeps their order so
+  // the canvas can number them. The first entry stays the default.
   const sandboxes: unknown[] = Array.isArray(nested.sandboxes)
     ? nested.sandboxes
     : [];
-  for (const extra of sandboxes.slice(1)) {
-    await resolveSandboxNode(sync, extra, agent.accountId);
+  const sandboxOrder: string[] = [];
+  let defaultSandboxNodeId: string | null = null;
+  for (const [index, sandbox] of sandboxes.entries()) {
+    const sandboxNodeId = await resolveSandboxNode(
+      sync,
+      sandbox,
+      agent.accountId,
+    );
+    if (index === 0) defaultSandboxNodeId = sandboxNodeId;
+    if (!sandboxNodeId || sandboxOrder.includes(sandboxNodeId)) continue;
+    addDefaultEdge(sync.desiredEdges, agentNode.id, sandboxNodeId);
+    sandboxOrder.push(sandboxNodeId);
   }
+  agentNode.data = { ...agentNode.data, sandboxOrder: sandboxOrder };
 
   if (Array.isArray(nested.workspaces)) {
     await wireAgentWorkspaces(sync, {

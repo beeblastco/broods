@@ -13,9 +13,25 @@
  * services no agent reaches to an unconnected lane below that. A mount edge
  * ties its two cards together: an agent that reaches one reaches the other, so
  * a mounted pair always lands in the same cluster or lane.
+ *
+ * Sandbox, workspace and MCP columns stack frames rather than cards: each
+ * frame starts on a cell, its members fill its slots, and it claims as many
+ * rows as its expanded height needs. Frames come from `canvasFrames.ts`, so
+ * the dashboard reads back the same groups the layout packed.
  */
 
 import type { CanvasNode } from "../canvas";
+import {
+  agentOwners,
+  compareByLabel,
+  deriveCanvasFrames,
+  edgeKind,
+  frameMemberPositions,
+  frameSize,
+  FRAME_WIDTH,
+  type CanvasFrame,
+  type McpTransportsByNode,
+} from "./canvasFrames";
 
 /** Card box, matching `w-44 min-h-24` on the node shell in `BaseNode.tsx`. */
 export const NODE_WIDTH = 176;
@@ -24,8 +40,12 @@ export const NODE_HEIGHT = 96;
 /** Background dot pitch. Drags snap to it, and cell sizes are multiples of it. */
 export const GRID = 24;
 
-/** One tidy-layout cell: a card plus the gap to the next one. */
-export const CELL_WIDTH = NODE_WIDTH + 40;
+/**
+ * One tidy-layout cell: a frame (the widest box) plus the gutter to the next
+ * column. An agent's edge into a stacked frame runs down that gutter, so it
+ * has to stay clear of both columns.
+ */
+export const CELL_WIDTH = FRAME_WIDTH + 40;
 export const CELL_HEIGHT = NODE_HEIGHT + 48;
 
 /** Empty cells between two agent clusters, and above each lane. */
@@ -39,9 +59,10 @@ const NODE_MARGIN = 16;
 const MAX_NUDGE_RINGS = 48;
 
 /**
- * Column order for an agent's services, mirroring the dashboard's "Add service"
- * menu. Sandbox and workspace stay adjacent so the mount edge between them
- * stays short. Exhaustive over the node types on purpose: adding one to
+ * Column order for an agent's services. Every edge that runs between two
+ * columns has them side by side, so it crosses one gutter and no frame: MCP
+ * sits left of sandbox for the runs-on edge, workspace right of sandbox for
+ * the mount edge. Exhaustive over the node types on purpose: adding one to
  * `canvasNodeValidator` without giving it a column is a compile error here.
  */
 const SERVICE_COLUMN_ORDER: Record<
@@ -49,10 +70,10 @@ const SERVICE_COLUMN_ORDER: Record<
   number
 > = {
   database: 0,
-  sandbox: 1,
-  workspace: 2,
-  skill: 3,
-  mcp: 4,
+  mcp: 1,
+  sandbox: 2,
+  workspace: 3,
+  skill: 4,
 };
 
 const COLUMN_RANKS: ReadonlyMap<string, number> = new Map(
@@ -73,6 +94,9 @@ type CanvasGraph = {
   /** Services more than one agent reaches. */
   sharedServices: LayoutNode[];
 };
+
+/** One item a column stacks: a frame and its members, or a lone card. */
+type ColumnItem = { frame: CanvasFrame } | { node: LayoutNode };
 
 /** A block of typed columns, and the cells it occupies. */
 type LayoutBlock = {
@@ -103,6 +127,9 @@ export type LayoutNode = {
 
 export type LayoutPosition = CanvasNode["position"];
 
+/** A box already on the board: a card or a frame. */
+export type LayoutRect = LayoutPosition & { height: number; width: number };
+
 /** Overlay new positions by node id, leaving every other node field untouched. */
 export function applyPositions<
   T extends LayoutNode & { position: LayoutPosition },
@@ -116,18 +143,22 @@ export function applyPositions<
 
 export function applyTidyLayout<
   T extends LayoutNode & { position: LayoutPosition },
->(nodes: readonly T[], edges: readonly LayoutEdge[]): T[] {
-  return applyPositions(nodes, tidyCanvasLayout(nodes, edges));
+>(
+  nodes: readonly T[],
+  edges: readonly LayoutEdge[],
+  mcpTransports: McpTransportsByNode,
+): T[] {
+  return applyPositions(nodes, tidyCanvasLayout(nodes, edges, mcpTransports));
 }
 
 /**
- * Nearest dot-grid point to `desired` whose card clears every occupied card.
+ * Nearest dot-grid point to `desired` whose card clears every occupied box.
  * Manual adds and drag drops land right there, and only step aside when they
- * would cover another card: below first, then right, left, above, then out.
+ * would cover a card or frame: below first, then right, left, above, then out.
  */
 export function findFreePosition(
   desired: LayoutPosition,
-  occupied: readonly LayoutPosition[],
+  occupied: readonly LayoutRect[],
 ): LayoutPosition {
   const start = snapToGrid(desired);
   for (let ring = 0; ring <= MAX_NUDGE_RINGS; ring++) {
@@ -136,7 +167,7 @@ export function findFreePosition(
         x: start.x + offset.x * GRID,
         y: start.y + offset.y * GRID,
       };
-      if (!occupied.some((taken) => cardsOverlap(candidate, taken))) {
+      if (!occupied.some((taken) => cardOverlaps(candidate, taken))) {
         return candidate;
       }
     }
@@ -148,15 +179,17 @@ export function findFreePosition(
 export function tidyCanvasLayout(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
+  mcpTransports: McpTransportsByNode,
 ): Map<string, LayoutPosition> {
   const graph = indexGraph(nodes, edges);
+  const frames = deriveCanvasFrames(nodes, edges, mcpTransports);
   const positions = new Map<string, LayoutPosition>();
   let cursorColumn = 0;
   let deepestRow = 1;
 
   for (const agent of orderAgents(graph)) {
     const services = graph.exclusiveServices.get(agent.id) ?? [];
-    const block = layoutBlock(services, cursorColumn, 1);
+    const block = layoutBlock(services, frames, cursorColumn, 1);
     // Middle column of the block; the left one of the two when the count is even.
     positions.set(
       agent.id,
@@ -178,7 +211,7 @@ export function tidyCanvasLayout(
 
   for (const lane of lanes) {
     if (lane.services.length === 0) continue;
-    const block = layoutBlock(lane.services, 0, laneRow);
+    const block = layoutBlock(lane.services, frames, 0, laneRow);
     const offsetX = lane.centered
       ? Math.max(0, Math.floor((totalColumns - block.columns) / 2)) * CELL_WIDTH
       : 0;
@@ -191,10 +224,13 @@ export function tidyCanvasLayout(
   return positions;
 }
 
-function cardsOverlap(a: LayoutPosition, b: LayoutPosition): boolean {
+/** Whether a card at `card` comes within the margin of `box`. */
+function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
   return (
-    Math.abs(a.x - b.x) < NODE_WIDTH + NODE_MARGIN &&
-    Math.abs(a.y - b.y) < NODE_HEIGHT + NODE_MARGIN
+    card.x < box.x + box.width + NODE_MARGIN &&
+    box.x < card.x + NODE_WIDTH + NODE_MARGIN &&
+    card.y < box.y + box.height + NODE_MARGIN &&
+    box.y < card.y + NODE_HEIGHT + NODE_MARGIN
   );
 }
 
@@ -208,18 +244,34 @@ function columnRank(type: string): number {
   return COLUMN_RANKS.get(type) ?? COLUMN_RANKS.size;
 }
 
-function compareByLabel(a: LayoutNode, b: LayoutNode): number {
-  return labelOf(a).localeCompare(labelOf(b));
+/**
+ * A column's frames in frame order, then its lone cards by label. The node
+ * types that frame never mix framed and lone cards in one block: a cluster or
+ * the shared lane holds only reached services, the unconnected lane none.
+ */
+function columnItems(
+  column: readonly LayoutNode[],
+  frames: readonly CanvasFrame[],
+): ColumnItem[] {
+  const ids = new Set(column.map((node) => node.id));
+  const framed = frames.filter((frame) =>
+    frame.memberIds.some((id) => ids.has(id)),
+  );
+  const framedIds = new Set(framed.flatMap((frame) => frame.memberIds));
+
+  return [
+    ...framed.map((frame) => ({ frame: frame })),
+    ...column
+      .filter((node) => !framedIds.has(node.id))
+      .map((node) => ({ node: node })),
+  ];
 }
 
-/** Edge kind, from the ReactFlow field when set, else from the persisted id prefix. */
-function edgeKind(edge: LayoutEdge): "mount" | "subagent" | "default" {
-  if (edge.type === "mount" || edge.id.startsWith("mount:")) return "mount";
-  if (edge.type === "subagent" || edge.id.startsWith("subagent:")) {
-    return "subagent";
-  }
+/** Whole cells a frame claims: its expanded height plus the usual gap, rounded up. */
+function frameRows(memberCount: number): number {
+  const gap = CELL_HEIGHT - NODE_HEIGHT;
 
-  return "default";
+  return Math.ceil((frameSize(memberCount).height + gap) / CELL_HEIGHT);
 }
 
 function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
@@ -244,40 +296,17 @@ function indexGraph(
   const services = nodes.filter((node) => node.type !== "agent");
   const agentIds = new Set(agents.map((agent) => agent.id));
   const parentAgentId = new Map<string, string>();
-  const ownersByService = new Map<string, Set<string>>();
-  const mountPairs: [string, string][] = [];
+  const ownersByService = agentOwners(nodes, edges);
 
   for (const edge of edges) {
-    const kind = edgeKind(edge);
-    if (kind === "mount") {
-      if (!agentIds.has(edge.source) && !agentIds.has(edge.target)) {
-        mountPairs.push([edge.source, edge.target]);
-      }
-      continue;
+    if (
+      edgeKind(edge) === "subagent" &&
+      agentIds.has(edge.source) &&
+      agentIds.has(edge.target)
+    ) {
+      parentAgentId.set(edge.target, edge.source);
     }
-    if (kind === "subagent") {
-      if (agentIds.has(edge.source) && agentIds.has(edge.target)) {
-        parentAgentId.set(edge.target, edge.source);
-      }
-      continue;
-    }
-
-    // Ownership is read undirected: the dashboard draws agent→service, but a
-    // reconnected edge can arrive the other way round.
-    const agentId = agentIds.has(edge.source)
-      ? edge.source
-      : agentIds.has(edge.target)
-        ? edge.target
-        : null;
-    if (!agentId) continue;
-    const serviceId = agentId === edge.source ? edge.target : edge.source;
-    if (agentIds.has(serviceId)) continue;
-    const owners = ownersByService.get(serviceId);
-    if (owners) owners.add(agentId);
-    else ownersByService.set(serviceId, new Set([agentId]));
   }
-
-  spreadOwnersOverMounts(ownersByService, mountPairs);
 
   const exclusiveServices = new Map<string, LayoutNode[]>();
   const orphanServices: LayoutNode[] = [];
@@ -309,16 +338,13 @@ function indexGraph(
   };
 }
 
-function labelOf(node: LayoutNode): string {
-  return typeof node.data.label === "string" ? node.data.label : node.id;
-}
-
 /**
  * Place services as typed columns growing right, rows growing down, starting
  * at the given cell. An empty block still claims one column for its agent.
  */
 function layoutBlock(
   services: readonly LayoutNode[],
+  frames: readonly CanvasFrame[],
   originColumn: number,
   originRow: number,
 ): LayoutBlock {
@@ -327,13 +353,21 @@ function layoutBlock(
   let bottomRow = originRow;
 
   columns.forEach((column, columnIndex) => {
-    column.forEach((node, rowIndex) => {
-      positions.set(
-        node.id,
-        cellPosition(originColumn + columnIndex, originRow + rowIndex),
-      );
-      bottomRow = Math.max(bottomRow, originRow + rowIndex + 1);
-    });
+    let row = originRow;
+    for (const item of columnItems(column, frames)) {
+      const origin = cellPosition(originColumn + columnIndex, row);
+      if ("node" in item) {
+        positions.set(item.node.id, origin);
+        row += 1;
+        continue;
+      }
+      const { memberIds } = item.frame;
+      for (const [id, position] of frameMemberPositions(origin, memberIds)) {
+        positions.set(id, position);
+      }
+      row += frameRows(memberIds.length);
+    }
+    bottomRow = Math.max(bottomRow, row);
   });
 
   return {
@@ -406,29 +440,4 @@ function snapToGrid(position: LayoutPosition): LayoutPosition {
     x: Math.round(position.x / GRID) * GRID,
     y: Math.round(position.y / GRID) * GRID,
   };
-}
-
-/**
- * Give both ends of every mount every owner either end has. Repeats until
- * nothing changes, so a chain of mounts settles on one owner set too.
- */
-function spreadOwnersOverMounts(
-  ownersByService: Map<string, Set<string>>,
-  mountPairs: readonly (readonly [string, string])[],
-): void {
-  let spread = true;
-  while (spread) {
-    spread = false;
-    for (const [a, b] of mountPairs) {
-      const ownersA = ownersByService.get(a) ?? new Set<string>();
-      const ownersB = ownersByService.get(b) ?? new Set<string>();
-      const merged = new Set([...ownersA, ...ownersB]);
-      if (merged.size === ownersA.size && merged.size === ownersB.size) {
-        continue;
-      }
-      ownersByService.set(a, merged);
-      ownersByService.set(b, new Set(merged));
-      spread = true;
-    }
-  }
 }

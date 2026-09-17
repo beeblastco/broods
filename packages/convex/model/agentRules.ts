@@ -72,6 +72,13 @@ export interface AgentWorkspaceRef {
   sandbox?: string | null;
 }
 
+/** A workspace mounted on a sandbox that is not the agent's first. */
+export type LaterSandboxMount = {
+  index: number;
+  sandboxId: string;
+  workspace: AgentWorkspaceRef;
+};
+
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 export const AGENT_HARNESS_TYPES = [
@@ -353,6 +360,25 @@ export function assertAgentRuntimeRefs(
     );
 }
 
+/**
+ * The first sandbox after the default that also backs a workspace, which the
+ * config API refuses: only the first sandbox mounts workspaces, a later one runs
+ * with none. The dashboard checks a canvas edit with this before saving it.
+ */
+export function findLaterSandboxMount(
+  sandboxes: readonly string[],
+  workspaces: readonly AgentWorkspaceRef[] | undefined,
+): LaterSandboxMount | undefined {
+  for (const [index, sandboxId] of sandboxes.entries()) {
+    const workspace = workspaceOnLaterSandbox(sandboxes, index, workspaces);
+    if (workspace) {
+      return { index: index, sandboxId: sandboxId, workspace: workspace };
+    }
+  }
+
+  return undefined;
+}
+
 // Provider-defined tool names are validated for shape only; whether the
 // configured provider actually ships the tool is resolved by core at run time.
 export function isProviderToolName(toolName: string): boolean {
@@ -375,24 +401,18 @@ export function defaultSandboxOf(
 }
 
 /**
- * The agent's sandbox list once the canvas sets its default. The canvas draws only
- * the default, so the extras already stored stay behind it. Clearing the default
- * clears the list rather than promoting an extra into its place.
+ * The agent's sandbox list after a canvas save. The canvas order wins, and a
+ * stored id no sandbox node on the stage canvas stands for is kept after it:
+ * the canvas cannot draw that sandbox, so it cannot mean to remove it.
  */
-export function sandboxesWithDefault(
-  stored: unknown,
-  defaultSandbox: string | null,
+export function mergeCanvasSandboxes(
+  canvas: readonly string[],
+  stored: readonly string[],
+  canvasSandboxIds: ReadonlySet<string>,
 ): string[] {
-  if (!defaultSandbox) return [];
-  const extras = Array.isArray(stored)
-    ? stored
-        .slice(1)
-        .filter(
-          (id): id is string => typeof id === "string" && id !== defaultSandbox,
-        )
-    : [];
+  const hidden = stored.filter((id) => !canvasSandboxIds.has(id));
 
-  return [defaultSandbox, ...extras];
+  return [...new Set([...canvas, ...hidden])];
 }
 
 function normalizeAgentBehaviorConfig(value: unknown): void {
@@ -663,21 +683,31 @@ function normalizeSandboxRefs(
   assertOptionalStringArray(value, "config.sandboxes");
   if (value === undefined) return;
   const seen = new Set<string>();
+  // One index at a time, duplicate first, so mixed input reports the same
+  // error as core's copy of this rule.
   value.forEach((sandboxId, index): void => {
     if (seen.has(sandboxId))
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
       );
-    const mounted =
-      index === 0
-        ? undefined
-        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
+    const mounted = workspaceOnLaterSandbox(value, index, workspaces);
     if (mounted)
       throw new Error(
         `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
       );
     seen.add(sandboxId);
   });
+}
+
+/** The workspace backed by `sandboxes[index]` when that is not the first sandbox. */
+function workspaceOnLaterSandbox(
+  sandboxes: readonly string[],
+  index: number,
+  workspaces: readonly AgentWorkspaceRef[] | undefined,
+): AgentWorkspaceRef | undefined {
+  return index === 0
+    ? undefined
+    : workspaces?.find((ref): boolean => ref.sandbox === sandboxes[index]);
 }
 
 function normalizeWorkspaceRefs(value: unknown): void {

@@ -11,13 +11,16 @@ export type CanvasSaveState = "idle" | "saving" | "saved" | "error";
 /**
  * The canvas autosave pill. "Saving…" and a failed save stay up as long as
  * they hold; "Saved" clears itself after a moment, and comes back for the
- * next save because that passes through "saving" first.
+ * next save because that passes through "saving" first. A failure says why
+ * when the save reported a reason.
  */
 export function CanvasSaveStatus({
   state,
+  message,
   onRetry,
 }: {
   state: CanvasSaveState;
+  message?: string | null;
   onRetry: () => void;
 }): React.JSX.Element | null {
   const [savedShown, setSavedShown] = useState(false);
@@ -49,8 +52,10 @@ export function CanvasSaveStatus({
         <span className="text-muted-foreground">Saved</span>
       )}
       {state === "error" && (
-        <span className="flex items-center gap-2 text-destructive">
-          Couldn&apos;t save
+        <span className="flex max-w-md items-center gap-2 text-destructive">
+          <span className="min-w-0">
+            Couldn&apos;t save{message ? `: ${message}` : ""}
+          </span>
           <button
             type="button"
             className="cursor-pointer underline underline-offset-2"

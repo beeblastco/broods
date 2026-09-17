@@ -1,13 +1,22 @@
 "use client";
 
 import {
+  CANVAS_EDGE_TYPES,
+  CANVAS_NODE_TYPES,
+} from "@/app/components/canvas/Canvas";
+import {
   CanvasControls,
   FIT_VIEW_OPTIONS,
 } from "@/app/components/canvas/CanvasControl";
 import {
+  CanvasFramesProvider,
+  type CanvasFramesValue,
+} from "@/app/components/canvas/CanvasFramesContext";
+import {
   CanvasSaveStatus,
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
+import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { StatusDot } from "@/app/components/StatusDot";
@@ -20,10 +29,26 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
-import { ReactFlow, ReactFlowProvider, type Node } from "@xyflow/react";
+import { agreedSandboxOrderNumbers } from "@/app/lib/canvasFrameEdits";
+import {
+  buildFramedGraph,
+  type StageMcpServer,
+} from "@/app/lib/canvasFrameNodes";
+import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
+import type { MachineConnection } from "@/app/lib/machineConnection";
+import type { Id } from "@broods/convex/_generated/dataModel";
+import { applyTidyLayout, GRID } from "@broods/convex/model/canvasLayout";
+import {
+  Background,
+  ConnectionMode,
+  ReactFlow,
+  ReactFlowProvider,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 
@@ -57,6 +82,75 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
     data: { label: `${x},${y}` },
   })),
 );
+
+/**
+ * Tracy's stage as the frames canvas draws it: three sandboxes in order, a
+ * mounted, an inherited and a read-only workspace, MCP servers on each
+ * transport and a session store. Laid out by the same tidy layout the canvas
+ * button runs, so the frames land where a real stage puts them.
+ */
+const FRAME_MCP_SERVERS: StageMcpServer[] = [
+  fixtureServer("github", "http", null),
+  fixtureServer("linear", "http", null),
+  fixtureServer("search", "hosted", null),
+  fixtureServer("blender", "machine", "kien-mac"),
+];
+
+const FRAME_EDGES: Edge[] = [
+  ...[
+    "session",
+    "internal-sandbox",
+    "kien-mac",
+    "phicks-mac",
+    "notes",
+    "repos",
+    "handbook",
+    "github",
+    "linear",
+    "search",
+    "blender",
+  ].map((target) => ({
+    id: `xy-edge__tracy-${target}`,
+    source: "tracy",
+    target: target,
+  })),
+  {
+    id: "mount:internal-sandbox-right-notes-left",
+    source: "internal-sandbox",
+    sourceHandle: "right",
+    target: "notes",
+    targetHandle: "left",
+    type: "mount",
+  },
+];
+
+const FRAME_NODES: Node[] = applyTidyLayout(
+  [
+    fixtureNode("tracy", "agent", {
+      sandboxOrder: ["internal-sandbox", "kien-mac", "phicks-mac"],
+    }),
+    fixtureNode("session", "database"),
+    fixtureNode("internal-sandbox", "sandbox", {
+      config: { provider: "sandbox" },
+    }),
+    fixtureNode("kien-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("phicks-mac", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("notes", "workspace"),
+    fixtureNode("repos", "workspace"),
+    fixtureNode("handbook", "workspace", { readOnly: true }),
+    fixtureNode("github", "mcp"),
+    fixtureNode("linear", "mcp"),
+    fixtureNode("search", "mcp"),
+    fixtureNode("blender", "mcp"),
+  ],
+  FRAME_EDGES,
+  new Map(FRAME_MCP_SERVERS.map((server) => [server.nodeId, server.transport])),
+);
+
+const FRAME_ANALYSIS = analyzeCanvasInfra(FRAME_NODES, FRAME_EDGES);
+
+/** The url MCP frame starts collapsed, so the fixture shows both frame states. */
+const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
 
 const subscribeNever = (): (() => void) => () => {};
 
@@ -158,6 +252,11 @@ export function UiGallery(): React.JSX.Element {
             maxZoom={FIT_VIEW_OPTIONS.maxZoom}
           />
         </div>
+      </section>
+
+      <section data-fixture="canvas-frames" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Canvas frames</h2>
+        <CanvasFramesFixture />
       </section>
 
       <section data-fixture="press-drag" className="flex flex-col gap-2">
@@ -270,6 +369,125 @@ export function UiGallery(): React.JSX.Element {
       </section>
     </main>
   );
+}
+
+/**
+ * The real node and edge components on a static graph. Stage data comes from
+ * the frames context instead of Convex, one machine connected and one offline.
+ */
+function CanvasFramesFixture(): React.JSX.Element {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+    () => new Set([COLLAPSED_FIXTURE_FRAME]),
+  );
+  const graph = useMemo(
+    () =>
+      buildFramedGraph(
+        FRAME_NODES,
+        FRAME_EDGES,
+        FRAME_MCP_SERVERS,
+        collapsed,
+        null,
+      ),
+    [collapsed],
+  );
+  const frames = useMemo(
+    (): CanvasFramesValue => ({
+      machineConnections: [
+        fixtureConnection("kien-mac", Date.now(), undefined),
+        fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
+      ],
+      mcpServers: new Map(
+        FRAME_MCP_SERVERS.map((server) => [server.nodeId, server]),
+      ),
+      onToggleFrame: (frameId) =>
+        setCollapsed((current) => {
+          const next = new Set(current);
+          if (!next.delete(frameId)) next.add(frameId);
+
+          return next;
+        }),
+      sandboxOrderNumbers: agreedSandboxOrderNumbers(FRAME_NODES, FRAME_EDGES),
+    }),
+    [],
+  );
+
+  return (
+    <InfraAnalysisProvider value={FRAME_ANALYSIS}>
+      <CanvasFramesProvider value={frames}>
+        <div className="h-[40rem] w-[64rem] rounded-lg border border-border">
+          <ReactFlow
+            nodes={graph.nodes}
+            edges={graph.edges}
+            nodeTypes={CANVAS_NODE_TYPES}
+            edgeTypes={CANVAS_EDGE_TYPES}
+            colorMode="dark"
+            // Mount and runs-on edges end on source-type side handles, as on the canvas.
+            connectionMode={ConnectionMode.Loose}
+            fitView
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            maxZoom={FIT_VIEW_OPTIONS.maxZoom}
+            nodesDraggable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background
+              bgColor="#000"
+              color="rgba(255,255,255,0.3)"
+              gap={GRID}
+              size={2}
+            />
+          </ReactFlow>
+        </div>
+      </CanvasFramesProvider>
+    </InfraAnalysisProvider>
+  );
+}
+
+/** A machine daemon's connection row; offline when `disconnectedAt` is set. */
+function fixtureConnection(
+  name: string,
+  lastSeenAt: number,
+  disconnectedAt: number | undefined,
+): MachineConnection {
+  return {
+    _creationTime: lastSeenAt,
+    _id: `connection-${name}` as Id<"machineConnections">,
+    accountId: "fixture-account" as Id<"accounts">,
+    computer: false,
+    connectedAt: lastSeenAt,
+    connectionId: `connection-${name}`,
+    disconnectedAt: disconnectedAt,
+    lastSeenAt: lastSeenAt,
+    mcp: [],
+    name: name,
+    sandboxConfigId: `sandbox-${name}` as Id<"sandboxConfigs">,
+  };
+}
+
+function fixtureNode(
+  id: string,
+  type: string,
+  data: Record<string, unknown> = {},
+): Node {
+  return {
+    data: { label: id, status: "idle", ...data },
+    id: id,
+    position: { x: 0, y: 0 },
+    type: type,
+  };
+}
+
+function fixtureServer(
+  nodeId: string,
+  transport: StageMcpServer["transport"],
+  sandbox: string | null,
+): StageMcpServer {
+  return {
+    disabled: false,
+    name: nodeId,
+    nodeId: nodeId,
+    sandbox: sandbox,
+    transport: transport,
+  };
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import { BUNDLE_EDGE_PREFIX, bundleEdgePath } from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -20,8 +21,8 @@ import { useState } from "react";
 const ARROW_ID_PREFIX = "deletable-arrow";
 
 /**
- * Custom edge with a hover-to-delete trash icon. Reads its endpoints to style by kind (A):
- * an agent→sandbox edge is labelled "default".
+ * Custom edge with a hover-to-delete trash icon, or a lock badge when code owns it. A bundle
+ * edge from an agent to a frame is locked when any edge it stands for is.
  */
 export function DeletableEdge({
   id,
@@ -36,33 +37,29 @@ export function DeletableEdge({
   sourcePosition,
   targetPosition,
   style,
+  deletable,
 }: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  // Endpoint info as a single primitive so the selector stays referentially stable.
-  const endpointInfo = useStore((s) => {
-    const sourceNode = s.nodeLookup.get(source);
-    const targetNode = s.nodeLookup.get(target);
-    const sourceData = sourceNode?.data as { managedBy?: string } | undefined;
-    const targetData = targetNode?.data as { managedBy?: string } | undefined;
+  // Endpoint ownership as a single primitive so the selector stays referentially stable.
+  const endpointOwnership = useStore((s) => {
+    const sourceData = s.nodeLookup.get(source)?.data as
+      | { managedBy?: string }
+      | undefined;
+    const targetData = s.nodeLookup.get(target)?.data as
+      | { managedBy?: string }
+      | undefined;
 
-    return [
-      sourceNode?.type ?? "",
-      sourceData?.managedBy ?? "",
-      targetNode?.type ?? "",
-      targetData?.managedBy ?? "",
-    ].join(">");
+    return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
   });
-  const [sourceType, sourceManagedBy, targetType, targetManagedBy] =
-    endpointInfo.split(">");
-  const isDefaultSandbox =
-    (sourceType === "agent" && targetType === "sandbox") ||
-    (sourceType === "sandbox" && targetType === "agent");
+  const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
 
-  // Fan parallel edges apart so their vertical trunks don't stack (flow is vertical → offset X).
-  const [sourceFan, targetFan] = useEdgeFanOffset(
+  // Fan edges that land on one handle apart (flow is vertical → offset X). The source end is
+  // not fanned: an agent's edges leave its bottom as one trunk and split along the way, where
+  // fanned starts drew a row of stubs that curled into each other.
+  const [, targetFan] = useEdgeFanOffset(
     id,
     source,
     sourceHandleId,
@@ -71,19 +68,25 @@ export function DeletableEdge({
     "default",
   );
 
-  // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling.
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX: sourceX + sourceFan,
-    sourceY: sourceY,
-    targetX: targetX + targetFan,
-    targetY: targetY,
-    sourcePosition: sourcePosition,
-    targetPosition: targetPosition,
-    borderRadius: 16,
-  });
+  // Rigid orthogonal routing to match the workspace↔sandbox mount edge styling. A bundle edge
+  // into a frame takes the column gutter instead, and several agents' bundles into one frame
+  // share its handle rather than fan.
+  const [edgePath, labelX, labelY] = id.startsWith(BUNDLE_EDGE_PREFIX)
+    ? bundleEdgePath({ x: sourceX, y: sourceY }, { x: targetX, y: targetY })
+    : getSmoothStepPath({
+        sourceX: sourceX,
+        sourceY: sourceY,
+        targetX: targetX + targetFan,
+        targetY: targetY,
+        sourcePosition: sourcePosition,
+        targetPosition: targetPosition,
+        borderRadius: 16,
+      });
 
-  // Code-managed edges can't be deleted here: no red delete-hover, no trash.
+  // Code-managed edges can't be deleted here: no red delete-hover, no trash. Canvas marks
+  // them, and bundles of them, `deletable: false`.
   const locked =
+    deletable === false ||
     isCodeManagedEdgeId(id) ||
     (isCodeManagedOwner(sourceManagedBy) &&
       isCodeManagedOwner(targetManagedBy));
@@ -125,20 +128,6 @@ export function DeletableEdge({
         markerEnd={`url(#${arrowId})`}
       />
       <EdgeLabelRenderer>
-        {/* Subtle "default" marker at the midpoint; hidden on hover so the delete button takes over */}
-        {isDefaultSandbox && !hovered && (
-          <div
-            className="nodrag nopan pointer-events-none absolute top-(--label-y) left-(--label-x) -translate-1/2 text-3xs font-medium uppercase tracking-widest text-muted-foreground opacity-(--edge-opacity)"
-            style={{
-              "--edge-opacity": style?.opacity,
-              "--label-x": `${labelX}px`,
-              "--label-y": `${labelY}px`,
-            }}
-          >
-            default
-          </div>
-        )}
-
         {locked ? (
           <LockedEdgeBadge
             labelX={labelX}

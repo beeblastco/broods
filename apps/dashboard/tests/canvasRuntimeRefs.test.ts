@@ -95,26 +95,58 @@ describe("analyzeCanvasInfra workspace state", () => {
     expect(workspaceStates.secure.kind).toBe("override");
     expect(workspaceStates.reference).toEqual({ kind: "readonly" });
   });
+
+  test("a workspace inherits the first sandbox in the agent's order", () => {
+    const nodes = [
+      node("agent", "agent", {
+        agentConfigId: "cfg",
+        sandboxOrder: ["b", "a"],
+      }),
+      node("a", "sandbox"),
+      node("b", "sandbox"),
+      node("ws", "workspace"),
+    ];
+    const edges = [edge("agent", "a"), edge("agent", "b"), edge("agent", "ws")];
+
+    const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
+
+    expect(workspaceStates.ws).toEqual({
+      kind: "inherited",
+      sandboxLabel: "b",
+    });
+  });
 });
 
 describe("deriveAgentRuntimeRefs", () => {
-  test("the direct sandbox edge becomes the default, sandboxes[0]", () => {
+  test("lists the stored order first, then sandboxes wired since", () => {
     const nodes = [
-      node("agent", "agent", { agentConfigId: "cfg" }),
-      node("sb", "sandbox", { resourceId: "sb_default" }),
+      node("agent", "agent", {
+        agentConfigId: "cfg",
+        // "gone" lost its edge, so it no longer counts.
+        sandboxOrder: ["mac", "gone", "cloud"],
+      }),
+      node("cloud", "sandbox", { resourceId: "sb_cloud" }),
+      node("gone", "sandbox", { resourceId: "sb_gone" }),
+      node("mac", "sandbox", { resourceId: "sb_mac" }),
+      node("new", "sandbox", { resourceId: "sb_new" }),
+    ];
+    const edges = [
+      edge("agent", "new"),
+      edge("agent", "cloud"),
+      edge("agent", "mac"),
     ];
 
-    const [refs] = deriveAgentRuntimeRefs(nodes, [edge("agent", "sb")]);
+    const [refs] = deriveAgentRuntimeRefs(nodes, edges);
 
-    expect(refs.defaultSandbox).toBe("sb_default");
+    expect(refs.sandboxes).toEqual(["sb_mac", "sb_cloud", "sb_new"]);
   });
 
-  test("no sandbox edge derives no default", () => {
+  test("no sandbox edge derives no sandboxes", () => {
     const nodes = [node("agent", "agent", { agentConfigId: "cfg" })];
 
     const [refs] = deriveAgentRuntimeRefs(nodes, []);
 
-    expect(refs.defaultSandbox).toBeNull();
+    expect(refs.sandboxes).toEqual([]);
   });
 });
 

@@ -2,8 +2,11 @@
  * Derives broods AgentConfig sandbox/workspace references from canvas
  * runtime-resource nodes and edges.
  */
+import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { findLaterSandboxMount } from "@broods/convex/model/agentRules";
+import { agentSandboxOrder } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
 /** Canvas node types that participate in broods runtime reference projection. */
@@ -19,8 +22,8 @@ export type WorkspaceRef = {
 /** Runtime reference patch for one agent config. */
 export type AgentRuntimeRefs = {
   configId: Id<"agentConfigs">;
-  /** The agent's default sandbox, sandboxes[0]. The canvas draws only the default. */
-  defaultSandbox: string | null;
+  /** Sandbox resource ids in `sandboxes` order; the first is the default. */
+  sandboxes: string[];
   workspaces: WorkspaceRef[];
 };
 
@@ -41,6 +44,16 @@ export type CanvasInfraAnalysis = {
   agentRefCounts: Record<string, number>;
   /** Node id → whether an agent is reachable from it (drives the unwired badge). */
   connectedToAgent: Record<string, boolean>;
+};
+
+/** A dashboard agent whose drawn refs the config API would refuse. */
+export type RuntimeRefsProblem = {
+  agentId: string;
+  /** Resource id of the sandbox the workspace is mounted on, not the agent's first. */
+  sandboxId: string;
+  sandboxLabel: string;
+  workspaceId: string;
+  workspaceName: string;
 };
 
 /** A caller agent's subagent (agent→agent) call targets derived from the canvas graph. */
@@ -119,7 +132,7 @@ export function analyzeCanvasInfra(
   const adjacency = buildAdjacency(edges);
   const agents = runtimeNodes.filter((node) => node.type === "agent");
 
-  // agentId → its directly-attached default sandbox node (config.sandboxes[0])
+  // agentId → its default sandbox node, the first in its sandbox order (config.sandboxes[0])
   const agentDefaultSandbox = new Map<string, RuntimeNode | undefined>();
   // resource node id → set of agent ids that reference it (for shared counts)
   const refAgents = new Map<string, Set<string>>();
@@ -134,9 +147,13 @@ export function analyzeCanvasInfra(
     const directNodes = neighbors(agent.id, adjacency)
       .map((id) => byId.get(id))
       .filter((node): node is RuntimeNode => !!node);
-    const defaultSandbox = directNodes.find((node) => node.type === "sandbox");
-    agentDefaultSandbox.set(agent.id, defaultSandbox);
-    if (defaultSandbox) addRef(defaultSandbox.id, agent.id);
+    const sandboxIds = agentSandboxOrder(agent, runtimeNodes, edges);
+    const [defaultSandboxId] = sandboxIds;
+    agentDefaultSandbox.set(
+      agent.id,
+      defaultSandboxId ? byId.get(defaultSandboxId) : undefined,
+    );
+    for (const sandboxId of sandboxIds) addRef(sandboxId, agent.id);
 
     for (const workspace of directNodes.filter(
       (node) => node.type === "workspace",
@@ -218,18 +235,17 @@ export function deriveAgentRuntimeRefs(
       return [];
     }
 
-    // An agent's resources come from its DIRECT edges (explicit model): the sandbox it
-    // points at is its default, sandboxes[0]; the workspaces it points at are its workspaces.
-    // Workspaces are no longer inferred transitively through a shared sandbox. The canvas
-    // allows one direct sandbox edge, so extras never come from here.
+    // An agent's resources come from its DIRECT edges (explicit model): the sandboxes it
+    // points at, in its stored order, are its sandboxes; the workspaces it points at are
+    // its workspaces. Workspaces are not inferred transitively through a shared sandbox.
     const directNodes = neighbors(agent.id, adjacency)
       .map((nodeId) => byId.get(nodeId))
       .filter((node): node is RuntimeNode => !!node);
-    const directSandboxIds = directNodes
-      .filter((node) => node.type === "sandbox")
+    const sandboxes = agentSandboxOrder(agent, runtimeNodes, edges)
+      .map((nodeId) => byId.get(nodeId))
+      .filter((node): node is RuntimeNode => !!node)
       .map((node) => resourceIdFor(node, "sandbox"))
       .filter((value): value is string => !!value);
-    const defaultSandbox = directSandboxIds[0] ?? null;
     const workspaceNodes = directNodes.filter(
       (node) => node.type === "workspace",
     );
@@ -277,17 +293,59 @@ export function deriveAgentRuntimeRefs(
     return [
       {
         configId: agentConfigId,
-        defaultSandbox: defaultSandbox,
+        sandboxes: sandboxes,
         workspaces: workspaces,
       },
     ];
   });
 }
 
+/**
+ * Dashboard agents whose derived refs `updateRuntimeRefs` would refuse, by the
+ * same rule it applies: only the first sandbox backs a workspace. The canvas
+ * checks an edit with this before it saves. Code-managed agents are skipped,
+ * as the mutation leaves their refs alone.
+ */
+export function runtimeRefsProblems(
+  nodes: Node[],
+  edges: Edge[],
+): RuntimeRefsProblem[] {
+  const agentsByConfig = new Map(
+    nodes
+      .filter((node) => node.type === "agent")
+      .map((node) => [node.data.agentConfigId, node]),
+  );
+  const sandboxLabels = new Map(
+    (nodes as RuntimeNode[])
+      .filter((node) => node.type === "sandbox")
+      .map((node) => [resourceIdFor(node, "sandbox"), nodeLabel(node)]),
+  );
+
+  return deriveAgentRuntimeRefs(nodes, edges).flatMap(
+    (refs): RuntimeRefsProblem[] => {
+      const agent = agentsByConfig.get(refs.configId);
+      const mount = findLaterSandboxMount(refs.sandboxes, refs.workspaces);
+      if (!agent || !mount || isCodeManagedOwner(agent.data.managedBy)) {
+        return [];
+      }
+
+      return [
+        {
+          agentId: agent.id,
+          sandboxId: mount.sandboxId,
+          sandboxLabel: sandboxLabels.get(mount.sandboxId) ?? mount.sandboxId,
+          workspaceId: mount.workspace.workspaceId,
+          workspaceName: mount.workspace.name,
+        },
+      ];
+    },
+  );
+}
+
 /** Stable serialization for change detection before writing Convex mutations. */
 export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   return JSON.stringify({
-    defaultSandbox: refs.defaultSandbox,
+    sandboxes: refs.sandboxes,
     workspaces: refs.workspaces,
   });
 }

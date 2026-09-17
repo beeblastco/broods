@@ -75,6 +75,7 @@
   --color-canvas-agent: oklch(0.627 0.265 303.9);
   --color-canvas-subagent: oklch(0.606 0.25 292.717);
   --color-canvas-mount: oklch(0.704 0.14 182.503);
+  --color-canvas-runs: oklch(0.811 0.111 293.571);
 
   --color-usage-input: #60a5fa;
   --color-usage-output: #34d399;

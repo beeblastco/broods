@@ -6,10 +6,11 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
+import type { CanvasNode } from "../canvas";
 import { toNestedAgentConfig } from "../model/agentConfigCodec";
 import {
   assertAgentRuntimeRefs,
-  sandboxesWithDefault,
+  mergeCanvasSandboxes,
 } from "../model/agentRules";
 import {
   ensureAgentsRowForConfig,
@@ -352,18 +353,18 @@ export const update = mutation({
 
 /**
  * Updates the broods runtime resource references derived from the canvas graph.
- * This preserves unrelated extraConfig branches while setting the default sandbox
- * and replacing workspaces.
+ * This preserves unrelated extraConfig branches while replacing the sandbox
+ * list (in canvas order) and the workspaces.
  */
 export const updateRuntimeRefs = mutation({
   args: {
     configId: v.id("agentConfigs"),
-    defaultSandbox: v.union(v.string(), v.null()),
+    sandboxes: v.array(v.string()),
     workspaces: v.union(v.array(workspaceRefValidator), v.null()),
   },
   returns: v.id("agentConfigs"),
   handler: async (ctx, args): Promise<Id<"agentConfigs">> => {
-    const { configId, defaultSandbox, workspaces } = args;
+    const { configId, sandboxes: canvasSandboxes, workspaces } = args;
 
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
@@ -385,10 +386,26 @@ export const updateRuntimeRefs = mutation({
       return configId;
     }
 
+    // Sandboxes with no node on this stage's canvas were never on screen to
+    // remove, so they stay listed after the ones the canvas draws.
+    const layout = await ctx.db
+      .query("canvasLayouts")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", existing.projectId).eq("stageId", existing.stageId),
+      )
+      .unique();
+    const canvasSandboxIds = new Set(
+      ((layout?.nodes ?? []) as CanvasNode[]).flatMap((node) =>
+        node.type === "sandbox" && typeof node.data.resourceId === "string"
+          ? [node.data.resourceId]
+          : [],
+      ),
+    );
     const extraConfig = { ...asRecord(existing.extraConfig) };
-    const sandboxes = sandboxesWithDefault(
-      extraConfig.sandboxes,
-      defaultSandbox,
+    const sandboxes = mergeCanvasSandboxes(
+      canvasSandboxes,
+      await liveStoredSandboxes(ctx, extraConfig.sandboxes, canvasSandboxIds),
+      canvasSandboxIds,
     );
     if (sandboxes.length > 0) {
       extraConfig.sandboxes = sandboxes;
@@ -538,6 +555,28 @@ async function canAccessAgentConfig(
   config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
   return Boolean(await getProjectForRole(ctx, authId, config.projectId));
+}
+
+/**
+ * Stored sandbox ids still worth keeping: those on the canvas, and those whose
+ * row still exists. A node deleted on the canvas leaves the layout too, and
+ * the layout save already deleted its dashboard row, so it must not linger.
+ */
+async function liveStoredSandboxes(
+  ctx: MutationCtx,
+  stored: unknown,
+  canvasSandboxIds: ReadonlySet<string>,
+): Promise<string[]> {
+  const live: string[] = [];
+  for (const id of Array.isArray(stored) ? stored : []) {
+    if (typeof id !== "string") continue;
+    const rowId = ctx.db.normalizeId("sandboxConfigs", id);
+    if (canvasSandboxIds.has(id) || (rowId && (await ctx.db.get(rowId)))) {
+      live.push(id);
+    }
+  }
+
+  return live;
 }
 
 /** Hide secret values from browser reads while preserving variable names. */

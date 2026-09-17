@@ -57,3 +57,20 @@ export function machineState(
     ? "connected"
     : "offline";
 }
+
+/**
+ * State of the machine sandbox named `name` in a stage's connection list, or
+ * undefined while that list is still loading.
+ */
+export function machineStateByName(
+  connections: readonly MachineConnection[] | undefined,
+  name: string,
+  now: number,
+): MachineState | undefined {
+  if (connections === undefined) return undefined;
+
+  return machineState(
+    connections.find((connection) => connection.name === name),
+    now,
+  );
+}

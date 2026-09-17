@@ -400,7 +400,7 @@ describe("syncApiAgentCanvasWiring", () => {
     expect(edges).toHaveLength(1);
   });
 
-  test("keeps an extra sandbox node without an edge", async () => {
+  test("draws an edge to every sandbox and stamps their order", async () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const tt = t();
     const { accountId } = await seedOrg(tt, {
@@ -426,9 +426,8 @@ describe("syncApiAgentCanvasWiring", () => {
         config: config,
       });
     await seed({ sandboxes: [sandboxId] });
-    // A PATCH that turns the default into an extra still declares the sandbox,
-    // so the node survives the prune. It draws no edge: the canvas has no shape
-    // for that link yet.
+    // A PATCH that turns the default into a second sandbox keeps its node and
+    // edge, and the agent node records the new order.
     await seed({ sandboxes: [defaultSandboxId, sandboxId] });
 
     const config = await configFor(tt, agentId);
@@ -442,9 +441,11 @@ describe("syncApiAgentCanvasWiring", () => {
     const defaultNode = nodes.find(
       (n) => n.data.resourceId === defaultSandboxId,
     )!;
+    const agentNode = nodes.find((n) => n.type === "agent")!;
     const edges = layout!.edges as Array<{ source: string; target: string }>;
-    expect(edges.some((e) => e.target === extraNode.id)).toBe(false);
+    expect(edges.some((e) => e.target === extraNode.id)).toBe(true);
     expect(edges.some((e) => e.target === defaultNode.id)).toBe(true);
+    expect(agentNode.data.sandboxOrder).toEqual([defaultNode.id, extraNode.id]);
   });
 
   test("preserves an agent's wiring while its blob cannot be decrypted", async () => {

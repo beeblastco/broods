@@ -16,6 +16,7 @@ import {
   snapshotExternalConfig,
   type CliResource,
 } from "./cliSync";
+import { loadMcpTransportsByNode } from "./mcp";
 import { isPlainObject } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
@@ -131,6 +132,7 @@ export async function syncCanvasLayoutForManifest(
   const workspaceWriters = collectDesiredAgentEdges({
     desiredResources: desiredResources,
     nodeIdByKindName: materialized.nodeIdByKindName,
+    nextById: materialized.nextById,
     mcpNameById: mcpNameById,
     desiredEdges: desiredEdges,
   });
@@ -325,14 +327,25 @@ function cliResourceKeyForNode(node: CanvasNode): string {
   return `${node.type}:${name}`;
 }
 
+/**
+ * Draws every agent's edges into `desiredEdges` and stamps each agent node's
+ * `sandboxOrder`, the sandbox node ids in `sandboxes` order, so the canvas can
+ * number the sandbox edges it draws.
+ */
 function collectDesiredAgentEdges(options: {
   desiredResources: CanvasCliResource[];
   nodeIdByKindName: Map<string, string>;
+  nextById: Map<string, CanvasNode>;
   mcpNameById: Map<string, string>;
   desiredEdges: Map<string, CanvasEdge>;
 }): WorkspaceWriterState {
-  const { desiredResources, nodeIdByKindName, mcpNameById, desiredEdges } =
-    options;
+  const {
+    desiredResources,
+    nodeIdByKindName,
+    nextById,
+    mcpNameById,
+    desiredEdges,
+  } = options;
   const workspaceWriters: WorkspaceWriterState = {
     referenced: new Set<string>(),
     writers: new Set<string>(),
@@ -345,24 +358,29 @@ function collectDesiredAgentEdges(options: {
     if (!agentId || !isPlainObject(agent.config)) continue;
     // Agent→service edges are default (top/bottom handle) edges, like the
     // dashboard's own auto-connect. Only workspace↔sandbox uses a side-handle
-    // mount edge (sandbox x=420 sits left of workspace x=760). Only the default
-    // sandbox, sandboxes[0], gets an edge; the canvas has no shape for the extras
-    // yet, so they stay unlinked nodes.
-    const defaultSandbox = defaultSandboxOf(agent.config);
-    const defaultSandboxName = defaultSandbox
-      ? resourceName(defaultSandbox)
-      : null;
-    if (defaultSandboxName) {
+    // mount edge.
+    const sandboxOrder: string[] = [];
+    const sandboxes: unknown[] = Array.isArray(agent.config.sandboxes)
+      ? agent.config.sandboxes
+      : [];
+    for (const sandbox of sandboxes) {
+      if (typeof sandbox !== "string") continue;
       const sandboxNodeId = nodeIdByKindName.get(
-        `sandbox:${defaultSandboxName}`,
+        `sandbox:${resourceName(sandbox)}`,
       );
-      if (sandboxNodeId)
-        addDesiredDefaultEdge(desiredEdges, agentId, sandboxNodeId);
+      if (!sandboxNodeId || sandboxOrder.includes(sandboxNodeId)) continue;
+      addDesiredDefaultEdge(desiredEdges, agentId, sandboxNodeId);
+      sandboxOrder.push(sandboxNodeId);
     }
+    const agentNode = nextById.get(agentId);
+    if (agentNode) {
+      agentNode.data = { ...agentNode.data, sandboxOrder: sandboxOrder };
+    }
+    const defaultSandbox = defaultSandboxOf(agent.config);
     addAgentWorkspaceEdges({
       agentConfig: agent.config,
       agentNodeId: agentId,
-      defaultSandboxName: defaultSandboxName,
+      defaultSandboxName: defaultSandbox ? resourceName(defaultSandbox) : null,
       nodeIdByKindName: nodeIdByKindName,
       desiredEdges: desiredEdges,
       workspaceWriters: workspaceWriters,
@@ -649,7 +667,11 @@ async function persistCanvasLayout(
   },
 ): Promise<void> {
   const now = Date.now();
-  const nextNodes = applyTidyLayout(options.nextNodes, options.nextEdges);
+  const nextNodes = applyTidyLayout(
+    options.nextNodes,
+    options.nextEdges,
+    await loadMcpTransportsByNode(ctx, options.stageId),
+  );
   if (options.layout) {
     await ctx.db.patch(options.layout._id, {
       nodes: nextNodes,
