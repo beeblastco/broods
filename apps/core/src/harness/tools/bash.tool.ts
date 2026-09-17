@@ -10,7 +10,10 @@ import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logDebug, logInfo, logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import type {
+  ResolvedAgentSandbox,
+  ResolvedWorkspace,
+} from "../../shared/workspaces.ts";
 import {
   bindAsyncToolResultSandbox,
   createDetachedAsyncToolResult,
@@ -41,7 +44,6 @@ import {
   workspaceParamSchema,
   writesOutsideAllowed,
   type SandboxToolContext,
-  type SelectableSandbox,
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
@@ -52,9 +54,8 @@ const THROWAWAY_NOTE =
 interface BashInput {
   command: string;
   workspace?: string;
-  // `true` or the agent's own sandbox name picks its own sandbox; any other name
-  // picks an extra. A name that matches nothing is refused.
-  sandbox?: boolean | string;
+  // A sandbox name; anything else is refused.
+  sandbox?: unknown;
   background?: boolean;
   pty?: boolean;
 }
@@ -78,6 +79,9 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
         }
         try {
           const selected = bashSandboxTarget(onSandbox);
+          if (onSandbox !== undefined && selected === undefined) {
+            return toolError("Error: sandbox must be the name of a sandbox");
+          }
           // Silently preferring one would let the policy layer be told a workspace
           // that the run never touches, so an incoherent selection is refused.
           if (workspace !== undefined && selected !== undefined) {
@@ -85,26 +89,24 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
               "Error: pass either workspace or sandbox, not both — they select different places to run",
             );
           }
-          // Resolved before the workspace fallback so an unknown name is refused
-          // instead of quietly landing in the default workspace.
-          const agentSandbox = resolveAgentSandbox(context, selected);
-          const target = {
-            ...(workspace ? { workspace: workspace } : {}),
-            ...(selected !== undefined ? { sandbox: selected } : {}),
-          };
-          const ws = targetsAgentSandbox(context, target)
+          // Resolved before the workspace fallback so a name that picks nothing
+          // selectable is refused instead of quietly landing in the default workspace.
+          const picked = resolveAgentSandbox(context, selected);
+          const ws = targetsAgentSandbox(context, {
+            workspace: workspace,
+            sandbox: selected,
+          })
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
-          const sandbox = ws?.sandbox ?? agentSandbox.sandbox;
+          // A read-only workspace must not fall through to the default sandbox: the
+          // approval gate skipped it expecting this refusal.
+          const sandbox = ws ? ws.sandbox : picked?.sandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
           const outsideWorkspace = ws
             ? outsideWorkspaceCommand(trimmed, {
-                persistentOwnSandbox: writesOutsideAllowed(
-                  ws,
-                  context.agentSandbox,
-                ),
+                persistentOwnSandbox: writesOutsideAllowed(ws, context),
               })
             : undefined;
           if (outsideWorkspace) {
@@ -171,25 +173,24 @@ function backgroundNote(context: SandboxToolContext): string {
 }
 
 function description(context: SandboxToolContext): string {
-  if (extrasOnly(context)) {
-    return `Executes a bash command on one of your sandboxes (bash, python3, and node on PATH).
-
-Usage notes:
-- Every call names the sandbox to run on with \`sandbox\`.
-- Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
-- Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
-- Shell state (working directory, environment variables, background processes) resets every call. Keep the whole task in a single command, chaining steps with && or ;.${sandboxesNote(context)}`;
-  }
   if (context.workspaces.length === 0) {
-    const runtimes = runtimeDescription(context.agentSandbox);
+    const defaultSandbox = context.sandboxes?.[0]?.sandbox;
+    const runtimes = runtimeDescription(defaultSandbox);
+    // A reserved default reconnects every call, so calling it stateless would
+    // contradict what the model sees persist.
+    const reserved = isReservedStandalone(defaultSandbox);
+    const kind = reserved ? "a reserved" : "an ephemeral";
+    const state = reserved
+      ? "The sandbox is reserved: files persist across calls until the reservation ends, but nothing reaches durable storage. Shell state (working directory, environment variables, background processes) resets every call, so chain dependent steps with && or ;."
+      : "The sandbox is stateless: each call runs in a fresh container with no persistent storage. Files do NOT persist across calls, and shell state (working directory, environment variables, background processes) resets every call — keep the whole task in a single command, chaining steps with && or ;.";
 
-    return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
+    return `Executes a bash command in ${kind} Linux sandbox (bash, python3, and node on PATH).
 
 Usage notes:
 - ${runtimes}
 - Use proper quoting for paths or arguments containing spaces (e.g. cd "path with spaces").
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
-- The sandbox is stateless: each call runs in a fresh container with no persistent storage. Files do NOT persist across calls, and shell state (working directory, environment variables, background processes) resets every call — keep the whole task in a single command, chaining steps with && or ;.${sandboxesNote(context)}`;
+- ${state}${sandboxesNote(context)}`;
   }
 
   return `Executes a bash command on the attached workspace in a Linux sandbox (bash, python3, and node on PATH).
@@ -318,16 +319,6 @@ async function dispatchBackground(
   );
 }
 
-// An agent whose only sandboxes are extras has no default place to run, so a call
-// that names none would fail after approval. The schema makes the name mandatory.
-function extrasOnly(context: SandboxToolContext): boolean {
-  return (
-    context.workspaces.length === 0 &&
-    !context.agentSandbox &&
-    (context.sandboxes?.length ?? 0) > 0
-  );
-}
-
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
   const sandboxProp = sandboxParamSchema(context);
@@ -356,18 +347,30 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
           }
         : {}),
     },
-    required: extrasOnly(context) ? ["command", "sandbox"] : ["command"],
+    required: ["command"],
     additionalProperties: false,
   };
+}
+
+// A workspace-less run reconnects on options.reservationKey (derived per agent by
+// resolveAgentRuntime, or pinned). No key means nothing survives.
+function isReservedStandalone(
+  sandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  const options = isPlainObject(sandbox?.options) ? sandbox.options : {};
+
+  return (
+    sandbox?.persistent === true &&
+    typeof options.reservationKey === "string" &&
+    options.reservationKey.trim().length > 0
+  );
 }
 
 // Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
 // machine around them is the agent's too and the durability guard steps aside.
 function ownSandboxNote(context: SandboxToolContext): string {
   const names = context.workspaces
-    .filter((workspace) =>
-      writesOutsideAllowed(workspace, context.agentSandbox),
-    )
+    .filter((workspace): boolean => writesOutsideAllowed(workspace, context))
     .map((workspace) => workspace.name);
   if (names.length === 0) {
     return "";
@@ -390,9 +393,9 @@ function ptyCommand(command: string): string {
 function reservedNote(context: SandboxToolContext): string {
   const names = context.workspaces
     .filter(
-      (workspace) =>
+      (workspace): boolean =>
         workspace.sandbox?.persistent === true &&
-        !isAgentOwnSandbox(workspace, context.agentSandbox),
+        !isAgentOwnSandbox(workspace, context),
     )
     .map((workspace) => workspace.name);
   if (names.length === 0) {
@@ -403,25 +406,15 @@ function reservedNote(context: SandboxToolContext): string {
 - ${names.join(", ")} run on a reserved (persistent) sandbox: packages installed under $HOME (e.g. a uv/venv or npm prefix) survive across calls until the reservation ends. It is an execution layer you borrow, so writes outside the workspace directory are still rejected — keep results in the workspace.`;
 }
 
-// A workspace-less run reconnects on options.reservationKey (derived per agent by
-// resolveAgentRuntime, or pinned). No key means nothing survives, no note.
-function reservedStandaloneNote(context: SandboxToolContext): string {
-  const options = isPlainObject(context.agentSandbox?.options)
-    ? context.agentSandbox.options
-    : {};
-  const reserved =
-    context.agentSandbox?.persistent === true &&
-    typeof options.reservationKey === "string" &&
-    options.reservationKey.trim().length > 0;
-
-  if (!reserved) {
+function reservedStandaloneNote(sandbox: SandboxExecutorConfig): string {
+  if (!isReservedStandalone(sandbox)) {
     return "";
   }
 
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
-// Scenario note: the sandboxes a call can pick by name, the agent's own first when
+// Scenario note: the sandboxes a call can pick by name, the default first when
 // nothing mounts it. One list, so `sandbox` never means two different things.
 function sandboxesNote(context: SandboxToolContext): string {
   const choices = sandboxParamChoices(context);
@@ -429,8 +422,13 @@ function sandboxesNote(context: SandboxToolContext): string {
     return "";
   }
   const entries = choices.map((choice): string => {
-    const label = choice.description ?? (choice.own ? "your own sandbox" : "");
-    const reserved = choice.own ? reservedStandaloneNote(context) : "";
+    const isDefault = choice === context.sandboxes?.[0];
+    const label = choice.description ?? (isDefault ? "your own sandbox" : "");
+    // With no workspace the description already covers the default's persistence.
+    const reserved =
+      isDefault && context.workspaces.length > 0
+        ? reservedStandaloneNote(choice.sandbox)
+        : "";
 
     return `${choice.name}${label ? `: ${label}.` : ""}${reserved}`;
   });
@@ -440,13 +438,15 @@ function sandboxesNote(context: SandboxToolContext): string {
 ${entries.map((entry): string => `  - ${entry}`).join("\n")}`;
 }
 
-// What the `sandbox` param offers. A lone own sandbox with no workspace is where
-// bash already runs, so it earns no field; beside a workspace or an extra it is a
+// What the `sandbox` param offers. A lone default with no workspace is where bash
+// already runs, so it earns no field; beside a workspace or another sandbox it is a
 // choice.
-function sandboxParamChoices(context: SandboxToolContext): SelectableSandbox[] {
+function sandboxParamChoices(
+  context: SandboxToolContext,
+): ResolvedAgentSandbox[] {
   const choices = selectableSandboxes(context);
   const onlyTheDefault =
-    choices.length === 1 && choices[0]?.own && context.workspaces.length === 0;
+    choices.length === 1 && context.workspaces.length === 0;
 
   return onlyTheDefault ? [] : choices;
 }
@@ -476,7 +476,7 @@ function sandboxParamSchema(
 // then works around. Stay silent when every workspace is exempt.
 function writeGuardNote(context: SandboxToolContext): string {
   const guarded = context.workspaces.filter(
-    (workspace) => !writesOutsideAllowed(workspace, context.agentSandbox),
+    (workspace): boolean => !writesOutsideAllowed(workspace, context),
   );
   if (guarded.length === 0) {
     return "";

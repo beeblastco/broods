@@ -27,6 +27,6 @@ export const myAgent = defineAgent({
     system:
       "You are a helpful assistant. Use bash to write files and run code in a sandboxed Linux environment. Always use the provided tools to interact with the sandbox, and never assume direct access to the filesystem or execution environment.",
   },
-  sandbox: statelessSandbox,
+  sandboxes: [statelessSandbox],
   publicAccess: true,
 });

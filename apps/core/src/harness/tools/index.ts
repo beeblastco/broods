@@ -19,7 +19,6 @@ import {
 } from "../../shared/domain/agent-config.ts";
 import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
-import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
@@ -33,10 +32,7 @@ import type { AsyncToolNames, RunAsyncToolDispatch } from "../async-tools.ts";
 import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type { DispatchAppliedIngress } from "../integrations.ts";
 import type { PendingQuestionSummary } from "../questions.ts";
-import type {
-  SandboxCpuSample,
-  SandboxExecutorConfig,
-} from "../sandbox/types.ts";
+import type { SandboxCpuSample } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
 import {
   listMcpTools,
@@ -102,13 +98,7 @@ export interface ToolContext {
   // Each workspace carries its own effective sandbox + permissionMode (or no
   // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // The agent's own sandbox (`config.sandbox`). Backs bash outright when no
-  // workspace is attached, and stays reachable as its own bash target when the
-  // attached workspaces all borrow a different sandbox. Undefined => no own sandbox.
-  agentSandbox?: SandboxExecutorConfig;
-  agentSandboxPermissionMode?: SandboxPermissionMode;
-  // Extra sandboxes (`config.sandboxes`) bash reaches by name, each with no
-  // workspace mounted. Empty => bash keeps its boolean `sandbox` flag.
+  // Resolved config.sandboxes; the first is the default.
   sandboxes?: ResolvedAgentSandbox[];
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
@@ -138,21 +128,25 @@ export async function createTools(
 
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
-  const agentSandbox = context.agentSandbox;
   const sandboxes = context.sandboxes ?? [];
+  const defaultSandbox = sandboxes[0]?.sandbox;
+  const sandboxContext: SandboxToolContext = {
+    workspaces: workspaces,
+    sandboxes: sandboxes,
+  };
   const sandboxOptions =
-    typeof agentSandbox?.options === "object" && agentSandbox.options !== null
-      ? (agentSandbox.options as Record<string, unknown>)
+    typeof defaultSandbox?.options === "object" &&
+    defaultSandbox.options !== null
+      ? (defaultSandbox.options as Record<string, unknown>)
       : {};
   const hasSandboxReservation =
     typeof sandboxOptions.reservationKey === "string" &&
     sandboxOptions.reservationKey.trim().length > 0;
   // Persistence keys on the workspace namespace, or without one on the key
   // resolveAgentRuntime derives per agent; no agent identity leaves runs ephemeral.
-  const runsWithoutNamespace =
-    workspaces.length === 0 || hasStandaloneSandbox(workspaces, agentSandbox);
+  const runsWithoutNamespace = hasStandaloneSandbox(sandboxContext);
   if (
-    agentSandbox?.persistent === true &&
+    defaultSandbox?.persistent === true &&
     runsWithoutNamespace &&
     !hasSandboxReservation
   ) {
@@ -184,25 +178,12 @@ export async function createTools(
         }
       : undefined;
 
-  // What bash and computer both select from: the agent's own sandbox, and the
-  // extra sandboxes a call can name.
-  const sandboxContext: SandboxToolContext = {
-    workspaces: workspaces,
-    ...(agentSandbox
-      ? {
-          agentSandbox: agentSandbox,
-          agentSandboxPermissionMode:
-            context.agentSandboxPermissionMode ?? "ask",
-        }
-      : {}),
-    ...(sandboxes.length > 0 ? { sandboxes: sandboxes } : {}),
-  };
   // bash: the agent's own sandbox, or any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
   // of silently selecting the first writable workspace. Background jobs and CPU
   // metering are bash's alone.
-  if (agentSandbox || sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
+  if (sandboxes.length > 0 || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
@@ -212,10 +193,9 @@ export async function createTools(
       }),
     );
   }
-  // computer: only a computer has a screen to drive. The agent's own sandbox is
-  // one way to reach one, an attached machine sandbox is another, and an agent
-  // that reaches several names which per call.
-  const machines = machineSandboxes(sandboxContext);
+  // computer: every machine in `sandboxes` is a computer target, and an agent that
+  // reaches several names which per call.
+  const machines = machineSandboxes(sandboxes);
   if (machines.length > 0) {
     Object.assign(sandboxTools, computerTool(machines));
   }

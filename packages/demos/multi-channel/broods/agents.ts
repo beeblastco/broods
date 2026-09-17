@@ -138,7 +138,7 @@ export const agent = defineAgent({
     maxTurn: 0,
   },
   connections: [slack, telegram, github],
-  sandbox: sandbox,
+  sandboxes: [sandbox],
   workspaces: [workspace],
   subagent: {
     enabled: true,

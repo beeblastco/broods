@@ -26,7 +26,6 @@ const NESTED_BRANCHES = [
   "agent",
   "model",
   "provider",
-  "sandbox",
   "sandboxes",
   "workspaces",
   "session",
@@ -41,10 +40,20 @@ const NESTED_BRANCHES = [
 ] as const;
 
 // Removed branches, kept only so a write answers with a pointer instead of dropping
-// the value silently. `workspace` (singular) is the pre-records shape.
+// the value silently. `workspace` (singular) is the pre-records shape; `sandbox`
+// (singular) became the first entry of `sandboxes`.
+/**
+ * The one answer to a config that still names the removed `sandbox` key. It
+ * lives here, not in agentRules, so the dashboard bundle that imports this codec
+ * does not pull in the rules' server-side imports.
+ */
+export const SANDBOX_REMOVED_MESSAGE =
+  "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default";
+
 const REMOVED_BRANCH_HINTS: Record<string, string> = {
+  sandbox: SANDBOX_REMOVED_MESSAGE,
   workspace:
-    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',
+    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandboxes: ["sb_…"]',
 };
 
 /** Encrypted blob shape persisted on the `agents` row. base64url-encoded. */
@@ -265,9 +274,12 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const model = buildNestedModelBranch(flat, extra);
   const tools = buildNestedToolsBranch(flat, extra);
 
-  // Read drops a removed branch rather than throwing: rows written before it was
-  // removed still carry the blob, and reading one must not fail. Writing it back
-  // is what clears it, so an agent cleans itself on its next save.
+  // Read never throws on a removed branch: rows written before it was removed
+  // still carry the blob, and reading one must not fail. A dead `workspace` is
+  // dropped, so writing the read back clears it. A stale `sandbox` is carried
+  // instead: dropping it would run the agent without its default and say
+  // nothing, so core refuses the config by name until a CLI sync or canvas
+  // save rewrites the row.
   return assembleNestedConfig(extra, agent, model, tools);
 }
 
@@ -283,7 +295,7 @@ function assembleNestedConfig(
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
     ...(provider ? { provider: provider } : {}),
-    ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
+    ...(extra.sandbox !== undefined ? { sandbox: extra.sandbox } : {}),
     ...(extra.sandboxes ? { sandboxes: extra.sandboxes } : {}),
     ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
     ...(extra.session ? { session: extra.session } : {}),
@@ -407,14 +419,12 @@ function collectExtraConfig(
   const extra: Record<string, unknown> = {};
   if (agent && Object.keys(agent).length > 0) extra.agent = agent;
   if (model && Object.keys(model).length > 0) extra.model = model;
-  if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
   if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
   if (tools && Object.keys(tools).length > 0) extra.tools = tools;
   for (const branch of NESTED_BRANCHES) {
     if (
       branch === "agent" ||
       branch === "model" ||
-      branch === "sandbox" ||
       branch === "workspaces" ||
       branch === "tools"
     )

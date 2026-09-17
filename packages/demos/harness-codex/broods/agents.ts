@@ -10,7 +10,6 @@ export const runner = defineSandbox({
 
 export const codexHarness = defineHarness({
   type: "codex",
-  sandbox: runner,
   permissionMode: "allow-all",
   startupTimeoutMs: 180_000,
 });
@@ -18,6 +17,8 @@ export const codexHarness = defineHarness({
 export const codingAgent = defineAgent({
   name: "code-agent",
   harness: codexHarness,
+  // The harness runs on the first sandbox.
+  sandboxes: [runner],
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),

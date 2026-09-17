@@ -48,7 +48,7 @@ export const reservedAgent = defineAgent({
       "For long-running work, use bash with background:true and then poll async_status.",
     ].join(" "),
   },
-  sandbox: reservedSandbox,
+  sandboxes: [reservedSandbox],
   workspaces: [projectWorkspace],
   publicAccess: true,
 });

@@ -23,7 +23,6 @@ import type {
   PolicyDocument,
   PolicyMode,
 } from "../shared/domain/policy.ts";
-import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
 import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
@@ -32,7 +31,6 @@ import type {
   ResolvedAgentSandbox,
   ResolvedWorkspace,
 } from "../shared/workspaces.ts";
-import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   bashNeedsApproval,
   bashSandboxTarget,
@@ -90,8 +88,6 @@ export function compatibilityApprovalStatus(
   options: {
     configuredApprovals: ReadonlyMap<string, true>;
     workspaces: ResolvedWorkspace[];
-    agentSandbox?: SandboxExecutorConfig;
-    agentSandboxPermissionMode?: SandboxPermissionMode;
     sandboxes?: ResolvedAgentSandbox[];
   },
 ): ToolApprovalStatus {
@@ -104,19 +100,14 @@ export function compatibilityApprovalStatus(
   const onSandbox = bashSandboxTarget(record.sandbox);
 
   if (toolName === "bash") {
+    // A `sandbox` that is no name resolves nowhere, so it asks like an unknown name.
+    if (record.sandbox !== undefined && onSandbox === undefined) {
+      return "user-approval";
+    }
+
     return bashNeedsApproval(
-      {
-        workspaces: options.workspaces,
-        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
-        ...(options.agentSandboxPermissionMode
-          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
-          : {}),
-        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
-      },
-      {
-        ...(workspace ? { workspace: workspace } : {}),
-        ...(onSandbox !== undefined ? { sandbox: onSandbox } : {}),
-      },
+      { workspaces: options.workspaces, sandboxes: options.sandboxes },
+      { workspace: workspace, sandbox: onSandbox },
     )
       ? "user-approval"
       : undefined;
@@ -129,18 +120,13 @@ export function compatibilityApprovalStatus(
       return undefined;
     }
     const machine = computerSandboxTarget(
-      machineSandboxes({
-        workspaces: options.workspaces,
-        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
-        ...(options.agentSandboxPermissionMode
-          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
-          : {}),
-        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
-      }),
+      machineSandboxes(options.sandboxes),
       record.sandbox,
     );
 
-    return machine?.permissionMode !== "bypass" ? "user-approval" : undefined;
+    return machine?.sandbox.permissionMode !== "bypass"
+      ? "user-approval"
+      : undefined;
   }
 
   // memory_save writes workspace files (memory/*.md + the index), so it follows
@@ -166,7 +152,6 @@ export async function createPolicyToolApproval(
   workspaces: ResolvedWorkspace[],
   options: {
     mcpIdsByName?: ReadonlyMap<string, string>;
-    agentSandbox?: SandboxExecutorConfig;
     sandboxes?: ResolvedAgentSandbox[];
   } = {},
 ): Promise<RuntimeToolApproval | undefined> {
@@ -257,15 +242,12 @@ export async function createPolicyToolApproval(
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
-  agentSandbox?: SandboxExecutorConfig;
-  agentSandboxPermissionMode?: SandboxPermissionMode;
   sandboxes?: ResolvedAgentSandbox[];
   policyApproval?: RuntimeToolApproval;
 }): RuntimeToolApproval | undefined {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
-    Boolean(options.agentSandbox) ||
     (options.sandboxes?.length ?? 0) > 0;
 
   if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
@@ -384,7 +366,6 @@ export function policyInputForTool(
   workspaces: ResolvedWorkspace[],
   options: {
     mcpIdsByName?: ReadonlyMap<string, string>;
-    agentSandbox?: SandboxExecutorConfig;
     sandboxes?: ResolvedAgentSandbox[];
   } = {},
 ): Pick<
@@ -408,31 +389,26 @@ export function policyInputForTool(
   // A bash call that runs on an agent-level sandbox touches no workspace, so it must
   // not be described to the policy as if it did. A workspace-scoped rule would then
   // authorize a run that never lands there. Resolve the same target execution will.
+  const workspaceTarget =
+    typeof record.workspace === "string" ? record.workspace : undefined;
   const onAgentSandbox =
     toolName === "bash" &&
     targetsAgentSandbox(
-      {
-        workspaces: workspaces,
-        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
-        ...(options.sandboxes ? { sandboxes: options.sandboxes } : {}),
-      },
-      {
-        ...(typeof record.workspace === "string"
-          ? { workspace: record.workspace }
-          : {}),
-        ...(sandboxTarget !== undefined ? { sandbox: sandboxTarget } : {}),
-      },
+      { workspaces: workspaces, sandboxes: options.sandboxes },
+      { workspace: workspaceTarget, sandbox: sandboxTarget },
     );
   const workspace = onAgentSandbox
     ? undefined
-    : resolveWorkspaceForPolicy(
-        workspaces,
-        typeof record.workspace === "string" ? record.workspace : undefined,
-      );
-  // An extra carries its own permissionMode, and that is the one fact a policy
-  // can use to tell one extra from another.
-  const extra = onAgentSandbox
-    ? options.sandboxes?.find((entry): boolean => entry.name === sandboxTarget)
+    : resolveWorkspaceForPolicy(workspaces, workspaceTarget);
+  // A sandbox carries its own permissionMode, and that is the one fact a policy can
+  // use to tell one sandbox from another. An unnamed call runs on the default, so it
+  // reports the same mode as naming the default does.
+  const picked = onAgentSandbox
+    ? sandboxTarget === undefined
+      ? options.sandboxes?.[0]
+      : options.sandboxes?.find(
+          (entry): boolean => entry.name === sandboxTarget,
+        )
     : undefined;
   const filePath =
     typeof record.file_path === "string"
@@ -453,8 +429,8 @@ export function policyInputForTool(
           sandboxPermissionMode: workspace.sandbox?.permissionMode,
         }
       : {}),
-    ...(extra?.sandbox.permissionMode
-      ? { sandboxPermissionMode: extra.sandbox.permissionMode }
+    ...(picked?.sandbox.permissionMode
+      ? { sandboxPermissionMode: picked.sandbox.permissionMode }
       : {}),
     ...(filePath ? { filePath: filePath } : {}),
   };

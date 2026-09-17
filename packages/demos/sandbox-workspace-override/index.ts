@@ -1,12 +1,12 @@
 /**
  * Example: per-workspace sandbox override via declarative broods resources.
  *
- * The agent-level `sandbox` is a DEFAULT. Each `workspaces[]` entry can set its own
- * `sandbox` to override it for that workspace. The cascade is:
+ * The agent's first entry in `sandboxes` is the DEFAULT. Each `workspaces[]` entry
+ * can set its own `sandbox` to override it for that workspace. The cascade is:
  *
  *   ws.sandbox === <id>   -> override: use that sandbox (and ITS permissionMode)
  *   ws.sandbox === null   -> force read-only (read/glob via S3 only), even with a default
- *   ws.sandbox omitted    -> inherit the agent-level `sandbox`
+ *   ws.sandbox omitted    -> inherit the agent's first sandbox
  *
  * Here one agent drives three workspaces at once: one inherits the default sandbox, one is
  * pinned to a stricter deny-all network sandbox, and one is forced read-only.

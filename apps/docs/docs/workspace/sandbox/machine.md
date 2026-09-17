@@ -82,15 +82,13 @@ CAPTCHAs, payments or security settings. Ctrl+C on the daemon stops it all.
 
 ### More than one computer
 
-An agent drives every machine it can reach: its own `sandbox`, plus any machine
-attached through `sandboxes`. The agent's own sandbox no longer has to be the
-machine, so one agent can drive several computers.
+An agent drives every machine in its `sandboxes`, wherever it sits in the list,
+so one agent can drive several computers.
 
 ```ts
 defineAgent({
   name: "tracy",
-  sandbox: kienMac,
-  sandboxes: [phicksMac],
+  sandboxes: [kienMac, phicksMac],
 });
 ```
 
@@ -99,12 +97,12 @@ more, it takes a `sandbox` naming which computer to act on, and every result
 says which screen it came from. Coordinates never carry from one screen to
 another, so take a screenshot after switching.
 
-Approval for an action follows the computer that call names, not the agent's own:
-in one turn a `bypass` machine clicks without asking while an `ask` machine still
-asks. Looking stays free on every machine, as above, so `ask` does not stop an
-agent screenshotting one it can reach. What decides whether it can reach a
-computer at all is the owner starting the daemon with `--computer`, and Ctrl+C
-there ends it.
+Approval for an action follows the computer that call names, not the agent's
+first sandbox: in one turn a `bypass` machine clicks without asking while an
+`ask` machine still asks. Looking stays free on every machine, as above, so
+`ask` does not stop an agent screenshotting one it can reach. What decides
+whether it can reach a computer at all is the owner starting the daemon with
+`--computer`, and Ctrl+C there ends it.
 
 ## Local MCP servers
 

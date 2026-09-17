@@ -1,6 +1,6 @@
 import { defineAgent, defineSandbox, env } from "broods";
 
-// The agent's default machine, with internet egress for general work.
+// Listed first, so it is the agent's default machine, with internet egress.
 export const generalSandbox = defineSandbox({
   name: "general-sandbox",
   provider: "lambda",
@@ -9,7 +9,7 @@ export const generalSandbox = defineSandbox({
   timeout: 60,
 });
 
-// An extra machine the model selects with bash `sandbox: "offline-sandbox"`. No
+// A second machine the model selects with bash `sandbox: "offline-sandbox"`. No
 // workspace is mounted and egress is blocked, so it suits untrusted code.
 export const offlineSandbox = defineSandbox({
   name: "offline-sandbox",
@@ -36,7 +36,6 @@ export const multiSandboxAgent = defineAgent({
     system:
       "You have two sandboxes. general-sandbox is the default and reaches the internet. offline-sandbox has no network. Pick one with the bash `sandbox` argument and report errors verbatim.",
   },
-  sandbox: generalSandbox,
-  sandboxes: [offlineSandbox],
+  sandboxes: [generalSandbox, offlineSandbox],
   publicAccess: true,
 });

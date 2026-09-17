@@ -162,7 +162,7 @@ export async function compileProject(
     }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
-  assertExportedAgentSandboxes(resources);
+  assertAgentSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
   const reach = declaredReach(resources);
   for (const resource of resources) assertKnownConfigKeys(resource);
@@ -377,7 +377,6 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "tools",
   "mcp",
   "denyTools",
-  "sandbox",
   "sandboxes",
   "workspaces",
   "subagent",
@@ -416,6 +415,12 @@ function assertKnownConfigKeys(resource: AnyResource): void {
   const config = resource.config as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (KNOWN_AGENT_CONFIG_KEYS.has(key)) continue;
+    // A removed key gets its migration, not the generic allowed-keys list.
+    if (key === "sandbox") {
+      throw new Error(
+        `Agent "${resource.name}" config.sandbox was removed; use sandboxes, the first is the default`,
+      );
+    }
     const suggestion = AGENT_KEY_SUGGESTIONS[key];
     const hint = suggestion
       ? ` Did you mean "${suggestion}"?`
@@ -614,12 +619,21 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
-    const agentSandbox = resolveLocalSandbox(config.sandbox, sandboxes);
+    // Resource files are transpiled without a typecheck, so a string `sandboxes`
+    // must not yield its first character.
+    const defaultSandbox = resolveLocalSandbox(
+      Array.isArray(config.sandboxes) ? config.sandboxes[0] : undefined,
+      sandboxes,
+    );
     const workspaces = config.workspaces;
     if (!Array.isArray(workspaces)) continue;
     for (const entry of workspaces) {
       const workspaceName = workspaceNameFor(entry);
-      const sandbox = effectiveWorkspaceSandbox(entry, agentSandbox, sandboxes);
+      const sandbox = effectiveWorkspaceSandbox(
+        entry,
+        defaultSandbox,
+        sandboxes,
+      );
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
       throw new Error(
         `Agent "${resource.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" (${sandboxProvider(sandbox)}) ` +
@@ -642,7 +656,7 @@ function resolveLocalSandbox(
 
 function effectiveWorkspaceSandbox(
   entry: unknown,
-  agentSandbox: SandboxResource | undefined,
+  defaultSandbox: SandboxResource | undefined,
   sandboxes: Map<string, SandboxResource>,
 ): SandboxResource | undefined {
   if (entry && typeof entry === "object" && "sandbox" in entry) {
@@ -652,7 +666,7 @@ function effectiveWorkspaceSandbox(
     return resolveLocalSandbox(sandbox, sandboxes);
   }
 
-  return agentSandbox;
+  return defaultSandbox;
 }
 
 function workspaceNameFor(entry: unknown): string {
@@ -686,9 +700,11 @@ function sandboxProvider(sandbox: SandboxResource): string {
     : "sandbox";
 }
 
-// A sandbox referenced as a resource but never exported is not compiled into the
-// manifest, so the name the agent config carries would resolve to nothing at sync.
-function assertExportedAgentSandboxes(resources: AnyResource[]): void {
+// Resource files skip the typecheck and CLI sync keeps unknown names as-is, so a
+// wrong shape here would reach a stage as a sandbox id. A sandbox referenced as a
+// resource but never exported is not compiled into the manifest either, so its
+// name would resolve to nothing at sync.
+function assertAgentSandboxes(resources: AnyResource[]): void {
   const exportedSandboxNames = new Set(
     resources
       .filter(
@@ -698,24 +714,25 @@ function assertExportedAgentSandboxes(resources: AnyResource[]): void {
   );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
-    const references: Array<{ field: string; sandbox: unknown }> = [
-      { field: "sandbox", sandbox: resource.config.sandbox },
-      { field: "harness", sandbox: resource.config.harness?.sandbox },
-      ...(resource.config.sandboxes ?? []).map(
-        (sandbox): { field: string; sandbox: unknown } => ({
-          field: "sandboxes",
-          sandbox: sandbox,
-        }),
-      ),
-    ];
-    for (const reference of references) {
-      if (
-        isResource(reference.sandbox) &&
-        reference.sandbox.kind === "sandbox" &&
-        !exportedSandboxNames.has(reference.sandbox.name)
-      ) {
+    const value: unknown = resource.config.sandboxes;
+    if (value === undefined) continue;
+    if (!Array.isArray(value)) {
+      throw new Error(
+        `Agent "${resource.name}" sandboxes must be an array of sandbox resources or names`,
+      );
+    }
+    const sandboxes: unknown[] = value;
+    for (const [index, sandbox] of sandboxes.entries()) {
+      const isName = typeof sandbox === "string" && sandbox.trim().length > 0;
+      const isSandbox = isResource(sandbox) && sandbox.kind === "sandbox";
+      if (!isName && !isSandbox) {
         throw new Error(
-          `Agent "${resource.name}" ${reference.field} references sandbox "${reference.sandbox.name}", but that sandbox is not exported from broods/`,
+          `Agent "${resource.name}" sandboxes[${index}] must be a sandbox resource or a non-empty name`,
+        );
+      }
+      if (isSandbox && !exportedSandboxNames.has(sandbox.name)) {
+        throw new Error(
+          `Agent "${resource.name}" sandboxes references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
         );
       }
     }
@@ -1081,7 +1098,6 @@ const KNOWN_HARNESS_KEYS = new Set([
   "debug",
   "inactiveTools",
   "permissionMode",
-  "sandbox",
   "startupTimeoutMs",
   "type",
   "webSearch",
@@ -1163,6 +1179,12 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     throw new Error(`Agent "${agentName}" config.harness must be an object`);
   }
   const config = harness as Record<string, unknown>;
+  // Checked before unknown keys so a JS author gets the migration, not a typo hint.
+  if ("sandbox" in config) {
+    throw new Error(
+      `Agent "${agentName}" harness sandbox was removed; list it first in the agent's sandboxes`,
+    );
+  }
   for (const key of Object.keys(config)) {
     if (!KNOWN_HARNESS_KEYS.has(key)) {
       throw new Error(
@@ -1179,22 +1201,6 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
   ) {
     throw new Error(
       `Agent "${agentName}" config.harness.type must be claude-code, codex, deepagents, opencode, or pi`,
-    );
-  }
-  if (config.sandbox === undefined) {
-    throw new Error(
-      `Agent "${agentName}" config.harness.sandbox is required for ${config.type}`,
-    );
-  }
-  if (
-    config.sandbox !== undefined &&
-    !(
-      typeof config.sandbox === "string" ||
-      (isResource(config.sandbox) && config.sandbox.kind === "sandbox")
-    )
-  ) {
-    throw new Error(
-      `Agent "${agentName}" config.harness.sandbox must be a defineSandbox resource or sandbox name`,
     );
   }
   if (
@@ -1313,25 +1319,19 @@ function normalizeAgentConfig(
   const config = { ...(resource.config as Record<string, unknown>) };
   validateProviderConfig(resource.name, config.provider);
   validateHarnessConfig(resource.name, config.harness);
-  if (
-    config.harness &&
-    typeof config.harness === "object" &&
-    !Array.isArray(config.harness)
-  ) {
-    const harness = {
-      ...(config.harness as Record<string, unknown>),
-    };
-    if (config.sandbox !== undefined) {
-      throw new Error(
-        `Agent "${resource.name}" must configure the AI SDK harness sandbox on defineHarness, not defineAgent`,
-      );
-    }
-    config.sandbox = isResource(harness.sandbox)
-      ? harness.sandbox.name
-      : harness.sandbox;
-    delete harness.sandbox;
-    config.harness = harness;
-  }
+  const sandboxes = Array.isArray(config.sandboxes)
+    ? config.sandboxes.map((sandbox): unknown =>
+        isResource(sandbox) ? sandbox.name : sandbox,
+      )
+    : undefined;
+  if (sandboxes) config.sandboxes = sandboxes;
+  // CLI sync never runs the Convex validator, so this mirrors its repeat check.
+  sandboxes?.forEach((sandbox, index): void => {
+    if (sandboxes.indexOf(sandbox) === index) return;
+    throw new Error(
+      `Agent "${resource.name}" sandboxes[${index}] "${String(sandbox)}" is listed more than once`,
+    );
+  });
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;
@@ -1367,31 +1367,27 @@ function normalizeAgentConfig(
     );
     delete config.connections;
   }
-  if (isResource(config.sandbox)) {
-    config.sandbox = config.sandbox.name;
-  }
-  if (Array.isArray(config.sandboxes)) {
-    config.sandboxes = config.sandboxes.map((sandbox): unknown =>
-      isResource(sandbox) ? sandbox.name : sandbox,
-    );
-  }
   if (Array.isArray(config.workspaces)) {
     const workspaces = config.workspaces.map((workspace) =>
       normalizeWorkspaceRef(workspace, resource.name),
     );
-    // An extra never mounts a workspace, so one that also backs a workspace would
-    // be the same machine reachable with and without the mount.
+    // Only the first sandbox mounts workspaces, so a later one that also backs a
+    // workspace would be the same machine reachable with and without the mount.
     for (const workspace of workspaces) {
-      if (
-        Array.isArray(config.sandboxes) &&
-        config.sandboxes.includes(workspace.sandbox)
-      ) {
+      const index = sandboxes?.indexOf(workspace.sandbox) ?? -1;
+      if (index >= 1) {
         throw new Error(
-          `Agent "${resource.name}" sandboxes references sandbox "${String(workspace.sandbox)}", which also backs workspace "${String(workspace.name)}"`,
+          `Agent "${resource.name}" sandboxes[${index}] "${String(workspace.sandbox)}" also backs workspace "${String(workspace.name)}"; only the first sandbox can back a workspace`,
         );
       }
     }
     config.workspaces = workspaces;
+  }
+  // After the workspace-backing check, in the same order as core and Convex.
+  if (config.harness && !sandboxes?.length) {
+    throw new Error(
+      `Agent "${resource.name}" runs a harness, so it needs sandboxes; the first runs the harness`,
+    );
   }
   if (config.policies !== undefined) {
     const policies = normalizePolicyRefs(config.policies, resource.name);
