@@ -171,10 +171,12 @@ export function BaseNode({
 
       {showSideHandles && (
         <>
+          {/* An MCP card's sides only anchor its drawn runs-on edge; nothing mounts there. */}
           <Handle
             id="left"
             type="source"
             position={Position.Left}
+            isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
             className="bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
@@ -182,6 +184,7 @@ export function BaseNode({
             id="right"
             type="source"
             position={Position.Right}
+            isConnectable={nodeType !== "mcp"}
             isConnectableEnd={sideHandlesConnectable}
             className="bg-transparent! w-2.5! h-2.5! border-transparent!"
           />
@@ -221,10 +224,15 @@ export function BaseNode({
             contentHeight != null ? `${contentHeight * scale}px` : undefined,
         }}
       >
+        {/* Narrowed by the same scale, so the scaled header still ends at the card's edge
+            instead of running its title under the globe badge. */}
         <div
           ref={contentRef}
-          className="px-3 pt-2.5 origin-top-left scale-(--node-scale)"
-          style={{ "--node-scale": scale }}
+          className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
+          style={{
+            "--content-width": `${100 / scale}%`,
+            "--node-scale": scale,
+          }}
         >
           <div className="flex items-center gap-1.5 pr-7 min-w-0">
             {nodeType === "agent" ? (

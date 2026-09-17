@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveCanvasFrames,
+  deriveCanvasGroups,
   frameGroupOf,
   frameMemberPositions,
   frameOriginOf,
+  framesOf,
   frameSize,
+  inheritedSandboxIds,
   sandboxOrderNumbers,
   type McpTransportsByNode,
 } from "../model/canvasFrames";
@@ -70,9 +72,9 @@ describe("frameGroupOf", () => {
   });
 });
 
-describe("deriveCanvasFrames", () => {
-  it("gives each agent its own frame and several agents a shared one", () => {
-    const frames = deriveCanvasFrames(
+describe("deriveCanvasGroups", () => {
+  it("gives each agent its own group and several agents a shared one", () => {
+    const groups = deriveCanvasGroups(
       [
         node("a1", "agent"),
         node("a2", "agent"),
@@ -84,15 +86,33 @@ describe("deriveCanvasFrames", () => {
       NO_TRANSPORTS,
     );
 
-    expect(frames.map((frame) => [frame.id, frame.memberIds])).toEqual([
+    expect(groups.map((group) => [group.id, group.memberIds])).toEqual([
       ["frame:a1:sandbox:cloud", ["s1"]],
       ["frame:a2:sandbox:cloud", ["s2"]],
       ["frame:a1,a2:sandbox:cloud", ["s3"]],
     ]);
   });
 
-  it("leaves unreached resources unframed, and frames a mounted sandbox with its agent", () => {
-    const frames = deriveCanvasFrames(
+  it("frames a group only once it has a second member", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("mac", "sandbox", { config: { provider: "machine" } }),
+    ];
+    const one = [edge("a1", "s1"), edge("a1", "mac")];
+    const two = [...one, edge("a1", "s2")];
+
+    expect(framesOf(deriveCanvasGroups(nodes, one, NO_TRANSPORTS))).toEqual([]);
+    expect(
+      framesOf(deriveCanvasGroups(nodes, two, NO_TRANSPORTS)).map(
+        (frame) => frame.memberIds,
+      ),
+    ).toEqual([["s1", "s2"]]);
+  });
+
+  it("leaves unreached resources ungrouped, and groups a mounted sandbox with its agent", () => {
+    const frames = deriveCanvasGroups(
       [
         node("a1", "agent"),
         node("w1", "workspace"),
@@ -126,7 +146,7 @@ describe("deriveCanvasFrames", () => {
     ];
 
     expect(
-      deriveCanvasFrames(nodes, edges, NO_TRANSPORTS).map(
+      deriveCanvasGroups(nodes, edges, NO_TRANSPORTS).map(
         (frame) => frame.memberIds,
       ),
     ).toEqual([["mac"], ["cloud-b", "cloud-a"]]);
@@ -143,10 +163,44 @@ describe("deriveCanvasFrames", () => {
 describe("frame geometry", () => {
   it("round-trips a frame origin through its member slots", () => {
     const origin = { x: 432, y: 288 };
-    const slots = frameMemberPositions(origin, ["s1", "s2", "s3"]);
+    const frame = { kind: "sandbox" as const, memberIds: ["s1", "s2", "s3"] };
+    const slots = frameMemberPositions(origin, frame);
 
     expect(slots.get("s2")).toEqual({ x: 440, y: 368 });
     expect(frameOriginOf([...slots.values()])).toEqual(origin);
-    expect(frameSize(3)).toEqual({ height: 184, width: 200 });
+    expect(frameSize(frame)).toEqual({ height: 184, width: 200 });
+  });
+
+  it("gives workspace chips taller slots", () => {
+    const frame = { kind: "workspace" as const, memberIds: ["w1", "w2"] };
+
+    expect(frameMemberPositions({ x: 0, y: 0 }, frame).get("w2")).toEqual({
+      x: 8,
+      y: 96,
+    });
+    expect(frameSize(frame)).toEqual({ height: 164, width: 200 });
+  });
+});
+
+describe("inheritedSandboxIds", () => {
+  it("maps an unmounted workspace to its agent's default sandbox", () => {
+    const nodes = [
+      node("a1", "agent", { sandboxOrder: ["s2", "s1"] }),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("w1", "workspace"),
+      node("w2", "workspace"),
+      node("w3", "workspace", { readOnly: true }),
+    ];
+    const edges = [
+      edge("a1", "s1"),
+      edge("a1", "s2"),
+      edge("a1", "w1"),
+      edge("a1", "w2"),
+      edge("a1", "w3"),
+      { id: "mount:w2-left-s1-right", source: "w2", target: "s1" },
+    ];
+
+    expect([...inheritedSandboxIds(nodes, edges)]).toEqual([["w1", "s2"]]);
   });
 });

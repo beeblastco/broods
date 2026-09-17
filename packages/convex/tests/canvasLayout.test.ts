@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  deriveCanvasFrames,
+  agentEdgePoints,
+  handlePoint,
+  LANE_SPACING,
+  routeCanvasEdges,
+} from "../model/canvasEdgeRoutes";
+import {
+  deriveCanvasGroups,
   FRAME_HEADER_HEIGHT,
   FRAME_PADDING,
   frameMemberPositions,
   frameOriginOf,
+  framesOf,
   frameSize,
   type McpTransportsByNode,
 } from "../model/canvasFrames";
@@ -55,11 +62,13 @@ function boardBoxes(
 ): Map<string, LayoutRect> {
   const boxes = new Map<string, LayoutRect>();
   const framed = new Set<string>();
-  for (const frame of deriveCanvasFrames(nodes, edges, NO_TRANSPORTS)) {
+  for (const frame of framesOf(
+    deriveCanvasGroups(nodes, edges, NO_TRANSPORTS),
+  )) {
     const origin = frameOriginOf(
       frame.memberIds.map((id) => positions.get(id)!),
     );
-    boxes.set(frame.id, { ...origin, ...frameSize(frame.memberIds.length) });
+    boxes.set(frame.id, { ...origin, ...frameSize(frame) });
     for (const id of frame.memberIds) framed.add(id);
   }
   for (const [id, position] of positions) {
@@ -165,7 +174,7 @@ describe("tidyCanvasLayout", () => {
     expect(reversed.get("a1")!.x).toBeLessThan(reversed.get("a2")!.x);
   });
 
-  it("is deterministic and puts every frame and lone card on a whole cell", () => {
+  it("is deterministic and puts every frame and lone card on the dot grid", () => {
     const second = tidyCanvasLayout(
       [...nodes].reverse(),
       [...edges].reverse(),
@@ -178,8 +187,8 @@ describe("tidyCanvasLayout", () => {
       expect(second.get(id)).toEqual(position);
     }
     for (const box of boardBoxes(nodes, edges, positions).values()) {
-      expect(box.x % CELL_WIDTH).toBe(0);
-      expect(box.y % CELL_HEIGHT).toBe(0);
+      expect(box.x % GRID).toBe(0);
+      expect(box.y % GRID).toBe(0);
     }
   });
 
@@ -199,16 +208,13 @@ describe("tidyCanvasLayout", () => {
     ];
     const laid = tidyCanvasLayout(threeSandboxes, wiring, NO_TRANSPORTS);
 
-    for (const frame of deriveCanvasFrames(
-      threeSandboxes,
-      wiring,
-      NO_TRANSPORTS,
-    )) {
+    const frames = framesOf(
+      deriveCanvasGroups(threeSandboxes, wiring, NO_TRANSPORTS),
+    );
+    expect(frames).toHaveLength(1);
+    for (const frame of frames) {
       const members = frame.memberIds.map((id) => laid.get(id)!);
-      const slots = frameMemberPositions(
-        frameOriginOf(members),
-        frame.memberIds,
-      );
+      const slots = frameMemberPositions(frameOriginOf(members), frame);
 
       expect(members).toEqual([...slots.values()]);
     }
@@ -271,20 +277,94 @@ describe("tidyCanvasLayout", () => {
     );
 
     // Both sandboxes share tracy's cloud frame in the first column; the one
-    // tracy lists comes first, the mounted one takes the next slot.
-    expect(cluster.get("s2")).toEqual({
-      x: FRAME_PADDING,
-      y: CELL_HEIGHT + FRAME_HEADER_HEIGHT,
-    });
+    // tracy lists comes first, the mounted one takes the next slot. The lone
+    // workspace is a card in the next column, level with the frame.
+    const frameTop = cluster.get("s2")!.y - FRAME_HEADER_HEIGHT;
+    expect(cluster.get("s2")!.x).toBe(FRAME_PADDING);
+    expect(frameTop).toBeGreaterThanOrEqual(CELL_HEIGHT);
     expect(cluster.get("s1")!.x).toBe(FRAME_PADDING);
     expect(cluster.get("s1")!.y).toBeGreaterThan(cluster.get("s2")!.y);
-    expect(cluster.get("w1")).toEqual({
-      x: CELL_WIDTH + FRAME_PADDING,
-      y: CELL_HEIGHT + FRAME_HEADER_HEIGHT,
-    });
+    expect(cluster.get("w1")!.y).toBe(frameTop);
+    expect(cluster.get("w1")!.x).toBeGreaterThanOrEqual(CELL_WIDTH);
     expect(shared.get("s1")!.y).toBe(shared.get("w1")!.y);
     expect(shared.get("s1")!.y).toBeGreaterThan(CELL_HEIGHT);
-    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBe(CELL_WIDTH);
+    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBeGreaterThanOrEqual(
+      CELL_WIDTH,
+    );
+  });
+
+  it("keeps a group of one as a card on its cell", () => {
+    const laid = tidyCanvasLayout(
+      [node("a1", "agent", "tracy"), node("s1", "sandbox", "internal")],
+      [edge("a1", "s1")],
+      NO_TRANSPORTS,
+    );
+
+    expect(laid.get("s1")!.x).toBe(0);
+    expect(laid.get("s1")!.y % GRID).toBe(0);
+  });
+
+  it("leaves room for every lane: under the agent and in the gutters", () => {
+    // Seven edges out of one agent, two frames stacked under it and a
+    // service deep in a column, so buses pile up and gutters carry lanes.
+    const many = [
+      node("a1", "agent", "tracy"),
+      node("d1", "database", "session"),
+      node("m1", "mcp", "github"),
+      node("m2", "mcp", "linear"),
+      node("s1", "sandbox", "cloud-a"),
+      node("s2", "sandbox", "cloud-b"),
+      node("s3", "sandbox", "mac-a", { config: { provider: "machine" } }),
+      node("s4", "sandbox", "mac-b", { config: { provider: "machine" } }),
+      node("w1", "workspace", "notes"),
+      node("w2", "workspace", "repos"),
+      node("k1", "skill", "pdf"),
+    ];
+    const wiring = [
+      ...["d1", "m1", "m2", "s1", "s2", "s3", "s4", "w1", "w2", "k1"].map(
+        (id) => edge("a1", id),
+      ),
+      edge("w1", "s1", "mount"),
+    ];
+    const laid = tidyCanvasLayout(many, wiring, NO_TRANSPORTS);
+    const boxes = boardBoxes(many, wiring, laid);
+    const agentEdges = [...boxes.keys()]
+      .filter((id) => id !== "a1")
+      .map((id) => ({ id: id, source: "a1", target: id }));
+    const routes = routeCanvasEdges(boxes, agentEdges, []);
+
+    expect(overlappingPairs(boxes)).toEqual([]);
+    expect(routes.agent.size).toBe(agentEdges.length);
+    for (const [id, route] of routes.agent) {
+      const points = agentEdgePoints(
+        handlePoint(boxes.get("a1")!, "bottom"),
+        handlePoint(boxes.get(id)!, "top"),
+        route,
+      );
+      // Every corner stays out of every box but the two the edge joins.
+      for (const point of points.slice(1, -1)) {
+        for (const [boxId, box] of boxes) {
+          if (boxId === "a1" || boxId === id) continue;
+          const inside =
+            point.x > box.x &&
+            point.x < box.x + box.width &&
+            point.y > box.y &&
+            point.y < box.y + box.height;
+          expect(inside, `${id} corner in ${boxId}`).toBe(false);
+        }
+      }
+      if (route.gutter) {
+        // The gutter lane keeps a lane's width from the boxes beside it.
+        for (const box of boxes.values()) {
+          const clear =
+            route.gutter.x <= box.x - LANE_SPACING ||
+            route.gutter.x >= box.x + box.width + LANE_SPACING;
+          const beside =
+            box.y < points[3].y && points[2].y < box.y + box.height;
+          expect(clear || !beside).toBe(true);
+        }
+      }
+    }
   });
 
   it("survives a sub-agent cycle without dropping an agent", () => {
@@ -332,7 +412,11 @@ describe("findFreePosition", () => {
   });
 
   it("steps clear of a whole frame, not just its first card", () => {
-    const frame = { x: 240, y: 96, ...frameSize(4) };
+    const frame = {
+      x: 240,
+      y: 96,
+      ...frameSize({ kind: "sandbox", memberIds: ["s1", "s2", "s3", "s4"] }),
+    };
     const placed = findFreePosition({ x: 240, y: 240 }, [frame]);
 
     // Below the frame: a card-sized check at the origin alone would allow y 240.

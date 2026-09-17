@@ -53,64 +53,98 @@ describe("reconcileFramePositions", () => {
   });
 
   test("the slot-0 member leaving keeps the frame and moves the leaver clear of it", () => {
-    const edges = EDGES.filter((item) => item.target !== "alpha");
-    const unmounted = edges.filter((item) => item.type !== "mount");
-    const nodes = reconcileFramePositions(
+    const nodes = [...NODES, node("charlie", "sandbox", { x: 248, y: 276 })];
+    const edges = [...EDGES, edge("agent", "charlie")];
+    const unmounted = edges.filter(
+      (item) => item.target !== "alpha" && item.type !== "mount",
+    );
+    const settled = reconcileFramePositions(
+      { edges: edges, mcpServers: [], nodes: nodes },
+      { edges: unmounted, mcpServers: [], nodes: nodes },
+    );
+
+    // bravo and charlie slide up in the frame that stayed put.
+    expect(positionOf(settled, "bravo")).toEqual({ x: 248, y: 172 });
+    expect(positionOf(settled, "charlie")).toEqual({ x: 248, y: 224 });
+    // The frame box is 200 wide and 132 tall now; alpha's card clears it.
+    expect(clearOf(positionOf(settled, "alpha"), CLOUD_ORIGIN, 200, 132)).toBe(
+      true,
+    );
+  });
+
+  test("a frame down to one member hands its spot to that member's card", () => {
+    const unmounted = EDGES.filter(
+      (item) => item.target !== "alpha" && item.type !== "mount",
+    );
+    const settled = reconcileFramePositions(
       { edges: EDGES, mcpServers: [], nodes: NODES },
       { edges: unmounted, mcpServers: [], nodes: NODES },
     );
-    const alpha = positionOf(nodes, "alpha");
 
-    // bravo slides into slot 0 of the frame that stayed put.
-    expect(positionOf(nodes, "bravo")).toEqual({ x: 248, y: 172 });
-    // The frame box is 200 wide and 80 tall now; alpha's card clears it.
-    const clear =
-      alpha.x >= CLOUD_ORIGIN.x + 200 ||
-      alpha.x + 176 <= CLOUD_ORIGIN.x ||
-      alpha.y >= CLOUD_ORIGIN.y + 80 ||
-      alpha.y + 96 <= CLOUD_ORIGIN.y;
-    expect(clear).toBe(true);
-  });
-
-  test("a server that gains a transport moves to a frame clear of the others", () => {
-    const servers: StageMcpServer[] = [
-      {
-        disabled: false,
-        name: "github",
-        nodeId: "github",
-        sandbox: null,
-        transport: "http",
-      },
-    ];
-    const nodes = [...NODES, node("github", "mcp", { x: 248, y: 400 })];
-    const edges = [...EDGES, edge("agent", "github")];
-    const withSearch = [...nodes, node("search", "mcp", { x: 248, y: 452 })];
-    const searchEdges = [...edges, edge("agent", "search")];
-    const settled = reconcileFramePositions(
-      { edges: searchEdges, mcpServers: servers, nodes: withSearch },
-      {
-        edges: searchEdges,
-        mcpServers: [
-          ...servers,
-          {
-            disabled: false,
-            name: "search",
-            nodeId: "search",
-            sandbox: null,
-            transport: "hosted",
-          },
-        ],
-        nodes: withSearch,
-      },
-    );
-    const search = positionOf(settled, "search");
-    const github = positionOf(settled, "github");
-
-    // The url frame keeps its origin; search's new frame does not overlap it.
-    expect(github).toEqual({ x: 248, y: 400 });
-    expect(search.y >= github.y + 44 + 8 || search.x >= github.x + 200).toBe(
+    expect(positionOf(settled, "bravo")).toEqual(CLOUD_ORIGIN);
+    expect(clearOf(positionOf(settled, "alpha"), CLOUD_ORIGIN, 176, 96)).toBe(
       true,
     );
+  });
+
+  test("a lone card that gains a second member grows into a frame where it stood", () => {
+    const nodes = [
+      ...NODES.map((item) =>
+        item.id === "notes" ? { ...item, position: { x: 480, y: 144 } } : item,
+      ),
+      node("docs", "workspace", { x: 960, y: 720 }),
+    ];
+    const edges = [...EDGES, edge("agent", "docs")];
+    const settled = reconcileFramePositions(
+      { edges: EDGES, mcpServers: [], nodes: nodes },
+      { edges: edges, mcpServers: [], nodes: nodes },
+    );
+
+    // The frame's box starts where the notes card stood; its slots go by label.
+    expect(positionOf(settled, "docs")).toEqual({ x: 488, y: 172 });
+    expect(positionOf(settled, "notes")).toEqual({ x: 488, y: 240 });
+  });
+
+  test("a server that changes transport leaves its frame and steps clear of it", () => {
+    const servers = ["github", "linear", "search"].map(
+      (name): StageMcpServer => ({
+        disabled: false,
+        name: name,
+        nodeId: name,
+        sandbox: null,
+        transport: "http",
+      }),
+    );
+    const nodes = [
+      ...NODES,
+      node("github", "mcp", { x: 248, y: 428 }),
+      node("linear", "mcp", { x: 248, y: 480 }),
+      node("search", "mcp", { x: 248, y: 532 }),
+    ];
+    const edges = [
+      ...EDGES,
+      edge("agent", "github"),
+      edge("agent", "linear"),
+      edge("agent", "search"),
+    ];
+    const settled = reconcileFramePositions(
+      { edges: edges, mcpServers: servers, nodes: nodes },
+      {
+        edges: edges,
+        mcpServers: servers.map((server) =>
+          server.nodeId === "search"
+            ? { ...server, transport: "hosted" as const }
+            : server,
+        ),
+        nodes: nodes,
+      },
+    );
+
+    // The url frame keeps its origin; search's card clears it.
+    expect(positionOf(settled, "github")).toEqual({ x: 248, y: 428 });
+    expect(
+      clearOf(positionOf(settled, "search"), { x: 240, y: 400 }, 200, 132),
+    ).toBe(true);
   });
 
   test("moves nothing when no frame changes, even members off their slots", () => {
@@ -232,6 +266,21 @@ function node(
     position: position,
     type: type,
   };
+}
+
+/** Whether a card at `card` stays off the box at `origin`. */
+function clearOf(
+  card: Node["position"],
+  origin: Node["position"],
+  width: number,
+  height: number,
+): boolean {
+  return (
+    card.x >= origin.x + width ||
+    card.x + 176 <= origin.x ||
+    card.y >= origin.y + height ||
+    card.y + 96 <= origin.y
+  );
 }
 
 function positionOf(nodes: readonly Node[], id: string): Node["position"] {

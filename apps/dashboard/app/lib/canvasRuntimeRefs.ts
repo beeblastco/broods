@@ -6,7 +6,10 @@ import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { findLaterSandboxMount } from "@broods/convex/model/agentRules";
-import { agentSandboxOrder } from "@broods/convex/model/canvasFrames";
+import {
+  agentSandboxOrder,
+  inheritedSandboxIds,
+} from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
 /** Canvas node types that participate in broods runtime reference projection. */
@@ -132,12 +135,8 @@ export function analyzeCanvasInfra(
   const adjacency = buildAdjacency(edges);
   const agents = runtimeNodes.filter((node) => node.type === "agent");
 
-  // agentId → its default sandbox node, the first in its sandbox order (config.sandboxes[0])
-  const agentDefaultSandbox = new Map<string, RuntimeNode | undefined>();
   // resource node id → set of agent ids that reference it (for shared counts)
   const refAgents = new Map<string, Set<string>>();
-  // workspace node id → agent ids directly wired to it
-  const workspaceDirectAgents = new Map<string, string[]>();
   const addRef = (nodeId: string, agentId: string): void => {
     if (!refAgents.has(nodeId)) refAgents.set(nodeId, new Set());
     refAgents.get(nodeId)!.add(agentId);
@@ -147,21 +146,14 @@ export function analyzeCanvasInfra(
     const directNodes = neighbors(agent.id, adjacency)
       .map((id) => byId.get(id))
       .filter((node): node is RuntimeNode => !!node);
-    const sandboxIds = agentSandboxOrder(agent, runtimeNodes, edges);
-    const [defaultSandboxId] = sandboxIds;
-    agentDefaultSandbox.set(
-      agent.id,
-      defaultSandboxId ? byId.get(defaultSandboxId) : undefined,
-    );
-    for (const sandboxId of sandboxIds) addRef(sandboxId, agent.id);
+    for (const sandboxId of agentSandboxOrder(agent, runtimeNodes, edges)) {
+      addRef(sandboxId, agent.id);
+    }
 
     for (const workspace of directNodes.filter(
       (node) => node.type === "workspace",
     )) {
       addRef(workspace.id, agent.id);
-      if (!workspaceDirectAgents.has(workspace.id))
-        workspaceDirectAgents.set(workspace.id, []);
-      workspaceDirectAgents.get(workspace.id)!.push(agent.id);
 
       // The agent also references each sandbox this workspace is mounted into (override).
       for (const mount of neighbors(workspace.id, adjacency)) {
@@ -175,6 +167,7 @@ export function analyzeCanvasInfra(
     agentRefCounts[nodeId] = agentSet.size;
   }
 
+  const inherited = inheritedSandboxIds(runtimeNodes, edges);
   const workspaceStates: Record<string, WorkspaceSandboxState> = {};
   for (const node of runtimeNodes) {
     if (node.type !== "workspace") continue;
@@ -202,9 +195,9 @@ export function analyzeCanvasInfra(
     }
 
     // Otherwise inherit a directly-wired agent's default sandbox, else read-only.
-    const inheritedFrom = (workspaceDirectAgents.get(node.id) ?? [])
-      .map((agentId) => agentDefaultSandbox.get(agentId))
-      .find((sandbox): sandbox is RuntimeNode => !!sandbox);
+    const inheritedId = inherited.get(node.id);
+    const inheritedFrom =
+      inheritedId === undefined ? undefined : byId.get(inheritedId);
 
     workspaceStates[node.id] = inheritedFrom
       ? { kind: "inherited", sandboxLabel: nodeLabel(inheritedFrom) }

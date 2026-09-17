@@ -2,17 +2,15 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
-import {
-  isCodeManagedEdgeId,
-  isCodeManagedOwner,
-} from "@/app/components/canvas/edgeOwnership";
+import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
+import type { SideEdgeData } from "@/app/lib/canvasFrameNodes";
 import { cn } from "@/app/lib/utils";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
-  useStore,
+  type Edge,
   type EdgeProps,
 } from "@xyflow/react";
 import { useState } from "react";
@@ -20,13 +18,15 @@ import { useState } from "react";
 const ARROW_ID_PREFIX = "mount-arrow";
 
 /**
- * Edge for workspace↔sandbox mount relationships.
- * Renders via side handles with bidirectional arrows to show data flows in both directions.
+ * Edge for workspace↔sandbox mount relationships, and the drawn edge from a workspace to the
+ * sandbox it inherits. Renders via side handles with bidirectional arrows to show data flows
+ * in both directions.
  */
 export function MountEdge({
   id,
   source,
   target,
+  data,
   sourceHandleId,
   targetHandleId,
   sourceX,
@@ -37,19 +37,9 @@ export function MountEdge({
   targetPosition,
   style,
   deletable,
-}: EdgeProps): React.JSX.Element {
+}: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
-  const endpointOwnership = useStore((s) => {
-    const sourceData = s.nodeLookup.get(source)?.data as
-      | { managedBy?: string }
-      | undefined;
-    const targetData = s.nodeLookup.get(target)?.data as
-      | { managedBy?: string }
-      | undefined;
-
-    return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
-  });
-  const [sourceManagedBy, targetManagedBy] = endpointOwnership.split(">");
+  const locked = useCodeManagedEdge(id, source, target);
 
   // Fan parallel mounts apart so their trunks don't stack (flow is horizontal → offset Y).
   const [sourceFan, targetFan] = useEdgeFanOffset(
@@ -69,15 +59,14 @@ export function MountEdge({
     sourcePosition: sourcePosition,
     targetPosition: targetPosition,
     borderRadius: 16,
+    // Its own lane in the gutter, clear of agent edges and other side edges.
+    centerX: data?.route?.centerX,
   });
 
   // Code-managed edges can't be deleted here, so they never show the red
   // delete-hover or the trash button, only a lock badge. A mount re-pointed to
-  // a collapsed frame is drawn, not stored, so it shows neither.
-  const locked =
-    isCodeManagedEdgeId(id) ||
-    (isCodeManagedOwner(sourceManagedBy) &&
-      isCodeManagedOwner(targetManagedBy));
+  // a collapsed frame, or an inherited sandbox, is drawn, not stored, so it
+  // shows neither.
   const removable = !locked && deletable !== false;
   const deleteHover = hovered && removable;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
@@ -127,6 +116,7 @@ export function MountEdge({
       <EdgeLabelRenderer>
         {locked ? (
           <LockedEdgeBadge
+            edgeId={id}
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}

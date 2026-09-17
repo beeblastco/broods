@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * A frame around the sandbox, workspace or MCP chips an agent reaches.
+ * A frame around two or more sandbox, workspace or MCP chips an agent reaches.
  * Expanded, it is only the dashed box and header; the member chips render
  * themselves inside it. Collapsed, it is one compact card that names its
  * members and sums up their state.
@@ -11,26 +11,23 @@ import {
   type CanvasFramesValue,
 } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
-import {
-  statusConfig,
-  type BaseNodeData,
-} from "@/app/components/node/BaseNode";
-import { WORKSPACE_STATE_LABEL } from "@/app/components/node/Workspace";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { useNow } from "@/app/hooks/useNow";
 import type { FrameNodeType } from "@/app/lib/canvasFrameNodes";
 import type { CanvasInfraAnalysis } from "@/app/lib/canvasRuntimeRefs";
+import { machineStateByName } from "@/app/lib/machineConnection";
 import {
-  MACHINE_STATE_LABEL,
-  machineStateByName,
-} from "@/app/lib/machineConnection";
+  mcpMemberStatus,
+  sandboxMemberStatus,
+  summarizeMembers,
+  workspaceMemberStatus,
+  type MemberStatus,
+} from "@/app/lib/memberStatus";
 import { cn } from "@/app/lib/utils";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 const HANDLE_CLASS = "bg-transparent! w-2.5! h-2.5! border-transparent!";
-
-/** One member's word in the collapsed summary, and whether it reads as healthy. */
-type MemberState = { ok: boolean; word: string };
 
 export function FrameNode({
   id,
@@ -40,8 +37,8 @@ export function FrameNode({
   const frames = useCanvasFrames();
   const infraAnalysis = useInfraAnalysis();
   const now = useNow();
-  const states = members.map((member) =>
-    memberState(member, frames, infraAnalysis, now),
+  const summary = summarizeMembers(
+    members.map((member) => memberStatus(member, frames, infraAnalysis, now)),
   );
   const Chevron = collapsed ? ChevronRight : ChevronDown;
 
@@ -107,12 +104,10 @@ export function FrameNode({
           </div>
           <div className="mt-auto flex items-center gap-1.5 px-2.5 pb-2 text-2xs text-muted-foreground">
             <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                states.every((state) => state.ok) ? "bg-success" : "bg-warning",
-              )}
+              data-slot="frame-status"
+              className={cn("size-1.5 shrink-0 rounded-full", summary.color)}
             />
-            <span className="truncate">{summarize(states)}</span>
+            <span className="truncate">{summary.text}</span>
           </div>
         </>
       )}
@@ -120,48 +115,24 @@ export function FrameNode({
   );
 }
 
-function memberState(
+/** The status a member's chip shows, from the same stage data the chip reads. */
+function memberStatus(
   member: Node,
   frames: CanvasFramesValue,
   infraAnalysis: CanvasInfraAnalysis,
   now: number,
-): MemberState {
+): MemberStatus {
   const data = member.data as BaseNodeData;
   if (member.type === "mcp") {
-    const server = frames.mcpServers.get(member.id);
-    const enabled = server !== undefined && !server.disabled;
-
-    return { ok: enabled, word: enabled ? "enabled" : "disabled" };
+    return mcpMemberStatus(frames.mcpServers.get(member.id));
   }
   if (member.type === "workspace") {
-    const kind = infraAnalysis.workspaceStates[member.id]?.kind;
-
-    return kind
-      ? { ok: kind !== "readonly", word: WORKSPACE_STATE_LABEL[kind] }
-      : { ok: true, word: "idle" };
+    return workspaceMemberStatus(infraAnalysis.workspaceStates[member.id]);
   }
   const machine =
     data.config?.provider === "machine"
       ? machineStateByName(frames.machineConnections, data.label, now)
       : undefined;
-  if (machine) {
-    return {
-      ok: machine === "connected",
-      word: MACHINE_STATE_LABEL[machine].toLowerCase(),
-    };
-  }
-  const status = data.status ?? "idle";
 
-  return {
-    ok: status !== "error",
-    word: statusConfig[status].text.toLowerCase(),
-  };
-}
-
-/** "1 connected · 1 offline": each word with its count, in first-seen order. */
-function summarize(states: readonly MemberState[]): string {
-  const counts = new Map<string, number>();
-  for (const { word } of states) counts.set(word, (counts.get(word) ?? 0) + 1);
-
-  return [...counts].map(([word, count]) => `${count} ${word}`).join(" · ");
+  return sandboxMemberStatus(data, machine);
 }

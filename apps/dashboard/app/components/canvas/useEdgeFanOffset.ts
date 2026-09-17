@@ -12,15 +12,15 @@ const FAN_SPACING = 20;
  * that exact (node, handle), via either end, ordered by id so an antiparallel
  * pair (A→B and B→A on the same handles) keeps a consistent slot and stays parallel.
  * Only fans within a `kind` since each kind has a fixed flow axis. Returns offsets
- * to apply perpendicular to flow: X for vertical (default) edges, Y for horizontal
- * (mount/subagent) edges.
+ * to apply perpendicular to flow, Y for these horizontal edges. Agent edges fan
+ * through their routed lanes instead.
  *
  * @param id this edge's id
  * @param sourceNode source node id
  * @param sourceHandle source handle id (null for the default top/bottom handle)
  * @param targetNode target node id
  * @param targetHandle target handle id (null for the default top/bottom handle)
- * @param kind edge kind to fan within (`default` · `mount` · `subagent`)
+ * @param kind edge kind to fan within (`mount` · `subagent`)
  * @returns `[sourceOffset, targetOffset]` in flow pixels, centered on zero
  */
 export function useEdgeFanOffset(

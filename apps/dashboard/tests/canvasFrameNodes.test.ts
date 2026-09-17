@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
+  agentEdgePath,
   applyFramedNodeChanges,
   buildFramedGraph,
-  bundleEdgePath,
   expandBundleEdgeRemoval,
   flattenFramedNodes,
   type StageMcpServer,
@@ -11,24 +11,32 @@ import {
 
 const NONE = new Set<string>();
 
-/** An agent with two sandboxes, one mounted workspace and one machine MCP server. */
+/**
+ * An agent over a cloud frame (cloud, spare) and a workspace frame (notes
+ * mounted on cloud, wiki inheriting it), with a lone machine sandbox and a
+ * lone machine MCP server as cards. Members sit on their slots.
+ */
 const NODES: Node[] = [
   node("agent", "agent", { x: 200, y: 0 }),
   node("cloud", "sandbox", { x: 8, y: 172 }),
+  node("spare", "sandbox", { x: 8, y: 224 }),
   node(
     "mac",
     "sandbox",
-    { x: 400, y: 172 },
+    { x: 480, y: 144 },
     { config: { provider: "machine" } },
   ),
-  node("notes", "workspace", { x: 228, y: 172 }),
-  node("blender", "mcp", { x: 600, y: 172 }),
+  node("notes", "workspace", { x: 248, y: 172 }),
+  node("wiki", "workspace", { x: 248, y: 240 }),
+  node("blender", "mcp", { x: 720, y: 144 }),
 ];
 
 const EDGES: Edge[] = [
   edge("agent", "cloud"),
+  edge("agent", "spare"),
   edge("agent", "mac"),
   edge("agent", "notes"),
+  edge("agent", "wiki"),
   edge("agent", "blender"),
   {
     id: "mount:cloud-right-notes-left",
@@ -64,7 +72,30 @@ describe("buildFramedGraph", () => {
       parentId: CLOUD_FRAME,
       position: { x: 8, y: 28 },
     });
+    expect(nodes.find((item) => item.id === "wiki")).toMatchObject({
+      parentId: WORKSPACE_FRAME,
+      position: { x: 8, y: 96 },
+    });
     expect(flattenFramedNodes(nodes)).toStrictEqual(NODES);
+  });
+
+  test("leaves a group of one as a card with its own bottom-to-top edge", () => {
+    const { edges, frames, nodes } = buildFramedGraph(
+      NODES,
+      EDGES,
+      SERVERS,
+      NONE,
+      null,
+    );
+
+    expect(frames.map((frame) => frame.id)).toEqual([
+      CLOUD_FRAME,
+      WORKSPACE_FRAME,
+    ]);
+    expect(nodes.find((item) => item.id === "mac")).toBe(NODES[3]);
+    expect(
+      edges.find((item) => item.id === "xy-edge__agent-mac")?.data,
+    ).toMatchObject({ route: { gutter: null } });
   });
 
   test("a moved frame carries its members' absolute positions", () => {
@@ -80,26 +111,24 @@ describe("buildFramedGraph", () => {
     ).toEqual({ x: 56, y: 52 });
   });
 
-  test("bundles an agent's edges into one frame and removing it removes each", () => {
-    const twoClouds = [...NODES, node("spare", "sandbox", { x: 8, y: 224 })];
-    const edges = [...EDGES, edge("agent", "spare")];
+  test("bundles an agent's edges into one frame's top and removing it removes each", () => {
     const { bundles, edges: display } = buildFramedGraph(
-      twoClouds,
-      edges,
+      NODES,
+      EDGES,
       SERVERS,
       NONE,
       null,
     );
     const bundleId = `bundle:agent:${CLOUD_FRAME}`;
+    const bundle = display.filter((item) => item.target === CLOUD_FRAME);
 
-    expect(display.filter((item) => item.target === CLOUD_FRAME)).toEqual([
-      {
-        id: bundleId,
-        source: "agent",
-        target: CLOUD_FRAME,
-        targetHandle: "left",
-      },
-    ]);
+    expect(bundle).toHaveLength(1);
+    expect(bundle[0]).toMatchObject({
+      id: bundleId,
+      source: "agent",
+      target: CLOUD_FRAME,
+      targetHandle: "top",
+    });
     expect(
       expandBundleEdgeRemoval([{ id: bundleId, type: "remove" }], bundles),
     ).toEqual([
@@ -125,7 +154,26 @@ describe("buildFramedGraph", () => {
     ).toMatchObject({ deletable: false });
   });
 
-  test("collapsing hides members and re-points their mount to the frame", () => {
+  test("draws the mount and the inherited sandbox, each on its own lane", () => {
+    const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
+    const sides = edges.filter((item) => item.type === "mount");
+
+    expect(sides.map((item) => [item.id, item.source, item.target])).toEqual([
+      ["mount:cloud-right-notes-left", "cloud", "notes"],
+      ["inherits:wiki-cloud", "wiki", "cloud"],
+    ]);
+    expect(sides[1]).toMatchObject({
+      deletable: false,
+      sourceHandle: "left",
+      targetHandle: "right",
+    });
+    const [mountX, inheritX] = sides.map(
+      (item) => (item.data as { route: { centerX: number } }).route.centerX,
+    );
+    expect(Math.abs(mountX - inheritX)).toBeGreaterThanOrEqual(8);
+  });
+
+  test("collapsing hides members and re-points their mount and inheritance to the frame", () => {
     const { nodes, edges } = buildFramedGraph(
       NODES,
       EDGES,
@@ -136,24 +184,20 @@ describe("buildFramedGraph", () => {
 
     expect(nodes.find((item) => item.id === "notes")?.hidden).toBe(true);
     expect(nodes.find((item) => item.id === WORKSPACE_FRAME)?.height).toBe(84);
-    expect(edges.filter((item) => item.type === "mount")).toEqual([
-      {
-        deletable: false,
-        id: `collapsed:cloud-right-${WORKSPACE_FRAME}-left`,
-        reconnectable: false,
-        source: "cloud",
-        sourceHandle: "right",
-        target: WORKSPACE_FRAME,
-        targetHandle: "left",
-        type: "mount",
-      },
+    expect(
+      edges
+        .filter((item) => item.type === "mount")
+        .map((item) => [item.id, item.deletable]),
+    ).toEqual([
+      [`collapsed:cloud-right-${WORKSPACE_FRAME}-left`, false],
+      [`inherits:${WORKSPACE_FRAME}-cloud`, false],
     ]);
   });
 
   test("draws runs-on from a machine server to the sandbox it names", () => {
     const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
 
-    expect(edges.filter((item) => item.type === "runsOn")).toEqual([
+    expect(edges.filter((item) => item.type === "runsOn")).toMatchObject([
       {
         deletable: false,
         id: "runs-on:blender-mac",
@@ -169,24 +213,24 @@ describe("buildFramedGraph", () => {
   });
 
   test("leaves MCP nodes as cards until the server list has loaded", () => {
-    const { frames, nodes } = buildFramedGraph(
-      NODES,
-      EDGES,
+    const withGithub = [...NODES, node("github", "mcp", { x: 960, y: 144 })];
+    const { frames } = buildFramedGraph(
+      withGithub,
+      [...EDGES, edge("agent", "github")],
       undefined,
       NONE,
       null,
     );
 
     expect(frames.some((frame) => frame.kind === "mcp")).toBe(false);
-    expect(nodes.find((item) => item.id === "blender")).toBe(NODES[4]);
   });
 
   test("hands back the previous objects for frames and edges that did not change", () => {
     const first = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
     const same = buildFramedGraph(NODES, EDGES, SERVERS, NONE, first);
-    // The agent card moves; no frame and no drawn edge changes.
+    // The agent card nudges; no frame and no drawn lane changes.
     const dragged = NODES.map((item) =>
-      item.id === "agent" ? { ...item, position: { x: 240, y: 0 } } : item,
+      item.id === "agent" ? { ...item, position: { x: 208, y: 0 } } : item,
     );
     const afterDrag = buildFramedGraph(dragged, EDGES, SERVERS, NONE, first);
 
@@ -200,16 +244,16 @@ describe("buildFramedGraph", () => {
 });
 
 describe("applyFramedNodeChanges", () => {
-  // Stored before frames: the second cloud sandbox is off its slot.
-  const legacy = [...NODES, node("spare", "sandbox", { x: 30, y: 300 })];
-  const legacyEdges = [...EDGES, edge("agent", "spare")];
+  // Stored before frames: a third cloud sandbox is off its slot.
+  const legacy = [...NODES, node("extra", "sandbox", { x: 30, y: 400 })];
+  const legacyEdges = [...EDGES, edge("agent", "extra")];
 
   test("a measurement moves no member onto its slot", () => {
     const next = applyFramedNodeChanges(
       [
         {
           dimensions: { height: 44, width: 184 },
-          id: "spare",
+          id: "extra",
           type: "dimensions",
         },
       ],
@@ -233,24 +277,38 @@ describe("applyFramedNodeChanges", () => {
       NONE,
     );
 
-    expect(next.find((item) => item.id === "spare")?.position).toEqual({
+    expect(next.find((item) => item.id === "extra")?.position).toEqual({
       x: 8,
-      y: 224,
+      y: 276,
     });
   });
 });
 
-describe("bundleEdgePath", () => {
-  test("turns under the agent and runs down the gutter left of the frame", () => {
-    const [path, labelX, labelY] = bundleEdgePath(
-      { x: 300, y: 96 },
-      { x: 480, y: 200 },
+describe("agentEdgePath", () => {
+  test("drops to its bus and straight into the target's top", () => {
+    const [path, labelX, labelY] = agentEdgePath(
+      { x: 100, y: 96 },
+      { x: 300, y: 144 },
+      { busDrop: 12, gutter: null, sourceFan: 4, targetFan: 0 },
     );
 
     expect(path).toBe(
-      "M300 96 L300 112 Q300 120 308 120 L462 120 Q470 120 470 128 L470 195 Q470 200 475 200 L480 200",
+      "M104 96 L104 102 Q104 108 110 108 L292 108 Q300 108 300 116 L300 144",
     );
-    expect([labelX, labelY]).toEqual([470, 160]);
+    expect([labelX, labelY]).toEqual([300, 126]);
+  });
+
+  test("runs down its gutter and across the gap above the target", () => {
+    const [path, labelX, labelY] = agentEdgePath(
+      { x: 100, y: 96 },
+      { x: 340, y: 432 },
+      { busDrop: 20, gutter: { rise: 12, x: 232 }, sourceFan: 0, targetFan: 0 },
+    );
+
+    expect(path).toBe(
+      "M100 96 L100 108 Q100 116 108 116 L224 116 Q232 116 232 124 L232 412 Q232 420 240 420 L334 420 Q340 420 340 426 L340 432",
+    );
+    expect([labelX, labelY]).toEqual([232, 268]);
   });
 });
 

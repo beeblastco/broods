@@ -8,16 +8,17 @@ import { Handle, Position } from "@xyflow/react";
 export type ChipStatus = { color: string; text: string };
 
 /**
- * A sandbox, workspace or MCP node drawn inside a frame: a 184x44 chip with
- * its icon, name and one status line. Side handles are always mounted so
- * mount and runs-on edges can attach; only sandbox and workspace chips
- * (`mountable`) accept a new mount drawn onto them.
+ * A sandbox, workspace or MCP node drawn inside a frame: a chip with its icon,
+ * name, one status line and an optional note line. Side handles are always
+ * mounted so mount and runs-on edges can attach; only sandbox and workspace
+ * chips (`mountable`) accept a new mount drawn onto them.
  */
 export function ResourceChip({
   icon,
   label,
   mountable,
   nodeType,
+  note,
   orderNumber,
   status,
 }: {
@@ -25,6 +26,8 @@ export function ResourceChip({
   label: string;
   mountable: boolean;
   nodeType: string;
+  /** A third line under the status, e.g. how many agents share a workspace. */
+  note?: string;
   /** A sandbox's place in its agent's `sandboxes`. */
   orderNumber?: number;
   status: ChipStatus;
@@ -34,8 +37,11 @@ export function ResourceChip({
   return (
     <div
       data-slot="resource-chip"
-      // h-11 w-46 is FRAME_CHIP_HEIGHT x FRAME_CHIP_WIDTH, the slot the frame leaves.
-      className="relative flex h-11 w-46 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-1.5 hover:border-foreground/25"
+      // w-46 by h-11 or h-15 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHTS, the slot the frame leaves.
+      className={cn(
+        "relative flex w-46 cursor-pointer flex-col justify-center rounded-md border border-border bg-card px-1.5 hover:border-foreground/25",
+        nodeType === "workspace" ? "h-15 gap-1" : "h-11 gap-0.5",
+      )}
     >
       {/* Like a card's: an agent dragged onto a chip wires it too. */}
       <Handle
@@ -68,9 +74,17 @@ export function ResourceChip({
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
-        <span className={cn("size-1.5 shrink-0 rounded-full", status.color)} />
+        <span
+          data-slot="chip-status"
+          className={cn("size-1.5 shrink-0 rounded-full", status.color)}
+        />
         <span className="truncate">{status.text}</span>
       </div>
+      {note && (
+        <div className="truncate pl-2.5 text-3xs text-muted-foreground">
+          {note}
+        </div>
+      )}
     </div>
   );
 }

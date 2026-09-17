@@ -5,7 +5,8 @@
  * and the tidy layout packs their members into slots, both from this module,
  * so the two agree on membership, order and geometry. A member node keeps
  * its absolute position in the saved layout; a frame's origin is read back
- * from its members.
+ * from its members. A group with one member is no frame: that node stays a
+ * card, and becomes a chip once a second member joins its group.
  *
  * Pure on purpose: the dashboard imports it, so no Convex server imports.
  */
@@ -13,9 +14,18 @@
 import type { LayoutEdge, LayoutNode, LayoutPosition } from "./canvasLayout";
 import type { McpTransport } from "./mcp";
 
-/** Member chip box inside a frame: room for a 20 character name and its status line. */
+/** Member chip width inside a frame: room for a 20 character name. */
 export const FRAME_CHIP_WIDTH = 184;
-export const FRAME_CHIP_HEIGHT = 44;
+
+/**
+ * Chip height per kind. A workspace chip carries a third line (the agents
+ * sharing it) under its mount state, so it is taller.
+ */
+export const FRAME_CHIP_HEIGHTS: Record<FrameKind, number> = {
+  sandbox: 44,
+  workspace: 60,
+  mcp: 44,
+};
 
 /** Vertical gap between two chips. */
 export const FRAME_GAP = 8;
@@ -40,7 +50,7 @@ const MCP_FRAME_LABELS: Record<McpTransport, string> = {
   machine: "MCP · your computer",
 };
 
-/** One derived frame and the member nodes it holds. */
+/** One derived group and the member nodes it holds; drawn as a frame from two members. */
 export type CanvasFrame = {
   /** `frame:{owners}:{kind}:{key}`, stable while membership rules hold. */
   id: string;
@@ -60,6 +70,9 @@ export type FrameGroup = {
 };
 
 export type FrameKind = "sandbox" | "workspace" | "mcp";
+
+/** What frame geometry reads from a group. */
+export type FrameShape = Pick<CanvasFrame, "kind" | "memberIds">;
 
 export type FrameSize = {
   height: number;
@@ -152,10 +165,11 @@ export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
 }
 
 /**
- * Every frame on the canvas. Only sandbox, workspace and MCP nodes at least
- * one agent reaches are framed; unreached ones stay standalone cards.
+ * Every group on the canvas, one-member groups included. Only sandbox,
+ * workspace and MCP nodes at least one agent reaches are grouped; unreached
+ * ones stay standalone cards.
  */
-export function deriveCanvasFrames(
+export function deriveCanvasGroups(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
   mcpTransports: McpTransportsByNode,
@@ -268,17 +282,16 @@ export function frameGroupOf(
 /** Absolute top-left of each member's slot, filled in `memberIds` order. */
 export function frameMemberPositions(
   origin: LayoutPosition,
-  memberIds: readonly string[],
+  frame: FrameShape,
 ): Map<string, LayoutPosition> {
+  const step = FRAME_CHIP_HEIGHTS[frame.kind] + FRAME_GAP;
+
   return new Map(
-    memberIds.map((id, index) => [
+    frame.memberIds.map((id, index) => [
       id,
       {
         x: origin.x + FRAME_PADDING,
-        y:
-          origin.y +
-          FRAME_HEADER_HEIGHT +
-          index * (FRAME_CHIP_HEIGHT + FRAME_GAP),
+        y: origin.y + FRAME_HEADER_HEIGHT + index * step,
       },
     ]),
   );
@@ -294,14 +307,72 @@ export function frameOriginOf(
   return { x: x - FRAME_PADDING, y: y - FRAME_HEADER_HEIGHT };
 }
 
-/** Expanded frame box for a member count. */
-export function frameSize(count: number): FrameSize {
-  const chips = count * FRAME_CHIP_HEIGHT + Math.max(count - 1, 0) * FRAME_GAP;
+/** The groups drawn as frames: those with two members or more. */
+export function framesOf(groups: readonly CanvasFrame[]): CanvasFrame[] {
+  return groups.filter((group) => group.memberIds.length >= 2);
+}
+
+/** Expanded frame box for its kind and member count. */
+export function frameSize(frame: FrameShape): FrameSize {
+  const count = frame.memberIds.length;
+  const chips =
+    count * FRAME_CHIP_HEIGHTS[frame.kind] + Math.max(count - 1, 0) * FRAME_GAP;
 
   return {
     height: FRAME_HEADER_HEIGHT + chips + FRAME_PADDING,
     width: FRAME_WIDTH,
   };
+}
+
+/**
+ * The sandbox each workspace inherits, by workspace node id: the default
+ * sandbox of the first agent (by id) wired to it, for a workspace no
+ * sandbox is mounted on and no `readOnly` flag forces read-only.
+ */
+export function inheritedSandboxIds(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): Map<string, string> {
+  const types = new Map(nodes.map((node) => [node.id, node.type]));
+  const mounted = new Set<string>();
+  const wired = new Set<string>();
+  for (const edge of edges) {
+    for (const [workspaceId, otherId] of [
+      [edge.source, edge.target],
+      [edge.target, edge.source],
+    ]) {
+      if (types.get(workspaceId) !== "workspace") continue;
+      if (types.get(otherId) === "sandbox") mounted.add(workspaceId);
+      if (types.get(otherId) === "agent")
+        wired.add(`${otherId}\n${workspaceId}`);
+    }
+  }
+  // By id, so the pick does not depend on the order nodes arrive in.
+  const defaults = nodes
+    .flatMap((agent): [string, string][] => {
+      if (agent.type !== "agent") return [];
+      const [first] = agentSandboxOrder(agent, nodes, edges);
+
+      return first === undefined ? [] : [[agent.id, first]];
+    })
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  return new Map(
+    nodes.flatMap((workspace): [string, string][] => {
+      if (
+        workspace.type !== "workspace" ||
+        mounted.has(workspace.id) ||
+        workspace.data.readOnly === true
+      ) {
+        return [];
+      }
+      const inherited = defaults.find(([agentId]) =>
+        wired.has(`${agentId}\n${workspace.id}`),
+      );
+
+      return inherited ? [[workspace.id, inherited[1]]] : [];
+    }),
+  );
 }
 
 /**

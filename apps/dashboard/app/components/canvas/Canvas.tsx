@@ -1336,19 +1336,23 @@ function CanvasInner({
     }),
     [machineConnections, mcpServersByNode, toggleFrame, orderNumbers],
   );
-  // The right-clicked chip and what it offers; null falls back to "Add service",
-  // which is also what a card outside every frame gets.
+  // The right-clicked chip, or card that would be one, and what it offers; null
+  // falls back to "Add service", which is what every other card gets.
   const chipMenu = useMemo(() => {
-    const framed = framedGraph.frames.some((frame) =>
-      frame.memberIds.some((id) => id === menuNodeId),
-    );
+    const menuNode = nodes.find((node) => node.id === menuNodeId);
+    const groupable =
+      menuNode?.type === "sandbox" ||
+      menuNode?.type === "workspace" ||
+      menuNode?.type === "mcp";
     const actions =
-      menuNodeId && framed ? frameMemberActions(nodes, edges, menuNodeId) : [];
+      menuNode && groupable
+        ? frameMemberActions(nodes, edges, menuNode.id)
+        : [];
 
-    return menuNodeId && actions.length > 0
-      ? { actions: actions, memberId: menuNodeId }
+    return menuNode && actions.length > 0
+      ? { actions: actions, memberId: menuNode.id }
       : null;
-  }, [menuNodeId, framedGraph.frames, nodes, edges]);
+  }, [menuNodeId, nodes, edges]);
 
   // Commit-to-paint for a topology change: measured from the effect to the next
   // frame, so it covers ReactFlow's own layout, which is what scales with the
@@ -1659,7 +1663,7 @@ function useEverTrue(flag: boolean): boolean {
   return seen || flag;
 }
 
-/** Right-click entries for a framed chip, one set per agent that wires it directly. */
+/** Right-click entries for a chip or lone resource card, one set per agent that wires it directly. */
 function FrameMemberMenuItems({
   actions,
   memberId,

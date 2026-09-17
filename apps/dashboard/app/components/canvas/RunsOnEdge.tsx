@@ -1,9 +1,11 @@
 "use client";
 
+import type { SideEdgeData } from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  type Edge,
   type EdgeProps,
 } from "@xyflow/react";
 
@@ -14,6 +16,7 @@ import {
  */
 export function RunsOnEdge({
   id,
+  data,
   sourceX,
   sourceY,
   targetX,
@@ -21,7 +24,7 @@ export function RunsOnEdge({
   sourcePosition,
   targetPosition,
   style,
-}: EdgeProps): React.JSX.Element {
+}: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX: sourceX,
     sourceY: sourceY,
@@ -30,6 +33,7 @@ export function RunsOnEdge({
     sourcePosition: sourcePosition,
     targetPosition: targetPosition,
     borderRadius: 16,
+    centerX: data?.route?.centerX,
   });
 
   return (

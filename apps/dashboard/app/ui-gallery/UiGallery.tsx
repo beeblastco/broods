@@ -84,16 +84,19 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
 );
 
 /**
- * Tracy's stage as the frames canvas draws it: three sandboxes in order, a
- * mounted, an inherited and a read-only workspace, MCP servers on each
- * transport and a session store. Laid out by the same tidy layout the canvas
- * button runs, so the frames land where a real stage puts them.
+ * Tracy's stage as the frames canvas draws it: a cloud sandbox alone as a
+ * card and two computers framed, one connected and one offline; a mounted and
+ * an inherited workspace framed, and two read-only ones shared with a coder
+ * sub-agent; MCP servers on each transport, the url ones disabled; a session
+ * store; a code-managed sub-agent link and a user-owned one after it. Laid out by
+ * the same tidy layout the canvas button runs, so everything lands where a
+ * real stage puts it.
  */
 const FRAME_MCP_SERVERS: StageMcpServer[] = [
-  fixtureServer("github", "http", null),
-  fixtureServer("linear", "http", null),
-  fixtureServer("search", "hosted", null),
-  fixtureServer("blender", "machine", "kien-mac"),
+  fixtureServer("github", "http", null, true),
+  fixtureServer("linear", "http", null, true),
+  fixtureServer("search", "hosted", null, false),
+  fixtureServer("blender", "machine", "kien-mac", false),
 ];
 
 const FRAME_EDGES: Edge[] = [
@@ -105,15 +108,14 @@ const FRAME_EDGES: Edge[] = [
     "notes",
     "repos",
     "handbook",
+    "playbook",
     "github",
     "linear",
     "search",
     "blender",
-  ].map((target) => ({
-    id: `xy-edge__tracy-${target}`,
-    source: "tracy",
-    target: target,
-  })),
+  ].map((target) => fixtureEdge("tracy", target)),
+  fixtureEdge("coder", "handbook"),
+  fixtureEdge("coder", "playbook"),
   {
     id: "mount:internal-sandbox-right-notes-left",
     source: "internal-sandbox",
@@ -122,6 +124,25 @@ const FRAME_EDGES: Edge[] = [
     targetHandle: "left",
     type: "mount",
   },
+  // Code-managed: the canvas marks it undeletable when it loads it.
+  {
+    deletable: false,
+    id: "subagent:tracy-right-coder-left",
+    reconnectable: false,
+    source: "tracy",
+    sourceHandle: "right",
+    target: "coder",
+    targetHandle: "left",
+    type: "subagent",
+  },
+  {
+    id: "subagent:coder-right-reviewer-left",
+    source: "coder",
+    sourceHandle: "right",
+    target: "reviewer",
+    targetHandle: "left",
+    type: "subagent",
+  },
 ];
 
 const FRAME_NODES: Node[] = applyTidyLayout(
@@ -129,6 +150,8 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     fixtureNode("tracy", "agent", {
       sandboxOrder: ["internal-sandbox", "kien-mac", "phicks-mac"],
     }),
+    fixtureNode("coder", "agent"),
+    fixtureNode("reviewer", "agent"),
     fixtureNode("session", "database"),
     fixtureNode("internal-sandbox", "sandbox", {
       config: { provider: "sandbox" },
@@ -138,6 +161,7 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     fixtureNode("notes", "workspace"),
     fixtureNode("repos", "workspace"),
     fixtureNode("handbook", "workspace", { readOnly: true }),
+    fixtureNode("playbook", "workspace", { readOnly: true }),
     fixtureNode("github", "mcp"),
     fixtureNode("linear", "mcp"),
     fixtureNode("search", "mcp"),
@@ -414,7 +438,7 @@ function CanvasFramesFixture(): React.JSX.Element {
   return (
     <InfraAnalysisProvider value={FRAME_ANALYSIS}>
       <CanvasFramesProvider value={frames}>
-        <div className="h-[40rem] w-[64rem] rounded-lg border border-border">
+        <div className="h-[48rem] w-[72rem] rounded-lg border border-border">
           <ReactFlow
             nodes={graph.nodes}
             edges={graph.edges}
@@ -463,6 +487,10 @@ function fixtureConnection(
   };
 }
 
+function fixtureEdge(source: string, target: string): Edge {
+  return { id: `xy-edge__${source}-${target}`, source: source, target: target };
+}
+
 function fixtureNode(
   id: string,
   type: string,
@@ -480,9 +508,10 @@ function fixtureServer(
   nodeId: string,
   transport: StageMcpServer["transport"],
   sandbox: string | null,
+  disabled: boolean,
 ): StageMcpServer {
   return {
-    disabled: false,
+    disabled: disabled,
     name: nodeId,
     nodeId: nodeId,
     sandbox: sandbox,

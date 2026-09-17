@@ -16,19 +16,39 @@
  *
  * Sandbox, workspace and MCP columns stack frames rather than cards: each
  * frame starts on a cell, its members fill its slots, and it claims as many
- * rows as its expanded height needs. Frames come from `canvasFrames.ts`, so
- * the dashboard reads back the same groups the layout packed.
+ * rows as its expanded height needs. A group of one stays a card on its cell.
+ * Groups come from `canvasFrames.ts`, so the dashboard reads back the same
+ * frames the layout packed.
+ *
+ * Cells are then pulled apart where edges need room: the gap under the agent
+ * row grows until every bus lane fits, and a column gutter grows until its
+ * lanes fit, both in whole grid steps. The lanes come from
+ * `canvasEdgeRoutes.ts`, the same router the dashboard draws with.
  */
 
 import type { CanvasNode } from "../canvas";
 import {
+  BUS_INSET,
+  facingSide,
+  handlePoint,
+  LANE_SPACING,
+  routeCanvasEdges,
+  type AgentEdgeRequest,
+  type SideEdgeRequest,
+} from "./canvasEdgeRoutes";
+import {
   agentOwners,
   compareByLabel,
-  deriveCanvasFrames,
+  deriveCanvasGroups,
   edgeKind,
+  FRAME_CHIP_HEIGHTS,
+  FRAME_CHIP_WIDTH,
   frameMemberPositions,
+  frameOriginOf,
+  framesOf,
   frameSize,
   FRAME_WIDTH,
+  inheritedSandboxIds,
   type CanvasFrame,
   type McpTransportsByNode,
 } from "./canvasFrames";
@@ -57,6 +77,9 @@ const NODE_MARGIN = 16;
 
 /** How far {@link findFreePosition} steps out before giving up, in dot-grid steps. */
 const MAX_NUDGE_RINGS = 48;
+
+/** Widen-and-reroute rounds before the tidy layout settles for what it has. */
+const MAX_LANE_PASSES = 4;
 
 /**
  * Column order for an agent's services. Every edge that runs between two
@@ -97,6 +120,9 @@ type CanvasGraph = {
 
 /** One item a column stacks: a frame and its members, or a lone card. */
 type ColumnItem = { frame: CanvasFrame } | { node: LayoutNode };
+
+/** Pixels added between cells: under the agent row, and per column gutter (keyed by the column right of it). */
+type LaneRoom = { bus: number; gutters: Map<number, number> };
 
 /** A block of typed columns, and the cells it occupies. */
 type LayoutBlock = {
@@ -181,15 +207,52 @@ export function tidyCanvasLayout(
   edges: readonly LayoutEdge[],
   mcpTransports: McpTransportsByNode,
 ): Map<string, LayoutPosition> {
+  const groups = deriveCanvasGroups(nodes, edges, mcpTransports);
+  const cells = cellLayout(nodes, edges, groups);
+  let room: LaneRoom = { bus: 0, gutters: new Map() };
+  for (let pass = 0; pass < MAX_LANE_PASSES; pass++) {
+    const positions = spreadCells(cells, room);
+    const needed = laneRoom(nodes, edges, framesOf(groups), positions, room);
+    if (
+      needed.bus === room.bus &&
+      [...needed.gutters].every(([b, px]) => room.gutters.get(b) === px)
+    ) {
+      return positions;
+    }
+    room = needed;
+  }
+
+  return spreadCells(cells, room);
+}
+
+/** Whether a card at `card` comes within the margin of `box`. */
+function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
+  return (
+    card.x < box.x + box.width + NODE_MARGIN &&
+    box.x < card.x + NODE_WIDTH + NODE_MARGIN &&
+    card.y < box.y + box.height + NODE_MARGIN &&
+    box.y < card.y + NODE_HEIGHT + NODE_MARGIN
+  );
+}
+
+/**
+ * Nodes on whole cells: agent clusters along the top, shared services in a
+ * lane below them, unwired ones below that. Positions are in cell units times
+ * the cell size, before any gutter or bus room is added.
+ */
+function cellLayout(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+  groups: readonly CanvasFrame[],
+): Map<string, LayoutPosition> {
   const graph = indexGraph(nodes, edges);
-  const frames = deriveCanvasFrames(nodes, edges, mcpTransports);
   const positions = new Map<string, LayoutPosition>();
   let cursorColumn = 0;
   let deepestRow = 1;
 
   for (const agent of orderAgents(graph)) {
     const services = graph.exclusiveServices.get(agent.id) ?? [];
-    const block = layoutBlock(services, frames, cursorColumn, 1);
+    const block = layoutBlock(services, groups, cursorColumn, 1);
     // Middle column of the block; the left one of the two when the count is even.
     positions.set(
       agent.id,
@@ -211,7 +274,7 @@ export function tidyCanvasLayout(
 
   for (const lane of lanes) {
     if (lane.services.length === 0) continue;
-    const block = layoutBlock(lane.services, frames, 0, laneRow);
+    const block = layoutBlock(lane.services, groups, 0, laneRow);
     const offsetX = lane.centered
       ? Math.max(0, Math.floor((totalColumns - block.columns) / 2)) * CELL_WIDTH
       : 0;
@@ -224,19 +287,46 @@ export function tidyCanvasLayout(
   return positions;
 }
 
-/** Whether a card at `card` comes within the margin of `box`. */
-function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
-  return (
-    card.x < box.x + box.width + NODE_MARGIN &&
-    box.x < card.x + NODE_WIDTH + NODE_MARGIN &&
-    card.y < box.y + box.height + NODE_MARGIN &&
-    box.y < card.y + NODE_HEIGHT + NODE_MARGIN
-  );
-}
-
 /** Top-left corner of a cell. */
 function cellPosition(column: number, row: number): LayoutPosition {
   return { x: column * CELL_WIDTH, y: row * CELL_HEIGHT };
+}
+
+/**
+ * A column's groups in group order, each a frame or, with one member, a card;
+ * then its ungrouped cards by label.
+ */
+function columnItems(
+  column: readonly LayoutNode[],
+  groups: readonly CanvasFrame[],
+): ColumnItem[] {
+  const byId = new Map(column.map((node) => [node.id, node]));
+  const grouped = groups.filter((group) =>
+    group.memberIds.some((id) => byId.has(id)),
+  );
+  const groupedIds = new Set(grouped.flatMap((group) => group.memberIds));
+
+  return [
+    ...grouped.flatMap((group): ColumnItem[] => {
+      if (group.memberIds.length > 1) return [{ frame: group }];
+      const node = byId.get(group.memberIds[0]);
+
+      return node ? [{ node: node }] : [];
+    }),
+    ...column
+      .filter((node) => !groupedIds.has(node.id))
+      .map((node) => ({ node: node })),
+  ];
+}
+
+/** Left edge of a column once the gutters before it have their room. */
+function columnLeft(column: number, room: LaneRoom): number {
+  let left = column * CELL_WIDTH;
+  for (const [boundary, extra] of room.gutters) {
+    if (boundary <= column) left += extra;
+  }
+
+  return left;
 }
 
 /** Position of a service type in {@link SERVICE_COLUMN_ORDER}; unknown types sort last. */
@@ -245,33 +335,94 @@ function columnRank(type: string): number {
 }
 
 /**
- * A column's frames in frame order, then its lone cards by label. The node
- * types that frame never mix framed and lone cards in one block: a cluster or
- * the shared lane holds only reached services, the unconnected lane none.
+ * The edges the dashboard draws at `positions`, for the router: one agent
+ * edge per agent and frame or card, and a side edge per mount and inherited
+ * sandbox. Also the top-level boxes they run between and around.
  */
-function columnItems(
-  column: readonly LayoutNode[],
+function edgeRequests(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
   frames: readonly CanvasFrame[],
-): ColumnItem[] {
-  const ids = new Set(column.map((node) => node.id));
-  const framed = frames.filter((frame) =>
-    frame.memberIds.some((id) => ids.has(id)),
+  positions: ReadonlyMap<string, LayoutPosition>,
+): {
+  agentEdges: AgentEdgeRequest[];
+  boxes: Map<string, LayoutRect>;
+  sideEdges: SideEdgeRequest[];
+} {
+  const frameOf = new Map<string, CanvasFrame>();
+  for (const frame of frames) {
+    for (const id of frame.memberIds) frameOf.set(id, frame);
+  }
+  const agentIds = new Set(
+    nodes.filter((node) => node.type === "agent").map((node) => node.id),
   );
-  const framedIds = new Set(framed.flatMap((frame) => frame.memberIds));
+  const boxes = new Map<string, LayoutRect>();
+  for (const frame of frames) {
+    const origin = frameOriginOf(
+      frame.memberIds.flatMap((id) => positions.get(id) ?? []),
+    );
+    boxes.set(frame.id, { ...origin, ...frameSize(frame) });
+  }
+  for (const [id, position] of positions) {
+    if (frameOf.has(id)) continue;
+    boxes.set(id, { ...position, height: NODE_HEIGHT, width: NODE_WIDTH });
+  }
 
-  return [
-    ...framed.map((frame) => ({ frame: frame })),
-    ...column
-      .filter((node) => !framedIds.has(node.id))
-      .map((node) => ({ node: node })),
-  ];
+  const agentEdges = new Map<string, AgentEdgeRequest>();
+  const sidePairs: [string, string][] = [...inheritedSandboxIds(nodes, edges)];
+  for (const edge of edges) {
+    const kind = edgeKind(edge);
+    // The dashboard draws agent→service, but an edge can arrive reversed.
+    const [agentId, serviceId] = agentIds.has(edge.source)
+      ? [edge.source, edge.target]
+      : [edge.target, edge.source];
+    const fromAgent = agentIds.has(agentId) && !agentIds.has(serviceId);
+    if (kind === "mount" && !agentIds.has(agentId)) {
+      sidePairs.push([edge.source, edge.target]);
+    }
+    if (kind !== "default" || !fromAgent) continue;
+    const target = frameOf.get(serviceId)?.id ?? serviceId;
+    const id = `${agentId}>${target}`;
+    agentEdges.set(id, { id: id, source: agentId, target: target });
+  }
+  const handleBox = (id: string): LayoutRect | undefined => {
+    const frame = frameOf.get(id);
+    const position = positions.get(id);
+
+    return frame && position
+      ? {
+          ...position,
+          height: FRAME_CHIP_HEIGHTS[frame.kind],
+          width: FRAME_CHIP_WIDTH,
+        }
+      : boxes.get(id);
+  };
+  const sideEdges = sidePairs.flatMap(([a, b]): SideEdgeRequest[] => {
+    const boxA = handleBox(a);
+    const boxB = handleBox(b);
+    if (!boxA || !boxB) return [];
+
+    return [
+      {
+        id: `${a}|${b}`,
+        source: handlePoint(boxA, facingSide(boxA, boxB)),
+        target: handlePoint(boxB, facingSide(boxB, boxA)),
+      },
+    ];
+  });
+
+  return {
+    agentEdges: [...agentEdges.values()],
+    boxes: boxes,
+    sideEdges: sideEdges,
+  };
 }
 
 /** Whole cells a frame claims: its expanded height plus the usual gap, rounded up. */
-function frameRows(memberCount: number): number {
+function frameRows(frame: CanvasFrame): number {
   const gap = CELL_HEIGHT - NODE_HEIGHT;
 
-  return Math.ceil((frameSize(memberCount).height + gap) / CELL_HEIGHT);
+  return Math.ceil((frameSize(frame).height + gap) / CELL_HEIGHT);
 }
 
 function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
@@ -339,12 +490,77 @@ function indexGraph(
 }
 
 /**
+ * `room` grown wherever the lanes routed at `positions` do not fit: the bus
+ * gap under the agent row, or a column gutter (keyed by the column on its
+ * right).
+ */
+function laneRoom(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+  frames: readonly CanvasFrame[],
+  positions: ReadonlyMap<string, LayoutPosition>,
+  room: LaneRoom,
+): LaneRoom {
+  const { agentEdges, boxes, sideEdges } = edgeRequests(
+    nodes,
+    edges,
+    frames,
+    positions,
+  );
+  const routes = routeCanvasEdges(boxes, agentEdges, sideEdges);
+
+  const busDepth = Math.max(
+    0,
+    ...[...routes.agent.values()].map((route) => route.busDrop + BUS_INSET),
+  );
+  const busGap = CELL_HEIGHT - NODE_HEIGHT + room.bus;
+  const lanesByGutter = new Map<number, number[]>();
+  const addLane = (x: number, ends: readonly number[]): void => {
+    // The gutter right of a column's centre and left of the next one's.
+    let boundary = 0;
+    while (x > columnLeft(boundary, room) + FRAME_WIDTH / 2) boundary++;
+    // A side edge between columns that are not neighbours has no one gutter.
+    const reach = columnLeft(boundary, room) + FRAME_WIDTH;
+    if (
+      boundary === 0 ||
+      ends.some((end) => end < columnLeft(boundary - 1, room) || end > reach)
+    ) {
+      return;
+    }
+    const lanes = lanesByGutter.get(boundary);
+    if (lanes) lanes.push(x);
+    else lanesByGutter.set(boundary, [x]);
+  };
+  for (const route of routes.agent.values()) {
+    if (route.gutter) addLane(route.gutter.x, []);
+  }
+  for (const edge of sideEdges) {
+    const route = routes.side.get(edge.id);
+    if (route) addLane(route.centerX, [edge.source.x, edge.target.x]);
+  }
+  const gutters = new Map(room.gutters);
+  for (const [boundary, lanes] of lanesByGutter) {
+    const current = room.gutters.get(boundary) ?? 0;
+    const needed = Math.max(...lanes) - Math.min(...lanes) + LANE_SPACING * 2;
+    const width = CELL_WIDTH - FRAME_WIDTH + current;
+    if (needed > width) {
+      gutters.set(boundary, current + roundUpToGrid(needed - width));
+    }
+  }
+
+  return {
+    bus: room.bus + roundUpToGrid(Math.max(0, busDepth - busGap)),
+    gutters: gutters,
+  };
+}
+
+/**
  * Place services as typed columns growing right, rows growing down, starting
  * at the given cell. An empty block still claims one column for its agent.
  */
 function layoutBlock(
   services: readonly LayoutNode[],
-  frames: readonly CanvasFrame[],
+  groups: readonly CanvasFrame[],
   originColumn: number,
   originRow: number,
 ): LayoutBlock {
@@ -354,18 +570,17 @@ function layoutBlock(
 
   columns.forEach((column, columnIndex) => {
     let row = originRow;
-    for (const item of columnItems(column, frames)) {
+    for (const item of columnItems(column, groups)) {
       const origin = cellPosition(originColumn + columnIndex, row);
       if ("node" in item) {
         positions.set(item.node.id, origin);
         row += 1;
         continue;
       }
-      const { memberIds } = item.frame;
-      for (const [id, position] of frameMemberPositions(origin, memberIds)) {
+      for (const [id, position] of frameMemberPositions(origin, item.frame)) {
         positions.set(id, position);
       }
-      row += frameRows(memberIds.length);
+      row += frameRows(item.frame);
     }
     bottomRow = Math.max(bottomRow, row);
   });
@@ -435,9 +650,33 @@ function ringOffsets(ring: number): LayoutPosition[] {
   );
 }
 
+function roundUpToGrid(value: number): number {
+  return Math.ceil(value / GRID) * GRID;
+}
+
 function snapToGrid(position: LayoutPosition): LayoutPosition {
   return {
     x: Math.round(position.x / GRID) * GRID,
     y: Math.round(position.y / GRID) * GRID,
   };
+}
+
+/** Cell positions moved right by the gutter room before their column, and down by the bus room below the agent row. */
+function spreadCells(
+  cells: ReadonlyMap<string, LayoutPosition>,
+  room: LaneRoom,
+): Map<string, LayoutPosition> {
+  return new Map(
+    [...cells].map(([id, position]): [string, LayoutPosition] => {
+      const column = Math.floor(position.x / CELL_WIDTH);
+
+      return [
+        id,
+        {
+          x: position.x + columnLeft(column, room) - column * CELL_WIDTH,
+          y: position.y >= CELL_HEIGHT ? position.y + room.bus : position.y,
+        },
+      ];
+    }),
+  );
 }
