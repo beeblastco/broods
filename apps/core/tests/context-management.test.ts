@@ -323,7 +323,7 @@ describe("session system context", () => {
     setStorageForTests(storageWithSandbox({ storage: { provider: "s3" } }));
     const writable = await newSession(
       {
-        sandbox: "sb_1",
+        sandboxes: ["sb_1"],
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
       "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
@@ -355,7 +355,7 @@ describe("session system context", () => {
     readS3TextMock.mockResolvedValue("MUST NOT REACH THE MODEL");
     const optedOut = await newSession(
       {
-        sandbox: "sb_1",
+        sandboxes: ["sb_1"],
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
       "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
@@ -420,7 +420,7 @@ describe("session system context", () => {
     const harnessSession = await newSession(
       {
         harness: { type: "codex" },
-        sandbox: "sb_1",
+        sandboxes: ["sb_1"],
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
       "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",

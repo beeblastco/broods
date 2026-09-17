@@ -2,11 +2,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  assertAgentRuntimeRefs,
+  defaultSandboxOf,
   mergeAgentConfig,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
+  sandboxesWithDefault,
 } from "../model/agentRules";
 import { redactConfigSecrets } from "../model/configValues";
 import {
@@ -16,37 +19,40 @@ import {
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 
 describe("agent rules", () => {
-  it("validates extra sandboxes", () => {
+  it("validates the sandboxes list", () => {
     expect(
       normalizeAgentConfig({
-        sandbox: "sb_default",
-        sandboxes: ["sb_offline", "sb_browser"],
+        sandboxes: ["sb_default", "sb_browser"],
+        workspaces: [
+          { name: "repo", workspaceId: "ws_1", sandbox: "sb_default" },
+        ],
       }),
     ).toEqual({
-      sandbox: "sb_default",
-      sandboxes: ["sb_offline", "sb_browser"],
+      sandboxes: ["sb_default", "sb_browser"],
+      workspaces: [
+        { name: "repo", workspaceId: "ws_1", sandbox: "sb_default" },
+      ],
     });
+    expect(() => normalizeAgentConfig({ sandbox: "sb_default" })).toThrow(
+      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
+    );
     expect(() => normalizeAgentConfig({ sandboxes: "sb_offline" })).toThrow(
       "config.sandboxes must be an array of non-empty strings",
     );
     expect(() =>
       normalizeAgentConfig({ sandboxes: ["sb_offline", "sb_offline"] }),
-    ).toThrow('config.sandboxes[1] "sb_offline" is used more than once');
+    ).toThrow('config.sandboxes[1] "sb_offline" is listed more than once');
+    // Only the default mounts workspaces, so a workspace cannot name an extra.
     expect(() =>
       normalizeAgentConfig({
-        sandbox: "sb_default",
-        sandboxes: ["sb_default"],
-      }),
-    ).toThrow("config.sandboxes[0] repeats the default config.sandbox");
-    // An extra never mounts a workspace, so a workspace's sandbox cannot be one.
-    expect(() =>
-      normalizeAgentConfig({
-        sandboxes: ["sb_browser"],
+        sandboxes: ["sb_default", "sb_browser"],
         workspaces: [
           { name: "repo", workspaceId: "ws_1", sandbox: "sb_browser" },
         ],
       }),
-    ).toThrow('config.sandboxes[0] "sb_browser" also backs workspace "repo"');
+    ).toThrow(
+      'config.sandboxes[1] "sb_browser" also backs workspace "repo"; only the first sandbox can back a workspace',
+    );
   });
 
   it("validates config.mcp entries", () => {
@@ -329,25 +335,32 @@ describe("agent rules", () => {
     expect(
       normalizeAgentConfig({
         harness: { type: "claude-code", permissionMode: "allow-edits" },
-        sandbox: "sandbox_1",
+        sandboxes: ["sandbox_1"],
       }),
     ).toEqual({
       harness: { type: "claude-code", permissionMode: "allow-edits" },
-      sandbox: "sandbox_1",
+      sandboxes: ["sandbox_1"],
     });
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "claude-code", turbo: true },
-        sandbox: "sandbox_1",
+        sandboxes: ["sandbox_1"],
       }),
     ).toThrow('config.harness has unknown option "turbo"');
     expect(() =>
       normalizeAgentConfig({ harness: { type: "claude-code" } }),
-    ).toThrow("config.sandbox is required for the claude-code harness");
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the claude-code harness; the first runs it",
+    );
+    expect(() =>
+      normalizeAgentConfig({ harness: { type: "codex" }, sandboxes: [] }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
+    );
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex", permissionMode: "allow-edits" },
-        sandbox: "sandbox_1",
+        sandboxes: ["sandbox_1"],
       }),
     ).toThrow(
       "config.harness.permissionMode must be allow-all for the codex harness",
@@ -355,7 +368,7 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "pi", startupTimeoutMs: 1_000 },
-        sandbox: "sandbox_1",
+        sandboxes: ["sandbox_1"],
       }),
     ).toThrow(
       "config.harness.startupTimeoutMs is not supported by the pi harness",
@@ -517,6 +530,98 @@ describe("agent rules", () => {
     });
     expect(() => normalizeUpdateAgentInput({}, { status: "deleted" })).toThrow(
       "status must be one of: active, disabled",
+    );
+  });
+});
+
+describe("sandboxesWithDefault", () => {
+  it("replaces the default a canvas draws and keeps the stored extras", () => {
+    expect(
+      sandboxesWithDefault(["sb_old", "sb_mac", "sb_gpu"], "sb_new"),
+    ).toEqual(["sb_new", "sb_mac", "sb_gpu"]);
+  });
+
+  it("drops an extra that is drawn as the new default, so no id repeats", () => {
+    expect(sandboxesWithDefault(["sb_old", "sb_mac"], "sb_mac")).toEqual([
+      "sb_mac",
+    ]);
+  });
+
+  it("clears the list with the default instead of promoting an extra", () => {
+    expect(sandboxesWithDefault(["sb_old", "sb_mac"], null)).toEqual([]);
+  });
+
+  it("starts a list when none is stored", () => {
+    expect(sandboxesWithDefault(undefined, "sb_new")).toEqual(["sb_new"]);
+  });
+
+  it("returns the same list when the default is redrawn", () => {
+    expect(sandboxesWithDefault(["sb_a", "sb_b"], "sb_a")).toEqual([
+      "sb_a",
+      "sb_b",
+    ]);
+  });
+});
+
+describe("defaultSandboxOf", () => {
+  it("reads the first of sandboxes", () => {
+    expect(defaultSandboxOf({ sandboxes: ["sb_a", "sb_b"] })).toBe("sb_a");
+  });
+
+  it("finds no default without a string first entry", () => {
+    expect(defaultSandboxOf({})).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: [] })).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: "sb_a" })).toBeUndefined();
+    expect(defaultSandboxOf({ sandboxes: [42] })).toBeUndefined();
+  });
+});
+
+// The rules a canvas save checks before it stores the refs it drew.
+describe("assertAgentRuntimeRefs", () => {
+  it("refuses a workspace drawn onto a later sandbox", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({
+        sandboxes: sandboxesWithDefault(["sb_a", "sb_b"], "sb_a"),
+        workspaces: [{ name: "repo", workspaceId: "ws_1", sandbox: "sb_b" }],
+      }),
+    ).toThrow(
+      'config.sandboxes[1] "sb_b" also backs workspace "repo"; only the first sandbox can back a workspace',
+    );
+  });
+
+  it("refuses a harness left without its default", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({ harness: { type: "codex" } }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
+    );
+  });
+
+  it("leaves branches a canvas save never touches to their owner", () => {
+    expect(() =>
+      assertAgentRuntimeRefs({
+        provider: { custom: { base_url: "${BASE_URL}" } },
+        sandboxes: ["sb_a"],
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("config patch pre-validation", () => {
+  it("lets a patch add a harness to an agent that already has sandboxes", () => {
+    expect(
+      normalizeUpdateAgentInput(
+        { sandboxes: ["sb_a"] },
+        { config: { harness: { type: "codex" } } },
+      ).config,
+    ).toEqual({ harness: { type: "codex" }, sandboxes: ["sb_a"] });
+  });
+
+  it("still refuses the merged config when no sandbox is stored", () => {
+    expect(() =>
+      normalizeUpdateAgentInput({}, { config: { harness: { type: "codex" } } }),
+    ).toThrow(
+      "config.sandboxes needs at least one sandbox for the codex harness; the first runs it",
     );
   });
 });

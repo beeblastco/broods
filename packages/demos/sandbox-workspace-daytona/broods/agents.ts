@@ -39,7 +39,7 @@ export const sandboxAssistant = defineAgent({
     system:
       "You are a helpful assistant that can call tools and provide information to the user.",
   },
-  sandbox: daytonaSandbox,
+  sandboxes: [daytonaSandbox],
   workspaces: [notesWorkspace],
   publicAccess: true,
 });

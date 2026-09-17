@@ -33,7 +33,7 @@ const TEST_ACCOUNT = {
         apiKey: "google-key",
       },
     },
-    sandbox: "sb_1",
+    sandboxes: ["sb_1"],
     workspaces: [{ name: "notes", workspaceId: "ws_a" }],
     channels: {
       slack: {
@@ -1024,7 +1024,7 @@ describe("direct API ingress", () => {
           apiKey: "google-key",
         },
       },
-      sandbox: "sb_1",
+      sandboxes: ["sb_1"],
       workspaces: [{ name: "notes", workspaceId: "ws_a" }],
       publicAccess: true,
     });

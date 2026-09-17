@@ -1,4 +1,4 @@
-/** Extra agent sandboxes travel by name in a manifest and by id at rest. */
+/** Agent sandboxes travel by name in a manifest and by id at rest. */
 
 import { describe, expect, test } from "vitest";
 import { rewriteIdsToNames, rewriteResourceRefs } from "../model/cliSync";
@@ -9,16 +9,13 @@ const SANDBOX_IDS = {
 };
 
 describe("cli sync sandbox refs", () => {
-  test("rewrites extra sandbox names to ids and back", () => {
+  test("rewrites sandbox names to ids and back", () => {
     const stored = rewriteResourceRefs(
-      { sandbox: "general-sandbox", sandboxes: ["offline-sandbox"] },
+      { sandboxes: ["general-sandbox", "offline-sandbox"] },
       { workspaces: {}, sandboxes: SANDBOX_IDS, policies: {} },
     );
 
-    expect(stored).toEqual({
-      sandbox: "sb_general",
-      sandboxes: ["sb_offline"],
-    });
+    expect(stored).toEqual({ sandboxes: ["sb_general", "sb_offline"] });
     expect(
       rewriteIdsToNames(stored, {
         workspaces: {},
@@ -27,9 +24,6 @@ describe("cli sync sandbox refs", () => {
           sb_offline: "offline-sandbox",
         },
       }),
-    ).toEqual({
-      sandbox: "general-sandbox",
-      sandboxes: ["offline-sandbox"],
-    });
+    ).toEqual({ sandboxes: ["general-sandbox", "offline-sandbox"] });
   });
 });

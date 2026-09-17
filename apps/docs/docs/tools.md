@@ -34,7 +34,7 @@ Provider-defined tool names come from the provider package, not from core. With 
 
 `ask_questions` is registered on every run that has somewhere to put a question and somewhere to resume: a channel turn, or a WebSocket/direct turn. Subagents never get it (the parent asks on their behalf) and neither does a cron-fired run. It is also the only question tool under an AI SDK Harness: the adapter's native `askUserQuestions` builtin is switched off. See [Asking the user](#asking-the-user).
 
-Sandbox tools come from a referenced `sandbox` (+ `workspaces`); see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
+Sandbox tools come from the agent's `sandboxes` (+ `workspaces`); see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule`, `list_schedules`, `update_schedule`, and `cancel_schedule` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
 
 ## Runtime behavior
 
@@ -43,7 +43,7 @@ Sandbox tools come from a referenced `sandbox` (+ `workspaces`); see [Workspace 
 Tool registry path:
 
 1. `createTools()` rejects `config.tools` names reserved by the harness itself.
-2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`. An agent's `sandboxes` add more `bash` targets with no workspace, selected by name with the `sandbox` argument; `read`/`write`/`edit`/`glob`/`grep` never run there.
+2. The sandbox tools come from the agent's `sandboxes`: `bash` (stateless) on the first when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`. The other entries in `sandboxes` are `bash` targets with no workspace, selected by name with the `sandbox` argument, and `computer` targets when they are machines; `read`/`write`/`edit`/`glob`/`grep` never run there.
 3. `run_subagent` comes only from `config.subagent`.
 4. `load_skill` comes from `config.skills`.
 5. Every remaining key is resolved against the configured provider's `tools` namespace; the config keys other than `enabled`/`needsApproval`/`async` are passed through as that tool's arguments.

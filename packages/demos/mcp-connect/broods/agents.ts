@@ -11,7 +11,7 @@ export const search = defineMcp({
   name: "search",
   description: "External MCP server the assistant may query.",
   url: "https://mcp.example.com/mcp",
-  headers: { Authorization: `Bearer ${env("SEARCH_TOKEN")}` },
+  headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
 });
 
 export const assistant = defineAgent({

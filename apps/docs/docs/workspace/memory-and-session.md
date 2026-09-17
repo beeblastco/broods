@@ -84,7 +84,7 @@ export const notes = defineWorkspace({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   workspaces: [notes],
 });
 ```
@@ -116,9 +116,9 @@ export const lockedDown = defineSandbox({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  sandbox: lambdaSandbox,
+  sandboxes: [lambdaSandbox],
   workspaces: [
-    personal, // inherit agent sandbox
+    personal, // inherit the first sandbox
     { workspace: team, sandbox: lockedDown }, // per-workspace override
     { workspace: docs, sandbox: null }, // read-only S3 access
   ],
