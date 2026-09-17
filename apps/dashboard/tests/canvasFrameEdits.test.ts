@@ -6,6 +6,7 @@ import {
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
+  workspaceOnlySandboxIds,
 } from "../app/lib/canvasFrameEdits";
 import type { StageMcpServer } from "../app/lib/canvasFrameNodes";
 
@@ -247,6 +248,24 @@ describe("agreedSandboxOrderNumbers", () => {
     expect([...agreedSandboxOrderNumbers(nodes, edges)]).toEqual([
       ["alpha", 1],
     ]);
+  });
+});
+
+describe("workspaceOnlySandboxIds", () => {
+  test("marks a sandbox a workspace mounts only when no agent wires it", () => {
+    // browser backs notes and no agent lists it; alpha backs notes and is listed.
+    const nodes = [...NODES, node("browser", "sandbox", { x: 0, y: 480 })];
+    const edges = [
+      ...EDGES,
+      {
+        id: "mount:browser-right-notes-left",
+        source: "browser",
+        target: "notes",
+        type: "mount",
+      },
+    ];
+
+    expect([...workspaceOnlySandboxIds(nodes, edges)]).toEqual(["browser"]);
   });
 });
 

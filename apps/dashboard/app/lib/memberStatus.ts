@@ -23,6 +23,12 @@ const LEVEL_RANK: Record<MemberLevel, number> = {
   error: 3,
 };
 
+const MACHINE_LEVEL: Record<MachineState, MemberLevel> = {
+  connected: "ok",
+  never: "idle",
+  offline: "warn",
+};
+
 const RUN_LEVEL: Record<NonNullable<BaseNodeData["status"]>, MemberLevel> = {
   error: "error",
   idle: "idle",
@@ -39,7 +45,7 @@ export const WORKSPACE_STATE_LABEL: Record<
   readonly: "read-only",
 };
 
-/** How much a member's state matters: idle covers off, disabled and not connected. */
+/** How much a member's state matters: idle covers off, disabled and never connected. */
 export type MemberLevel = "error" | "idle" | "ok" | "warn";
 
 /** A dot color class, its level, and the word the chip shows. */
@@ -52,7 +58,10 @@ export function enabledMemberStatus(enabled: boolean): MemberStatus {
     : { color: statusConfig.idle.color, label: "Disabled", level: "idle" };
 }
 
-/** A machine sandbox reads its daemon connection once it has loaded; any other sandbox its run state. */
+/**
+ * A machine sandbox reads its daemon connection once it has loaded: offline
+ * warns, never connected is idle. Any other sandbox reads its run state.
+ */
 export function sandboxMemberStatus(
   data: BaseNodeData,
   machine: MachineState | undefined,
@@ -61,7 +70,7 @@ export function sandboxMemberStatus(
     return {
       color: STATUS_TONE_BG[MACHINE_TONE[machine]],
       label: MACHINE_STATE_LABEL[machine],
-      level: machine === "connected" ? "ok" : "idle",
+      level: MACHINE_LEVEL[machine],
     };
   }
   const status = data.status ?? "idle";

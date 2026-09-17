@@ -183,7 +183,7 @@ describe("buildFramedGraph", () => {
       ["inherits:wiki-cloud", "wiki", "cloud"],
     ]);
     expect(sides[1]).toMatchObject({
-      data: { displayOnly: true },
+      data: { drawn: "inherited" },
       deletable: false,
       sourceHandle: "left",
       targetHandle: "right",

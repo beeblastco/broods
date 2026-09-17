@@ -21,10 +21,11 @@ export const MACHINE_STATE_LABEL: Record<MachineState, string> = {
   offline: "Offline",
 };
 
+/** Offline is a warning: that computer ran the daemon before and has stopped. Never connected is only idle. */
 export const MACHINE_TONE: Record<MachineState, StatusTone> = {
   connected: "ok",
   never: "ended",
-  offline: "ended",
+  offline: "warn",
 };
 
 export type MachineConnection = FunctionReturnType<

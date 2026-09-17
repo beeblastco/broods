@@ -1,6 +1,7 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
+import { EdgeHoverLine } from "@/app/components/canvas/EdgeHoverLine";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
 import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
@@ -36,6 +37,7 @@ export function SubagentEdge({
   deletable,
 }: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
+  const [lineHovered, setLineHovered] = useState(false);
   const locked = useCodeManagedEdge(id, source, target) || deletable === false;
   const deleteHover = hovered && !locked;
 
@@ -78,29 +80,33 @@ export function SubagentEdge({
           <path
             d="M -10,-4 L 0,0 L -10,4 Z"
             className={
-              deleteHover ? "fill-destructive/90" : "fill-canvas-subagent/65"
+              deleteHover ? "fill-destructive/90" : "fill-canvas-subagent/85"
             }
           />
         </marker>
       </defs>
 
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        // Keep the violet stroke but honor focus-mode dimming: pull only `opacity` from the
-        // incoming style (which also carries the gray default stroke we must not apply).
-        // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
-        // and the width goes through xyflow's own variable.
-        className={cn(
-          "opacity-(--edge-opacity)",
-          deleteHover ? "stroke-destructive/90!" : "stroke-canvas-subagent/65!",
-        )}
-        style={{
-          "--edge-opacity": style?.opacity,
-          "--xy-edge-stroke-width": 1.5,
-        }}
-        markerEnd={`url(#${arrowId})`}
-      />
+      <EdgeHoverLine onHoverChange={setLineHovered}>
+        <BaseEdge
+          id={id}
+          path={edgePath}
+          // Keep the violet stroke but honor focus-mode dimming: pull only `opacity` from the
+          // incoming style (which also carries the gray default stroke we must not apply).
+          // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
+          // and the width goes through xyflow's own variable.
+          className={cn(
+            "opacity-(--edge-opacity)",
+            deleteHover
+              ? "stroke-destructive/90!"
+              : "stroke-canvas-subagent/85!",
+          )}
+          style={{
+            "--edge-opacity": style?.opacity,
+            "--xy-edge-stroke-width": 1.5,
+          }}
+          markerEnd={`url(#${arrowId})`}
+        />
+      </EdgeHoverLine>
 
       <EdgeLabelRenderer>
         {locked ? (
@@ -109,6 +115,7 @@ export function SubagentEdge({
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            revealed={lineHovered}
           />
         ) : (
           <EdgeDeleteButton
@@ -116,6 +123,7 @@ export function SubagentEdge({
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            revealed={lineHovered}
           />
         )}
       </EdgeLabelRenderer>

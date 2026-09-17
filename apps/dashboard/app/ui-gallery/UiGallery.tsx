@@ -29,7 +29,10 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
-import { agreedSandboxOrderNumbers } from "@/app/lib/canvasFrameEdits";
+import {
+  agreedSandboxOrderNumbers,
+  workspaceOnlySandboxIds,
+} from "@/app/lib/canvasFrameEdits";
 import {
   buildFramedGraph,
   serversByNode,
@@ -430,6 +433,10 @@ function CanvasFramesFixture(): React.JSX.Element {
           return next;
         }),
       sandboxOrderNumbers: agreedSandboxOrderNumbers(FRAME_NODES, FRAME_EDGES),
+      workspaceOnlySandboxIds: workspaceOnlySandboxIds(
+        FRAME_NODES,
+        FRAME_EDGES,
+      ),
     }),
     [],
   );

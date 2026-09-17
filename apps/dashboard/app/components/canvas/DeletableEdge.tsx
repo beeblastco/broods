@@ -1,6 +1,7 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
+import { EdgeHoverLine } from "@/app/components/canvas/EdgeHoverLine";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
 import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import { agentEdgePath, type AgentEdgeData } from "@/app/lib/canvasFrameNodes";
@@ -15,6 +16,12 @@ import { useTheme } from "next-themes";
 import { useState } from "react";
 
 const ARROW_ID_PREFIX = "deletable-arrow";
+
+/** Agent edge line and arrow color per theme; the canvas passes it as the default edge stroke. */
+export const AGENT_EDGE_STROKE = {
+  dark: "rgba(255,255,255,0.4)",
+  light: "rgba(0,0,0,0.35)",
+};
 
 /**
  * Custom edge with a hover-to-delete trash icon, or a lock badge when code owns it. A bundle
@@ -35,6 +42,7 @@ export function DeletableEdge({
   deletable,
 }: EdgeProps<Edge<AgentEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
+  const [lineHovered, setLineHovered] = useState(false);
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
@@ -62,7 +70,7 @@ export function DeletableEdge({
   // them, and bundles of them, `deletable: false`.
   const locked = deletable === false || codeManaged;
   const deleteHover = hovered && !locked;
-  const arrowColor = isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)";
+  const arrowColor = isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -90,14 +98,18 @@ export function DeletableEdge({
         </marker>
       </defs>
 
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        style={style}
-        // Important, so the hover stroke wins over the default stroke inline in `style`.
-        className={deleteHover ? "stroke-destructive/90! stroke-2!" : undefined}
-        markerEnd={`url(#${arrowId})`}
-      />
+      <EdgeHoverLine onHoverChange={setLineHovered}>
+        <BaseEdge
+          id={id}
+          path={edgePath}
+          style={style}
+          // Important, so the hover stroke wins over the default stroke inline in `style`.
+          className={
+            deleteHover ? "stroke-destructive/90! stroke-2!" : undefined
+          }
+          markerEnd={`url(#${arrowId})`}
+        />
+      </EdgeHoverLine>
       <EdgeLabelRenderer>
         {locked ? (
           <LockedEdgeBadge
@@ -105,6 +117,7 @@ export function DeletableEdge({
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            revealed={lineHovered}
           />
         ) : (
           <EdgeDeleteButton
@@ -112,6 +125,7 @@ export function DeletableEdge({
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            revealed={lineHovered}
           />
         )}
       </EdgeLabelRenderer>

@@ -459,25 +459,50 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
   }
 });
 
-test("a code-managed sub-agent link shows a lock, a user-owned one a trash", async ({
+test("hovering any edge's line shows a lock or a trash: trash only where it can be deleted", async ({
   page,
 }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
+  await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
 
-  await expect(
-    fixture.locator(
-      '[data-edge-id="subagent:tracy-right-coder-left"][data-edge-control="locked"]',
-    ),
-  ).toHaveCount(1);
-  await expect(
-    fixture.locator('[data-edge-id="subagent:tracy-right-coder-left"] button'),
-  ).toHaveCount(0);
-  await expect(
-    fixture.locator(
-      '[data-edge-id="subagent:coder-right-reviewer-left"][data-edge-control="delete"]',
-    ),
-  ).toHaveCount(1);
+  // Stored and user-owned edges delete; code-managed and drawn ones lock and say why.
+  expect(await hoverEveryEdge(fixture)).toEqual(
+    expect.objectContaining({
+      "inherits:repos-internal-sandbox": "locked",
+      "mount:internal-sandbox-right-notes-left": "delete",
+      "runs-on:blender-kien-mac": "locked",
+      "subagent:coder-right-reviewer-left": "delete",
+      "subagent:tracy-right-coder-left": "locked",
+      "xy-edge__tracy-session": "delete",
+    }),
+  );
+  for (const [id, reason] of [
+    ["inherits:repos-internal-sandbox", /Inherited from the agent's default/],
+    ["runs-on:blender-kien-mac", /runs on this computer/],
+    ["subagent:tracy-right-coder-left", /Managed by broods\/ code/],
+  ] as const) {
+    await expect(
+      fixture.locator(`[data-edge-id="${id}"][data-edge-control="locked"]`),
+      id,
+    ).toHaveAttribute("title", reason);
+  }
+
+  // Collapsed, the mount re-points to the frame: drawn, so locked.
+  const frame = fixture.locator(
+    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+  );
+  await frame.getByRole("button", { name: "Collapse Workspaces · S3" }).click();
+  const collapsed = Object.entries(await hoverEveryEdge(fixture)).filter(
+    ([id]) => id.startsWith("collapsed:"),
+  );
+  expect(collapsed.length).toBeGreaterThan(0);
+  for (const [id, control] of collapsed) {
+    expect(control, id).toBe("locked");
+    await expect(
+      fixture.locator(`[data-edge-id="${id}"][data-edge-control="locked"]`),
+    ).toHaveAttribute("title", /Expand the group/);
+  }
 });
 
 /** The bg-* class a status dot carries. */
@@ -501,4 +526,71 @@ async function boxOf(locator: Locator): Promise<Box> {
   expect(box).not.toBeNull();
 
   return box ?? { height: 0, width: 0, x: 0, y: 0 };
+}
+
+/**
+ * Hovers each drawn edge where the pointer reaches it, on its line or else on
+ * its own control, and returns which control that reveals. Fails an edge with
+ * anything but exactly one control, and one the pointer can't reach at all.
+ */
+async function hoverEveryEdge(
+  fixture: Locator,
+): Promise<Record<string, string>> {
+  const page = fixture.page();
+  await fixture.scrollIntoViewIfNeeded();
+  const ids = await fixture
+    .locator(".react-flow__edge")
+    .evaluateAll((edges): string[] =>
+      edges.map((edge) => edge.getAttribute("data-id") ?? ""),
+    );
+  const controls: Record<string, string> = {};
+  const unreachable: string[] = [];
+  for (const id of ids) {
+    const control = fixture.locator(
+      `[data-edge-id="${id}"][data-edge-control]`,
+    );
+    await expect(control, `${id} control`).toHaveCount(1);
+    controls[id] = (await control.getAttribute("data-edge-control")) ?? "";
+    const point = await fixture
+      .locator(`.react-flow__edge[data-id="${id}"] path.react-flow__edge-path`)
+      .evaluate((path: SVGPathElement, edgeId): Point | null => {
+        const matrix = path.getScreenCTM();
+        if (!matrix) return null;
+        const points = Array.from({ length: 19 }, (_, index) =>
+          path
+            .getPointAtLength((path.getTotalLength() * (index + 1)) / 20)
+            .matrixTransform(matrix),
+        );
+        const hitAt = (at: DOMPoint): Element | null | undefined =>
+          document.elementFromPoint(at.x, at.y);
+        const found =
+          points.find(
+            (at) =>
+              hitAt(at)
+                ?.closest(".react-flow__edge")
+                ?.getAttribute("data-id") === edgeId,
+          ) ??
+          points.find(
+            (at) =>
+              hitAt(at)
+                ?.closest("[data-edge-control]")
+                ?.getAttribute("data-edge-id") === edgeId,
+          );
+
+        return found ? { x: found.x, y: found.y } : null;
+      }, id);
+    if (!point) {
+      unreachable.push(id);
+      continue;
+    }
+    await page.mouse.move(point.x, point.y);
+    await expect(control.locator("> *"), `${id} revealed`).toHaveCSS(
+      "opacity",
+      "1",
+    );
+    await page.mouse.move(0, 0);
+  }
+  expect(unreachable).toEqual([]);
+
+  return controls;
 }
