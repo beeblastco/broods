@@ -9,6 +9,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
 import { defaultSandboxOf } from "./agentRules";
+import { isCliEdgeId } from "./canvasFrames";
 import { applyTidyLayout } from "./canvasLayout";
 import {
   authIdForAccount,
@@ -408,13 +409,7 @@ function edgeIsCliManaged(
   edge: CanvasEdge,
   nodesById: Map<string, CanvasNode>,
 ): boolean {
-  if (
-    edge.id.startsWith("xy-edge__cli-") ||
-    edge.id.startsWith("mount:cli-") ||
-    edge.id.startsWith("subagent:cli-")
-  ) {
-    return true;
-  }
+  if (isCliEdgeId(edge.id)) return true;
   const sourceManagedBy = nodesById.get(edge.source)?.data.managedBy;
   const targetManagedBy = nodesById.get(edge.target)?.data.managedBy;
 

@@ -1,26 +1,19 @@
 "use client";
 
-import {
-  isCodeManagedEdgeId,
-  isCodeManagedOwner,
-} from "@/app/components/canvas/edgeOwnership";
+import { isCodeManagedEdge } from "@/app/components/canvas/edgeOwnership";
 import { useStore } from "@xyflow/react";
 
-/**
- * Whether code owns an edge: its id names a `broods/` project edge, or both
- * its ends are code-managed nodes. Such an edge shows a lock, never a trash.
- */
+/** Whether code owns an edge (see `isCodeManagedEdge`): it shows a lock, never a trash. */
 export function useCodeManagedEdge(
   id: string,
   source: string,
   target: string,
 ): boolean {
   // A boolean, so the selector stays referentially stable across store updates.
-  const ownedEnds = useStore(
-    (state) =>
-      isCodeManagedOwner(state.nodeLookup.get(source)?.data.managedBy) &&
-      isCodeManagedOwner(state.nodeLookup.get(target)?.data.managedBy),
+  return useStore((state): boolean =>
+    isCodeManagedEdge(
+      { id: id, source: source, target: target },
+      (nodeId): unknown => state.nodeLookup.get(nodeId)?.data.managedBy,
+    ),
   );
-
-  return ownedEnds || isCodeManagedEdgeId(id);
 }

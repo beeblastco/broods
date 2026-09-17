@@ -416,6 +416,20 @@ export function frameSize(frame: FrameShape): FrameSize {
 }
 
 /**
+ * Whether an edge id names a `broods/` project endpoint: a `cli-` node id right
+ * after the kind prefix, the way the CLI sync writes every edge it creates. The
+ * sync prunes such an edge its config no longer lists, and the dashboard locks
+ * it.
+ */
+export function isCliEdgeId(id: string): boolean {
+  return (
+    id.startsWith("mount:cli-") ||
+    id.startsWith("subagent:cli-") ||
+    id.startsWith("xy-edge__cli-")
+  );
+}
+
+/**
  * The sandbox node each machine MCP server runs on, by the server's node id:
  * the sandbox whose mount name, or else label, is the server's `sandbox`.
  */

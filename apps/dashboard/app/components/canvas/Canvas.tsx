@@ -14,8 +14,9 @@ import {
   DeletableEdge,
 } from "@/app/components/canvas/DeletableEdge";
 import {
-  isCodeManagedEdgeId,
-  isCodeManagedOwner,
+  connectionEdge,
+  isCodeManagedEdge,
+  isSideHandle,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -279,16 +280,10 @@ function hydrateSubagentEdge(edge: Edge): Edge {
 
 /** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
 function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
-  const sourceManagedBy = (
-    nodesById.get(edge.source)?.data as { managedBy?: string } | undefined
-  )?.managedBy;
-  const targetManagedBy = (
-    nodesById.get(edge.target)?.data as { managedBy?: string } | undefined
-  )?.managedBy;
   if (
-    !isCodeManagedEdgeId(edge.id) &&
-    !(
-      isCodeManagedOwner(sourceManagedBy) && isCodeManagedOwner(targetManagedBy)
+    !isCodeManagedEdge(
+      edge,
+      (nodeId): unknown => nodesById.get(nodeId)?.data.managedBy,
     )
   ) {
     return edge;
@@ -343,19 +338,6 @@ function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
   return edges.some(
     (e) =>
       (e.source === a && e.target === b) || (e.source === b && e.target === a),
-  );
-}
-
-/** Whether a connection uses a side handle (left/right), i.e. a mount or subagent link. */
-function isSideConnection(c: {
-  sourceHandle?: string | null;
-  targetHandle?: string | null;
-}): boolean {
-  return (
-    c.sourceHandle === "left" ||
-    c.sourceHandle === "right" ||
-    c.targetHandle === "left" ||
-    c.targetHandle === "right"
   );
 }
 
@@ -954,18 +936,24 @@ function CanvasInner({
         )
       : hasEdgeBetween(edgesRef.current, connection.source, connection.target);
     if (duplicate) return false;
+    // Code owns this wiring: the agent would ignore the edge, the canvas would
+    // lock it, and the next deploy would remove it.
+    if (
+      isCodeManagedEdge(
+        connectionEdge(connection, srcNode.type === "agent"),
+        (nodeId): unknown =>
+          (nodeId === srcNode.id ? srcNode : tgtNode).data.managedBy,
+      )
+    ) {
+      return false;
+    }
 
     // Side handles serve mounts (workspace↔sandbox) and subagent links (agent↔agent) only;
     // those pairs must use the sides on BOTH ends, never the top/bottom handles. A half-side
     // edge would encode a null handle into its id and fail to hydrate after a reload.
-    if (isSideConnection(connection)) {
-      const sourceIsSide =
-        connection.sourceHandle === "left" ||
-        connection.sourceHandle === "right";
-      const targetIsSide =
-        connection.targetHandle === "left" ||
-        connection.targetHandle === "right";
-
+    const sourceIsSide = isSideHandle(connection.sourceHandle);
+    const targetIsSide = isSideHandle(connection.targetHandle);
+    if (sourceIsSide || targetIsSide) {
       // A mount that would back a workspace from an agent's later sandbox is refused too.
       return (
         sourceIsSide &&
@@ -1009,22 +997,12 @@ function CanvasInner({
 
   const onConnect: OnConnect = useCallback(
     (params) => {
-      // isValidConnection already enforced every rule; build the edge and add it. Side-handle
-      // info is encoded in the id (mount/subagent) so it survives the DB round-trip. The
-      // saved layout only keeps id/source/target/animated.
-      let edge: Edge | Connection = params;
-      if (isSideConnection(params)) {
-        const isAgentPair =
-          nodesRef.current.find((n) => n.id === params.source)?.type ===
-          "agent";
-        const kind = isAgentPair ? "subagent" : "mount";
-        edge = {
-          ...params,
-          id: `${kind}:${params.source}-${params.sourceHandle}-${params.target}-${params.targetHandle}`,
-          type: kind,
-          animated: false,
-        };
-      }
+      // isValidConnection already enforced every rule, on this same edge.
+      const edge = connectionEdge(
+        params,
+        nodesRef.current.find((n): boolean => n.id === params.source)?.type ===
+          "agent",
+      );
 
       editGraph((nodes, edges) => ({
         edges: addEdge(edge, edges),
