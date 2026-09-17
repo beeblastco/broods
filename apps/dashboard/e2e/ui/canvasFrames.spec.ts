@@ -529,9 +529,12 @@ async function boxOf(locator: Locator): Promise<Box> {
 }
 
 /**
- * Hovers each drawn edge where the pointer reaches it, on its line or else on
- * its own control, and returns which control that reveals. Fails an edge with
- * anything but exactly one control, and one the pointer can't reach at all.
+ * Hovers each drawn edge on its line, never on its control (hovering a control
+ * reveals it on its own), and returns which control that reveals. Fails an edge
+ * with anything but exactly one control, or whose line the pointer can't reach.
+ * Excepted: a line wholly under its own control, its own agent's shared trunk
+ * or that trunk's controls, or a card at its end. There the edge on top takes
+ * the hover, by design; a line over bare canvas never counts as covered.
  */
 async function hoverEveryEdge(
   fixture: Locator,
@@ -551,36 +554,60 @@ async function hoverEveryEdge(
     );
     await expect(control, `${id} control`).toHaveCount(1);
     controls[id] = (await control.getAttribute("data-edge-control")) ?? "";
-    const point = await fixture
+    const { covered, point } = await fixture
       .locator(`.react-flow__edge[data-id="${id}"] path.react-flow__edge-path`)
-      .evaluate((path: SVGPathElement, edgeId): Point | null => {
-        const matrix = path.getScreenCTM();
-        if (!matrix) return null;
-        const points = Array.from({ length: 19 }, (_, index) =>
-          path
-            .getPointAtLength((path.getTotalLength() * (index + 1)) / 20)
-            .matrixTransform(matrix),
-        );
-        const hitAt = (at: DOMPoint): Element | null | undefined =>
-          document.elementFromPoint(at.x, at.y);
-        const found =
-          points.find(
-            (at) =>
-              hitAt(at)
-                ?.closest(".react-flow__edge")
-                ?.getAttribute("data-id") === edgeId,
-          ) ??
-          points.find(
-            (at) =>
-              hitAt(at)
-                ?.closest("[data-edge-control]")
-                ?.getAttribute("data-edge-id") === edgeId,
-          );
+      .evaluate(
+        (
+          path: SVGPathElement,
+          options,
+        ): { covered: boolean; point: Point | null } => {
+          const matrix = path.getScreenCTM();
+          if (!matrix) return { covered: false, point: null };
+          const ownerOf = (edgeId: string): string | undefined =>
+            options.agents.find(
+              (name) =>
+                edgeId.startsWith(`bundle:${name}:`) ||
+                edgeId.startsWith(`xy-edge__${name}-`),
+            );
+          const owner = ownerOf(options.id);
+          const hits = Array.from({ length: 19 }, (_, index) => {
+            const at = path
+              .getPointAtLength((path.getTotalLength() * (index + 1)) / 20)
+              .matrixTransform(matrix);
+            const element = document.elementFromPoint(at.x, at.y);
 
-        return found ? { x: found.x, y: found.y } : null;
-      }, id);
+            return {
+              at: at,
+              control: element
+                ?.closest("[data-edge-control]")
+                ?.getAttribute("data-edge-id"),
+              edge: element
+                ?.closest(".react-flow__edge")
+                ?.getAttribute("data-id"),
+              end:
+                (index === 0 || index === 18) &&
+                element?.closest(".react-flow__node") != null,
+            };
+          });
+          const found = hits.find((hit) => hit.edge === options.id);
+
+          return {
+            covered: hits.every(
+              (hit) =>
+                hit.end ||
+                hit.control === options.id ||
+                (owner !== undefined &&
+                  [hit.control, hit.edge].some(
+                    (other) => other != null && ownerOf(other) === owner,
+                  )),
+            ),
+            point: found ? { x: found.at.x, y: found.at.y } : null,
+          };
+        },
+        { agents: AGENTS, id: id },
+      );
     if (!point) {
-      unreachable.push(id);
+      if (!covered) unreachable.push(id);
       continue;
     }
     await page.mouse.move(point.x, point.y);

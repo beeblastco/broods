@@ -42,7 +42,7 @@ export function EdgeDeleteButton({
       <button
         aria-label="Delete connection"
         className={cn(
-          "flex cursor-pointer items-center justify-center rounded-md border bg-card p-1 text-destructive shadow-sm transition-all group-hover:opacity-100 hover:scale-110 hover:border-destructive/50",
+          "flex cursor-pointer items-center justify-center rounded-md border bg-card p-1 text-destructive shadow-sm transition-all group-hover:opacity-100 hover:scale-110 focus-visible:opacity-100 hover:border-destructive/50",
           revealed ? "opacity-100" : "opacity-0",
         )}
         onClick={onDelete}
