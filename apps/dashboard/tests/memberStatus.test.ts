@@ -7,30 +7,42 @@ import {
 } from "../app/lib/memberStatus";
 
 describe("summarizeMembers", () => {
-  test("grey when every member is idle, disabled or not connected", () => {
+  test("grey when every member is idle, disabled or never connected", () => {
     expect(
       summarizeMembers([
         enabledMemberStatus(false),
         sandboxMemberStatus({ label: "cloud", status: "idle" }, undefined),
-        sandboxMemberStatus({ label: "mac" }, "offline"),
+        sandboxMemberStatus({ label: "mac" }, "never"),
         workspaceMemberStatus({ kind: "inherited", sandboxLabels: ["cloud"] }),
       ]),
     ).toEqual({
       color: "bg-muted-foreground",
-      text: "1 disabled · 1 idle · 1 offline · 1 inherited",
+      text: "1 disabled · 1 idle · 1 not connected yet · 1 inherited",
     });
+  });
+
+  test("a computer that went offline warns, even beside a connected one", () => {
+    const connected = sandboxMemberStatus({ label: "mac" }, "connected");
+    const offline = sandboxMemberStatus({ label: "old" }, "offline");
+    const never = sandboxMemberStatus({ label: "new" }, "never");
+
+    expect(offline).toMatchObject({ color: "bg-warning", level: "warn" });
+    expect(summarizeMembers([connected, offline, never]).color).toBe(
+      "bg-warning",
+    );
+    expect(summarizeMembers([never, connected]).color).toBe("bg-success");
   });
 
   test("takes the color of the member that matters most: error, warn, ok, idle", () => {
     const connected = sandboxMemberStatus({ label: "mac" }, "connected");
-    const offline = sandboxMemberStatus({ label: "old" }, "offline");
+    const never = sandboxMemberStatus({ label: "new" }, "never");
     const readOnly = workspaceMemberStatus({ kind: "readonly" });
     const failed = sandboxMemberStatus(
       { label: "cloud", status: "error" },
       undefined,
     );
 
-    expect(summarizeMembers([offline, connected]).color).toBe("bg-success");
+    expect(summarizeMembers([never, connected]).color).toBe("bg-success");
     expect(summarizeMembers([connected, readOnly]).color).toBe("bg-warning");
     expect(summarizeMembers([readOnly, failed, connected]).color).toBe(
       "bg-destructive",

@@ -11,7 +11,7 @@ export const STATUS_TONE_BG: Record<StatusTone, string> = {
   warn: "bg-warning",
   error: "bg-destructive",
   running: "bg-info",
-  ended: "bg-muted-foreground/50",
+  ended: "bg-muted-foreground",
 };
 
 /** Socket state as a tone, shared by the log tail and the live terminal. */

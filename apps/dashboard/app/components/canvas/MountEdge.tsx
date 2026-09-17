@@ -1,7 +1,11 @@
 "use client";
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
-import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
+import { EdgeHoverLine } from "@/app/components/canvas/EdgeHoverLine";
+import {
+  EDGE_LOCK_REASON,
+  LockedEdgeBadge,
+} from "@/app/components/canvas/LockedEdgeBadge";
 import { useCodeManagedEdge } from "@/app/components/canvas/useCodeManagedEdge";
 import { sideEdgePath, type SideEdgeData } from "@/app/lib/canvasFrameNodes";
 import { cn } from "@/app/lib/utils";
@@ -36,6 +40,7 @@ export function MountEdge({
   deletable,
 }: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
+  const [lineHovered, setLineHovered] = useState(false);
   const codeManaged = useCodeManagedEdge(id, source, target);
 
   // An edge the router skipped (no measured handle yet) falls back to a step path.
@@ -56,12 +61,14 @@ export function MountEdge({
       });
 
   // A drawn edge (a mount re-pointed to a collapsed frame, an inherited sandbox) is not
-  // stored, so it offers neither a lock nor a trash. A stored code-managed mount shows the
-  // lock and never the red delete-hover.
-  const displayOnly = data?.displayOnly === true;
-  const locked = codeManaged && !displayOnly;
-  const removable = !codeManaged && !displayOnly && deletable !== false;
-  const deleteHover = hovered && removable;
+  // stored, so it shows a lock saying why. A code-managed mount shows the lock too, and
+  // never the red delete-hover.
+  const lockReason = data?.drawn
+    ? EDGE_LOCK_REASON[data.drawn]
+    : codeManaged || deletable === false
+      ? EDGE_LOCK_REASON.code
+      : null;
+  const deleteHover = hovered && lockReason === null;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -80,49 +87,52 @@ export function MountEdge({
           <path
             d="M -10,-4 L 0,0 L -10,4 Z"
             className={
-              deleteHover ? "fill-destructive/90" : "fill-canvas-mount/55"
+              deleteHover ? "fill-destructive/90" : "fill-canvas-mount/80"
             }
           />
         </marker>
       </defs>
 
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        // Keep the teal stroke but honor focus-mode dimming: pull only `opacity` from the
-        // incoming style (which also carries the gray default stroke we must not apply).
-        // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
-        // and the width goes through xyflow's own variable.
-        className={cn(
-          "animate-dashdraw opacity-(--edge-opacity)",
-          deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/55!",
-        )}
-        style={{
-          "--edge-opacity": style?.opacity,
-          "--xy-edge-stroke-width": 1.5,
-        }}
-        strokeDasharray="5 3"
-        markerStart={`url(#${arrowId})`}
-        markerEnd={`url(#${arrowId})`}
-      />
+      <EdgeHoverLine onHoverChange={setLineHovered}>
+        <BaseEdge
+          id={id}
+          path={edgePath}
+          // Keep the teal stroke but honor focus-mode dimming: pull only `opacity` from the
+          // incoming style (which also carries the gray default stroke we must not apply).
+          // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
+          // and the width goes through xyflow's own variable.
+          className={cn(
+            "animate-dashdraw opacity-(--edge-opacity)",
+            deleteHover ? "stroke-destructive/90!" : "stroke-canvas-mount/80!",
+          )}
+          style={{
+            "--edge-opacity": style?.opacity,
+            "--xy-edge-stroke-width": 1.5,
+          }}
+          strokeDasharray="5 3"
+          markerStart={`url(#${arrowId})`}
+          markerEnd={`url(#${arrowId})`}
+        />
+      </EdgeHoverLine>
 
       <EdgeLabelRenderer>
-        {locked ? (
+        {lockReason === null ? (
+          <EdgeDeleteButton
+            edgeId={id}
+            labelX={labelX}
+            labelY={labelY}
+            onHoverChange={setHovered}
+            revealed={lineHovered}
+          />
+        ) : (
           <LockedEdgeBadge
             edgeId={id}
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            reason={lockReason}
+            revealed={lineHovered}
           />
-        ) : (
-          removable && (
-            <EdgeDeleteButton
-              edgeId={id}
-              labelX={labelX}
-              labelY={labelY}
-              onHoverChange={setHovered}
-            />
-          )
         )}
       </EdgeLabelRenderer>
     </>
