@@ -18,7 +18,8 @@ const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
  * MCP server node: one registered server exposing its tools to wired agents.
  * Reads its row from the stage's server list the Canvas queries once. Inside
  * a frame it draws as a chip naming the computer a machine server runs on.
- * A disabled server reads as idle, the same grey its collapsed frame shows.
+ * A disabled server reads as idle, the same grey its collapsed frame shows. A
+ * machine server's card names the computer it runs on.
  * The card keeps side handles, unconnectable, for its runs-on edge.
  */
 export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
@@ -49,7 +50,13 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
       nodeType="mcp"
       data={nodeData}
       icon={<Plug className="size-3.5" />}
-      subtitle={server ? TRANSPORT_SUBTITLE[server.transport] : undefined}
+      subtitle={
+        server?.sandbox
+          ? `${server.sandbox} · stdio`
+          : server
+            ? TRANSPORT_SUBTITLE[server.transport]
+            : undefined
+      }
       liveStatus={{ color: status.color, text: status.label }}
       showSideHandles={server?.transport === "machine"}
     />

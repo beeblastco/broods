@@ -54,6 +54,8 @@ const MCP_FRAME_LABELS: Record<McpTransport, string> = {
 export type CanvasFrame = {
   /** `frame:{owners}:{kind}:{key}`, stable while membership rules hold. */
   id: string;
+  /** What splits groups of one kind: where a sandbox runs, a workspace's storage, an MCP transport. */
+  key: string;
   kind: FrameKind;
   label: string;
   /** Sandboxes by order number then label; other kinds by label. */
@@ -193,6 +195,7 @@ export function deriveCanvasGroups(
     members.set(id, [node]);
     frames.set(id, {
       id: id,
+      key: group.key,
       kind: group.kind,
       label: group.label,
       memberIds: [],

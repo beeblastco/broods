@@ -438,7 +438,7 @@ function CanvasFramesFixture(): React.JSX.Element {
   return (
     <InfraAnalysisProvider value={FRAME_ANALYSIS}>
       <CanvasFramesProvider value={frames}>
-        <div className="h-[48rem] w-[72rem] rounded-lg border border-border">
+        <div className="h-[30rem] w-[80rem] rounded-lg border border-border">
           <ReactFlow
             nodes={graph.nodes}
             edges={graph.edges}

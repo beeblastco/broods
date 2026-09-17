@@ -242,7 +242,9 @@ test("every agent edge leaves the agent's bottom, enters its target's top and cr
   expect(problems).toEqual([]);
 });
 
-test("no two edges draw over each other along a stretch", async ({ page }) => {
+test("edges of different agents or kinds never draw over each other", async ({
+  page,
+}) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
   // Every frame open, so every lane is on screen.
@@ -261,14 +263,21 @@ test("no two edges draw over each other along a stretch", async ({ page }) => {
         for (let at = 0; at <= path.getTotalLength(); at += 1) {
           points.push(path.getPointAtLength(at));
         }
+        // One agent's edges share a trunk on purpose; any other edge is its own.
+        const agent = options.agents.find(
+          (name) =>
+            id.startsWith(`bundle:${name}:`) ||
+            id.startsWith(`xy-edge__${name}-`),
+        );
 
-        return { id: id, points: points };
+        return { id: id, owner: agent ?? id, points: points };
       });
       const cell = (x: number, y: number): string =>
         `${Math.floor(x / 4)}:${Math.floor(y / 4)}`;
       const found: string[] = [];
       for (const [index, a] of paths.entries()) {
         for (const b of paths.slice(index + 1)) {
+          if (a.owner === b.owner) continue;
           const grid = new Map<string, DOMPoint[]>();
           for (const point of b.points) {
             const key = cell(point.x, point.y);
@@ -299,7 +308,7 @@ test("no two edges draw over each other along a stretch", async ({ page }) => {
 
       return { checked: paths.length, overlaps: found };
     },
-    { distance: OVERLAP_DISTANCE, length: OVERLAP_LENGTH },
+    { agents: AGENTS, distance: OVERLAP_DISTANCE, length: OVERLAP_LENGTH },
   );
 
   // Agent, bundle, mount, inherited, runs-on and sub-agent edges all drawn.

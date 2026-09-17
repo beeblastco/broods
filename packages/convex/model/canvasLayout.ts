@@ -2,28 +2,28 @@
  * Deterministic canvas auto-layout, shared by the dashboard, the CLI sync and
  * the account API sync so every writer draws the same picture.
  *
- * The tidy layout works in card-sized cells, so its columns and rows line up
- * across the whole board. Drags and manual adds are finer: they snap to the
- * background dot grid and only step aside when they would cover another card.
+ * The tidy layout reads like an org chart: agents along the top, each over a
+ * row of the services it reaches, so most edges are one drop, one run along
+ * the agent's bus and one drop into the service. Drags and manual adds are
+ * finer: they snap to the background dot grid and only step aside when they
+ * would cover another card.
  *
- * Each agent owns a cluster: the agent card sits centred above a block of
- * typed columns holding the services only that agent uses. Sub-agents follow
+ * Each agent owns a cluster: the agent card sits over the middle of a block of
+ * columns holding the services only that agent uses. Every sandbox, workspace
+ * and MCP group (a frame, or a card when it has one member) takes its own
+ * column; sessions and skills stack in one column each. Sub-agents follow
  * their parent, so the side-handle link between them stays short. Services
- * more than one agent reaches drop to a shared lane under the clusters, and
- * services no agent reaches to an unconnected lane below that. A mount edge
- * ties its two cards together: an agent that reaches one reaches the other, so
- * a mounted pair always lands in the same cluster or lane.
+ * several agents reach sit in a block right after the first of those agents'
+ * clusters, so it lands between them; services no agent reaches park in a lane
+ * below. A mount edge ties its two cards together: an agent that reaches one
+ * reaches the other, so a mounted pair always lands in the same block. Groups
+ * come from `canvasFrames.ts`, so the dashboard reads back the same frames the
+ * layout packed.
  *
- * Sandbox, workspace and MCP columns stack frames rather than cards: each
- * frame starts on a cell, its members fill its slots, and it claims as many
- * rows as its expanded height needs. A group of one stays a card on its cell.
- * Groups come from `canvasFrames.ts`, so the dashboard reads back the same
- * frames the layout packed.
- *
- * Cells are then pulled apart where edges need room: the gap under the agent
- * row grows until every bus lane fits, and a column gutter grows until its
- * lanes fit, both in whole grid steps. The lanes come from
- * `canvasEdgeRoutes.ts`, the same router the dashboard draws with.
+ * Columns are as wide as their widest box plus a gutter, and the gap under
+ * the agent row and each gutter grow, in grid steps, until the lanes routed
+ * through them fit. The lanes come from `canvasEdgeRoutes.ts`, the same
+ * router the dashboard draws with.
  */
 
 import type { CanvasNode } from "../canvas";
@@ -60,17 +60,20 @@ export const NODE_HEIGHT = 96;
 /** Background dot pitch. Drags snap to it, and cell sizes are multiples of it. */
 export const GRID = 24;
 
-/**
- * One tidy-layout cell: a frame (the widest box) plus the gutter to the next
- * column. An agent's edge into a stacked frame runs down that gutter, so it
- * has to stay clear of both columns.
- */
-export const CELL_WIDTH = FRAME_WIDTH + 40;
-export const CELL_HEIGHT = NODE_HEIGHT + 48;
+/** Gap under a stacked box, and under the agent row before its bus needs more. */
+const STACK_GAP = 48;
 
-/** Empty cells between two agent clusters, and above each lane. */
-const CLUSTER_GAP_COLUMNS = 1;
-const LANE_GAP_ROWS = 1;
+/** Top of the service row: an agent card, then the gap its bus runs in. */
+export const SERVICE_TOP = NODE_HEIGHT + STACK_GAP;
+
+/**
+ * Column index to x before columns get their real widths: every box starts at
+ * `column * COLUMN_UNIT`, plus a chip's inset in its frame.
+ */
+const COLUMN_UNIT = 1000;
+
+/** Gutter between two columns before its lanes need more. */
+const MIN_GUTTER = 40;
 
 /** Clearance a nudged card keeps from the cards it stepped around. */
 const NODE_MARGIN = 16;
@@ -114,20 +117,27 @@ type CanvasGraph = {
   orphanServices: LayoutNode[];
   /** Sub-agent parent, keyed by the child agent's id. */
   parentAgentId: Map<string, string>;
-  /** Services more than one agent reaches. */
-  sharedServices: LayoutNode[];
+  /** Services more than one agent reaches, with the agents that reach them. */
+  sharedServices: { node: LayoutNode; owners: ReadonlySet<string> }[];
 };
 
-/** One item a column stacks: a frame and its members, or a lone card. */
-type ColumnItem = { frame: CanvasFrame } | { node: LayoutNode };
+/** One box a column holds: a group (a frame, or a card with one member) or an ungrouped card. */
+type ColumnItem = { group: CanvasFrame } | { node: LayoutNode };
 
-/** Pixels added between cells: under the agent row, and per column gutter (keyed by the column right of it). */
-type LaneRoom = { bus: number; gutters: Map<number, number> };
+/**
+ * Column widths, and pixels added on top of the minimum spacing: under the
+ * agent row, and per gutter (keyed by the column right of it).
+ */
+type LaneRoom = {
+  bus: number;
+  gutters: Map<number, number>;
+  widths: ReadonlyMap<number, number>;
+};
 
-/** A block of typed columns, and the cells it occupies. */
+/** A block of columns, and how far down it reaches. */
 type LayoutBlock = {
-  /** Row below the lowest placed card, or the origin row when empty. */
-  bottomRow: number;
+  /** Below the lowest placed box and its gap, or the origin when empty. */
+  bottomY: number;
   columns: number;
   positions: Map<string, LayoutPosition>;
 };
@@ -208,11 +218,16 @@ export function tidyCanvasLayout(
   mcpTransports: McpTransportsByNode,
 ): Map<string, LayoutPosition> {
   const groups = deriveCanvasGroups(nodes, edges, mcpTransports);
+  const frames = framesOf(groups);
   const cells = cellLayout(nodes, edges, groups);
-  let room: LaneRoom = { bus: 0, gutters: new Map() };
+  let room: LaneRoom = {
+    bus: 0,
+    gutters: new Map(),
+    widths: columnWidths(cells, frames),
+  };
   for (let pass = 0; pass < MAX_LANE_PASSES; pass++) {
     const positions = spreadCells(cells, room);
-    const needed = laneRoom(nodes, edges, framesOf(groups), positions, room);
+    const needed = laneRoom(nodes, edges, frames, positions, room);
     if (
       needed.bus === room.bus &&
       [...needed.gutters].every(([b, px]) => room.gutters.get(b) === px)
@@ -236,9 +251,10 @@ function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
 }
 
 /**
- * Nodes on whole cells: agent clusters along the top, shared services in a
- * lane below them, unwired ones below that. Positions are in cell units times
- * the cell size, before any gutter or bus room is added.
+ * Nodes in cell space: agents on top, each over its block of services at
+ * SERVICE_TOP, a block of shared services right after the first agent that
+ * reaches them, unwired ones parked below. x is a column index times
+ * COLUMN_UNIT (plus a chip's inset); y is already in pixels.
  */
 function cellLayout(
   nodes: readonly LayoutNode[],
@@ -246,84 +262,82 @@ function cellLayout(
   groups: readonly CanvasFrame[],
 ): Map<string, LayoutPosition> {
   const graph = indexGraph(nodes, edges);
+  const agents = orderAgents(graph);
+  const rank = new Map(agents.map((agent, index) => [agent.id, index]));
+  const sharedAfter = new Map<string, LayoutNode[]>();
+  for (const { node, owners } of graph.sharedServices) {
+    const [anchor] = [...owners].sort(
+      (a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0),
+    );
+    sharedAfter.set(anchor, [...(sharedAfter.get(anchor) ?? []), node]);
+  }
   const positions = new Map<string, LayoutPosition>();
   let cursorColumn = 0;
-  let deepestRow = 1;
-
-  for (const agent of orderAgents(graph)) {
-    const services = graph.exclusiveServices.get(agent.id) ?? [];
-    const block = layoutBlock(services, groups, cursorColumn, 1);
-    // Middle column of the block; the left one of the two when the count is even.
-    positions.set(
-      agent.id,
-      cellPosition(cursorColumn + Math.floor((block.columns - 1) / 2), 0),
-    );
+  let deepestY = SERVICE_TOP;
+  const place = (block: LayoutBlock): void => {
     for (const [id, position] of block.positions) positions.set(id, position);
-    deepestRow = Math.max(deepestRow, block.bottomRow);
-    cursorColumn += block.columns + CLUSTER_GAP_COLUMNS;
+    deepestY = Math.max(deepestY, block.bottomY);
+    cursorColumn += block.columns;
+  };
+
+  for (const agent of agents) {
+    const services = graph.exclusiveServices.get(agent.id) ?? [];
+    const block = layoutBlock(services, groups, cursorColumn, SERVICE_TOP);
+    // Middle column of the block; the left one of the two when the count is even.
+    const column = cursorColumn + Math.floor((block.columns - 1) / 2);
+    positions.set(agent.id, { x: column * COLUMN_UNIT, y: 0 });
+    place(block);
+    const shared = sharedAfter.get(agent.id);
+    if (shared) place(layoutBlock(shared, groups, cursorColumn, SERVICE_TOP));
   }
-
-  const totalColumns = Math.max(cursorColumn - CLUSTER_GAP_COLUMNS, 1);
-  const lanes = [
-    // Centred, because a shared service belongs to no single cluster.
-    { centered: true, services: graph.sharedServices },
+  if (graph.orphanServices.length > 0) {
     // Left-aligned, so unwired cards read as parked rather than part of the graph.
-    { centered: false, services: graph.orphanServices },
-  ];
-  let laneRow = deepestRow + LANE_GAP_ROWS;
-
-  for (const lane of lanes) {
-    if (lane.services.length === 0) continue;
-    const block = layoutBlock(lane.services, groups, 0, laneRow);
-    const offsetX = lane.centered
-      ? Math.max(0, Math.floor((totalColumns - block.columns) / 2)) * CELL_WIDTH
-      : 0;
-    for (const [id, position] of block.positions) {
-      positions.set(id, { x: position.x + offsetX, y: position.y });
-    }
-    laneRow = block.bottomRow + LANE_GAP_ROWS;
+    const parked = layoutBlock(
+      graph.orphanServices,
+      groups,
+      0,
+      deepestY + STACK_GAP,
+    );
+    for (const [id, position] of parked.positions) positions.set(id, position);
   }
 
   return positions;
 }
 
-/** Top-left corner of a cell. */
-function cellPosition(column: number, row: number): LayoutPosition {
-  return { x: column * CELL_WIDTH, y: row * CELL_HEIGHT };
-}
-
 /**
- * A column's groups in group order, each a frame or, with one member, a card;
- * then its ungrouped cards by label.
+ * A typed column's groups in group order, then its ungrouped cards by label.
+ * Among sandbox groups the computers come first and among MCP groups last,
+ * so a machine server sits beside the computer its runs-on edge reaches and
+ * a cloud sandbox beside the workspaces mounted on it.
  */
 function columnItems(
   column: readonly LayoutNode[],
   groups: readonly CanvasFrame[],
 ): ColumnItem[] {
-  const byId = new Map(column.map((node) => [node.id, node]));
-  const grouped = groups.filter((group) =>
-    group.memberIds.some((id) => byId.has(id)),
-  );
+  const ids = new Set(column.map((node) => node.id));
+  const grouped = groups
+    .filter((group) => group.memberIds.some((id) => ids.has(id)))
+    .sort((a, b) => machineRank(a) - machineRank(b));
   const groupedIds = new Set(grouped.flatMap((group) => group.memberIds));
 
   return [
-    ...grouped.flatMap((group): ColumnItem[] => {
-      if (group.memberIds.length > 1) return [{ frame: group }];
-      const node = byId.get(group.memberIds[0]);
-
-      return node ? [{ node: node }] : [];
-    }),
+    ...grouped.map((group) => ({ group: group })),
     ...column
       .filter((node) => !groupedIds.has(node.id))
       .map((node) => ({ node: node })),
   ];
 }
 
-/** Left edge of a column once the gutters before it have their room. */
+/** Left edge of a column: every column before it, its gutter and that gutter's room, on the grid. */
 function columnLeft(column: number, room: LaneRoom): number {
-  let left = column * CELL_WIDTH;
-  for (const [boundary, extra] of room.gutters) {
-    if (boundary <= column) left += extra;
+  let left = 0;
+  for (let index = 0; index < column; index++) {
+    left = roundUpToGrid(
+      left +
+        widthOf(index, room) +
+        MIN_GUTTER +
+        (room.gutters.get(index + 1) ?? 0),
+    );
   }
 
   return left;
@@ -332,6 +346,22 @@ function columnLeft(column: number, room: LaneRoom): number {
 /** Position of a service type in {@link SERVICE_COLUMN_ORDER}; unknown types sort last. */
 function columnRank(type: string): number {
   return COLUMN_RANKS.get(type) ?? COLUMN_RANKS.size;
+}
+
+/** Each column's width: a frame's where it holds one, else a card's. */
+function columnWidths(
+  cells: ReadonlyMap<string, LayoutPosition>,
+  frames: readonly CanvasFrame[],
+): Map<number, number> {
+  const framed = new Set(frames.flatMap((frame) => frame.memberIds));
+  const widths = new Map<number, number>();
+  for (const [id, position] of cells) {
+    const column = Math.floor(position.x / COLUMN_UNIT);
+    const width = framed.has(id) ? FRAME_WIDTH : NODE_WIDTH;
+    widths.set(column, Math.max(widths.get(column) ?? 0, width));
+  }
+
+  return widths;
 }
 
 /**
@@ -418,13 +448,6 @@ function edgeRequests(
   };
 }
 
-/** Whole cells a frame claims: its expanded height plus the usual gap, rounded up. */
-function frameRows(frame: CanvasFrame): number {
-  const gap = CELL_HEIGHT - NODE_HEIGHT;
-
-  return Math.ceil((frameSize(frame).height + gap) / CELL_HEIGHT);
-}
-
 function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
   const byType = new Map<string, LayoutNode[]>();
   for (const node of services) {
@@ -461,7 +484,7 @@ function indexGraph(
 
   const exclusiveServices = new Map<string, LayoutNode[]>();
   const orphanServices: LayoutNode[] = [];
-  const sharedServices: LayoutNode[] = [];
+  const sharedServices: CanvasGraph["sharedServices"] = [];
 
   for (const service of services) {
     const owners = ownersByService.get(service.id);
@@ -470,7 +493,7 @@ function indexGraph(
       continue;
     }
     if (owners.size > 1) {
-      sharedServices.push(service);
+      sharedServices.push({ node: service, owners: owners });
       continue;
     }
     const [ownerId] = owners;
@@ -513,14 +536,16 @@ function laneRoom(
     0,
     ...[...routes.agent.values()].map((route) => route.busDrop + BUS_INSET),
   );
-  const busGap = CELL_HEIGHT - NODE_HEIGHT + room.bus;
+  const busGap = STACK_GAP + room.bus;
   const lanesByGutter = new Map<number, number[]>();
   const addLane = (x: number, ends: readonly number[]): void => {
     // The gutter right of a column's centre and left of the next one's.
     let boundary = 0;
-    while (x > columnLeft(boundary, room) + FRAME_WIDTH / 2) boundary++;
+    while (x > columnLeft(boundary, room) + widthOf(boundary, room) / 2) {
+      boundary++;
+    }
     // A side edge between columns that are not neighbours has no one gutter.
-    const reach = columnLeft(boundary, room) + FRAME_WIDTH;
+    const reach = columnLeft(boundary, room) + widthOf(boundary, room);
     if (
       boundary === 0 ||
       ends.some((end) => end < columnLeft(boundary - 1, room) || end > reach)
@@ -542,7 +567,10 @@ function laneRoom(
   for (const [boundary, lanes] of lanesByGutter) {
     const current = room.gutters.get(boundary) ?? 0;
     const needed = Math.max(...lanes) - Math.min(...lanes) + LANE_SPACING * 2;
-    const width = CELL_WIDTH - FRAME_WIDTH + current;
+    const width =
+      columnLeft(boundary, room) -
+      columnLeft(boundary - 1, room) -
+      widthOf(boundary - 1, room);
     if (needed > width) {
       gutters.set(boundary, current + roundUpToGrid(needed - width));
     }
@@ -551,45 +579,62 @@ function laneRoom(
   return {
     bus: room.bus + roundUpToGrid(Math.max(0, busDepth - busGap)),
     gutters: gutters,
+    widths: room.widths,
   };
 }
 
 /**
- * Place services as typed columns growing right, rows growing down, starting
- * at the given cell. An empty block still claims one column for its agent.
+ * Place services as columns growing right from `originColumn`, each column
+ * stacking down from `originY` with a STACK_GAP under every box. A sandbox,
+ * workspace or MCP group takes a column of its own; any other type shares one.
+ * An empty block still claims one column for its agent.
  */
 function layoutBlock(
   services: readonly LayoutNode[],
   groups: readonly CanvasFrame[],
   originColumn: number,
-  originRow: number,
+  originY: number,
 ): LayoutBlock {
-  const columns = groupIntoColumns(services);
-  const positions = new Map<string, LayoutPosition>();
-  let bottomRow = originRow;
+  const columns = groupIntoColumns(services).flatMap((column) => {
+    const items = columnItems(column, groups);
 
-  columns.forEach((column, columnIndex) => {
-    let row = originRow;
-    for (const item of columnItems(column, groups)) {
-      const origin = cellPosition(originColumn + columnIndex, row);
-      if ("node" in item) {
-        positions.set(item.node.id, origin);
-        row += 1;
+    return items.every((item) => "group" in item)
+      ? items.map((item) => [item])
+      : [items];
+  });
+  const positions = new Map<string, LayoutPosition>();
+  let bottomY = originY;
+
+  columns.forEach((items, columnIndex) => {
+    let y = originY;
+    for (const item of items) {
+      const origin = { x: (originColumn + columnIndex) * COLUMN_UNIT, y: y };
+      if ("node" in item || item.group.memberIds.length === 1) {
+        const id = "node" in item ? item.node.id : item.group.memberIds[0];
+        positions.set(id, origin);
+        y = roundUpToGrid(y + NODE_HEIGHT + STACK_GAP);
         continue;
       }
-      for (const [id, position] of frameMemberPositions(origin, item.frame)) {
+      for (const [id, position] of frameMemberPositions(origin, item.group)) {
         positions.set(id, position);
       }
-      row += frameRows(item.frame);
+      y = roundUpToGrid(y + frameSize(item.group).height + STACK_GAP);
     }
-    bottomRow = Math.max(bottomRow, row);
+    bottomY = Math.max(bottomY, y);
   });
 
   return {
-    bottomRow: bottomRow,
+    bottomY: bottomY,
     columns: Math.max(columns.length, 1),
     positions: positions,
   };
+}
+
+/** Where a group sorts among its kind: computers first for sandboxes, last for MCP servers. */
+function machineRank(group: CanvasFrame): number {
+  if (group.key !== "machine") return 0;
+
+  return group.kind === "sandbox" ? -1 : 1;
 }
 
 /** Agents in draw order: roots by label, each followed by its sub-agents. */
@@ -661,22 +706,26 @@ function snapToGrid(position: LayoutPosition): LayoutPosition {
   };
 }
 
-/** Cell positions moved right by the gutter room before their column, and down by the bus room below the agent row. */
+/** Cell positions at their columns' real left edges, and below the agent row pushed down by the bus room. */
 function spreadCells(
   cells: ReadonlyMap<string, LayoutPosition>,
   room: LaneRoom,
 ): Map<string, LayoutPosition> {
   return new Map(
     [...cells].map(([id, position]): [string, LayoutPosition] => {
-      const column = Math.floor(position.x / CELL_WIDTH);
+      const column = Math.floor(position.x / COLUMN_UNIT);
 
       return [
         id,
         {
-          x: position.x + columnLeft(column, room) - column * CELL_WIDTH,
-          y: position.y >= CELL_HEIGHT ? position.y + room.bus : position.y,
+          x: position.x - column * COLUMN_UNIT + columnLeft(column, room),
+          y: position.y >= SERVICE_TOP ? position.y + room.bus : position.y,
         },
       ];
     }),
   );
+}
+
+function widthOf(column: number, room: LaneRoom): number {
+  return room.widths.get(column) ?? NODE_WIDTH;
 }

@@ -289,11 +289,11 @@ describe("agentEdgePath", () => {
     const [path, labelX, labelY] = agentEdgePath(
       { x: 100, y: 96 },
       { x: 300, y: 144 },
-      { busDrop: 12, gutter: null, sourceFan: 4, targetFan: 0 },
+      { busDrop: 12, gutter: null, targetFan: 0 },
     );
 
     expect(path).toBe(
-      "M104 96 L104 102 Q104 108 110 108 L292 108 Q300 108 300 116 L300 144",
+      "M100 96 L100 102 Q100 108 106 108 L292 108 Q300 108 300 116 L300 144",
     );
     expect([labelX, labelY]).toEqual([300, 126]);
   });
@@ -302,7 +302,7 @@ describe("agentEdgePath", () => {
     const [path, labelX, labelY] = agentEdgePath(
       { x: 100, y: 96 },
       { x: 340, y: 432 },
-      { busDrop: 20, gutter: { rise: 12, x: 232 }, sourceFan: 0, targetFan: 0 },
+      { busDrop: 20, gutter: { rise: 12, x: 232 }, targetFan: 0 },
     );
 
     expect(path).toBe(

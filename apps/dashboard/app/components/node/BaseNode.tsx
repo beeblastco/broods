@@ -191,32 +191,6 @@ export function BaseNode({
         </>
       )}
 
-      {(nodeType === "agent" || nodeType === "sandbox") &&
-        (() => {
-          // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-          // when network egress is allowed. Core models this as `network.mode`
-          // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
-          // fall back to a muted, slashed globe when off.
-          const networkMode = (
-            data.config?.network as { mode?: string } | undefined
-          )?.mode;
-          const isOn =
-            nodeType === "sandbox"
-              ? networkMode === "allow-all" || networkMode === "restricted"
-              : data.config?.publicAccess === true;
-
-          return (
-            <span className="absolute top-2 right-2.5 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border/70 bg-background/90">
-              <Globe
-                className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
-              />
-              {!isOn && (
-                <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
-              )}
-            </span>
-          );
-        })()}
-
       <div
         className="h-(--content-height)"
         style={{
@@ -224,8 +198,7 @@ export function BaseNode({
             contentHeight != null ? `${contentHeight * scale}px` : undefined,
         }}
       >
-        {/* Narrowed by the same scale, so the scaled header still ends at the card's edge
-            instead of running its title under the globe badge. */}
+        {/* Narrowed by the same scale, so the scaled header still ends at the card's edge. */}
         <div
           ref={contentRef}
           className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
@@ -234,7 +207,7 @@ export function BaseNode({
             "--node-scale": scale,
           }}
         >
-          <div className="flex items-center gap-1.5 pr-7 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
             {nodeType === "agent" ? (
               <DitherAvatarSVG
                 seed={data.label}
@@ -250,7 +223,8 @@ export function BaseNode({
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
             <span
-              className="text-xs font-medium text-foreground truncate min-w-0"
+              // Two lines before it clips, so a long resource name reads whole.
+              className="text-xs font-medium text-foreground line-clamp-2 wrap-anywhere min-w-0"
               title={data.label}
             >
               {data.label}
@@ -328,6 +302,32 @@ export function BaseNode({
         <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
           <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-2xs text-muted-foreground">{statusText}</span>
+          {/* Down here, not in the title's corner, so a long name keeps the full width. */}
+          {(nodeType === "agent" || nodeType === "sandbox") &&
+            (() => {
+              // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
+              // when network egress is allowed. Core models this as `network.mode`
+              // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
+              // fall back to a muted, slashed globe when off.
+              const networkMode = (
+                data.config?.network as { mode?: string } | undefined
+              )?.mode;
+              const isOn =
+                nodeType === "sandbox"
+                  ? networkMode === "allow-all" || networkMode === "restricted"
+                  : data.config?.publicAccess === true;
+
+              return (
+                <span className="relative ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90">
+                  <Globe
+                    className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
+                  />
+                  {!isOn && (
+                    <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
+                  )}
+                </span>
+              );
+            })()}
         </div>
       )}
     </div>

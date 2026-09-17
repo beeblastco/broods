@@ -16,12 +16,11 @@ import {
   type McpTransportsByNode,
 } from "../model/canvasFrames";
 import {
-  CELL_HEIGHT,
-  CELL_WIDTH,
   findFreePosition,
   GRID,
   NODE_HEIGHT,
   NODE_WIDTH,
+  SERVICE_TOP,
   tidyCanvasLayout,
   type LayoutEdge,
   type LayoutNode,
@@ -146,15 +145,13 @@ describe("tidyCanvasLayout", () => {
     expect(positions.get("m1")!.x).toBeLessThan(positions.get("s1")!.x);
   });
 
-  it("drops a shared service below both clusters, and an unwired one lower still", () => {
-    const clusterBottom = Math.max(
-      positions.get("s1")!.y,
-      positions.get("s2")!.y,
-      positions.get("k1")!.y,
+  it("puts a shared service in the row between its agents, and an unwired one below", () => {
+    expect(positions.get("w1")!.x).toBeGreaterThan(positions.get("s1")!.x);
+    expect(positions.get("w1")!.x).toBeLessThan(positions.get("s2")!.x);
+    expect(positions.get("w1")!.y).toBe(positions.get("s1")!.y);
+    expect(positions.get("x1")!.y).toBeGreaterThan(
+      positions.get("w1")!.y + NODE_HEIGHT,
     );
-
-    expect(positions.get("w1")!.y).toBeGreaterThan(clusterBottom);
-    expect(positions.get("x1")!.y).toBeGreaterThan(positions.get("w1")!.y);
   });
 
   it("keeps a sub-agent next to its parent", () => {
@@ -181,8 +178,6 @@ describe("tidyCanvasLayout", () => {
       NO_TRANSPORTS,
     );
 
-    expect(CELL_WIDTH % GRID).toBe(0);
-    expect(CELL_HEIGHT % GRID).toBe(0);
     for (const [id, position] of positions) {
       expect(second.get(id)).toEqual(position);
     }
@@ -223,7 +218,7 @@ describe("tidyCanvasLayout", () => {
     );
   });
 
-  it("stacks sandbox frames by their lowest order number", () => {
+  it("puts computers left of cloud sandboxes in one row, whatever their order", () => {
     const sandboxes = (order: string[]): LayoutNode[] => [
       node("a1", "agent", "support", { sandboxOrder: order }),
       node("cloud", "sandbox", "cloud"),
@@ -241,11 +236,15 @@ describe("tidyCanvasLayout", () => {
       NO_TRANSPORTS,
     );
 
-    expect(macFirst.get("mac")!.y).toBeLessThan(macFirst.get("cloud")!.y);
-    expect(cloudFirst.get("cloud")!.y).toBeLessThan(cloudFirst.get("mac")!.y);
+    // The cloud sandbox sits beside the workspaces a mount reaches; the
+    // computer beside the MCP servers a runs-on edge reaches.
+    for (const laid of [macFirst, cloudFirst]) {
+      expect(laid.get("mac")!.x).toBeLessThan(laid.get("cloud")!.x);
+      expect(laid.get("mac")!.y).toBe(laid.get("cloud")!.y);
+    }
   });
 
-  it("keeps a mounted pair together: beside its agent, or in the shared lane", () => {
+  it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
     // `tracy` reaches `browser-sandbox` only through the workspace that mounts
     // it, so the sandbox belongs in tracy's cluster, not the unwired lane.
     const cluster = tidyCanvasLayout(
@@ -281,15 +280,15 @@ describe("tidyCanvasLayout", () => {
     // workspace is a card in the next column, level with the frame.
     const frameTop = cluster.get("s2")!.y - FRAME_HEADER_HEIGHT;
     expect(cluster.get("s2")!.x).toBe(FRAME_PADDING);
-    expect(frameTop).toBeGreaterThanOrEqual(CELL_HEIGHT);
+    expect(frameTop).toBeGreaterThanOrEqual(SERVICE_TOP);
     expect(cluster.get("s1")!.x).toBe(FRAME_PADDING);
     expect(cluster.get("s1")!.y).toBeGreaterThan(cluster.get("s2")!.y);
     expect(cluster.get("w1")!.y).toBe(frameTop);
-    expect(cluster.get("w1")!.x).toBeGreaterThanOrEqual(CELL_WIDTH);
+    expect(cluster.get("w1")!.x).toBeGreaterThan(cluster.get("s2")!.x);
     expect(shared.get("s1")!.y).toBe(shared.get("w1")!.y);
-    expect(shared.get("s1")!.y).toBeGreaterThan(CELL_HEIGHT);
-    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBeGreaterThanOrEqual(
-      CELL_WIDTH,
+    expect(shared.get("s1")!.y).toBeGreaterThanOrEqual(SERVICE_TOP);
+    expect(shared.get("w1")!.x - shared.get("s1")!.x).toBeGreaterThan(
+      NODE_WIDTH,
     );
   });
 
@@ -335,6 +334,10 @@ describe("tidyCanvasLayout", () => {
 
     expect(overlappingPairs(boxes)).toEqual([]);
     expect(routes.agent.size).toBe(agentEdges.length);
+    // One row under the agent, so every edge is a straight drop off the bus.
+    expect(
+      [...routes.agent.values()].filter((route) => route.gutter !== null),
+    ).toEqual([]);
     for (const [id, route] of routes.agent) {
       const points = agentEdgePoints(
         handlePoint(boxes.get("a1")!, "bottom"),

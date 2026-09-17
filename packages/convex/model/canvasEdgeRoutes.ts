@@ -9,8 +9,10 @@
  * A side edge (mount, runs-on, inherited sandbox) is a step path whose
  * vertical run sits in the gap between its two ends.
  *
- * Every run gets its own lane, at least LANE_SPACING from any parallel run it
- * shares a stretch with, so no two edges draw over each other.
+ * One agent's edges share a trunk and branch off it, like an org chart. Every
+ * other run gets its own lane, at least LANE_SPACING from any parallel run of
+ * another agent or side edge it shares a stretch with, so no two edges draw
+ * over each other.
  *
  * Pure on purpose: the dashboard imports it, so no Convex server imports.
  */
@@ -41,8 +43,6 @@ export type AgentEdgeRoute = {
   busDrop: number;
   /** The gutter lane, and how far above the target the approach lane runs; null for a straight drop. */
   gutter: { rise: number; x: number } | null;
-  /** Along the agent's bottom, from its centre. */
-  sourceFan: number;
   /** Along the target's top, from its centre. */
   targetFan: number;
 };
@@ -75,15 +75,16 @@ type Leg = {
   gutterX: number | null;
   id: string;
   request: AgentEdgeRequest;
-  source: LayoutRect;
-  sourceFan: number;
   start: LayoutPosition;
   target: LayoutRect;
   targetFan: number;
 };
 
-/** A straight run taken so far: `at` is its x (vertical) or y (horizontal), `from`..`to` its extent. */
-type Run = { at: number; from: number; to: number };
+/**
+ * A straight run taken so far: `at` is its x (vertical) or y (horizontal),
+ * `from`..`to` its extent, `owner` the agent (or side edge) it belongs to.
+ */
+type Run = { at: number; from: number; owner: string; to: number };
 
 /** The corner points of an agent edge, from the agent's bottom handle to the target's top handle. */
 export function agentEdgePoints(
@@ -91,7 +92,7 @@ export function agentEdgePoints(
   target: LayoutPosition,
   route: AgentEdgeRoute,
 ): LayoutPosition[] {
-  const start = { x: source.x + route.sourceFan, y: source.y };
+  const start = source;
   const end = { x: target.x + route.targetFan, y: target.y };
   const busY = source.y + route.busDrop;
   if (!route.gutter) {
@@ -130,8 +131,10 @@ export function handlePoint(box: LayoutRect, side: HandleSide): LayoutPosition {
 /**
  * Lanes for every agent and side edge. `boxes` holds every top-level box on
  * the board (agents, cards, frames); an agent edge runs between two of them
- * and steps around the rest. Gutter lanes go first, nearest target first so a
- * deeper one takes the outer lane and never crosses the approach above it.
+ * and steps around the rest. An agent's edges share one trunk: one drop, one
+ * bus, and one lane per gutter, branching off where each one turns. Runs of
+ * different agents, and of side edges, keep apart. Gutter lanes go first,
+ * nearest target first, so a deeper one takes the outer lane.
  */
 export function routeCanvasEdges(
   boxes: ReadonlyMap<string, LayoutRect>,
@@ -168,8 +171,6 @@ export function routeCanvasEdges(
         gutterX: null,
         id: request.id,
         request: request,
-        source: source,
-        sourceFan: 0,
         start: start,
         target: target,
         targetFan: 0,
@@ -183,6 +184,7 @@ export function routeCanvasEdges(
     const toLeft = leg.start.x <= leg.end.x;
     leg.gutterX = takeLane(
       verticals,
+      leg.request.source,
       toLeft
         ? leg.target.x - GUTTER_INSET
         : leg.target.x + leg.target.width + GUTTER_INSET,
@@ -200,6 +202,7 @@ export function routeCanvasEdges(
         {
           centerX: takeLane(
             verticals,
+            edge.id,
             Math.round((edge.source.x + edge.target.x) / 2),
             0,
             Math.min(edge.source.y, edge.target.y),
@@ -209,50 +212,51 @@ export function routeCanvasEdges(
       ]),
   );
 
-  // Fans in the order the edges turn, so neighbours leave side by side.
-  for (const group of groupBy(legs, (leg) => leg.request.source)) {
-    group.sort(
-      (a, b) =>
-        (a.gutterX ?? a.end.x) - (b.gutterX ?? b.end.x) ||
-        a.end.y - b.end.y ||
-        a.id.localeCompare(b.id),
-    );
-    fanOffsets(group, group[0].source.width, LANE_SPACING).forEach(
-      (offset, index) => {
-        group[index].sourceFan = offset;
-      },
-    );
-  }
+  // Edges from different agents into one target fan across its top, in the
+  // order they arrive, so they never share the final drop.
   for (const group of groupBy(legs, (leg) => leg.request.target)) {
     group.sort(
       (a, b) =>
-        (a.gutterX ?? a.start.x + a.sourceFan) -
-          (b.gutterX ?? b.start.x + b.sourceFan) || a.id.localeCompare(b.id),
+        (a.gutterX ?? a.start.x) - (b.gutterX ?? b.start.x) ||
+        a.id.localeCompare(b.id),
     );
-    fanOffsets(group, group[0].target.width, TARGET_FAN_SPACING).forEach(
-      (offset, index) => {
-        group[index].targetFan = offset;
-      },
-    );
+    fanOffsets(group, group[0].target.width).forEach((offset, index) => {
+      group[index].targetFan = offset;
+    });
   }
 
-  // The edge reaching farthest takes the shallowest bus lane, so the shorter
-  // runs below it never cross its drop.
-  for (const leg of [...legs].sort(
-    (a, b) =>
-      a.start.y - b.start.y ||
-      busReach(b) - busReach(a) ||
-      a.id.localeCompare(b.id),
-  )) {
-    const from = leg.start.x + leg.sourceFan;
-    const to = leg.gutterX ?? leg.end.x + leg.targetFan;
-    leg.busY = takeLane(
-      horizontals,
-      leg.start.y + BUS_INSET,
-      1,
-      Math.min(from, to) - LANE_SPACING,
-      Math.max(from, to) + LANE_SPACING,
+  // One bus per agent, spanning every turn it makes; the widest bus takes the
+  // shallowest lane.
+  const buses = groupBy(legs, (leg) => leg.request.source)
+    .map((group) => {
+      const turns = group.flatMap((leg) => [
+        leg.start.x,
+        leg.gutterX ?? leg.end.x + leg.targetFan,
+      ]);
+
+      return {
+        from: Math.min(...turns) - LANE_SPACING,
+        group: group,
+        to: Math.max(...turns) + LANE_SPACING,
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.group[0].start.y - b.group[0].start.y ||
+        b.to - b.from - (a.to - a.from) ||
+        a.group[0].request.source.localeCompare(b.group[0].request.source),
     );
+  for (const bus of buses) {
+    const [first] = bus.group;
+    const busY = takeLane(
+      horizontals,
+      first.request.source,
+      first.start.y + BUS_INSET,
+      1,
+      bus.from,
+      bus.to,
+    );
+    for (const leg of bus.group) leg.busY = busY;
   }
 
   const agent = new Map<string, AgentEdgeRoute>();
@@ -265,6 +269,7 @@ export function routeCanvasEdges(
       const to = leg.end.x + leg.targetFan;
       const approachY = takeLane(
         horizontals,
+        leg.request.source,
         leg.end.y - APPROACH_INSET,
         -1,
         Math.min(gutterX, to) - LANE_SPACING,
@@ -275,7 +280,6 @@ export function routeCanvasEdges(
     agent.set(leg.id, {
       busDrop: leg.busY - leg.start.y,
       gutter: gutter,
-      sourceFan: leg.sourceFan,
       targetFan: leg.targetFan,
     });
   }
@@ -283,25 +287,16 @@ export function routeCanvasEdges(
   return { agent: agent, side: side };
 }
 
-/** How far an edge runs along its bus. */
-function busReach(leg: Leg): number {
-  return Math.abs(
-    (leg.gutterX ?? leg.end.x + leg.targetFan) - (leg.start.x + leg.sourceFan),
-  );
-}
-
 /**
  * Offsets that spread a group of edges across a box side of `width`, centred,
- * `spacing` apart, or closer when the side is too short for that.
+ * TARGET_FAN_SPACING apart, or closer when the side is too short for that.
  */
-function fanOffsets(
-  group: readonly Leg[],
-  width: number,
-  spacing: number,
-): number[] {
+function fanOffsets(group: readonly Leg[], width: number): number[] {
   const room = Math.max(width - FAN_INSET * 2, 0);
   const step =
-    group.length < 2 ? 0 : Math.min(spacing, room / (group.length - 1));
+    group.length < 2
+      ? 0
+      : Math.min(TARGET_FAN_SPACING, room / (group.length - 1));
 
   return group.map((_, index) => (index - (group.length - 1) / 2) * step);
 }
@@ -327,12 +322,14 @@ function overlaps(a: LayoutRect, b: LayoutRect): boolean {
 }
 
 /**
- * The first lane from `base` that keeps LANE_SPACING from every run it shares
- * a stretch with, stepping one way (`direction` ±1) or alternating around
- * `base` (0). Records the run it takes.
+ * The first lane from `base` that keeps LANE_SPACING from every run of
+ * another owner it shares a stretch with, stepping one way (`direction` ±1)
+ * or alternating around `base` (0). Runs of one owner may share a lane: that
+ * is an agent's trunk. Records the run it takes.
  */
 function takeLane(
   runs: Run[],
+  owner: string,
   base: number,
   direction: -1 | 0 | 1,
   from: number,
@@ -347,12 +344,13 @@ function takeLane(
     const at = base + offset * LANE_SPACING;
     const clear = runs.every(
       (run) =>
+        run.owner === owner ||
         Math.abs(run.at - at) >= LANE_SPACING ||
         run.to <= from ||
         to <= run.from,
     );
     if (clear) {
-      runs.push({ at: at, from: from, to: to });
+      runs.push({ at: at, from: from, owner: owner, to: to });
 
       return at;
     }

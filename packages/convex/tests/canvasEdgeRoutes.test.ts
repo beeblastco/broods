@@ -39,7 +39,7 @@ describe("routeCanvasEdges", () => {
     }
   });
 
-  it("takes the gutter past a card in the way, one lane per edge", () => {
+  it("runs one agent's edges on one trunk, and takes the gutter past a card in the way", () => {
     const { agent } = routeCanvasEdges(
       BOXES,
       [
@@ -49,16 +49,35 @@ describe("routeCanvasEdges", () => {
       ],
       [],
     );
-    const deep = agent.get("deep")!;
-    const deeper = agent.get("deeper")!;
 
-    // Left of the column, the deeper target on the outer lane.
-    expect(deep.gutter?.x).toBe(232);
-    expect(deeper.gutter?.x).toBe(232 - LANE_SPACING);
-    const buses = [...agent.values()].map((route) => route.busDrop);
-    expect(new Set(buses).size).toBe(buses.length);
-    const fans = [...agent.values()].map((route) => route.sourceFan);
-    expect(new Set(fans).size).toBe(fans.length);
+    expect(agent.get("top")!.gutter).toBeNull();
+    // Left of the column, one lane the two deep edges branch off.
+    expect(agent.get("deep")!.gutter?.x).toBe(232);
+    expect(agent.get("deeper")!.gutter?.x).toBe(232);
+    expect(
+      new Set([...agent.values()].map((route) => route.busDrop)).size,
+    ).toBe(1);
+  });
+
+  it("keeps two agents' buses and gutter lanes apart", () => {
+    const boxes = new Map([...BOXES, ["other", box(-240, 0)]]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [
+        { id: "mine", source: "agent", target: "deep" },
+        { id: "theirs", source: "other", target: "deeper" },
+      ],
+      [],
+    );
+    const mine = agent.get("mine")!;
+    const theirs = agent.get("theirs")!;
+
+    expect(Math.abs(mine.busDrop - theirs.busDrop)).toBeGreaterThanOrEqual(
+      LANE_SPACING,
+    );
+    expect(Math.abs(mine.gutter!.x - theirs.gutter!.x)).toBeGreaterThanOrEqual(
+      LANE_SPACING,
+    );
   });
 
   it("keeps a side edge off a gutter lane it runs beside", () => {
