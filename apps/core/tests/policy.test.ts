@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { policyInputForTool } from "../src/harness/policy.ts";
-import { normalizePolicyIds } from "../src/shared/domain/policy.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [
@@ -235,28 +234,5 @@ describe("agent policy input", () => {
         },
       },
     });
-  });
-});
-
-describe("policy attachment validation", () => {
-  it("keeps the attachment a plain list of ids", () => {
-    expect(
-      normalizePolicyIds(["policy_a", "policy_b"], "config.policies"),
-    ).toEqual(["policy_a", "policy_b"]);
-    expect(() => normalizePolicyIds([1], "config.policies")).toThrow(
-      "config.policies",
-    );
-  });
-
-  it("treats an empty attachment as no policy at all", () => {
-    expect(normalizePolicyIds(undefined, "config.policies")).toBeUndefined();
-    expect(normalizePolicyIds([], "config.policies")).toBeUndefined();
-  });
-
-  // Attaching the same policy twice must not send it to OPA twice.
-  it("drops duplicate ids", () => {
-    expect(
-      normalizePolicyIds(["policy_a", "policy_a"], "config.policies"),
-    ).toEqual(["policy_a"]);
   });
 });

@@ -64,6 +64,10 @@ type OtelValue = {
   arrayValue?: { values?: OtelValue[] };
 };
 type OtelAttribute = { key?: string; value?: OtelValue };
+type TempoTraceEntry = {
+  rows: Promise<ObservabilitySpanRow[]>;
+  expiresAtMs: number;
+};
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   DEBUG: 0,
@@ -80,6 +84,10 @@ const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 // a busy stage and left the Tracing tab "waiting" with no history at all.
 const TEMPO_SEARCH_TIMEOUT_MS = 15_000;
 const TEMPO_TRACE_TIMEOUT_MS = 5_000;
+// How long a trace lookup is shared. A trace still growing is inside the 30 min
+// NATS replay (OBS_REPLAY_WINDOW_MS) every subscribe gets, so a shared answer
+// that misses its newest spans never shows.
+const TEMPO_TRACE_SHARE_MS = 5 * 60 * 1000;
 // Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
 // polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
 // timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
@@ -111,6 +119,9 @@ const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
 >();
+// Trace lookups shared by every socket on this gateway, so a reopen, reconnect
+// or second panel does not send Tempo the same reads again.
+const tempoTraces = new Map<string, TempoTraceEntry>();
 
 export async function handleObservabilityMessage(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
@@ -413,6 +424,11 @@ export function tempoTraceRowsFromResponse(
   return rows;
 }
 
+/** Tests only: forget every shared trace lookup. */
+export function resetTempoTraceCacheForTests(): void {
+  tempoTraces.clear();
+}
+
 async function handleObservabilitySubscribe(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -530,18 +546,30 @@ async function sendBackfill(
         throw new Error("Trace history is not configured (TEMPO_URL)");
       let failures = 0;
       for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
-        // A re-subscribe or unsubscribe landed while this chunk was in
-        // flight: a newer backfill owns the stream now.
-        if (state.runs.traces !== run) return;
         failures += chunk.failures;
-        const sent = sendObs(socket, {
-          type: "backfill",
-          stream: "traces",
-          entries: chunk.rows,
-          more: true,
-        });
-        // The socket is gone: stop paying Tempo for a tab nobody is watching.
-        if (!sent) return;
+        const traces = new Map<string, ObservabilitySpanRow[]>();
+        for (const row of chunk.rows) {
+          const rows = traces.get(row.traceId);
+          if (rows) rows.push(row);
+          else traces.set(row.traceId, [row]);
+        }
+        // One trace per message, each once the buffer is empty: a chunk of LLM
+        // payloads nears the socket's backpressure limit, and passing it
+        // closes the socket.
+        for (const rows of traces.values()) {
+          await waitForObsDrain(socket, 0);
+          // A re-subscribe or unsubscribe landed meanwhile: a newer backfill
+          // owns the stream now.
+          if (state.runs.traces !== run) return;
+          const sent = sendObs(socket, {
+            type: "backfill",
+            stream: "traces",
+            entries: rows,
+            more: true,
+          });
+          // The socket is gone: stop paying Tempo for a tab nobody is watching.
+          if (!sent) return;
+        }
       }
       if (state.runs.traces !== run) return;
       sendObs(socket, {
@@ -713,7 +741,34 @@ export async function* fetchTempoBackfill(
   }
 }
 
-async function fetchTempoTrace(
+// Unfiltered rows: callers scope them. A failed lookup leaves the map, so the
+// next ask goes back to Tempo.
+function fetchTempoTrace(
+  tempoUrl: string,
+  traceId: string,
+): Promise<ObservabilitySpanRow[]> {
+  const nowMs = Date.now();
+  // Entries are only appended and share one lifetime, so expired ones lead.
+  for (const [cachedId, entry] of tempoTraces) {
+    if (entry.expiresAtMs > nowMs) break;
+    tempoTraces.delete(cachedId);
+  }
+  const cached = tempoTraces.get(traceId);
+  if (cached) return cached.rows;
+
+  const rows = requestTempoTrace(tempoUrl, traceId);
+  tempoTraces.set(traceId, {
+    rows: rows,
+    expiresAtMs: nowMs + TEMPO_TRACE_SHARE_MS,
+  });
+  rows.catch((): void => {
+    if (tempoTraces.get(traceId)?.rows === rows) tempoTraces.delete(traceId);
+  });
+
+  return rows;
+}
+
+async function requestTempoTrace(
   tempoUrl: string,
   traceId: string,
 ): Promise<ObservabilitySpanRow[]> {
@@ -890,11 +945,12 @@ function cleanupObservabilityStream(
 // sendObs shedding.
 async function waitForObsDrain(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  maxBufferedBytes = OBS_SHED_BUFFERED_BYTES,
 ): Promise<void> {
   const deadline = Date.now() + OBS_DRAIN_MAX_WAIT_MS;
   while (
     socket.readyState === WebSocket.OPEN &&
-    socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES &&
+    socket.getBufferedAmount() > maxBufferedBytes &&
     Date.now() < deadline
   ) {
     await new Promise((resolve) => setTimeout(resolve, OBS_DRAIN_POLL_MS));

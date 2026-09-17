@@ -474,20 +474,14 @@ async function login(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
-  const project =
-    optionValue(args, "--project") ??
-    process.env.BROODS_PROJECT ??
-    inferProjectName(process.cwd());
-  const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+  // Login records who you are, not what you work on. Project, stage and region
+  // land in .env.local only when passed; `init` and `dev` pick them otherwise.
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
     baseUrl: auth.baseUrl,
-    project: project,
-    stage: stage,
-    region:
-      optionValue(args, "--region") ??
-      process.env.BROODS_REGION ??
-      DEFAULT_SERVICE_REGION,
+    project: optionValue(args, "--project"),
+    stage: optionValue(args, "--stage"),
+    region: optionValue(args, "--region"),
     force: false,
   });
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
@@ -497,6 +491,10 @@ async function login(args: string[]): Promise<void> {
   if (user) console.log(`User: ${user}`);
   if (org) console.log(`Org: ${org}`);
   if (account) console.log(`Account: ${account}`);
+  const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
+  if (!project) return;
+  const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
@@ -530,9 +528,12 @@ async function whoami(args: string[]): Promise<void> {
     optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
+  const projectSet = Boolean(optionValue(args, "--project") ?? runtime.project);
   console.log(`broods v${VERSION}`);
   console.log(`Dashboard:   ${dashboardUrl}`);
-  console.log(`Project:     ${scope.project}`);
+  console.log(
+    `Project:     ${projectSet ? scope.project : `none (${scope.project} from folder name)`}`,
+  );
   console.log(`Stage:       ${scope.stage}`);
 
   let auth: StoredAuthConfig;
@@ -560,7 +561,33 @@ async function whoami(args: string[]): Promise<void> {
       `Account:     ${context.account.username} (${context.account.status})`,
     );
   }
+  // A folder name is a guess, not a scope anyone chose, so there is no remote
+  // project or key to check against yet.
+  if (!projectSet) {
+    printWarning("No project set. `broods dev` picks one.");
 
+    return;
+  }
+
+  await printRuntimeKeyStatus(client, scope, org?.name);
+
+  const projects = context.projects.map((entry) => entry.name);
+  if (!projects.includes(scope.project)) {
+    printWarning(
+      `This org has no project named ${scope.project}. It has: ${projects.length > 0 ? projects.join(", ") : "none"}.`,
+    );
+  }
+}
+
+/**
+ * Prints how the local BROODS_API_KEY compares with the key the org and stage
+ * serve. Used by `whoami`.
+ */
+async function printRuntimeKeyStatus(
+  client: BroodsSyncClient,
+  scope: ReturnType<typeof targetScope>,
+  orgName: string | undefined,
+): Promise<void> {
   // The runtime key is per stage, so a key that does not match the one this
   // org/stage serves means `run`, `logs` and `stream` are talking to a
   // different tenant than `dev` would sync to.
@@ -581,7 +608,7 @@ async function whoami(args: string[]): Promise<void> {
   } else if (!remoteKey?.apiKey) {
     console.log("Runtime key: none for this scope");
     printWarning(
-      `${scope.project}/${scope.stage} does not exist in ${org?.name ?? "this org"} yet. \`broods dev\` will create it.`,
+      `${scope.project}/${scope.stage} does not exist in ${orgName ?? "this org"} yet. \`broods dev\` will create it.`,
     );
   } else if (!localKey) {
     console.log(`Runtime key: ${remoteKey.keyHint} (not in .env.local)`);
@@ -595,13 +622,6 @@ async function whoami(args: string[]): Promise<void> {
     printWarning(
       `⚠ BROODS_API_KEY from ${keySource} belongs to a different org or stage. Run \`broods stage use ` +
         `${scope.stage}\` to repoint it.`,
-    );
-  }
-
-  const projects = context.projects.map((entry) => entry.name);
-  if (!projects.includes(scope.project)) {
-    printWarning(
-      `This org has no project named ${scope.project}. It has: ${projects.length > 0 ? projects.join(", ") : "none"}.`,
     );
   }
 }
@@ -2671,19 +2691,20 @@ async function ensureModuleType(): Promise<void> {
 async function writeLocalEnvDefaults(options: {
   dashboardUrl: string;
   baseUrl?: string;
-  project: string;
-  stage: string;
-  region: string;
+  project?: string;
+  stage?: string;
+  region?: string;
   force: boolean;
 }): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
   const values = parseEnv(current);
-  // Only pin the API base URL when it is known. Guessing one for a deployment
-  // we do not host would write an address that never resolves.
-  const nextValues: Record<string, string> = {
+  // Only pin the values that are known. Guessing a base URL for a deployment
+  // we do not host would write an address that never resolves, and guessing a
+  // project would pin a scope nobody chose.
+  const nextValues: Record<string, string | undefined> = {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
-    ...(options.baseUrl ? { BROODS_BASE_URL: options.baseUrl } : {}),
+    BROODS_BASE_URL: options.baseUrl,
     BROODS_PROJECT: options.project,
     BROODS_STAGE: options.stage,
     BROODS_REGION: options.region,
@@ -2694,6 +2715,7 @@ async function writeLocalEnvDefaults(options: {
   let changed = false;
 
   for (const [key, value] of Object.entries(nextValues)) {
+    if (!value) continue;
     if (values[key] !== undefined && !options.force) continue;
     const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
     if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;

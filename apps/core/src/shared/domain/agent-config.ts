@@ -1,6 +1,8 @@
 /**
- * Agent configuration: types for the per-agent settings object, input
- * normalization, encryption helpers, patch-merge, and redaction.
+ * Agent configuration: types for the per-agent settings object, the runtime
+ * projection of a stored config, and encryption helpers. The validation rules
+ * are the config plane's (`@broods/convex/model/agentRules`), so a config is
+ * judged the same on write and on every run.
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
@@ -15,7 +17,6 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
-import { systemModelMessageSchema } from "ai";
 import {
   createCipheriv,
   createDecipheriv,
@@ -23,100 +24,32 @@ import {
   randomBytes,
 } from "node:crypto";
 import { requireEnv } from "../env.ts";
-import { assertPublicHttpsUrl } from "../http.ts";
+import { isPlainObject } from "../object.ts";
+import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
 import {
-  assertOptionalStringArray,
-  isPlainObject,
-  isStringRecord,
-} from "../object.ts";
-import {
-  AGENT_HOOK_EVENT_NAMES,
-  type AgentHookEventName,
-} from "@broods/convex/model/accountHooks";
-import {
-  ACCOUNT_MODEL_PROVIDER_NAMES,
-  isAccountModelProviderName,
-  type AccountModelProviderName,
-} from "@broods/convex/model/modelProviders";
+  normalizeAgentConfig,
+  type AGENT_HARNESS_DEBUG_LEVELS,
+  type AGENT_HARNESS_PERMISSION_MODES,
+  type AGENT_HARNESS_TYPES,
+  type AGENT_LIFECYCLE_EVENT_NAMES,
+} from "@broods/convex/model/agentRules";
+import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type { McpOauth } from "./mcp.ts";
-import { normalizePolicyIds } from "./policy.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
-const REDACTED_SECRET_VALUE = "********";
 // `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
 export const AGENT_MAX_TURN_UNLIMITED = 0;
-const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
-const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
-const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
-const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-const AGENT_HARNESS_TYPES = [
-  "claude-code",
-  "codex",
-  "deepagents",
-  "opencode",
-  "pi",
+// A per-run `model` override may tune sampling (the Vercel AI SDK
+// `LanguageModelCallOptions`: temperature, topP, topK, maxOutputTokens,
+// reasoning, …) and provider-specific `providerOptions`. Identity/credential
+// keys are rejected.
+export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
+  "provider",
+  "modelId",
+  "output",
+  "apiKey",
 ] as const;
-const AGENT_HARNESS_DEBUG_LEVELS = [
-  "error",
-  "warn",
-  "info",
-  "debug",
-  "trace",
-] as const;
-const AGENT_HARNESS_PERMISSION_MODES = [
-  "allow-reads",
-  "allow-edits",
-  "allow-all",
-] as const;
-const AGENT_HARNESS_KEYS = new Set([
-  "activeTools",
-  "debug",
-  "inactiveTools",
-  "permissionMode",
-  "startupTimeoutMs",
-  "type",
-  "webSearch",
-]);
-const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
-// Deprecated public account-tool id prefix. It is neither a native Convex id
-// nor a provider tool name, so it must not fall through as one.
-const DEPRECATED_TOOL_ID_PREFIX = "tool_";
-
-// Tool names the harness registers itself (sandbox, skills, subagents, async
-// status). config.tools cannot claim them for a provider-defined tool.
-const RESERVED_HARNESS_TOOL_NAMES = new Set([
-  "async_status",
-  "bash",
-  "cancel_schedule",
-  "edit",
-  "glob",
-  "grep",
-  "list_schedules",
-  "load_skill",
-  "memory_save",
-  "read",
-  "run_subagent",
-  "schedule",
-  "update_schedule",
-  "write",
-]);
-
-// Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
-// full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points), whose single
-// home is packages/convex/model/accountHooks.ts.
-const AGENT_LIFECYCLE_EVENT_NAMES = [
-  "agent.started",
-  "agent.step.finished",
-  "agent.finished",
-  "agent.failed",
-  "agent.approval.required",
-  "tool.call.started",
-  "tool.call.finished",
-  "tool.result",
-  "subagent.task.started",
-  "subagent.task.finished",
-] as const satisfies readonly AgentLifecycleEventName[];
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -188,37 +121,8 @@ export interface RunOverrides {
   model?: Partial<AgentModelConfig>;
 }
 
-// A per-run `model` override may tune sampling (the Vercel AI SDK
-// `LanguageModelCallOptions`: temperature, topP, topK, maxOutputTokens,
-// reasoning, …) and provider-specific `providerOptions`. Identity/credential
-// keys are rejected.
-export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
-  "provider",
-  "modelId",
-  "output",
-  "apiKey",
-] as const;
-
 type StreamTextOptions = Parameters<typeof streamText>[0];
 export type AgentModelProviderOptions = StreamTextOptions["providerOptions"];
-export const MODEL_CONFIG_SETTING_KEYS = [
-  "provider",
-  "modelId",
-  "transcriptionModelId",
-  "providerOptions",
-  "output",
-  "maxOutputTokens",
-  "temperature",
-  "topP",
-  "topK",
-  "presencePenalty",
-  "frequencyPenalty",
-  "stopSequences",
-  "seed",
-  "reasoning",
-  "maxRetries",
-  "timeout",
-] as const;
 
 export interface AgentSkillsConfig {
   enabled?: boolean;
@@ -369,16 +273,7 @@ export interface AgentWebhookHookConfig {
 }
 
 export type AgentLifecycleEventName =
-  | "agent.started"
-  | "agent.step.finished"
-  | "agent.finished"
-  | "agent.failed"
-  | "agent.approval.required"
-  | "tool.call.started"
-  | "tool.call.finished"
-  | "tool.result"
-  | "subagent.task.started"
-  | "subagent.task.finished";
+  (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number];
 
 // The full set of events a user code hook can subscribe to (agent lifecycle plus
 // the channel points: inbound message, before-send). Re-exported from its single
@@ -424,7 +319,6 @@ export interface AgentChannelsConfig {
 }
 
 export type ChannelPartitionBy = "shared" | "conversation";
-const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
 
 /**
  * How an attached partitioned workspace splits its folders for runs arriving
@@ -434,23 +328,6 @@ const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
 export type ChannelPartition =
   | { by: "shared"; alias?: never }
   | { by: "conversation"; alias: string };
-
-// Both spellings this field used to carry, kept so a stale key throws instead
-// of sitting in config doing nothing.
-const RETIRED_PARTITION_KEYS = [
-  "workspaceIsolationScope",
-  "workspaceScope",
-] as const;
-
-// Every provider used to name its own reach list. They are one pair now, so a
-// stale key has to fail loudly here rather than sit in config doing nothing.
-// The index signature on the channel configs means nothing else catches it.
-const RETIRED_REACH_KEYS = [
-  ["allowedChatIds", "allowedChannelIds"],
-  ["allowedGroupIds", "allowedChannelIds"],
-  ["allowedGuildIds", "allowedChannelIds"],
-  ["allowedRepos", "allowedChannelIds"],
-] as const;
 
 // The adapter credential fields are spelled out rather than indexed off the
 // adapter configs so the published SDK types resolve without those packages;
@@ -594,8 +471,121 @@ interface EncryptedAgentConfig {
   ciphertext: string;
 }
 
-type AgentConfigPatch = Record<string, unknown>;
+/**
+ * Folds per-run overrides into a shallow copy of the agent config for one
+ * invocation. Model overrides ride on `model` and are read where the config
+ * already flows. `system` is handled separately as ephemeral system messages.
+ * Returns the original config untouched when there are no model overrides.
+ */
+export function applyRunOverrides(
+  config: AgentConfig,
+  overrides?: RunOverrides,
+): AgentConfig {
+  if (
+    !overrides ||
+    !(overrides.model && Object.keys(overrides.model).length > 0)
+  ) {
+    return config;
+  }
+  const next: AgentConfig = { ...config };
+  if (overrides.model && Object.keys(overrides.model).length > 0) {
+    next.model = { ...config.model, ...overrides.model };
+  }
 
+  return next;
+}
+
+// The step cap an external harness (claude-code, deepagents) is handed. Unset
+// falls back to that harness's own default; 0 lifts it there too.
+export function configuredMaxTurn(config: AgentConfig): number | undefined {
+  const maxTurn = config.agent?.maxTurn;
+
+  return maxTurn === AGENT_MAX_TURN_UNLIMITED
+    ? Number.MAX_SAFE_INTEGER
+    : maxTurn;
+}
+
+export function decodeStoredAgentConfig(value: unknown): AgentConfig {
+  return decodeStoredConfigObject(value) as AgentConfig;
+}
+
+export function decodeStoredConfigObject(
+  value: unknown,
+): Record<string, unknown> {
+  if (isEncryptedAgentConfig(value)) {
+    return decryptConfigObject(value);
+  }
+
+  throw new Error("Stored config must be encrypted");
+}
+
+// The same aes-256-gcm blob the config plane writes with Web Crypto
+// (encryptAgentConfigBlob), so decodeStoredConfigObject reads either.
+export function encryptConfigObject(config: object): EncryptedAgentConfig {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    CONFIG_ENCRYPTION_ALGORITHM,
+    agentConfigEncryptionKey(),
+    iv,
+  );
+  const plaintext = JSON.stringify(config);
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext, "utf-8"),
+    cipher.final(),
+  ]);
+
+  return {
+    encrypted: true,
+    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
+    iv: iv.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+  };
+}
+
+// Off by default: only an explicit `trace: "enabled"` on the channel appends
+// the dashboard trace link to replies. Trace collection is unaffected.
+export function isChannelTraceEnabled(
+  config: AgentConfig,
+  channelName: string | undefined,
+): boolean {
+  if (!channelName) return false;
+  const channelConfig = config.channels?.[channelName] as
+    | { trace?: "enabled" | "disabled" }
+    | undefined;
+
+  return channelConfig?.trace === "enabled";
+}
+
+// Persistent is the default so a child owns a durable conversation that can be
+// resumed and controlled; only an explicit "ephemeral" opts out.
+export function resolveSubagentMode(
+  config: AgentConfig,
+): "ephemeral" | "persistent" {
+  return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
+}
+
+export function toChannelRuntimeAgentConfig(
+  config: AgentConfig,
+  channelName: string,
+): AgentConfig {
+  const runtimeConfig = toRuntimeAgentConfig(config);
+  const channelConfig = config.channels?.[channelName];
+
+  if (!channelConfig) {
+    return runtimeConfig;
+  }
+
+  return {
+    ...runtimeConfig,
+    channels: config.channels,
+  };
+}
+
+/**
+ * The stored config cut down to the branches a run reads, re-checked with the
+ * config plane's rules so a row written before a rule tightened fails by name.
+ */
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   const {
     agent,
@@ -639,1220 +629,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
     ...(policies !== undefined ? { policies: policies } : {}),
     ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
-  });
-}
-
-export function toChannelRuntimeAgentConfig(
-  config: AgentConfig,
-  channelName: string,
-): AgentConfig {
-  const runtimeConfig = toRuntimeAgentConfig(config);
-  const channelConfig = config.channels?.[channelName];
-
-  if (!channelConfig) {
-    return runtimeConfig;
-  }
-
-  return {
-    ...runtimeConfig,
-    channels: config.channels,
-  };
-}
-
-// The step cap an external harness (claude-code, deepagents) is handed. Unset
-// falls back to that harness's own default; 0 lifts it there too.
-export function configuredMaxTurn(config: AgentConfig): number | undefined {
-  const maxTurn = config.agent?.maxTurn;
-
-  return maxTurn === AGENT_MAX_TURN_UNLIMITED
-    ? Number.MAX_SAFE_INTEGER
-    : maxTurn;
-}
-
-// Off by default: only an explicit `trace: "enabled"` on the channel appends
-// the dashboard trace link to replies. Trace collection is unaffected.
-export function isChannelTraceEnabled(
-  config: AgentConfig,
-  channelName: string | undefined,
-): boolean {
-  if (!channelName) return false;
-  const channelConfig = config.channels?.[channelName] as
-    | { trace?: "enabled" | "disabled" }
-    | undefined;
-
-  return channelConfig?.trace === "enabled";
-}
-
-// Provider-defined tool names are validated for shape only; whether the
-// configured provider actually ships the tool is resolved at registry build.
-export function isProviderToolName(toolName: string): boolean {
-  return (
-    PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
-    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
-    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
-  );
-}
-
-// Persistent is the default so a child owns a durable conversation that can be
-// resumed and controlled; only an explicit "ephemeral" opts out.
-export function resolveSubagentMode(
-  config: AgentConfig,
-): "ephemeral" | "persistent" {
-  return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
-}
-
-/**
- * Validates an agent config. `patch` checks a partial update alone, so it skips the
- * harness-needs-sandboxes rule, which only holds for the merged config; the merged
- * result is validated in full.
- */
-export function normalizeAgentConfig(
-  value: unknown,
-  options: { patch?: boolean } = {},
-): AgentConfig {
-  if (value == null) {
-    return {};
-  }
-
-  if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  normalizeAgentBehaviorConfig(config.agent);
-  normalizeHarnessConfig(config.harness);
-  normalizeModelConfig(config.model);
-  normalizeProviderConfig(config.provider);
-  if (config.sandbox !== undefined) {
-    throw new Error(
-      "config.sandbox was removed; list sandbox ids in config.sandboxes, the first is the default",
-    );
-  }
-  normalizeWorkspaceRefs(config.workspaces);
-  normalizeSandboxRefs(config.sandboxes, config.workspaces);
-  if (
-    !options.patch &&
-    isPlainObject(config.harness) &&
-    !config.sandboxes?.length
-  ) {
-    throw new Error(
-      `config.sandboxes needs at least one sandbox for the ${String(config.harness.type)} harness; the first runs it`,
-    );
-  }
-  normalizeSessionConfig(config.session);
-  normalizeHooksConfig(config.hooks);
-  normalizeChannelsConfig(config.channels);
-  normalizeToolsConfig(config.tools);
-  normalizeMcpConfig(config.mcp);
-  assertOptionalStringArray(config.denyTools, "config.denyTools");
-  normalizeSkillsConfig(config.skills);
-  normalizeSubagentConfig(config.subagent);
-  normalizeSchedulerConfig(config.scheduler);
-  if (config.policy !== undefined) {
-    throw new Error(
-      "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
-    );
-  }
-  const policies = normalizePolicyIds(config.policies, "config.policies");
-  if (policies) {
-    config.policies = policies;
-  } else {
-    delete config.policies;
-  }
-  if (isPlainObject(config.harness) && config.policies !== undefined) {
-    throw new Error("config.policies is not supported with config.harness");
-  }
-  if (
-    isPlainObject(config.harness) &&
-    isPlainObject(config.model) &&
-    isPlainObject(config.model.output) &&
-    config.model.output.type !== "text"
-  ) {
-    throw new Error(
-      "config.model.output structured output is not supported with config.harness",
-    );
-  }
-  assertOptionalBoolean(config.publicAccess, "config.publicAccess");
-
-  return config as AgentConfig;
-}
-
-export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
-  if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
-  }
-
-  validateConfigPatch(value, "config");
-
-  return value;
-}
-
-function normalizeHarnessConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.harness must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (!AGENT_HARNESS_KEYS.has(key)) {
-      throw new Error(`config.harness has unknown option "${key}"`);
-    }
-  }
-  if (
-    typeof config.type !== "string" ||
-    !AGENT_HARNESS_TYPES.includes(
-      config.type as (typeof AGENT_HARNESS_TYPES)[number],
-    )
-  ) {
-    throw new Error(
-      `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
-    );
-  }
-  assertOptionalEnum(
-    config.permissionMode,
-    "config.harness.permissionMode",
-    AGENT_HARNESS_PERMISSION_MODES,
-  );
-  assertOptionalPositiveInteger(
-    config.startupTimeoutMs,
-    "config.harness.startupTimeoutMs",
-    AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
-  );
-  assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
-  assertOptionalStringArray(config.activeTools, "config.harness.activeTools");
-  assertOptionalStringArray(
-    config.inactiveTools,
-    "config.harness.inactiveTools",
-  );
-  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
-    throw new Error(
-      "config.harness must use either activeTools or inactiveTools, not both",
-    );
-  }
-  normalizeHarnessDebugConfig(config.debug);
-  if (
-    config.type === "codex" &&
-    config.permissionMode !== undefined &&
-    config.permissionMode !== "allow-all"
-  ) {
-    throw new Error(
-      "config.harness.permissionMode must be allow-all for the codex harness",
-    );
-  }
-  if (config.type !== "codex" && config.webSearch !== undefined) {
-    throw new Error(
-      "config.harness.webSearch is only supported by the codex harness",
-    );
-  }
-  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
-    throw new Error(
-      "config.harness.startupTimeoutMs is not supported by the pi harness",
-    );
-  }
-}
-
-function normalizeHarnessDebugConfig(value: unknown): void {
-  if (value === undefined) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.harness.debug must be an object");
-  }
-  for (const key of Object.keys(value)) {
-    if (!AGENT_HARNESS_DEBUG_KEYS.has(key)) {
-      throw new Error(`config.harness.debug has unknown option "${key}"`);
-    }
-  }
-  assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
-  assertOptionalEnum(
-    value.level,
-    "config.harness.debug.level",
-    AGENT_HARNESS_DEBUG_LEVELS,
-  );
-  assertOptionalStringArray(
-    value.subsystems,
-    "config.harness.debug.subsystems",
-  );
-}
-
-function normalizeChannelsConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.channels must be an object");
-  }
-
-  const channels = value as Record<string, unknown>;
-  normalizeTelegramConfig(channels.telegram);
-  normalizeGitHubConfig(channels.github);
-  normalizeSlackConfig(channels.slack);
-  normalizeDiscordConfig(channels.discord);
-  normalizePancakeConfig(channels.pancake);
-  normalizeZaloConfig(channels.zalo);
-}
-
-function normalizeAgentBehaviorConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.agent must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalMaxTurn(config.maxTurn);
-  validateAgentSystemConfig(config.system);
-}
-
-// Any non-negative integer; 0 lifts the cap. No ceiling: a long tool job can
-// legitimately take hundreds of steps.
-function assertOptionalMaxTurn(value: unknown): void {
-  if (value === undefined) {
-    return;
-  }
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error(
-      "config.agent.maxTurn must be a non-negative integer (0 lifts the cap)",
-    );
-  }
-}
-
-function validateAgentSystemConfig(value: unknown): void {
-  if (value === undefined) {
-    return;
-  }
-  if (typeof value === "string") {
-    return;
-  }
-
-  const values = Array.isArray(value) ? value : [value];
-  for (const entry of values) {
-    const parsed = systemModelMessageSchema.safeParse(entry);
-    if (!parsed.success) {
-      throw new Error(
-        `config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${
-          parsed.error.issues[0]?.message ?? "invalid system message"
-        }`,
-      );
-    }
-  }
-}
-
-function normalizeModelConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.model must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (
-      !MODEL_CONFIG_SETTING_KEYS.includes(
-        key as (typeof MODEL_CONFIG_SETTING_KEYS)[number],
-      )
-    ) {
-      throw new Error(
-        `config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`,
-      );
-    }
-  }
-  assertOptionalProviderName(config.provider, "config.model.provider");
-  assertOptionalString(config.modelId, "config.model.modelId");
-  assertOptionalString(
-    config.transcriptionModelId,
-    "config.model.transcriptionModelId",
-  );
-  assertOptionalEnum(config.reasoning, "config.model.reasoning", [
-    "provider-default",
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ]);
-  if (
-    config.providerOptions !== undefined &&
-    !isPlainObject(config.providerOptions)
-  ) {
-    throw new Error("config.model.providerOptions must be an object");
-  }
-  normalizeModelOutputConfig(config.output);
-}
-
-function normalizeModelOutputConfig(value: unknown): void {
-  if (value === undefined) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.model.output must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.type, "config.model.output.type", [
-    "text",
-    "object",
-    "array",
-    "choice",
-    "json",
-  ]);
-  if (config.type === undefined) {
-    throw new Error(
-      "config.model.output.type must be one of: text, object, array, choice, json",
-    );
-  }
-  assertOptionalString(config.name, "config.model.output.name");
-  assertOptionalString(config.description, "config.model.output.description");
-
-  switch (config.type) {
-    case "text":
-    case "json":
-      return;
-    case "object":
-      if (!isPlainObject(config.schema)) {
-        throw new Error("config.model.output.schema must be an object");
-      }
-
-      return;
-    case "array":
-      if (!isPlainObject(config.element)) {
-        throw new Error("config.model.output.element must be an object");
-      }
-
-      return;
-    case "choice":
-      if (
-        !Array.isArray(config.options) ||
-        config.options.length === 0 ||
-        !config.options.every((entry) => typeof entry === "string")
-      ) {
-        throw new Error(
-          "config.model.output.options must be a non-empty array of strings",
-        );
-      }
-
-      return;
-  }
-}
-
-function normalizeProviderConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.provider must be an object");
-  }
-
-  for (const [providerName, providerConfig] of Object.entries(value)) {
-    if (!isAccountModelProviderName(providerName)) {
-      throw new Error(
-        `config.provider.${providerName} is not a supported provider`,
-      );
-    }
-    normalizeProviderSettings(providerName, providerConfig);
-  }
-}
-
-function normalizeProviderSettings(
-  providerName: AccountModelProviderName,
-  value: unknown,
-): void {
-  if (!isPlainObject(value)) {
-    throw new Error(`config.provider.${providerName} must be an object`);
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
-  assertOptionalString(
-    config.base_url,
-    `config.provider.${providerName}.base_url`,
-  );
-  assertOptionalString(
-    config.baseURL,
-    `config.provider.${providerName}.baseURL`,
-  );
-  const baseURL = providerBaseURL(config);
-  if (providerName === "custom" && !baseURL) {
-    throw new Error(
-      `config.provider.custom.base_url is required${baseUrlTypoHint(config)}`,
-    );
-  }
-  if (baseURL) {
-    const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
-    assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
-    // Canonicalize on `baseURL`: accepting both spellings but storing one
-    // prevents a stale `base_url` (which providerBaseURL prefers) from
-    // shadowing later `baseURL` updates.
-    config.baseURL = baseURL;
-    delete config.base_url;
-  }
-  if (config.headers !== undefined && !isStringRecord(config.headers)) {
-    throw new Error(
-      `config.provider.${providerName}.headers must be an object with string values`,
-    );
-  }
-}
-
-function providerBaseURL(config: Record<string, unknown>): string | undefined {
-  const raw =
-    typeof config.base_url === "string" ? config.base_url : config.baseURL;
-  if (typeof raw !== "string") {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-
-  return trimmed || undefined;
-}
-
-/**
- * When the base URL is missing, surface the common camel-case typo so the error
- * is actionable instead of a bare "required".
- */
-function baseUrlTypoHint(config: Record<string, unknown>): string {
-  return config.baseUrl !== undefined
-    ? ` (found "baseUrl", use "base_url" or "baseURL")`
-    : "";
-}
-
-// The first sandbox is the default and may back a workspace. A later one runs
-// with no mount, so it never backs one. Each id appears once.
-function normalizeSandboxRefs(
-  sandboxes: unknown,
-  workspaces: AgentWorkspaceRef[] | undefined,
-): asserts sandboxes is string[] | undefined {
-  assertOptionalStringArray(sandboxes, "config.sandboxes");
-  if (sandboxes === undefined) {
-    return;
-  }
-
-  const seen = new Set<string>();
-  sandboxes.forEach((sandboxId, index): void => {
-    if (seen.has(sandboxId)) {
-      throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" is listed more than once`,
-      );
-    }
-    const mounted =
-      index === 0
-        ? undefined
-        : workspaces?.find((ref): boolean => ref.sandbox === sandboxId);
-    if (mounted) {
-      throw new Error(
-        `config.sandboxes[${index}] "${sandboxId}" also backs workspace "${mounted.name}"; only the first sandbox can back a workspace`,
-      );
-    }
-    seen.add(sandboxId);
-  });
-}
-
-function normalizeWorkspaceRefs(
-  value: unknown,
-): asserts value is AgentWorkspaceRef[] | undefined {
-  if (value == null) {
-    return;
-  }
-  if (!Array.isArray(value)) {
-    throw new Error("config.workspaces must be an array");
-  }
-
-  const seenNames = new Set<string>();
-  value.forEach((entry, index) => {
-    if (!isPlainObject(entry)) {
-      throw new Error(`config.workspaces[${index}] must be an object`);
-    }
-    const ref = entry as Record<string, unknown>;
-    const name = ref.name;
-    if (typeof name !== "string" || name.trim().length === 0) {
-      throw new Error(
-        `config.workspaces[${index}].name must be a non-empty string`,
-      );
-    }
-    assertWorkspaceId(name, `config.workspaces[${index}].name`);
-    assertOptionalNonEmptyString(
-      ref.workspaceId,
-      `config.workspaces[${index}].workspaceId`,
-    );
-    if (
-      typeof ref.workspaceId !== "string" ||
-      ref.workspaceId.trim().length === 0
-    ) {
-      throw new Error(
-        `config.workspaces[${index}].workspaceId must be a non-empty string`,
-      );
-    }
-    // `null` is allowed: it forces this workspace read-only even when config.sandboxes is set.
-    if (ref.sandbox !== null && ref.sandbox !== undefined) {
-      if (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0) {
-        throw new Error(
-          `config.workspaces[${index}].sandbox must be a non-empty string or null`,
-        );
-      }
-    }
-    if (seenNames.has(name)) {
-      throw new Error(
-        `config.workspaces[${index}].name "${name}" is used more than once`,
-      );
-    }
-    seenNames.add(name);
-  });
-}
-
-function normalizeSessionConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.session must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  normalizeSessionPruningConfig(config.pruning);
-  normalizeSessionCompactionConfig(config.compaction);
-}
-
-function normalizeSessionPruningConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.session.pruning must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.session.pruning.enabled");
-}
-
-function normalizeSessionCompactionConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.session.compaction must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.session.compaction.enabled");
-  assertOptionalPositiveInteger(
-    config.maxContextLength,
-    "config.session.compaction.maxContextLength",
-    SESSION_MAX_CONTEXT_LENGTH_LIMIT,
-  );
-}
-
-function normalizeHooksConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.hooks must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  if (config.webhooks !== undefined) {
-    if (!Array.isArray(config.webhooks)) {
-      throw new Error("config.hooks.webhooks must be an array");
-    }
-    config.webhooks.forEach((webhook, index) =>
-      normalizeWebhookHookConfig(webhook, `config.hooks.webhooks[${index}]`),
-    );
-  }
-  if (config.code !== undefined) {
-    if (!Array.isArray(config.code)) {
-      throw new Error("config.hooks.code must be an array");
-    }
-    config.code.forEach((hook, index) =>
-      normalizeCodeHookConfig(hook, `config.hooks.code[${index}]`),
-    );
-  }
-}
-
-function normalizeCodeHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) {
-    throw new Error(`${path} must be an object`);
-  }
-
-  const config = value as Record<string, unknown>;
-  if (
-    typeof config.hookId !== "string" ||
-    !CONVEX_DOCUMENT_ID_PATTERN.test(config.hookId)
-  ) {
-    throw new Error(`${path}.hookId must be a native Convex document id`);
-  }
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  if (config.events !== undefined) {
-    if (
-      !Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName),
-      )
-    ) {
-      throw new Error(
-        `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
-      );
-    }
-  }
-}
-
-function normalizeWebhookHookConfig(value: unknown, path: string): void {
-  if (!isPlainObject(value)) {
-    throw new Error(`${path} must be an object`);
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `${path}.enabled`);
-  assertOptionalNonEmptyString(config.url, `${path}.url`);
-  assertOptionalNonEmptyString(config.secret, `${path}.secret`);
-  if (config.events !== undefined) {
-    if (
-      !Array.isArray(config.events) ||
-      !config.events.every(
-        (event) =>
-          typeof event === "string" &&
-          AGENT_LIFECYCLE_EVENT_NAMES.includes(
-            event as AgentLifecycleEventName,
-          ),
-      )
-    ) {
-      throw new Error(
-        `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
-      );
-    }
-  }
-
-  if (config.enabled === true) {
-    if (typeof config.url !== "string" || config.url.trim().length === 0) {
-      throw new Error(`${path}.url is required when ${path}.enabled is true`);
-    }
-    if (
-      typeof config.secret !== "string" ||
-      config.secret.trim().length === 0
-    ) {
-      throw new Error(
-        `${path}.secret is required when ${path}.enabled is true`,
-      );
-    }
-  }
-
-  if (typeof config.url === "string" && config.url.trim().length > 0) {
-    assertPublicHttpsUrl(config.url, `${path}.url`);
-  }
-}
-
-function normalizeToolsConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.tools must be an object");
-  }
-
-  for (const [toolName, toolConfig] of Object.entries(value)) {
-    normalizeToolConfig(toolName, toolConfig);
-  }
-}
-
-function normalizeMcpConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.mcp must be an object");
-  }
-
-  for (const [serverId, serverConfig] of Object.entries(value)) {
-    if (!CONVEX_DOCUMENT_ID_PATTERN.test(serverId)) {
-      throw new Error(
-        `config.mcp.${serverId} must be keyed by an MCP server id`,
-      );
-    }
-    if (!isPlainObject(serverConfig)) {
-      throw new Error(`config.mcp.${serverId} must be an object`);
-    }
-    const config = serverConfig as Record<string, unknown>;
-    assertOptionalBoolean(config.enabled, `config.mcp.${serverId}.enabled`);
-    assertOptionalBoolean(
-      config.needsApproval,
-      `config.mcp.${serverId}.needsApproval`,
-    );
-    if (config.headers !== undefined && !isStringRecord(config.headers)) {
-      throw new Error(
-        `config.mcp.${serverId}.headers must be an object of string values`,
-      );
-    }
-    if (config.oauth !== undefined && !isStringRecord(config.oauth)) {
-      throw new Error(
-        `config.mcp.${serverId}.oauth must be an object of string values`,
-      );
-    }
-  }
-}
-
-function normalizeSkillsConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.skills must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.skills.enabled");
-  assertOptionalStringArray(config.allowed, "config.skills.allowed");
-}
-
-function normalizeSubagentConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.subagent must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.subagent.enabled");
-  assertOptionalStringArray(config.allowed, "config.subagent.allowed");
-  assertOptionalEnum(config.context, "config.subagent.context", [
-    "new",
-    "inherited",
-  ]);
-  assertOptionalEnum(config.mode, "config.subagent.mode", [
-    "ephemeral",
-    "persistent",
-  ]);
-  assertOptionalBoolean(config.stream, "config.subagent.stream");
-  assertOptionalEnum(config.visibility, "config.subagent.visibility", [
-    "full",
-    "result",
-    "none",
-  ]);
-}
-
-function normalizeSchedulerConfig(value: unknown): void {
-  if (value == null) {
-    return;
-  }
-  if (!isPlainObject(value)) {
-    throw new Error("config.scheduler must be an object");
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
-}
-
-function normalizeToolConfig(toolName: string, value: unknown): void {
-  if (!isPlainObject(value)) {
-    throw new Error(`config.tools.${toolName} must be an object`);
-  }
-
-  if (!isProviderToolName(toolName)) {
-    throw new Error(`config.tools.${toolName} is not a supported tool`);
-  }
-
-  const config = value as Record<string, unknown>;
-  assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
-  assertOptionalBoolean(
-    config.needsApproval,
-    `config.tools.${toolName}.needsApproval`,
-  );
-  assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
-  if (config.config !== undefined && !isPlainObject(config.config)) {
-    throw new Error(`config.tools.${toolName}.config must be an object`);
-  }
-}
-
-function validateConfigPatch(value: unknown, path: string): void {
-  if (!isPlainObject(value)) {
-    throw new Error(`${path} must be an object`);
-  }
-
-  const candidate = value as Record<string, unknown>;
-  const withoutNulls = removeNullConfigValues(candidate);
-
-  if (path === "config") {
-    normalizeAgentConfig(withoutNulls, { patch: true });
-
-    return;
-  }
-}
-
-function removeNullConfigValues(
-  value: Record<string, unknown>,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, entry]) => {
-      if (entry === null) {
-        return [];
-      }
-      if (isPlainObject(entry)) {
-        return [[key, removeNullConfigValues(entry)]];
-      }
-
-      return [[key, entry]];
-    }),
-  );
-}
-
-function normalizeTelegramConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.telegram must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.telegram");
-  assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
-  assertOptionalString(config.botToken, "config.channels.telegram.botToken");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.telegram.webhookSecret",
-  );
-  assertOptionalString(
-    config.botUsername,
-    "config.channels.telegram.botUsername",
-  );
-  assertOptionalString(
-    config.reactionEmoji,
-    "config.channels.telegram.reactionEmoji",
-  );
-}
-
-function normalizeGitHubConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.github must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.github");
-  assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.github.webhookSecret",
-  );
-  assertOptionalString(config.appId, "config.channels.github.appId");
-  assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalString(
-    config.botUserName,
-    "config.channels.github.botUserName",
-  );
-  assertOptionalPositiveInteger(
-    config.botUserId,
-    "config.channels.github.botUserId",
-    Number.MAX_SAFE_INTEGER,
-  );
-}
-
-function normalizeSlackConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.slack must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.slack");
-  assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
-  assertOptionalString(config.botToken, "config.channels.slack.botToken");
-  assertOptionalString(
-    config.signingSecret,
-    "config.channels.slack.signingSecret",
-  );
-  assertOptionalString(
-    config.reactionEmoji,
-    "config.channels.slack.reactionEmoji",
-  );
-}
-
-function normalizeDiscordConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.discord must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.discord");
-  assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
-  assertOptionalString(config.botToken, "config.channels.discord.botToken");
-  assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
-  assertOptionalStringArray(
-    config.mentionRoleIds,
-    "config.channels.discord.mentionRoleIds",
-  );
-}
-
-function normalizePancakeConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.pancake must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.pancake");
-  assertOptionalString(config.pageId, "config.channels.pancake.pageId");
-  assertOptionalString(
-    config.pageAccessToken,
-    "config.channels.pancake.pageAccessToken",
-  );
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.pancake.webhookSecret",
-  );
-  assertOptionalString(config.senderId, "config.channels.pancake.senderId");
-}
-
-function normalizeZaloConfig(value: unknown): void {
-  if (value == null) return;
-  if (!isPlainObject(value))
-    throw new Error("config.channels.zalo must be an object");
-  const config = value as Record<string, unknown>;
-  normalizeChannelIdentityConfig(config, "config.channels.zalo");
-  assertOptionalString(config.botToken, "config.channels.zalo.botToken");
-  assertOptionalString(
-    config.webhookSecret,
-    "config.channels.zalo.webhookSecret",
-  );
-  if (typeof config.webhookSecret === "string") {
-    const length = config.webhookSecret.length;
-    if (length < 8 || length > 256) {
-      throw new Error(
-        "config.channels.zalo.webhookSecret must be 8 to 256 characters",
-      );
-    }
-  }
-}
-
-function normalizeChannelIdentityConfig(
-  config: Record<string, unknown>,
-  name: string,
-): void {
-  normalizeRequiredString(config.id, `${name}.id`);
-  assertOptionalEnum(config.trace, `${name}.trace`, [
-    "enabled",
-    "disabled",
-  ] as const);
-  for (const [retired, replacement] of RETIRED_REACH_KEYS) {
-    if (config[retired] !== undefined)
-      throw new Error(
-        `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
-      );
-  }
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    `${name}.allowedChannelIds`,
-  );
-  assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
-  for (const retired of RETIRED_PARTITION_KEYS) {
-    if (config[retired] !== undefined)
-      throw new Error(
-        `${name}.${retired} is no longer supported; use ${name}.partition`,
-      );
-  }
-  if (config.partition === undefined) {
-    return;
-  }
-  if (!isPlainObject(config.partition)) {
-    throw new Error(`${name}.partition must be an object`);
-  }
-  const partition = config.partition as Record<string, unknown>;
-  assertOptionalEnum(
-    partition.by,
-    `${name}.partition.by`,
-    CHANNEL_PARTITION_MODES,
-  );
-  if (partition.by === undefined) {
-    throw new Error(
-      `${name}.partition.by must be one of: ${CHANNEL_PARTITION_MODES.join(", ")}`,
-    );
-  }
-  if (partition.by === "shared") {
-    if ("alias" in partition && partition.alias !== undefined) {
-      throw new Error(
-        `${name}.partition.alias is only supported when ${name}.partition.by is conversation`,
-      );
-    }
-
-    return;
-  }
-  normalizeRequiredString(partition.alias, `${name}.partition.alias`);
-  assertPartitionAlias(partition.alias, `${name}.partition.alias`);
-}
-
-function assertOptionalString(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-}
-
-function assertOptionalProviderName(value: unknown, name: string): void {
-  if (value === undefined) {
-    return;
-  }
-  if (typeof value !== "string" || !isAccountModelProviderName(value)) {
-    throw new Error(
-      `${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
-    );
-  }
-}
-
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
-  }
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
-  }
-}
-
-function normalizeRequiredString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
-}
-
-function assertOptionalNonEmptyString(value: unknown, name: string): void {
-  assertOptionalString(value, name);
-  if (typeof value === "string" && value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-}
-
-function assertWorkspaceId(value: string, name: string): void {
-  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error(
-      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
-    );
-  }
-}
-
-function assertPartitionAlias(value: unknown, name: string): void {
-  if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error(
-      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
-    );
-  }
-}
-
-function assertOptionalPositiveInteger(
-  value: unknown,
-  name: string,
-  max: number,
-): void {
-  if (value === undefined) {
-    return;
-  }
-
-  if (
-    typeof value !== "number" ||
-    !Number.isSafeInteger(value) ||
-    value < 1 ||
-    value > max
-  ) {
-    throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-/**
- * Folds per-run overrides into a shallow copy of the agent config for one
- * invocation. Model overrides ride on `model` and are read where the config
- * already flows. `system` is handled separately as ephemeral system messages.
- * Returns the original config untouched when there are no model overrides.
- */
-export function applyRunOverrides(
-  config: AgentConfig,
-  overrides?: RunOverrides,
-): AgentConfig {
-  if (
-    !overrides ||
-    !(overrides.model && Object.keys(overrides.model).length > 0)
-  ) {
-    return config;
-  }
-  const next: AgentConfig = { ...config };
-  if (overrides.model && Object.keys(overrides.model).length > 0) {
-    next.model = { ...config.model, ...overrides.model };
-  }
-
-  return next;
-}
-
-export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-  return decodeStoredConfigObject(value) as AgentConfig;
-}
-
-export function decodeStoredConfigObject(
-  value: unknown,
-): Record<string, unknown> {
-  if (isEncryptedAgentConfig(value)) {
-    return decryptConfigObject(value);
-  }
-
-  throw new Error("Stored config must be encrypted");
-}
-
-export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
-  return encryptConfigObject(config);
-}
-
-// Generic config encryption (aes-256-gcm) reused by the sandbox-config store so
-// account-scoped sandbox configs (which carry envVars secrets) are also encrypted
-// at rest. Workspace configs hold no secrets and are stored in plaintext.
-export function encryptConfigObject(config: object): EncryptedAgentConfig {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(
-    CONFIG_ENCRYPTION_ALGORITHM,
-    agentConfigEncryptionKey(),
-    iv,
-  );
-  const plaintext = JSON.stringify(config);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf-8"),
-    cipher.final(),
-  ]);
-
-  return {
-    encrypted: true,
-    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
-    iv: iv.toString("base64url"),
-    tag: cipher.getAuthTag().toString("base64url"),
-    ciphertext: ciphertext.toString("base64url"),
-  };
-}
-
-export function mergeAgentConfig(
-  existing: AgentConfig,
-  patch: AgentConfigPatch,
-): AgentConfig {
-  return normalizeAgentConfig(mergeConfigValue(existing, patch));
-}
-
-// Generic deep-merge + secret redaction reused by the sandbox/workspace config
-// stores so they share the agent config's patch semantics (null deletes a key,
-// the REDACTED sentinel preserves the existing secret).
-export function mergeConfigObjects(
-  existing: object,
-  patch: object,
-): Record<string, unknown> {
-  const merged = mergeConfigValue(existing, patch);
-
-  return isPlainObject(merged) ? merged : {};
-}
-
-export function redactAgentConfig(config: AgentConfig): AgentConfig {
-  return redactSecrets(config) as AgentConfig;
-}
-
-export function redactConfigSecrets<T>(value: T): T {
-  return redactSecrets(value) as T;
+  }) as AgentConfig;
 }
 
 function agentConfigEncryptionKey(): Buffer {
@@ -1894,80 +671,5 @@ function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
     typeof value.iv === "string" &&
     typeof value.tag === "string" &&
     typeof value.ciphertext === "string"
-  );
-}
-
-function isSecretConfigKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  return (
-    normalized.includes("secret") ||
-    normalized.includes("token") ||
-    normalized.includes("privatekey") ||
-    normalized.includes("private_key") ||
-    normalized.includes("credential") ||
-    normalized.includes("kubeconfig") ||
-    normalized.includes("certificate") ||
-    normalized.includes("accesskey") ||
-    normalized.includes("access_key") ||
-    normalized.includes("password") ||
-    normalized.includes("passwd") ||
-    normalized === "apikey" ||
-    normalized === "api_key"
-  );
-}
-
-function mergeConfigValue(existing: unknown, patch: unknown): unknown {
-  if (patch === undefined) {
-    return existing;
-  }
-
-  if (patch === REDACTED_SECRET_VALUE) {
-    return existing;
-  }
-
-  if (patch === null) {
-    return undefined;
-  }
-
-  if (Array.isArray(patch) || !isPlainObject(patch)) {
-    return patch;
-  }
-
-  const existingObject = isPlainObject(existing) ? existing : {};
-  const merged = { ...existingObject };
-  for (const [key, value] of Object.entries(patch)) {
-    // JSON.parse creates "__proto__" as an own key; assigning it below
-    // would rewrite the merged object's prototype instead of a property.
-    if (key === "__proto__" || key === "constructor" || key === "prototype") {
-      continue;
-    }
-    const mergedValue = mergeConfigValue(existingObject[key], value);
-    if (mergedValue === undefined) {
-      delete merged[key];
-    } else {
-      merged[key] = mergedValue;
-    }
-  }
-
-  return merged;
-}
-
-function redactSecrets(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(redactSecrets);
-  }
-
-  if (!isPlainObject(value)) {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      isSecretConfigKey(key) && typeof entry === "string"
-        ? REDACTED_SECRET_VALUE
-        : redactSecrets(entry),
-    ]),
   );
 }
