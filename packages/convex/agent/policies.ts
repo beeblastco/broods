@@ -366,7 +366,7 @@ export const updateInternal = internalMutation({
 
 /**
  * Counts how many agent configs in a stage reference each policy.
- * Policy assignments live in `extraConfig.policy.policyIds` on `agentConfigs`.
+ * Policy assignments live in `extraConfig.policies` on `agentConfigs`.
  * @param projectId project containing the agents
  * @param stageId stage containing the agents
  * @returns record mapping policy id to the number of agents referencing it
@@ -397,8 +397,7 @@ export const usageCounts = query({
     const counts: Record<string, number> = {};
     for (const agent of agents) {
       const extra = isPlainObject(agent.extraConfig) ? agent.extraConfig : {};
-      const policy = isPlainObject(extra.policy) ? extra.policy : {};
-      const policyIds = Array.isArray(policy.policyIds) ? policy.policyIds : [];
+      const policyIds = Array.isArray(extra.policies) ? extra.policies : [];
       for (const policyId of policyIds) {
         if (typeof policyId === "string") {
           counts[policyId] = (counts[policyId] ?? 0) + 1;

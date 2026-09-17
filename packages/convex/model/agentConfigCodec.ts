@@ -22,8 +22,11 @@ const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
 export const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
+// Every AgentConfig branch with no flat column. One missing here is dropped from
+// extraConfig, so the next push re-encrypts the agent without it.
 const NESTED_BRANCHES = [
   "agent",
+  "harness",
   "model",
   "provider",
   "sandboxes",
@@ -33,10 +36,12 @@ const NESTED_BRANCHES = [
   "channels",
   "tools",
   "mcp",
+  "denyTools",
   "skills",
   "subagent",
   "policy",
   "scheduler",
+  "policies",
 ] as const;
 
 // Removed branches, kept only so a write answers with a pointer instead of dropping
@@ -293,6 +298,7 @@ function assembleNestedConfig(
 
   return {
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
+    ...(extra.harness ? { harness: extra.harness } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
     ...(provider ? { provider: provider } : {}),
     ...(extra.sandbox !== undefined ? { sandbox: extra.sandbox } : {}),
@@ -303,12 +309,14 @@ function assembleNestedConfig(
     ...(extra.channels ? { channels: extra.channels } : {}),
     ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
     ...(extra.mcp ? { mcp: extra.mcp } : {}),
+    ...(extra.denyTools ? { denyTools: extra.denyTools } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
     // Removed branch, carried so the validator refuses it by name instead of
     // the agent silently running without the policy it expected.
     ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
+    ...(extra.policies ? { policies: extra.policies } : {}),
     // Top-level scalar carried in extraConfig so it flows through every
     // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
     ...(typeof extra.publicAccess === "boolean"
