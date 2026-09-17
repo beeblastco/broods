@@ -1,6 +1,6 @@
 # Channels reference
 
-Channels are communication integrations such as Telegram, GitHub, Slack, Discord, Pancake, and Zalo. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
+Channels are communication integrations such as Telegram, GitHub, Slack, Discord, Matrix, Pancake, and Zalo. They translate provider webhooks into the shared agent input shape, then send replies through a channel-specific `ChannelActions` implementation.
 
 Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
 
@@ -9,7 +9,7 @@ Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
 - [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)
 - [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)
 
-Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
+Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Matrix, Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
 
 Customers interact with the provider bot, app, or webhook. They do not receive account secrets. There is one webhook URL, per account and channel:
 
@@ -49,6 +49,7 @@ Providers disagree on more than grouping: some fetch a URL you hand them, others
 | Telegram | fetches the URL                   | fetches the URL                  | album of 2-10, then another |
 | Slack    | Block Kit image blocks            | uploads bytes (`files.uploadV2`) | one message, one upload     |
 | Discord  | uploads bytes                     | uploads bytes                    | one multipart message       |
+| Matrix   | uploads bytes                     | uploads bytes                    | one per message             |
 | Pancake  | uploads bytes (`upload_contents`) | uploads bytes                    | one per message             |
 | Zalo     | fetches the URL                   | none                             | one per message             |
 | GitHub   | none                              | none                             | text links only             |
@@ -86,6 +87,7 @@ leaves Slack.
 | Telegram | photos, video, audio, voice notes, documents, video notes, static stickers |
 | Slack    | every file on a message, including voice clips                             |
 | Discord  | uploads, voice messages, stickers                                          |
+| Matrix   | images, video, audio, files, including encrypted ones                      |
 | Pancake  | photos and videos                                                          |
 | Zalo     | photos, stickers, voice notes                                              |
 | GitHub   | none. An image pasted into a comment stays a markdown URL in its text      |
@@ -199,6 +201,7 @@ Webhook handling splits across four files:
 | `github`   | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts)     | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)     | `webhookSecret`, `appId`, `privateKey` (+ optional `botUserName` for @-mention gating) | [GitHub Details](github.md)     |
 | `slack`    | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts)       | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)       | `botToken`, `signingSecret`                                                            | [Slack Details](slack.md)       |
 | `discord`  | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts)   | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)   | `botToken`, `publicKey`                                                                | [Discord Details](discord.md)   |
+| `matrix`   | [`src/shared/matrix-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/matrix-channel.ts)     | Broods-native                                                                    | `apiUrl`, `botToken` (+ optional `mentionText` for addressing)                         | [Matrix Details](matrix.md)     |
 | `pancake`  | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts)   | Broods-native                                                                    | `pageId`, `pageAccessToken`, `webhookSecret`                                           | [Pancake Details](pancake.md)   |
 | `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret`                                                            | [Zalo Details](zalo.md)         |
 
@@ -259,7 +262,7 @@ Runnable examples live under `packages/demos/channel-*`. Provider registration i
 
 Every channel gets these behaviors from the shared pipeline, not from the adapter:
 
-- **Bot commands.** Command-capable channels (Slack, Discord, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, `/compact [instructions]` summarizes it into a compact summary, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
+- **Bot commands.** Command-capable channels (Slack, Discord, Matrix, Telegram, and Zalo) route supported `/command` input through [`src/shared/commands.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/commands.ts) instead of the agent: `/new` and `/clear` clear the conversation context, `/compact [instructions]` summarizes it into a compact summary, and `/help` lists commands. GitHub and Pancake treat slash-looking message text as agent input.
 - **Typing + reaction.** An accepted message triggers a fire-and-forget typing indicator and a reaction where the channel supports it. Telegram and Slack reaction emoji are configurable; GitHub uses 👀; Pancake/Zalo are no-op.
 - **Tool approval auto-deny.** Core denies tools configured with `needsApproval` on channel turns, with the reason `Tool approval is only supported through the direct API.`
 - **Error replies.** If processing fails, the channel receives `Error: <message>` as the reply.

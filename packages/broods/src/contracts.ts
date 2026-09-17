@@ -13,6 +13,7 @@ import type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
@@ -37,6 +38,7 @@ export type { TelegramSource } from "../../../apps/core/src/shared/telegram-chan
 export type { GitHubSource } from "../../../apps/core/src/shared/github-channel.ts";
 export type { SlackSource } from "../../../apps/core/src/shared/slack-channel.ts";
 export type { DiscordSource } from "../../../apps/core/src/shared/discord-channel.ts";
+export type { MatrixSource } from "../../../apps/core/src/shared/matrix-channel.ts";
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
 
@@ -57,6 +59,7 @@ export type {
   AgentWebhookHookConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentMatrixChannelConfig,
   AgentPancakeChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,

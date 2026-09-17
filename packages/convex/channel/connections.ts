@@ -2,14 +2,14 @@
  * Where a channel's bot token and inbound webhook path live, for a process that
  * has to hold a connection open on the agent's behalf.
  *
- * `apps/discord-forwarder` is the first and so far only caller, because Discord
- * is the only channel that cannot deliver a regular message over HTTP: it POSTs
- * interactions (slash commands, buttons) to an endpoint, but ordinary messages
- * arrive only over a Gateway WebSocket. Telegram, Slack, Zalo, GitHub and
- * Pancake all register a plain webhook URL and need nothing held open, so they
- * have no forwarder today. The query takes a channel name anyway: the read is
- * not Discord-shaped, and Slack Socket Mode or Telegram long polling would want
- * exactly this answer.
+ * Two callers, one per channel that cannot deliver a regular message over HTTP.
+ * `apps/discord-forwarder`: Discord POSTs interactions (slash commands,
+ * buttons) to an endpoint, but ordinary messages arrive only over a Gateway
+ * WebSocket. `apps/matrix-forwarder`: Matrix has no webhooks at all, so it
+ * long-polls `/sync` against the homeserver in `apiUrl`. Telegram, Slack, Zalo,
+ * GitHub and Pancake all register a plain webhook URL and need nothing held
+ * open, so they have no forwarder today. Slack Socket Mode or Telegram long
+ * polling would want exactly this answer.
  *
  * The forwarder holds this query open as a subscription, so it reads the small
  * `channelEndpoints` projection (`model/channelEndpoints.ts` is its one writer)
@@ -31,6 +31,8 @@ import {
 const channelConnectionValidator = v.object({
   agentId: v.string(),
   agentName: v.string(),
+  /** The channel's API base URL, when set. Matrix always sets its homeserver. */
+  apiUrl: v.optional(v.string()),
   botToken: v.string(),
   /**
    * Path only. The caller joins it onto its own configured base URL, so the
@@ -67,6 +69,7 @@ export const listConnections = internalQuery({
       connections.push({
         agentId: row.agentId,
         agentName: row.agentName,
+        apiUrl: row.apiUrl,
         botToken: botToken,
         webhookPath: row.webhookPath,
       });

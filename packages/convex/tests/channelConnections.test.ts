@@ -305,6 +305,50 @@ describe("listConnections", () => {
     },
   );
 
+  test("carries the Matrix homeserver and follows a change to it", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const agentId = await seedAgent(tt, scope, "tracy", {
+      channels: {
+        matrix: { apiUrl: "https://matrix.org", botToken: "syt_token" },
+      },
+    });
+    await seedDeployment(tt, scope, "endpoint-1");
+
+    expect(await listConnections(tt, "matrix")).toEqual([
+      {
+        agentId: agentId,
+        agentName: "tracy",
+        apiUrl: "https://matrix.org",
+        botToken: "syt_token",
+        webhookPath: `/v1/webhooks/${scope.accountId}/dev/endpoint-1/matrix`,
+      },
+    ]);
+
+    // Only the URL changes, so a digest that skipped it would keep the old row.
+    const blob = await encryptAgentConfigBlob(
+      {
+        channels: {
+          matrix: { apiUrl: "https://chat.example.com", botToken: "syt_token" },
+        },
+      },
+      SECRET,
+    );
+    await tt.run(async (ctx) => {
+      await ctx.db.patch(agentId, {
+        encryptedConfig: blob.ciphertext,
+        encryptionIv: blob.iv,
+        encryptionTag: blob.tag,
+      });
+    });
+
+    const connections = await listConnections(tt, "matrix");
+
+    expect(connections.map((entry) => entry.apiUrl)).toEqual([
+      "https://chat.example.com",
+    ]);
+  });
+
   test("one channel's token never answers for another", async () => {
     const tt = t();
     const scope = await seedScope(tt);

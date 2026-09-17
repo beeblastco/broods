@@ -436,7 +436,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, matrix, pancake, zalo). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -448,7 +448,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [telegram, github, slack, discord, pancake, zalo]
+            enum: [telegram, github, slack, discord, matrix, pancake, zalo]
       responses:
         "200":
           description: Provider-specific acknowledgement
@@ -480,7 +480,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [telegram, github, slack, discord, pancake, zalo]
+            enum: [telegram, github, slack, discord, matrix, pancake, zalo]
       responses:
         "200":
           description: Provider-specific acknowledgement
@@ -4054,7 +4054,7 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, telegram, github, pancake, zalo.
+          description: Adapter name, e.g. slack, discord, matrix, telegram, github, pancake, zalo.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
@@ -4790,6 +4790,59 @@ components:
               description: >-
                 Role ids that also count as a mention, so tagging @oncall
                 reaches the agent without naming it directly.
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
+            partition:
+              type: object
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
+              required: [by]
+              properties:
+                alias:
+                  type: string
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
+                  type: string
+                  enum: [shared, conversation]
+        matrix:
+          type: object
+          description: >-
+            A Matrix account the agent speaks as, usually a person's own.
+            `apps/matrix-forwarder` syncs with the access token and posts room
+            messages to the webhook. A token requires `apiUrl`.
+          properties:
+            id:
+              type: string
+              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
+            apiUrl:
+              type: string
+              description: Homeserver base URL, e.g. https://matrix.org. Required with `botToken`.
+            botToken:
+              type: string
+              description: Access token of the Matrix account.
+            allowedChannelIds:
+              type: array
+              items:
+                type: string
+              description: Room ids this connection answers in. Every room when omitted or set to ["*"], none when empty.
+            allowedUserIds:
+              type: array
+              items:
+                type: string
+              description: Matrix user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            botName:
+              type: string
+              description: >-
+                Name the agent's replies are shown under, set as a per-message
+                profile. Unset, replies look like the account's own messages.
+            mentionText:
+              type: string
+              description: >-
+                Text that addresses the agent, e.g. @my-agent. Unset, a mention
+                of the account does. Every other message is stored as context.
             trace:
               type: string
               enum: [enabled, disabled]

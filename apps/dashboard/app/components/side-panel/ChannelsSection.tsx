@@ -2,7 +2,7 @@
 
 /**
  * Agent Details-tab channels editor. Channels are inbound webhook triggers the agent replies
- * to; this renders a schema-driven form for the six broods channel kinds so adding a
+ * to; this renders a schema-driven form for the broods channel kinds so adding a
  * field/kind is a data change, not new UI. Secrets accept `${ENV}` placeholders.
  */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
@@ -34,7 +34,7 @@ type ChannelKind = { kind: string; label: string; fields: ChannelField[] };
 
 type ChannelConfig = Record<string, unknown>;
 
-/** The six broods channel kinds and their config fields (source of truth: agent-config.ts). */
+/** The broods channel kinds and their config fields (source of truth: agent-config.ts). */
 const CHANNELS: ChannelKind[] = [
   {
     kind: "telegram",
@@ -170,6 +170,49 @@ const CHANNELS: ChannelKind[] = [
         label: "API URL",
         type: "text",
         placeholder: "https://discord.com/api/v10",
+      },
+    ],
+  },
+  {
+    kind: "matrix",
+    label: "Matrix",
+    fields: [
+      {
+        key: "apiUrl",
+        label: "Homeserver URL",
+        type: "text",
+        required: true,
+        placeholder: "https://matrix.org",
+      },
+      {
+        key: "botToken",
+        label: "Access token",
+        type: "secret",
+        required: true,
+      },
+      {
+        key: "botName",
+        label: "Reply name",
+        type: "text",
+        placeholder: "Shown on the agent's replies",
+      },
+      {
+        key: "mentionText",
+        label: "Mention text (answer only when addressed)",
+        type: "text",
+        placeholder: "@my-agent",
+      },
+      {
+        key: "allowedChannelIds",
+        label: "Allowed room IDs",
+        type: "stringList",
+        placeholder: "!abc:matrix.org, *",
+      },
+      {
+        key: "allowedUserIds",
+        label: "Allowed user IDs",
+        type: "stringList",
+        placeholder: "@alice:matrix.org, …",
       },
     ],
   },

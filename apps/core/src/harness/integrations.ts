@@ -101,6 +101,7 @@ import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createMatrixChannel } from "../shared/matrix-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,
@@ -1771,6 +1772,7 @@ function resolveCommandToken(
 function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
+    channelName === "matrix" ||
     channelName === "slack" ||
     channelName === "telegram" ||
     channelName === "zalo"
@@ -1799,6 +1801,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
+  const matrixChannel = createMatrixChannelFromConfig(config);
 
   return {
     webhookChannels: [
@@ -1808,6 +1811,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       discordChannel,
       pancakeChannel,
       zaloChannel,
+      matrixChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -2564,6 +2568,22 @@ function createPancakeChannelFromConfig(
     reachSet(channel.allowedUserIds),
     channel.senderId,
   );
+}
+
+function createMatrixChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.matrix;
+  if (!channel?.botToken || !channel.apiUrl) {
+    return null;
+  }
+
+  return createMatrixChannel(channel.apiUrl, channel.botToken, {
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    ...(channel.botName ? { botName: channel.botName } : {}),
+    ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
+  });
 }
 
 function createZaloChannelFromConfig(

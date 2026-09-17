@@ -8,7 +8,7 @@
  */
 
 import { forwarderConfigFromEnv } from "./config.ts";
-import { watchDiscordConnections } from "./connections.ts";
+import { planeConnections, watchChannelConnections } from "./connections.ts";
 import { logInfo } from "./log.ts";
 import { Forwarder } from "./supervisor.ts";
 
@@ -49,10 +49,15 @@ if (import.meta.main) {
   // process that has not opened its port yet fails the liveness probe. Readiness
   // stays false until the first snapshot lands, which is the signal that
   // belongs to Convex.
-  const watch = watchDiscordConnections(config.planes, (connections): void => {
-    forwarder.reconcile(connections);
-    ready = true;
-  });
+  const watch = watchChannelConnections(
+    "discord",
+    config.planes,
+    planeConnections,
+    (connections): void => {
+      forwarder.reconcile(connections);
+      ready = true;
+    },
+  );
 
   const shutdown = (): void => {
     void watch.close();

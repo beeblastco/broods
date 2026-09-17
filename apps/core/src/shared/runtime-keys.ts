@@ -30,6 +30,7 @@ export const TELEGRAM_INTEGRATION_PREFIX = "tg:";
 export const DISCORD_INTEGRATION_PREFIX = "discord:";
 export const PANCAKE_INTEGRATION_PREFIX = "pancake:";
 export const ZALO_INTEGRATION_PREFIX = "zalo:";
+export const MATRIX_INTEGRATION_PREFIX = "matrix:";
 
 const RESERVED_EVENT_ID_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
@@ -43,6 +44,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   PANCAKE_INTEGRATION_PREFIX,
   SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 const RESERVED_CONVERSATION_PREFIXES = [
@@ -55,6 +57,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 const CHANNEL_CONVERSATION_PREFIXES = [
@@ -64,6 +67,7 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 export interface AccountAgentScopedKey {
@@ -98,6 +102,12 @@ export function channelScopeKeyFromConversation(
     const parts = unscopedKey.split(":");
 
     return parts.length >= 3 ? parts.slice(0, 3).join(":") : unscopedKey;
+  }
+  // A thread root is an event id, and only event ids contain `$`: room ids never do.
+  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
+    const threadAt = unscopedKey.indexOf(":$");
+
+    return threadAt === -1 ? unscopedKey : unscopedKey.slice(0, threadAt);
   }
   if (unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");

@@ -1,0 +1,92 @@
+name: Build Matrix Forwarder Image
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "apps/matrix-forwarder/**"
+      # Imported by relative path: the two core modules and the Discord
+      # forwarder helpers. Nothing declares that dependency, so name them here
+      # or a rename ships broken.
+      - "apps/core/src/shared/env.ts"
+      - "apps/core/src/shared/matrix-wire.ts"
+      - "apps/discord-forwarder/src/**"
+      # Copied into the image, and it owns the config-plane query the forwarder
+      # reads, so a change there ships broken without a rebuild.
+      - "packages/convex/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/build-matrix-forwarder.yaml"
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/beeblastco/broods-matrix-forwarder
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --no-save
+
+      - name: Type-check matrix forwarder
+        run: bun run --filter @broods/matrix-forwarder check
+
+      - name: Test matrix forwarder
+        run: bun run --filter @broods/matrix-forwarder test
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/matrix-forwarder/Dockerfile
+          push: true
+          # The floating branch tag only for dev and main: a feature branch's
+          # name has a slash, which no image tag may hold, so a manual dispatch
+          # to test a branch on the dev stage ships by sha alone.
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ (github.ref_name == 'dev' || github.ref_name == 'main') && format('{0}:{1}', env.IMAGE_NAME, github.ref_name) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # One release, not one per stage: it serves every config plane. Rolled from
+  # `dev` alone because `main` only ever fast-forwards from it, so rolling on
+  # both would reinstall older code on promote.
+  rollout:
+    needs: build
+    if: ${{ github.ref_name == 'dev' }}
+    # No prerequisite gate: this image depends on neither Convex nor the AWS
+    # data plane. The grant is still required because rollout.yaml declares it
+    # and a called workflow can never hold more than its caller.
+    permissions:
+      actions: read
+    uses: ./.github/workflows/rollout.yaml
+    with:
+      workflow: deploy-matrix-forwarder.yaml
+      tag: ${{ github.sha }}
+    secrets:
+      dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

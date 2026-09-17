@@ -20,12 +20,19 @@ import { agentsInStage } from "./projectScope";
 
 /** The slice of a decrypted agent config the projection reads. */
 interface ChannelsConfigView {
-  channels?: Record<string, { botToken?: unknown } | undefined>;
+  channels?: Record<
+    string,
+    { apiUrl?: unknown; botToken?: unknown } | undefined
+  >;
 }
+
+/** What a forwarder needs to connect as one channel: its token, and for Matrix the homeserver. */
+type ChannelCredentials = Pick<DesiredEndpoint, "apiUrl" | "botToken">;
 
 interface DesiredEndpoint {
   agentId: string;
   agentName: string;
+  apiUrl?: string;
   botToken: string;
   endpointId: string;
   platform: string;
@@ -86,6 +93,7 @@ export async function refreshAccountChannelEndpoints(
       accountId: accountId,
       agentId: entry.agentId,
       agentName: entry.agentName,
+      apiUrl: entry.apiUrl,
       digest: digest,
       endpointId: entry.endpointId,
       platform: entry.platform,
@@ -152,10 +160,12 @@ async function desiredEndpoints(
       accountId,
     );
     for (const agent of agents) {
-      for (const [platform, botToken] of await agentBotTokens(agent, secret)) {
+      const credentials = await agentChannelCredentials(agent, secret);
+      for (const [platform, { apiUrl, botToken }] of credentials) {
         const entry: DesiredEndpoint = {
           agentId: agent._id,
           agentName: agent.name,
+          apiUrl: apiUrl,
           botToken: botToken,
           endpointId: deployment.endpointId,
           platform: platform,
@@ -174,14 +184,14 @@ async function desiredEndpoints(
   return desired;
 }
 
-/** Every configured (channel, botToken) pair in one agent's decrypted config. */
-async function agentBotTokens(
+/** Every channel with a bot token in one agent's decrypted config, keyed by channel. */
+async function agentChannelCredentials(
   agent: Doc<"agents">,
   secret: string,
-): Promise<Map<string, string>> {
-  const tokens = new Map<string, string>();
+): Promise<Map<string, ChannelCredentials>> {
+  const credentials = new Map<string, ChannelCredentials>();
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
-    return tokens;
+    return credentials;
   }
 
   const config = (await decryptAgentConfigBlob(
@@ -194,12 +204,15 @@ async function agentBotTokens(
   )) as ChannelsConfigView | null;
   for (const [platform, channel] of Object.entries(config?.channels ?? {})) {
     const botToken = channel?.botToken;
-    if (typeof botToken === "string" && botToken) {
-      tokens.set(platform, botToken);
-    }
+    if (typeof botToken !== "string" || !botToken) continue;
+    const apiUrl = channel?.apiUrl;
+    credentials.set(platform, {
+      apiUrl: typeof apiUrl === "string" && apiUrl ? apiUrl : undefined,
+      botToken: botToken,
+    });
   }
 
-  return tokens;
+  return credentials;
 }
 
 /** Stable content digest so an unchanged row is never rewritten. */
@@ -207,6 +220,7 @@ async function endpointDigest(entry: DesiredEndpoint): Promise<string> {
   const value = JSON.stringify([
     entry.agentId,
     entry.agentName,
+    entry.apiUrl ?? null,
     entry.botToken,
     entry.endpointId,
     entry.platform,

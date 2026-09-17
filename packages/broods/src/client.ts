@@ -97,6 +97,7 @@ export interface ChannelReference {
     | "github"
     | "slack"
     | "discord"
+    | "matrix"
     | "pancake"
     | "zalo";
   readonly agentName: string;

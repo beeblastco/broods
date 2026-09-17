@@ -109,6 +109,8 @@ export const channelEndpointsFields = {
   accountId: v.id("accounts"),
   agentId: v.string(),
   agentName: v.string(),
+  /** Plaintext API base URL, when the channel sets one. Matrix needs its homeserver. */
+  apiUrl: v.optional(v.string()),
   digest: v.string(),
   endpointId: v.string(),
   platform: v.string(),
@@ -363,7 +365,7 @@ export const channelRecordsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  /** Adapter name: slack, discord, telegram, github, pancake, zalo. */
+  /** Adapter name: slack, discord, matrix, telegram, github, pancake, zalo. */
   platform: v.string(),
   /** Provider id of the place, e.g. a Slack channel id or an owner/repo. */
   externalId: v.string(),

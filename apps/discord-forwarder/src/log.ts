@@ -7,6 +7,10 @@
 
 type LogFields = Record<string, string | number | boolean | undefined>;
 
+// The `service` label. `apps/matrix-forwarder` reuses these helpers and renames
+// it once at startup through `setLogService`.
+let service = "discord-forwarder";
+
 export function logError(message: string, fields: LogFields = {}): void {
   emit("error", message, fields);
 }
@@ -19,6 +23,10 @@ export function logWarn(message: string, fields: LogFields = {}): void {
   emit("warn", message, fields);
 }
 
+export function setLogService(name: string): void {
+  service = name;
+}
+
 /** Stable, non-reversible label for a bot token, safe to put in a log line. */
 export function tokenHint(botToken: string): string {
   return `…${botToken.slice(-4)}`;
@@ -29,7 +37,7 @@ function emit(level: string, message: string, fields: LogFields): void {
   console.log(
     JSON.stringify({
       level: level,
-      service: "discord-forwarder",
+      service: service,
       message: message,
       ...fields,
     }),

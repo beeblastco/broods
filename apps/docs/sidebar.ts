@@ -219,6 +219,11 @@ const sidebars: SidebarsConfig = {
             },
             {
               type: "doc",
+              id: "channels/matrix",
+              label: "Matrix",
+            },
+            {
+              type: "doc",
               id: "channels/pancake",
               label: "Pancake",
             },
