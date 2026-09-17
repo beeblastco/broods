@@ -1,6 +1,6 @@
 /**
- * Agent policy runtime contracts: records, ids, attachment validation, and the
- * OPA decision input/output shapes. Document validation lives in the config
+ * Agent policy runtime contracts: records, ids, and the OPA decision
+ * input/output shapes. Document validation lives in the config
  * plane (packages/convex/model/policyRules.ts); runtime decisions are made by
  * OPA using the same document/input shape.
  */
@@ -10,7 +10,6 @@ import type {
   PolicyDocument,
 } from "@broods/convex/model/policyRules";
 import { randomBytes } from "node:crypto";
-import { assertOptionalStringArray } from "../object.ts";
 
 export type {
   PolicyAction,
@@ -77,19 +76,4 @@ export interface PolicyDecision {
 
 export function createPolicyId(): string {
   return `policy_${randomBytes(12).toString("base64url")}`;
-}
-
-/**
- * Validates the policy ids attached to an agent or a channel. Attachment is
- * just the list: how hard each one bites is carried by the policy itself.
- */
-export function normalizePolicyIds(
-  value: unknown,
-  field: string,
-): string[] | undefined {
-  if (value == null) return undefined;
-  assertOptionalStringArray(value, field);
-  const ids = [...new Set(value as string[])];
-
-  return ids.length > 0 ? ids : undefined;
 }

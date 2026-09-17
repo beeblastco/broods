@@ -9,8 +9,8 @@
  */
 
 import type { ToolSet } from "ai";
+import { isProviderToolName } from "@broods/convex/model/agentRules";
 import {
-  isProviderToolName,
   resolveSubagentMode,
   type AccountModelProviderName,
   type AgentConfig,

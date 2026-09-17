@@ -3,7 +3,7 @@
  * Keep endpoint CRUD in account-manage and prompt loading in harness-processing.
  */
 
-import { readS3Text, s3ObjectExists } from "./s3.ts";
+import { readS3Text } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
 
@@ -68,18 +68,6 @@ export class SkillAuthorizationError extends Error {
 export class SkillNotFoundError extends Error {
   constructor(public readonly skillPath: string) {
     super(`Skill not found: ${skillPath}`);
-  }
-}
-
-export async function assertAccountOwnsSkillPath(
-  accountId: string,
-  skillPath: string,
-): Promise<void> {
-  parseOwnedSkillPath(accountId, skillPath);
-  if (
-    !(await s3ObjectExists(skillsBucketName(), `${skillPath}/${SKILL_FILE}`))
-  ) {
-    throw new SkillNotFoundError(skillPath);
   }
 }
 
