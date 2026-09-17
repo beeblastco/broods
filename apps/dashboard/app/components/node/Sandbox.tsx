@@ -122,6 +122,22 @@ function MachineSandboxNode({
 }
 
 /**
+ * What a chip adds after its status: "default" for the first sandbox, and for
+ * an unnumbered one how many agents share it, or that it only backs a workspace.
+ */
+function chipNote(
+  orderNumber: number | undefined,
+  sharedCount: number,
+  workspaceOnly: boolean,
+): string {
+  if (orderNumber === 1) return " · default";
+  if (orderNumber !== undefined) return "";
+  if (sharedCount > 1) return ` · shared ×${sharedCount}`;
+
+  return workspaceOnly ? ` · ${WORKSPACE_ONLY_NOTE}` : "";
+}
+
+/**
  * A card's subtitle: where it runs, then its place in `sandboxes` ("1 · default",
  * "2 · sandbox"), or "workspace only" when no agent lists it.
  */
@@ -162,16 +178,11 @@ function SandboxChip({
   const { sandboxOrderNumbers, workspaceOnlySandboxIds } = useCanvasFrames();
   const orderNumber = sandboxOrderNumbers.get(id);
   const sharedCount = useInfraAnalysis().agentRefCounts[id] ?? 0;
-  const note =
-    orderNumber === 1
-      ? " · default"
-      : orderNumber !== undefined
-        ? ""
-        : sharedCount > 1
-          ? ` · shared ×${sharedCount}`
-          : workspaceOnlySandboxIds.has(id)
-            ? ` · ${WORKSPACE_ONLY_NOTE}`
-            : "";
+  const note = chipNote(
+    orderNumber,
+    sharedCount,
+    workspaceOnlySandboxIds.has(id),
+  );
 
   return (
     <ResourceChip

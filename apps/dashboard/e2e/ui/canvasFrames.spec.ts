@@ -3,6 +3,15 @@ import { openGallery } from "../lib/gallery";
 
 type Box = { height: number; width: number; x: number; y: number };
 
+/** What sits on top at one point sampled along an edge's line. */
+type Hit = {
+  at: DOMPoint;
+  control: string | null | undefined;
+  edge: string | null | undefined;
+  /** A card at the line's first or last sample, where the edge meets it. */
+  end: boolean;
+};
+
 type Point = { x: number; y: number };
 
 const AGENTS = ["tracy", "coder", "reviewer"];
@@ -505,11 +514,11 @@ test("hovering any edge's line shows a lock or a trash: trash only where it can 
   }
 });
 
-/** The bg-* class a status dot carries. */
-function dotColor(className: string | null): string {
-  return (
-    (className ?? "").split(" ").find((name) => name.startsWith("bg-")) ?? ""
-  );
+async function boxOf(locator: Locator): Promise<Box> {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+
+  return box ?? { height: 0, width: 0, x: 0, y: 0 };
 }
 
 /** The precedence a collapsed frame applies: error, warn, active, idle. */
@@ -521,11 +530,11 @@ function colorRank(color: string): number {
   return 0;
 }
 
-async function boxOf(locator: Locator): Promise<Box> {
-  const box = await locator.boundingBox();
-  expect(box).not.toBeNull();
-
-  return box ?? { height: 0, width: 0, x: 0, y: 0 };
+/** The bg-* class a status dot carries. */
+function dotColor(className: string | null): string {
+  return (
+    (className ?? "").split(" ").find((name) => name.startsWith("bg-")) ?? ""
+  );
 }
 
 /**
@@ -570,7 +579,7 @@ async function hoverEveryEdge(
                 edgeId.startsWith(`xy-edge__${name}-`),
             );
           const owner = ownerOf(options.id);
-          const hits = Array.from({ length: 19 }, (_, index) => {
+          const hits = Array.from({ length: 19 }, (_, index): Hit => {
             const at = path
               .getPointAtLength((path.getTotalLength() * (index + 1)) / 20)
               .matrixTransform(matrix);
@@ -589,16 +598,17 @@ async function hoverEveryEdge(
                 element?.closest(".react-flow__node") != null,
             };
           });
-          const found = hits.find((hit) => hit.edge === options.id);
+          const found = hits.find((hit): boolean => hit.edge === options.id);
 
           return {
             covered: hits.every(
-              (hit) =>
+              (hit): boolean =>
                 hit.end ||
                 hit.control === options.id ||
                 (owner !== undefined &&
                   [hit.control, hit.edge].some(
-                    (other) => other != null && ownerOf(other) === owner,
+                    (other): boolean =>
+                      other != null && ownerOf(other) === owner,
                   )),
             ),
             point: found ? { x: found.at.x, y: found.at.y } : null,

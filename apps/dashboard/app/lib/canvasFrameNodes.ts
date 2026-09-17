@@ -88,7 +88,7 @@ export type FrameNodeType = Node<FrameNodeData, "frame">;
  */
 export type DrawnEdgeKind = "collapsed" | "inherited" | "runsOn";
 
-/** A side edge's drawn data: its lanes, when the router placed it, and why it is drawn, when it is. */
+/** A side edge's drawn data: its lanes once routed, and why it is drawn, if it is. */
 export type SideEdgeData = { drawn?: DrawnEdgeKind; route?: SideEdgeRoute };
 
 export type StageMcpServer = FunctionReturnType<
@@ -751,7 +751,7 @@ function sameValue(a: unknown, b: unknown, depth: number): boolean {
   );
 }
 
-/** A drawn side edge nobody stores, deletes or reconnects: an inherited mount or a runs-on edge. */
+/** A drawn side edge nobody stores, deletes or reconnects: inherited or runs-on. */
 function sideEdge(
   id: string,
   source: string,

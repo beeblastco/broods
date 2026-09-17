@@ -15,13 +15,13 @@ import {
 import { useTheme } from "next-themes";
 import { useState } from "react";
 
-const ARROW_ID_PREFIX = "deletable-arrow";
-
 /** Agent edge line and arrow color per theme; the canvas passes it as the default edge stroke. */
-export const AGENT_EDGE_STROKE = {
+export const AGENT_EDGE_STROKE: Record<"dark" | "light", string> = {
   dark: "rgba(255,255,255,0.4)",
   light: "rgba(0,0,0,0.35)",
 };
+
+const ARROW_ID_PREFIX = "deletable-arrow";
 
 /**
  * Custom edge with a hover-to-delete trash icon, or a lock badge when code owns it. A bundle

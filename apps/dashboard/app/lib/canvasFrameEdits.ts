@@ -1,7 +1,8 @@
 /**
  * Edits on the flat canvas graph that frames care about: where cards go when
  * an edit changes which frame they belong to, what a chip's menu offers, and
- * the order numbers and notes sandboxes show. Pure, so each rule is unit-tested here.
+ * the order numbers and notes sandboxes show. Pure, so each rule is unit-tested
+ * here.
  */
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { deriveGroups, type StageMcpServer } from "@/app/lib/canvasFrameNodes";
@@ -337,14 +338,16 @@ export function workspaceOnlySandboxIds(
 ): Set<string> {
   const listed = new Set([...agentSandboxOrders(nodes, edges).values()].flat());
   const sandboxIds = new Set(
-    nodes.filter((node) => node.type === "sandbox").map((node) => node.id),
+    nodes
+      .filter((node): boolean => node.type === "sandbox")
+      .map((node): string => node.id),
   );
 
   return new Set(
     edges
-      .filter((edge) => edgeKind(edge) === "mount")
-      .flatMap((edge) => [edge.source, edge.target])
-      .filter((id) => sandboxIds.has(id) && !listed.has(id)),
+      .filter((edge): boolean => edgeKind(edge) === "mount")
+      .flatMap((edge): string[] => [edge.source, edge.target])
+      .filter((id): boolean => sandboxIds.has(id) && !listed.has(id)),
   );
 }
 

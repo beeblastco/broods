@@ -16,8 +16,8 @@ export function EdgeHoverLine({
   return (
     <g
       className="[pointer-events:visibleStroke]"
-      onMouseEnter={() => onHoverChange(true)}
-      onMouseLeave={() => onHoverChange(false)}
+      onMouseEnter={(): void => onHoverChange(true)}
+      onMouseLeave={(): void => onHoverChange(false)}
     >
       {children}
     </g>

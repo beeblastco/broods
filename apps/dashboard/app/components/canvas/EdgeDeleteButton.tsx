@@ -30,7 +30,7 @@ export function EdgeDeleteButton({
 
   return (
     // 32×32 hit zone centered on the edge midpoint, with no child div intercepting clicks. Small,
-    // so it never covers a neighbouring edge's line: hovering the line reveals the control too.
+    // so it covers little of a neighbouring line; hovering the edge's own line reveals it too.
     <div
       data-edge-control="delete"
       data-edge-id={edgeId}
