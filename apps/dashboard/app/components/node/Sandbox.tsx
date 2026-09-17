@@ -83,7 +83,6 @@ function MachineSandboxNode({
   const now = useNow();
   const state = machineStateByName(machineConnections, data.label, now);
   const status = sandboxMemberStatus(data, state);
-  const liveStatus = { color: status.color, text: status.label };
 
   if (framed) {
     return (
@@ -91,7 +90,7 @@ function MachineSandboxNode({
         id={id}
         data={data}
         icon={<Monitor className="size-3.5" />}
-        status={liveStatus}
+        status={{ color: status.color, text: status.label }}
       />
     );
   }
@@ -103,7 +102,7 @@ function MachineSandboxNode({
       data={data}
       icon={<Box className="size-3.5" />}
       subtitle={orderSubtitle(MACHINE_LABEL, sandboxOrderNumbers.get(id))}
-      liveStatus={state && liveStatus}
+      liveStatus={state && status}
       showSideHandles={true}
     />
   );

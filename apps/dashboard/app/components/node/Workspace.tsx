@@ -3,7 +3,8 @@
 /**
  * Workspace node for a standalone broods workspaceConfig record, referenced by
  * agent config `workspaces[].workspaceId`. Inside a frame it draws as a chip
- * whose status line is the workspace's effective-sandbox state.
+ * whose status line is the workspace's effective-sandbox state; as a card its
+ * status row says the same.
  */
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
@@ -13,6 +14,7 @@ import {
 } from "@/app/components/node/ResourceChip";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import { workspaceMemberStatus } from "@/app/lib/memberStatus";
+import { workspaceStateText } from "@broods/convex/model/canvasLayout";
 import type { NodeProps } from "@xyflow/react";
 import { FolderOpen } from "lucide-react";
 
@@ -25,6 +27,7 @@ export function WorkspaceNode({
   const infraAnalysis = useInfraAnalysis();
   const state = infraAnalysis.workspaceStates[id];
   const sharedCount = infraAnalysis.agentRefCounts[id] ?? 0;
+  const status = workspaceChipStatus(state);
 
   if (parentId !== undefined) {
     return (
@@ -34,7 +37,7 @@ export function WorkspaceNode({
         mountable={true}
         nodeType="workspace"
         note={sharedCount > 1 ? `shared ×${sharedCount}` : undefined}
-        status={workspaceChipStatus(state)}
+        status={status}
       />
     );
   }
@@ -45,6 +48,7 @@ export function WorkspaceNode({
       nodeType="workspace"
       data={nodeData}
       icon={<FolderOpen className="size-3.5" />}
+      liveStatus={workspaceMemberStatus(state)}
       showSideHandles={true}
     />
   );
@@ -58,10 +62,9 @@ function workspaceChipStatus(
   if (!state || state.kind === "readonly") {
     return { color: status.color, text: status.label };
   }
-  const sandbox =
-    state.kind === "override"
-      ? state.sandboxLabels.join(", ")
-      : state.sandboxLabel;
 
-  return { color: status.color, text: `↳ ${sandbox} · ${status.label}` };
+  return {
+    color: status.color,
+    text: `↳ ${workspaceStateText(state.kind, state.sandboxLabels)}`,
+  };
 }

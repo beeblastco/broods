@@ -23,7 +23,7 @@ import type { MutationCtx } from "../_generated/server";
 import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
 import { applyTidyLayout } from "./canvasLayout";
-import { loadMcpTransportsByNode } from "./mcp";
+import { loadMcpServersByNode } from "./mcp";
 import { isPlainObject } from "./objects";
 
 /** The stored layout normalized and indexed by id and back-references. */
@@ -124,7 +124,7 @@ export async function syncApiAgentCanvasWiring(
     nodes: applyTidyLayout(
       reconciled.nextNodes,
       reconciled.nextEdges,
-      await loadMcpTransportsByNode(ctx, stageId),
+      await loadMcpServersByNode(ctx, stageId),
     ),
     edges: reconciled.nextEdges,
     updatedAt: Date.now(),

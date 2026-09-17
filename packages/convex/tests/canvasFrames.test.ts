@@ -6,13 +6,15 @@ import {
   frameOriginOf,
   framesOf,
   frameSize,
-  inheritedSandboxIds,
+  agentRefCounts,
+  runsOnSandboxIds,
   sandboxOrderNumbers,
-  type McpTransportsByNode,
+  workspaceSandboxIds,
+  type McpServersByNode,
 } from "../model/canvasFrames";
 import type { LayoutEdge, LayoutNode } from "../model/canvasLayout";
 
-const NO_TRANSPORTS: McpTransportsByNode = new Map();
+const NO_SERVERS: McpServersByNode = new Map();
 
 function node(
   id: string,
@@ -31,13 +33,13 @@ describe("frameGroupOf", () => {
     expect(
       frameGroupOf(
         node("s1", "sandbox", { config: { provider: "machine" } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "machine", kind: "sandbox", label: "Your computer" });
     expect(
       frameGroupOf(
         node("s2", "sandbox", { config: { provider: "lambda" } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "cloud", kind: "sandbox", label: "Cloud sandbox" });
   });
@@ -46,13 +48,15 @@ describe("frameGroupOf", () => {
     expect(
       frameGroupOf(
         node("w1", "workspace", { config: { storage: { provider: "s3" } } }),
-        NO_TRANSPORTS,
+        NO_SERVERS,
       ),
     ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces · S3" });
   });
 
   it("groups MCP servers by saved transport, and unsaved ones apart", () => {
-    const transports = new Map([["m1", "machine" as const]]);
+    const transports: McpServersByNode = new Map([
+      ["m1", { sandbox: null, transport: "machine" }],
+    ]);
 
     expect(frameGroupOf(node("m1", "mcp"), transports)).toEqual({
       key: "machine",
@@ -67,8 +71,8 @@ describe("frameGroupOf", () => {
   });
 
   it("never frames a database or a skill", () => {
-    expect(frameGroupOf(node("d1", "database"), NO_TRANSPORTS)).toBeNull();
-    expect(frameGroupOf(node("k1", "skill"), NO_TRANSPORTS)).toBeNull();
+    expect(frameGroupOf(node("d1", "database"), NO_SERVERS)).toBeNull();
+    expect(frameGroupOf(node("k1", "skill"), NO_SERVERS)).toBeNull();
   });
 });
 
@@ -83,7 +87,7 @@ describe("deriveCanvasGroups", () => {
         node("s3", "sandbox"),
       ],
       [edge("a1", "s1"), edge("a2", "s2"), edge("a1", "s3"), edge("a2", "s3")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(groups.map((group) => [group.id, group.memberIds])).toEqual([
@@ -103,9 +107,9 @@ describe("deriveCanvasGroups", () => {
     const one = [edge("a1", "s1"), edge("a1", "mac")];
     const two = [...one, edge("a1", "s2")];
 
-    expect(framesOf(deriveCanvasGroups(nodes, one, NO_TRANSPORTS))).toEqual([]);
+    expect(framesOf(deriveCanvasGroups(nodes, one, NO_SERVERS))).toEqual([]);
     expect(
-      framesOf(deriveCanvasGroups(nodes, two, NO_TRANSPORTS)).map(
+      framesOf(deriveCanvasGroups(nodes, two, NO_SERVERS)).map(
         (frame) => frame.memberIds,
       ),
     ).toEqual([["s1", "s2"]]);
@@ -123,7 +127,7 @@ describe("deriveCanvasGroups", () => {
         edge("a1", "w1"),
         { id: "mount:w1-left-s1-right", source: "w1", target: "s1" },
       ],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(frames.flatMap((frame) => frame.memberIds).sort()).toEqual([
@@ -146,7 +150,7 @@ describe("deriveCanvasGroups", () => {
     ];
 
     expect(
-      deriveCanvasGroups(nodes, edges, NO_TRANSPORTS).map(
+      deriveCanvasGroups(nodes, edges, NO_SERVERS).map(
         (frame) => frame.memberIds,
       ),
     ).toEqual([["mac"], ["cloud-b", "cloud-a"]]);
@@ -182,8 +186,8 @@ describe("frame geometry", () => {
   });
 });
 
-describe("inheritedSandboxIds", () => {
-  it("maps an unmounted workspace to its agent's default sandbox", () => {
+describe("workspaceSandboxIds", () => {
+  it("reads a mount, a read-only flag, and otherwise the agent's default", () => {
     const nodes = [
       node("a1", "agent", { sandboxOrder: ["s2", "s1"] }),
       node("s1", "sandbox"),
@@ -201,6 +205,71 @@ describe("inheritedSandboxIds", () => {
       { id: "mount:w2-left-s1-right", source: "w2", target: "s1" },
     ];
 
-    expect([...inheritedSandboxIds(nodes, edges)]).toEqual([["w1", "s2"]]);
+    expect([...workspaceSandboxIds(nodes, edges)]).toEqual([
+      ["w1", { kind: "inherited", sandboxIds: ["s2"] }],
+      ["w2", { kind: "override", sandboxIds: ["s1"] }],
+      ["w3", { kind: "readonly" }],
+    ]);
+  });
+
+  it("lists each wired agent's own default when agents differ", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("a2", "agent"),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("w1", "workspace"),
+    ];
+    const edges = [
+      edge("a2", "s2"),
+      edge("a1", "s1"),
+      edge("a2", "w1"),
+      edge("a1", "w1"),
+    ];
+
+    expect(workspaceSandboxIds(nodes, edges).get("w1")).toEqual({
+      kind: "inherited",
+      sandboxIds: ["s1", "s2"],
+    });
+  });
+});
+
+describe("agentRefCounts", () => {
+  it("counts agents by sandboxes, workspaces and the sandboxes those mount", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("a2", "agent"),
+      node("s1", "sandbox"),
+      node("w1", "workspace"),
+    ];
+    const edges = [
+      edge("a1", "s1"),
+      edge("a1", "w1"),
+      edge("a2", "w1"),
+      { id: "mount:w1-left-s1-right", source: "w1", target: "s1" },
+    ];
+
+    expect(agentRefCounts(nodes, edges)).toEqual(
+      new Map([
+        ["s1", 2],
+        ["w1", 2],
+      ]),
+    );
+  });
+});
+
+describe("runsOnSandboxIds", () => {
+  it("finds a machine server's sandbox by mount name or label", () => {
+    const nodes = [
+      node("mac", "sandbox", { mountName: "kien-mac" }),
+      node("m1", "mcp"),
+      node("m2", "mcp"),
+    ];
+    const servers: McpServersByNode = new Map([
+      ["m1", { sandbox: "kien-mac", transport: "machine" }],
+      ["m2", { sandbox: null, transport: "http" }],
+    ]);
+
+    expect([...runsOnSandboxIds(nodes, servers)]).toEqual([["m1", "mac"]]);
   });
 });

@@ -55,6 +55,9 @@ const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 /** Remote tool names, as constrained by the MCP spec's SHOULD plus our cap. */
 const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** Where a saved MCP server runs: its transport, and a machine server's sandbox name. */
+export type McpPlacement = { sandbox: string | null; transport: McpTransport };
+
 export type McpTransport = "http" | "hosted" | "machine";
 
 /**
@@ -146,25 +149,32 @@ export function authorizationHeaderName(
 }
 
 /**
- * Transport of each active server in a stage, keyed by the canvas node it
- * owns. Canvas frames group MCP nodes by it, so every tidy writer passes it.
+ * Transport and sandbox of each active server in a stage, keyed by the canvas
+ * node it owns. Canvas frames group MCP nodes by transport, and the layout
+ * keeps a machine server beside the sandbox it runs on, so every tidy writer
+ * passes it.
  */
-export async function loadMcpTransportsByNode(
+export async function loadMcpServersByNode(
   ctx: QueryCtx,
   stageId: Id<"stages">,
-): Promise<Map<string, McpTransport>> {
+): Promise<Map<string, McpPlacement>> {
   const servers = await ctx.db
     .query("mcp")
     .withIndex("by_stageId_and_status", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .collect();
-  const transports = new Map<string, McpTransport>();
+  const placements = new Map<string, McpPlacement>();
   for (const server of servers) {
-    if (server.nodeId) transports.set(server.nodeId, server.transport);
+    if (server.nodeId) {
+      placements.set(server.nodeId, {
+        sandbox: server.sandbox ?? null,
+        transport: server.transport,
+      });
+    }
   }
 
-  return transports;
+  return placements;
 }
 
 /**

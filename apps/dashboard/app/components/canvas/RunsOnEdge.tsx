@@ -1,6 +1,6 @@
 "use client";
 
-import type { SideEdgeData } from "@/app/lib/canvasFrameNodes";
+import { sideEdgePath, type SideEdgeData } from "@/app/lib/canvasFrameNodes";
 import {
   BaseEdge,
   getSmoothStepPath,
@@ -25,16 +25,22 @@ export function RunsOnEdge({
   targetPosition,
   style,
 }: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
-  const [edgePath] = getSmoothStepPath({
-    sourceX: sourceX,
-    sourceY: sourceY,
-    targetX: targetX,
-    targetY: targetY,
-    sourcePosition: sourcePosition,
-    targetPosition: targetPosition,
-    borderRadius: 16,
-    centerX: data?.route?.centerX,
-  });
+  // Fanned and laned by the router, so two servers on one computer never share a leg.
+  const [edgePath] = data?.route
+    ? sideEdgePath(
+        { x: sourceX, y: sourceY },
+        { x: targetX, y: targetY },
+        data.route,
+      )
+    : getSmoothStepPath({
+        sourceX: sourceX,
+        sourceY: sourceY,
+        targetX: targetX,
+        targetY: targetY,
+        sourcePosition: sourcePosition,
+        targetPosition: targetPosition,
+        borderRadius: 16,
+      });
 
   return (
     <BaseEdge

@@ -7,8 +7,9 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { findLaterSandboxMount } from "@broods/convex/model/agentRules";
 import {
+  agentRefCounts,
   agentSandboxOrder,
-  inheritedSandboxIds,
+  workspaceSandboxIds,
 } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 
@@ -33,10 +34,11 @@ export type AgentRuntimeRefs = {
 /**
  * Effective-sandbox state for a workspace, resolved from the broods cascade
  * `ws.sandbox (override) ?? config.sandboxes[0] (inherited) ?? none (read-only)`.
+ * Inherited names every distinct default of the agents wired to it.
  */
 export type WorkspaceSandboxState =
   | { kind: "override"; sandboxLabels: string[] }
-  | { kind: "inherited"; sandboxLabel: string }
+  | { kind: "inherited"; sandboxLabels: string[] }
   | { kind: "readonly" };
 
 /** Per-node infra annotations derived from the canvas graph for badge rendering. */
@@ -133,80 +135,23 @@ export function analyzeCanvasInfra(
   const runtimeNodes = nodes as RuntimeNode[];
   const byId = new Map(runtimeNodes.map((node) => [node.id, node]));
   const adjacency = buildAdjacency(edges);
-  const agents = runtimeNodes.filter((node) => node.type === "agent");
+  const labelsOf = (ids: readonly string[]): string[] =>
+    ids.flatMap((id) => {
+      const node = byId.get(id);
 
-  // resource node id → set of agent ids that reference it (for shared counts)
-  const refAgents = new Map<string, Set<string>>();
-  const addRef = (nodeId: string, agentId: string): void => {
-    if (!refAgents.has(nodeId)) refAgents.set(nodeId, new Set());
-    refAgents.get(nodeId)!.add(agentId);
-  };
-
-  for (const agent of agents) {
-    const directNodes = neighbors(agent.id, adjacency)
-      .map((id) => byId.get(id))
-      .filter((node): node is RuntimeNode => !!node);
-    for (const sandboxId of agentSandboxOrder(agent, runtimeNodes, edges)) {
-      addRef(sandboxId, agent.id);
-    }
-
-    for (const workspace of directNodes.filter(
-      (node) => node.type === "workspace",
-    )) {
-      addRef(workspace.id, agent.id);
-
-      // The agent also references each sandbox this workspace is mounted into (override).
-      for (const mount of neighbors(workspace.id, adjacency)) {
-        if (byId.get(mount)?.type === "sandbox") addRef(mount, agent.id);
-      }
-    }
-  }
-
-  const agentRefCounts: Record<string, number> = {};
-  for (const [nodeId, agentSet] of refAgents) {
-    agentRefCounts[nodeId] = agentSet.size;
-  }
-
-  const inherited = inheritedSandboxIds(runtimeNodes, edges);
+      return node ? [nodeLabel(node)] : [];
+    });
   const workspaceStates: Record<string, WorkspaceSandboxState> = {};
-  for (const node of runtimeNodes) {
-    if (node.type !== "workspace") continue;
-
-    const mountSandboxes = neighbors(node.id, adjacency)
-      .map((id) => byId.get(id))
-      .filter((n): n is RuntimeNode => n?.type === "sandbox");
-
-    if (mountSandboxes.length > 0) {
-      workspaceStates[node.id] = {
-        kind: "override",
-        sandboxLabels: mountSandboxes.map(nodeLabel),
-      };
-
-      continue;
-    }
-
-    // No mount edge. A CLI-resolved `readOnly` flag (e.g. a `sandbox: null` ref
-    // with no other writer) forces read-only even when a directly-wired agent has
-    // a default sandbox. The pure-canvas graph can't express that intent.
-    if (node.data.readOnly === true) {
-      workspaceStates[node.id] = { kind: "readonly" };
-
-      continue;
-    }
-
-    // Otherwise inherit a directly-wired agent's default sandbox, else read-only.
-    const inheritedId = inherited.get(node.id);
-    const inheritedFrom =
-      inheritedId === undefined ? undefined : byId.get(inheritedId);
-
-    workspaceStates[node.id] = inheritedFrom
-      ? { kind: "inherited", sandboxLabel: nodeLabel(inheritedFrom) }
-      : { kind: "readonly" };
+  for (const [id, state] of workspaceSandboxIds(runtimeNodes, edges)) {
+    workspaceStates[id] =
+      state.kind === "readonly"
+        ? state
+        : { kind: state.kind, sandboxLabels: labelsOf(state.sandboxIds) };
   }
 
   return {
     workspaceStates: workspaceStates,
-    agentRefCounts: agentRefCounts,
+    agentRefCounts: Object.fromEntries(agentRefCounts(runtimeNodes, edges)),
     connectedToAgent: resolveAgentReachability(runtimeNodes, adjacency),
   };
 }

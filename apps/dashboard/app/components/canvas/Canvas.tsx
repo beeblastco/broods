@@ -51,6 +51,7 @@ import {
   applyFramedNodeChanges,
   buildFramedGraph,
   expandBundleEdgeRemoval,
+  serversByNode,
   type FramedGraph,
 } from "@/app/lib/canvasFrameNodes";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -453,15 +454,8 @@ function CanvasInner({
     : ("skip" as const);
   const canvasLayout = useQuery(api.canvas.getByProject, stageArgs);
   const mcpServers = useQuery(api.mcp.listByStage, stageArgs);
-  const mcpTransports = useMemo(
-    () =>
-      new Map(
-        (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
-      ),
-    [mcpServers],
-  );
   const mcpServersByNode = useMemo(
-    () => new Map((mcpServers ?? []).map((server) => [server.nodeId, server])),
+    () => serversByNode(mcpServers ?? []),
     [mcpServers],
   );
   const machineConnections = useQuery(
@@ -1114,14 +1108,15 @@ function CanvasInner({
   );
 
   /**
-   * Re-lay the whole graph: agent clusters of typed columns, shared services in
-   * a lane below. Cards you dragged yourself move too. That is the point.
+   * Re-lay the whole graph: each agent over a row of its services, shared
+   * services between the agents that use them, unwired cards parked below.
+   * Cards you dragged yourself move too. That is the point.
    */
   const tidyLayout = useCallback(() => {
-    setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpTransports));
+    setNodes((nds) => applyTidyLayout(nds, edgesRef.current, mcpServersByNode));
     scheduleSave();
     window.requestAnimationFrame(() => fitView(FIT_VIEW_OPTIONS));
-  }, [setNodes, scheduleSave, fitView, mcpTransports]);
+  }, [setNodes, scheduleSave, fitView, mcpServersByNode]);
 
   const makeDefault = useCallback(
     (agentId: string, sandboxId: string) => {

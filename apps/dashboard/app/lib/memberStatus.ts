@@ -8,7 +8,6 @@ import {
   type BaseNodeData,
 } from "@/app/components/node/BaseNode";
 import { STATUS_TONE_BG } from "@/app/components/StatusDot";
-import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import {
   MACHINE_STATE_LABEL,
@@ -46,12 +45,11 @@ export type MemberLevel = "error" | "idle" | "ok" | "warn";
 /** A dot color class, its level, and the word the chip shows. */
 export type MemberStatus = { color: string; label: string; level: MemberLevel };
 
-export function mcpMemberStatus(
-  server: StageMcpServer | undefined,
-): MemberStatus {
-  return server !== undefined && !server.disabled
+/** An MCP server or skill: enabled is ok, disabled reads as idle, grey like any other off state. */
+export function enabledMemberStatus(enabled: boolean): MemberStatus {
+  return enabled
     ? { color: "bg-success", label: "Enabled", level: "ok" }
-    : { color: "bg-muted-foreground", label: "Disabled", level: "idle" };
+    : { color: statusConfig.idle.color, label: "Disabled", level: "idle" };
 }
 
 /** A machine sandbox reads its daemon connection once it has loaded; any other sandbox its run state. */

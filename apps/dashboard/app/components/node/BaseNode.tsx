@@ -3,6 +3,12 @@
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
+import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
+import type { MemberStatus } from "@/app/lib/memberStatus";
+import {
+  cardHeight,
+  workspaceStateText,
+} from "@broods/convex/model/canvasLayout";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -38,6 +44,20 @@ export const agentStatusConfig: Record<
   unhealthy: { color: "bg-destructive", text: "Unhealthy" },
 };
 
+/** Text color of a workspace card's state line, per state. */
+const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
+  inherited: "text-muted-foreground",
+  override: "text-canvas-mount/90",
+  readonly: "text-warning/90",
+};
+
+/** Arrow color on that line; read-only draws a lock instead. */
+const STATE_ICON_TONE: Record<WorkspaceSandboxState["kind"], string> = {
+  inherited: "text-muted-foreground",
+  override: "text-canvas-mount/80",
+  readonly: "text-warning/80",
+};
+
 const zoomSelector = (state: { transform: [number, number, number] }): number =>
   state.transform[2];
 
@@ -47,7 +67,6 @@ export function BaseNode({
   data,
   icon,
   agentStatus,
-  cardStatus,
   liveStatus,
   subtitle,
   featureRows,
@@ -58,10 +77,8 @@ export function BaseNode({
   data: BaseNodeData;
   icon: React.ReactNode;
   agentStatus?: AgentHealthStatus;
-  /** Binary enabled/disabled display for cards whose state mirrors a config `enabled` flag. */
-  cardStatus?: { enabled: boolean };
-  /** Live state shown once the node is wired, e.g. a machine sandbox's connection. */
-  liveStatus?: { color: string; text: string };
+  /** State shown once the node is wired: a machine's connection, an MCP server or skill's enabled flag, a workspace's mount. */
+  liveStatus?: Pick<MemberStatus, "color" | "label">;
   /** Optional secondary row rendered under the label (e.g. sandbox provider badge). */
   subtitle?: React.ReactNode;
   /** Optional list of `+ feature` rows rendered between label and status pill. */
@@ -127,10 +144,7 @@ export function BaseNode({
     statusText = "Unconnected";
   } else if (liveStatus) {
     statusColor = liveStatus.color;
-    statusText = liveStatus.text;
-  } else if (cardStatus) {
-    statusColor = cardStatus.enabled ? "bg-success" : "bg-destructive";
-    statusText = cardStatus.enabled ? "Enabled" : "Disabled";
+    statusText = liveStatus.label;
   } else {
     const config = statusConfig[data.status ?? "idle"];
     statusColor = config.color;
@@ -140,10 +154,21 @@ export function BaseNode({
   const borderClass = !isConnectedToAgent
     ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
+  const stateText = workspaceState ? stateLine(workspaceState) : null;
+  // The tidy layout stacks cards at this height, so the card never draws shorter.
+  const minHeight = cardHeight(data.label, {
+    features: featureRows?.length ?? 0,
+    refCount: sharedAgentCount,
+    stateText: stateText,
+    subtitle: subtitle !== undefined,
+  });
 
   return (
     <div
-      className={`relative w-44 min-h-24 flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
+      data-slot="card"
+      data-min-height={minHeight}
+      className={`relative w-44 min-h-(--card-height) flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
+      style={{ "--card-height": `${minHeight}px` }}
     >
       {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
                 handle to the node's FIRST handle (sources before targets) for the snap preview,
@@ -201,6 +226,7 @@ export function BaseNode({
         {/* Narrowed by the same scale, so the scaled header still ends at the card's edge. */}
         <div
           ref={contentRef}
+          data-slot="card-header"
           className="px-3 pt-2.5 origin-top-left scale-(--node-scale) w-(--content-width)"
           style={{
             "--content-width": `${100 / scale}%`,
@@ -250,41 +276,23 @@ export function BaseNode({
             </div>
           )}
 
-          {/* B: workspace effective-sandbox state from the cascade */}
-          {workspaceState && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-2xs min-w-0">
+          {/* B: workspace effective-sandbox state from the cascade. It wraps rather than
+              clipping, so a long sandbox name reads whole. */}
+          {workspaceState && stateText !== null && (
+            <div className="mt-1.5 flex items-start gap-1.5 text-2xs min-w-0">
               {workspaceState.kind === "readonly" ? (
-                <>
-                  <Lock className="size-3 shrink-0 text-warning/80" />
-                  <span className="text-warning/90">read-only</span>
-                </>
-              ) : workspaceState.kind === "override" ? (
-                <>
-                  <CornerDownRight className="size-3 shrink-0 text-canvas-mount/80" />
-                  <span
-                    className="truncate text-canvas-mount/90"
-                    title={workspaceState.sandboxLabels.join(", ")}
-                  >
-                    {workspaceState.sandboxLabels.join(", ")}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    · mounted
-                  </span>
-                </>
+                <Lock className="mt-0.5 size-3 shrink-0 text-warning/80" />
               ) : (
-                <>
-                  <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
-                  <span
-                    className="truncate text-muted-foreground"
-                    title={workspaceState.sandboxLabel}
-                  >
-                    {workspaceState.sandboxLabel}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    · inherited
-                  </span>
-                </>
+                <CornerDownRight
+                  className={`mt-0.5 size-3 shrink-0 ${STATE_ICON_TONE[workspaceState.kind]}`}
+                />
               )}
+              <span
+                className={`min-w-0 line-clamp-2 wrap-anywhere ${STATE_TEXT_TONE[workspaceState.kind]}`}
+                title={stateText}
+              >
+                {stateText}
+              </span>
             </div>
           )}
 
@@ -299,7 +307,10 @@ export function BaseNode({
       </div>
 
       {showStatus && (
-        <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
+        <div
+          data-slot="card-status"
+          className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5"
+        >
           <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-2xs text-muted-foreground">{statusText}</span>
           {/* Down here, not in the title's corner, so a long name keeps the full width. */}
@@ -359,4 +370,12 @@ export function useSideHandlesConnectable(nodeType: string): boolean {
 
     return fromType === "workspace" || fromType === "sandbox";
   });
+}
+
+/** The text of a workspace card's state line. */
+function stateLine(state: WorkspaceSandboxState): string {
+  return workspaceStateText(
+    state.kind,
+    state.kind === "readonly" ? [] : state.sandboxLabels,
+  );
 }

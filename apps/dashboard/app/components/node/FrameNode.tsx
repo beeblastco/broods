@@ -17,7 +17,7 @@ import type { FrameNodeType } from "@/app/lib/canvasFrameNodes";
 import type { CanvasInfraAnalysis } from "@/app/lib/canvasRuntimeRefs";
 import { machineStateByName } from "@/app/lib/machineConnection";
 import {
-  mcpMemberStatus,
+  enabledMemberStatus,
   sandboxMemberStatus,
   summarizeMembers,
   workspaceMemberStatus,
@@ -124,7 +124,9 @@ function memberStatus(
 ): MemberStatus {
   const data = member.data as BaseNodeData;
   if (member.type === "mcp") {
-    return mcpMemberStatus(frames.mcpServers.get(member.id));
+    const server = frames.mcpServers.get(member.id);
+
+    return enabledMemberStatus(server !== undefined && !server.disabled);
   }
   if (member.type === "workspace") {
     return workspaceMemberStatus(infraAnalysis.workspaceStates[member.id]);

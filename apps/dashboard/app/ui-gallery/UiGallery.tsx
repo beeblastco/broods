@@ -32,6 +32,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { agreedSandboxOrderNumbers } from "@/app/lib/canvasFrameEdits";
 import {
   buildFramedGraph,
+  serversByNode,
   type StageMcpServer,
 } from "@/app/lib/canvasFrameNodes";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
@@ -168,7 +169,7 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     fixtureNode("blender", "mcp"),
   ],
   FRAME_EDGES,
-  new Map(FRAME_MCP_SERVERS.map((server) => [server.nodeId, server.transport])),
+  serversByNode(FRAME_MCP_SERVERS),
 );
 
 const FRAME_ANALYSIS = analyzeCanvasInfra(FRAME_NODES, FRAME_EDGES);
@@ -420,9 +421,7 @@ function CanvasFramesFixture(): React.JSX.Element {
         fixtureConnection("kien-mac", Date.now(), undefined),
         fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
       ],
-      mcpServers: new Map(
-        FRAME_MCP_SERVERS.map((server) => [server.nodeId, server]),
-      ),
+      mcpServers: serversByNode(FRAME_MCP_SERVERS),
       onToggleFrame: (frameId) =>
         setCollapsed((current) => {
           const next = new Set(current);

@@ -29,7 +29,7 @@ import {
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
 import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
-import { loadMcpTransportsByNode } from "./mcp";
+import { loadMcpServersByNode } from "./mcp";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -136,7 +136,7 @@ export async function backSyncCanvasFromAgentRow(
       nodes: applyTidyLayout(
         [...layout.nodes, nextNode],
         layout.edges,
-        await loadMcpTransportsByNode(ctx, stage._id),
+        await loadMcpServersByNode(ctx, stage._id),
       ),
       updatedAt: now,
     });

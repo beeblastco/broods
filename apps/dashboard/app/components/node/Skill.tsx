@@ -7,6 +7,7 @@ import {
   readAgentBranch,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
+import { enabledMemberStatus } from "@/app/lib/memberStatus";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import type { NodeProps } from "@xyflow/react";
 import { Sparkles } from "lucide-react";
@@ -36,7 +37,8 @@ export function SkillNode({ id, data }: NodeProps): React.JSX.Element {
       nodeType="skill"
       data={baseData}
       icon={<Sparkles className="size-3.5" />}
-      cardStatus={agentConfig ? { enabled: enabled } : undefined}
+      // Grey when disabled, like a disabled MCP server.
+      liveStatus={agentConfig ? enabledMemberStatus(enabled) : undefined}
     />
   );
 }

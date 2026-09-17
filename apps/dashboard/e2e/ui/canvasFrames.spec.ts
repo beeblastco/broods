@@ -20,6 +20,10 @@ const OVERLAP_DISTANCE = 2;
 // Longest stretch, in flow units, two edges may share before it counts.
 const OVERLAP_LENGTH = 8;
 
+// How far outside its box a handle's edge end may sit, in flow units: React
+// Flow draws the handle straddling the border, plus rounding.
+const HANDLE_OFFSET = 6;
+
 // Distance between the points sampled along an edge path, in flow units.
 const PATH_STEP = 4;
 
@@ -208,9 +212,12 @@ test("every agent edge leaves the agent's bottom, enters its target's top and cr
         const at = (distance: number): DOMPoint =>
           path.getPointAtLength(distance).matrixTransform(matrix);
         const found: string[] = [];
+        // A handle sits a few flow px outside its box, so the tolerance
+        // scales with the zoom: flow px times screen px per flow px.
+        const slack = options.handleOffset * matrix.a + 1;
         // Within `slack` of the side's line, and between its two ends.
         const onSide = (point: DOMPoint, y: number, rect: DOMRect): boolean =>
-          Math.abs(point.y - y) <= options.slack &&
+          Math.abs(point.y - y) <= slack &&
           point.x >= rect.left &&
           point.x <= rect.right;
         const inside = (point: DOMPoint, rect: DOMRect): boolean =>
@@ -236,10 +243,96 @@ test("every agent edge leaves the agent's bottom, enters its target's top and cr
         return [...new Set(found)];
       });
     },
-    { agents: AGENTS, slack: 3, step: PATH_STEP },
+    { agents: AGENTS, handleOffset: HANDLE_OFFSET, step: PATH_STEP },
   );
 
   expect(problems).toEqual([]);
+});
+
+test("mount, inherited and runs-on edges cross no box but the ones holding their ends", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-frames"]');
+  await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
+
+  const problems = await fixture.evaluate((root, step): string[] => {
+    const rects = [
+      ...root.querySelectorAll<HTMLElement>(
+        ".react-flow__node:not(.react-flow__node:has([data-slot='resource-chip']))",
+      ),
+    ].map((node) => ({
+      id: node.dataset.id ?? "",
+      rect: node.getBoundingClientRect(),
+    }));
+    const inside = (point: DOMPoint, rect: DOMRect, margin: number): boolean =>
+      point.x > rect.left + margin &&
+      point.x < rect.right - margin &&
+      point.y > rect.top + margin &&
+      point.y < rect.bottom - margin;
+    const paths = [
+      ...root.querySelectorAll<SVGPathElement>(
+        ".react-flow__edge-mount path.react-flow__edge-path, .react-flow__edge-runsOn path.react-flow__edge-path",
+      ),
+    ];
+
+    return paths.flatMap((path): string[] => {
+      const id =
+        path.closest<SVGGElement>(".react-flow__edge")?.dataset.id ?? "";
+      const matrix = path.getScreenCTM();
+      if (!matrix) return [`${id}: no path`];
+      const length = path.getTotalLength();
+      const at = (distance: number): DOMPoint =>
+        path.getPointAtLength(distance).matrixTransform(matrix);
+      // The boxes holding either end: a chip's frame, or a card itself.
+      const ends = [at(0), at(length)];
+      const allowed = new Set(
+        rects
+          .filter(({ rect }) => ends.some((end) => inside(end, rect, -8)))
+          .map(({ id: boxId }) => boxId),
+      );
+      const hits = new Set<string>();
+      for (let distance = 0; distance <= length; distance += step) {
+        const point = at(distance);
+        for (const { id: boxId, rect } of rects) {
+          if (!allowed.has(boxId) && inside(point, rect, 1)) {
+            hits.add(`${id} crosses ${boxId}`);
+          }
+        }
+      }
+
+      return [...hits];
+    });
+  }, PATH_STEP);
+
+  expect(problems).toEqual([]);
+});
+
+test("every card draws within the height the tidy layout stacks it at", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const overflowing = await page
+    .locator('[data-fixture="canvas-frames"] [data-slot="card"]')
+    .evaluateAll((cards): string[] =>
+      cards.flatMap((card): string[] => {
+        const header = card.querySelector<HTMLElement>(
+          '[data-slot="card-header"]',
+        );
+        const status = card.querySelector<HTMLElement>(
+          '[data-slot="card-status"]',
+        );
+        // offsetHeight ignores the zoom's counter-scale, so this is the height at scale 1.
+        const drawn = (header?.offsetHeight ?? 0) + (status?.offsetHeight ?? 0);
+        const estimate = Number(card.dataset.minHeight);
+
+        return drawn > estimate + 1
+          ? [`${card.textContent}: ${drawn} > ${estimate}`]
+          : [];
+      }),
+    );
+
+  expect(overflowing).toEqual([]);
 });
 
 test("edges of different agents or kinds never draw over each other", async ({

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   agentEdgePoints,
+  crossedBoxIds,
   handlePoint,
-  LANE_SPACING,
   routeCanvasEdges,
 } from "../model/canvasEdgeRoutes";
 import {
@@ -13,9 +13,10 @@ import {
   frameOriginOf,
   framesOf,
   frameSize,
-  type McpTransportsByNode,
+  type McpServersByNode,
 } from "../model/canvasFrames";
 import {
+  cardHeight,
   findFreePosition,
   GRID,
   NODE_HEIGHT,
@@ -28,7 +29,7 @@ import {
   type LayoutRect,
 } from "../model/canvasLayout";
 
-const NO_TRANSPORTS: McpTransportsByNode = new Map();
+const NO_SERVERS: McpServersByNode = new Map();
 
 function node(
   id: string,
@@ -61,9 +62,7 @@ function boardBoxes(
 ): Map<string, LayoutRect> {
   const boxes = new Map<string, LayoutRect>();
   const framed = new Set<string>();
-  for (const frame of framesOf(
-    deriveCanvasGroups(nodes, edges, NO_TRANSPORTS),
-  )) {
+  for (const frame of framesOf(deriveCanvasGroups(nodes, edges, NO_SERVERS))) {
     const origin = frameOriginOf(
       frame.memberIds.map((id) => positions.get(id)!),
     );
@@ -123,7 +122,7 @@ describe("tidyCanvasLayout", () => {
     edge("a1", "a2", "subagent"),
   ];
   // The layout is pure, so one run covers every assertion below.
-  const positions = tidyCanvasLayout(nodes, edges, NO_TRANSPORTS);
+  const positions = tidyCanvasLayout(nodes, edges, NO_SERVERS);
 
   it("places every node exactly once, with no frame or card overlapping another", () => {
     expect([...positions.keys()].sort()).toEqual(nodes.map((n) => n.id).sort());
@@ -164,7 +163,7 @@ describe("tidyCanvasLayout", () => {
         node("s1", "sandbox", "py-sbx"),
       ],
       [edge("a1", "s1"), edge("a1", "a2", "subagent")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(positions.get("a1")!.x).toBeLessThan(positions.get("a2")!.x);
@@ -175,7 +174,7 @@ describe("tidyCanvasLayout", () => {
     const second = tidyCanvasLayout(
       [...nodes].reverse(),
       [...edges].reverse(),
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     for (const [id, position] of positions) {
@@ -201,10 +200,10 @@ describe("tidyCanvasLayout", () => {
       edge("a1", "s3"),
       edge("a1", "w1"),
     ];
-    const laid = tidyCanvasLayout(threeSandboxes, wiring, NO_TRANSPORTS);
+    const laid = tidyCanvasLayout(threeSandboxes, wiring, NO_SERVERS);
 
     const frames = framesOf(
-      deriveCanvasGroups(threeSandboxes, wiring, NO_TRANSPORTS),
+      deriveCanvasGroups(threeSandboxes, wiring, NO_SERVERS),
     );
     expect(frames).toHaveLength(1);
     for (const frame of frames) {
@@ -218,30 +217,120 @@ describe("tidyCanvasLayout", () => {
     );
   });
 
-  it("puts computers left of cloud sandboxes in one row, whatever their order", () => {
-    const sandboxes = (order: string[]): LayoutNode[] => [
-      node("a1", "agent", "support", { sandboxOrder: order }),
-      node("cloud", "sandbox", "cloud"),
-      node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
-    ];
-    const wiring = [edge("a1", "cloud"), edge("a1", "mac")];
-    const macFirst = tidyCanvasLayout(
-      sandboxes(["mac", "cloud"]),
-      wiring,
-      NO_TRANSPORTS,
+  it("puts the sandbox a workspace mounts next to the workspaces, whatever runs where", () => {
+    const layout = (
+      mountOn: string,
+      order: string[],
+    ): Map<string, LayoutPosition> =>
+      tidyCanvasLayout(
+        [
+          node("a1", "agent", "support", { sandboxOrder: order }),
+          node("cloud", "sandbox", "cloud"),
+          node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+          node("w1", "workspace", "notes"),
+        ],
+        [
+          edge("a1", "cloud"),
+          edge("a1", "mac"),
+          edge("a1", "w1"),
+          edge("w1", mountOn, "mount"),
+        ],
+        NO_SERVERS,
+      );
+
+    for (const [mountOn, other] of [
+      ["mac", "cloud"],
+      ["cloud", "mac"],
+    ]) {
+      for (const order of [
+        ["mac", "cloud"],
+        ["cloud", "mac"],
+      ]) {
+        const laid = layout(mountOn, order);
+        expect(laid.get(mountOn)!.x, `${mountOn} ${order}`).toBeGreaterThan(
+          laid.get(other)!.x,
+        );
+        expect(laid.get("w1")!.x).toBeGreaterThan(laid.get(mountOn)!.x);
+      }
+    }
+  });
+
+  it("puts a machine MCP server next to the computer it runs on", () => {
+    const laid = tidyCanvasLayout(
+      [
+        node("a1", "agent", "support"),
+        node("cloud", "sandbox", "cloud"),
+        node("mac", "sandbox", "mac", { config: { provider: "machine" } }),
+        node("tool", "mcp", "tool"),
+        node("api", "mcp", "api"),
+        node("w1", "workspace", "notes"),
+      ],
+      [
+        edge("a1", "cloud"),
+        edge("a1", "mac"),
+        edge("a1", "tool"),
+        edge("a1", "api"),
+        edge("a1", "w1"),
+        edge("w1", "cloud", "mount"),
+      ],
+      new Map([
+        ["tool", { sandbox: "mac", transport: "machine" }],
+        ["api", { sandbox: null, transport: "http" }],
+      ]),
     );
-    const cloudFirst = tidyCanvasLayout(
-      sandboxes(["cloud", "mac"]),
-      wiring,
-      NO_TRANSPORTS,
+    const order = ["api", "tool", "mac", "cloud", "w1"].map(
+      (id) => laid.get(id)!.x,
     );
 
-    // The cloud sandbox sits beside the workspaces a mount reaches; the
-    // computer beside the MCP servers a runs-on edge reaches.
-    for (const laid of [macFirst, cloudFirst]) {
-      expect(laid.get("mac")!.x).toBeLessThan(laid.get("cloud")!.x);
-      expect(laid.get("mac")!.y).toBe(laid.get("cloud")!.y);
-    }
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("puts a service several agents share after the middle one of them", () => {
+    const laid = tidyCanvasLayout(
+      [
+        node("a", "agent", "alpha"),
+        node("b", "agent", "bravo"),
+        node("c", "agent", "charlie"),
+        node("sa", "sandbox", "alpha-box"),
+        node("sb", "sandbox", "bravo-box"),
+        node("sc", "sandbox", "charlie-box"),
+        node("wiki", "workspace", "wiki"),
+      ],
+      [
+        edge("a", "sa"),
+        edge("b", "sb"),
+        edge("c", "sc"),
+        edge("a", "wiki"),
+        edge("b", "wiki"),
+        edge("c", "wiki"),
+      ],
+      NO_SERVERS,
+    );
+
+    expect(laid.get("wiki")!.x).toBeGreaterThan(laid.get("sb")!.x);
+    expect(laid.get("wiki")!.x).toBeLessThan(laid.get("sc")!.x);
+  });
+
+  it("stacks cards at the height their rows draw at", () => {
+    // Unwired workspaces park in one column; a long name wraps and the state
+    // line adds a row, so each card is taller than the minimum.
+    const long = "a-workspace-name-that-wraps";
+    const laid = tidyCanvasLayout(
+      [node("w1", "workspace", long), node("w2", "workspace", `${long}-too`)],
+      [],
+      NO_SERVERS,
+    );
+    const height = cardHeight(long, {
+      features: 0,
+      refCount: 0,
+      stateText: "read-only",
+      subtitle: false,
+    });
+
+    expect(height).toBeGreaterThan(NODE_HEIGHT);
+    expect(laid.get("w2")!.y - laid.get("w1")!.y).toBeGreaterThanOrEqual(
+      height + 48,
+    );
   });
 
   it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
@@ -255,7 +344,7 @@ describe("tidyCanvasLayout", () => {
         node("w1", "workspace", "browser-workspace"),
       ],
       [edge("a1", "s2"), edge("a1", "w1"), edge("s1", "w1", "mount")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
     // A sandbox mounted into a workspace two agents reach is reached by both,
     // so the pair drops to the shared lane side by side.
@@ -272,7 +361,7 @@ describe("tidyCanvasLayout", () => {
         edge("a2", "w1"),
         edge("s1", "w1", "mount"),
       ],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     // Both sandboxes share tracy's cloud frame in the first column; the one
@@ -296,7 +385,7 @@ describe("tidyCanvasLayout", () => {
     const laid = tidyCanvasLayout(
       [node("a1", "agent", "tracy"), node("s1", "sandbox", "internal")],
       [edge("a1", "s1")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(laid.get("s1")!.x).toBe(0);
@@ -325,7 +414,7 @@ describe("tidyCanvasLayout", () => {
       ),
       edge("w1", "s1", "mount"),
     ];
-    const laid = tidyCanvasLayout(many, wiring, NO_TRANSPORTS);
+    const laid = tidyCanvasLayout(many, wiring, NO_SERVERS);
     const boxes = boardBoxes(many, wiring, laid);
     const agentEdges = [...boxes.keys()]
       .filter((id) => id !== "a1")
@@ -344,29 +433,59 @@ describe("tidyCanvasLayout", () => {
         handlePoint(boxes.get(id)!, "top"),
         route,
       );
-      // Every corner stays out of every box but the two the edge joins.
-      for (const point of points.slice(1, -1)) {
-        for (const [boxId, box] of boxes) {
-          if (boxId === "a1" || boxId === id) continue;
-          const inside =
-            point.x > box.x &&
-            point.x < box.x + box.width &&
-            point.y > box.y &&
-            point.y < box.y + box.height;
-          expect(inside, `${id} corner in ${boxId}`).toBe(false);
-        }
-      }
-      if (route.gutter) {
-        // The gutter lane keeps a lane's width from the boxes beside it.
-        for (const box of boxes.values()) {
-          const clear =
-            route.gutter.x <= box.x - LANE_SPACING ||
-            route.gutter.x >= box.x + box.width + LANE_SPACING;
-          const beside =
-            box.y < points[3].y && points[2].y < box.y + box.height;
-          expect(clear || !beside).toBe(true);
-        }
-      }
+      // Every segment stays out of every box but the two the edge joins.
+      expect(crossedBoxIds(points, boxes, new Set(["a1", id])), id).toEqual([]);
+    }
+  });
+
+  it("grows the gap under the agents until every bus fits", () => {
+    // Three agents reach one service after the middle one, so all three buses
+    // cross the same stretch and need three lanes.
+    const agents = ["a", "b", "c"];
+    const laid = tidyCanvasLayout(
+      [
+        ...agents.map((id) => node(id, "agent", id)),
+        ...agents.map((id) => node(`k${id}`, "skill", `${id}-skill`)),
+        node("wiki", "workspace", "wiki"),
+      ],
+      [
+        ...agents.map((id) => edge(id, `k${id}`)),
+        ...agents.map((id) => edge(id, "wiki")),
+      ],
+      NO_SERVERS,
+    );
+
+    expect(laid.get("wiki")!.y).toBeGreaterThan(SERVICE_TOP);
+  });
+
+  it("routes deep stacked cards down gutters that cross no box", () => {
+    const skills = ["k1", "k2", "k3"];
+    const nodes = [
+      node("a1", "agent", "support"),
+      node("d1", "database", "session"),
+      ...skills.map((id) => node(id, "skill", id)),
+    ];
+    const edges = [edge("a1", "d1"), ...skills.map((id) => edge("a1", id))];
+    const laid = tidyCanvasLayout(nodes, edges, NO_SERVERS);
+    const boxes = boardBoxes(nodes, edges, laid);
+    const routes = routeCanvasEdges(
+      boxes,
+      [...boxes.keys()]
+        .filter((id) => id !== "a1")
+        .map((id) => ({ id: id, source: "a1", target: id })),
+      [],
+    );
+
+    expect(
+      [...routes.agent.values()].filter((route) => route.gutter !== null),
+    ).toHaveLength(2);
+    for (const [id, route] of routes.agent) {
+      const points = agentEdgePoints(
+        handlePoint(boxes.get("a1")!, "bottom"),
+        handlePoint(boxes.get(id)!, "top"),
+        route,
+      );
+      expect(crossedBoxIds(points, boxes, new Set(["a1", id])), id).toEqual([]);
     }
   });
 
@@ -374,7 +493,7 @@ describe("tidyCanvasLayout", () => {
     const positions = tidyCanvasLayout(
       [node("a1", "agent", "one"), node("a2", "agent", "two")],
       [edge("a1", "a2", "subagent"), edge("a2", "a1", "subagent")],
-      NO_TRANSPORTS,
+      NO_SERVERS,
     );
 
     expect(positions.size).toBe(2);

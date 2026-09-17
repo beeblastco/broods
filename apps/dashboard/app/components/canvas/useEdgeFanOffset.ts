@@ -11,16 +11,16 @@ const FAN_SPACING = 20;
  * Each endpoint is fanned independently within the set of same-kind edges touching
  * that exact (node, handle), via either end, ordered by id so an antiparallel
  * pair (A→B and B→A on the same handles) keeps a consistent slot and stays parallel.
- * Only fans within a `kind` since each kind has a fixed flow axis. Returns offsets
- * to apply perpendicular to flow, Y for these horizontal edges. Agent edges fan
- * through their routed lanes instead.
+ * Only fans within a `kind`. Returns Y offsets, perpendicular to these horizontal
+ * edges. Only sub-agent edges use it: agent, mount, inherited and runs-on edges fan
+ * through the lanes the canvas routes for them.
  *
  * @param id this edge's id
  * @param sourceNode source node id
- * @param sourceHandle source handle id (null for the default top/bottom handle)
+ * @param sourceHandle source side handle id (`left` or `right`)
  * @param targetNode target node id
- * @param targetHandle target handle id (null for the default top/bottom handle)
- * @param kind edge kind to fan within (`mount` · `subagent`)
+ * @param targetHandle target side handle id (`left` or `right`)
+ * @param kind edge kind to fan within (`subagent`)
  * @returns `[sourceOffset, targetOffset]` in flow pixels, centered on zero
  */
 export function useEdgeFanOffset(

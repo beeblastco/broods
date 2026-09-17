@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   agentEdgePoints,
+  crossedBoxIds,
   handlePoint,
   LANE_SPACING,
   routeCanvasEdges,
+  sideEdgePoints,
+  type SideEdgeRequest,
 } from "../model/canvasEdgeRoutes";
 import type { LayoutRect } from "../model/canvasLayout";
 
@@ -80,20 +83,127 @@ describe("routeCanvasEdges", () => {
     );
   });
 
+  it("keeps two agents' buses clearly apart where their ends come close", () => {
+    // Both agents reach one card between them, so their buses end a fan apart.
+    const boxes = new Map([
+      ["left", box(0, 0)],
+      ["right", box(600, 0)],
+      ["shared", box(300, 144)],
+    ]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [
+        { id: "l", source: "left", target: "shared" },
+        { id: "r", source: "right", target: "shared" },
+      ],
+      [],
+    );
+
+    expect(
+      Math.abs(agent.get("l")!.busDrop - agent.get("r")!.busDrop),
+    ).toBeGreaterThanOrEqual(16);
+  });
+
   it("keeps a side edge off a gutter lane it runs beside", () => {
+    const boxes = new Map([...BOXES, ["left", box(48, 300)]]);
     const { agent, side } = routeCanvasEdges(
-      BOXES,
+      boxes,
       [{ id: "deep", source: "agent", target: "deep" }],
-      [{ id: "mount", source: { x: 176, y: 200 }, target: { x: 288, y: 400 } }],
+      [sideEdge("mount", boxes, "left", "right", "deep", "left")],
     );
     const lane = agent.get("deep")!.gutter!.x;
+    const route = side.get("mount")!;
 
-    expect(Math.abs(side.get("mount")!.centerX - lane)).toBeGreaterThanOrEqual(
-      LANE_SPACING,
+    expect(route.underY).toBeNull();
+    expect(Math.abs(route.sourceX - lane)).toBeGreaterThanOrEqual(LANE_SPACING);
+  });
+
+  it("steps straight between neighbours and detours under a box in the way", () => {
+    const boxes = new Map([
+      ["left", box(0, 144)],
+      ["middle", box(240, 144)],
+      ["right", box(480, 144)],
+    ]);
+    const near = sideEdge("near", boxes, "left", "right", "middle", "left");
+    const far = sideEdge("far", boxes, "left", "right", "right", "left");
+    const { side } = routeCanvasEdges(boxes, [], [near, far]);
+
+    expect(side.get("near")!.underY).toBeNull();
+    const detour = side.get("far")!;
+    expect(detour.underY).toBeGreaterThan(240);
+    const points = sideEdgePoints(
+      handlePoint(far.source.box, "right"),
+      handlePoint(far.target.box, "left"),
+      detour,
     );
+    expect(crossedBoxIds(points, boxes, new Set(["left", "right"]))).toEqual(
+      [],
+    );
+  });
+
+  it("fans two side edges into one handle so their last legs never share a run", () => {
+    const boxes = new Map([
+      ["one", box(0, 144)],
+      ["two", box(0, 288)],
+      ["computer", box(240, 200)],
+    ]);
+    const { side } = routeCanvasEdges(
+      boxes,
+      [],
+      [
+        sideEdge("a", boxes, "one", "right", "computer", "left"),
+        sideEdge("b", boxes, "two", "right", "computer", "left"),
+      ],
+    );
+    const fans = [side.get("a")!.targetFan, side.get("b")!.targetFan];
+
+    expect(Math.abs(fans[0] - fans[1])).toBeGreaterThanOrEqual(LANE_SPACING);
+  });
+});
+
+describe("crossedBoxIds", () => {
+  it("counts a segment through a box whose corners all sit outside it", () => {
+    const boxes = new Map([["wide", box(100, 0)]]);
+    const through = [
+      { x: 0, y: 48 },
+      { x: 400, y: 48 },
+    ];
+    const along = [
+      { x: 0, y: 0 },
+      { x: 400, y: 0 },
+    ];
+
+    expect(crossedBoxIds(through, boxes, new Set())).toEqual(["wide"]);
+    expect(crossedBoxIds(along, boxes, new Set())).toEqual([]);
   });
 });
 
 function box(x: number, y: number): LayoutRect {
   return { height: 96, width: 176, x: x, y: y };
+}
+
+/** A side edge from one box's side handle to another's, each box its own top-level box. */
+function sideEdge(
+  id: string,
+  boxes: ReadonlyMap<string, LayoutRect>,
+  source: string,
+  sourceSide: "left" | "right",
+  target: string,
+  targetSide: "left" | "right",
+): SideEdgeRequest {
+  return {
+    id: id,
+    source: {
+      box: boxes.get(source)!,
+      nodeId: source,
+      outerId: source,
+      side: sourceSide,
+    },
+    target: {
+      box: boxes.get(target)!,
+      nodeId: target,
+      outerId: target,
+      side: targetSide,
+    },
+  };
 }

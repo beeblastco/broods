@@ -13,13 +13,13 @@
 import type { api } from "@broods/convex/_generated/api";
 import {
   agentEdgePoints,
-  handlePoint,
   routeCanvasEdges,
+  sideEdgePoints,
   type AgentEdgeRequest,
   type AgentEdgeRoute,
-  type HandleSide,
   type SideEdgeRequest,
   type SideEdgeRoute,
+  type SideEnd,
 } from "@broods/convex/model/canvasEdgeRoutes";
 import {
   deriveCanvasGroups,
@@ -31,9 +31,11 @@ import {
   framesOf,
   frameSize,
   FRAME_WIDTH,
-  inheritedSandboxIds,
+  runsOnSandboxIds,
+  workspaceSandboxIds,
   type CanvasFrame,
   type FrameKind,
+  type McpServersByNode,
 } from "@broods/convex/model/canvasFrames";
 import {
   NODE_HEIGHT,
@@ -79,14 +81,16 @@ export type FrameNodeData = {
 
 export type FrameNodeType = Node<FrameNodeData, "frame">;
 
-/** A side edge's drawn data: where its vertical run sits. */
-export type SideEdgeData = { route?: SideEdgeRoute };
+/**
+ * A side edge's drawn data: its lanes, when the router placed it, and whether
+ * it is drawn from other state rather than stored, so it offers no delete and
+ * shows no lock.
+ */
+export type SideEdgeData = { displayOnly?: boolean; route?: SideEdgeRoute };
 
 export type StageMcpServer = FunctionReturnType<
   typeof api.mcp.listByStage
->[number];
-
-/**
+>[number]; /**
  * Path of an agent edge from the agent's bottom handle to its target's top
  * handle along its lanes, as `[path, labelX, labelY]` like React Flow's path
  * helpers. The label sits on the gutter run, or on the final drop.
@@ -120,11 +124,18 @@ export function applyFramedNodeChanges(
   if (!changes.some((change) => change.type === "position")) {
     return applyNodeChanges(changes, nodes);
   }
-  const graph = buildFramedGraph(nodes, edges, mcpServers, collapsed, null);
+  // Nodes only: a drag moves no edge in flat state, so it routes none.
+  const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
+  const displayNodes = framedNodes(
+    nodes,
+    frames,
+    memberFrames(frames),
+    collapsed,
+  );
 
   return reuseUnchanged(
     nodes,
-    flattenFramedNodes(applyNodeChanges(changes, graph.nodes)),
+    flattenFramedNodes(applyNodeChanges(changes, displayNodes)),
     sameNode,
   );
 }
@@ -144,12 +155,15 @@ export function buildFramedGraph(
   previous: FramedGraph | null,
 ): FramedGraph {
   const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
-  const frameOf = new Map<string, CanvasFrame>();
-  for (const frame of frames) {
-    for (const id of frame.memberIds) frameOf.set(id, frame);
-  }
+  const frameOf = memberFrames(frames);
   const displayNodes = framedNodes(nodes, frames, frameOf, collapsed);
-  const drawn = framedEdges(nodes, edges, mcpServers ?? [], frameOf, collapsed);
+  const drawn = framedEdges(
+    nodes,
+    edges,
+    serversByNode(mcpServers ?? []),
+    frameOf,
+    collapsed,
+  );
 
   return {
     bundles: drawn.bundles,
@@ -174,14 +188,10 @@ export function deriveGroups(
   edges: readonly Edge[],
   mcpServers: readonly StageMcpServer[] | undefined,
 ): CanvasFrame[] {
-  const transports = new Map(
-    (mcpServers ?? []).map((server) => [server.nodeId, server.transport]),
-  );
-
   return deriveCanvasGroups(
     mcpServers ? nodes : nodes.filter((node) => node.type !== "mcp"),
     edges,
-    transports,
+    serversByNode(mcpServers ?? []),
   );
 }
 
@@ -229,6 +239,34 @@ export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
   });
 }
 
+/** The stage's MCP rows keyed by the canvas node each one owns. */
+export function serversByNode(
+  mcpServers: readonly StageMcpServer[],
+): Map<string, StageMcpServer> {
+  return new Map(mcpServers.map((server) => [server.nodeId, server]));
+}
+
+/**
+ * Path of a side edge between its two side handles along its lanes, as
+ * `[path, labelX, labelY]`. The label sits on the middle run: the vertical
+ * one of a straight step, or the run under the boxes of a detour.
+ */
+export function sideEdgePath(
+  source: XYPosition,
+  target: XYPosition,
+  route: SideEdgeRoute,
+): [string, number, number] {
+  const points = sideEdgePoints(source, target, route);
+  const middle = Math.floor((points.length - 1) / 2);
+  const [from, to] = [points[middle], points[middle + 1]];
+
+  return [
+    roundedPath(points, EDGE_CORNER_RADIUS),
+    (from.x + to.x) / 2,
+    (from.y + to.y) / 2,
+  ];
+}
+
 function addBundle(
   display: Edge[],
   bundles: Map<string, string[]>,
@@ -267,11 +305,11 @@ function addBundle(
  */
 function displayBoxes(displayNodes: readonly Node[]): {
   boxes: Map<string, LayoutRect>;
-  handleBoxes: Map<string, LayoutRect>;
+  handleBoxes: Map<string, { box: LayoutRect; outerId: string }>;
 } {
   const byId = new Map(displayNodes.map((node) => [node.id, node]));
   const boxes = new Map<string, LayoutRect>();
-  const handleBoxes = new Map<string, LayoutRect>();
+  const handleBoxes = new Map<string, { box: LayoutRect; outerId: string }>();
   for (const node of displayNodes) {
     if (node.hidden) continue;
     if (node.parentId === undefined) {
@@ -281,7 +319,7 @@ function displayBoxes(displayNodes: readonly Node[]): {
         width: node.width ?? node.measured?.width ?? NODE_WIDTH,
       };
       boxes.set(node.id, box);
-      handleBoxes.set(node.id, box);
+      handleBoxes.set(node.id, { box: box, outerId: node.id });
       continue;
     }
     const parent = byId.get(node.parentId);
@@ -289,10 +327,13 @@ function displayBoxes(displayNodes: readonly Node[]): {
     const kind: FrameKind =
       node.type === "workspace" || node.type === "mcp" ? node.type : "sandbox";
     handleBoxes.set(node.id, {
-      height: FRAME_CHIP_HEIGHTS[kind],
-      width: FRAME_CHIP_WIDTH,
-      x: parent.position.x + node.position.x,
-      y: parent.position.y + node.position.y,
+      box: {
+        height: FRAME_CHIP_HEIGHTS[kind],
+        width: FRAME_CHIP_WIDTH,
+        x: parent.position.x + node.position.x,
+        y: parent.position.y + node.position.y,
+      },
+      outerId: parent.id,
     });
   }
 
@@ -309,7 +350,7 @@ function displayBoxes(displayNodes: readonly Node[]): {
 function framedEdges(
   nodes: readonly Node[],
   edges: readonly Edge[],
-  mcpServers: readonly StageMcpServer[],
+  mcpServers: McpServersByNode,
   frameOf: ReadonlyMap<string, CanvasFrame>,
   collapsed: ReadonlySet<string>,
 ): Pick<FramedGraph, "bundles" | "edges"> {
@@ -352,6 +393,7 @@ function framedEdges(
     seen.add(id);
     display.push({
       ...edge,
+      data: { ...edge.data, displayOnly: true },
       deletable: false,
       id: id,
       reconnectable: false,
@@ -424,8 +466,10 @@ function framedNodes(
 }
 
 /**
- * Dashed edge from a workspace to the sandbox it inherits, facing it. Drawn,
- * never stored: the inheritance follows from the agent's own edges.
+ * Dashed edge from a workspace to each sandbox it inherits, facing it: one per
+ * distinct default of the agents wired to it, since each agent runs the
+ * workspace on its own. Drawn, never stored: the inheritance follows from the
+ * agents' own edges.
  */
 function inheritedEdges(
   nodes: readonly Node[],
@@ -434,36 +478,45 @@ function inheritedEdges(
 ): Edge[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
 
-  return [...inheritedSandboxIds(nodes, edges)].flatMap(
-    ([workspaceId, sandboxId]): Edge[] => {
-      const workspace = byId.get(workspaceId);
-      const sandbox = byId.get(sandboxId);
-      if (!workspace || !sandbox) return [];
-      const source = endpoint(workspaceId);
-      const target = endpoint(sandboxId);
-      if (source === target) return [];
-      const workspaceOnRight = workspace.position.x >= sandbox.position.x;
+  return [...workspaceSandboxIds(nodes, edges)].flatMap(
+    ([workspaceId, state]): Edge[] =>
+      state.kind !== "inherited"
+        ? []
+        : state.sandboxIds.flatMap((sandboxId): Edge[] => {
+            const workspace = byId.get(workspaceId);
+            const sandbox = byId.get(sandboxId);
+            const source = endpoint(workspaceId);
+            const target = endpoint(sandboxId);
+            if (!workspace || !sandbox || source === target) return [];
 
-      return [
-        {
-          deletable: false,
-          id: `inherits:${source}-${target}`,
-          reconnectable: false,
-          selectable: false,
-          source: source,
-          sourceHandle: workspaceOnRight ? "left" : "right",
-          target: target,
-          targetHandle: workspaceOnRight ? "right" : "left",
-          type: "mount",
-        },
-      ];
-    },
+            return [
+              sideEdge(
+                `inherits:${source}-${target}`,
+                source,
+                target,
+                workspace.position.x >= sandbox.position.x,
+                "mount",
+              ),
+            ];
+          }),
   );
 }
 
 /** Length of an axis-aligned leg. */
 function legLength(a: XYPosition, b: XYPosition): number {
   return Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+}
+
+/** Each framed node's frame, by member id. */
+function memberFrames(
+  frames: readonly CanvasFrame[],
+): Map<string, CanvasFrame> {
+  const frameOf = new Map<string, CanvasFrame>();
+  for (const frame of frames) {
+    for (const id of frame.memberIds) frameOf.set(id, frame);
+  }
+
+  return frameOf;
 }
 
 /**
@@ -530,8 +583,9 @@ function roundedPath(points: readonly XYPosition[], radius: number): string {
 
 /**
  * Display edges with their lanes in `data.route`: agent edges (bottom to top,
- * between two top-level boxes) and side edges (mount and runs-on, between two
- * side handles). Hidden members are no box; their edges already re-point.
+ * between two top-level boxes) and side edges (mount, inherited and runs-on,
+ * between two side handles). Hidden members are no box; their edges already
+ * re-point.
  */
 function routeEdges(
   displayNodes: readonly Node[],
@@ -541,6 +595,20 @@ function routeEdges(
   const { boxes, handleBoxes } = displayBoxes(displayNodes);
   const agentEdges: AgentEdgeRequest[] = [];
   const sideEdges: SideEdgeRequest[] = [];
+  const endOf = (
+    nodeId: string,
+    handle: string | null | undefined,
+  ): SideEnd | null => {
+    const placed = handleBoxes.get(nodeId);
+    if (!placed || (handle !== "left" && handle !== "right")) return null;
+
+    return {
+      box: placed.box,
+      nodeId: nodeId,
+      outerId: placed.outerId,
+      side: handle,
+    };
+  };
   for (const edge of edges) {
     if (edge.type === undefined || edge.type === "default") {
       if (
@@ -555,24 +623,10 @@ function routeEdges(
       }
       continue;
     }
-    const source = handleBoxes.get(edge.source);
-    const target = handleBoxes.get(edge.target);
-    const sourceSide = sideOf(edge.sourceHandle);
-    const targetSide = sideOf(edge.targetHandle);
-    if (
-      edge.type === "subagent" ||
-      !source ||
-      !target ||
-      !sourceSide ||
-      !targetSide
-    ) {
-      continue;
-    }
-    sideEdges.push({
-      id: edge.id,
-      source: handlePoint(source, sourceSide),
-      target: handlePoint(target, targetSide),
-    });
+    const source = endOf(edge.source, edge.sourceHandle);
+    const target = endOf(edge.target, edge.targetHandle);
+    if (edge.type === "subagent" || !source || !target) continue;
+    sideEdges.push({ id: edge.id, source: source, target: target });
   }
   const routes = routeCanvasEdges(boxes, agentEdges, sideEdges);
 
@@ -584,43 +638,35 @@ function routeEdges(
 }
 
 /**
- * Dotted edge from a machine MCP server to the sandbox it runs on, the one
+ * Dotted edge from each machine MCP server to the sandbox it runs on, the one
  * named by the row's `sandbox`. It leaves from the side facing that sandbox.
  */
 function runsOnEdges(
   nodes: readonly Node[],
-  mcpServers: readonly StageMcpServer[],
+  mcpServers: McpServersByNode,
   endpoint: (id: string) => string,
 ): Edge[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
 
-  return mcpServers.flatMap((server): Edge[] => {
-    if (server.transport !== "machine" || server.sandbox === null) return [];
-    const mcp = byId.get(server.nodeId);
-    const sandbox = nodes.find(
-      (node) =>
-        node.type === "sandbox" &&
-        (node.data.mountName ?? node.data.label) === server.sandbox,
-    );
-    if (!mcp || !sandbox) return [];
-    const source = endpoint(mcp.id);
-    const target = endpoint(sandbox.id);
-    const mcpOnRight = mcp.position.x >= sandbox.position.x;
+  return [...runsOnSandboxIds(nodes, mcpServers)].flatMap(
+    ([mcpId, sandboxId]): Edge[] => {
+      const mcp = byId.get(mcpId);
+      const sandbox = byId.get(sandboxId);
+      if (!mcp || !sandbox) return [];
+      const source = endpoint(mcpId);
+      const target = endpoint(sandboxId);
 
-    return [
-      {
-        deletable: false,
-        id: `runs-on:${source}-${target}`,
-        reconnectable: false,
-        selectable: false,
-        source: source,
-        sourceHandle: mcpOnRight ? "left" : "right",
-        target: target,
-        targetHandle: mcpOnRight ? "right" : "left",
-        type: "runsOn",
-      },
-    ];
-  });
+      return [
+        sideEdge(
+          `runs-on:${source}-${target}`,
+          source,
+          target,
+          mcp.position.x >= sandbox.position.x,
+          "runsOn",
+        ),
+      ];
+    },
+  );
 }
 
 /** An edge's fields, and its style or data two levels down, where a route sits. */
@@ -672,9 +718,29 @@ function sameValue(a: unknown, b: unknown, depth: number): boolean {
   );
 }
 
-/** A left or right handle id as a box side; anything else is no side handle. */
-function sideOf(handle: string | null | undefined): HandleSide | null {
-  return handle === "left" || handle === "right" ? handle : null;
+/**
+ * A drawn side edge nobody stores, deletes or reconnects, leaving the side of
+ * its source that faces its target.
+ */
+function sideEdge(
+  id: string,
+  source: string,
+  target: string,
+  sourceOnRight: boolean,
+  type: "mount" | "runsOn",
+): Edge {
+  return {
+    data: { displayOnly: true },
+    deletable: false,
+    id: id,
+    reconnectable: false,
+    selectable: false,
+    source: source,
+    sourceHandle: sourceOnRight ? "left" : "right",
+    target: target,
+    targetHandle: sourceOnRight ? "right" : "left",
+    type: type,
+  };
 }
 
 /** The point `distance` along the axis-aligned leg from `from` to `to`. */

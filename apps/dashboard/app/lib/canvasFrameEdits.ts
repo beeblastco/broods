@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/canvasRuntimeRefs";
 import {
   agentSandboxOrder,
+  agentSandboxOrders,
   edgeKind,
   frameMemberPositions,
   frameOriginOf,
@@ -64,9 +65,8 @@ export function agreedSandboxOrderNumbers(
   edges: readonly Edge[],
 ): Map<string, number> {
   const numbers = new Map<string, number | null>();
-  for (const agent of nodes) {
-    if (agent.type !== "agent") continue;
-    agentSandboxOrder(agent, nodes, edges).forEach((id, index) => {
+  for (const sandboxIds of agentSandboxOrders(nodes, edges).values()) {
+    sandboxIds.forEach((id, index) => {
       const current = numbers.get(id);
       numbers.set(
         id,

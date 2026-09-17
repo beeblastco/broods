@@ -1,13 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
+  agentEdgePoints,
+  crossedBoxIds,
+  handlePoint,
+  sideEdgePoints,
+  type AgentEdgeRoute,
+  type SideEdgeRoute,
+} from "@broods/convex/model/canvasEdgeRoutes";
+import {
+  FRAME_CHIP_HEIGHTS,
+  FRAME_CHIP_WIDTH,
+} from "@broods/convex/model/canvasFrames";
+import {
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  tidyCanvasLayout,
+  type LayoutRect,
+} from "@broods/convex/model/canvasLayout";
+import {
   agentEdgePath,
   applyFramedNodeChanges,
   buildFramedGraph,
   expandBundleEdgeRemoval,
   flattenFramedNodes,
+  serversByNode,
   type StageMcpServer,
 } from "../app/lib/canvasFrameNodes";
+import deployedStages from "./fixtures/deployedStages.json";
 
 const NONE = new Set<string>();
 
@@ -154,7 +174,7 @@ describe("buildFramedGraph", () => {
     ).toMatchObject({ deletable: false });
   });
 
-  test("draws the mount and the inherited sandbox, each on its own lane", () => {
+  test("draws the mount and the inherited sandbox apart where they share a handle", () => {
     const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
     const sides = edges.filter((item) => item.type === "mount");
 
@@ -163,15 +183,88 @@ describe("buildFramedGraph", () => {
       ["inherits:wiki-cloud", "wiki", "cloud"],
     ]);
     expect(sides[1]).toMatchObject({
+      data: { displayOnly: true },
       deletable: false,
       sourceHandle: "left",
       targetHandle: "right",
     });
-    const [mountX, inheritX] = sides.map(
-      (item) => (item.data as { route: { centerX: number } }).route.centerX,
-    );
-    expect(Math.abs(mountX - inheritX)).toBeGreaterThanOrEqual(8);
+    // Both end on cloud's right handle: they fan along its side.
+    const [mount, inherit] = sides.map((item) => sideRouteOf(item));
+    expect(
+      Math.abs(mount.sourceFan - inherit.targetFan),
+    ).toBeGreaterThanOrEqual(8);
   });
+
+  test("draws one inherited edge per distinct default of the agents sharing a workspace", () => {
+    const nodes = [
+      node("one", "agent", { x: 0, y: 0 }),
+      node("two", "agent", { x: 480, y: 0 }),
+      node("a", "sandbox", { x: 0, y: 144 }),
+      node("b", "sandbox", { x: 480, y: 144 }),
+      node("docs", "workspace", { x: 240, y: 144 }),
+    ];
+    const edges = [
+      edge("one", "a"),
+      edge("two", "b"),
+      edge("one", "docs"),
+      edge("two", "docs"),
+    ];
+    const { edges: display } = buildFramedGraph(nodes, edges, [], NONE, null);
+
+    expect(
+      display
+        .filter((item) => item.id.startsWith("inherits:"))
+        .map((item) => item.id),
+    ).toEqual(["inherits:docs-a", "inherits:docs-b"]);
+  });
+
+  test("fans runs-on edges of two servers on one computer apart", () => {
+    const nodes = [...NODES, node("render", "mcp", { x: 720, y: 288 })];
+    const servers: StageMcpServer[] = [
+      ...SERVERS,
+      {
+        disabled: false,
+        name: "render",
+        nodeId: "render",
+        sandbox: "mac",
+        transport: "machine",
+      },
+    ];
+    const { edges } = buildFramedGraph(
+      nodes,
+      [...EDGES, edge("agent", "render")],
+      servers,
+      NONE,
+      null,
+    );
+    const fans = edges
+      .filter((item) => item.type === "runsOn")
+      .map((item) => sideRouteOf(item).targetFan);
+
+    expect(fans).toHaveLength(2);
+    expect(Math.abs(fans[0] - fans[1])).toBeGreaterThanOrEqual(8);
+  });
+
+  test.each(["tracy", "large"] as const)(
+    "the tidy layout of the deployed %s stage draws no edge through a box",
+    (stage) => {
+      const { edges, mcpServers, nodes } = deployedStages[stage];
+      const servers: StageMcpServer[] = mcpServers;
+      const flatEdges = edges.map(hydrateEdge);
+      const positions = tidyCanvasLayout(
+        nodes,
+        flatEdges,
+        serversByNode(servers),
+      );
+      const laid: Node[] = nodes.map((item) => ({
+        ...item,
+        position: positions.get(item.id) ?? item.position,
+      }));
+      const graph = buildFramedGraph(laid, flatEdges, servers, NONE, null);
+
+      expect(crossings(graph.nodes, graph.edges)).toEqual([]);
+    },
+  );
 
   test("collapsing hides members and re-points their mount and inheritance to the frame", () => {
     const { nodes, edges } = buildFramedGraph(
@@ -228,9 +321,10 @@ describe("buildFramedGraph", () => {
   test("hands back the previous objects for frames and edges that did not change", () => {
     const first = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
     const same = buildFramedGraph(NODES, EDGES, SERVERS, NONE, first);
-    // The agent card nudges; no frame and no drawn lane changes.
+    // The agent card moves 40px; its lanes are relative to its handles, so no
+    // frame and no drawn edge changes.
     const dragged = NODES.map((item) =>
-      item.id === "agent" ? { ...item, position: { x: 208, y: 0 } } : item,
+      item.id === "agent" ? { ...item, position: { x: 240, y: 0 } } : item,
     );
     const afterDrag = buildFramedGraph(dragged, EDGES, SERVERS, NONE, first);
 
@@ -240,6 +334,31 @@ describe("buildFramedGraph", () => {
     expect(afterDrag.nodes.find((item) => item.id === CLOUD_FRAME)).toBe(
       first.nodes.find((item) => item.id === CLOUD_FRAME),
     );
+  });
+
+  test("rebuilds only the edge whose gutter flips when the agent crosses its target", () => {
+    // A skill stacked under the cloud frame takes a gutter, on the side the
+    // agent is on.
+    const nodes = [...NODES, node("deep", "skill", { x: 0, y: 360 })];
+    const edges = [...EDGES, edge("agent", "deep")];
+    const first = buildFramedGraph(nodes, edges, SERVERS, NONE, null);
+    const dragged = nodes.map((item) =>
+      item.id === "agent" ? { ...item, position: { x: -240, y: 0 } } : item,
+    );
+    const afterDrag = buildFramedGraph(dragged, edges, SERVERS, NONE, first);
+    const gutterOf = (graph: typeof first): number | undefined =>
+      (
+        graph.edges.find((item) => item.id === "xy-edge__agent-deep")?.data as
+          | { route: AgentEdgeRoute }
+          | undefined
+      )?.route.gutter?.x;
+    const rebuilt = afterDrag.edges
+      .filter((item) => !first.edges.includes(item))
+      .map((item) => item.id);
+
+    expect(gutterOf(first)).toBeGreaterThan(176);
+    expect(gutterOf(afterDrag)).toBeLessThan(0);
+    expect(rebuilt).toEqual(["xy-edge__agent-deep"]);
   });
 });
 
@@ -328,4 +447,101 @@ function node(
     position: position,
     type: type,
   };
+}
+
+/**
+ * Every drawn edge that runs through a top-level box other than the two
+ * holding its ends, with each node at its drawn size: frames as set, cards at
+ * the minimum, chips at their slot.
+ */
+function crossings(nodes: readonly Node[], edges: readonly Edge[]): string[] {
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  const boxes = new Map<string, LayoutRect>();
+  const handles = new Map<string, { box: LayoutRect; outer: string }>();
+  for (const item of nodes) {
+    if (item.hidden) continue;
+    const parent =
+      item.parentId === undefined ? undefined : byId.get(item.parentId);
+    if (!parent) {
+      const box = {
+        ...item.position,
+        height: item.height ?? NODE_HEIGHT,
+        width: item.width ?? NODE_WIDTH,
+      };
+      boxes.set(item.id, box);
+      handles.set(item.id, { box: box, outer: item.id });
+      continue;
+    }
+    const kind =
+      item.type === "workspace" || item.type === "mcp" ? item.type : "sandbox";
+    handles.set(item.id, {
+      box: {
+        height: FRAME_CHIP_HEIGHTS[kind],
+        width: FRAME_CHIP_WIDTH,
+        x: parent.position.x + item.position.x,
+        y: parent.position.y + item.position.y,
+      },
+      outer: parent.id,
+    });
+  }
+
+  return edges.flatMap((item): string[] => {
+    const source = handles.get(item.source);
+    const target = handles.get(item.target);
+    const route: unknown = item.data?.route;
+    if (!source || !target || typeof route !== "object" || route === null) {
+      return [];
+    }
+    const points =
+      "busDrop" in route
+        ? agentEdgePoints(
+            handlePoint(source.box, "bottom"),
+            handlePoint(target.box, "top"),
+            agentRouteOf(item),
+          )
+        : sideEdgePoints(
+            handlePoint(
+              source.box,
+              item.sourceHandle === "left" ? "left" : "right",
+            ),
+            handlePoint(
+              target.box,
+              item.targetHandle === "left" ? "left" : "right",
+            ),
+            sideRouteOf(item),
+          );
+
+    return crossedBoxIds(
+      points,
+      boxes,
+      new Set([source.outer, target.outer]),
+    ).map((box) => `${item.id} crosses ${box}`);
+  });
+}
+
+function agentRouteOf(item: Edge): AgentEdgeRoute {
+  return (item.data as { route: AgentEdgeRoute }).route;
+}
+
+/** A stored edge as the canvas hydrates it: a mount's handles come from its id. */
+function hydrateEdge(item: {
+  id: string;
+  source: string;
+  target: string;
+}): Edge {
+  if (!item.id.startsWith("mount:")) return item;
+  const rest = item.id.slice(`mount:${item.source}-`.length);
+  const marker = `-${item.target}-`;
+  const at = rest.indexOf(marker);
+
+  return {
+    ...item,
+    sourceHandle: rest.slice(0, at),
+    targetHandle: rest.slice(at + marker.length),
+    type: "mount",
+  };
+}
+
+function sideRouteOf(item: Edge): SideEdgeRoute {
+  return (item.data as { route: SideEdgeRoute }).route;
 }

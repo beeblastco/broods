@@ -1,0 +1,1830 @@
+{
+  "tracy": {
+    "nodes": [
+      {
+        "id": "cli-agent-coder",
+        "type": "agent",
+        "position": {
+          "x": 1392,
+          "y": 0
+        },
+        "data": {
+          "label": "coder",
+          "sandboxOrder": ["cli-sandbox-coder-sandbox"],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-tracy",
+        "type": "agent",
+        "position": {
+          "x": 456,
+          "y": 0
+        },
+        "data": {
+          "label": "tracy",
+          "sandboxOrder": [
+            "cli-sandbox-internal-sandbox",
+            "cli-sandbox-kien-mac",
+            "cli-sandbox-phicks-mac"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-sandbox-coder-sandbox",
+        "type": "sandbox",
+        "position": {
+          "x": 1392,
+          "y": 144
+        },
+        "data": {
+          "label": "coder-sandbox",
+          "mountName": "coder-sandbox",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-internal-sandbox",
+        "type": "sandbox",
+        "position": {
+          "x": 696,
+          "y": 144
+        },
+        "data": {
+          "label": "internal-sandbox",
+          "mountName": "internal-sandbox",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-kien-mac",
+        "type": "sandbox",
+        "position": {
+          "x": 464,
+          "y": 172
+        },
+        "data": {
+          "label": "kien-mac",
+          "mountName": "kien-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-phicks-mac",
+        "type": "sandbox",
+        "position": {
+          "x": 464,
+          "y": 224
+        },
+        "data": {
+          "label": "phicks-mac",
+          "mountName": "phicks-mac",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-handbook",
+        "type": "workspace",
+        "position": {
+          "x": 1160,
+          "y": 172
+        },
+        "data": {
+          "label": "handbook",
+          "mountName": "handbook",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-notes",
+        "type": "workspace",
+        "position": {
+          "x": 920,
+          "y": 172
+        },
+        "data": {
+          "label": "notes",
+          "mountName": "notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-playbook",
+        "type": "workspace",
+        "position": {
+          "x": 1160,
+          "y": 240
+        },
+        "data": {
+          "label": "playbook",
+          "mountName": "playbook",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-repos",
+        "type": "workspace",
+        "position": {
+          "x": 920,
+          "y": 240
+        },
+        "data": {
+          "label": "repos",
+          "mountName": "repos",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-mcp-blender",
+        "type": "mcp",
+        "position": {
+          "x": 240,
+          "y": 144
+        },
+        "data": {
+          "label": "blender",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-github",
+        "type": "mcp",
+        "position": {
+          "x": 8,
+          "y": 172
+        },
+        "data": {
+          "label": "github",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-linear",
+        "type": "mcp",
+        "position": {
+          "x": 8,
+          "y": 224
+        },
+        "data": {
+          "label": "linear",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "xy-edge__cli-agent-coder-cli-sandbox-coder-sandbox",
+        "source": "cli-agent-coder",
+        "target": "cli-sandbox-coder-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-coder-cli-workspace-handbook",
+        "source": "cli-agent-coder",
+        "target": "cli-workspace-handbook"
+      },
+      {
+        "id": "xy-edge__cli-agent-coder-cli-workspace-playbook",
+        "source": "cli-agent-coder",
+        "target": "cli-workspace-playbook"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-internal-sandbox",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-internal-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-kien-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-kien-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-sandbox-phicks-mac",
+        "source": "cli-agent-tracy",
+        "target": "cli-sandbox-phicks-mac"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-notes",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-notes"
+      },
+      {
+        "id": "mount:cli-workspace-notes-left-cli-sandbox-internal-sandbox-right",
+        "source": "cli-workspace-notes",
+        "target": "cli-sandbox-internal-sandbox"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-repos",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-repos"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-handbook",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-handbook"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-workspace-playbook",
+        "source": "cli-agent-tracy",
+        "target": "cli-workspace-playbook"
+      },
+      {
+        "id": "subagent:cli-agent-tracy-right-cli-agent-coder-left",
+        "source": "cli-agent-tracy",
+        "target": "cli-agent-coder"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-blender",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-blender"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-github",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-github"
+      },
+      {
+        "id": "xy-edge__cli-agent-tracy-cli-mcp-linear",
+        "source": "cli-agent-tracy",
+        "target": "cli-mcp-linear"
+      }
+    ],
+    "mcpServers": [
+      {
+        "nodeId": "cli-mcp-linear",
+        "name": "linear",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-github",
+        "name": "github",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-blender",
+        "name": "blender",
+        "transport": "machine",
+        "sandbox": "kien-mac",
+        "disabled": false
+      }
+    ]
+  },
+  "large": {
+    "nodes": [
+      {
+        "id": "cli-agent-alpha",
+        "type": "agent",
+        "position": {
+          "x": 216,
+          "y": 0
+        },
+        "data": {
+          "label": "alpha",
+          "sandboxOrder": [
+            "cli-sandbox-alpha-cloud-1",
+            "cli-sandbox-alpha-mac-1",
+            "cli-sandbox-alpha-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-bravo",
+        "type": "agent",
+        "position": {
+          "x": 1800,
+          "y": 0
+        },
+        "data": {
+          "label": "bravo",
+          "sandboxOrder": [
+            "cli-sandbox-bravo-cloud-1",
+            "cli-sandbox-bravo-cloud-2",
+            "cli-sandbox-bravo-mac-1",
+            "cli-sandbox-bravo-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-charlie",
+        "type": "agent",
+        "position": {
+          "x": 3192,
+          "y": 0
+        },
+        "data": {
+          "label": "charlie",
+          "sandboxOrder": [
+            "cli-sandbox-charlie-cloud-1",
+            "cli-sandbox-charlie-cloud-2",
+            "cli-sandbox-charlie-cloud-3",
+            "cli-sandbox-charlie-mac-1",
+            "cli-sandbox-charlie-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-delta",
+        "type": "agent",
+        "position": {
+          "x": 4128,
+          "y": 0
+        },
+        "data": {
+          "label": "delta",
+          "sandboxOrder": [
+            "cli-sandbox-delta-cloud-1",
+            "cli-sandbox-delta-mac-1",
+            "cli-sandbox-delta-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-echo",
+        "type": "agent",
+        "position": {
+          "x": 5496,
+          "y": 0
+        },
+        "data": {
+          "label": "echo",
+          "sandboxOrder": [
+            "cli-sandbox-echo-cloud-1",
+            "cli-sandbox-echo-cloud-2",
+            "cli-sandbox-echo-mac-1",
+            "cli-sandbox-echo-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-agent-foxtrot",
+        "type": "agent",
+        "position": {
+          "x": 6672,
+          "y": 0
+        },
+        "data": {
+          "label": "foxtrot",
+          "sandboxOrder": [
+            "cli-sandbox-foxtrot-cloud-1",
+            "cli-sandbox-foxtrot-cloud-2",
+            "cli-sandbox-foxtrot-cloud-3",
+            "cli-sandbox-foxtrot-mac-1",
+            "cli-sandbox-foxtrot-mac-2"
+          ],
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-sandbox-alpha-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 456,
+          "y": 144
+        },
+        "data": {
+          "label": "alpha-cloud-1",
+          "mountName": "alpha-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-alpha-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 224,
+          "y": 172
+        },
+        "data": {
+          "label": "alpha-mac-1",
+          "mountName": "alpha-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-alpha-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 224,
+          "y": 224
+        },
+        "data": {
+          "label": "alpha-mac-2",
+          "mountName": "alpha-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-bravo-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 2048,
+          "y": 172
+        },
+        "data": {
+          "label": "bravo-cloud-1",
+          "mountName": "bravo-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-bravo-cloud-2",
+        "type": "sandbox",
+        "position": {
+          "x": 2048,
+          "y": 224
+        },
+        "data": {
+          "label": "bravo-cloud-2",
+          "mountName": "bravo-cloud-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-bravo-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 1808,
+          "y": 172
+        },
+        "data": {
+          "label": "bravo-mac-1",
+          "mountName": "bravo-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-bravo-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 1808,
+          "y": 224
+        },
+        "data": {
+          "label": "bravo-mac-2",
+          "mountName": "bravo-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-charlie-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 3440,
+          "y": 172
+        },
+        "data": {
+          "label": "charlie-cloud-1",
+          "mountName": "charlie-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-charlie-cloud-2",
+        "type": "sandbox",
+        "position": {
+          "x": 3440,
+          "y": 224
+        },
+        "data": {
+          "label": "charlie-cloud-2",
+          "mountName": "charlie-cloud-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-charlie-cloud-3",
+        "type": "sandbox",
+        "position": {
+          "x": 3440,
+          "y": 276
+        },
+        "data": {
+          "label": "charlie-cloud-3",
+          "mountName": "charlie-cloud-3",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-charlie-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 3200,
+          "y": 172
+        },
+        "data": {
+          "label": "charlie-mac-1",
+          "mountName": "charlie-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-charlie-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 3200,
+          "y": 224
+        },
+        "data": {
+          "label": "charlie-mac-2",
+          "mountName": "charlie-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-delta-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 4368,
+          "y": 144
+        },
+        "data": {
+          "label": "delta-cloud-1",
+          "mountName": "delta-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-delta-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 4136,
+          "y": 172
+        },
+        "data": {
+          "label": "delta-mac-1",
+          "mountName": "delta-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-delta-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 4136,
+          "y": 224
+        },
+        "data": {
+          "label": "delta-mac-2",
+          "mountName": "delta-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-echo-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 5744,
+          "y": 172
+        },
+        "data": {
+          "label": "echo-cloud-1",
+          "mountName": "echo-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-echo-cloud-2",
+        "type": "sandbox",
+        "position": {
+          "x": 5744,
+          "y": 224
+        },
+        "data": {
+          "label": "echo-cloud-2",
+          "mountName": "echo-cloud-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-echo-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 5504,
+          "y": 172
+        },
+        "data": {
+          "label": "echo-mac-1",
+          "mountName": "echo-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-echo-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 5504,
+          "y": 224
+        },
+        "data": {
+          "label": "echo-mac-2",
+          "mountName": "echo-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-foxtrot-cloud-1",
+        "type": "sandbox",
+        "position": {
+          "x": 6920,
+          "y": 172
+        },
+        "data": {
+          "label": "foxtrot-cloud-1",
+          "mountName": "foxtrot-cloud-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-foxtrot-cloud-2",
+        "type": "sandbox",
+        "position": {
+          "x": 6920,
+          "y": 224
+        },
+        "data": {
+          "label": "foxtrot-cloud-2",
+          "mountName": "foxtrot-cloud-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-foxtrot-cloud-3",
+        "type": "sandbox",
+        "position": {
+          "x": 6920,
+          "y": 276
+        },
+        "data": {
+          "label": "foxtrot-cloud-3",
+          "mountName": "foxtrot-cloud-3",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "sandbox"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-foxtrot-mac-1",
+        "type": "sandbox",
+        "position": {
+          "x": 6680,
+          "y": 172
+        },
+        "data": {
+          "label": "foxtrot-mac-1",
+          "mountName": "foxtrot-mac-1",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-sandbox-foxtrot-mac-2",
+        "type": "sandbox",
+        "position": {
+          "x": 6680,
+          "y": 224
+        },
+        "data": {
+          "label": "foxtrot-mac-2",
+          "mountName": "foxtrot-mac-2",
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "provider": "machine"
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-alpha-data",
+        "type": "workspace",
+        "position": {
+          "x": 680,
+          "y": 172
+        },
+        "data": {
+          "label": "alpha-data",
+          "mountName": "alpha-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-alpha-notes",
+        "type": "workspace",
+        "position": {
+          "x": 680,
+          "y": 240
+        },
+        "data": {
+          "label": "alpha-notes",
+          "mountName": "alpha-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-bravo-data",
+        "type": "workspace",
+        "position": {
+          "x": 2288,
+          "y": 172
+        },
+        "data": {
+          "label": "bravo-data",
+          "mountName": "bravo-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-bravo-notes",
+        "type": "workspace",
+        "position": {
+          "x": 2288,
+          "y": 240
+        },
+        "data": {
+          "label": "bravo-notes",
+          "mountName": "bravo-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-charlie-data",
+        "type": "workspace",
+        "position": {
+          "x": 3680,
+          "y": 172
+        },
+        "data": {
+          "label": "charlie-data",
+          "mountName": "charlie-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-charlie-notes",
+        "type": "workspace",
+        "position": {
+          "x": 3680,
+          "y": 240
+        },
+        "data": {
+          "label": "charlie-notes",
+          "mountName": "charlie-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-delta-data",
+        "type": "workspace",
+        "position": {
+          "x": 4592,
+          "y": 172
+        },
+        "data": {
+          "label": "delta-data",
+          "mountName": "delta-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-delta-notes",
+        "type": "workspace",
+        "position": {
+          "x": 4592,
+          "y": 240
+        },
+        "data": {
+          "label": "delta-notes",
+          "mountName": "delta-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-echo-data",
+        "type": "workspace",
+        "position": {
+          "x": 5984,
+          "y": 172
+        },
+        "data": {
+          "label": "echo-data",
+          "mountName": "echo-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-echo-notes",
+        "type": "workspace",
+        "position": {
+          "x": 5984,
+          "y": 240
+        },
+        "data": {
+          "label": "echo-notes",
+          "mountName": "echo-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-foxtrot-data",
+        "type": "workspace",
+        "position": {
+          "x": 7160,
+          "y": 172
+        },
+        "data": {
+          "label": "foxtrot-data",
+          "mountName": "foxtrot-data",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-foxtrot-notes",
+        "type": "workspace",
+        "position": {
+          "x": 7160,
+          "y": 240
+        },
+        "data": {
+          "label": "foxtrot-notes",
+          "mountName": "foxtrot-notes",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-shared-assets",
+        "type": "workspace",
+        "position": {
+          "x": 4824,
+          "y": 144
+        },
+        "data": {
+          "label": "shared-assets",
+          "mountName": "shared-assets",
+          "readOnly": false,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-shared-docs",
+        "type": "workspace",
+        "position": {
+          "x": 1128,
+          "y": 144
+        },
+        "data": {
+          "label": "shared-docs",
+          "mountName": "shared-docs",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-workspace-team-wiki",
+        "type": "workspace",
+        "position": {
+          "x": 2520,
+          "y": 144
+        },
+        "data": {
+          "label": "team-wiki",
+          "mountName": "team-wiki",
+          "readOnly": true,
+          "managedBy": "cli",
+          "status": "idle",
+          "config": {
+            "storage": {
+              "provider": "s3"
+            }
+          }
+        }
+      },
+      {
+        "id": "cli-mcp-alpha-tool",
+        "type": "mcp",
+        "position": {
+          "x": 0,
+          "y": 144
+        },
+        "data": {
+          "label": "alpha-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-bravo-api-1",
+        "type": "mcp",
+        "position": {
+          "x": 1352,
+          "y": 172
+        },
+        "data": {
+          "label": "bravo-api-1",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-bravo-api-2",
+        "type": "mcp",
+        "position": {
+          "x": 1352,
+          "y": 224
+        },
+        "data": {
+          "label": "bravo-api-2",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-bravo-tool",
+        "type": "mcp",
+        "position": {
+          "x": 1584,
+          "y": 144
+        },
+        "data": {
+          "label": "bravo-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-charlie-api-1",
+        "type": "mcp",
+        "position": {
+          "x": 2744,
+          "y": 172
+        },
+        "data": {
+          "label": "charlie-api-1",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-charlie-api-2",
+        "type": "mcp",
+        "position": {
+          "x": 2744,
+          "y": 224
+        },
+        "data": {
+          "label": "charlie-api-2",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-charlie-tool",
+        "type": "mcp",
+        "position": {
+          "x": 2976,
+          "y": 144
+        },
+        "data": {
+          "label": "charlie-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-delta-tool",
+        "type": "mcp",
+        "position": {
+          "x": 3912,
+          "y": 144
+        },
+        "data": {
+          "label": "delta-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-echo-api-1",
+        "type": "mcp",
+        "position": {
+          "x": 5048,
+          "y": 172
+        },
+        "data": {
+          "label": "echo-api-1",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-echo-api-2",
+        "type": "mcp",
+        "position": {
+          "x": 5048,
+          "y": 224
+        },
+        "data": {
+          "label": "echo-api-2",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-echo-tool",
+        "type": "mcp",
+        "position": {
+          "x": 5280,
+          "y": 144
+        },
+        "data": {
+          "label": "echo-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-foxtrot-api-1",
+        "type": "mcp",
+        "position": {
+          "x": 6224,
+          "y": 172
+        },
+        "data": {
+          "label": "foxtrot-api-1",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-foxtrot-api-2",
+        "type": "mcp",
+        "position": {
+          "x": 6224,
+          "y": 224
+        },
+        "data": {
+          "label": "foxtrot-api-2",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-foxtrot-api-3",
+        "type": "mcp",
+        "position": {
+          "x": 6224,
+          "y": 276
+        },
+        "data": {
+          "label": "foxtrot-api-3",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-foxtrot-tool",
+        "type": "mcp",
+        "position": {
+          "x": 6456,
+          "y": 144
+        },
+        "data": {
+          "label": "foxtrot-tool",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      },
+      {
+        "id": "cli-mcp-shared-search",
+        "type": "mcp",
+        "position": {
+          "x": 912,
+          "y": 144
+        },
+        "data": {
+          "label": "shared-search",
+          "managedBy": "cli",
+          "status": "idle"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-sandbox-alpha-cloud-1",
+        "source": "cli-agent-alpha",
+        "target": "cli-sandbox-alpha-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-sandbox-alpha-mac-1",
+        "source": "cli-agent-alpha",
+        "target": "cli-sandbox-alpha-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-sandbox-alpha-mac-2",
+        "source": "cli-agent-alpha",
+        "target": "cli-sandbox-alpha-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-workspace-alpha-notes",
+        "source": "cli-agent-alpha",
+        "target": "cli-workspace-alpha-notes"
+      },
+      {
+        "id": "mount:cli-workspace-alpha-notes-left-cli-sandbox-alpha-cloud-1-right",
+        "source": "cli-workspace-alpha-notes",
+        "target": "cli-sandbox-alpha-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-workspace-alpha-data",
+        "source": "cli-agent-alpha",
+        "target": "cli-workspace-alpha-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-workspace-shared-docs",
+        "source": "cli-agent-alpha",
+        "target": "cli-workspace-shared-docs"
+      },
+      {
+        "id": "subagent:cli-agent-alpha-right-cli-agent-bravo-left",
+        "source": "cli-agent-alpha",
+        "target": "cli-agent-bravo"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-mcp-alpha-tool",
+        "source": "cli-agent-alpha",
+        "target": "cli-mcp-alpha-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-alpha-cli-mcp-shared-search",
+        "source": "cli-agent-alpha",
+        "target": "cli-mcp-shared-search"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-sandbox-bravo-cloud-1",
+        "source": "cli-agent-bravo",
+        "target": "cli-sandbox-bravo-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-sandbox-bravo-cloud-2",
+        "source": "cli-agent-bravo",
+        "target": "cli-sandbox-bravo-cloud-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-sandbox-bravo-mac-1",
+        "source": "cli-agent-bravo",
+        "target": "cli-sandbox-bravo-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-sandbox-bravo-mac-2",
+        "source": "cli-agent-bravo",
+        "target": "cli-sandbox-bravo-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-workspace-bravo-notes",
+        "source": "cli-agent-bravo",
+        "target": "cli-workspace-bravo-notes"
+      },
+      {
+        "id": "mount:cli-workspace-bravo-notes-left-cli-sandbox-bravo-cloud-1-right",
+        "source": "cli-workspace-bravo-notes",
+        "target": "cli-sandbox-bravo-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-workspace-bravo-data",
+        "source": "cli-agent-bravo",
+        "target": "cli-workspace-bravo-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-workspace-shared-docs",
+        "source": "cli-agent-bravo",
+        "target": "cli-workspace-shared-docs"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-workspace-team-wiki",
+        "source": "cli-agent-bravo",
+        "target": "cli-workspace-team-wiki"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-mcp-bravo-tool",
+        "source": "cli-agent-bravo",
+        "target": "cli-mcp-bravo-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-mcp-bravo-api-1",
+        "source": "cli-agent-bravo",
+        "target": "cli-mcp-bravo-api-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-bravo-cli-mcp-bravo-api-2",
+        "source": "cli-agent-bravo",
+        "target": "cli-mcp-bravo-api-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-sandbox-charlie-cloud-1",
+        "source": "cli-agent-charlie",
+        "target": "cli-sandbox-charlie-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-sandbox-charlie-cloud-2",
+        "source": "cli-agent-charlie",
+        "target": "cli-sandbox-charlie-cloud-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-sandbox-charlie-cloud-3",
+        "source": "cli-agent-charlie",
+        "target": "cli-sandbox-charlie-cloud-3"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-sandbox-charlie-mac-1",
+        "source": "cli-agent-charlie",
+        "target": "cli-sandbox-charlie-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-sandbox-charlie-mac-2",
+        "source": "cli-agent-charlie",
+        "target": "cli-sandbox-charlie-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-workspace-charlie-notes",
+        "source": "cli-agent-charlie",
+        "target": "cli-workspace-charlie-notes"
+      },
+      {
+        "id": "mount:cli-workspace-charlie-notes-left-cli-sandbox-charlie-cloud-1-right",
+        "source": "cli-workspace-charlie-notes",
+        "target": "cli-sandbox-charlie-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-workspace-charlie-data",
+        "source": "cli-agent-charlie",
+        "target": "cli-workspace-charlie-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-workspace-shared-docs",
+        "source": "cli-agent-charlie",
+        "target": "cli-workspace-shared-docs"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-tool",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-charlie-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-api-1",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-charlie-api-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-charlie-api-2",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-charlie-api-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-charlie-cli-mcp-shared-search",
+        "source": "cli-agent-charlie",
+        "target": "cli-mcp-shared-search"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-sandbox-delta-cloud-1",
+        "source": "cli-agent-delta",
+        "target": "cli-sandbox-delta-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-sandbox-delta-mac-1",
+        "source": "cli-agent-delta",
+        "target": "cli-sandbox-delta-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-sandbox-delta-mac-2",
+        "source": "cli-agent-delta",
+        "target": "cli-sandbox-delta-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-workspace-delta-notes",
+        "source": "cli-agent-delta",
+        "target": "cli-workspace-delta-notes"
+      },
+      {
+        "id": "mount:cli-workspace-delta-notes-left-cli-sandbox-delta-cloud-1-right",
+        "source": "cli-workspace-delta-notes",
+        "target": "cli-sandbox-delta-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-workspace-delta-data",
+        "source": "cli-agent-delta",
+        "target": "cli-workspace-delta-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-workspace-shared-assets",
+        "source": "cli-agent-delta",
+        "target": "cli-workspace-shared-assets"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-workspace-team-wiki",
+        "source": "cli-agent-delta",
+        "target": "cli-workspace-team-wiki"
+      },
+      {
+        "id": "subagent:cli-agent-delta-right-cli-agent-echo-left",
+        "source": "cli-agent-delta",
+        "target": "cli-agent-echo"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-mcp-delta-tool",
+        "source": "cli-agent-delta",
+        "target": "cli-mcp-delta-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-delta-cli-mcp-shared-search",
+        "source": "cli-agent-delta",
+        "target": "cli-mcp-shared-search"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-sandbox-echo-cloud-1",
+        "source": "cli-agent-echo",
+        "target": "cli-sandbox-echo-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-sandbox-echo-cloud-2",
+        "source": "cli-agent-echo",
+        "target": "cli-sandbox-echo-cloud-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-sandbox-echo-mac-1",
+        "source": "cli-agent-echo",
+        "target": "cli-sandbox-echo-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-sandbox-echo-mac-2",
+        "source": "cli-agent-echo",
+        "target": "cli-sandbox-echo-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-workspace-echo-notes",
+        "source": "cli-agent-echo",
+        "target": "cli-workspace-echo-notes"
+      },
+      {
+        "id": "mount:cli-workspace-echo-notes-left-cli-sandbox-echo-cloud-1-right",
+        "source": "cli-workspace-echo-notes",
+        "target": "cli-sandbox-echo-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-workspace-echo-data",
+        "source": "cli-agent-echo",
+        "target": "cli-workspace-echo-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-workspace-shared-assets",
+        "source": "cli-agent-echo",
+        "target": "cli-workspace-shared-assets"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-mcp-echo-api-2",
+        "source": "cli-agent-echo",
+        "target": "cli-mcp-echo-api-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-mcp-echo-api-1",
+        "source": "cli-agent-echo",
+        "target": "cli-mcp-echo-api-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-echo-cli-mcp-echo-tool",
+        "source": "cli-agent-echo",
+        "target": "cli-mcp-echo-tool"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-sandbox-foxtrot-cloud-1",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-sandbox-foxtrot-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-sandbox-foxtrot-cloud-2",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-sandbox-foxtrot-cloud-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-sandbox-foxtrot-cloud-3",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-sandbox-foxtrot-cloud-3"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-sandbox-foxtrot-mac-1",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-sandbox-foxtrot-mac-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-sandbox-foxtrot-mac-2",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-sandbox-foxtrot-mac-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-workspace-foxtrot-notes",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-workspace-foxtrot-notes"
+      },
+      {
+        "id": "mount:cli-workspace-foxtrot-notes-left-cli-sandbox-foxtrot-cloud-1-right",
+        "source": "cli-workspace-foxtrot-notes",
+        "target": "cli-sandbox-foxtrot-cloud-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-workspace-foxtrot-data",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-workspace-foxtrot-data"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-workspace-shared-assets",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-workspace-shared-assets"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-workspace-team-wiki",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-workspace-team-wiki"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-api-2",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-mcp-foxtrot-api-2"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-api-3",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-mcp-foxtrot-api-3"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-api-1",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-mcp-foxtrot-api-1"
+      },
+      {
+        "id": "xy-edge__cli-agent-foxtrot-cli-mcp-foxtrot-tool",
+        "source": "cli-agent-foxtrot",
+        "target": "cli-mcp-foxtrot-tool"
+      }
+    ],
+    "mcpServers": [
+      {
+        "nodeId": "cli-mcp-shared-search",
+        "name": "shared-search",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-foxtrot-tool",
+        "name": "foxtrot-tool",
+        "transport": "machine",
+        "sandbox": "foxtrot-mac-1",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-foxtrot-api-3",
+        "name": "foxtrot-api-3",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-foxtrot-api-2",
+        "name": "foxtrot-api-2",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-foxtrot-api-1",
+        "name": "foxtrot-api-1",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-echo-tool",
+        "name": "echo-tool",
+        "transport": "machine",
+        "sandbox": "echo-mac-1",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-echo-api-2",
+        "name": "echo-api-2",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-echo-api-1",
+        "name": "echo-api-1",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-delta-tool",
+        "name": "delta-tool",
+        "transport": "machine",
+        "sandbox": "delta-mac-1",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-charlie-tool",
+        "name": "charlie-tool",
+        "transport": "machine",
+        "sandbox": "charlie-mac-1",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-charlie-api-2",
+        "name": "charlie-api-2",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-charlie-api-1",
+        "name": "charlie-api-1",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-bravo-tool",
+        "name": "bravo-tool",
+        "transport": "machine",
+        "sandbox": "bravo-mac-1",
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-bravo-api-2",
+        "name": "bravo-api-2",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-bravo-api-1",
+        "name": "bravo-api-1",
+        "transport": "http",
+        "sandbox": null,
+        "disabled": false
+      },
+      {
+        "nodeId": "cli-mcp-alpha-tool",
+        "name": "alpha-tool",
+        "transport": "machine",
+        "sandbox": "alpha-mac-1",
+        "disabled": false
+      }
+    ]
+  }
+}

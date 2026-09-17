@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  mcpMemberStatus,
+  enabledMemberStatus,
   sandboxMemberStatus,
   summarizeMembers,
   workspaceMemberStatus,
@@ -10,10 +10,10 @@ describe("summarizeMembers", () => {
   test("grey when every member is idle, disabled or not connected", () => {
     expect(
       summarizeMembers([
-        mcpMemberStatus(undefined),
+        enabledMemberStatus(false),
         sandboxMemberStatus({ label: "cloud", status: "idle" }, undefined),
         sandboxMemberStatus({ label: "mac" }, "offline"),
-        workspaceMemberStatus({ kind: "inherited", sandboxLabel: "cloud" }),
+        workspaceMemberStatus({ kind: "inherited", sandboxLabels: ["cloud"] }),
       ]),
     ).toEqual({
       color: "bg-muted-foreground",
@@ -45,22 +45,20 @@ describe("summarizeMembers", () => {
 
     expect(
       summarizeMembers([
-        workspaceMemberStatus({ kind: "inherited", sandboxLabel: "cloud" }),
+        workspaceMemberStatus({ kind: "inherited", sandboxLabels: ["cloud"] }),
         mounted,
       ]),
     ).toEqual({ color: "bg-canvas-mount", text: "1 inherited · 1 mounted" });
   });
 
-  test("an enabled server is ok, a disabled one idle", () => {
-    const server = {
-      disabled: false,
-      name: "github",
-      nodeId: "github",
-      sandbox: null,
-      transport: "http" as const,
-    };
-
-    expect(mcpMemberStatus(server).level).toBe("ok");
-    expect(mcpMemberStatus({ ...server, disabled: true }).level).toBe("idle");
+  test("an enabled server or skill is ok, a disabled one grey and idle", () => {
+    expect(enabledMemberStatus(true)).toMatchObject({
+      color: "bg-success",
+      level: "ok",
+    });
+    expect(enabledMemberStatus(false)).toMatchObject({
+      color: "bg-muted-foreground",
+      level: "idle",
+    });
   });
 });

@@ -4,7 +4,7 @@ import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import { ResourceChip } from "@/app/components/node/ResourceChip";
 import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
-import { mcpMemberStatus } from "@/app/lib/memberStatus";
+import { enabledMemberStatus } from "@/app/lib/memberStatus";
 import type { NodeProps } from "@xyflow/react";
 import { Plug } from "lucide-react";
 
@@ -25,7 +25,7 @@ const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
 export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const server = useCanvasFrames().mcpServers.get(id);
-  const status = mcpMemberStatus(server);
+  const status = enabledMemberStatus(server !== undefined && !server.disabled);
 
   if (parentId !== undefined) {
     return (
@@ -57,7 +57,7 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
             ? TRANSPORT_SUBTITLE[server.transport]
             : undefined
       }
-      liveStatus={{ color: status.color, text: status.label }}
+      liveStatus={status}
       showSideHandles={server?.transport === "machine"}
     />
   );
