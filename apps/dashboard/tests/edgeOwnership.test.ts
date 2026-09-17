@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   connectionEdge,
-  isCodeOwnedEdge,
+  isCodeManagedEdge,
 } from "../app/components/canvas/edgeOwnership";
 
 /** Tracy's CLI nodes, plus a sandbox and an agent made on the dashboard. */
@@ -13,7 +13,7 @@ const MANAGED_BY: Record<string, string> = {
   "sandbox-dash": "dashboard",
 };
 
-describe("isCodeOwnedEdge", () => {
+describe("isCodeManagedEdge", () => {
   test("owns an edge a person draws from a code-managed agent, so it can't be drawn", () => {
     for (const [source, target] of [
       ["cli-agent-tracy", "cli-sandbox-mac"],
@@ -73,7 +73,7 @@ function owned(
   targetHandle: string,
   sourceIsAgent: boolean,
 ): boolean {
-  return isCodeOwnedEdge(
+  return isCodeManagedEdge(
     connectionEdge(
       {
         source: source,

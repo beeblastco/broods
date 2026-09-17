@@ -1,9 +1,9 @@
 "use client";
 
-import { isCodeOwnedEdge } from "@/app/components/canvas/edgeOwnership";
+import { isCodeManagedEdge } from "@/app/components/canvas/edgeOwnership";
 import { useStore } from "@xyflow/react";
 
-/** Whether code owns an edge (see `isCodeOwnedEdge`): it shows a lock, never a trash. */
+/** Whether code owns an edge (see `isCodeManagedEdge`): it shows a lock, never a trash. */
 export function useCodeManagedEdge(
   id: string,
   source: string,
@@ -11,7 +11,7 @@ export function useCodeManagedEdge(
 ): boolean {
   // A boolean, so the selector stays referentially stable across store updates.
   return useStore((state): boolean =>
-    isCodeOwnedEdge(
+    isCodeManagedEdge(
       { id: id, source: source, target: target },
       (nodeId): unknown => state.nodeLookup.get(nodeId)?.data.managedBy,
     ),
