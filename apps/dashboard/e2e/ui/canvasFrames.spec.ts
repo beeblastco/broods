@@ -436,12 +436,8 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
       "Your computer",
       ["kien-mac", "phicks-mac"],
     ],
-    ["frame:tracy:workspace:s3", "Workspaces · S3", ["notes", "repos"]],
-    [
-      "frame:coder,tracy:workspace:s3",
-      "Workspaces · S3",
-      ["handbook", "playbook"],
-    ],
+    ["frame:tracy:workspace:s3", "Workspaces", ["notes", "repos"]],
+    ["frame:coder,tracy:workspace:s3", "Workspaces", ["handbook", "playbook"]],
   ] as const) {
     const colors = await Promise.all(
       members.map(async (id): Promise<string> =>
@@ -501,7 +497,7 @@ test("hovering any edge's line shows a lock or a trash: trash only where it can 
   const frame = fixture.locator(
     '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
   );
-  await frame.getByRole("button", { name: "Collapse Workspaces · S3" }).click();
+  await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
   const collapsed = Object.entries(await hoverEveryEdge(fixture)).filter(
     ([id]) => id.startsWith("collapsed:"),
   );

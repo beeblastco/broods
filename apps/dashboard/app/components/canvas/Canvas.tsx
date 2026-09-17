@@ -43,13 +43,11 @@ import {
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
 import {
-  agreedSandboxOrderNumbers,
   boardRects,
   frameMemberActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
-  workspaceOnlySandboxIds,
   type FrameMemberAction,
 } from "@/app/lib/canvasFrameEdits";
 import {
@@ -77,6 +75,10 @@ import {
   GRID,
 } from "@broods/convex/model/canvasLayout";
 import { api } from "@broods/convex/_generated/api";
+import {
+  agreedSandboxOrderNumbers,
+  workspaceOnlySandboxIds,
+} from "@broods/convex/model/canvasFrames";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   addEdge,

@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
-  agreedSandboxOrderNumbers,
   frameMemberActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
-  workspaceOnlySandboxIds,
 } from "../app/lib/canvasFrameEdits";
 import type { StageMcpServer } from "../app/lib/canvasFrameNodes";
 
@@ -236,36 +234,6 @@ describe("runtime ref guards", () => {
         { edges: broken, nodes: renamed },
       ),
     ).toBeNull();
-  });
-});
-
-describe("agreedSandboxOrderNumbers", () => {
-  test("numbers a shared sandbox only when its agents order it the same", () => {
-    const nodes = [...NODES, node("second", "agent", { x: 720, y: 0 })];
-    // bravo is second for `agent` and first, alone, for `second`.
-    const edges = [...EDGES, edge("second", "bravo")];
-
-    expect([...agreedSandboxOrderNumbers(nodes, edges)]).toEqual([
-      ["alpha", 1],
-    ]);
-  });
-});
-
-describe("workspaceOnlySandboxIds", () => {
-  test("marks a sandbox a workspace mounts only when no agent wires it", () => {
-    // browser backs notes and no agent lists it; alpha backs notes and is listed.
-    const nodes = [...NODES, node("browser", "sandbox", { x: 0, y: 480 })];
-    const edges = [
-      ...EDGES,
-      {
-        id: "mount:browser-right-notes-left",
-        source: "browser",
-        target: "notes",
-        type: "mount",
-      },
-    ];
-
-    expect([...workspaceOnlySandboxIds(nodes, edges)]).toEqual(["browser"]);
   });
 });
 

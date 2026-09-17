@@ -42,6 +42,7 @@ import {
 import {
   agentOwners,
   agentRefCounts,
+  agreedSandboxOrderNumbers,
   compareByLabel,
   deriveCanvasGroups,
   edgeKind,
@@ -53,7 +54,7 @@ import {
   frameSize,
   FRAME_WIDTH,
   runsOnSandboxIds,
-  sandboxOrderNumbers,
+  workspaceOnlySandboxIds,
   workspaceSandboxIds,
   type CanvasFrame,
   type McpServersByNode,
@@ -414,7 +415,11 @@ function cardHeights(
   mcpServers: McpServersByNode,
   states: ReadonlyMap<string, WorkspaceSandboxIds>,
 ): Map<string, number> {
-  const orderNumbers = sandboxOrderNumbers(nodes, edges);
+  // A sandbox card has a subtitle row for its number or for "workspace only".
+  const noteSandboxIds = new Set([
+    ...agreedSandboxOrderNumbers(nodes, edges).keys(),
+    ...workspaceOnlySandboxIds(nodes, edges),
+  ]);
   const refCounts = agentRefCounts(nodes, edges);
   const labels = new Map(nodes.map((node) => [node.id, labelOf(node)]));
 
@@ -449,7 +454,7 @@ function cardHeights(
         subtitle:
           node.type === "database" ||
           (node.type === "mcp" && mcpServers.has(node.id)) ||
-          (node.type === "sandbox" && (machine || orderNumbers.has(node.id))),
+          (node.type === "sandbox" && (machine || noteSandboxIds.has(node.id))),
       };
 
       return [node.id, cardHeight(labelOf(node), facts)];
