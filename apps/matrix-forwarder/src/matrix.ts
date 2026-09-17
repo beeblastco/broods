@@ -59,24 +59,6 @@ export interface WhoAmI {
   user_id: string;
 }
 
-export class MatrixError extends Error {
-  readonly errcode: string | undefined;
-  readonly retryAfterMs: number | undefined;
-  readonly status: number;
-
-  constructor(
-    status: number,
-    errcode: string | undefined,
-    retryAfterMs: number | undefined,
-    message: string,
-  ) {
-    super(message);
-    this.errcode = errcode;
-    this.retryAfterMs = retryAfterMs;
-    this.status = status;
-  }
-}
-
 /** One account's view of its homeserver. Holds no sync state. */
 export class MatrixClient {
   private readonly accessToken: string;
@@ -218,6 +200,24 @@ export class MatrixClient {
     );
 
     return JSON.parse(text) as T;
+  }
+}
+
+export class MatrixError extends Error {
+  readonly errcode: string | undefined;
+  readonly retryAfterMs: number | undefined;
+  readonly status: number;
+
+  constructor(
+    status: number,
+    errcode: string | undefined,
+    retryAfterMs: number | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.errcode = errcode;
+    this.retryAfterMs = retryAfterMs;
+    this.status = status;
   }
 }
 

@@ -26,25 +26,7 @@ interface Capture {
   url: string;
 }
 
-function captureFetch(status = 200): Capture[] {
-  const calls: Capture[] = [];
-  globalThis.fetch = (async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    calls.push({
-      body: JSON.parse(String(init?.body)),
-      headers: (init?.headers ?? {}) as Record<string, string>,
-      url: String(input),
-    });
-
-    return new Response("", { status: status });
-  }) as typeof fetch;
-
-  return calls;
-}
-
-afterEach(() => {
+afterEach((): void => {
   globalThis.fetch = realFetch;
 });
 
@@ -115,8 +97,8 @@ describe("forwarding a room message", () => {
     const calls = captureFetch();
     await forwardRoomEvent(event, "token-a", TARGETS);
 
-    expect(calls.map((call) => call.url)).toEqual(
-      TARGETS.map((target) => target.webhookUrl),
+    expect(calls.map((call): string => call.url)).toEqual(
+      TARGETS.map((target): string => target.webhookUrl),
     );
   });
 
@@ -128,3 +110,21 @@ describe("forwarding a room message", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+function captureFetch(status = 200): Capture[] {
+  const calls: Capture[] = [];
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    calls.push({
+      body: JSON.parse(String(init?.body)),
+      headers: (init?.headers ?? {}) as Record<string, string>,
+      url: String(input),
+    });
+
+    return new Response("", { status: status });
+  }) as typeof fetch;
+
+  return calls;
+}

@@ -36,16 +36,14 @@ import {
 import { contentTypeForPath } from "./media-types.ts";
 import { MATRIX_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
+const DEFAULT_REACTION = "👀";
+const FORWARDER_URL_ENV = "MATRIX_FORWARDER_URL";
 /**
  * Marks an event this channel sent. The account is usually a person's, so the
  * sender alone cannot tell the agent's replies from its owner's messages.
  */
 export const MATRIX_BOT_MARKER = "app.broods.bot";
-
-const DEFAULT_REACTION = "👀";
-const FORWARDER_URL_ENV = "MATRIX_FORWARDER_URL";
 const MATRIX_REQUEST_TIMEOUT_MS = 30_000;
-// Message types that carry media, mapped to the attachment type they become.
 const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
   "m.audio": "audio",
   "m.file": "file",
@@ -53,22 +51,6 @@ const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
   "m.video": "video",
 };
 const TEXT_MSGTYPES = new Set(["m.emote", "m.text"]);
-
-/** Where a reply goes: the room, and the thread when the message was in one. */
-export interface MatrixSource {
-  encrypted: boolean;
-  messageId: string;
-  roomId: string;
-  threadRootId?: string;
-  userId: string;
-}
-
-export interface MatrixChannelOptions {
-  allowedChannelIds: ReadonlySet<string> | null;
-  allowedUserIds: ReadonlySet<string> | null;
-  botName?: string;
-  mentionText?: string;
-}
 
 /** The `file` object of an encrypted attachment (spec: EncryptedFile). */
 interface EncryptedFile {
@@ -83,6 +65,22 @@ interface EncryptedFile {
   };
   url: string;
   v: "v2";
+}
+
+export interface MatrixChannelOptions {
+  allowedChannelIds: ReadonlySet<string> | null;
+  allowedUserIds: ReadonlySet<string> | null;
+  botName?: string;
+  mentionText?: string;
+}
+
+/** Where a reply goes: the room, and the thread when the message was in one. */
+export interface MatrixSource {
+  encrypted: boolean;
+  messageId: string;
+  roomId: string;
+  threadRootId?: string;
+  userId: string;
 }
 
 // Strings only: `fetchMetadata` is persisted into a `broods-media:` reference.
@@ -697,8 +695,9 @@ async function uploadMedia(
         "Content-Type": mimeType,
       },
       method: "POST",
-      // The download below follows redirects because authenticated media may
-      // point at a CDN. An upload never does, and the token rides the request.
+      // The account's token rides this request and an upload never redirects.
+      // `downloadMedia` keeps fetch's default because authenticated media is
+      // allowed to redirect to a CDN.
       redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },

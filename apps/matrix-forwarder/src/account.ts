@@ -124,7 +124,7 @@ export class MatrixAccount {
       this.state = "failed";
       logError("Matrix account stopped unexpectedly", {
         error: error instanceof Error ? error.message : String(error),
-        tokenHint: this.hint(),
+        tokenHint: tokenHint(this.options.accessToken),
       });
     });
   }
@@ -212,10 +212,6 @@ export class MatrixAccount {
     }
   }
 
-  private hint(): string {
-    return tokenHint(this.options.accessToken);
-  }
-
   /** whoami, then the device's store. Null when the account cannot or should no longer run. */
   private async open(signal: AbortSignal): Promise<Session | null> {
     const whoami = await this.client.whoami();
@@ -224,7 +220,7 @@ export class MatrixAccount {
     if (whoami.device_id === undefined) {
       this.state = "failed";
       logError("Matrix access token has no device, account stopped", {
-        tokenHint: this.hint(),
+        tokenHint: tokenHint(this.options.accessToken),
         userId: whoami.user_id,
       });
 
@@ -250,7 +246,7 @@ export class MatrixAccount {
       this.userId = whoami.user_id;
       logInfo("Matrix account started", {
         deviceId: whoami.device_id,
-        tokenHint: this.hint(),
+        tokenHint: tokenHint(this.options.accessToken),
         userId: whoami.user_id,
       });
 
@@ -307,7 +303,7 @@ export class MatrixAccount {
           ) {
             this.state = "failed";
             logError("Matrix access token rejected, account stopped", {
-              tokenHint: this.hint(),
+              tokenHint: tokenHint(this.options.accessToken),
               userId: this.userId ?? undefined,
             });
             break;
@@ -321,7 +317,7 @@ export class MatrixAccount {
           logWarn("Matrix sync failed, retrying", {
             delayMs: delayMs,
             error: error instanceof Error ? error.message : String(error),
-            tokenHint: this.hint(),
+            tokenHint: tokenHint(this.options.accessToken),
           });
           await sleep(delayMs, signal);
         }

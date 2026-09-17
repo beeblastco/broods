@@ -69,6 +69,7 @@ import {
   logInfo,
   logWarn,
 } from "../shared/log.ts";
+import { createMatrixChannel } from "../shared/matrix-channel.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
@@ -101,7 +102,6 @@ import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
-import { createMatrixChannel } from "../shared/matrix-channel.ts";
 import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
   applyMessageSendingHook,

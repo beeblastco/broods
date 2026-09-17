@@ -14,6 +14,36 @@ interface Sent {
   type: string;
 }
 
+describe("sending into a room", () => {
+  it("sends the event type as-is into a plain room", async () => {
+    const { client, crypto, encryptedTypes, sent } = fakes(false);
+
+    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
+    expect(encryptedTypes).toEqual([]);
+    expect(sent).toEqual([
+      {
+        content: REQUEST.content,
+        roomId: REQUEST.roomId,
+        type: "m.room.message",
+      },
+    ]);
+  });
+
+  it("encrypts and sends m.room.encrypted into an encrypted room", async () => {
+    const { client, crypto, encryptedTypes, sent } = fakes(true);
+
+    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
+    expect(encryptedTypes).toEqual(["m.room.message"]);
+    expect(sent).toEqual([
+      {
+        content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "opaque" },
+        roomId: REQUEST.roomId,
+        type: "m.room.encrypted",
+      },
+    ]);
+  });
+});
+
 function fakes(encrypted: boolean): {
   client: Parameters<typeof sendRoomEvent>[0];
   crypto: Parameters<typeof sendRoomEvent>[1];
@@ -50,33 +80,3 @@ function fakes(encrypted: boolean): {
     sent: sent,
   };
 }
-
-describe("sending into a room", () => {
-  it("sends the event type as-is into a plain room", async () => {
-    const { client, crypto, encryptedTypes, sent } = fakes(false);
-
-    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
-    expect(encryptedTypes).toEqual([]);
-    expect(sent).toEqual([
-      {
-        content: REQUEST.content,
-        roomId: REQUEST.roomId,
-        type: "m.room.message",
-      },
-    ]);
-  });
-
-  it("encrypts and sends m.room.encrypted into an encrypted room", async () => {
-    const { client, crypto, encryptedTypes, sent } = fakes(true);
-
-    await expect(sendRoomEvent(client, crypto, REQUEST)).resolves.toBe("$sent");
-    expect(encryptedTypes).toEqual(["m.room.message"]);
-    expect(sent).toEqual([
-      {
-        content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "opaque" },
-        roomId: REQUEST.roomId,
-        type: "m.room.encrypted",
-      },
-    ]);
-  });
-});

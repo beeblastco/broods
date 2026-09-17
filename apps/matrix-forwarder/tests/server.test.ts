@@ -12,45 +12,6 @@ import type {
 
 const STATUS: ForwarderStatus = { accounts: [], targets: 0 };
 
-function account(failing = false): ForwarderAccount & {
-  typing: MatrixTypingRequest[];
-} {
-  const typing: MatrixTypingRequest[] = [];
-
-  return {
-    send: async (request: MatrixSendRequest): Promise<string> => {
-      if (failing) throw new Error("M_FORBIDDEN: not in room");
-
-      return `$sent-${request.type}`;
-    },
-    setTyping: async (request: MatrixTypingRequest): Promise<void> => {
-      typing.push(request);
-    },
-    start: (): void => {},
-    state: "syncing",
-    stop: async (): Promise<void> => {},
-    typing: typing,
-    userId: "@owner:example.org",
-  };
-}
-
-function forwarder(
-  accounts: Record<string, ForwarderAccount>,
-): Pick<Forwarder, "account" | "status"> {
-  return {
-    account: (token: string): ForwarderAccount | undefined => accounts[token],
-    status: (): ForwarderStatus => STATUS,
-  };
-}
-
-function post(path: string, body: unknown, token?: string): Request {
-  return new Request(`http://forwarder${path}`, {
-    body: JSON.stringify(body),
-    headers: token ? { "x-matrix-access-token": token } : {},
-    method: "POST",
-  });
-}
-
 describe("the HTTP surface", () => {
   it("answers liveness before the config plane, readiness only after", async () => {
     const plane = forwarder({});
@@ -124,3 +85,42 @@ describe("the HTTP surface", () => {
     expect(invalid.status).toBe(400);
   });
 });
+
+function account(failing = false): ForwarderAccount & {
+  typing: MatrixTypingRequest[];
+} {
+  const typing: MatrixTypingRequest[] = [];
+
+  return {
+    send: async (request: MatrixSendRequest): Promise<string> => {
+      if (failing) throw new Error("M_FORBIDDEN: not in room");
+
+      return `$sent-${request.type}`;
+    },
+    setTyping: async (request: MatrixTypingRequest): Promise<void> => {
+      typing.push(request);
+    },
+    start: (): void => {},
+    state: "syncing",
+    stop: async (): Promise<void> => {},
+    typing: typing,
+    userId: "@owner:example.org",
+  };
+}
+
+function forwarder(
+  accounts: Record<string, ForwarderAccount>,
+): Pick<Forwarder, "account" | "status"> {
+  return {
+    account: (token: string): ForwarderAccount | undefined => accounts[token],
+    status: (): ForwarderStatus => STATUS,
+  };
+}
+
+function post(path: string, body: unknown, token?: string): Request {
+  return new Request(`http://forwarder${path}`, {
+    body: JSON.stringify(body),
+    headers: token ? { "x-matrix-access-token": token } : {},
+    method: "POST",
+  });
+}

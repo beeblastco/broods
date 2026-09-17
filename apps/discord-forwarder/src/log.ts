@@ -5,11 +5,11 @@
  * plane already uses for deploy keys.
  */
 
-type LogFields = Record<string, string | number | boolean | undefined>;
-
 // The `service` label. `apps/matrix-forwarder` reuses these helpers and renames
 // it once at startup through `setLogService`.
 let service = "discord-forwarder";
+
+type LogFields = Record<string, string | number | boolean | undefined>;
 
 export function logError(message: string, fields: LogFields = {}): void {
   emit("error", message, fields);

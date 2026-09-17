@@ -25,6 +25,12 @@ const TOKEN = "syt_token";
 const originalFetch = globalThis.fetch;
 const originalForwarderUrl = process.env.MATRIX_FORWARDER_URL;
 
+interface CapturedCall {
+  body: unknown;
+  token: string | null;
+  url: string;
+}
+
 afterEach((): void => {
   globalThis.fetch = originalFetch;
   process.env.MATRIX_FORWARDER_URL = originalForwarderUrl;
@@ -310,12 +316,6 @@ describe("matrix channel actions", () => {
     });
   });
 });
-
-interface CapturedCall {
-  body: unknown;
-  token: string | null;
-  url: string;
-}
 
 function captureForwarder(): CapturedCall[] {
   process.env.MATRIX_FORWARDER_URL = "http://forwarder.test";

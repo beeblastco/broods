@@ -24,67 +24,9 @@ const EVENT: MatrixForwardedEvent = {
 
 const realFetch = globalThis.fetch;
 
-class StubAccount implements ForwarderAccount {
-  readonly options: MatrixAccountOptions;
-  started = 0;
-  state: AccountState = "stopped";
-  stopped = 0;
-  userId: string | null = null;
-
-  constructor(options: MatrixAccountOptions) {
-    this.options = options;
-  }
-
-  async send(): Promise<string> {
-    return "$sent";
-  }
-
-  async setTyping(): Promise<void> {}
-
-  start(): void {
-    this.started += 1;
-    this.state = "syncing";
-  }
-
-  async stop(): Promise<void> {
-    this.stopped += 1;
-    this.state = "stopped";
-  }
-}
-
-afterEach(() => {
+afterEach((): void => {
   globalThis.fetch = realFetch;
 });
-
-function connection(
-  overrides: Partial<MatrixConnection> = {},
-): MatrixConnection {
-  return {
-    agentId: "agent-1",
-    agentName: "support",
-    apiUrl: "https://matrix.example.org",
-    botToken: "token-a",
-    webhookUrl: "https://gateway.dev.example.com/v1/webhooks/a/dev/e1/matrix",
-    ...overrides,
-  };
-}
-
-function stubbedForwarder(): {
-  accounts: StubAccount[];
-  forwarder: Forwarder;
-} {
-  const accounts: StubAccount[] = [];
-
-  return {
-    accounts: accounts,
-    forwarder: new Forwarder("/data", (options): ForwarderAccount => {
-      const account = new StubAccount(options);
-      accounts.push(account);
-
-      return account;
-    }),
-  };
-}
 
 describe("grouping connections", () => {
   // The same account deployed to dev and prod is one sync loop and one crypto
@@ -136,11 +78,12 @@ describe("reconcile", () => {
       connection({ agentId: "agent-2", botToken: "token-b" }),
     ]);
 
-    expect(accounts.map((account) => account.options.accessToken)).toEqual([
-      "token-a",
-      "token-b",
-    ]);
-    expect(accounts.every((account) => account.started === 1)).toBe(true);
+    expect(
+      accounts.map((account): string => account.options.accessToken),
+    ).toEqual(["token-a", "token-b"]);
+    expect(accounts.every((account): boolean => account.started === 1)).toBe(
+      true,
+    );
     expect(accounts[0]?.options.storeDir).toBe("/data");
     expect(forwarder.account("token-b")).toBe(accounts[1]);
   });
@@ -190,7 +133,9 @@ describe("reconcile", () => {
     ]);
     await forwarder.stop();
 
-    expect(accounts.every((account) => account.stopped === 1)).toBe(true);
+    expect(accounts.every((account): boolean => account.stopped === 1)).toBe(
+      true,
+    );
     expect(forwarder.status().accounts).toHaveLength(0);
   });
 
@@ -215,3 +160,61 @@ describe("reconcile", () => {
     expect(posted).toEqual(["https://gateway.example.com/new"]);
   });
 });
+
+class StubAccount implements ForwarderAccount {
+  readonly options: MatrixAccountOptions;
+  started = 0;
+  state: AccountState = "stopped";
+  stopped = 0;
+  userId: string | null = null;
+
+  constructor(options: MatrixAccountOptions) {
+    this.options = options;
+  }
+
+  async send(): Promise<string> {
+    return "$sent";
+  }
+
+  async setTyping(): Promise<void> {}
+
+  start(): void {
+    this.started += 1;
+    this.state = "syncing";
+  }
+
+  async stop(): Promise<void> {
+    this.stopped += 1;
+    this.state = "stopped";
+  }
+}
+
+function connection(
+  overrides: Partial<MatrixConnection> = {},
+): MatrixConnection {
+  return {
+    agentId: "agent-1",
+    agentName: "support",
+    apiUrl: "https://matrix.example.org",
+    botToken: "token-a",
+    webhookUrl: "https://gateway.dev.example.com/v1/webhooks/a/dev/e1/matrix",
+    ...overrides,
+  };
+}
+
+function stubbedForwarder(): {
+  accounts: StubAccount[];
+  forwarder: Forwarder;
+} {
+  const accounts: StubAccount[] = [];
+
+  return {
+    accounts: accounts,
+    forwarder: new Forwarder("/data", (options): ForwarderAccount => {
+      const account = new StubAccount(options);
+      accounts.push(account);
+
+      return account;
+    }),
+  };
+}
