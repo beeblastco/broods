@@ -139,7 +139,7 @@ function chipNote(
 
 /**
  * A card's subtitle: where it runs, then its place in `sandboxes` ("1 · default",
- * "2 · sandbox"), or "workspace only" when no agent lists it.
+ * "2"), or "workspace only" when no agent lists it.
  */
 function orderSubtitle(
   where: string | null,
@@ -147,13 +147,11 @@ function orderSubtitle(
   workspaceOnly: boolean,
 ): string | undefined {
   const parts = [
-    ...(where === null ? [] : [where]),
-    ...(orderNumber !== undefined
-      ? [String(orderNumber), orderNumber === 1 ? "default" : "sandbox"]
-      : workspaceOnly
-        ? [WORKSPACE_ONLY_NOTE]
-        : []),
-  ];
+    where,
+    orderNumber?.toString(),
+    orderNumber === 1 ? "default" : null,
+    orderNumber === undefined && workspaceOnly ? WORKSPACE_ONLY_NOTE : null,
+  ].filter((part): part is string => typeof part === "string");
 
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }

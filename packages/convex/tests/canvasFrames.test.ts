@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agreedSandboxOrderNumbers,
   deriveCanvasGroups,
   frameGroupOf,
   frameMemberPositions,
@@ -9,6 +10,7 @@ import {
   agentRefCounts,
   runsOnSandboxIds,
   sandboxOrderNumbers,
+  workspaceOnlySandboxIds,
   workspaceSandboxIds,
   type McpServersByNode,
 } from "../model/canvasFrames";
@@ -50,7 +52,7 @@ describe("frameGroupOf", () => {
         node("w1", "workspace", { config: { storage: { provider: "s3" } } }),
         NO_SERVERS,
       ),
-    ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces · S3" });
+    ).toEqual({ key: "s3", kind: "workspace", label: "Workspaces" });
   });
 
   it("groups MCP servers by saved transport, and unsaved ones apart", () => {
@@ -299,5 +301,64 @@ describe("runsOnSandboxIds", () => {
     ]);
 
     expect([...runsOnSandboxIds(nodes, servers)]).toEqual([["m1", "mac"]]);
+  });
+});
+
+describe("agreedSandboxOrderNumbers", () => {
+  it("numbers a shared sandbox only when its agents order it the same", () => {
+    // bravo is second for `agent` and first, alone, for `second`.
+    const nodes = [
+      node("agent", "agent"),
+      node("second", "agent"),
+      node("alpha", "sandbox"),
+      node("bravo", "sandbox"),
+    ];
+    const edges = [
+      edge("agent", "alpha"),
+      edge("agent", "bravo"),
+      edge("second", "bravo"),
+    ];
+
+    expect([...agreedSandboxOrderNumbers(nodes, edges)]).toEqual([
+      ["alpha", 1],
+    ]);
+  });
+
+  it("leaves an agent's only sandbox unnumbered", () => {
+    const nodes = [node("solo", "agent"), node("lambda", "sandbox")];
+
+    expect([
+      ...agreedSandboxOrderNumbers(nodes, [edge("solo", "lambda")]),
+    ]).toEqual([]);
+  });
+});
+
+describe("workspaceOnlySandboxIds", () => {
+  it("marks a sandbox a workspace mounts only when no agent wires it", () => {
+    // browser backs notes and no agent lists it; alpha backs notes and is listed.
+    const nodes = [
+      node("agent", "agent"),
+      node("alpha", "sandbox"),
+      node("browser", "sandbox"),
+      node("notes", "workspace"),
+    ];
+    const edges = [
+      edge("agent", "alpha"),
+      edge("agent", "notes"),
+      {
+        id: "mount:alpha-right-notes-left",
+        source: "alpha",
+        target: "notes",
+        type: "mount",
+      },
+      {
+        id: "mount:browser-right-notes-left",
+        source: "browser",
+        target: "notes",
+        type: "mount",
+      },
+    ];
+
+    expect([...workspaceOnlySandboxIds(nodes, edges)]).toEqual(["browser"]);
   });
 });
