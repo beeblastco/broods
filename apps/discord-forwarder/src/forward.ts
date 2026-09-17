@@ -79,6 +79,9 @@ async function post(
         [auth.header]: auth.token,
       },
       body: body,
+      // The forwarder's token rides the header above, and the gateway never
+      // redirects, so a redirect here would hand the token to another host.
+      redirect: "error",
       signal: AbortSignal.timeout(auth.timeoutMs),
     });
     if (!response.ok) {
