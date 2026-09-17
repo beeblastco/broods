@@ -202,17 +202,17 @@ describe("frame geometry", () => {
 
     expect(slots.get("s2")).toEqual({ x: 440, y: 368 });
     expect(frameOriginOf([...slots.values()])).toEqual(origin);
-    expect(frameSize(frame)).toEqual({ height: 184, width: 200 });
+    expect(frameSize(frame)).toEqual({ height: 184, width: 192 });
   });
 
-  it("gives workspace chips taller slots", () => {
+  it("gives every kind the same slot height", () => {
     const frame = { kind: "workspace" as const, memberIds: ["w1", "w2"] };
 
     expect(frameMemberPositions({ x: 0, y: 0 }, frame).get("w2")).toEqual({
       x: 8,
-      y: 96,
+      y: 80,
     });
-    expect(frameSize(frame)).toEqual({ height: 164, width: 200 });
+    expect(frameSize(frame)).toEqual({ height: 132, width: 192 });
   });
 });
 

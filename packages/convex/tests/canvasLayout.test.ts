@@ -16,7 +16,6 @@ import {
   type McpServersByNode,
 } from "../model/canvasFrames";
 import {
-  cardHeight,
   findFreePosition,
   GRID,
   NODE_HEIGHT,
@@ -340,26 +339,17 @@ describe("tidyCanvasLayout", () => {
     expect(laid.get("wiki")!.x).toBeLessThan(laid.get("sc")!.x);
   });
 
-  it("stacks cards at the height their rows draw at", () => {
-    // Unwired workspaces park in one column; a long name wraps and the state
-    // line adds a row, so each card is taller than the minimum.
-    const long = "a-workspace-name-that-wraps";
+  it("stacks every card at one height, whatever its rows say", () => {
+    // Unwired workspaces park in one column. A long name and a state line used
+    // to grow the card; now both truncate, so the stack step never changes.
+    const long = "a-workspace-name-that-would-wrap";
     const laid = tidyCanvasLayout(
       [node("w1", "workspace", long), node("w2", "workspace", `${long}-too`)],
       [],
       NO_SERVERS,
     );
-    const height = cardHeight(long, {
-      features: 0,
-      refCount: 0,
-      stateText: "read-only",
-      subtitle: false,
-    });
 
-    expect(height).toBeGreaterThan(NODE_HEIGHT);
-    expect(laid.get("w2")!.y - laid.get("w1")!.y).toBeGreaterThanOrEqual(
-      height + 48,
-    );
+    expect(laid.get("w2")!.y - laid.get("w1")!.y).toBe(NODE_HEIGHT + 48);
   });
 
   it("keeps a mounted pair together: beside its agent, or in the shared block", () => {
@@ -526,19 +516,6 @@ describe("tidyCanvasLayout", () => {
     );
 
     expect(positions.size).toBe(2);
-  });
-});
-
-describe("cardHeight", () => {
-  it("adds the rows a card draws, measured: title, state line and shared row", () => {
-    expect(
-      cardHeight("notes", {
-        features: 0,
-        refCount: 2,
-        stateText: "cloud · inherited",
-        subtitle: false,
-      }),
-    ).toBe(10 + 16 + 6 + 17 + 4 + 17 + 38);
   });
 });
 

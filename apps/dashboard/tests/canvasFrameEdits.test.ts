@@ -101,7 +101,7 @@ describe("reconcileFramePositions", () => {
 
     // The frame's box starts where the notes card stood; its slots go by label.
     expect(positionOf(settled, "docs")).toEqual({ x: 488, y: 172 });
-    expect(positionOf(settled, "notes")).toEqual({ x: 488, y: 240 });
+    expect(positionOf(settled, "notes")).toEqual({ x: 488, y: 224 });
   });
 
   test("a server that changes transport leaves its frame and steps clear of it", () => {

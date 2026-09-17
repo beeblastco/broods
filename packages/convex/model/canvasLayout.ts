@@ -21,8 +21,8 @@
  * the same block. Groups come from `canvasFrames.ts`, so the dashboard reads
  * back the same frames the layout packed.
  *
- * Columns are as wide as their widest box plus a gutter, and cards as tall as
- * {@link cardHeight} says, the height the dashboard renders them at. The gap
+ * Columns are as wide as their widest box plus a gutter, and every card is
+ * {@link NODE_HEIGHT} tall, the one height the dashboard draws. The gap
  * under the agent row, each gutter, the gap between stacked boxes and the gap
  * above the parked lane grow, in grid steps, until the lanes routed through
  * them fit. The lanes come from `canvasEdgeRoutes.ts`, the same router the
@@ -41,12 +41,10 @@ import {
 } from "./canvasEdgeRoutes";
 import {
   agentOwners,
-  agentRefCounts,
-  agreedSandboxOrderNumbers,
   compareByLabel,
   deriveCanvasGroups,
   edgeKind,
-  FRAME_CHIP_HEIGHTS,
+  FRAME_CHIP_HEIGHT,
   FRAME_CHIP_WIDTH,
   frameMemberPositions,
   frameOriginOf,
@@ -54,7 +52,6 @@ import {
   frameSize,
   FRAME_WIDTH,
   runsOnSandboxIds,
-  workspaceOnlySandboxIds,
   workspaceSandboxIds,
   type CanvasFrame,
   type McpServersByNode,
@@ -82,15 +79,7 @@ export const SERVICE_TOP = NODE_HEIGHT + STACK_GAP;
  * the character counts below, kept low so an estimate is never short, and
  * clamps at two lines.
  */
-const CARD_FEATURE_GAP = 2;
-const CARD_ROW_LINE = 17;
-const CARD_STATE_CHARS = 24;
-const CARD_STATE_MARGIN = 6;
 export const CARD_STATUS_ROW = 38;
-const CARD_SUBTITLE_MARGIN = 4;
-const CARD_TITLE_CHARS = 20;
-const CARD_TITLE_LINE = 16;
-const CARD_TOP_PADDING = 10;
 
 /**
  * Column index to x before columns get their real widths: every box starts at
@@ -138,17 +127,6 @@ const COLUMN_RANKS: ReadonlyMap<string, number> = new Map(
 
 /** Column left edges already worked out, per room. */
 const COLUMN_LEFTS = new WeakMap<LaneRoom, number[]>();
-
-/**
- * What decides a card's height beyond its title: extra feature rows, the
- * subtitle, a workspace's state line, and how many agents share it.
- */
-export type CardFacts = {
-  features: number;
-  refCount: number;
-  stateText: string | null;
-  subtitle: boolean;
-};
 
 /** One stage's graph, split into the groups the layout places separately. */
 type CanvasGraph = {
@@ -200,7 +178,6 @@ type LayoutContext = {
   /** Each grouped node's group, and each group's place in group order. */
   groupOf: ReadonlyMap<string, CanvasFrame>;
   groupRanks: ReadonlyMap<CanvasFrame, number>;
-  heights: ReadonlyMap<string, number>;
   /** Side-edge ends, as node id pairs, with the edge's kind. */
   sidePairs: readonly (readonly [string, string, string])[];
   types: ReadonlyMap<string, string | undefined>;
@@ -268,32 +245,6 @@ export function applyTidyLayout<
 }
 
 /**
- * The most a card's header (every row above the status row) can grow to at
- * scale 1: its title and state line both wrapped to their two-line clamp.
- * A card counter-scales its header up only while this still fits its height.
- */
-export function cardHeaderMaxHeight(facts: CardFacts): number {
-  return headerRows(2, facts.stateText === null ? 0 : 2, facts);
-}
-
-/**
- * A card's height from its rows, as `BaseNode.tsx` renders it at scale 1.
- * The card takes this as its minimum height, and as long as the rows fit (the
- * line estimate is generous) the canvas measures exactly this, so the tidy
- * layout stacks cards at the heights they draw at.
- */
-export function cardHeight(label: string, facts: CardFacts): number {
-  const titleLines = lineCount(label, CARD_TITLE_CHARS);
-  const stateLines =
-    facts.stateText === null ? 0 : lineCount(facts.stateText, CARD_STATE_CHARS);
-
-  return Math.max(
-    NODE_HEIGHT,
-    headerRows(titleLines, stateLines, facts) + CARD_STATUS_ROW,
-  );
-}
-
-/**
  * Nearest dot-grid point to `desired` whose card clears every occupied box.
  * Manual adds and drag drops land right there, and only step aside when they
  * would cover a card or frame: below first, then right, left, above, then out.
@@ -338,7 +289,6 @@ export function tidyCanvasLayout(
       ),
     ),
     groupRanks: new Map(groups.map((group, index) => [group, index])),
-    heights: cardHeights(nodes, edges, mcpServers, states),
     sidePairs: sidePairs(nodes, edges, mcpServers, states),
     types: new Map(nodes.map((node) => [node.id, node.type])),
   };
@@ -403,65 +353,6 @@ function busShortfall(
   );
 }
 
-/**
- * Each node's height as a card, from the same facts the dashboard reads: its
- * subtitle (a session's store line, an MCP server's transport, a sandbox's
- * place or computer), a persistent sandbox's feature row, a workspace's state
- * line, and how many agents share a sandbox or workspace.
- */
-function cardHeights(
-  nodes: readonly LayoutNode[],
-  edges: readonly LayoutEdge[],
-  mcpServers: McpServersByNode,
-  states: ReadonlyMap<string, WorkspaceSandboxIds>,
-): Map<string, number> {
-  // A sandbox card has a subtitle row for its number or for "workspace only".
-  const noteSandboxIds = new Set([
-    ...agreedSandboxOrderNumbers(nodes, edges).keys(),
-    ...workspaceOnlySandboxIds(nodes, edges),
-  ]);
-  const refCounts = agentRefCounts(nodes, edges);
-  const labels = new Map(nodes.map((node) => [node.id, labelOf(node)]));
-
-  return new Map(
-    nodes.map((node): [string, number] => {
-      const config: unknown = node.data.config;
-      const machine =
-        typeof config === "object" &&
-        config !== null &&
-        "provider" in config &&
-        config.provider === "machine";
-      const persistent =
-        typeof config === "object" &&
-        config !== null &&
-        "persistent" in config &&
-        config.persistent === true;
-      const state = states.get(node.id);
-      const facts: CardFacts = {
-        features: node.type === "sandbox" && persistent && !machine ? 1 : 0,
-        refCount:
-          node.type === "sandbox" || node.type === "workspace"
-            ? (refCounts.get(node.id) ?? 0)
-            : 0,
-        stateText: state
-          ? workspaceStateText(
-              state.kind,
-              state.kind === "readonly"
-                ? []
-                : state.sandboxIds.map((id) => labels.get(id) ?? id),
-            )
-          : null,
-        subtitle:
-          node.type === "database" ||
-          (node.type === "mcp" && mcpServers.has(node.id)) ||
-          (node.type === "sandbox" && (machine || noteSandboxIds.has(node.id))),
-      };
-
-      return [node.id, cardHeight(labelOf(node), facts)];
-    }),
-  );
-}
-
 /** Whether a card at `card` comes within the margin of `box`. */
 function cardOverlaps(card: LayoutPosition, box: LayoutRect): boolean {
   return (
@@ -505,10 +396,7 @@ function cellLayout(
     assign(ranked[Math.floor((ranked.length - 1) / 2)], node);
   }
   const serviceTop = roundUpToGrid(
-    Math.max(
-      NODE_HEIGHT,
-      ...agents.map((agent) => context.heights.get(agent.id) ?? NODE_HEIGHT),
-    ) + STACK_GAP,
+    Math.max(NODE_HEIGHT, ...agents.map((): number => NODE_HEIGHT)) + STACK_GAP,
   );
   const positions = new Map<string, LayoutPosition>();
   const stackIndex = new Map<string, number>();
@@ -653,7 +541,7 @@ function edgeRequests(
     if (frameOf.has(id)) continue;
     boxes.set(id, {
       ...position,
-      height: context.heights.get(id) ?? NODE_HEIGHT,
+      height: NODE_HEIGHT,
       width: NODE_WIDTH,
     });
   }
@@ -683,7 +571,7 @@ function edgeRequests(
     return frame && position
       ? {
           ...position,
-          height: FRAME_CHIP_HEIGHTS[frame.kind],
+          height: FRAME_CHIP_HEIGHT,
           width: FRAME_CHIP_WIDTH,
         }
       : boxes.get(id);
@@ -734,120 +622,6 @@ function groupIntoColumns(services: readonly LayoutNode[]): LayoutNode[][] {
   return [...byType.entries()]
     .sort(([a], [b]) => columnRank(a) - columnRank(b) || a.localeCompare(b))
     .map(([, column]) => column.sort(compareByLabel));
-}
-
-/**
- * Gutter room grown where the vertical lanes routed through a gutter span
- * more than its width, keeping a lane's width clear of the boxes either side.
- */
-function gutterRoom(routes: EdgeRoutes, room: LaneRoom): Map<number, number> {
-  const lanesByGutter = new Map<number, number[]>();
-  const xs = [
-    ...[...routes.agent.values()].flatMap((route) => route.gutter?.x ?? []),
-    ...[...routes.side.values()].flatMap((route) => [
-      route.sourceX,
-      route.targetX,
-    ]),
-  ];
-  for (const x of xs) {
-    // The gutter right of a column's centre and left of the next one's.
-    let boundary = 0;
-    while (x > columnLeft(boundary, room) + widthOf(boundary, room) / 2) {
-      boundary++;
-    }
-    if (boundary === 0) continue;
-    lanesByGutter.set(boundary, [...(lanesByGutter.get(boundary) ?? []), x]);
-  }
-  const gutters = new Map(room.gutters);
-  for (const [boundary, lanes] of lanesByGutter) {
-    const needed = Math.max(...lanes) - Math.min(...lanes) + LANE_SPACING * 2;
-    const width =
-      columnLeft(boundary, room) -
-      columnLeft(boundary - 1, room) -
-      widthOf(boundary - 1, room);
-    if (needed > width) {
-      gutters.set(
-        boundary,
-        (room.gutters.get(boundary) ?? 0) + roundUpToGrid(needed - width),
-      );
-    }
-  }
-
-  return gutters;
-}
-
-/** A card's rows above its status row, for the given title and state line counts. */
-function headerRows(
-  titleLines: number,
-  stateLines: number,
-  facts: CardFacts,
-): number {
-  return (
-    CARD_TOP_PADDING +
-    titleLines * CARD_TITLE_LINE +
-    (facts.subtitle ? CARD_SUBTITLE_MARGIN + CARD_ROW_LINE : 0) +
-    (facts.features > 0
-      ? CARD_STATE_MARGIN +
-        facts.features * (CARD_ROW_LINE + CARD_FEATURE_GAP) -
-        CARD_FEATURE_GAP
-      : 0) +
-    (stateLines > 0 ? CARD_STATE_MARGIN + stateLines * CARD_ROW_LINE : 0) +
-    (facts.refCount >= 2 ? CARD_SUBTITLE_MARGIN + CARD_ROW_LINE : 0)
-  );
-}
-
-function indexGraph(
-  nodes: readonly LayoutNode[],
-  edges: readonly LayoutEdge[],
-): CanvasGraph {
-  const agents = nodes.filter((node) => node.type === "agent");
-  const services = nodes.filter((node) => node.type !== "agent");
-  const agentIds = new Set(agents.map((agent) => agent.id));
-  const parentAgentId = new Map<string, string>();
-  const ownersByService = agentOwners(nodes, edges);
-
-  for (const edge of edges) {
-    if (
-      edgeKind(edge) === "subagent" &&
-      agentIds.has(edge.source) &&
-      agentIds.has(edge.target)
-    ) {
-      parentAgentId.set(edge.target, edge.source);
-    }
-  }
-
-  const exclusiveServices = new Map<string, LayoutNode[]>();
-  const orphanServices: LayoutNode[] = [];
-  const sharedServices: CanvasGraph["sharedServices"] = [];
-
-  for (const service of services) {
-    const owners = ownersByService.get(service.id);
-    if (!owners) {
-      orphanServices.push(service);
-      continue;
-    }
-    if (owners.size > 1) {
-      sharedServices.push({ node: service, owners: owners });
-      continue;
-    }
-    const [ownerId] = owners;
-    const owned = exclusiveServices.get(ownerId);
-    if (owned) owned.push(service);
-    else exclusiveServices.set(ownerId, [service]);
-  }
-
-  return {
-    agentIds: agentIds,
-    agents: agents,
-    exclusiveServices: exclusiveServices,
-    orphanServices: orphanServices,
-    parentAgentId: parentAgentId,
-    sharedServices: sharedServices,
-  };
-}
-
-function labelOf(node: LayoutNode): string {
-  return typeof node.data.label === "string" ? node.data.label : node.id;
 }
 
 /**
@@ -915,9 +689,7 @@ function layoutBlock(
         const id = "node" in item ? item.node.id : item.group.memberIds[0];
         positions.set(id, origin);
         stackIndex.set(id, index);
-        y = roundUpToGrid(
-          y + (context.heights.get(id) ?? NODE_HEIGHT) + STACK_GAP,
-        );
+        y = roundUpToGrid(y + NODE_HEIGHT + STACK_GAP);
 
         return;
       }
@@ -938,9 +710,90 @@ function layoutBlock(
   };
 }
 
-/** Lines a text wraps to at `perLine` characters, one or two. */
-function lineCount(text: string, perLine: number): number {
-  return text.length > perLine ? 2 : 1;
+function gutterRoom(routes: EdgeRoutes, room: LaneRoom): Map<number, number> {
+  const lanesByGutter = new Map<number, number[]>();
+  const xs = [
+    ...[...routes.agent.values()].flatMap((route) => route.gutter?.x ?? []),
+    ...[...routes.side.values()].flatMap((route) => [
+      route.sourceX,
+      route.targetX,
+    ]),
+  ];
+  for (const x of xs) {
+    // The gutter right of a column's centre and left of the next one's.
+    let boundary = 0;
+    while (x > columnLeft(boundary, room) + widthOf(boundary, room) / 2) {
+      boundary++;
+    }
+    if (boundary === 0) continue;
+    lanesByGutter.set(boundary, [...(lanesByGutter.get(boundary) ?? []), x]);
+  }
+  const gutters = new Map(room.gutters);
+  for (const [boundary, lanes] of lanesByGutter) {
+    const needed = Math.max(...lanes) - Math.min(...lanes) + LANE_SPACING * 2;
+    const width =
+      columnLeft(boundary, room) -
+      columnLeft(boundary - 1, room) -
+      widthOf(boundary - 1, room);
+    if (needed > width) {
+      gutters.set(
+        boundary,
+        (room.gutters.get(boundary) ?? 0) + roundUpToGrid(needed - width),
+      );
+    }
+  }
+
+  return gutters;
+}
+
+function indexGraph(
+  nodes: readonly LayoutNode[],
+  edges: readonly LayoutEdge[],
+): CanvasGraph {
+  const agents = nodes.filter((node) => node.type === "agent");
+  const services = nodes.filter((node) => node.type !== "agent");
+  const agentIds = new Set(agents.map((agent) => agent.id));
+  const parentAgentId = new Map<string, string>();
+  const ownersByService = agentOwners(nodes, edges);
+
+  for (const edge of edges) {
+    if (
+      edgeKind(edge) === "subagent" &&
+      agentIds.has(edge.source) &&
+      agentIds.has(edge.target)
+    ) {
+      parentAgentId.set(edge.target, edge.source);
+    }
+  }
+
+  const exclusiveServices = new Map<string, LayoutNode[]>();
+  const orphanServices: LayoutNode[] = [];
+  const sharedServices: CanvasGraph["sharedServices"] = [];
+
+  for (const service of services) {
+    const owners = ownersByService.get(service.id);
+    if (!owners) {
+      orphanServices.push(service);
+      continue;
+    }
+    if (owners.size > 1) {
+      sharedServices.push({ node: service, owners: owners });
+      continue;
+    }
+    const [ownerId] = owners;
+    const owned = exclusiveServices.get(ownerId);
+    if (owned) owned.push(service);
+    else exclusiveServices.set(ownerId, [service]);
+  }
+
+  return {
+    agentIds: agentIds,
+    agents: agents,
+    exclusiveServices: exclusiveServices,
+    orphanServices: orphanServices,
+    parentAgentId: parentAgentId,
+    sharedServices: sharedServices,
+  };
 }
 
 /** Agents in draw order: roots by label, each followed by its sub-agents. */

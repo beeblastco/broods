@@ -9,7 +9,7 @@ import {
   type SideEdgeRoute,
 } from "@broods/convex/model/canvasEdgeRoutes";
 import {
-  FRAME_CHIP_HEIGHTS,
+  FRAME_CHIP_HEIGHT,
   FRAME_CHIP_WIDTH,
 } from "@broods/convex/model/canvasFrames";
 import {
@@ -47,7 +47,7 @@ const NODES: Node[] = [
     { config: { provider: "machine" } },
   ),
   node("notes", "workspace", { x: 248, y: 172 }),
-  node("wiki", "workspace", { x: 248, y: 240 }),
+  node("wiki", "workspace", { x: 248, y: 224 }),
   node("blender", "mcp", { x: 720, y: 144 }),
 ];
 
@@ -94,7 +94,7 @@ describe("buildFramedGraph", () => {
     });
     expect(nodes.find((item) => item.id === "wiki")).toMatchObject({
       parentId: WORKSPACE_FRAME,
-      position: { x: 8, y: 96 },
+      position: { x: 8, y: 80 },
     });
     expect(flattenFramedNodes(nodes)).toStrictEqual(NODES);
   });
@@ -321,7 +321,7 @@ describe("buildFramedGraph", () => {
     );
 
     expect(nodes.find((item) => item.id === "notes")?.hidden).toBe(true);
-    expect(nodes.find((item) => item.id === WORKSPACE_FRAME)?.height).toBe(84);
+    expect(nodes.find((item) => item.id === WORKSPACE_FRAME)?.height).toBe(96);
     expect(
       edges
         .filter((item) => item.type === "mount")
@@ -527,11 +527,9 @@ function drawnPaths(
       handles.set(item.id, { box: box, outer: item.id });
       continue;
     }
-    const kind =
-      item.type === "workspace" || item.type === "mcp" ? item.type : "sandbox";
     handles.set(item.id, {
       box: {
-        height: FRAME_CHIP_HEIGHTS[kind],
+        height: FRAME_CHIP_HEIGHT,
         width: FRAME_CHIP_WIDTH,
         x: parent.position.x + item.position.x,
         y: parent.position.y + item.position.y,

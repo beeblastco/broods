@@ -10,16 +10,15 @@ export type ChipStatus = { color: string; text: string; title?: string };
 
 /**
  * A sandbox, workspace or MCP node drawn inside a frame: a chip with its icon,
- * name, one status line and an optional note line. Side handles are always
- * mounted so mount and runs-on edges can attach; only sandbox and workspace
- * chips (`mountable`) accept a new mount drawn onto them.
+ * name and one status line, at a card's width. Side handles are always mounted
+ * so mount and runs-on edges can attach; only sandbox and workspace chips
+ * (`mountable`) accept a new mount drawn onto them.
  */
 export function ResourceChip({
   icon,
   label,
   mountable,
   nodeType,
-  note,
   orderNumber,
   status,
 }: {
@@ -27,8 +26,6 @@ export function ResourceChip({
   label: string;
   mountable: boolean;
   nodeType: string;
-  /** A third line under the status, e.g. how many agents share a workspace. */
-  note?: string;
   /** A sandbox's place in its agent's `sandboxes`. */
   orderNumber?: number;
   status: ChipStatus;
@@ -38,10 +35,9 @@ export function ResourceChip({
   return (
     <div
       data-slot="resource-chip"
-      // w-46 by h-11 or h-15 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHTS, the slot the frame leaves.
+      // w-44 by h-11 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHT, the slot the frame leaves.
       className={cn(
-        "relative flex w-46 cursor-pointer flex-col justify-center rounded-md border border-border bg-card px-1.5 hover:border-foreground/25",
-        nodeType === "workspace" ? "h-15 gap-1" : "h-11 gap-0.5",
+        "relative flex h-11 w-44 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-1.5 hover:border-foreground/25",
       )}
     >
       {/* Like a card's: an agent dragged onto a chip wires it too. */}
@@ -83,11 +79,6 @@ export function ResourceChip({
           {status.text}
         </span>
       </div>
-      {note && (
-        <div className="truncate pl-2.5 text-3xs text-muted-foreground">
-          {note}
-        </div>
-      )}
     </div>
   );
 }

@@ -7,13 +7,11 @@ import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
 import {
   CARD_STATUS_ROW,
-  cardHeaderMaxHeight,
-  cardHeight,
+  NODE_HEIGHT,
   workspaceStateText,
-  type CardFacts,
 } from "@broods/convex/model/canvasLayout";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
-import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
+import { Globe, Slash } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export type BaseNodeData = {
@@ -52,13 +50,6 @@ const STATE_TEXT_TONE: Record<WorkspaceSandboxState["kind"], string> = {
   inherited: "text-muted-foreground",
   override: "text-canvas-mount/90",
   readonly: "text-warning/90",
-};
-
-/** Arrow color on that line; read-only draws a lock instead. */
-const STATE_ICON_TONE: Record<WorkspaceSandboxState["kind"], string> = {
-  inherited: "text-muted-foreground",
-  override: "text-canvas-mount/80",
-  readonly: "text-warning/80",
 };
 
 const zoomSelector = (state: { transform: [number, number, number] }): number =>
@@ -158,22 +149,24 @@ export function BaseNode({
     ? "border-destructive/40 hover:border-destructive/60"
     : "border-border hover:border-foreground/25";
   const stateText = stateLine(workspaceState);
-  // The tidy layout stacks cards at this height, so the card draws exactly this tall.
-  const facts: CardFacts = {
-    features: featureRows?.length ?? 0,
-    refCount: sharedAgentCount,
-    stateText: stateText,
-    subtitle: subtitle !== undefined,
-  };
-  const minHeight = cardHeight(data.label, facts);
-  const headerScale = fittedScale(scale, minHeight, facts);
+  // Everything under the name on one line: the subtitle, each feature, a
+  // workspace's mount state, then how many agents share it.
+  const details: React.ReactNode[] = [
+    subtitle,
+    ...(featureRows ?? []).map((row) => row.label),
+    workspaceState && stateText !== null ? (
+      <span className={STATE_TEXT_TONE[workspaceState.kind]}>{stateText}</span>
+    ) : null,
+    sharedAgentCount >= 2 ? `shared ×${sharedAgentCount}` : null,
+  ].filter((part) => part !== undefined && part !== null);
+  const headerScale = fittedScale(scale, contentHeight);
 
   return (
     <div
       data-slot="card"
-      data-min-height={minHeight}
-      className={`relative w-44 min-h-(--card-height) flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
-      style={{ "--card-height": `${minHeight}px` }}
+      data-min-height={NODE_HEIGHT}
+      className={`relative w-44 h-(--card-height) flex flex-col rounded-md border bg-card transition duration-200 hover:shadow-md ${borderClass}`}
+      style={{ "--card-height": `${NODE_HEIGHT}px` }}
     >
       {/* The explicit id matters: while connecting, xyflow resolves an id-less hovered
                 handle to the node's FIRST handle (sources before targets) for the snap preview,
@@ -258,62 +251,21 @@ export function BaseNode({
               <span className="text-muted-foreground shrink-0">{icon}</span>
             )}
             <span
-              // Two lines before it clips, so a long resource name reads whole.
-              className="text-xs font-medium text-foreground line-clamp-2 wrap-anywhere min-w-0"
+              // One line, so every card is the same height; hover reads the whole name.
+              className="text-xs font-medium text-foreground truncate min-w-0"
               title={data.label}
             >
               {data.label}
             </span>
           </div>
-          {subtitle && (
-            <div className="mt-1 flex items-center gap-1.5 text-2xs text-muted-foreground">
-              {subtitle}
-            </div>
-          )}
-          {featureRows && featureRows.length > 0 && (
-            <div className="mt-1.5 flex flex-col gap-0.5">
-              {featureRows.map((row) => (
-                <div
-                  key={row.key}
-                  className="flex items-center gap-1.5 text-2xs text-muted-foreground"
-                >
-                  <span className="text-muted-foreground">+</span>
-                  {row.icon}
-                  <span>{row.label}</span>
-                </div>
+          {details.length > 0 && (
+            <div className="mt-1 truncate text-2xs text-muted-foreground">
+              {details.map((part, index) => (
+                <span key={index}>
+                  {index > 0 && " · "}
+                  {part}
+                </span>
               ))}
-            </div>
-          )}
-
-          {/* B: workspace effective-sandbox state from the cascade. It wraps rather than
-              clipping, so a long sandbox name reads whole. */}
-          {workspaceState && stateText !== null && (
-            <div className="mt-1.5 flex items-start gap-1.5 text-2xs min-w-0">
-              {workspaceState.kind === "readonly" ? (
-                <Lock className="mt-0.5 size-3 shrink-0 text-warning/80" />
-              ) : (
-                <CornerDownRight
-                  className={`mt-0.5 size-3 shrink-0 ${STATE_ICON_TONE[workspaceState.kind]}`}
-                />
-              )}
-              <span
-                className={`min-w-0 line-clamp-2 wrap-anywhere ${STATE_TEXT_TONE[workspaceState.kind]}`}
-                title={
-                  workspaceState.kind === "readonly"
-                    ? stateText
-                    : workspaceState.sandboxLabels.join(", ")
-                }
-              >
-                {stateText}
-              </span>
-            </div>
-          )}
-
-          {/* F: shared across multiple agents */}
-          {sharedAgentCount >= 2 && (
-            <div className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground">
-              <Users className="size-3 shrink-0" />
-              <span>shared ×{sharedAgentCount}</span>
             </div>
           )}
         </div>
@@ -386,22 +338,16 @@ export function useSideHandlesConnectable(nodeType: string): boolean {
 }
 
 /**
- * The header's counter-scale, grown only as far as the header's two-line
- * worst case still fits the card's height, so a fuller card keeps scale 1
- * rather than drawing taller than the layout placed it. Read from the rows,
- * not the measured header, so the narrower text of a larger scale can never
- * feed back into the scale.
+ * The header's counter-scale, grown only as far as the measured header still
+ * fits above the status row. The rows never wrap, so the measurement does not
+ * change with the scale and cannot feed back into it.
  */
-function fittedScale(
-  scale: number,
-  minHeight: number,
-  facts: CardFacts,
-): number {
-  if (scale <= 1) return scale;
+function fittedScale(scale: number, contentHeight: number | null): number {
+  if (scale <= 1 || contentHeight === null || contentHeight <= 0) return scale;
 
   return Math.min(
     scale,
-    Math.max(1, (minHeight - CARD_STATUS_ROW) / cardHeaderMaxHeight(facts)),
+    Math.max(1, (NODE_HEIGHT - CARD_STATUS_ROW) / contentHeight),
   );
 }
 
