@@ -51,6 +51,15 @@ interface ResolvedConnection {
   sha256?: string;
 }
 
+/** One canvas-owned server as `listByStage` returns it. */
+interface StageServer {
+  nodeId: string;
+  name: string;
+  transport: Doc<"mcp">["transport"];
+  sandbox: string | null;
+  disabled: boolean;
+}
+
 /** Run one tool from the explorer; returns the raw MCP result, isError included. */
 export const callTool = action({
   args: {
@@ -105,6 +114,65 @@ export const getByNode = query({
     if (!stage || stage.projectId !== projectId) return null;
 
     return await activeServerByNode(ctx, stageId, nodeId);
+  },
+});
+
+/**
+ * Every active server a canvas node owns in one stage. The canvas groups MCP
+ * nodes into frames by transport and names the machine a server runs on.
+ */
+export const listByStage = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.array(
+    v.object({
+      nodeId: v.string(),
+      name: v.string(),
+      transport: v.union(
+        v.literal("http"),
+        v.literal("hosted"),
+        v.literal("machine"),
+      ),
+      sandbox: v.union(v.string(), v.null()),
+      disabled: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, { projectId, stageId }): Promise<StageServer[]> => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    // Same soft misses as getByNode, so a deleted project or stage empties the
+    // canvas instead of crashing it.
+    const project = await getProjectForRole(ctx, user.id, projectId);
+    if (!project) return [];
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) return [];
+
+    const servers = await ctx.db
+      .query("mcp")
+      .withIndex("by_stageId_and_status", (q) =>
+        q.eq("stageId", stageId).eq("status", "active"),
+      )
+      .collect();
+
+    return servers.flatMap((server) =>
+      server.nodeId
+        ? [
+            {
+              nodeId: server.nodeId,
+              name: server.name,
+              transport: server.transport,
+              sandbox: server.sandbox ?? null,
+              disabled: server.disabled === true,
+            },
+          ]
+        : [],
+    );
   },
 });
 
