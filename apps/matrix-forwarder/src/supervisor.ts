@@ -18,17 +18,19 @@ import {
   logWarn,
   tokenHint,
 } from "../../discord-forwarder/src/log.ts";
+import {
+  warnOnSharedToken,
+  webhookUrls,
+} from "../../discord-forwarder/src/supervisor.ts";
 import type { AccountState, MatrixAccountOptions } from "./account.ts";
 import type { MatrixConnection } from "./connections.ts";
 import { forwardRoomEvent, type ForwardTarget } from "./forward.ts";
 
 /** Injected so tests never load the native crypto module; `main.ts` passes `MatrixAccount`. */
-export type AccountFactory = (
-  options: MatrixAccountOptions,
-) => ForwarderAccount;
+type AccountFactory = (options: MatrixAccountOptions) => ForwarderAccount;
 
 /** An access token's desired account: its homeserver and every webhook it serves. */
-export interface AccountGroup {
+interface AccountGroup {
   apiUrl: string;
   targets: ForwardTarget[];
 }
@@ -53,10 +55,8 @@ export interface ForwarderStatus {
   targets: number;
 }
 
-interface ManagedAccount {
+interface ManagedAccount extends AccountGroup {
   account: ForwarderAccount;
-  apiUrl: string;
-  targets: ForwardTarget[];
 }
 
 export class Forwarder {
@@ -102,12 +102,12 @@ export class Forwarder {
         // reconcile runs on every config change, so warn only when the fan-out
         // itself moved.
         if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
-          warnOnSharedToken(accessToken, urls);
+          warnOnSharedToken("Matrix", accessToken, urls);
         }
         existing.targets = group.targets;
         continue;
       }
-      warnOnSharedToken(accessToken, urls);
+      warnOnSharedToken("Matrix", accessToken, urls);
       this.open(accessToken, group);
     }
   }
@@ -226,23 +226,4 @@ export function groupConnectionsByToken(
   }
 
   return grouped;
-}
-
-function warnOnSharedToken(
-  accessToken: string,
-  webhooks: readonly string[],
-): void {
-  if (webhooks.length < 2) return;
-
-  logWarn(
-    "One Matrix access token serves several webhooks, every one will run",
-    { targets: webhooks.length, tokenHint: tokenHint(accessToken) },
-  );
-}
-
-/** The distinct webhooks a token fans out to, in a stable order. */
-function webhookUrls(targets: readonly ForwardTarget[]): string[] {
-  return [
-    ...new Set(targets.map((target): string => target.webhookUrl)),
-  ].sort();
 }

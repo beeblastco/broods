@@ -84,12 +84,12 @@ export class Forwarder {
         // reconcile runs on every config change, so warn only when the fan-out
         // itself moved.
         if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
-          warnOnSharedToken(botToken, urls);
+          warnOnSharedToken("Discord", botToken, urls);
         }
         existing.targets = targets;
         continue;
       }
-      warnOnSharedToken(botToken, urls);
+      warnOnSharedToken("Discord", botToken, urls);
       this.open(botToken, targets);
     }
   }
@@ -192,20 +192,26 @@ export function groupConnectionsByToken(
   return grouped;
 }
 
-function warnOnSharedToken(
+/**
+ * One token serving several webhooks runs the agent behind each of them, which
+ * is legitimate for one account deployed to two stages and a mistake otherwise.
+ * `channel` names which forwarder is reporting it.
+ */
+export function warnOnSharedToken(
+  channel: string,
   botToken: string,
   webhooks: readonly string[],
 ): void {
   if (webhooks.length < 2) return;
 
-  logWarn("One Discord bot token serves several webhooks, every one will run", {
+  logWarn(`One ${channel} token serves several webhooks, every one will run`, {
     targets: webhooks.length,
     tokenHint: tokenHint(botToken),
   });
 }
 
 /** The distinct webhooks a token fans out to, in a stable order. */
-function webhookUrls(targets: readonly ForwardTarget[]): string[] {
+export function webhookUrls(targets: readonly ForwardTarget[]): string[] {
   return [
     ...new Set(targets.map((target): string => target.webhookUrl)),
   ].sort();

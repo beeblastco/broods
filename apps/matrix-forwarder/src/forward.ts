@@ -1,21 +1,24 @@
 /**
  * POSTs a decrypted room message to every channel webhook its access token
- * serves, in the shape `apps/core/src/shared/matrix-wire.ts` accepts.
+ * serves, in the shape `apps/core/src/shared/matrix-wire.ts` accepts. The
+ * delivery itself is `fanOut`, shared with the Discord forwarder.
  *
- * Nothing is filtered here: not rooms, not senders, not edits, not the account's
- * own messages. The account is usually a person's, so which of those is a
- * trigger is a product rule, and core owns it.
+ * The only event dropped here is one this channel sent: it carries the marker,
+ * it comes back through `/sync` like any other message, and core would only
+ * discard it again. Everything else goes, rooms, senders and edits included,
+ * because the account is usually a person's and which message is a trigger is
+ * core's decision.
  */
 
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
+  MATRIX_BOT_MARKER,
   type MatrixForwardedEvent,
 } from "../../core/src/shared/matrix-wire.ts";
 import {
-  logError,
-  logWarn,
-  tokenHint,
-} from "../../discord-forwarder/src/log.ts";
+  fanOut,
+  type ForwardTarget,
+} from "../../discord-forwarder/src/forward.ts";
 import type { RoomEvent } from "./matrix.ts";
 
 // Bun puts no deadline on `fetch`. A webhook that accepts and never answers
@@ -23,7 +26,7 @@ import type { RoomEvent } from "./matrix.ts";
 // keep timeline order.
 const FETCH_TIMEOUT_MS = 10_000;
 
-export interface ForwardedEventInput {
+interface ForwardedEventInput {
   encrypted: boolean;
   event: RoomEvent;
   roomId: string;
@@ -31,11 +34,7 @@ export interface ForwardedEventInput {
   userId: string;
 }
 
-export interface ForwardTarget {
-  agentId: string;
-  agentName: string;
-  webhookUrl: string;
-}
+export type { ForwardTarget };
 
 /** Keeps only the event fields the wire contract names. */
 export function forwardedEvent(
@@ -57,53 +56,24 @@ export function forwardedEvent(
   };
 }
 
-/** Never throws: a failed delivery is logged and skipped, like the Discord forwarder. */
 export async function forwardRoomEvent(
   event: MatrixForwardedEvent,
   accessToken: string,
   targets: readonly ForwardTarget[],
 ): Promise<void> {
-  const body = JSON.stringify(event);
-
-  await Promise.all(
-    targets.map((target): Promise<void> =>
-      post(target, body, accessToken, event),
-    ),
+  await fanOut(
+    targets,
+    JSON.stringify(event),
+    {
+      header: MATRIX_ACCESS_TOKEN_HEADER,
+      timeoutMs: FETCH_TIMEOUT_MS,
+      token: accessToken,
+    },
+    { eventId: event.event.event_id },
   );
 }
 
-async function post(
-  target: ForwardTarget,
-  body: string,
-  accessToken: string,
-  event: MatrixForwardedEvent,
-): Promise<void> {
-  try {
-    const response = await fetch(target.webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [MATRIX_ACCESS_TOKEN_HEADER]: accessToken,
-      },
-      body: body,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      logWarn("Forward rejected by core", {
-        agentId: target.agentId,
-        agentName: target.agentName,
-        eventId: event.event.event_id,
-        status: response.status,
-        tokenHint: tokenHint(accessToken),
-      });
-    }
-  } catch (error) {
-    logError("Forward failed", {
-      agentId: target.agentId,
-      agentName: target.agentName,
-      error: error instanceof Error ? error.message : String(error),
-      eventId: event.event.event_id,
-      tokenHint: tokenHint(accessToken),
-    });
-  }
+/** True for a message this channel sent, which nothing downstream wants. */
+export function isOwnMessage(content: Record<string, unknown>): boolean {
+  return content[MATRIX_BOT_MARKER] === true;
 }

@@ -23,7 +23,7 @@ import {
   tokenHint,
 } from "../../discord-forwarder/src/log.ts";
 import { RoomCrypto } from "./crypto.ts";
-import { forwardedEvent } from "./forward.ts";
+import { forwardedEvent, isOwnMessage } from "./forward.ts";
 import {
   MatrixClient,
   MatrixError,
@@ -91,7 +91,6 @@ export class MatrixAccount {
   userId: string | null = null;
   private readonly client: MatrixClient;
   private readonly controller = new AbortController();
-  private crypto: RoomCrypto | null = null;
   /** Room id to its members' display names. Reloaded when a sender is missing. */
   private readonly memberNames = new Map<
     string,
@@ -100,6 +99,7 @@ export class MatrixAccount {
   private readonly options: MatrixAccountOptions;
   private pending: PendingEvent[] = [];
   private running: Promise<void> | null = null;
+  private session: Session | null = null;
 
   constructor(options: MatrixAccountOptions) {
     this.client = new MatrixClient(options.apiUrl, options.accessToken);
@@ -107,9 +107,9 @@ export class MatrixAccount {
   }
 
   async send(request: MatrixSendRequest): Promise<string> {
-    if (this.crypto === null) throw new Error("Matrix account is not started");
+    if (this.session === null) throw new Error("Matrix account is not started");
 
-    return sendRoomEvent(this.client, this.crypto, request);
+    return sendRoomEvent(this.client, this.session.crypto, request);
   }
 
   async setTyping(request: MatrixTypingRequest): Promise<void> {
@@ -166,6 +166,9 @@ export class MatrixAccount {
       }
     }
     if (plaintext.type !== "m.room.message") return;
+    // The agent's own replies arrive on the next sync like any other message,
+    // and core would only discard them again.
+    if (isOwnMessage(plaintext.content)) return;
 
     await this.options.onEvent(
       forwardedEvent({
@@ -242,7 +245,6 @@ export class MatrixAccount {
         whoami.device_id,
         join(storePath, "crypto"),
       );
-      this.crypto = crypto;
       this.userId = whoami.user_id;
       logInfo("Matrix account started", {
         deviceId: whoami.device_id,
@@ -273,6 +275,7 @@ export class MatrixAccount {
           if (session === null) {
             session = await this.open(signal);
             if (session === null) break;
+            this.session = session;
             since = await readSyncToken(session.syncTokenPath);
           }
           this.state = "syncing";
@@ -323,7 +326,7 @@ export class MatrixAccount {
         }
       }
     } finally {
-      this.crypto = null;
+      this.session = null;
       if (this.state !== "failed") this.state = "stopped";
       if (session !== null) {
         // Released even when the close fails, or the next account for this
@@ -345,6 +348,7 @@ export class MatrixAccount {
     if (cached?.has(userId)) return cached.get(userId);
     try {
       const members = await this.client.joinedMembers(roomId);
+      if (!members.has(userId)) members.set(userId, undefined);
       this.memberNames.set(roomId, members);
 
       return members.get(userId);
@@ -370,10 +374,8 @@ async function claimStore(
   userId: string,
 ): Promise<(() => void) | null> {
   const previous = storeHolders.get(storePath);
-  let resolveReleased = (): void => {};
-  const released = new Promise<void>((resolve): void => {
-    resolveReleased = resolve;
-  });
+  const { promise: released, resolve: resolveReleased } =
+    Promise.withResolvers<void>();
   const held = (previous ?? Promise.resolve()).then(
     (): Promise<void> => released,
   );
@@ -415,19 +417,24 @@ async function readSyncToken(path: string): Promise<string | undefined> {
   }
 }
 
-/** Resolves after `ms`, or as soon as `signal` aborts. */
+/**
+ * Resolves after `ms`, or as soon as `signal` aborts. The listener is removed
+ * either way: `once` alone would leave one behind on the account's signal for
+ * every retry the timer won, which is every retry that is not a shutdown.
+ */
 async function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  await new Promise<void>((resolve): void => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      (): void => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, ms);
+  const abort = (): void => {
+    clearTimeout(timer);
+    resolve();
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    await promise;
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }
 
 /**

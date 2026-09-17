@@ -25,24 +25,23 @@ import {
   type ChannelParseResult,
 } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
-import { optionalEnv } from "./env.ts";
 import { logWarn } from "./log.ts";
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
+  MATRIX_BOT_MARKER,
   type MatrixForwardedEvent,
   type MatrixSendRequest,
   type MatrixTypingRequest,
 } from "./matrix-wire.ts";
 import { contentTypeForPath } from "./media-types.ts";
-import { MATRIX_INTEGRATION_PREFIX } from "./runtime-keys.ts";
+import {
+  CHANNEL_THREAD_SEPARATOR,
+  MATRIX_INTEGRATION_PREFIX,
+} from "./runtime-keys.ts";
 
 const DEFAULT_REACTION = "👀";
-const FORWARDER_URL_ENV = "MATRIX_FORWARDER_URL";
-/**
- * Marks an event this channel sent. The account is usually a person's, so the
- * sender alone cannot tell the agent's replies from its owner's messages.
- */
-export const MATRIX_BOT_MARKER = "app.broods.bot";
+/** Read by `createMatrixChannelFromConfig`, never by the adapter itself. */
+export const MATRIX_FORWARDER_URL_ENV = "MATRIX_FORWARDER_URL";
 const MATRIX_REQUEST_TIMEOUT_MS = 30_000;
 const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
   "m.audio": "audio",
@@ -67,10 +66,18 @@ interface EncryptedFile {
   v: "v2";
 }
 
-export interface MatrixChannelOptions {
+/** Where the account lives, and how core reaches the forwarder that holds it. */
+export interface MatrixConnection {
+  accessToken: string;
+  apiUrl: string;
+  botName?: string;
+  /** `MATRIX_FORWARDER_URL`, resolved once by the caller. */
+  forwarderUrl: string;
+}
+
+export interface MatrixChannelOptions extends MatrixConnection {
   allowedChannelIds: ReadonlySet<string> | null;
   allowedUserIds: ReadonlySet<string> | null;
-  botName?: string;
   mentionText?: string;
 }
 
@@ -92,10 +99,8 @@ interface MediaLocation {
 }
 
 export function createMatrixActions(
-  apiUrl: string,
-  accessToken: string,
+  connection: MatrixConnection,
   source: MatrixSource,
-  botName: string | undefined,
 ): ChannelActions {
   const sendMedia = async function (
     attachments: ChannelFile[] | ChannelImage[],
@@ -103,9 +108,9 @@ export function createMatrixActions(
   ): Promise<void> {
     if (caption) {
       await sendMessage(
-        accessToken,
+        connection,
         source,
-        formatReply(caption, botName, source),
+        formatReply(caption, connection, source),
       );
     }
     for (const attachment of attachments) {
@@ -113,11 +118,9 @@ export function createMatrixActions(
       const bytes = await channelAttachmentBytes(attachment);
       const mimeType = attachment.mimeType ?? contentTypeForPath(name);
       const media = source.encrypted
-        ? { file: await uploadEncrypted(apiUrl, accessToken, name, bytes) }
-        : {
-            url: await uploadMedia(apiUrl, accessToken, name, bytes, mimeType),
-          };
-      await sendMessage(accessToken, source, {
+        ? { file: await uploadEncrypted(connection, name, bytes) }
+        : { url: await uploadMedia(connection, name, bytes, mimeType) };
+      await sendMessage(connection, source, {
         ...media,
         body: name,
         filename: name,
@@ -135,9 +138,9 @@ export function createMatrixActions(
 
     sendText: async function (text): Promise<void> {
       await sendMessage(
-        accessToken,
+        connection,
         source,
-        formatReply(text, botName, source),
+        formatReply(text, connection, source),
       );
     },
 
@@ -146,7 +149,7 @@ export function createMatrixActions(
         roomId: source.roomId,
         typing: true,
       };
-      await callForwarder(accessToken, "/v1/typing", request);
+      await callForwarder(connection, "/v1/typing", request);
     },
 
     supportsReactions: true,
@@ -163,14 +166,12 @@ export function createMatrixActions(
         roomId: source.roomId,
         type: "m.reaction",
       };
-      await callForwarder(accessToken, "/v1/send", request);
+      await callForwarder(connection, "/v1/send", request);
     },
   };
 }
 
 export function createMatrixChannel(
-  apiUrl: string,
-  accessToken: string,
   options: MatrixChannelOptions,
 ): ChannelAdapter {
   return {
@@ -184,8 +185,7 @@ export function createMatrixChannel(
 
       return {
         ...attachment,
-        fetchData: (): Promise<Buffer> =>
-          downloadMedia(apiUrl, accessToken, location),
+        fetchData: (): Promise<Buffer> => downloadMedia(options, location),
       };
     },
 
@@ -196,7 +196,9 @@ export function createMatrixChannel(
     authenticate: function (req): boolean {
       const token = req.headers[MATRIX_ACCESS_TOKEN_HEADER];
 
-      return token !== undefined && timingSafeStringEqual(token, accessToken);
+      return (
+        token !== undefined && timingSafeStringEqual(token, options.accessToken)
+      );
     },
 
     parse: function (req): ChannelParseResult {
@@ -208,38 +210,33 @@ export function createMatrixChannel(
         return ignore("unsupported_event");
       }
 
-      return parseRoomMessage(apiUrl, accessToken, payload, options);
+      return parseRoomMessage(payload, options);
     },
 
     actions: function (msg): ChannelActions {
-      return createMatrixActions(
-        apiUrl,
-        accessToken,
-        toMatrixSource(msg.source),
-        options.botName,
-      );
+      return createMatrixActions(options, toMatrixSource(msg.source));
     },
   };
 }
 
 async function callForwarder(
-  accessToken: string,
+  connection: MatrixConnection,
   path: "/v1/send" | "/v1/typing",
   body: MatrixSendRequest | MatrixTypingRequest,
-): Promise<Response> {
-  const baseUrl = optionalEnv(FORWARDER_URL_ENV);
-  if (!baseUrl) {
+): Promise<void> {
+  if (!connection.forwarderUrl) {
     throw new Error(
-      `${FORWARDER_URL_ENV} is not set, so Matrix replies cannot be sent`,
+      `${MATRIX_FORWARDER_URL_ENV} is not set, so Matrix replies cannot be sent`,
     );
   }
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+  const response = await fetch(`${trimSlash(connection.forwarderUrl)}${path}`, {
     body: JSON.stringify(body),
     headers: {
       "Content-Type": "application/json",
-      [MATRIX_ACCESS_TOKEN_HEADER]: accessToken,
+      [MATRIX_ACCESS_TOKEN_HEADER]: connection.accessToken,
     },
     method: "POST",
+    redirect: "error",
     signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
@@ -247,8 +244,6 @@ async function callForwarder(
       `Matrix forwarder ${path} failed (${response.status}): ${await response.text()}`,
     );
   }
-
-  return response;
 }
 
 async function decryptMedia(
@@ -258,7 +253,7 @@ async function decryptMedia(
   if (!location.key || !location.iv || !location.sha256) {
     return bytes;
   }
-  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  const digest = await crypto.subtle.digest("SHA-256", view(bytes));
   if (
     Buffer.from(digest).toString("base64").replace(/=+$/, "") !==
     location.sha256.replace(/=+$/, "")
@@ -280,20 +275,19 @@ async function decryptMedia(
   );
   const plaintext = await crypto.subtle.decrypt(
     {
-      counter: new Uint8Array(Buffer.from(location.iv, "base64")),
+      counter: view(Buffer.from(location.iv, "base64")),
       length: 64,
       name: "AES-CTR",
     },
     key,
-    new Uint8Array(bytes),
+    view(bytes),
   );
 
   return Buffer.from(plaintext);
 }
 
 async function downloadMedia(
-  apiUrl: string,
-  accessToken: string,
+  connection: MatrixConnection,
   location: MediaLocation,
 ): Promise<Buffer> {
   const mxc = /^mxc:\/\/([^/]+)\/(.+)$/.exec(location.mxcUrl);
@@ -302,9 +296,9 @@ async function downloadMedia(
   }
   const [, serverName, mediaId] = mxc;
   const response = await fetch(
-    `${homeserver(apiUrl)}/_matrix/client/v1/media/download/${encodeURIComponent(serverName!)}/${encodeURIComponent(mediaId!)}`,
+    `${trimSlash(connection.apiUrl)}/_matrix/client/v1/media/download/${encodeURIComponent(serverName!)}/${encodeURIComponent(mediaId!)}`,
     {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${connection.accessToken}` },
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
   );
@@ -372,7 +366,7 @@ async function encryptMedia(
     await crypto.subtle.encrypt(
       { counter: iv, length: 64, name: "AES-CTR" },
       key,
-      new Uint8Array(bytes),
+      view(bytes),
     ),
   );
   const jwk = await crypto.subtle.exportKey("jwk", key);
@@ -401,7 +395,7 @@ async function encryptMedia(
  */
 function formatReply(
   markdown: string,
-  botName: string | undefined,
+  connection: MatrixConnection,
   source: MatrixSource,
 ): Record<string, unknown> {
   const html = Bun.markdown.html(markdown, {
@@ -411,6 +405,7 @@ function formatReply(
     strikethrough: true,
     tables: true,
   });
+  const botName = connection.botName;
   const content: Record<string, unknown> = {
     body: botName ? `${botName}: ${markdown}` : markdown,
     format: "org.matrix.custom.html",
@@ -432,10 +427,6 @@ function formatReply(
   }
 
   return content;
-}
-
-function homeserver(apiUrl: string): string {
-  return apiUrl.replace(/\/$/, "");
 }
 
 function ignore(reason: string): ChannelParseResult {
@@ -466,8 +457,7 @@ function isAddressed(
 
 /** Media on a message, named and located, with the bytes left for later. */
 function mediaAttachment(
-  apiUrl: string,
-  accessToken: string,
+  connection: MatrixConnection,
   content: Record<string, unknown>,
 ): Attachment | null {
   const type = MEDIA_MSGTYPES[String(content.msgtype)];
@@ -491,8 +481,7 @@ function mediaAttachment(
       : String(content.body ?? "attachment");
 
   return {
-    fetchData: (): Promise<Buffer> =>
-      downloadMedia(apiUrl, accessToken, location),
+    fetchData: (): Promise<Buffer> => downloadMedia(connection, location),
     fetchMetadata: { ...location },
     name: name,
     type: type,
@@ -535,8 +524,6 @@ function messageText(content: Record<string, unknown>): string {
 }
 
 function parseRoomMessage(
-  apiUrl: string,
-  accessToken: string,
   payload: MatrixForwardedEvent,
   options: MatrixChannelOptions,
 ): ChannelParseResult {
@@ -550,7 +537,7 @@ function parseRoomMessage(
     return ignore(dropped);
   }
 
-  const attachment = mediaAttachment(apiUrl, accessToken, content);
+  const attachment = mediaAttachment(options, content);
   const body = messageText(content);
   const runAgent = isAddressed(
     body,
@@ -584,7 +571,7 @@ function parseRoomMessage(
     ack: { statusCode: 200, body: "ok" },
     message: {
       eventId: `${MATRIX_INTEGRATION_PREFIX}${event.event_id}`,
-      conversationKey: `${MATRIX_INTEGRATION_PREFIX}${roomId}${threadRootId ? `:${threadRootId}` : ""}`,
+      conversationKey: `${MATRIX_INTEGRATION_PREFIX}${roomId}${threadRootId ? `${CHANNEL_THREAD_SEPARATOR}${threadRootId}` : ""}`,
       channelName: "matrix",
       // A command keeps its bare text so the leading token still parses.
       content: [
@@ -624,7 +611,7 @@ function replyRelation(source: MatrixSource): Record<string, unknown> {
 }
 
 async function sendMessage(
-  accessToken: string,
+  connection: MatrixConnection,
   source: MatrixSource,
   content: Record<string, unknown>,
 ): Promise<void> {
@@ -633,7 +620,7 @@ async function sendMessage(
     roomId: source.roomId,
     type: "m.room.message",
   };
-  await callForwarder(accessToken, "/v1/send", request);
+  await callForwarder(connection, "/v1/send", request);
 }
 
 function toMatrixSource(source: Record<string, unknown>): MatrixSource {
@@ -657,20 +644,37 @@ function toMatrixSource(source: Record<string, unknown>): MatrixSource {
   };
 }
 
+/** Both Matrix URLs this module builds are joined onto the homeserver by hand. */
+function trimSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/**
+ * A `Buffer` as Web Crypto wants it. `new Uint8Array(buffer)` would copy the
+ * whole attachment, twice for an inbound encrypted one, so this views the same
+ * bytes instead. The assertion holds because Node never backs a `Buffer` with
+ * a `SharedArrayBuffer`, which is the only other member of `ArrayBufferLike`.
+ */
+function view(bytes: Buffer): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(
+    bytes.buffer as ArrayBuffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  );
+}
+
 function unpaddedBase64(bytes: Buffer): string {
   return bytes.toString("base64").replace(/=+$/, "");
 }
 
 async function uploadEncrypted(
-  apiUrl: string,
-  accessToken: string,
+  connection: MatrixConnection,
   name: string,
   bytes: Buffer,
 ): Promise<EncryptedFile> {
   const { ciphertext, file } = await encryptMedia(bytes);
   const url = await uploadMedia(
-    apiUrl,
-    accessToken,
+    connection,
     name,
     ciphertext,
     "application/octet-stream",
@@ -680,18 +684,17 @@ async function uploadEncrypted(
 }
 
 async function uploadMedia(
-  apiUrl: string,
-  accessToken: string,
+  connection: MatrixConnection,
   name: string,
   bytes: Buffer,
   mimeType: string,
 ): Promise<string> {
   const response = await fetch(
-    `${homeserver(apiUrl)}/_matrix/media/v3/upload?filename=${encodeURIComponent(name)}`,
+    `${trimSlash(connection.apiUrl)}/_matrix/media/v3/upload?filename=${encodeURIComponent(name)}`,
     {
       body: bytes,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${connection.accessToken}`,
         "Content-Type": mimeType,
       },
       method: "POST",

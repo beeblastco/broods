@@ -7,6 +7,12 @@
 /** Header both directions authenticate with: the account's access token. */
 export const MATRIX_ACCESS_TOKEN_HEADER = "x-matrix-access-token";
 
+/**
+ * Marks an event this channel sent. The account is usually a person's, so the
+ * sender alone cannot tell the agent's replies from its owner's messages.
+ */
+export const MATRIX_BOT_MARKER = "app.broods.bot";
+
 /** Forwarder → core, one room message, already decrypted. */
 export interface MatrixForwardedEvent {
   type: "MATRIX_ROOM_EVENT";

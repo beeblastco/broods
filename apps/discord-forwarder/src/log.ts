@@ -9,7 +9,7 @@
 // it once at startup through `setLogService`.
 let service = "discord-forwarder";
 
-type LogFields = Record<string, string | number | boolean | undefined>;
+export type LogFields = Record<string, string | number | boolean | undefined>;
 
 export function logError(message: string, fields: LogFields = {}): void {
   emit("error", message, fields);

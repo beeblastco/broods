@@ -8,17 +8,19 @@ import type {
 import {
   createMatrixActions,
   createMatrixChannel,
-  MATRIX_BOT_MARKER,
   type MatrixChannelOptions,
+  type MatrixConnection,
   type MatrixSource,
 } from "../src/shared/matrix-channel.ts";
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
+  MATRIX_BOT_MARKER,
   type MatrixForwardedEvent,
 } from "../src/shared/matrix-wire.ts";
 import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
 
 const API_URL = "https://matrix.example.org";
+const FORWARDER_URL = "http://forwarder.test";
 const ROOM_ID = "!room:example.org";
 const TOKEN = "syt_token";
 
@@ -194,7 +196,7 @@ describe("matrix channel adapter", () => {
     );
     const message = messageOf(parsed);
 
-    expect(message.conversationKey).toBe(`matrix:${ROOM_ID}:$root`);
+    expect(message.conversationKey).toBe(`matrix:${ROOM_ID}|$root`);
     expect(message.source).toMatchObject({ threadRootId: "$root" });
     expect(channelScopeKeyFromConversation(message.conversationKey)).toBe(
       `matrix:${ROOM_ID}`,
@@ -246,12 +248,12 @@ describe("matrix channel adapter", () => {
 describe("matrix channel actions", () => {
   it("sends a reply through the forwarder with the profile and marker", async () => {
     const sent = captureForwarder();
-    const actions = createMatrixActions(API_URL, TOKEN, source(), "Georgi");
+    const actions = createMatrixActions(connection("Georgi"), source());
 
     await actions.sendText("**done**");
 
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.url).toBe("http://forwarder.test/v1/send");
+    expect(sent[0]!.url).toBe(`${FORWARDER_URL}/v1/send`);
     expect(sent[0]!.token).toBe(TOKEN);
     expect(sent[0]!.body).toMatchObject({
       content: {
@@ -271,7 +273,7 @@ describe("matrix channel actions", () => {
 
   it("hangs a file it sends off the message it answers", async () => {
     const sent = captureForwarder();
-    const actions = createMatrixActions(API_URL, TOKEN, source(), "Georgi");
+    const actions = createMatrixActions(connection("Georgi"), source());
 
     await actions.sendFiles!([
       {
@@ -297,12 +299,7 @@ describe("matrix channel actions", () => {
   it("reacts to the inbound message", async () => {
     const sent = captureForwarder();
 
-    await createMatrixActions(
-      API_URL,
-      TOKEN,
-      source(),
-      undefined,
-    ).reactToMessage();
+    await createMatrixActions(connection(), source()).reactToMessage();
 
     expect(sent[0]!.body).toMatchObject({
       content: {
@@ -318,7 +315,6 @@ describe("matrix channel actions", () => {
 });
 
 function captureForwarder(): CapturedCall[] {
-  process.env.MATRIX_FORWARDER_URL = "http://forwarder.test";
   const calls: CapturedCall[] = [];
   globalThis.fetch = (async (
     input: string | URL | Request,
@@ -342,11 +338,21 @@ function captureForwarder(): CapturedCall[] {
 }
 
 function channel(options: Partial<MatrixChannelOptions> = {}): ChannelAdapter {
-  return createMatrixChannel(API_URL, TOKEN, {
+  return createMatrixChannel({
+    ...connection(),
     allowedChannelIds: null,
     allowedUserIds: null,
     ...options,
   });
+}
+
+function connection(botName?: string): MatrixConnection {
+  return {
+    accessToken: TOKEN,
+    apiUrl: API_URL,
+    forwarderUrl: FORWARDER_URL,
+    ...(botName ? { botName: botName } : {}),
+  };
 }
 
 async function encryptForTest(

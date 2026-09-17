@@ -11,7 +11,7 @@ import {
   type MatrixTypingRequest,
 } from "../../core/src/shared/matrix-wire.ts";
 import { logWarn, tokenHint } from "../../discord-forwarder/src/log.ts";
-import type { Forwarder, ForwarderAccount } from "./supervisor.ts";
+import type { Forwarder } from "./supervisor.ts";
 
 export async function handleRequest(
   forwarder: Pick<Forwarder, "account" | "status">,
@@ -50,8 +50,9 @@ export async function handleRequest(
       if (!isSendRequest(body)) {
         return new Response("Invalid send request", { status: 400 });
       }
+      const sent: MatrixSendResponse = { eventId: await account.send(body) };
 
-      return await send(account, body);
+      return Response.json(sent);
     }
     if (!isTypingRequest(body)) {
       return new Response("Invalid typing request", { status: 400 });
@@ -92,15 +93,4 @@ function isTypingRequest(body: unknown): body is MatrixTypingRequest {
   return (
     typeof record.roomId === "string" && typeof record.typing === "boolean"
   );
-}
-
-async function send(
-  account: ForwarderAccount,
-  request: MatrixSendRequest,
-): Promise<Response> {
-  const response: MatrixSendResponse = {
-    eventId: await account.send(request),
-  };
-
-  return Response.json(response);
 }

@@ -23,6 +23,11 @@ export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
 export const DIRECT_API_CONVERSATION_PREFIX = "api:";
 export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
+/**
+ * Separates a channel's own conversation from the thread inside it, for
+ * channels whose ids are not colon-delimited. No provider id contains it.
+ */
+export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
 export const SLACK_INTEGRATION_PREFIX = "slack:";
 export const SLACK_COMMAND_INTEGRATION_PREFIX = "slack-command:";
@@ -93,6 +98,13 @@ export function channelScopeKeyFromConversation(
     return unscopedKey;
   }
 
+  // Everything below counts colons, which a channel whose own ids contain them
+  // cannot do. A new channel marks the boundary itself and skips the guessing;
+  // Matrix is the first, and the older four keep their shapes.
+  const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
+  if (boundary !== -1) {
+    return unscopedKey.slice(0, boundary);
+  }
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 
@@ -102,12 +114,6 @@ export function channelScopeKeyFromConversation(
     const parts = unscopedKey.split(":");
 
     return parts.length >= 3 ? parts.slice(0, 3).join(":") : unscopedKey;
-  }
-  // A thread root is an event id, and only event ids contain `$`: room ids never do.
-  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
-    const threadAt = unscopedKey.indexOf(":$");
-
-    return threadAt === -1 ? unscopedKey : unscopedKey.slice(0, threadAt);
   }
   if (unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");

@@ -9,7 +9,7 @@ import {
   type ConfigPlane,
 } from "../../discord-forwarder/src/config.ts";
 
-export interface ForwarderConfig {
+interface ForwarderConfig {
   /** Every config plane this process serves. One process, not one per stage. */
   planes: ConfigPlane[];
   port: number;

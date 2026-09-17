@@ -32,7 +32,7 @@ export interface SyncFilter {
   };
 }
 
-export interface SyncOptions {
+interface SyncOptions {
   filter: SyncFilter;
   signal: AbortSignal;
   since: string | undefined;
@@ -53,7 +53,7 @@ export interface SyncResponse {
   to_device?: { events: unknown[] };
 }
 
-export interface WhoAmI {
+interface WhoAmI {
   /** Absent for application-service tokens. */
   device_id?: string;
   user_id: string;

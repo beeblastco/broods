@@ -13,7 +13,10 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MatrixForwardedEvent } from "../../core/src/shared/matrix-wire.ts";
+import {
+  MATRIX_BOT_MARKER,
+  type MatrixForwardedEvent,
+} from "../../core/src/shared/matrix-wire.ts";
 
 const DEVICE_ID = "DEVICE1";
 const ROOM_ID = "!room:example.org";
@@ -54,6 +57,9 @@ describe.skipIf(!cryptoAvailable)("the account loop", () => {
     try {
       await until((): boolean => forwarded.length > 0);
 
+      expect(forwarded.map((event): string => event.event.event_id)).toEqual([
+        "$event-1",
+      ]);
       expect(forwarded[0]).toMatchObject({
         type: "MATRIX_ROOM_EVENT",
         encrypted: false,
@@ -156,9 +162,21 @@ function fakeHomeserver(options: { unknownToken?: boolean } = {}): Homeserver {
                   timeline: {
                     events: [
                       {
+                        // The agent's own reply, which must not come back.
+                        content: {
+                          body: "earlier reply",
+                          [MATRIX_BOT_MARKER]: true,
+                          msgtype: "m.text",
+                        },
+                        event_id: "$event-0",
+                        origin_server_ts: 1,
+                        sender: USER_ID,
+                        type: "m.room.message",
+                      },
+                      {
                         content: { body: "morning", msgtype: "m.text" },
                         event_id: "$event-1",
-                        origin_server_ts: 1,
+                        origin_server_ts: 2,
                         sender: "@ada:example.org",
                         type: "m.room.message",
                       },
