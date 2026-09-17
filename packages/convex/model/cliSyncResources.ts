@@ -260,11 +260,8 @@ export async function syncAgentResources(
     // Policy refs that resolve to no policy resource in this deploy stay
     // behind as raw strings the runtime later drops, silently weakening the
     // intended policy set. Surface them as a deploy warning instead.
-    if (
-      isPlainObject(withEnvRefs.policy) &&
-      Array.isArray(withEnvRefs.policy.policyIds)
-    ) {
-      for (const entry of withEnvRefs.policy.policyIds) {
+    if (Array.isArray(withEnvRefs.policies)) {
+      for (const entry of withEnvRefs.policies) {
         if (typeof entry === "string" && !policyIds[entry])
           missingPolicies.add(entry);
       }
