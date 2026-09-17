@@ -141,9 +141,16 @@ export class RoomCrypto {
         response.device_one_time_keys_count ?? {},
         response.device_unused_fallback_key_types ?? [],
       );
-      // A user who joins an encrypted room arrives in `changed`, so a non-empty
-      // list is the signal that a cached member list may be missing someone.
-      if (response.device_lists?.changed?.length) this.roomMembers.clear();
+      // A user who joins an encrypted room arrives in `changed` and one who
+      // leaves arrives in `left`, so either list means a cached member list is
+      // stale. `left` matters most: `encrypt` hands that list to
+      // `shareRoomKey`, which would give a departed user the next room key.
+      if (
+        response.device_lists?.changed?.length ||
+        response.device_lists?.left?.length
+      ) {
+        this.roomMembers.clear();
+      }
       try {
         await this.flushOutgoing();
       } catch (error) {

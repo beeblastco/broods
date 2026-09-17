@@ -25,7 +25,8 @@ export const DIRECT_API_CONVERSATION_PREFIX = "api:";
 export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
 /**
  * Separates a channel's own conversation from the thread inside it, for
- * channels whose ids are not colon-delimited. No provider id contains it.
+ * channels whose ids carry colons and so cannot be split on them. No provider
+ * id contains it, and it is only read under a channel prefix.
  */
 export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
@@ -98,12 +99,14 @@ export function channelScopeKeyFromConversation(
     return unscopedKey;
   }
 
-  // Everything below counts colons, which a channel whose own ids contain them
-  // cannot do. A new channel marks the boundary itself and skips the guessing;
-  // Matrix is the first, and the older four keep their shapes.
-  const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
-  if (boundary !== -1) {
-    return unscopedKey.slice(0, boundary);
+  // Matrix marks the boundary itself rather than letting the colon counting
+  // below guess at it, because its room ids carry colons. Only a key under the
+  // Matrix prefix is split this way: a public conversation key is free to
+  // contain the separator, and `customer|a` must not scope to `customer`.
+  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
+    const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
+
+    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
   }
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");

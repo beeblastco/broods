@@ -25,6 +25,7 @@ import {
 import type { AccountState, MatrixAccountOptions } from "./account.ts";
 import type { MatrixConnection } from "./connections.ts";
 import { forwardRoomEvent, type ForwardTarget } from "./forward.ts";
+import { normalizeApiUrl } from "./matrix.ts";
 
 /** Injected so tests never load the native crypto module; `main.ts` passes `MatrixAccount`. */
 type AccountFactory = (options: MatrixAccountOptions) => ForwarderAccount;
@@ -203,11 +204,12 @@ export function groupConnectionsByToken(
 ): Map<string, AccountGroup> {
   const grouped = new Map<string, AccountGroup>();
   for (const connection of connections) {
+    const apiUrl = normalizeApiUrl(connection.apiUrl);
     const group = grouped.get(connection.botToken) ?? {
-      apiUrl: connection.apiUrl,
+      apiUrl: apiUrl,
       targets: [],
     };
-    if (group.apiUrl !== connection.apiUrl) {
+    if (group.apiUrl !== apiUrl) {
       logWarn(
         "One Matrix access token names two homeservers, skipping the second",
         {

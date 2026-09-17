@@ -66,7 +66,7 @@ export class MatrixClient {
 
   constructor(apiUrl: string, accessToken: string) {
     this.accessToken = accessToken;
-    this.apiUrl = apiUrl.replace(/\/+$/, "");
+    this.apiUrl = normalizeApiUrl(apiUrl);
   }
 
   /** User id to display name for everyone joined; no display name maps to undefined. */
@@ -221,11 +221,25 @@ export class MatrixError extends Error {
   }
 }
 
+/**
+ * Trailing slashes are not part of a homeserver's identity. The supervisor
+ * compares two planes' URLs with this, so an account is not started twice for
+ * one homeserver written two ways.
+ */
+export function normalizeApiUrl(apiUrl: string): string {
+  return apiUrl.replace(/\/+$/, "");
+}
+
 function toMatrixError(status: number, text: string): MatrixError {
   let fields: { errcode?: unknown; error?: unknown; retry_after_ms?: unknown } =
     {};
   try {
-    fields = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
+    // A body of `null` parses, and reading `errcode` off it would throw where
+    // this function exists to turn a bad response into an error.
+    if (typeof parsed === "object" && parsed !== null) {
+      fields = parsed;
+    }
   } catch {
     // Proxies answer 502s with HTML. The status alone has to do.
   }

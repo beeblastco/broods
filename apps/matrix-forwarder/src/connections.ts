@@ -18,8 +18,9 @@ export interface MatrixConnection {
 }
 
 /**
- * Joins each webhook path onto the plane's own gateway. A row without a
- * homeserver cannot sync, so it is skipped and logged rather than started.
+ * Joins each webhook path onto the plane's own gateway. A row whose homeserver
+ * is missing or not https cannot be synced, so it is skipped and logged rather
+ * than started.
  */
 export function planeMatrixConnections(
   plane: ConfigPlane,
@@ -27,8 +28,11 @@ export function planeMatrixConnections(
 ): MatrixConnection[] {
   const connections: MatrixConnection[] = [];
   for (const row of rows) {
-    if (!row.apiUrl) {
-      logWarn("Matrix connection has no homeserver URL, skipped", {
+    // `assertPublicHttpsUrl` already rejects these on write, so this catches
+    // rows stored before it did. Every sync carries the access token, and a
+    // cleartext homeserver would carry it in the clear.
+    if (!row.apiUrl || !isHttpsUrl(row.apiUrl)) {
+      logWarn("Matrix connection needs an https homeserver URL, skipped", {
         agentId: row.agentId,
         agentName: row.agentName,
         plane: plane.name,
@@ -45,4 +49,12 @@ export function planeMatrixConnections(
   }
 
   return connections;
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }

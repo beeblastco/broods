@@ -59,6 +59,21 @@ describe("grouping connections", () => {
     });
   });
 
+  // Two planes may spell one homeserver with and without its trailing slash.
+  // Read as two, the later plane's webhook would be dropped as a conflict.
+  it("treats homeservers that differ only by a trailing slash as one", () => {
+    const grouped = groupConnectionsByToken([
+      connection(),
+      connection({
+        agentId: "agent-2",
+        apiUrl: "https://matrix.example.org/",
+      }),
+    ]);
+
+    expect(grouped.get("token-a")?.apiUrl).toBe("https://matrix.example.org");
+    expect(grouped.get("token-a")?.targets).toHaveLength(2);
+  });
+
   it("drops the connection when one token names a second homeserver", () => {
     const grouped = groupConnectionsByToken([
       connection(),
