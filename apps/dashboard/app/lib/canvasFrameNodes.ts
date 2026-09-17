@@ -82,15 +82,21 @@ export type FrameNodeData = {
 export type FrameNodeType = Node<FrameNodeData, "frame">;
 
 /**
- * A side edge's drawn data: its lanes, when the router placed it, and whether
- * it is drawn from other state rather than stored, so it offers no delete and
- * shows no lock.
+ * Why a side edge is drawn rather than stored: a mount re-pointed to a
+ * collapsed frame, a workspace's inherited sandbox, or a machine MCP server's
+ * computer. A drawn edge can't be deleted, so it shows a lock saying why.
  */
-export type SideEdgeData = { displayOnly?: boolean; route?: SideEdgeRoute };
+export type DrawnEdgeKind = "collapsed" | "inherited" | "runsOn";
+
+/** A side edge's drawn data: its lanes once routed, and why it is drawn, if it is. */
+export type SideEdgeData = { drawn?: DrawnEdgeKind; route?: SideEdgeRoute };
 
 export type StageMcpServer = FunctionReturnType<
   typeof api.mcp.listByStage
->[number]; /** * Path of an agent edge from the agent's bottom handle to its target's top
+>[number];
+
+/**
+ * Path of an agent edge from the agent's bottom handle to its target's top
  * handle along its lanes, as `[path, labelX, labelY]` like React Flow's path
  * helpers. The label sits on the gutter run, or on the final drop.
  */
@@ -414,7 +420,7 @@ function framedEdges(
     display.push({
       ...edge,
       ...handles,
-      data: { ...edge.data, displayOnly: true },
+      data: { ...edge.data, drawn: "collapsed" },
       deletable: false,
       id: id,
       reconnectable: false,
@@ -516,7 +522,7 @@ function inheritedEdges(
                 source,
                 target,
                 facingHandles(workspace, sandbox),
-                "mount",
+                "inherited",
               ),
             ];
           }),
@@ -745,24 +751,24 @@ function sameValue(a: unknown, b: unknown, depth: number): boolean {
   );
 }
 
-/** A drawn side edge nobody stores, deletes or reconnects. */
+/** A drawn side edge nobody stores, deletes or reconnects: inherited or runs-on. */
 function sideEdge(
   id: string,
   source: string,
   target: string,
   handles: Pick<Edge, "sourceHandle" | "targetHandle">,
-  type: "mount" | "runsOn",
+  drawn: Exclude<DrawnEdgeKind, "collapsed">,
 ): Edge {
   return {
     ...handles,
-    data: { displayOnly: true },
+    data: { drawn: drawn },
     deletable: false,
     id: id,
     reconnectable: false,
     selectable: false,
     source: source,
     target: target,
-    type: type,
+    type: drawn === "runsOn" ? "runsOn" : "mount",
   };
 }
 

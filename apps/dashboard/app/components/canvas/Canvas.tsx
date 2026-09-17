@@ -9,7 +9,10 @@ import {
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { CanvasFramesProvider } from "@/app/components/canvas/CanvasFramesContext";
-import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
+import {
+  AGENT_EDGE_STROKE,
+  DeletableEdge,
+} from "@/app/components/canvas/DeletableEdge";
 import {
   isCodeManagedEdgeId,
   isCodeManagedOwner,
@@ -45,6 +48,7 @@ import {
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
+  workspaceOnlySandboxIds,
   type FrameMemberAction,
 } from "@/app/lib/canvasFrameEdits";
 import {
@@ -470,7 +474,7 @@ function CanvasInner({
   const defaultEdgeOptions = useMemo(
     () => ({
       style: {
-        stroke: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+        stroke: isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light,
         strokeWidth: 1.5,
       },
       // Never animated: ReactFlow's animated edges run a continuous dash
@@ -1314,10 +1318,11 @@ function CanvasInner({
       }),
     [nodes, edges],
   );
-  const { infraAnalysis, orderNumbers } = useMemo(
+  const { infraAnalysis, orderNumbers, workspaceOnly } = useMemo(
     () => ({
       infraAnalysis: analyzeCanvasInfra(nodes, edges),
       orderNumbers: agreedSandboxOrderNumbers(nodes, edges),
+      workspaceOnly: workspaceOnlySandboxIds(nodes, edges),
     }),
     // Recompute only when the structural signature changes (positions excluded).
     [infraKey],
@@ -1328,8 +1333,15 @@ function CanvasInner({
       mcpServers: mcpServersByNode,
       onToggleFrame: toggleFrame,
       sandboxOrderNumbers: orderNumbers,
+      workspaceOnlySandboxIds: workspaceOnly,
     }),
-    [machineConnections, mcpServersByNode, toggleFrame, orderNumbers],
+    [
+      machineConnections,
+      mcpServersByNode,
+      toggleFrame,
+      orderNumbers,
+      workspaceOnly,
+    ],
   );
   // The right-clicked chip, or card that would be one, and what it offers; null
   // falls back to "Add service", which is what every other card gets.
