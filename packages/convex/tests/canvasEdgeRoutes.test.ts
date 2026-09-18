@@ -42,6 +42,31 @@ describe("routeCanvasEdges", () => {
     }
   });
 
+  it("drops straight past a frame beside the route, not through it", () => {
+    // The sandbox frame stands in the rectangle between the two handles but
+    // under the bus and left of the drop, so the edge keeps its two corners.
+    const boxes = new Map<string, LayoutRect>([
+      ["agent", box(0, 0)],
+      ["frame", { height: 230, width: 280, x: 0, y: 200 }],
+      ["workspaces", box(480, 288)],
+    ]);
+    const { agent } = routeCanvasEdges(
+      boxes,
+      [{ id: "e", source: "agent", target: "workspaces" }],
+      [],
+    );
+    const points = agentEdgePoints(
+      handlePoint(boxes.get("agent")!, "bottom"),
+      handlePoint(boxes.get("workspaces")!, "top"),
+      agent.get("e")!,
+    );
+
+    expect(agent.get("e")!.gutter).toBeNull();
+    expect(
+      crossedBoxIds(points, boxes, new Set(["agent", "workspaces"])),
+    ).toEqual([]);
+  });
+
   it("runs one agent's edges on one trunk, and takes the gutter past a card in the way", () => {
     const { agent } = routeCanvasEdges(
       BOXES,
