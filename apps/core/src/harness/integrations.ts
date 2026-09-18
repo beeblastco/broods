@@ -53,7 +53,7 @@ import {
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
-import { getHarnessPublicUrl } from "../shared/env.ts";
+import { getHarnessPublicUrl, optionalEnv } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import type { QuestionAnswer } from "../../../../packages/broods/src/websocket-contracts.ts";
 import {
@@ -69,6 +69,10 @@ import {
   logInfo,
   logWarn,
 } from "../shared/log.ts";
+import {
+  createMatrixChannel,
+  MATRIX_FORWARDER_URL_ENV,
+} from "../shared/matrix-channel.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
@@ -1771,6 +1775,7 @@ function resolveCommandToken(
 function supportsInlineCommands(channelName: string): boolean {
   return (
     channelName === "discord" ||
+    channelName === "matrix" ||
     channelName === "slack" ||
     channelName === "telegram" ||
     channelName === "zalo"
@@ -1799,6 +1804,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
   const discordChannel = createDiscordChannelFromConfig(config);
   const pancakeChannel = createPancakeChannelFromConfig(config);
   const zaloChannel = createZaloChannelFromConfig(config);
+  const matrixChannel = createMatrixChannelFromConfig(config);
 
   return {
     webhookChannels: [
@@ -1808,6 +1814,7 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       discordChannel,
       pancakeChannel,
       zaloChannel,
+      matrixChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
 }
@@ -2564,6 +2571,27 @@ function createPancakeChannelFromConfig(
     reachSet(channel.allowedUserIds),
     channel.senderId,
   );
+}
+
+function createMatrixChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
+  const channel = config.channels?.matrix;
+  if (!channel?.botToken || !channel.apiUrl) {
+    return null;
+  }
+
+  return createMatrixChannel({
+    accessToken: channel.botToken,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
+    apiUrl: channel.apiUrl,
+    // Empty when the deployment has no forwarder: inbound still parses, and a
+    // reply fails with a message naming the variable.
+    forwarderUrl: optionalEnv(MATRIX_FORWARDER_URL_ENV) ?? "",
+    ...(channel.botName ? { botName: channel.botName } : {}),
+    ...(channel.mentionText ? { mentionText: channel.mentionText } : {}),
+  });
 }
 
 function createZaloChannelFromConfig(

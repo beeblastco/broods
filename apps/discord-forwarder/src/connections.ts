@@ -1,5 +1,5 @@
 /**
- * Watches Discord connections in every config plane the process serves.
+ * Watches one channel's connections in every config plane the process serves.
  *
  * A Convex websocket subscription replaces the old fixed-interval poll: the
  * query re-runs only when a plane's `channelConnections` table actually
@@ -8,8 +8,9 @@
  *
  * `packages/convex/channel/connections.ts` does the decryption, so this process
  * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`, only one deploy key per plane,
- * the same credential core authenticates storage reads with. That query is not
- * Discord-specific; this is the caller that asks it for `discord`.
+ * the same credential core authenticates storage reads with. Neither that query
+ * nor the watch below is Discord-specific: `apps/matrix-forwarder` imports the
+ * watch and asks it for `matrix`.
  */
 
 import type { ChannelConnection } from "@broods/convex/channel/connections";
@@ -44,17 +45,17 @@ export interface ForwarderConnection {
  * once meant a backend that was not live yet stopped every other plane from
  * ever opening a socket.
  */
-export function combinePlaneAnswers(
+export function combinePlaneAnswers<T>(
   planeNames: readonly string[],
-  answers: readonly (ForwarderConnection[] | null)[],
-): ForwarderConnection[] {
+  answers: readonly (T[] | null)[],
+): T[] {
   // `every` is true for an empty list too, which is the right answer: a process
   // with no planes has nothing to watch and must not report itself ready.
   if (answers.every((answer): boolean => answer === null)) {
     throw new Error(`No config plane answered: ${planeNames.join(", ")}`);
   }
 
-  return answers.flatMap((answer): ForwarderConnection[] => answer ?? []);
+  return answers.flatMap((answer): T[] => answer ?? []);
 }
 
 /**
@@ -75,8 +76,10 @@ export function planeConnections(
 }
 
 /**
- * One entry per deployed agent that configures a Discord bot token, across every
- * plane, delivered whenever any plane's answer changes.
+ * One entry per deployed agent that configures a bot token for `channel`, across
+ * every plane, delivered whenever any plane's answer changes. `resolve` turns
+ * one plane's rows into the caller's connection shape, `planeConnections` for
+ * Discord.
  *
  * A plane is isolated from its neighbours: the websocket client reconnects on
  * its own, and until a plane answers again its last snapshot keeps contributing,
@@ -86,30 +89,30 @@ export function planeConnections(
  * `onChange` never fires before at least one plane has answered, so total
  * silence never reconciles at all.
  */
-export function watchDiscordConnections(
+export function watchChannelConnections<T>(
+  channel: string,
   planes: readonly ConfigPlane[],
-  onChange: (connections: ForwarderConnection[]) => void,
+  resolve: (plane: ConfigPlane, rows: ChannelConnection[]) => T[],
+  onChange: (connections: T[]) => void,
 ): ConnectionWatch {
-  const latest = new Map<string, ForwarderConnection[]>();
+  const latest = new Map<string, T[]>();
   const clients = planes.map((plane): ConvexClient => {
     const client = planeClient(plane);
     client.onUpdate(
       internal.channel.connections.listConnections,
-      { channel: "discord" },
+      { channel: channel },
       (rows: ChannelConnection[]): void => {
-        latest.set(plane.name, planeConnections(plane, rows));
+        latest.set(plane.name, resolve(plane, rows));
         onChange(
           combinePlaneAnswers(
             planes.map((entry): string => entry.name),
-            planes.map(
-              (entry): ForwarderConnection[] | null =>
-                latest.get(entry.name) ?? null,
-            ),
+            planes.map((entry): T[] | null => latest.get(entry.name) ?? null),
           ),
         );
       },
       (error: Error): void => {
         logWarn("Config plane subscription error", {
+          channel: channel,
           error: error.message,
           plane: plane.name,
           reusing: latest.get(plane.name)?.length ?? 0,

@@ -8,6 +8,7 @@ import type {
   AgentConfig,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
+  AgentMatrixChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
   ChannelPartition,
@@ -21,6 +22,7 @@ import type {
   GitHubSource,
   SlackSource,
   DiscordSource,
+  MatrixSource,
   PancakeSource,
   ZaloSource,
 } from "./contracts.ts";
@@ -203,6 +205,7 @@ export type ChannelType =
   | "github"
   | "slack"
   | "discord"
+  | "matrix"
   | "pancake"
   | "zalo";
 
@@ -299,6 +302,17 @@ export type DiscordConnectionInput = EnvRefString<
 > &
   ConnectionIdentityInput;
 
+export type MatrixConnectionInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentMatrixChannelConfig,
+      "apiUrl" | "botToken" | "botName" | "mentionText"
+    >,
+    "apiUrl" | "botToken"
+  >
+> &
+  ConnectionIdentityInput;
+
 export interface PancakeConnectionInput extends ConnectionIdentityInput {
   pageId: ChannelSecret;
   pageAccessToken: ChannelSecret;
@@ -327,6 +341,10 @@ export type DiscordConnectionDefinition = ConnectionDefinition<
   "discord",
   DiscordConnectionInput
 >;
+export type MatrixConnectionDefinition = ConnectionDefinition<
+  "matrix",
+  MatrixConnectionInput
+>;
 export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
   PancakeConnectionInput
@@ -340,6 +358,7 @@ export type AnyConnectionDefinition =
   | GitHubConnectionDefinition
   | SlackConnectionDefinition
   | DiscordConnectionDefinition
+  | MatrixConnectionDefinition
   | PancakeConnectionDefinition
   | ZaloConnectionDefinition;
 
@@ -396,6 +415,12 @@ export type DiscordChannelInput = ChannelRulesInput & {
   channelId: string;
   /** Guild the channel sits in. */
   guildId?: string;
+};
+
+export type MatrixChannelInput = ChannelRulesInput & {
+  connection: MatrixConnectionDefinition;
+  /** Matrix room id, e.g. "!abc123:matrix.org". */
+  channelId: string;
 };
 
 export type GitHubChannelInput = ChannelRulesInput & {
@@ -482,6 +507,7 @@ export type TelegramMessageSource = TelegramSource;
 export type GitHubMessageSource = GitHubSource;
 export type SlackMessageSource = SlackSource;
 export type DiscordMessageSource = DiscordSource;
+export type MatrixMessageSource = MatrixSource;
 export type PancakeMessageSource = PancakeSource;
 export type ZaloMessageSource = ZaloSource;
 
@@ -494,6 +520,7 @@ export type ChannelMessageReceived =
   | { channel: "github"; text: string; source: GitHubMessageSource }
   | { channel: "slack"; text: string; source: SlackMessageSource }
   | { channel: "discord"; text: string; source: DiscordMessageSource }
+  | { channel: "matrix"; text: string; source: MatrixMessageSource }
   | { channel: "pancake"; text: string; source: PancakeMessageSource }
   | { channel: "zalo"; text: string; source: ZaloMessageSource };
 
@@ -837,6 +864,12 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
+export function defineMatrixConnection(
+  config: MatrixConnectionInput,
+): MatrixConnectionDefinition {
+  return defineConnection("matrix", config);
+}
+
 export function definePancakeConnection(
   config: PancakeConnectionInput,
 ): PancakeConnectionDefinition {
@@ -883,6 +916,14 @@ export function defineGitHubChannel<const Name extends string>(
   }
 
   return defineChannelResource(name, description, repo, owner, rules);
+}
+
+export function defineMatrixChannel<const Name extends string>(
+  input: ResourceInput<Name, MatrixChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, channelId, ...rules } = input;
+
+  return defineChannelResource(name, description, channelId, undefined, rules);
 }
 
 export function definePancakeChannel<const Name extends string>(

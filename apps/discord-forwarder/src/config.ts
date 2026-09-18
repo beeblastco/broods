@@ -48,6 +48,23 @@ export interface ForwarderConfig {
   port: number;
 }
 
+/**
+ * Deploy keys stay out of the plane list because that list lives in a Helm values
+ * file and they are secrets. Each plane names its own key by convention instead,
+ * so serving one more Convex deployment is one list entry and one secret key
+ * rather than a code change. `apps/matrix-forwarder` reads the same list.
+ */
+export function configPlanesEnv(): ConfigPlane[] {
+  return parseConfigPlanes(requireEnv(PLANES_ENV)).map(
+    (plane): ConfigPlane => ({
+      convexUrl: plane.convexUrl,
+      deployKey: requireEnv(deployKeyEnvName(plane.name)),
+      name: plane.name,
+      webhookBaseUrl: plane.webhookBaseUrl,
+    }),
+  );
+}
+
 export function forwarderConfigFromEnv(): ForwarderConfig {
   return {
     backoffCeilingMs: positiveIntegerEnv("DISCORD_BACKOFF_CEILING_MS", 300_000),
@@ -105,23 +122,6 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
   }
 
   return planes;
-}
-
-/**
- * Deploy keys stay out of the plane list because that list lives in a Helm values
- * file and they are secrets. Each plane names its own key by convention instead,
- * so serving one more Convex deployment is one list entry and one secret key
- * rather than a code change.
- */
-function configPlanesEnv(): ConfigPlane[] {
-  return parseConfigPlanes(requireEnv(PLANES_ENV)).map(
-    (plane): ConfigPlane => ({
-      convexUrl: plane.convexUrl,
-      deployKey: requireEnv(deployKeyEnvName(plane.name)),
-      name: plane.name,
-      webhookBaseUrl: plane.webhookBaseUrl,
-    }),
-  );
 }
 
 /** Plane `dev` reads `CONVEX_DEPLOY_KEY_DEV`. */

@@ -173,6 +173,54 @@ describe("agent rules", () => {
     );
   });
 
+  it("requires an http(s) homeserver URL for a Matrix token", () => {
+    const matrix = {
+      id: "mx",
+      apiUrl: "https://matrix.org",
+      botToken: "syt_token",
+      botName: "Georgi AI",
+      mentionText: "@georgi-ai",
+    };
+    expect(normalizeAgentConfig({ channels: { matrix: matrix } })).toEqual({
+      channels: { matrix: matrix },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { matrix: { id: "mx", botToken: "syt_token" } },
+      }),
+    ).toThrow(
+      "config.channels.matrix.apiUrl is required when config.channels.matrix.botToken is set",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          matrix: {
+            id: "mx",
+            apiUrl: "http://10.0.0.5:8008",
+            botToken: "syt_token",
+          },
+        },
+      }),
+    ).toThrow("config.channels.matrix.apiUrl must use https");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          matrix: {
+            id: "mx",
+            apiUrl: "https://core.internal",
+            botToken: "syt_token",
+          },
+        },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    // A patch may rotate the token alone; the merged config still has the URL.
+    expect(
+      normalizeAgentConfigPatch({
+        channels: { matrix: { id: "mx", botToken: "syt_rotated" } },
+      }),
+    ).toEqual({ channels: { matrix: { id: "mx", botToken: "syt_rotated" } } });
+  });
+
   it("accepts a system prompt as a string or AI SDK system messages", () => {
     const system = [
       {

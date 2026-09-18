@@ -716,6 +716,7 @@ Each channel has a dedicated constructor:
 import {
   defineTelegramConnection,
   defineDiscordConnection,
+  defineMatrixConnection,
   defineSlackConnection,
   defineGitHubConnection,
   definePancakeConnection,

@@ -23,6 +23,12 @@ export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
 export const DIRECT_API_CONVERSATION_PREFIX = "api:";
 export const ACCOUNT_NAMESPACE_PREFIX = "acct:";
+/**
+ * Separates a channel's own conversation from the thread inside it, for
+ * channels whose ids carry colons and so cannot be split on them. No provider
+ * id contains it, and it is only read under a channel prefix.
+ */
+export const CHANNEL_THREAD_SEPARATOR = "|";
 export const GITHUB_INTEGRATION_PREFIX = "gh:";
 export const SLACK_INTEGRATION_PREFIX = "slack:";
 export const SLACK_COMMAND_INTEGRATION_PREFIX = "slack-command:";
@@ -30,6 +36,7 @@ export const TELEGRAM_INTEGRATION_PREFIX = "tg:";
 export const DISCORD_INTEGRATION_PREFIX = "discord:";
 export const PANCAKE_INTEGRATION_PREFIX = "pancake:";
 export const ZALO_INTEGRATION_PREFIX = "zalo:";
+export const MATRIX_INTEGRATION_PREFIX = "matrix:";
 
 const RESERVED_EVENT_ID_PREFIXES = [
   INTERNAL_EVENT_ID_PREFIX,
@@ -43,6 +50,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   PANCAKE_INTEGRATION_PREFIX,
   SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 const RESERVED_CONVERSATION_PREFIXES = [
@@ -55,6 +63,7 @@ const RESERVED_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 const CHANNEL_CONVERSATION_PREFIXES = [
@@ -64,6 +73,7 @@ const CHANNEL_CONVERSATION_PREFIXES = [
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
   ZALO_INTEGRATION_PREFIX,
+  MATRIX_INTEGRATION_PREFIX,
 ] as const;
 
 export interface AccountAgentScopedKey {
@@ -89,6 +99,15 @@ export function channelScopeKeyFromConversation(
     return unscopedKey;
   }
 
+  // Matrix marks the boundary itself rather than letting the colon counting
+  // below guess at it, because its room ids carry colons. Only a key under the
+  // Matrix prefix is split this way: a public conversation key is free to
+  // contain the separator, and `customer|a` must not scope to `customer`.
+  if (unscopedKey.startsWith(MATRIX_INTEGRATION_PREFIX)) {
+    const boundary = unscopedKey.indexOf(CHANNEL_THREAD_SEPARATOR);
+
+    return boundary === -1 ? unscopedKey : unscopedKey.slice(0, boundary);
+  }
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
 

@@ -317,6 +317,7 @@ export interface AgentChannelsConfig {
   discord?: AgentDiscordChannelConfig;
   pancake?: AgentPancakeChannelConfig;
   zalo?: AgentZaloChannelConfig;
+  matrix?: AgentMatrixChannelConfig;
   [key: string]: unknown;
 }
 
@@ -436,6 +437,34 @@ export interface AgentDiscordChannelConfig {
   botUserId?: string;
   /** Role ids that count as mentioning the agent, e.g. an on-call role. */
   mentionRoleIds?: string[];
+  trace?: "enabled" | "disabled";
+  partition?: ChannelPartition;
+  [key: string]: unknown;
+}
+
+/**
+ * A Matrix account the agent speaks as. Matrix has no bot concept, so this is
+ * usually a person's own account: replies carry a per-message profile named
+ * `botName`, and `mentionText` decides what addresses the agent, because a
+ * mention of the account would also be a mention of its owner.
+ */
+export interface AgentMatrixChannelConfig {
+  id?: string;
+  /** Homeserver base URL, e.g. `https://matrix.org`. */
+  apiUrl?: string;
+  /** Access token of the account; `apps/matrix-forwarder` syncs with it. */
+  botToken?: string;
+  /** Room ids. */
+  allowedChannelIds?: string[];
+  /** Matrix user ids, e.g. `@alice:matrix.org`. */
+  allowedUserIds?: string[];
+  /** Name replies are shown under. Unset, replies look like the account's own messages. */
+  botName?: string;
+  /**
+   * Text that addresses the agent, e.g. `@georgi-ai`. Unset, a mention of the
+   * account does. Other messages are stored as context either way.
+   */
+  mentionText?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;

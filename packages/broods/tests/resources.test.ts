@@ -649,6 +649,7 @@ import {
   defineGitHubConnection,
   defineSlackConnection,
   defineDiscordConnection,
+  defineMatrixConnection,
   definePancakeConnection,
   defineZaloConnection,
   env,
@@ -681,6 +682,13 @@ export const discord = defineDiscordConnection({
   allowedChannelIds: ["D123"],
   apiUrl: "https://discord.example/api/v10",
 });
+export const matrix = defineMatrixConnection({
+  apiUrl: "https://matrix.example",
+  botToken: env("MATRIX_ACCESS_TOKEN"),
+  allowedChannelIds: ["!room:matrix.example"],
+  botName: "Support AI",
+  mentionText: "@support-ai",
+});
 export const pancake = definePancakeConnection({
   allowedChannelIds: ["*"],
   pageId: env("PANCAKE_PAGE_ID"),
@@ -697,7 +705,7 @@ export const zalo = defineZaloConnection({
 
 export const support = defineAgent({
   name: "support",
-  connections: [telegram, github, slack, discord, pancake, zalo],
+  connections: [telegram, github, slack, discord, matrix, pancake, zalo],
 });
 `,
   );
@@ -730,6 +738,12 @@ export const support = defineAgent({
         allowedChannelIds: ["D123"],
         apiUrl: "https://discord.example/api/v10",
       },
+      matrix: {
+        allowedChannelIds: ["!room:matrix.example"],
+        apiUrl: "https://matrix.example",
+        botName: "Support AI",
+        mentionText: "@support-ai",
+      },
       pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
       zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
     },
@@ -743,6 +757,7 @@ export const support = defineAgent({
   ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
+    { alias: "matrix", type: "matrix", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
     { alias: "slack", type: "slack", agentName: "support" },
     { alias: "telegram", type: "telegram", agentName: "support" },
