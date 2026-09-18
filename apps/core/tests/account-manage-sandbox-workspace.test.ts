@@ -285,6 +285,45 @@ describe("account-manage sandbox endpoints", () => {
     });
   });
 
+  it("answers 502 when the sandbox provider cannot be reached", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(
+        new TypeError(
+          "Unable to connect. Is the computer able to access the url?",
+        ),
+        { code: "ConnectionRefused" },
+      );
+    }) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        `/v1/sandboxes/${created.sandboxId}/refresh`,
+        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+        { reservationKey: reservationKey },
+      ),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await responseJson(response)).toEqual({
+      error: {
+        message:
+          'Sandbox provider "sandbox" is unreachable: Unable to connect. Is the computer able to access the url?',
+        type: "api_error",
+        code: "bad_gateway",
+      },
+    });
+  });
+
   it("terminate drops the reservation row the config-built executor cannot", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.WORKDIR_URL = "https://workdir.example.com";
