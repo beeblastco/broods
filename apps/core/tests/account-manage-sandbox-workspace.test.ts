@@ -316,8 +316,7 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.status).toBe(502);
     expect(await responseJson(response)).toEqual({
       error: {
-        message:
-          'Sandbox provider "sandbox" is unreachable: Unable to connect. Is the computer able to access the url?',
+        message: 'Sandbox provider "sandbox" is unreachable',
         type: "api_error",
         code: "bad_gateway",
       },

@@ -114,15 +114,14 @@ class AccountEndpointUnauthorizedError extends Error {
   }
 }
 
-/** A sandbox provider call that never reached the provider (answered as 502). */
+/**
+ * A sandbox provider call that never reached the provider (answered as 502).
+ * The message stays fixed so provider hosts never leak to the caller; the
+ * socket error is kept as `cause` and already recorded in the audit row.
+ */
 class SandboxProviderUnreachableError extends Error {
   constructor(provider: SandboxProvider, cause: unknown) {
-    super(
-      `Sandbox provider "${provider}" is unreachable: ${errorText(cause)}`,
-      {
-        cause: cause,
-      },
-    );
+    super(`Sandbox provider "${provider}" is unreachable`, { cause: cause });
   }
 }
 
