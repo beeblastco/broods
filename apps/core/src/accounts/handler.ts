@@ -65,6 +65,17 @@ import {
   deleteAccountBundles,
 } from "./cleanup.ts";
 
+// Socket-level fetch failure codes (Bun's own names plus the Node errnos) that
+// mean the provider was never reached, as opposed to it answering with an error.
+const UNREACHABLE_ERROR_CODES = new Set([
+  "ConnectionRefused",
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "FailedToOpenSocket",
+]);
+
 type SandboxLifecycleAction =
   | "suspend"
   | "resume"
@@ -100,6 +111,17 @@ interface SandboxLifecycleContext {
 class AccountEndpointUnauthorizedError extends Error {
   constructor() {
     super("Unauthorized");
+  }
+}
+
+/**
+ * A sandbox provider call that never reached the provider (answered as 502).
+ * The message stays fixed so provider hosts never leak to the caller; the
+ * socket error is kept as `cause` and already recorded in the audit row.
+ */
+class SandboxProviderUnreachableError extends Error {
+  constructor(provider: SandboxProvider, cause: unknown) {
+    super(`Sandbox provider "${provider}" is unreachable`, { cause: cause });
   }
 }
 
@@ -344,7 +366,11 @@ async function handleSandboxLifecycle(
   return terminateSandbox(context);
 }
 
-/** Runs one provider call, auditing and rethrowing its failure. */
+/**
+ * Runs one provider call, auditing and rethrowing its failure. A socket-level
+ * failure is rethrown as SandboxProviderUnreachableError so the caller sees a
+ * 502 naming the provider instead of a 400.
+ */
 async function auditedSandboxCall<T>(
   context: SandboxLifecycleContext,
   call: () => Promise<T>,
@@ -353,7 +379,9 @@ async function auditedSandboxCall<T>(
     return await call();
   } catch (err) {
     await context.audit("error", { errorMessage: errorText(err) });
-    throw err;
+    throw isUnreachableError(err)
+      ? new SandboxProviderUnreachableError(context.provider, err)
+      : err;
   }
 }
 
@@ -700,6 +728,9 @@ function errorResponseForError(err: unknown): Response {
   if (err instanceof AccountEndpointUnauthorizedError) {
     return errorResponse(401, err.message);
   }
+  if (err instanceof SandboxProviderUnreachableError) {
+    return errorResponse(502, err.message);
+  }
 
   return errorResponse(
     400,
@@ -709,6 +740,15 @@ function errorResponseForError(err: unknown): Response {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isUnreachableError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    typeof err.code === "string" &&
+    UNREACHABLE_ERROR_CODES.has(err.code)
+  );
 }
 
 function requireAccountAuth(
