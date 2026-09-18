@@ -131,7 +131,7 @@ export function createMatrixActions(
     attachments: ChannelFile[] | ChannelImage[],
     caption?: string,
   ): Promise<void> {
-    await stopTyping(connection, source.roomId);
+    clearTyping(connection, source.roomId);
     if (caption) {
       await sendMessage(
         connection,
@@ -163,7 +163,7 @@ export function createMatrixActions(
     sendImages: sendMedia,
 
     sendText: async function (text): Promise<void> {
-      await stopTyping(connection, source.roomId);
+      clearTyping(connection, source.roomId);
       await sendMessage(
         connection,
         source,
@@ -267,6 +267,17 @@ async function callForwarder(
       `Matrix forwarder ${path} failed (${response.status}): ${await response.text()}`,
     );
   }
+}
+
+/**
+ * Clears the typing notice beside the reply rather than before it. The notice
+ * is an acknowledgement, and a homeserver that stalls on `/v1/typing` must not
+ * hold the answer behind it for the request timeout.
+ */
+function clearTyping(connection: MatrixConnection, roomId: string): void {
+  // Safe to drop on the floor: `stopTyping` retires the notice synchronously,
+  // logs its own failure, and never rejects.
+  void stopTyping(connection, roomId);
 }
 
 async function decryptMedia(
