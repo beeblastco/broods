@@ -2,10 +2,11 @@
  * Lanes for the edges the canvas draws, shared by the dashboard, which draws
  * them, and the tidy layout, which leaves room for them.
  *
- * An agent edge leaves the agent's bottom and enters its target's top. With
- * nothing between the two it drops to a bus under the agent, runs across and
- * drops in. Otherwise it runs along the bus to the gutter beside the target,
- * down the gutter to the gap above the target, across and down into its top.
+ * An agent edge leaves the agent's bottom and enters its target's top. It
+ * drops to a bus under the agent, runs across and drops in, two corners and
+ * no more. Only when that drop or that run would pass through a box does it
+ * detour: along the bus to the gutter beside the target, down the gutter to
+ * the gap above the target, across and down into its top.
  *
  * A side edge (mount, runs-on, inherited sandbox) joins two side handles.
  * Between facing handles with nothing in the way it is one step, its vertical
@@ -127,7 +128,7 @@ export type SideEnd = {
 
 /** An agent edge while its lanes are being picked. */
 type Leg = {
-  /** Whether a box sits between the agent and the target, so the edge takes a gutter. */
+  /** Whether the straight bus route passes through a box, so the edge takes a gutter. */
   blocked: boolean;
   busY: number;
   end: LayoutPosition;
@@ -354,8 +355,6 @@ function agentLegs(
   boxes: ReadonlyMap<string, LayoutRect>,
   agentEdges: readonly AgentEdgeRequest[],
 ): Leg[] {
-  const boxList = [...boxes];
-
   return agentEdges.flatMap((request): Leg[] => {
     const source = boxes.get(request.source);
     const target = boxes.get(request.target);
@@ -364,21 +363,26 @@ function agentLegs(
     const end = handlePoint(target, "top");
     // A target level with or above the agent has no room for a bus.
     if (end.y - start.y < BUS_INSET + APPROACH_INSET) return [];
-    const between: LayoutRect = {
-      height: end.y - start.y,
-      width: Math.abs(end.x - start.x) + LANE_SPACING * 2,
-      x: Math.min(start.x, end.x) - LANE_SPACING,
-      y: start.y,
-    };
+    // The three-leg route this edge would draw with no gutter, on the first
+    // bus lane. Only a box that route passes through earns the detour: a box
+    // merely standing in the rectangle between the two handles, off to one
+    // side of the bus and the drop, does not. Buses settle one lane at a time
+    // and the target fan shifts the drop a few pixels, so the leg checked here
+    // is the one drawn to within a lane.
+    const straight = agentEdgePoints(start, end, {
+      busDrop: BUS_INSET,
+      gutter: null,
+      targetFan: 0,
+    });
 
     return [
       {
-        blocked: boxList.some(
-          ([id, box]) =>
-            id !== request.source &&
-            id !== request.target &&
-            overlaps(box, between),
-        ),
+        blocked:
+          crossedBoxIds(
+            straight,
+            boxes,
+            new Set([request.source, request.target]),
+          ).length > 0,
         busY: start.y,
         end: end,
         gutterX: null,
