@@ -12,6 +12,7 @@
  * The wire shapes shared with the forwarder live in `matrix-wire.ts`.
  */
 
+import { createHash } from "node:crypto";
 import type { Attachment } from "chat";
 import { timingSafeStringEqual } from "./auth.ts";
 import {
@@ -50,6 +51,10 @@ const MEDIA_MSGTYPES: Record<string, Attachment["type"]> = {
   "m.video": "video",
 };
 const TEXT_MSGTYPES = new Set(["m.emote", "m.text"]);
+/** Stops renewing a run that never replies, so its timer cannot outlive it. */
+const TYPING_CEILING_MS = 10 * 60_000;
+/** Shorter than the timeout the forwarder asks the homeserver for. */
+const TYPING_REFRESH_MS = 20_000;
 
 /** The `file` object of an encrypted attachment (spec: EncryptedFile). */
 interface EncryptedFile {
@@ -98,6 +103,26 @@ interface MediaLocation {
   sha256?: string;
 }
 
+/** A typing notice this process is renewing, and what it needs to keep or stop it. */
+interface TypingNotice {
+  deadlineMs: number;
+  key: string;
+  /** The refresh in flight, so a clear cannot overtake it on the wire. */
+  pending: Promise<void> | null;
+  roomId: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * Every room this process is currently showing as typing in, keyed by the
+ * account and room the notice belongs to. Process-wide because the notice is
+ * server-side state on that pair, and the reply that clears it often comes
+ * through a different `ChannelActions` object than the one that set it: a
+ * message that arrives mid-run is drained with actions built from its own
+ * reply source (`handler.ts` `channelFactory`).
+ */
+const TYPING_NOTICES = new Map<string, TypingNotice>();
+
 export function createMatrixActions(
   connection: MatrixConnection,
   source: MatrixSource,
@@ -106,6 +131,7 @@ export function createMatrixActions(
     attachments: ChannelFile[] | ChannelImage[],
     caption?: string,
   ): Promise<void> {
+    clearTyping(connection, source.roomId);
     if (caption) {
       await sendMessage(
         connection,
@@ -137,6 +163,7 @@ export function createMatrixActions(
     sendImages: sendMedia,
 
     sendText: async function (text): Promise<void> {
+      clearTyping(connection, source.roomId);
       await sendMessage(
         connection,
         source,
@@ -145,11 +172,7 @@ export function createMatrixActions(
     },
 
     sendTyping: async function (): Promise<void> {
-      const request: MatrixTypingRequest = {
-        roomId: source.roomId,
-        typing: true,
-      };
-      await callForwarder(connection, "/v1/typing", request);
+      await startTyping(connection, source.roomId);
     },
 
     supportsReactions: true,
@@ -244,6 +267,17 @@ async function callForwarder(
       `Matrix forwarder ${path} failed (${response.status}): ${await response.text()}`,
     );
   }
+}
+
+/**
+ * Clears the typing notice beside the reply rather than before it. The notice
+ * is an acknowledgement, and a homeserver that stalls on `/v1/typing` must not
+ * hold the answer behind it for the request timeout.
+ */
+function clearTyping(connection: MatrixConnection, roomId: string): void {
+  // Safe to drop on the floor: `stopTyping` retires the notice synchronously,
+  // logs its own failure, and never rejects.
+  void stopTyping(connection, roomId);
 }
 
 async function decryptMedia(
@@ -594,6 +628,36 @@ function parseRoomMessage(
 }
 
 /**
+ * Schedules the next refresh of `notice`, or retires it once past its ceiling.
+ * The homeserver expires a notice after the timeout the forwarder sends, which
+ * is far shorter than most runs.
+ */
+function renewTyping(connection: MatrixConnection, notice: TypingNotice): void {
+  // A superseded notice is no longer the map's, so it stops here rather than
+  // refreshing a room a newer lifecycle now owns.
+  if (TYPING_NOTICES.get(notice.key) !== notice) return;
+  if (Date.now() >= notice.deadlineMs) {
+    retireTyping(notice);
+
+    return;
+  }
+  notice.timer = setTimeout((): void => {
+    notice.timer = null;
+    notice.pending = sendTypingNotice(connection, notice.roomId, true)
+      .then((): void => renewTyping(connection, notice))
+      .catch((error: unknown): void => {
+        // One refusal ends the loop: the notice expires on its own, and a
+        // homeserver that refused this call will refuse the next twenty.
+        retireTyping(notice);
+        logWarn("Matrix typing refresh failed", {
+          error: error instanceof Error ? error.message : String(error),
+          roomId: notice.roomId,
+        });
+      });
+  }, TYPING_REFRESH_MS);
+}
+
+/**
  * Where a reply hangs: inside the thread when the message it answers was in
  * one, otherwise on the message itself.
  */
@@ -610,6 +674,20 @@ function replyRelation(source: MatrixSource): Record<string, unknown> {
   };
 }
 
+/**
+ * Drops `notice` and its timer, unless a newer one has already replaced it in
+ * the map: a lifecycle only ever retires itself.
+ */
+function retireTyping(notice: TypingNotice): void {
+  if (notice.timer !== null) {
+    clearTimeout(notice.timer);
+    notice.timer = null;
+  }
+  if (TYPING_NOTICES.get(notice.key) === notice) {
+    TYPING_NOTICES.delete(notice.key);
+  }
+}
+
 async function sendMessage(
   connection: MatrixConnection,
   source: MatrixSource,
@@ -621,6 +699,70 @@ async function sendMessage(
     type: "m.room.message",
   };
   await callForwarder(connection, "/v1/send", request);
+}
+
+async function sendTypingNotice(
+  connection: MatrixConnection,
+  roomId: string,
+  typing: boolean,
+): Promise<void> {
+  const request: MatrixTypingRequest = { roomId: roomId, typing: typing };
+  await callForwarder(connection, "/v1/typing", request);
+}
+
+/** Shows the typing notice and renews it until `stopTyping`, or the ceiling. */
+async function startTyping(
+  connection: MatrixConnection,
+  roomId: string,
+): Promise<void> {
+  const key = typingKey(connection, roomId);
+  const superseded = TYPING_NOTICES.get(key);
+  if (superseded?.timer != null) clearTimeout(superseded.timer);
+  const notice: TypingNotice = {
+    deadlineMs: Date.now() + TYPING_CEILING_MS,
+    key: key,
+    pending: null,
+    roomId: roomId,
+    timer: null,
+  };
+  // Registered before the request, not after it: holding the map entry is what
+  // marks this lifecycle current, and two messages landing in one room start
+  // their notices inside each other's round trip.
+  TYPING_NOTICES.set(key, notice);
+  try {
+    await sendTypingNotice(connection, roomId, true);
+  } catch (error) {
+    // Nothing to renew: the room was never shown a notice.
+    retireTyping(notice);
+    throw error;
+  }
+  renewTyping(connection, notice);
+}
+
+/** Clears the notice and stops renewing it. A no-op when none is running. */
+async function stopTyping(
+  connection: MatrixConnection,
+  roomId: string,
+): Promise<void> {
+  const key = typingKey(connection, roomId);
+  const notice = TYPING_NOTICES.get(key);
+  if (notice === undefined) return;
+  retireTyping(notice);
+  // The in-flight refresh first, or the clear races it and the room keeps
+  // showing the agent as typing for the rest of the homeserver's timeout.
+  await notice.pending;
+  // A message that arrived while that refresh settled owns the room now, and
+  // clearing here would blank the notice it just set.
+  if (TYPING_NOTICES.has(key)) return;
+  // Never fails the reply it precedes; a stale notice expires on its own.
+  await sendTypingNotice(connection, roomId, false).catch(
+    (error: unknown): void => {
+      logWarn("Matrix typing clear failed", {
+        error: error instanceof Error ? error.message : String(error),
+        roomId: roomId,
+      });
+    },
+  );
 }
 
 function toMatrixSource(source: Record<string, unknown>): MatrixSource {
@@ -647,6 +789,19 @@ function toMatrixSource(source: Record<string, unknown>): MatrixSource {
 /** Both Matrix URLs this module builds are joined onto the homeserver by hand. */
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+/**
+ * A notice belongs to one account in one room: two agents on different accounts
+ * can sit in the same room, and each shows as typing under its own user. The
+ * account is named by a hash of its token so no key holds the token itself.
+ */
+function typingKey(connection: MatrixConnection, roomId: string): string {
+  const account = createHash("sha256")
+    .update(connection.accessToken)
+    .digest("hex");
+
+  return `${account}\u0000${roomId}`;
 }
 
 /**
