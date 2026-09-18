@@ -633,23 +633,22 @@ function parseRoomMessage(
  * is far shorter than most runs.
  */
 function renewTyping(connection: MatrixConnection, notice: TypingNotice): void {
+  // A superseded notice is no longer the map's, so it stops here rather than
+  // refreshing a room a newer lifecycle now owns.
+  if (TYPING_NOTICES.get(notice.key) !== notice) return;
   if (Date.now() >= notice.deadlineMs) {
-    TYPING_NOTICES.delete(notice.key);
+    retireTyping(notice);
 
     return;
   }
   notice.timer = setTimeout((): void => {
     notice.timer = null;
     notice.pending = sendTypingNotice(connection, notice.roomId, true)
-      // Skipped when a second inbound message already re-armed the notice,
-      // which would otherwise leave two loops refreshing the same room.
-      .then((): void => {
-        if (notice.timer === null) renewTyping(connection, notice);
-      })
+      .then((): void => renewTyping(connection, notice))
       .catch((error: unknown): void => {
         // One refusal ends the loop: the notice expires on its own, and a
         // homeserver that refused this call will refuse the next twenty.
-        TYPING_NOTICES.delete(notice.key);
+        retireTyping(notice);
         logWarn("Matrix typing refresh failed", {
           error: error instanceof Error ? error.message : String(error),
           roomId: notice.roomId,
@@ -673,6 +672,20 @@ function replyRelation(source: MatrixSource): Record<string, unknown> {
     "m.in_reply_to": { event_id: source.messageId },
     rel_type: "m.thread",
   };
+}
+
+/**
+ * Drops `notice` and its timer, unless a newer one has already replaced it in
+ * the map: a lifecycle only ever retires itself.
+ */
+function retireTyping(notice: TypingNotice): void {
+  if (notice.timer !== null) {
+    clearTimeout(notice.timer);
+    notice.timer = null;
+  }
+  if (TYPING_NOTICES.get(notice.key) === notice) {
+    TYPING_NOTICES.delete(notice.key);
+  }
 }
 
 async function sendMessage(
@@ -703,19 +716,26 @@ async function startTyping(
   roomId: string,
 ): Promise<void> {
   const key = typingKey(connection, roomId);
-  const notice: TypingNotice = TYPING_NOTICES.get(key) ?? {
-    deadlineMs: 0,
+  const superseded = TYPING_NOTICES.get(key);
+  if (superseded?.timer != null) clearTimeout(superseded.timer);
+  const notice: TypingNotice = {
+    deadlineMs: Date.now() + TYPING_CEILING_MS,
     key: key,
     pending: null,
     roomId: roomId,
     timer: null,
   };
-  if (notice.timer !== null) clearTimeout(notice.timer);
-  // Shown before it is registered: a homeserver that refuses the first notice
-  // would otherwise leave a loop renewing one the room never saw.
-  await sendTypingNotice(connection, roomId, true);
-  notice.deadlineMs = Date.now() + TYPING_CEILING_MS;
+  // Registered before the request, not after it: holding the map entry is what
+  // marks this lifecycle current, and two messages landing in one room start
+  // their notices inside each other's round trip.
   TYPING_NOTICES.set(key, notice);
+  try {
+    await sendTypingNotice(connection, roomId, true);
+  } catch (error) {
+    // Nothing to renew: the room was never shown a notice.
+    retireTyping(notice);
+    throw error;
+  }
   renewTyping(connection, notice);
 }
 
@@ -727,15 +747,13 @@ async function stopTyping(
   const key = typingKey(connection, roomId);
   const notice = TYPING_NOTICES.get(key);
   if (notice === undefined) return;
-  TYPING_NOTICES.delete(key);
-  notice.deadlineMs = 0;
-  if (notice.timer !== null) {
-    clearTimeout(notice.timer);
-    notice.timer = null;
-  }
+  retireTyping(notice);
   // The in-flight refresh first, or the clear races it and the room keeps
   // showing the agent as typing for the rest of the homeserver's timeout.
   await notice.pending;
+  // A message that arrived while that refresh settled owns the room now, and
+  // clearing here would blank the notice it just set.
+  if (TYPING_NOTICES.has(key)) return;
   // Never fails the reply it precedes; a stale notice expires on its own.
   await sendTypingNotice(connection, roomId, false).catch(
     (error: unknown): void => {

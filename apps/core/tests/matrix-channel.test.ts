@@ -35,6 +35,13 @@ interface CapturedCall {
   url: string;
 }
 
+/** A forwarder whose responses a test releases by hand. */
+interface HeldForwarder {
+  calls: CapturedCall[];
+  /** Answers every request taken so far, then drains what they resume. */
+  release(): Promise<void>;
+}
+
 afterEach((): void => {
   globalThis.fetch = originalFetch;
   process.env.MATRIX_FORWARDER_URL = originalForwarderUrl;
@@ -336,6 +343,58 @@ describe("matrix channel actions", () => {
     expect(typingFlags(sent)).toEqual([true, true, false]);
   });
 
+  it("leaves one refresh loop when two messages start typing at once", async () => {
+    const held = holdForwarder();
+    const actions = createMatrixActions(connection(), source());
+
+    jest.useFakeTimers();
+    try {
+      // Both starts are in flight before either notice is answered, which is
+      // what two mentions landing together in one room look like.
+      const first = actions.sendTyping();
+      const second = actions.sendTyping();
+      await held.release();
+      await Promise.all([first, second]);
+      const afterStarts = held.calls.length;
+      jest.advanceTimersByTime(PAST_REFRESH_MS);
+      await held.release();
+
+      expect(held.calls.length - afterStarts).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps a notice started while the reply was clearing the last one", async () => {
+    const held = holdForwarder();
+    const first = createMatrixActions(connection(), source());
+    const second = createMatrixActions(connection(), source());
+
+    jest.useFakeTimers();
+    try {
+      const started = first.sendTyping();
+      await held.release();
+      await started;
+      // A refresh is on the wire, so the reply's clear waits behind it and the
+      // next message's notice is registered before that clear resumes.
+      jest.advanceTimersByTime(PAST_REFRESH_MS);
+      const reply = first.sendText("done");
+      const restarted = second.sendTyping();
+      await held.release();
+      await Promise.all([reply, restarted]);
+      const cleared = second.sendText("and again");
+      await held.release();
+      await cleared;
+      await held.release();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    // Start, refresh, restart, and only the second reply's clear: the first
+    // reply must not blank the notice the second message just set.
+    expect(typingFlags(held.calls)).toEqual([true, true, true, false]);
+  });
+
   // A message that arrives mid-run is drained with actions built from its own
   // reply source, so the object that answers is rarely the one that set the
   // notice. Per-object state would leave the first one renewing on its own.
@@ -453,6 +512,42 @@ function forwarded(
     senderName: "Georgi",
     type: "MATRIX_ROOM_EVENT",
     userId: "@me:example.org",
+  };
+}
+
+/**
+ * A forwarder that answers nothing until `release`, so a test can hold a request
+ * on the wire and start another lifecycle underneath it.
+ */
+function holdForwarder(): HeldForwarder {
+  const calls: CapturedCall[] = [];
+  const waiting: Array<() => void> = [];
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const body = init?.body;
+    calls.push({
+      body: typeof body === "string" ? JSON.parse(body) : body,
+      token: new Headers(init?.headers).get(MATRIX_ACCESS_TOKEN_HEADER),
+      url: String(input),
+    });
+    await new Promise<void>((resolve): void => {
+      waiting.push(resolve);
+    });
+
+    return Response.json({
+      content_uri: "mxc://example.org/media",
+      eventId: "$sent",
+    });
+  }) as typeof fetch;
+
+  return {
+    calls: calls,
+    release: async (): Promise<void> => {
+      for (const resolve of waiting.splice(0)) resolve();
+      await settle();
+    },
   };
 }
 
