@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, jest } from "bun:test";
 import type {
   ChannelAdapter,
   ChannelParseResult,
@@ -23,6 +23,8 @@ const API_URL = "https://matrix.example.org";
 const FORWARDER_URL = "http://forwarder.test";
 const ROOM_ID = "!room:example.org";
 const TOKEN = "syt_token";
+/** Comfortably past the adapter's own refresh interval. */
+const PAST_REFRESH_MS = 60_000;
 
 const originalFetch = globalThis.fetch;
 const originalForwarderUrl = process.env.MATRIX_FORWARDER_URL;
@@ -312,6 +314,46 @@ describe("matrix channel actions", () => {
       type: "m.reaction",
     });
   });
+
+  it("renews the typing notice until the reply clears it", async () => {
+    const sent = captureForwarder();
+    const actions = createMatrixActions(connection(), source());
+
+    jest.useFakeTimers();
+    try {
+      await actions.sendTyping();
+      jest.advanceTimersByTime(PAST_REFRESH_MS);
+      await settle();
+      await actions.sendText("done");
+      // Nothing is left ticking, so the room is not told the agent is typing
+      // again after it answered.
+      jest.advanceTimersByTime(PAST_REFRESH_MS * 3);
+      await settle();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(typingFlags(sent)).toEqual([true, true, false]);
+  });
+
+  // A message that arrives mid-run is drained with actions built from its own
+  // reply source, so the object that answers is rarely the one that set the
+  // notice. Per-object state would leave the first one renewing on its own.
+  it("clears a typing notice another actions object started", async () => {
+    const sent = captureForwarder();
+
+    jest.useFakeTimers();
+    try {
+      await createMatrixActions(connection(), source()).sendTyping();
+      await createMatrixActions(connection(), source()).sendText("done");
+      jest.advanceTimersByTime(PAST_REFRESH_MS * 3);
+      await settle();
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(typingFlags(sent)).toEqual([true, false]);
+  });
 });
 
 function captureForwarder(): CapturedCall[] {
@@ -435,6 +477,11 @@ function request(
   };
 }
 
+/** Lets the refresh chain's awaited fetch resolve while timers are faked. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
 function source(): MatrixSource {
   return {
     encrypted: false,
@@ -442,4 +489,11 @@ function source(): MatrixSource {
     roomId: ROOM_ID,
     userId: "@georgi:example.org",
   };
+}
+
+/** The `typing` flag of every `/v1/typing` call, in order. */
+function typingFlags(calls: readonly CapturedCall[]): boolean[] {
+  return calls
+    .filter((call): boolean => call.url.endsWith("/v1/typing"))
+    .map((call): boolean => (call.body as { typing: boolean }).typing);
 }
