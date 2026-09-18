@@ -1,32 +1,44 @@
 "use client";
 
-import { useSideHandlesConnectable } from "@/app/components/node/BaseNode";
+import {
+  NetworkBadge,
+  useSideHandlesConnectable,
+} from "@/app/components/node/BaseNode";
 import { cn } from "@/app/lib/utils";
 import { Handle, Position } from "@xyflow/react";
 
-/** Dot color class and text for a chip's status line. */
 /** Dot color class, text, and the full text for the tooltip when the line says less. */
 export type ChipStatus = { color: string; text: string; title?: string };
 
 /**
  * A sandbox, workspace or MCP node drawn inside a frame: a chip with its icon,
- * name and one status line, at a card's width. Side handles are always mounted
- * so mount and runs-on edges can attach; only sandbox and workspace chips
+ * name and one status line, at a card's width. Clicking it opens it into a
+ * card, which is the same element grown to a card's slot, so the chips under
+ * it slide down rather than being covered. Side handles are always mounted so
+ * mount and runs-on edges can attach; only sandbox and workspace chips
  * (`mountable`) accept a new mount drawn onto them.
  */
 export function ResourceChip({
+  details,
+  expanded,
   icon,
   label,
   mountable,
+  networkOn,
   nodeType,
   orderNumber,
   status,
 }: {
+  /** The line under the name while it is open, the same one its card shows. */
+  details?: string;
+  expanded: boolean;
   icon: React.ReactNode;
   label: string;
   mountable: boolean;
+  /** Sandboxes only: draws the egress globe while it is open. */
+  networkOn?: boolean;
   nodeType: string;
-  /** A sandbox's place in its agent's `sandboxes`. */
+  /** A sandbox's place in its agent's `sandboxes`; `details` names it while open. */
   orderNumber?: number;
   status: ChipStatus;
 }): React.JSX.Element {
@@ -35,9 +47,12 @@ export function ResourceChip({
   return (
     <div
       data-slot="resource-chip"
-      // w-44 by h-11 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHT, the slot the frame leaves.
+      data-expanded={expanded}
+      // w-44 by h-11 is FRAME_CHIP_WIDTH by FRAME_CHIP_HEIGHT, the slot the frame
+      // leaves; open it fills FRAME_MEMBER_CARD_HEIGHT with a card's padding.
       className={cn(
-        "relative flex h-11 w-44 cursor-pointer flex-col justify-center gap-0.5 rounded-md border border-border bg-card px-1.5 hover:border-foreground/25",
+        "relative flex w-44 cursor-pointer flex-col rounded-md border border-border bg-card transition-all duration-200 ease-out hover:border-foreground/25",
+        expanded ? "h-24 px-3 py-2.5" : "h-11 justify-center gap-0.5 px-1.5",
       )}
     >
       {/* Like a card's: an agent dragged onto a chip wires it too. */}
@@ -60,7 +75,7 @@ export function ResourceChip({
         />
       ))}
       <div className="flex min-w-0 items-center gap-1 text-xs font-medium text-foreground">
-        {orderNumber !== undefined && (
+        {orderNumber !== undefined && !expanded && (
           <span className="w-2.5 shrink-0 text-2xs tabular-nums text-muted-foreground">
             {orderNumber}
           </span>
@@ -70,7 +85,17 @@ export function ResourceChip({
           {label}
         </span>
       </div>
-      <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
+      {expanded && details !== undefined && (
+        <div className="mt-1 truncate text-2xs text-muted-foreground">
+          {details}
+        </div>
+      )}
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-1 text-muted-foreground",
+          expanded ? "mt-auto gap-1.5 text-2xs" : "text-3xs",
+        )}
+      >
         <span
           data-slot="chip-status"
           className={cn("size-1.5 shrink-0 rounded-full", status.color)}
@@ -78,6 +103,7 @@ export function ResourceChip({
         <span className="truncate" title={status.title ?? status.text}>
           {status.text}
         </span>
+        {expanded && networkOn !== undefined && <NetworkBadge on={networkOn} />}
       </div>
     </div>
   );

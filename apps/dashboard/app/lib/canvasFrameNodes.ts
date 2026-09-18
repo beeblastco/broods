@@ -26,6 +26,7 @@ import {
   edgeKind,
   FRAME_CHIP_HEIGHT,
   FRAME_CHIP_WIDTH,
+  FRAME_MEMBER_CARD_HEIGHT,
   frameMemberPositions,
   frameOriginOf,
   framesOf,
@@ -127,13 +128,16 @@ export function applyFramedNodeChanges(
   if (!changes.some((change) => change.type === "position")) {
     return applyNodeChanges(changes, nodes);
   }
-  // Nodes only: a drag moves no edge in flat state, so it routes none.
+  // Nodes only: a drag moves no edge in flat state, so it routes none. No open
+  // chip either: flat positions are the packed ones, so a chip a click opened
+  // never writes its 52px into the saved layout.
   const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
   const displayNodes = framedNodes(
     nodes,
     frames,
     memberFrames(frames),
     collapsed,
+    null,
   );
 
   return reuseUnchanged(
@@ -147,19 +151,28 @@ export function applyFramedNodeChanges(
  * React Flow nodes and edges for display. Each frame comes right before its
  * first member, so React Flow sees every parent ahead of its children and
  * flattening restores the flat order. Members sit at their slots whatever
- * their stored positions. Every node and edge equal to one in `previous`
- * is that same object, so an unchanged frame or edge does not re-render.
+ * their stored positions. `expandedMemberId` is the selected node: while it is
+ * a chip in an open frame it fills a card's slot and pushes the chips under it
+ * down. Every node and edge equal to one in `previous` is that same object, so
+ * an unchanged frame or edge does not re-render.
  */
 export function buildFramedGraph(
   nodes: readonly Node[],
   edges: readonly Edge[],
   mcpServers: readonly StageMcpServer[] | undefined,
   collapsed: ReadonlySet<string>,
+  expandedMemberId: string | null,
   previous: FramedGraph | null,
 ): FramedGraph {
   const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
   const frameOf = memberFrames(frames);
-  const displayNodes = framedNodes(nodes, frames, frameOf, collapsed);
+  const displayNodes = framedNodes(
+    nodes,
+    frames,
+    frameOf,
+    collapsed,
+    expandedMemberId,
+  );
   const drawn = framedEdges(
     nodes,
     edges,
@@ -172,7 +185,7 @@ export function buildFramedGraph(
     bundles: drawn.bundles,
     edges: reuseUnchanged(
       previous?.edges ?? [],
-      routeEdges(displayNodes, drawn.edges),
+      routeEdges(displayNodes, drawn.edges, expandedMemberId),
       sameEdge,
     ),
     frames: frames,
@@ -213,7 +226,11 @@ export function expandBundleEdgeRemoval(
   });
 }
 
-/** Display nodes back to flat state: no frames, members at absolute positions. */
+/**
+ * Display nodes back to flat state: no frames, members at absolute positions.
+ * Everything the display added goes with them, so a drag saves the same node
+ * shape the database sent.
+ */
 export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
   const frames = new Map(
     displayNodes
@@ -226,6 +243,7 @@ export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
     if (node.parentId === undefined) return [node];
     const frame = frames.get(node.parentId);
     const {
+      className: _className,
       draggable: _draggable,
       hidden: _hidden,
       parentId: _parentId,
@@ -306,7 +324,10 @@ function addBundle(
  * Top-level boxes an agent edge runs between and around, and the box of every
  * visible node a side edge can end on, chips at their absolute place.
  */
-function displayBoxes(displayNodes: readonly Node[]): {
+function displayBoxes(
+  displayNodes: readonly Node[],
+  expandedMemberId: string | null,
+): {
   boxes: Map<string, LayoutRect>;
   handleBoxes: Map<string, { box: LayoutRect; outerId: string }>;
 } {
@@ -329,7 +350,12 @@ function displayBoxes(displayNodes: readonly Node[]): {
     if (!parent) continue;
     handleBoxes.set(node.id, {
       box: {
-        height: FRAME_CHIP_HEIGHT,
+        // A side handle sits at the box's middle until the box is a card's
+        // height, so an open chip's edges meet it where the card draws them.
+        height:
+          node.id === expandedMemberId
+            ? FRAME_MEMBER_CARD_HEIGHT
+            : FRAME_CHIP_HEIGHT,
         width: FRAME_CHIP_WIDTH,
         x: parent.position.x + node.position.x,
         y: parent.position.y + node.position.y,
@@ -443,6 +469,7 @@ function framedNodes(
   frames: readonly CanvasFrame[],
   frameOf: ReadonlyMap<string, CanvasFrame>,
   collapsed: ReadonlySet<string>,
+  expandedMemberId: string | null,
 ): Node[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const frameNodes = new Map<string, FrameNodeType>();
@@ -450,10 +477,14 @@ function framedNodes(
   for (const frame of frames) {
     const members = frame.memberIds.flatMap((id) => byId.get(id) ?? []);
     const isCollapsed = collapsed.has(frame.id);
+    // A collapsed frame hides its chips, so nothing in it is open.
+    const expanded = isCollapsed ? undefined : (expandedMemberId ?? undefined);
     const size = isCollapsed
       ? { height: COLLAPSED_FRAME_HEIGHT, width: NODE_WIDTH }
-      : frameSize(frame);
+      : frameSize(frame, expanded);
     frameNodes.set(frame.id, {
+      // Grows and shrinks with the chip a click opens, and with a collapse.
+      className: "transition-box duration-200 ease-out",
       data: { collapsed: isCollapsed, frame: frame, members: members },
       height: size.height,
       id: frame.id,
@@ -464,7 +495,11 @@ function framedNodes(
       type: "frame",
       width: size.width,
     });
-    for (const [id, slot] of frameMemberPositions({ x: 0, y: 0 }, frame)) {
+    for (const [id, slot] of frameMemberPositions(
+      { x: 0, y: 0 },
+      frame,
+      expanded,
+    )) {
       slots.set(id, slot);
     }
   }
@@ -476,6 +511,9 @@ function framedNodes(
     if (!frame || !frameNode) return [node];
     const member: Node = {
       ...node,
+      // Slides to its new slot when the chip above it opens or closes. Only
+      // the transform, which a frame drag never writes on a member.
+      className: "transition-transform duration-200 ease-out",
       draggable: false,
       parentId: frame.id,
       position: slots.get(node.id) ?? { x: 0, y: 0 },
@@ -613,9 +651,10 @@ function roundedPath(points: readonly XYPosition[], radius: number): string {
 function routeEdges(
   displayNodes: readonly Node[],
   edges: readonly Edge[],
+  expandedMemberId: string | null,
 ): Edge[] {
   const byId = new Map(displayNodes.map((node) => [node.id, node]));
-  const { boxes, handleBoxes } = displayBoxes(displayNodes);
+  const { boxes, handleBoxes } = displayBoxes(displayNodes, expandedMemberId);
   const agentEdges: AgentEdgeRequest[] = [];
   const sideEdges: SideEdgeRequest[] = [];
   const endOf = (

@@ -9,7 +9,11 @@
  */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
-import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
+import {
+  BaseNode,
+  isNetworkOn,
+  type BaseNodeData,
+} from "@/app/components/node/BaseNode";
 import {
   ResourceChip,
   type ChipStatus,
@@ -56,6 +60,7 @@ export function SandboxNode({
         data={nodeData}
         icon={<Box className="size-3.5" />}
         status={{ color: status.color, text: status.label }}
+        where={null}
       />
     );
   }
@@ -100,6 +105,7 @@ function MachineSandboxNode({
         data={data}
         icon={<Monitor className="size-3.5" />}
         status={{ color: status.color, text: status.label }}
+        where={MACHINE_LABEL}
       />
     );
   }
@@ -119,6 +125,18 @@ function MachineSandboxNode({
       showSideHandles={true}
     />
   );
+}
+
+/** The line an open chip shows under its name: its card's subtitle and features. */
+function chipDetails(
+  subtitle: string | undefined,
+  persistent: boolean,
+): string | undefined {
+  const parts = [subtitle, persistent ? "persistent" : null].filter(
+    (part): part is string => typeof part === "string",
+  );
+
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 /**
@@ -167,26 +185,37 @@ function SandboxChip({
   data,
   icon,
   status,
+  where,
 }: {
   id: string;
   data: BaseNodeData;
   icon: React.ReactNode;
   status: ChipStatus;
+  /** Where it runs, for the open chip's line; null for a cloud sandbox. */
+  where: string | null;
 }): React.JSX.Element {
-  const { sandboxOrderNumbers, workspaceOnlySandboxIds } = useCanvasFrames();
+  const { expandedMemberId, sandboxOrderNumbers, workspaceOnlySandboxIds } =
+    useCanvasFrames();
   const orderNumber = sandboxOrderNumbers.get(id);
   const sharedCount = useInfraAnalysis().agentRefCounts[id] ?? 0;
-  const note = chipNote(
-    orderNumber,
-    sharedCount,
-    workspaceOnlySandboxIds.has(id),
-  );
+  const workspaceOnly = workspaceOnlySandboxIds.has(id);
+  // Open, the note moves to the line under the name, where a card keeps it.
+  const expanded = expandedMemberId === id;
+  const note = expanded
+    ? ""
+    : chipNote(orderNumber, sharedCount, workspaceOnly);
 
   return (
     <ResourceChip
+      details={chipDetails(
+        orderSubtitle(where, orderNumber, workspaceOnly),
+        data.config?.persistent === true,
+      )}
+      expanded={expanded}
       icon={icon}
       label={data.label}
       mountable={true}
+      networkOn={isNetworkOn("sandbox", data)}
       nodeType="sandbox"
       orderNumber={orderNumber}
       status={{ color: status.color, text: `${status.text}${note}` }}

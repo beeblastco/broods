@@ -43,11 +43,15 @@ import {
 } from "@/app/components/ui/context-menu";
 import { useStage } from "@/app/hooks/useStage";
 import {
+  acceptsNewMember,
   boardRects,
+  frameGroupActions,
   frameMemberActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
+  setUngrouped,
+  type FrameGroupAction,
   type FrameMemberAction,
 } from "@/app/lib/canvasFrameEdits";
 import {
@@ -78,6 +82,7 @@ import { api } from "@broods/convex/_generated/api";
 import {
   agreedSandboxOrderNumbers,
   workspaceOnlySandboxIds,
+  type CanvasFrame,
 } from "@broods/convex/model/canvasFrames";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import {
@@ -107,9 +112,11 @@ import {
   Box,
   Database,
   FolderOpen,
+  Group,
   Plug,
   Sparkles,
   Star,
+  Ungroup,
   Unlink,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -504,6 +511,10 @@ function CanvasInner({
   // from ones the saved graph already had.
   const savedLayoutRef = useRef(canvasLayout);
 
+  // Clicking a chip opens it: the selected node, which `buildFramedGraph` draws
+  // as a card in a card's slot while it is a chip in an open frame. Selecting
+  // anything else closes it, so only ever one is open.
+  const expandedMemberId = selectedNode?.id ?? null;
   const framedGraph = useMemo(
     () =>
       buildFramedGraph(
@@ -511,9 +522,10 @@ function CanvasInner({
         edges,
         mcpServers,
         collapsedFrames,
+        expandedMemberId,
         framedGraphRef.current,
       ),
-    [nodes, edges, mcpServers, collapsedFrames],
+    [nodes, edges, mcpServers, collapsedFrames, expandedMemberId],
   );
 
   useEffect(() => {
@@ -1062,9 +1074,18 @@ function CanvasInner({
     );
   }, [getViewportCenterPosition]);
 
-  /** Add a service node at a position and auto-connect to the nearest agent. */
+  /**
+   * Add a service node at a position and wire it: to `agentIds` when given,
+   * else to the nearest agent. A frame's own menu passes the agents that own
+   * it, which is what puts the new card in that frame rather than beside it.
+   */
   const addNode = useCallback(
-    (type: string, label: string, extraData?: Partial<BaseNodeData>) => {
+    (
+      type: string,
+      label: string,
+      extraData?: Partial<BaseNodeData>,
+      agentIds?: readonly string[],
+    ) => {
       const position = getFreeAddPosition();
       const id = String(nextId.current++);
       const nodeLabel = `${label} ${id}`;
@@ -1076,19 +1097,32 @@ function CanvasInner({
         data: { ...defaultRuntimeNodeData(type, nodeLabel, id), ...extraData },
       };
 
-      // Auto-connect to the nearest agent. A sandbox it gets lands last in
-      // that agent's order.
+      // A sandbox any of them gets lands last in that agent's order.
       const nearest = findNearestAgentNode(nodesRef.current, position);
-      const newEdge: Edge | null = nearest
-        ? { id: `e${nearest.id}-${id}`, source: nearest.id, target: id }
-        : null;
+      const sources =
+        agentIds ?? (nearest ? [nearest.id] : ([] as readonly string[]));
+      const newEdges: Edge[] = sources.map((source) => ({
+        id: `e${source}-${id}`,
+        source: source,
+        target: id,
+      }));
       // A card that joins a frame takes its next slot (see editGraph).
       editGraph((nodes, edges) => ({
-        edges: newEdge ? [...edges, newEdge] : edges,
+        edges: [...edges, ...newEdges],
         nodes: [...nodes, newNode],
       }));
     },
     [getFreeAddPosition, editGraph],
+  );
+
+  /** Add a service to a frame, wired to every agent that owns it. */
+  const addToFrame = useCallback(
+    (frame: CanvasFrame) => {
+      const template = NODE_TEMPLATES.find((item) => item.type === frame.kind);
+      if (!template) return;
+      addNode(template.type, template.label, undefined, frame.ownerIds);
+    },
+    [addNode],
   );
 
   /**
@@ -1117,6 +1151,21 @@ function CanvasInner({
       editGraph((nodes, edges) => ({
         edges: edges.filter((edge) => edge.id !== edgeId),
         nodes: nodes,
+      }));
+    },
+    [editGraph],
+  );
+
+  /**
+   * Pull nodes out of their group, or put them back. Membership is derived, so
+   * the flag on the node is the only record of it; the frame it leaves closes
+   * over the gap and the card steps clear of it.
+   */
+  const setNodesUngrouped = useCallback(
+    (nodeIds: readonly string[], ungrouped: boolean) => {
+      editGraph((nodes, edges) => ({
+        edges: edges,
+        nodes: setUngrouped(nodes, nodeIds, ungrouped),
       }));
     },
     [editGraph],
@@ -1309,6 +1358,7 @@ function CanvasInner({
   );
   const framesContext = useMemo(
     () => ({
+      expandedMemberId: expandedMemberId,
       machineConnections: machineConnections,
       mcpServers: mcpServersByNode,
       onToggleFrame: toggleFrame,
@@ -1316,6 +1366,7 @@ function CanvasInner({
       workspaceOnlySandboxIds: workspaceOnly,
     }),
     [
+      expandedMemberId,
       machineConnections,
       mcpServersByNode,
       toggleFrame,
@@ -1331,15 +1382,23 @@ function CanvasInner({
       menuNode?.type === "sandbox" ||
       menuNode?.type === "workspace" ||
       menuNode?.type === "mcp";
-    const actions =
-      menuNode && groupable
-        ? frameMemberActions(nodes, edges, menuNode.id)
-        : [];
+    if (!menuNode || !groupable) return null;
+    const actions = frameMemberActions(nodes, edges, menuNode.id);
+    const groups = frameGroupActions(
+      { edges: edges, mcpServers: mcpServers, nodes: nodes },
+      menuNode.id,
+    );
 
-    return menuNode && actions.length > 0
-      ? { actions: actions, memberId: menuNode.id }
+    return actions.length > 0 || groups.length > 0
+      ? { actions: actions, groups: groups, memberId: menuNode.id }
       : null;
-  }, [menuNodeId, nodes, edges]);
+  }, [menuNodeId, nodes, edges, mcpServers]);
+  // The right-clicked frame, when a service added to it would land in it.
+  const frameMenu = useMemo(() => {
+    const frame = framedGraph.frames.find((item) => item.id === menuNodeId);
+
+    return frame && acceptsNewMember(frame) ? frame : null;
+  }, [menuNodeId, framedGraph]);
 
   // Commit-to-paint for a topology change: measured from the effect to the next
   // frame, so it covers ReactFlow's own layout, which is what scales with the
@@ -1540,15 +1599,43 @@ function CanvasInner({
             </ContextMenuTrigger>
             {canWrite && chipMenu && (
               <ContextMenuContent className="w-56">
-                <FrameMemberMenuItems
-                  actions={chipMenu.actions}
-                  memberId={chipMenu.memberId}
-                  onMakeDefault={makeDefault}
-                  onRemoveEdge={removeEdge}
+                {chipMenu.actions.length > 0 && (
+                  <FrameMemberMenuItems
+                    actions={chipMenu.actions}
+                    memberId={chipMenu.memberId}
+                    onMakeDefault={makeDefault}
+                    onRemoveEdge={removeEdge}
+                  />
+                )}
+                {chipMenu.actions.length > 0 && chipMenu.groups.length > 0 && (
+                  <ContextMenuSeparator />
+                )}
+                <FrameGroupMenuItems
+                  actions={chipMenu.groups}
+                  onSetUngrouped={setNodesUngrouped}
                 />
               </ContextMenuContent>
             )}
-            {canWrite && !chipMenu && (
+            {canWrite && !chipMenu && frameMenu && (
+              <ContextMenuContent className="w-56">
+                <ContextMenuGroup>
+                  <ContextMenuLabel
+                    variant="muted"
+                    className="text-xs tracking-wider"
+                  >
+                    {frameMenu.label}
+                  </ContextMenuLabel>
+                  <ContextMenuItem
+                    className="cursor-pointer"
+                    onClick={() => addToFrame(frameMenu)}
+                  >
+                    <Group />
+                    Add to this group
+                  </ContextMenuItem>
+                </ContextMenuGroup>
+              </ContextMenuContent>
+            )}
+            {canWrite && !chipMenu && !frameMenu && (
               <ContextMenuContent className="w-48">
                 <ContextMenuGroup>
                   <ContextMenuLabel
@@ -1650,6 +1737,32 @@ function useEverTrue(flag: boolean): boolean {
   return seen || flag;
 }
 
+/** Right-click entries for the group a node is in, or the one it was pulled out of. */
+function FrameGroupMenuItems({
+  actions,
+  onSetUngrouped,
+}: {
+  actions: readonly FrameGroupAction[];
+  onSetUngrouped: (nodeIds: readonly string[], ungrouped: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <ContextMenuGroup>
+      {actions.map((action) => (
+        <ContextMenuItem
+          key={action.kind}
+          className="cursor-pointer"
+          onClick={() =>
+            onSetUngrouped(action.nodeIds, action.kind !== "rejoin")
+          }
+        >
+          {action.kind === "rejoin" ? <Group /> : <Ungroup />}
+          {groupActionLabel(action)}
+        </ContextMenuItem>
+      ))}
+    </ContextMenuGroup>
+  );
+}
+
 /** Right-click entries for a chip or lone resource card, one set per agent that wires it directly. */
 function FrameMemberMenuItems({
   actions,
@@ -1707,6 +1820,15 @@ function FrameMemberMenuItems({
       )}
     </ContextMenuGroup>
   );
+}
+
+function groupActionLabel(action: FrameGroupAction): string {
+  if (action.kind === "rejoin") return `Return to ${action.frameLabel}`;
+  if (action.kind === "ungroup-all") {
+    return `Ungroup all ${action.nodeIds.length}`;
+  }
+
+  return "Pull out of group";
 }
 
 function makeDefaultLabel(agentLabel: string | null): string {

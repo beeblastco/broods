@@ -407,6 +407,9 @@ function CanvasFramesFixture(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
     () => new Set([COLLAPSED_FIXTURE_FRAME]),
   );
+  // The canvas reads this off its selection; the fixture has no side panel, so
+  // it keeps the clicked chip itself.
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const graph = useMemo(
     () =>
       buildFramedGraph(
@@ -414,12 +417,14 @@ function CanvasFramesFixture(): React.JSX.Element {
         FRAME_EDGES,
         FRAME_MCP_SERVERS,
         collapsed,
+        expandedMemberId,
         null,
       ),
-    [collapsed],
+    [collapsed, expandedMemberId],
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      expandedMemberId: expandedMemberId,
       machineConnections: [
         fixtureConnection("kien-mac", Date.now(), undefined),
         fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
@@ -438,7 +443,7 @@ function CanvasFramesFixture(): React.JSX.Element {
         FRAME_EDGES,
       ),
     }),
-    [],
+    [expandedMemberId],
   );
 
   return (
@@ -457,6 +462,10 @@ function CanvasFramesFixture(): React.JSX.Element {
             fitViewOptions={FIT_VIEW_OPTIONS}
             maxZoom={FIT_VIEW_OPTIONS.maxZoom}
             nodesDraggable={false}
+            onNodeClick={(_event, node) =>
+              setExpandedMemberId(node.type === "frame" ? null : node.id)
+            }
+            onPaneClick={() => setExpandedMemberId(null)}
             proOptions={{ hideAttribution: true }}
           >
             <Background
