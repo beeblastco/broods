@@ -5,6 +5,7 @@ import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
+import { cn } from "@/app/lib/utils";
 import {
   CARD_STATUS_ROW,
   NODE_HEIGHT,
@@ -23,6 +24,8 @@ export type BaseNodeData = {
   description?: string;
   config?: Record<string, unknown>;
   properties?: { color: string };
+  /** Pulled out of its group by hand: it draws as a card, never as a chip. */
+  ungrouped?: boolean;
   // CLI-resolved forced read-only state for a workspace node (e.g. a `sandbox: null`
   // ref with no other writer). The pure-canvas graph can't express it, so analysis
   // honors this flag over the topology-inferred "inherited" state.
@@ -158,6 +161,7 @@ export function BaseNode({
       <span className={STATE_TEXT_TONE[workspaceState.kind]}>{stateText}</span>
     ) : null,
     sharedAgentCount >= 2 ? `shared ×${sharedAgentCount}` : null,
+    data.ungrouped === true ? "out of group" : null,
   ].filter((part) => part !== undefined && part !== null);
   const headerScale = fittedScale(scale, contentHeight);
 
@@ -279,34 +283,41 @@ export function BaseNode({
           <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-2xs text-muted-foreground">{statusText}</span>
           {/* Down here, not in the title's corner, so a long name keeps the full width. */}
-          {(nodeType === "agent" || nodeType === "sandbox") &&
-            (() => {
-              // Agent: lit when public access is on (secure-by-default → off). Sandbox: lit
-              // when network egress is allowed. Core models this as `network.mode`
-              // (allow-all/restricted = on, deny-all/unset = off), not a flat boolean. Both
-              // fall back to a muted, slashed globe when off.
-              const networkMode = (
-                data.config?.network as { mode?: string } | undefined
-              )?.mode;
-              const isOn =
-                nodeType === "sandbox"
-                  ? networkMode === "allow-all" || networkMode === "restricted"
-                  : data.config?.publicAccess === true;
-
-              return (
-                <span className="relative ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90">
-                  <Globe
-                    className={`size-3.5 ${isOn ? "text-success" : "text-muted-foreground"}`}
-                  />
-                  {!isOn && (
-                    <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
-                  )}
-                </span>
-              );
-            })()}
+          {(nodeType === "agent" || nodeType === "sandbox") && (
+            <NetworkBadge on={isNetworkOn(nodeType, data)} />
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Whether a node's network switch is on. A sandbox reads egress off
+ * `network.mode` (allow-all or restricted is on, deny-all and unset are off),
+ * which is how core models it; an agent reads public access, off by default.
+ */
+export function isNetworkOn(nodeType: string, data: BaseNodeData): boolean {
+  if (nodeType !== "sandbox") return data.config?.publicAccess === true;
+  const mode = (data.config?.network as { mode?: string } | undefined)?.mode;
+
+  return mode === "allow-all" || mode === "restricted";
+}
+
+/** The globe on a sandbox or agent's status row, slashed while it is off. */
+export function NetworkBadge({ on }: { on: boolean }): React.JSX.Element {
+  return (
+    <span className="relative ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90">
+      <Globe
+        className={cn(
+          "size-3.5",
+          on ? "text-success" : "text-muted-foreground",
+        )}
+      />
+      {!on && (
+        <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
+      )}
+    </span>
   );
 }
 

@@ -24,21 +24,28 @@ const TRANSPORT_SUBTITLE: Record<StageMcpServer["transport"], string> = {
  */
 export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
-  const server = useCanvasFrames().mcpServers.get(id);
+  const { expandedMemberId, mcpServers } = useCanvasFrames();
+  const server = mcpServers.get(id);
   const status = enabledMemberStatus(server !== undefined && !server.disabled);
 
   if (parentId !== undefined) {
+    const expanded = expandedMemberId === id;
+
     return (
       <ResourceChip
+        details={transportSubtitle(server)}
+        expanded={expanded}
         icon={<Plug className="size-3.5" />}
         label={nodeData.label}
         mountable={false}
         nodeType="mcp"
+        // Open, the computer moves to the line under the name, as on its card.
         status={{
           color: status.color,
-          text: server?.sandbox
-            ? `${status.label} · ${server.sandbox}`
-            : status.label,
+          text:
+            server?.sandbox && !expanded
+              ? `${status.label} · ${server.sandbox}`
+              : status.label,
         }}
       />
     );
@@ -50,15 +57,20 @@ export function McpNode({ id, data, parentId }: NodeProps): React.JSX.Element {
       nodeType="mcp"
       data={nodeData}
       icon={<Plug className="size-3.5" />}
-      subtitle={
-        server?.sandbox
-          ? `${server.sandbox} · stdio`
-          : server
-            ? TRANSPORT_SUBTITLE[server.transport]
-            : undefined
-      }
+      subtitle={transportSubtitle(server)}
       liveStatus={status}
       showSideHandles={server?.transport === "machine"}
     />
   );
+}
+
+/** Where the server runs: the computer a machine server is on, else its transport. */
+function transportSubtitle(
+  server: StageMcpServer | undefined,
+): string | undefined {
+  if (server === undefined) return undefined;
+
+  return server.sandbox
+    ? `${server.sandbox} · stdio`
+    : TRANSPORT_SUBTITLE[server.transport];
 }

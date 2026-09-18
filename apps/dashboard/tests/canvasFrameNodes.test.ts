@@ -83,7 +83,7 @@ const WORKSPACE_FRAME = "frame:agent:workspace:s3";
 
 describe("buildFramedGraph", () => {
   test("puts each frame before its members and flattens back to the flat nodes", () => {
-    const { nodes } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
+    const { nodes } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
     const ids = nodes.map((item) => item.id);
 
     expect(ids.indexOf(CLOUD_FRAME)).toBeLessThan(ids.indexOf("cloud"));
@@ -106,6 +106,7 @@ describe("buildFramedGraph", () => {
       SERVERS,
       NONE,
       null,
+      null,
     );
 
     expect(frames.map((frame) => frame.id)).toEqual([
@@ -118,8 +119,40 @@ describe("buildFramedGraph", () => {
     ).toMatchObject({ route: { gutter: null } });
   });
 
+  test("the open chip takes a card's slot and pushes the chip under it down", () => {
+    const { nodes } = buildFramedGraph(
+      NODES,
+      EDGES,
+      SERVERS,
+      NONE,
+      "cloud",
+      null,
+    );
+    const frame = nodes.find((item) => item.id === CLOUD_FRAME);
+
+    expect(nodes.find((item) => item.id === "spare")?.position).toEqual({
+      x: 8,
+      y: 28 + NODE_HEIGHT + 8,
+    });
+    expect(frame?.height).toBe(28 + NODE_HEIGHT + 8 + FRAME_CHIP_HEIGHT + 8);
+  });
+
+  test("dragging a frame with a chip open saves the packed slots", () => {
+    const next = applyFramedNodeChanges(
+      [{ id: CLOUD_FRAME, position: { x: 0, y: 144 }, type: "position" }],
+      NODES,
+      EDGES,
+      SERVERS,
+      NONE,
+    );
+    const slotY = (id: string): number =>
+      next.find((item) => item.id === id)?.position.y ?? 0;
+
+    expect(slotY("spare") - slotY("cloud")).toBe(FRAME_CHIP_HEIGHT + 8);
+  });
+
   test("a moved frame carries its members' absolute positions", () => {
-    const { nodes } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
+    const { nodes } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
     const moved = nodes.map((item) =>
       item.id === CLOUD_FRAME
         ? { ...item, position: { x: item.position.x + 48, y: 24 } }
@@ -137,6 +170,7 @@ describe("buildFramedGraph", () => {
       EDGES,
       SERVERS,
       NONE,
+      null,
       null,
     );
     const bundleId = `bundle:agent:${CLOUD_FRAME}`;
@@ -167,6 +201,7 @@ describe("buildFramedGraph", () => {
       SERVERS,
       NONE,
       null,
+      null,
     );
 
     expect(
@@ -175,7 +210,7 @@ describe("buildFramedGraph", () => {
   });
 
   test("draws the mount and the inherited sandbox apart where they share a handle", () => {
-    const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
+    const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
     const sides = edges.filter((item) => item.type === "mount");
 
     expect(sides.map((item) => [item.id, item.source, item.target])).toEqual([
@@ -215,7 +250,14 @@ describe("buildFramedGraph", () => {
         type: "mount",
       },
     ];
-    const { edges: display } = buildFramedGraph(nodes, edges, [], NONE, null);
+    const { edges: display } = buildFramedGraph(
+      nodes,
+      edges,
+      [],
+      NONE,
+      null,
+      null,
+    );
 
     expect(
       display.find((item) => item.id === "mount:docs-left-box-right"),
@@ -236,7 +278,14 @@ describe("buildFramedGraph", () => {
       edge("one", "docs"),
       edge("two", "docs"),
     ];
-    const { edges: display } = buildFramedGraph(nodes, edges, [], NONE, null);
+    const { edges: display } = buildFramedGraph(
+      nodes,
+      edges,
+      [],
+      NONE,
+      null,
+      null,
+    );
 
     expect(
       display
@@ -263,6 +312,7 @@ describe("buildFramedGraph", () => {
       servers,
       NONE,
       null,
+      null,
     );
     const fans = edges
       .filter((item) => item.type === "runsOn")
@@ -287,7 +337,14 @@ describe("buildFramedGraph", () => {
         ...item,
         position: positions.get(item.id) ?? item.position,
       }));
-      const graph = buildFramedGraph(laid, flatEdges, servers, NONE, null);
+      const graph = buildFramedGraph(
+        laid,
+        flatEdges,
+        servers,
+        NONE,
+        null,
+        null,
+      );
       const paths = drawnPaths(graph.nodes, graph.edges);
       const shared = paths.flatMap((a, index) =>
         paths
@@ -333,7 +390,7 @@ describe("buildFramedGraph", () => {
   });
 
   test("draws runs-on from a machine server to the sandbox it names", () => {
-    const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
+    const { edges } = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
 
     expect(edges.filter((item) => item.type === "runsOn")).toMatchObject([
       {
@@ -358,20 +415,28 @@ describe("buildFramedGraph", () => {
       undefined,
       NONE,
       null,
+      null,
     );
 
     expect(frames.some((frame) => frame.kind === "mcp")).toBe(false);
   });
 
   test("hands back the previous objects for frames and edges that did not change", () => {
-    const first = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null);
-    const same = buildFramedGraph(NODES, EDGES, SERVERS, NONE, first);
+    const first = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, null);
+    const same = buildFramedGraph(NODES, EDGES, SERVERS, NONE, null, first);
     // The agent card moves 40px; its lanes are relative to its handles, so no
     // frame and no drawn edge changes.
     const dragged = NODES.map((item) =>
       item.id === "agent" ? { ...item, position: { x: 240, y: 0 } } : item,
     );
-    const afterDrag = buildFramedGraph(dragged, EDGES, SERVERS, NONE, first);
+    const afterDrag = buildFramedGraph(
+      dragged,
+      EDGES,
+      SERVERS,
+      NONE,
+      null,
+      first,
+    );
 
     expect(same.nodes).toBe(first.nodes);
     expect(same.edges).toBe(first.edges);
@@ -386,11 +451,18 @@ describe("buildFramedGraph", () => {
     // agent is on.
     const nodes = [...NODES, node("deep", "skill", { x: 0, y: 360 })];
     const edges = [...EDGES, edge("agent", "deep")];
-    const first = buildFramedGraph(nodes, edges, SERVERS, NONE, null);
+    const first = buildFramedGraph(nodes, edges, SERVERS, NONE, null, null);
     const dragged = nodes.map((item) =>
       item.id === "agent" ? { ...item, position: { x: -240, y: 0 } } : item,
     );
-    const afterDrag = buildFramedGraph(dragged, edges, SERVERS, NONE, first);
+    const afterDrag = buildFramedGraph(
+      dragged,
+      edges,
+      SERVERS,
+      NONE,
+      null,
+      first,
+    );
     const gutterOf = (graph: typeof first): number | undefined =>
       (
         graph.edges.find((item) => item.id === "xy-edge__agent-deep")?.data as

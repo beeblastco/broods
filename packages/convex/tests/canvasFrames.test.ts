@@ -117,6 +117,22 @@ describe("deriveCanvasGroups", () => {
     ).toEqual([["s1", "s2"]]);
   });
 
+  it("leaves out a node pulled out by hand, and frames what is left", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("s1", "sandbox"),
+      node("s2", "sandbox"),
+      node("s3", "sandbox", { ungrouped: true }),
+    ];
+    const edges = [edge("a1", "s1"), edge("a1", "s2"), edge("a1", "s3")];
+
+    expect(
+      framesOf(deriveCanvasGroups(nodes, edges, NO_SERVERS)).map(
+        (frame) => frame.memberIds,
+      ),
+    ).toEqual([["s1", "s2"]]);
+  });
+
   it("leaves unreached resources ungrouped, and groups a mounted sandbox with its agent", () => {
     const frames = deriveCanvasGroups(
       [
@@ -203,6 +219,15 @@ describe("frame geometry", () => {
     expect(slots.get("s2")).toEqual({ x: 440, y: 368 });
     expect(frameOriginOf([...slots.values()])).toEqual(origin);
     expect(frameSize(frame)).toEqual({ height: 184, width: 192 });
+  });
+
+  it("gives the open chip a card's slot and pushes the ones under it down", () => {
+    const frame = { kind: "sandbox" as const, memberIds: ["s1", "s2", "s3"] };
+    const slots = frameMemberPositions({ x: 0, y: 0 }, frame, "s1");
+
+    expect([...slots.values()].map((slot) => slot.y)).toEqual([28, 132, 184]);
+    expect(frameSize(frame, "s1").height).toEqual(236);
+    expect(frameSize(frame, "missing")).toEqual(frameSize(frame));
   });
 
   it("gives every kind the same slot height", () => {

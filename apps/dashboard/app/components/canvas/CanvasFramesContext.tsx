@@ -4,14 +4,16 @@
  * Stage data the canvas node cards read, queried once by the Canvas instead of
  * once per card: the stage's MCP servers, its machine connections, each
  * wired sandbox's order number and which sandboxes only back a workspace. Also
- * carries the frame collapse toggle. The UI gallery provides a static value, so
- * cards render with no Convex behind them.
+ * carries the frame collapse toggle and which chip is open. The UI gallery
+ * provides a static value, so cards render with no Convex behind them.
  */
 import type { StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import { createContext, useContext } from "react";
 
 export type CanvasFramesValue = {
+  /** The selected chip, drawn as a card in a card's slot; null when none is. */
+  expandedMemberId: string | null;
   /** Undefined while loading. */
   machineConnections: readonly MachineConnection[] | undefined;
   /** By canvas node id. */
@@ -24,6 +26,7 @@ export type CanvasFramesValue = {
 };
 
 const EMPTY_VALUE: CanvasFramesValue = {
+  expandedMemberId: null,
   machineConnections: undefined,
   mcpServers: new Map(),
   onToggleFrame: () => {},

@@ -8,6 +8,10 @@
  * from its members. A group with one member is no frame: that node stays a
  * card, and becomes a chip once a second member joins its group.
  *
+ * The one thing about a group that is stored is the exception: a node whose
+ * `data.ungrouped` is set joins no group at all and stays a card, which is
+ * how the canvas pulls a member out of a frame.
+ *
  * Also the relations frames and layout both read off the flat graph: which
  * agents reference a resource, which sandbox a workspace resolves to, and
  * which computer a machine MCP server runs on.
@@ -32,6 +36,13 @@ export const FRAME_GAP = 8;
 
 /** Title row above the first chip. */
 export const FRAME_HEADER_HEIGHT = 28;
+
+/**
+ * Slot height of the one chip a click opens: `NODE_HEIGHT` from
+ * `canvasLayout.ts`, so an open chip is a card. Inlined; that module imports
+ * this one.
+ */
+export const FRAME_MEMBER_CARD_HEIGHT = 96;
 
 /** Inset left and right of the chips, and below the last one. */
 export const FRAME_PADDING = 8;
@@ -249,7 +260,8 @@ export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
 /**
  * Every group on the canvas, one-member groups included. Only sandbox,
  * workspace and MCP nodes at least one agent reaches are grouped; unreached
- * ones stay standalone cards.
+ * ones stay standalone cards, and so does a node pulled out by hand
+ * (`data.ungrouped`).
  */
 export function deriveCanvasGroups(
   nodes: readonly LayoutNode[],
@@ -269,6 +281,7 @@ export function deriveCanvasGroups(
   const members = new Map<string, LayoutNode[]>();
 
   for (const node of nodes) {
+    if (node.data.ungrouped === true) continue;
     const group = frameGroupOf(node, mcpServers);
     const nodeOwners = owners.get(node.id);
     if (!group || !nodeOwners) continue;
@@ -366,21 +379,26 @@ export function frameGroupOf(
   return null;
 }
 
-/** Absolute top-left of each member's slot, filled in `memberIds` order. */
+/**
+ * Absolute top-left of each member's slot, filled in `memberIds` order. With
+ * `expandedId` that member takes a card's slot and pushes the ones under it
+ * down; the saved layout is packed without it, so an open chip moves no
+ * stored position.
+ */
 export function frameMemberPositions(
   origin: LayoutPosition,
   frame: FrameShape,
+  expandedId?: string,
 ): Map<string, LayoutPosition> {
-  const step = FRAME_CHIP_HEIGHT + FRAME_GAP;
+  let y = origin.y + FRAME_HEADER_HEIGHT;
 
   return new Map(
-    frame.memberIds.map((id, index) => [
-      id,
-      {
-        x: origin.x + FRAME_PADDING,
-        y: origin.y + FRAME_HEADER_HEIGHT + index * step,
-      },
-    ]),
+    frame.memberIds.map((id): [string, LayoutPosition] => {
+      const slot = { x: origin.x + FRAME_PADDING, y: y };
+      y += memberSlotHeight(id, expandedId) + FRAME_GAP;
+
+      return [id, slot];
+    }),
   );
 }
 
@@ -399,10 +417,12 @@ export function framesOf(groups: readonly CanvasFrame[]): CanvasFrame[] {
   return groups.filter((group) => group.memberIds.length >= 2);
 }
 
-/** Expanded frame box for its kind and member count. */
-export function frameSize(frame: FrameShape): FrameSize {
-  const count = frame.memberIds.length;
-  const chips = count * FRAME_CHIP_HEIGHT + Math.max(count - 1, 0) * FRAME_GAP;
+/** Open frame box for its kind and member count, taller around an open chip. */
+export function frameSize(frame: FrameShape, expandedId?: string): FrameSize {
+  const chips = frame.memberIds.reduce(
+    (total, id) => total + memberSlotHeight(id, expandedId),
+    Math.max(frame.memberIds.length - 1, 0) * FRAME_GAP,
+  );
 
   return {
     height: FRAME_HEADER_HEIGHT + chips + FRAME_PADDING,
@@ -576,6 +596,11 @@ function lowestOrderNumber(
   frame: CanvasFrame,
 ): number {
   return Math.min(...frame.memberIds.map((id) => orderNumberOf(numbers, id)));
+}
+
+/** The slot a member fills: a chip's, or a card's while it is the open one. */
+function memberSlotHeight(id: string, expandedId: string | undefined): number {
+  return id === expandedId ? FRAME_MEMBER_CARD_HEIGHT : FRAME_CHIP_HEIGHT;
 }
 
 /** Order number for sorting; nodes without one sort after every numbered node. */

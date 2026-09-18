@@ -232,6 +232,13 @@ body {
   --span-phase: oklch(0.704 0.14 182.503);
 }
 
+/* React Flow writes a node's box inline, so a frame that grows around an open
+   chip transitions those two properties. `transition-all` would catch the
+   transform a drag writes and leave the frame trailing the cursor. */
+@utility transition-box {
+  transition-property: width, height;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

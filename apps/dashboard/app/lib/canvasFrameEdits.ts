@@ -6,12 +6,14 @@
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { deriveGroups, type StageMcpServer } from "@/app/lib/canvasFrameNodes";
 import {
+  defaultRuntimeNodeData,
   runtimeRefsProblems,
   type RuntimeRefsProblem,
 } from "@/app/lib/canvasRuntimeRefs";
 import {
   agentSandboxOrder,
   edgeKind,
+  frameGroupOf,
   frameMemberPositions,
   frameOriginOf,
   framesOf,
@@ -41,6 +43,17 @@ export type FlatGraph = {
 };
 
 /**
+ * What a right-click offers for the group a node is in, or the one it was
+ * pulled out of, and the nodes each entry flags. Every entry writes the same
+ * `data.ungrouped` flag: the first two set it, `rejoin` clears it.
+ */
+export type FrameGroupAction = {
+  frameLabel: string;
+  kind: "pull-out" | "rejoin" | "ungroup-all";
+  nodeIds: string[];
+};
+
+/**
  * What a right-click on a chip can do, per agent that wires it directly.
  * `agentLabel` names the agent only when several do, so the entries differ.
  * Make default carries why it is refused, when the config API would refuse it.
@@ -53,6 +66,25 @@ export type FrameMemberAction =
       disabledReason: string | null;
     }
   | { kind: "remove"; agentLabel: string | null; edgeId: string };
+
+/**
+ * Whether a service added to a frame would land in it. A fresh node carries
+ * the group key its defaults give it, so a cloud sandbox frame and an S3
+ * workspace frame take one and the machine, hosted and url frames do not:
+ * nothing a new node holds puts it in those.
+ */
+export function acceptsNewMember(frame: CanvasFrame): boolean {
+  const group = frameGroupOf(
+    {
+      data: defaultRuntimeNodeData(frame.kind, "", "new"),
+      id: "new",
+      type: frame.kind,
+    },
+    new Map(),
+  );
+
+  return group !== null && group.key === frame.key;
+}
 
 /**
  * The boxes top-level display nodes cover, for the free-spot search. A frame
@@ -71,6 +103,60 @@ export function boardRects(
       ...node.position,
       ...(sizes.get(node.id) ?? CARD_SIZE),
     }));
+}
+
+/**
+ * Group entries for a node's context menu: a member can leave its frame or
+ * dissolve it, a node that was pulled out can go back. Rejoining takes the
+ * other pulled-out nodes of the same group with it when this node alone would
+ * not re-form a frame, so the entry always visibly does something.
+ */
+export function frameGroupActions(
+  graph: FlatGraph,
+  nodeId: string,
+): FrameGroupAction[] {
+  const node = graph.nodes.find((item) => item.id === nodeId);
+  if (!node) return [];
+  const frame = framedGroups(graph, graph.nodes).find((item) =>
+    item.memberIds.includes(nodeId),
+  );
+  if (frame) {
+    return [
+      { frameLabel: frame.label, kind: "pull-out", nodeIds: [nodeId] },
+      {
+        frameLabel: frame.label,
+        kind: "ungroup-all",
+        nodeIds: [...frame.memberIds],
+      },
+    ];
+  }
+  if (node.data.ungrouped !== true) return [];
+  const restored = setUngrouped(
+    graph.nodes,
+    graph.nodes.map((item) => item.id),
+    false,
+  );
+  const home = framedGroups(graph, restored).find((item) =>
+    item.memberIds.includes(nodeId),
+  );
+  if (!home) return [];
+  const alone = framedGroups(
+    graph,
+    setUngrouped(graph.nodes, [nodeId], false),
+  ).some((item) => item.memberIds.includes(nodeId));
+  const pulled = new Set(
+    graph.nodes
+      .filter((item) => item.data.ungrouped === true)
+      .map((item) => item.id),
+  );
+
+  return [
+    {
+      frameLabel: home.label,
+      kind: "rejoin",
+      nodeIds: alone ? [nodeId] : home.memberIds.filter((id) => pulled.has(id)),
+    },
+  ];
 }
 
 /**
@@ -300,6 +386,31 @@ export function reconcileFramePositions(
 }
 
 /**
+ * `nodes` with `data.ungrouped` set or cleared on `ids`. The flag is the one
+ * stored thing about a group: a node carrying it joins none, so it draws as a
+ * card until it is cleared again.
+ */
+export function setUngrouped<T extends LayoutNode>(
+  nodes: readonly T[],
+  ids: readonly string[],
+  ungrouped: boolean,
+): T[] {
+  const targets = new Set(ids);
+
+  return nodes.map((node): T => {
+    if (!targets.has(node.id) || (node.data.ungrouped === true) === ungrouped) {
+      return node;
+    }
+    if (ungrouped) {
+      return { ...node, data: { ...node.data, ungrouped: true } };
+    }
+    const { ungrouped: _flag, ...data } = node.data;
+
+    return { ...node, data: data };
+  });
+}
+
+/**
  * Nearest grid point where a box of `size` clears every occupied box.
  * `findFreePosition` places a card, so each occupied box grows up and left by
  * how much bigger this box is than a card: a card clears the grown box exactly
@@ -322,6 +433,14 @@ function findFreeBox(
       y: box.y - extraHeight,
     })),
   );
+}
+
+/**
+ * The frames `nodes` draw with this graph's edges and server list, for the
+ * group entries: the same derivation the canvas draws from.
+ */
+function framedGroups(graph: FlatGraph, nodes: readonly Node[]): CanvasFrame[] {
+  return framesOf(deriveGroups(nodes, graph.edges, graph.mcpServers));
 }
 
 /** A frame's origin read from its members' positions in `positions`. */

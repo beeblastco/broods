@@ -40,6 +40,12 @@ const PATH_STEP = 4;
 const CARD_SIZE = { height: 96, width: 176 };
 const CHIP_HEIGHT = 44;
 
+// FRAME_HEADER_HEIGHT, FRAME_GAP and FRAME_PADDING, the box a frame draws
+// around its rows.
+const FRAME_HEADER = 28;
+const FRAME_GAP = 8;
+const FRAME_PADDING = 8;
+
 test("groups of one are cards, chips sit inside frames, a collapsed frame is one card", async ({
   page,
 }) => {
@@ -126,11 +132,64 @@ test("every card is one size, every group row another, whatever the card says", 
     '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
   );
   await frame.getByRole("button", { name: "Collapse Workspaces" }).click();
-  const collapsedBox = await boxOf(frame);
-  expect([
-    round(collapsedBox.width / zoom),
-    round(collapsedBox.height / zoom),
-  ]).toEqual([CARD_SIZE.width, CARD_SIZE.height]);
+  // Polled: the frame box transitions to the card it collapses into.
+  await expect
+    .poll(async (): Promise<number[]> => {
+      const box = await boxOf(frame);
+
+      return [round(box.width / zoom), round(box.height / zoom)];
+    })
+    .toEqual([CARD_SIZE.width, CARD_SIZE.height]);
+});
+
+test("clicking a chip opens it into a card and pushes the chips under it down", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-frames"]');
+  const zoom = await flowScale(fixture);
+  const chipOf = (id: string): Locator =>
+    fixture.locator(
+      `.react-flow__node[data-id="${id}"] [data-slot="resource-chip"]`,
+    );
+  const frame = fixture.locator(
+    '.react-flow__node[data-id="frame:tracy:workspace:s3"]',
+  );
+  const notes = chipOf("notes");
+  const repos = chipOf("repos");
+  const grown = CARD_SIZE.height - CHIP_HEIGHT;
+  // The second slot, measured from the frame's top: its header and one row.
+  const secondSlot = async (): Promise<number[]> => {
+    const [box, slot] = [await boxOf(frame), await boxOf(repos)];
+
+    return [
+      round((await boxOf(notes)).height / zoom),
+      round((slot.y - box.y) / zoom),
+      round(box.height / zoom),
+    ];
+  };
+  const before = await secondSlot();
+
+  expect(before).toEqual([
+    CHIP_HEIGHT,
+    FRAME_HEADER + CHIP_HEIGHT + FRAME_GAP,
+    FRAME_HEADER + 2 * CHIP_HEIGHT + FRAME_GAP + FRAME_PADDING,
+  ]);
+  await notes.click();
+  await expect(notes).toHaveAttribute("data-expanded", "true");
+  await expect
+    .poll(secondSlot)
+    .toEqual([CARD_SIZE.height, before[1] + grown, before[2] + grown]);
+
+  // Opening another closes it, and the frame goes back to the height it had.
+  await repos.click();
+  await expect(notes).toHaveAttribute("data-expanded", "false");
+  await expect(repos).toHaveAttribute("data-expanded", "true");
+  await expect
+    .poll(async (): Promise<number> =>
+      round((await boxOf(notes)).height / zoom),
+    )
+    .toBe(CHIP_HEIGHT);
 });
 
 test("chip names and status lines fit without truncating", async ({ page }) => {

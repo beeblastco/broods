@@ -6,6 +6,7 @@
  * whose status line is the workspace's effective-sandbox state; as a card its
  * status row says the same.
  */
+import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import {
   BaseNode,
@@ -28,19 +29,33 @@ export function WorkspaceNode({
   parentId,
 }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
+  const expandedMemberId = useCanvasFrames().expandedMemberId;
   const infraAnalysis = useInfraAnalysis();
   const state = infraAnalysis.workspaceStates[id];
   const sharedCount = infraAnalysis.agentRefCounts[id] ?? 0;
   const status = workspaceChipStatus(state, sharedCount);
 
   if (parentId !== undefined) {
+    const expanded = expandedMemberId === id;
+
     return (
       <ResourceChip
+        // Open, it reads as its card: the state line under the name, the run
+        // state in the status row, in the state's color.
+        details={status.text}
+        expanded={expanded}
         icon={<FolderOpen className="size-3.5" />}
         label={nodeData.label}
         mountable={true}
         nodeType="workspace"
-        status={status}
+        status={
+          expanded
+            ? {
+                color: status.color,
+                text: statusConfig[nodeData.status ?? "idle"].text,
+              }
+            : status
+        }
       />
     );
   }

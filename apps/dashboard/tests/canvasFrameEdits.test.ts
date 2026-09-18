@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
+  acceptsNewMember,
+  frameGroupActions,
   frameMemberActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
+  setUngrouped,
 } from "../app/lib/canvasFrameEdits";
 import type { StageMcpServer } from "../app/lib/canvasFrameNodes";
 
@@ -162,6 +165,88 @@ describe("reconcileFramePositions", () => {
         { edges: EDGES, mcpServers: [], nodes: renamed },
       ),
     ).toBe(renamed);
+  });
+});
+
+describe("pulling members out of a group", () => {
+  const GRAPH = { edges: EDGES, mcpServers: [], nodes: NODES };
+
+  test("a member can leave its frame or dissolve it, a lone card can do neither", () => {
+    expect(frameGroupActions(GRAPH, "alpha")).toEqual([
+      { frameLabel: "Cloud sandbox", kind: "pull-out", nodeIds: ["alpha"] },
+      {
+        frameLabel: "Cloud sandbox",
+        kind: "ungroup-all",
+        nodeIds: ["alpha", "bravo"],
+      },
+    ]);
+    expect(frameGroupActions(GRAPH, "lone")).toEqual([]);
+  });
+
+  test("the flag keeps the node out of its group and clearing it puts it back", () => {
+    const pulled = setUngrouped(NODES, ["alpha"], true);
+
+    expect(pulled.find((item) => item.id === "alpha")?.data.ungrouped).toBe(
+      true,
+    );
+    expect(
+      frameGroupActions({ ...GRAPH, nodes: pulled }, "alpha").map(
+        (action) => action.kind,
+      ),
+    ).toEqual(["rejoin"]);
+    expect(
+      setUngrouped(pulled, ["alpha"], false).find((item) => item.id === "alpha")
+        ?.data,
+    ).toEqual({ label: "alpha" });
+    // A node that already reads that way is handed back as it came, so the
+    // canvas does not re-render it.
+    expect(setUngrouped(NODES, ["alpha"], false)[1]).toBe(NODES[1]);
+  });
+
+  test("a card left alone by the pull-out offers to go back, with nobody else", () => {
+    const pulled = { ...GRAPH, nodes: setUngrouped(NODES, ["alpha"], true) };
+
+    expect(frameGroupActions(pulled, "alpha")).toEqual([
+      { frameLabel: "Cloud sandbox", kind: "rejoin", nodeIds: ["alpha"] },
+    ]);
+  });
+
+  test("going back after an ungroup-all takes the rest of the group with it", () => {
+    const nodes = setUngrouped(NODES, ["alpha", "bravo"], true);
+
+    expect(frameGroupActions({ ...GRAPH, nodes: nodes }, "bravo")).toEqual([
+      {
+        frameLabel: "Cloud sandbox",
+        kind: "rejoin",
+        nodeIds: ["alpha", "bravo"],
+      },
+    ]);
+  });
+
+  test("only a frame a new node's own defaults would join takes one", () => {
+    const [cloud] = frameGroupActions(GRAPH, "alpha");
+
+    expect(cloud.frameLabel).toBe("Cloud sandbox");
+    expect(
+      acceptsNewMember({
+        id: "frame:agent:sandbox:cloud",
+        key: "cloud",
+        kind: "sandbox",
+        label: "Cloud sandbox",
+        memberIds: ["alpha", "bravo"],
+        ownerIds: ["agent"],
+      }),
+    ).toBe(true);
+    expect(
+      acceptsNewMember({
+        id: "frame:agent:sandbox:machine",
+        key: "machine",
+        kind: "sandbox",
+        label: "Your computer",
+        memberIds: ["mac", "air"],
+        ownerIds: ["agent"],
+      }),
+    ).toBe(false);
   });
 });
 
