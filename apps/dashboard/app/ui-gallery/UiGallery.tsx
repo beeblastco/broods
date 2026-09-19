@@ -3,6 +3,7 @@
 import {
   CANVAS_EDGE_TYPES,
   CANVAS_NODE_TYPES,
+  CONNECTION_RADIUS,
 } from "@/app/components/canvas/Canvas";
 import {
   CanvasControls,
@@ -34,6 +35,8 @@ import {
   serversByNode,
   type StageMcpServer,
 } from "@/app/lib/canvasFrameNodes";
+import { connectionEdge } from "@/app/components/canvas/edgeOwnership";
+import { isValidCanvasConnection } from "@/app/lib/canvasConnections";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -65,6 +68,9 @@ const LEVEL_OPTIONS = [
 ];
 
 const SAVE_STATES: CanvasSaveState[] = ["idle", "saving", "saved", "error"];
+
+/** No frame starts collapsed in the connection fixture. */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set();
 
 // Enough rows for the stand-in table to scroll, so its head really sticks.
 const STAND_IN_ROWS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -177,6 +183,31 @@ const FRAME_NODES: Node[] = applyTidyLayout(
 
 const FRAME_ANALYSIS = analyzeCanvasInfra(FRAME_NODES, FRAME_EDGES);
 
+/**
+ * The connection fixture: `alpha` owns a two-chip computer frame, `beta` owns
+ * nothing in it, and `fresh-box` is a sandbox nobody wired yet. Between them
+ * they cover the two drags that were reported broken, an agent onto a brand
+ * new card and a second agent onto a chip inside someone else's frame.
+ */
+const CONNECT_EDGES: Edge[] = [
+  fixtureEdge("alpha", "box-one"),
+  fixtureEdge("alpha", "box-two"),
+];
+
+const CONNECT_NODES: Node[] = applyTidyLayout(
+  [
+    fixtureNode("alpha", "agent", { sandboxOrder: ["box-one", "box-two"] }),
+    fixtureNode("beta", "agent"),
+    fixtureNode("box-one", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("box-two", "sandbox", { config: { provider: "machine" } }),
+    fixtureNode("fresh-box", "sandbox", { config: { provider: "sandbox" } }),
+  ],
+  CONNECT_EDGES,
+  serversByNode([]),
+);
+
+const CONNECT_ANALYSIS = analyzeCanvasInfra(CONNECT_NODES, CONNECT_EDGES);
+
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
 const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
 
@@ -285,6 +316,11 @@ export function UiGallery(): React.JSX.Element {
       <section data-fixture="canvas-frames" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas frames</h2>
         <CanvasFramesFixture />
+      </section>
+
+      <section data-fixture="canvas-connect" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Canvas connections</h2>
+        <CanvasConnectFixture />
       </section>
 
       <section data-fixture="press-drag" className="flex flex-col gap-2">
@@ -403,6 +439,100 @@ export function UiGallery(): React.JSX.Element {
  * The real node and edge components on a static graph. Stage data comes from
  * the frames context instead of Convex, one machine connected and one offline.
  */
+/**
+ * A connectable canvas: the same nodes, handles and validator the real one
+ * uses, so a spec can drag an edge and find out whether it lands. Every edge
+ * it accepts is listed under the canvas, since a refused drop leaves nothing
+ * on screen to assert.
+ */
+function CanvasConnectFixture(): React.JSX.Element {
+  const [edges, setEdges] = useState<Edge[]>(CONNECT_EDGES);
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+  const graph = useMemo(
+    () =>
+      buildFramedGraph(
+        CONNECT_NODES,
+        edges,
+        [],
+        EMPTY_COLLAPSED,
+        expandedMemberId,
+        null,
+      ),
+    [edges, expandedMemberId],
+  );
+  const frames = useMemo(
+    (): CanvasFramesValue => ({
+      expandedMemberId: expandedMemberId,
+      machineConnections: [],
+      mcpServers: serversByNode([]),
+      onToggleFrame: () => undefined,
+      sandboxOrderNumbers: agreedSandboxOrderNumbers(CONNECT_NODES, edges),
+      workspaceOnlySandboxIds: workspaceOnlySandboxIds(CONNECT_NODES, edges),
+    }),
+    [edges, expandedMemberId],
+  );
+
+  return (
+    <InfraAnalysisProvider value={CONNECT_ANALYSIS}>
+      <CanvasFramesProvider value={frames}>
+        <div className="h-96 w-[52rem] rounded-lg border border-border">
+          <ReactFlow
+            nodes={graph.nodes}
+            edges={graph.edges}
+            nodeTypes={CANVAS_NODE_TYPES}
+            edgeTypes={CANVAS_EDGE_TYPES}
+            colorMode="dark"
+            connectionMode={ConnectionMode.Loose}
+            connectionRadius={CONNECTION_RADIUS}
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            maxZoom={FIT_VIEW_OPTIONS.maxZoom}
+            nodesDraggable={false}
+            // Fit once the nodes are measured. Fitting on mount reads them as
+            // zero-sized here and parks the graph outside the box.
+            onInit={(instance) => {
+              void instance.fitView(FIT_VIEW_OPTIONS);
+            }}
+            isValidConnection={(connection) =>
+              isValidCanvasConnection(
+                { edges: edges, nodes: CONNECT_NODES },
+                connection,
+              )
+            }
+            onConnect={(connection) =>
+              setEdges((current) => [
+                ...current,
+                connectionEdge(
+                  connection,
+                  CONNECT_NODES.find((node) => node.id === connection.source)
+                    ?.type === "agent",
+                ),
+              ])
+            }
+            onNodeClick={(_event, node) =>
+              setExpandedMemberId(node.type === "frame" ? null : node.id)
+            }
+            onPaneClick={() => setExpandedMemberId(null)}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background
+              bgColor="#000"
+              color="rgba(255,255,255,0.3)"
+              gap={GRID}
+              size={2}
+            />
+          </ReactFlow>
+        </div>
+        <output
+          data-testid="connect-log"
+          className="text-2xs text-muted-foreground"
+        >
+          {edges.map((edge) => edge.id).join(" | ")}
+        </output>
+      </CanvasFramesProvider>
+    </InfraAnalysisProvider>
+  );
+}
+
 function CanvasFramesFixture(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
     () => new Set([COLLAPSED_FIXTURE_FRAME]),
