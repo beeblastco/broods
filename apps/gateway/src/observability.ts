@@ -40,6 +40,9 @@ type LokiRange = {
   startNs: bigint;
   limit: number;
   direction: "backward" | "forward";
+  // A query's cost is the range it scans, so each caller budgets its own
+  // instead of every Loki call sharing one.
+  timeoutMs: number;
 };
 type LokiRow = { entry: ObservabilityLogEntry; ns: bigint };
 type ObservabilityStream = "logs" | "traces";
@@ -78,6 +81,33 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 // Loki caps query ranges at 30d1h and Tempo search at 168h (their defaults);
 // a wider window is rejected with HTTP 400 and the backfill delivers nothing.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// Loki splits a query_range into per-interval subqueries and runs them over the
+// whole range, so the row limit does not stop the scan: 30 days is ~1400
+// subqueries whether or not the newest hour already holds the answer. Ours is a
+// SingleBinary Loki on one CPU with the results cache off (infra
+// charts/releases/loki.yaml), so those queue against one core and nothing is
+// amortized between tab opens. That is the ~8 s the Logs tab used to spend
+// before failing on a 5 s budget, with the abort's bare "The operation timed
+// out." as the only explanation.
+//
+// So ask for the cheap window first and widen only when it comes back short of
+// a full page. A stage with recent logs answers from one subquery; only a stage
+// genuinely quiet for 30 days pays for the whole range. A step that times out
+// ends the backfill: a wider window is strictly more expensive, never a retry.
+const LOKI_BACKFILL_STEPS: ReadonlyArray<{
+  windowMs: number;
+  timeoutMs: number;
+}> = [
+  { windowMs: 60 * 60 * 1000, timeoutMs: 5_000 },
+  { windowMs: 24 * 60 * 60 * 1000, timeoutMs: 10_000 },
+  { windowMs: LOKI_BACKFILL_WINDOW_MS, timeoutMs: 15_000 },
+];
+// A sandbox backfill reads one fixed day, so it does not step; it is the widest
+// step's cost at most.
+const LOKI_SANDBOX_BACKFILL_TIMEOUT_MS = 15_000;
+// A sandbox poll scans 3 minutes and runs every SANDBOX_LOG_POLL_MS, so it
+// stays tight; a slow one should be skipped, not queued up behind itself.
+const LOKI_POLL_TIMEOUT_MS = 5_000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
 // A search over the whole window walks every block in it; a single trace by
 // id is an index hit. Both used to share 5 s, which the search blew through on
@@ -99,7 +129,7 @@ const SANDBOX_LOG_POLL_LOOKBACK_NS = 180n * 1_000_000_000n;
 // joins the deployment stream, where a JSON line would read as a core record.
 const SANDBOX_SERVICE_NAME = "broods-sandbox";
 // The sandbox_id filter is structured metadata and scans every chunk in the window;
-// one day covers any VM's lifetime and stays under the 5 s query timeout (30 days: 8 s).
+// one day covers any VM's lifetime and stays well inside the backfill timeout.
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
@@ -521,15 +551,11 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) throw new Error("Log history is not configured (LOKI_URL)");
-      const rows = await fetchLokiLogs(
+      const rows = await fetchLokiBackfill(
         lokiUrl,
         scope,
         lokiBackfillQuery(scope, minLevel),
-        {
-          startNs: nowNs() - BigInt(LOKI_BACKFILL_WINDOW_MS) * NS_PER_MS,
-          limit: limit,
-          direction: "backward",
-        },
+        limit,
       );
       if (state.runs.logs !== run) return;
       sendObs(socket, {
@@ -626,6 +652,32 @@ async function sendTrace(
 }
 
 /**
+ * The deployment logs backfill: the newest LOKI_BACKFILL_STEPS window that
+ * returns a full page, widening only when a step comes back short. Each step
+ * re-reads its own window rather than extending the last, so the rows are
+ * always one Loki answer and never a merge across overlapping ranges.
+ */
+async function fetchLokiBackfill(
+  lokiUrl: string,
+  scope: ObservabilityScope,
+  query: string,
+  limit: number,
+): Promise<LokiRow[]> {
+  let rows: LokiRow[] = [];
+  for (const step of LOKI_BACKFILL_STEPS) {
+    rows = await fetchLokiLogs(lokiUrl, scope, query, {
+      startNs: nowNs() - BigInt(step.windowMs) * NS_PER_MS,
+      limit: limit,
+      direction: "backward",
+      timeoutMs: step.timeoutMs,
+    });
+    if (rows.length >= limit) break;
+  }
+
+  return rows;
+}
+
+/**
  * One Loki query_range call in Loki's own order (`backward` = newest first).
  * Each entry keeps its nanosecond timestamp so the sandbox poll can dedupe
  * across overlapping windows. A sandbox tail's lines are guest text: they are
@@ -645,8 +697,15 @@ async function fetchLokiLogs(
   url.searchParams.set("start", String(range.startNs));
   url.searchParams.set("end", String(nowNs()));
 
+  // A bare abort reaches the client as "The operation timed out.", which names
+  // neither the query nor its budget.
   const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(range.timeoutMs),
+  }).catch((error: unknown) => {
+    if (error instanceof DOMException && error.name === "TimeoutError")
+      throw new Error(`Loki query timed out after ${range.timeoutMs}ms`);
+
+    throw error;
   });
   if (!response.ok)
     throw new Error(`Loki query failed with HTTP ${response.status}`);
@@ -868,6 +927,7 @@ function startSandboxLogPoll(
           startNs: floorNs,
           limit: SANDBOX_LOG_POLL_LIMIT,
           direction: "backward",
+          timeoutMs: LOKI_POLL_TIMEOUT_MS,
         },
         true,
       );
@@ -894,6 +954,7 @@ function startSandboxLogPoll(
             startNs: nowNs() - SANDBOX_LOG_BACKFILL_WINDOW_NS,
             limit: backfill,
             direction: "backward",
+            timeoutMs: LOKI_SANDBOX_BACKFILL_TIMEOUT_MS,
           },
           true,
         );

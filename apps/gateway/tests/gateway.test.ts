@@ -2299,6 +2299,136 @@ test("a sandbox tail replaced while its backfill is pending sends nothing from i
     process.env.LOKI_URL = originalLokiUrl;
   }
 });
+// The windows of LOKI_BACKFILL_STEPS, in hours, newest first.
+const BACKFILL_STEP_HOURS = [1, 24, 720];
+
+/**
+ * Runs a deployment logs backfill against a Loki stub answering each step with
+ * `rowsPerStep` lines, and reports the window each query asked for in hours.
+ */
+async function backfillStepHours(
+  rowsPerStep: number,
+  limit: number,
+): Promise<{ hours: number[]; sent: Array<Record<string, unknown>> }> {
+  const { socket, sent } = observabilitySocket();
+  const hours: number[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const start = BigInt(new URL(String(input)).searchParams.get("start")!);
+    hours.push(
+      Math.round(
+        Number((BigInt(Date.now()) * 1_000_000n - start) / 1_000_000n) /
+          3_600_000,
+      ),
+    );
+    const ns = String(BigInt(Date.now()) * 1_000_000n);
+
+    return json({
+      data: {
+        result: [
+          {
+            stream: {},
+            values: Array.from({ length: rowsPerStep }, (_value, index) => [
+              ns,
+              `line-${index}`,
+            ]),
+          },
+        ],
+      },
+    });
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "logs", backfill: limit }),
+      idleNats,
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+
+    return { hours: hours, sent: sent };
+  } finally {
+    cleanupObservabilitySocket(socket);
+  }
+}
+
+test("a logs backfill stops at the first window that fills the page", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  try {
+    const { hours, sent } = await backfillStepHours(5, 5);
+
+    // A stage with recent logs never pays for the 30-day scan.
+    expect(hours).toEqual([BACKFILL_STEP_HOURS[0]]);
+    expect(
+      (
+        sent.find((message) => message.type === "backfill")!
+          .entries as unknown[]
+      ).length,
+    ).toBe(5);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("a logs backfill widens to 30 days only while the page is short", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  try {
+    const { hours, sent } = await backfillStepHours(2, 200);
+
+    expect(hours).toEqual(BACKFILL_STEP_HOURS);
+    // The widest step's rows are the answer, not a merge across the steps.
+    expect(
+      (
+        sent.find((message) => message.type === "backfill")!
+          .entries as unknown[]
+      ).length,
+    ).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("a timed-out logs backfill names Loki and its budget, and does not widen", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  let queries = 0;
+  // The abort's own message ("The operation timed out.") named neither the
+  // query nor its budget, and reached the Logs tab verbatim.
+  globalThis.fetch = (async () => {
+    queries += 1;
+    throw new DOMException("The operation timed out.", "TimeoutError");
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({ type: "subscribe", stream: "logs", backfill: 200 }),
+      idleNats,
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      stream: "logs",
+      entries: [],
+      error: "Loki query timed out after 5000ms",
+    });
+    // A wider window is strictly more expensive, so it is never a retry.
+    expect(queries).toBe(1);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
 test("a traces subscribe whose transport fails after it was replaced stays silent", async () => {
   const { socket, sent } = observabilitySocket();
   let failFirst: ((reason: Error) => void) | undefined;
