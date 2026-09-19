@@ -16,7 +16,6 @@ import {
 import {
   connectionEdge,
   isCodeManagedEdge,
-  isSideHandle,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -61,6 +60,7 @@ import {
   serversByNode,
   type FramedGraph,
 } from "@/app/lib/canvasFrameNodes";
+import { isValidCanvasConnection } from "@/app/lib/canvasConnections";
 import { toErrorMessage } from "@/app/lib/errors";
 import { reportPerf } from "@/app/lib/perfReport";
 import {
@@ -154,6 +154,16 @@ const SkillSourcePickerDialog = dynamic(() =>
     (mod) => mod.SkillSourcePickerDialog,
   ),
 );
+
+/**
+ * How far from a handle a drop still lands on it. React Flow's default is 20px,
+ * which is smaller than the nodes: a drop on the body of a card or a chip sat
+ * outside every handle and silently did nothing. 100 reaches every pixel of a
+ * 176x44 chip and a 176x96 card's middle from its top handle, so dropping on a
+ * node connects to it. Side handles stay the nearest along a card's left and
+ * right edges, which is where a mount is aimed.
+ */
+export const CONNECTION_RADIUS = 100;
 
 /** Node and edge components by type; the UI gallery draws its canvas fixture with them too. */
 export const CANVAS_NODE_TYPES = {
@@ -341,13 +351,6 @@ function unredirectEdge(edge: Edge): Edge {
 }
 
 /** Whether an edge already connects the two nodes, in either direction. */
-function hasEdgeBetween(edges: Edge[], a: string, b: string): boolean {
-  return edges.some(
-    (e) =>
-      (e.source === a && e.target === b) || (e.source === b && e.target === a),
-  );
-}
-
 /** Drop duplicate edges by id and by node pair, keeping the first of each. Subagent links are
  * directional (A→B and B→A coexist), so they key by ordered pair; everything else by unordered. */
 function dedupeEdges(edges: Edge[]): Edge[] {
@@ -927,85 +930,14 @@ function CanvasInner({
    * Global connection validator. Controls which connections ReactFlow highlights
    * and allows visually. Called before onConnect fires.
    */
-  const isValidConnection = useCallback((connection: Connection | Edge) => {
-    if (connection.source === connection.target) return false;
-
-    const srcNode = nodesRef.current.find((n) => n.id === connection.source);
-    const tgtNode = nodesRef.current.find((n) => n.id === connection.target);
-    // Frames are drawn, not stored, so nothing connects to one.
-    if (!srcNode || !tgtNode) return false;
-    const isMountPair =
-      (srcNode.type === "workspace" || srcNode.type === "sandbox") &&
-      (tgtNode.type === "workspace" || tgtNode.type === "sandbox");
-    const isAgentPair = srcNode.type === "agent" && tgtNode.type === "agent";
-
-    // Subagent links are directional (A→B and B→A coexist), so dedupe by direction; every other
-    // pair allows a single edge either way.
-    const duplicate = isAgentPair
-      ? edgesRef.current.some(
-          (e) =>
-            e.source === connection.source && e.target === connection.target,
-        )
-      : hasEdgeBetween(edgesRef.current, connection.source, connection.target);
-    if (duplicate) return false;
-    // Code owns this wiring: the agent would ignore the edge, the canvas would
-    // lock it, and the next deploy would remove it.
-    if (
-      isCodeManagedEdge(
-        connectionEdge(connection, srcNode.type === "agent"),
-        (nodeId): unknown =>
-          (nodeId === srcNode.id ? srcNode : tgtNode).data.managedBy,
-      )
-    ) {
-      return false;
-    }
-
-    // Side handles serve mounts (workspace↔sandbox) and subagent links (agent↔agent) only;
-    // those pairs must use the sides on BOTH ends, never the top/bottom handles. A half-side
-    // edge would encode a null handle into its id and fail to hydrate after a reload.
-    const sourceIsSide = isSideHandle(connection.sourceHandle);
-    const targetIsSide = isSideHandle(connection.targetHandle);
-    if (sourceIsSide || targetIsSide) {
-      // A mount that would back a workspace from an agent's later sandbox is refused too.
-      return (
-        sourceIsSide &&
-        targetIsSide &&
-        (isAgentPair ||
-          (isMountPair &&
-            !introducedRuntimeRefsProblem(
-              { edges: edgesRef.current, nodes: nodesRef.current },
-              {
-                edges: [
-                  ...edgesRef.current,
-                  {
-                    id: "mount:candidate",
-                    source: connection.source,
-                    target: connection.target,
-                    type: "mount",
-                  },
-                ],
-                nodes: nodesRef.current,
-              },
-            )))
-      );
-    }
-    if (isMountPair || isAgentPair) return false;
-
-    return !introducedRuntimeRefsProblem(
-      { edges: edgesRef.current, nodes: nodesRef.current },
-      {
-        edges: [
-          ...edgesRef.current,
-          {
-            id: "candidate",
-            source: connection.source,
-            target: connection.target,
-          },
-        ],
-        nodes: nodesRef.current,
-      },
-    );
-  }, []);
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) =>
+      isValidCanvasConnection(
+        { edges: edgesRef.current, nodes: nodesRef.current },
+        connection,
+      ),
+    [],
+  );
 
   const onConnect: OnConnect = useCallback(
     (params) => {
@@ -1542,6 +1474,7 @@ function CanvasInner({
         nodeTypes={CANVAS_NODE_TYPES}
         edgeTypes={CANVAS_EDGE_TYPES}
         connectionMode={ConnectionMode.Loose}
+        connectionRadius={CONNECTION_RADIUS}
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
         maxZoom={1.5}

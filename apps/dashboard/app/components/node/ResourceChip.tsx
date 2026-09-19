@@ -26,7 +26,6 @@ export function ResourceChip({
   mountable,
   networkOn,
   nodeType,
-  orderNumber,
   status,
 }: {
   /** The line under the name while it is open, the same one its card shows. */
@@ -38,8 +37,6 @@ export function ResourceChip({
   /** Sandboxes only: draws the egress globe while it is open. */
   networkOn?: boolean;
   nodeType: string;
-  /** A sandbox's place in its agent's `sandboxes`; `details` names it while open. */
-  orderNumber?: number;
   status: ChipStatus;
 }): React.JSX.Element {
   const sideHandlesConnectable = useSideHandlesConnectable(nodeType);
@@ -75,11 +72,6 @@ export function ResourceChip({
         />
       ))}
       <div className="flex min-w-0 items-center gap-1 text-xs font-medium text-foreground">
-        {orderNumber !== undefined && !expanded && (
-          <span className="w-2.5 shrink-0 text-2xs tabular-nums text-muted-foreground">
-            {orderNumber}
-          </span>
-        )}
         <span className="shrink-0 text-muted-foreground">{icon}</span>
         <span className="min-w-0 truncate" title={label}>
           {label}

@@ -2,10 +2,10 @@
 
 /**
  * Sandbox node representing a standalone broods sandboxConfig record. A machine
- * sandbox shows its daemon's connection in place of the idle pill. Numbered by
- * its place in the agent's `sandboxes`, or marked "workspace only" when it only
- * backs a workspace: a chip inside a frame, or a card when it is the only one
- * of its kind.
+ * sandbox shows its daemon's connection in place of the idle pill. Marked
+ * "default" when it is first in the agent's `sandboxes`, or "workspace only"
+ * when it only backs a workspace: a chip inside a frame, or a card when it is
+ * the only one of its kind.
  */
 import { useCanvasFrames } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
@@ -60,7 +60,6 @@ export function SandboxNode({
         data={nodeData}
         icon={<Box className="size-3.5" />}
         status={{ color: status.color, text: status.label }}
-        where={null}
       />
     );
   }
@@ -105,7 +104,6 @@ function MachineSandboxNode({
         data={data}
         icon={<Monitor className="size-3.5" />}
         status={{ color: status.color, text: status.label }}
-        where={MACHINE_LABEL}
       />
     );
   }
@@ -156,8 +154,9 @@ function chipNote(
 }
 
 /**
- * A card's subtitle: where it runs, then its place in `sandboxes` ("1 · default",
- * "2"), or "workspace only" when no agent lists it.
+ * A card's subtitle: where it runs, then "default" when it is first in
+ * `sandboxes`, or "workspace only" when no agent lists it. The place itself is
+ * not printed; inside a frame the chip order carries it.
  */
 function orderSubtitle(
   where: string | null,
@@ -166,7 +165,6 @@ function orderSubtitle(
 ): string | undefined {
   const parts = [
     where,
-    orderNumber?.toString(),
     orderNumber === 1 ? "default" : null,
     orderNumber === undefined && workspaceOnly ? WORKSPACE_ONLY_NOTE : null,
   ].filter((part): part is string => typeof part === "string");
@@ -175,24 +173,22 @@ function orderSubtitle(
 }
 
 /**
- * A chip numbered by its place in its agents' order; the first is the default,
- * so its chip says so. A shared sandbox whose agents order it differently has
- * no one number, so it says how many agents share it instead, and one that
- * only backs a workspace says that.
+ * A chip placed by its agents' order: the frame stacks members in that order,
+ * so the top one is the default and only it says so. A shared sandbox whose
+ * agents order it differently has no one place, so it says how many agents
+ * share it instead, and one that only backs a workspace says that. Where it
+ * runs stays off the line, since the frame header already names it.
  */
 function SandboxChip({
   id,
   data,
   icon,
   status,
-  where,
 }: {
   id: string;
   data: BaseNodeData;
   icon: React.ReactNode;
   status: ChipStatus;
-  /** Where it runs, for the open chip's line; null for a cloud sandbox. */
-  where: string | null;
 }): React.JSX.Element {
   const { expandedMemberId, sandboxOrderNumbers, workspaceOnlySandboxIds } =
     useCanvasFrames();
@@ -208,7 +204,7 @@ function SandboxChip({
   return (
     <ResourceChip
       details={chipDetails(
-        orderSubtitle(where, orderNumber, workspaceOnly),
+        orderSubtitle(null, orderNumber, workspaceOnly),
         data.config?.persistent === true,
       )}
       expanded={expanded}
@@ -217,7 +213,6 @@ function SandboxChip({
       mountable={true}
       networkOn={isNetworkOn("sandbox", data)}
       nodeType="sandbox"
-      orderNumber={orderNumber}
       status={{ color: status.color, text: `${status.text}${note}` }}
     />
   );
