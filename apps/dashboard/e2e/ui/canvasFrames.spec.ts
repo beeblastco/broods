@@ -71,10 +71,11 @@ test("groups of one are cards, chips sit inside frames, a collapsed frame is one
     await expect(card).toBeVisible();
     await expect(card.locator('[data-slot="resource-chip"]')).toHaveCount(0);
   }
-  // A card says "default" in words; the digit is gone, chip order carries it.
-  await expect(
-    fixture.locator('.react-flow__node[data-id="internal-sandbox"]'),
-  ).toContainText("default");
+  // A card says "default" in words. The place used to print as a digit beside
+  // it, so the word alone proves nothing: assert the digit is gone too.
+  const lone = fixture.locator('.react-flow__node[data-id="internal-sandbox"]');
+  await expect(lone).toContainText("default");
+  await expect(lone).not.toContainText(/\d\s*·\s*default/);
   for (const frame of await frames.all()) {
     const count = Number(
       await frame.locator("span.tabular-nums").first().innerText(),
