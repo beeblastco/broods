@@ -71,9 +71,10 @@ test("groups of one are cards, chips sit inside frames, a collapsed frame is one
     await expect(card).toBeVisible();
     await expect(card.locator('[data-slot="resource-chip"]')).toHaveCount(0);
   }
+  // A card says "default" in words; the digit is gone, chip order carries it.
   await expect(
     fixture.locator('.react-flow__node[data-id="internal-sandbox"]'),
-  ).toContainText("1 · default");
+  ).toContainText("default");
   for (const frame of await frames.all()) {
     const count = Number(
       await frame.locator("span.tabular-nums").first().innerText(),
