@@ -64,11 +64,8 @@ export async function deleteAccountRuntimeData(
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
-  // The stored rows, not keys derived from current configs: an isolated
-  // namespace or a harness key would otherwise leak its machine at the provider.
-  // Before the cascade, which drops the rows and the configs the release needs.
-  // Unconditional: the account is disabled, so Convex refuses a row take and no
-  // run can re-claim a machine while it goes down.
+  // Read the stored rows before the cascade drops them: a key derived from
+  // today's configs misses an isolated namespace or a harness key.
   const reservations = await runtime.query<ReservedSandbox[]>(
     "listAccountSandboxReservations",
     { accountId: account.accountId },
