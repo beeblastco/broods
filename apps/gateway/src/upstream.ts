@@ -1,3 +1,4 @@
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import type { ObservabilityScope } from "./observability.ts";
 import { jsonError } from "./utils.ts";
 
@@ -14,12 +15,7 @@ type FetchLike = (
 export type ProxyOptions = {
   /** Request id forwarded to core so both hops log the same one. */
   requestId?: string;
-  /**
-   * Whether `X-Account-Id` is forwarded. Only the service token reads it, and
-   * that token should reach core in-cluster; once it does, set
-   * `GATEWAY_FORWARD_ACCOUNT_ID=false` so a leaked secret cannot pick an
-   * account from the public door.
-   */
+  /** Forward a client `X-Account-Id`. Off unless `GATEWAY_FORWARD_ACCOUNT_ID=true`. */
   forwardAccountId?: boolean;
 };
 
@@ -41,7 +37,9 @@ export async function proxyHttp(
   headers.delete("host");
   headers.delete("connection");
   headers.delete("upgrade");
-  if (options.forwardAccountId === false) headers.delete("x-account-id");
+  if (options.forwardAccountId !== true) headers.delete("x-account-id");
+  // `set`, not `append`: a client copy must never survive.
+  headers.set(VIA_GATEWAY_HEADER, "1");
 
   for (const coreBaseUrl of coreBaseUrls) {
     try {
@@ -79,6 +77,7 @@ export async function resolveObservabilityScope(
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            [VIA_GATEWAY_HEADER]: "1",
           },
           signal: AbortSignal.timeout(5_000),
         },

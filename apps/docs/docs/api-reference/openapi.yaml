@@ -4514,7 +4514,10 @@ components:
           type: string
           description: >-
             External server's MCP endpoint (`transport: http`). http(s) only,
-            no embedded credentials. Exactly one of url, bundle or sandbox is
+            no embedded credentials. The host must resolve to a public address:
+            core refuses a private, loopback, link-local or metadata address,
+            and refuses a redirect. A server on your own machine goes through
+            `transport: machine`. Exactly one of url, bundle or sandbox is
             required.
         sandbox:
           type: string
@@ -4527,7 +4530,7 @@ components:
           description: >-
             Hosted alternative to url (`transport: hosted`): bundled JavaScript
             module whose default export is a fetch-style MCP handler
-            (createMcpHandler). Max 10 MB inline; the tool-runner Lambda hosts
+            (createMcpHandler). Max 10 MB inline; the mcp-runner Lambda hosts
             it, one invoke per batch of requests. Larger bundles (up to 50 MB) go through
             `POST /v1/mcp/uploads` and are registered with bundleStorageId +
             sha256 instead.

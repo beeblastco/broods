@@ -6,13 +6,18 @@ import {
   type AccountRecord,
 } from "../src/shared/domain/accounts.ts";
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
 import {
   resetStorageForTests,
   setStorageForTests,
   type Storage,
 } from "../src/shared/storage.ts";
-import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  resolveBearerAuth,
+} from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
   accountId: "acct_1",
@@ -50,6 +55,7 @@ let roleSessionsByTokenHash: Record<string, RolePrincipal>;
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
   process.env.SERVICE_AUTH_SECRET = "service-secret";
+  process.env.STAGE_TICKET_SECRET = "stage-secret";
   accountsById = { [ACCOUNT.accountId]: ACCOUNT };
   accountsBySecretHash = { [ACCOUNT.secretHash]: ACCOUNT };
   agentsById = { [AGENT.agentId]: AGENT };
@@ -190,6 +196,20 @@ describe("resolveBearerAuth", () => {
     ).toBeNull();
   });
 
+  it("refuses the service token on a request the gateway proxied", async () => {
+    expect(
+      await resolveBearerAuth({
+        authorization: "Bearer service-secret",
+        "x-account-id": "acct_1",
+        [VIA_GATEWAY_HEADER]: "1",
+      }),
+    ).toBeNull();
+    expect(isServiceToken({}, "service-secret")).toBe(true);
+    expect(
+      isServiceToken({ [VIA_GATEWAY_HEADER]: "1" }, "service-secret"),
+    ).toBe(false);
+  });
+
   it("rejects the service token for disabled accounts", async () => {
     accountsById.acct_1 = { ...ACCOUNT, status: "disabled" };
     const headers = {
@@ -244,7 +264,7 @@ describe("stage session tickets", () => {
   };
 
   it("resolves a valid ticket as the stage's deployment", async () => {
-    const token = await sealStageSessionTicket(ticket, "service-secret");
+    const token = await sealStageSessionTicket(ticket, "stage-secret");
 
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${token}` }),
@@ -259,21 +279,21 @@ describe("stage session tickets", () => {
   });
 
   it("rejects a ticket signed with another secret, expired, or for a disabled account", async () => {
-    const foreign = await sealStageSessionTicket(ticket, "other-secret");
+    const foreign = await sealStageSessionTicket(ticket, "service-secret");
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${foreign}` }),
     ).toBeNull();
 
     const expired = await sealStageSessionTicket(
       { ...ticket, expiresAt: Date.now() - 1 },
-      "service-secret",
+      "stage-secret",
     );
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${expired}` }),
     ).toBeNull();
 
     accountsById[ACCOUNT.accountId] = { ...ACCOUNT, status: "disabled" };
-    const valid = await sealStageSessionTicket(ticket, "service-secret");
+    const valid = await sealStageSessionTicket(ticket, "stage-secret");
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${valid}` }),
     ).toBeNull();
