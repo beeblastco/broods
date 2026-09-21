@@ -7,7 +7,12 @@
  * not here, because the repo has no SDK fixture bundles.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  InvokeWithResponseStreamCommand,
+  LambdaClient,
+  type InvokeWithResponseStreamResponseEvent,
+} from "@aws-sdk/client-lambda";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import {
@@ -99,6 +104,42 @@ describe("hosted MCP fetch adapter", () => {
       expect((result as PromiseRejectedResult).reason.message).toBe(
         "mcp host Lambda failed: boom",
       );
+    }
+  });
+});
+
+describe("hosted MCP invoke", () => {
+  it("carries the account id as the Lambda tenant id", async () => {
+    // AWS_PROFILE outranks static keys; a real profile must never sign here.
+    delete process.env.AWS_PROFILE;
+    process.env.AWS_REGION = "eu-west-1";
+    process.env.AWS_ACCESS_KEY_ID = "test";
+    process.env.AWS_SECRET_ACCESS_KEY = "test";
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "bundles";
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "mcp-runner";
+    const frames = new TextEncoder().encode(
+      `${JSON.stringify({ t: "final", id: "1", result: ok("{}") })}\n{"t":"end"}\n`,
+    );
+    const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+    );
+
+    try {
+      const response = await hostedMcpFetch(hostedRecord())(URL, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(response.status).toBe(200);
+      const command = send.mock.calls[0]?.[0];
+      expect(command).toBeInstanceOf(InvokeWithResponseStreamCommand);
+      expect(command?.input).toMatchObject({
+        FunctionName: "mcp-runner",
+        TenantId: "acct_test",
+      });
+    } finally {
+      send.mockRestore();
     }
   });
 });
