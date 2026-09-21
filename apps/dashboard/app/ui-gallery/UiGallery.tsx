@@ -44,6 +44,8 @@ import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
 import {
   applyCanvasDrop,
   canvasDropTarget,
+  pendingDropOf,
+  sameCanvasDrop,
   type CanvasDrop,
 } from "@/app/lib/canvasDropTarget";
 import {
@@ -674,9 +676,7 @@ function CanvasDropFixture(): React.JSX.Element {
         EMPTY_COLLAPSED,
         null,
         null,
-        drop && drop.refusal === null && drop.frameId !== null
-          ? { frameId: drop.frameId, slot: drop.slot }
-          : null,
+        pendingDropOf(drop),
       ),
     [drop, edges, nodes],
   );
@@ -735,14 +735,17 @@ function CanvasDropFixture(): React.JSX.Element {
                       position: grabbed.position,
                     })
                   : null;
+              if (sameCanvasDrop(dropRef.current, next)) return;
               dropRef.current = next;
               setDrop(next);
             }}
-            onNodeDragStop={() => {
+            onNodeDragStop={(_event, grabbed) => {
               const pending = dropRef.current;
               dropRef.current = null;
               setDrop(null);
-              if (pending === null || pending.refusal !== null) return;
+              if (pending?.refusal !== null || pending.nodeId !== grabbed.id) {
+                return;
+              }
               const before = { edges: edges, mcpServers: [], nodes: nodes };
               const after = applyCanvasDrop(before, pending);
               setEdges(after.edges);

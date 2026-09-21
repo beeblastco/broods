@@ -3,6 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 import {
   applyCanvasDrop,
   canvasDropTarget,
+  sameCanvasDrop,
   type CanvasDrop,
 } from "../app/lib/canvasDropTarget";
 import type { FlatGraph } from "../app/lib/canvasFrameEdits";
@@ -101,26 +102,134 @@ describe("canvasDropTarget", () => {
     );
   });
 
-  test("wiring code owns is refused in the words the canvas already uses", () => {
-    const nodes = [
-      node("cli-agent", "agent", { x: 240, y: 0 }, { managedBy: "cli" }),
-      node("alpha", "sandbox", { x: 248, y: 172 }),
-      node("bravo", "sandbox", { x: 248, y: 224 }),
-      node("lone", "sandbox", BESIDE_FIRST_CHIP),
-    ];
+  test("a link into a `broods/` project's group is refused in its own words", () => {
+    // The `cli-` node id is what marks the edge as the project's, the way the
+    // CLI sync writes every edge it owns.
     const drop = canvasDropTarget({
       collapsedFrames: NONE,
       expandedMemberId: null,
       graph: {
         edges: [edge("cli-agent", "alpha"), edge("cli-agent", "bravo")],
         mcpServers: [],
-        nodes: nodes,
+        nodes: [
+          node("cli-agent", "agent", { x: 240, y: 0 }, { managedBy: "cli" }),
+          node("alpha", "sandbox", { x: 248, y: 172 }),
+          node("bravo", "sandbox", { x: 248, y: 224 }),
+          node("lone", "sandbox", BESIDE_FIRST_CHIP),
+        ],
       },
       nodeId: "lone",
       position: BESIDE_FIRST_CHIP,
     });
 
-    expect(drop?.refusal).toContain("Code manages");
+    expect(drop?.refusal).toBe(
+      "Code manages cli-agent. Add this link there and deploy.",
+    );
+  });
+
+  test("a group the REST API owns refuses a card the API owns too", () => {
+    // Plain ids, so only the two ends' ownership can refuse this one.
+    const drop = canvasDropTarget({
+      collapsedFrames: NONE,
+      expandedMemberId: null,
+      graph: {
+        edges: [edge("agent", "alpha"), edge("agent", "bravo")],
+        mcpServers: [],
+        nodes: [
+          node("agent", "agent", { x: 240, y: 0 }, { managedBy: "api" }),
+          node("alpha", "sandbox", { x: 248, y: 172 }),
+          node("bravo", "sandbox", { x: 248, y: 224 }),
+          node("lone", "sandbox", BESIDE_FIRST_CHIP, { managedBy: "api" }),
+        ],
+      },
+      nodeId: "lone",
+      position: BESIDE_FIRST_CHIP,
+    });
+
+    expect(drop?.refusal).toBe(
+      "Code manages agent and lone. Add this link there and deploy.",
+    );
+  });
+
+  test("a slot that would strand a mounted workspace is refused, not saved", () => {
+    // `notes` is mounted on alpha, legal only because alpha is the agent's first
+    // sandbox. Dropping `lone` above alpha would make lone first instead.
+    const graph = {
+      edges: [
+        edge("agent", "alpha"),
+        edge("agent", "bravo"),
+        edge("agent", "notes"),
+        {
+          id: "mount:alpha-right-notes-left",
+          source: "alpha",
+          sourceHandle: "right",
+          target: "notes",
+          targetHandle: "left",
+          type: "mount",
+        },
+      ],
+      mcpServers: [],
+      nodes: [
+        node(
+          "agent",
+          "agent",
+          { x: 240, y: 0 },
+          { agentConfigId: "cfg", sandboxOrder: ["alpha", "bravo"] },
+        ),
+        node("alpha", "sandbox", { x: 248, y: 172 }),
+        node("bravo", "sandbox", { x: 248, y: 224 }),
+        node("notes", "workspace", { x: 700, y: 400 }),
+        node("lone", "sandbox", BESIDE_FIRST_CHIP),
+      ],
+    };
+    const top = canvasDropTarget({
+      collapsedFrames: NONE,
+      expandedMemberId: null,
+      graph: graph,
+      nodeId: "lone",
+      position: BESIDE_FIRST_CHIP,
+    });
+    const bottom = canvasDropTarget({
+      collapsedFrames: NONE,
+      expandedMemberId: null,
+      graph: graph,
+      nodeId: "lone",
+      position: { x: 460, y: 200 },
+    });
+
+    expect(top?.slot).toBe(0);
+    expect(top?.refusal).toContain("notes");
+    // Below both chips it changes no default, so it is taken.
+    expect(bottom?.slot).toBe(2);
+    expect(bottom?.refusal).toBeNull();
+  });
+
+  test("a card pulled out of a drawn frame is no partner for a new group", () => {
+    // Dropping onto `gamma` would clear its flag and drag it back into the frame
+    // it was pulled out of, which is not the pair the preview would promise.
+    const drop = canvasDropTarget({
+      collapsedFrames: NONE,
+      expandedMemberId: null,
+      graph: {
+        edges: [
+          edge("agent", "alpha"),
+          edge("agent", "bravo"),
+          edge("agent", "gamma"),
+        ],
+        mcpServers: [],
+        nodes: [
+          node("agent", "agent", { x: 240, y: 0 }, { agentConfigId: "cfg" }),
+          node("alpha", "sandbox", { x: 248, y: 172 }),
+          node("bravo", "sandbox", { x: 248, y: 224 }),
+          node("gamma", "sandbox", { x: 900, y: 600 }, { ungrouped: true }),
+          node("lone", "sandbox", { x: 900, y: 700 }),
+        ],
+      },
+      nodeId: "lone",
+      position: { x: 900, y: 700 },
+    });
+
+    expect(drop).toBeNull();
   });
 
   test("two loose cards form a group, and the box is offered quietly", () => {
@@ -242,9 +351,18 @@ describe("applyCanvasDrop", () => {
       drop!,
     );
 
-    expect(dataOf(after.nodes, "uploads").frameOrder).toBe(0);
-    expect(dataOf(after.nodes, "docs").frameOrder).toBe(1);
-    expect(dataOf(after.nodes, "notes").frameOrder).toBe(2);
+    expect(dataOf(after.nodes, "uploads").frameSlot).toEqual({
+      group: "frame:agent:workspace:s3",
+      slot: 0,
+    });
+    expect(dataOf(after.nodes, "docs").frameSlot).toEqual({
+      group: "frame:agent:workspace:s3",
+      slot: 1,
+    });
+    expect(dataOf(after.nodes, "notes").frameSlot).toEqual({
+      group: "frame:agent:workspace:s3",
+      slot: 2,
+    });
     expect(memberIdsOf(after, "uploads")).toEqual(["uploads", "docs", "notes"]);
   });
 
@@ -289,8 +407,8 @@ describe("applyCanvasDrop", () => {
     const after = applyCanvasDrop(graph, drop!);
 
     expect(drop?.refusal).toBeNull();
-    expect(dataOf(after.nodes, "srv-three").frameOrder).toBeUndefined();
-    expect(dataOf(after.nodes, "srv-one").frameOrder).toBeUndefined();
+    expect(dataOf(after.nodes, "srv-three").frameSlot).toBeUndefined();
+    expect(dataOf(after.nodes, "srv-one").frameSlot).toBeUndefined();
     // Still the order the labels and the computer give it.
     expect(
       deriveGroups(after.nodes, after.edges, graph.mcpServers).find((group) =>
@@ -329,6 +447,34 @@ describe("applyCanvasDrop", () => {
       "alpha",
       "bravo",
     ]);
+  });
+});
+
+describe("sameCanvasDrop", () => {
+  const drop: CanvasDrop = {
+    frameId: CLOUD_FRAME,
+    groupId: CLOUD_FRAME,
+    key: "cloud",
+    kind: "sandbox",
+    label: "Cloud sandbox",
+    memberIds: ["alpha", "bravo"],
+    nodeId: "lone",
+    ownerIds: ["agent"],
+    refusal: null,
+    slot: 0,
+  };
+
+  test("two offers of the same slot in the same group are the same", () => {
+    expect(sameCanvasDrop(drop, { ...drop })).toBe(true);
+    expect(sameCanvasDrop(null, null)).toBe(true);
+  });
+
+  test("a different slot, group, reason or member list is a different offer", () => {
+    expect(sameCanvasDrop(drop, { ...drop, slot: 1 })).toBe(false);
+    expect(sameCanvasDrop(drop, { ...drop, frameId: null })).toBe(false);
+    expect(sameCanvasDrop(drop, { ...drop, refusal: "no" })).toBe(false);
+    expect(sameCanvasDrop(drop, { ...drop, memberIds: ["alpha"] })).toBe(false);
+    expect(sameCanvasDrop(drop, null)).toBe(false);
   });
 });
 

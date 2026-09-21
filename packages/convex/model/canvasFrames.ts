@@ -10,9 +10,9 @@
  *
  * Two things about a group are stored, both on its member nodes. A node whose
  * `data.ungrouped` is set joins no group at all and stays a card, which is how
- * the canvas pulls a member out of a frame. A node's `data.frameOrder` is the
- * place a drop gave it, which is how a card dropped into a frame lands in the
- * slot it was dropped on rather than where the sort would put it.
+ * the canvas pulls a member out of a frame. A node's `data.frameSlot` is the
+ * place a drop gave it in one named group, which is how a card dropped into a
+ * frame lands where it was dropped rather than where the sort would put it.
  *
  * Also the relations frames and layout both read off the flat graph: which
  * agents reference a resource, which sandbox a workspace resolves to, and
@@ -309,7 +309,7 @@ export function deriveCanvasGroups(
     frame.memberIds = (members.get(frame.id) ?? [])
       .sort(
         (a, b) =>
-          handOrderOf(a) - handOrderOf(b) ||
+          handSlotOf(a, frame.id) - handSlotOf(b, frame.id) ||
           orderNumberOf(numbers, a.id) - orderNumberOf(numbers, b.id) ||
           compareByLabel(a, b) ||
           a.id.localeCompare(b.id),
@@ -599,16 +599,28 @@ export function workspaceSandboxIds(
 }
 
 /**
- * The place a drop gave this member, or last when it has none. A drop writes it
- * on every member of the group at once, so a group is either ordered by hand or
- * ordered by the rules, never half of each. Sandbox groups are ordered by their
- * agents' `sandboxes` instead, so nothing writes this on a sandbox: the chip's
- * place and the place its badge shows stay the same number.
+ * The place a drop gave this member in this group, or last when it has none. A
+ * drop writes it on every member of the group at once, so a group is either
+ * ordered by hand or ordered by the rules, never half of each.
+ *
+ * It names the group it was given in, because a group's id is its members' kind,
+ * key and owning agents: re-wire a card to another agent and the slot it was
+ * given somewhere else stops counting instead of following it there. Sandbox
+ * groups are ordered by their agents' `sandboxes` instead, so nothing writes
+ * this on a sandbox: the chip's place and the place its badge shows stay the
+ * same number.
  */
-function handOrderOf(node: LayoutNode): number {
-  const order: unknown = node.data.frameOrder;
+function handSlotOf(node: LayoutNode, frameId: string): number {
+  const stored: unknown = node.data.frameSlot;
+  if (typeof stored !== "object" || stored === null) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const slot = "slot" in stored ? stored.slot : undefined;
+  const group = "group" in stored ? stored.group : undefined;
 
-  return typeof order === "number" ? order : Number.MAX_SAFE_INTEGER;
+  return group === frameId && typeof slot === "number"
+    ? slot
+    : Number.MAX_SAFE_INTEGER;
 }
 
 function labelOf(node: LayoutNode): string {

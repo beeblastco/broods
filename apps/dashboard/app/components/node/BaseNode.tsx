@@ -26,8 +26,11 @@ export type BaseNodeData = {
   properties?: { color: string };
   /** Pulled out of its group by hand: it draws as a card, never as a chip. */
   ungrouped?: boolean;
-  /** The slot a drop gave it in its group, 0 first; unset means the sort decides. */
-  frameOrder?: number;
+  /**
+   * The slot a drop gave it, 0 first, and the group it was given in. Unset, or
+   * set for another group, means the sort decides.
+   */
+  frameSlot?: { group: string; slot: number };
   // CLI-resolved forced read-only state for a workspace node (e.g. a `sandbox: null`
   // ref with no other writer). The pure-canvas graph can't express it, so analysis
   // honors this flag over the topology-inferred "inherited" state.

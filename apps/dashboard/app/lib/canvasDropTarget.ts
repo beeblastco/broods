@@ -20,13 +20,16 @@ import {
 import { connectionRefusal } from "@/app/lib/canvasConnections";
 import {
   cardLabel,
+  introducedRuntimeRefsProblem,
   setUngrouped,
   type FlatGraph,
 } from "@/app/lib/canvasFrameEdits";
+import { runtimeRefsProblemText } from "@/app/lib/canvasRuntimeRefs";
 import {
   COLLAPSED_FRAME_HEIGHT,
   deriveGroups,
   serversByNode,
+  type PendingDrop,
 } from "@/app/lib/canvasFrameNodes";
 import {
   agentOwners,
@@ -72,6 +75,12 @@ const KIND_SUBJECT: Record<FrameKind, string> = {
 export type CanvasDrop = {
   /** The frame it would join, or null while its group is still one loose card. */
   frameId: string | null;
+  /**
+   * The id of the group it lands in, which a stored slot names so that it stops
+   * counting if the card is later wired somewhere else. Empty while the drop is
+   * only being tried out, before that group is known.
+   */
+  groupId: string;
   /** What splits groups of this kind: where a sandbox runs, an MCP transport. */
   key: string;
   /** Which of the three framed kinds the group holds. */
@@ -91,7 +100,10 @@ export type CanvasDrop = {
 };
 
 /** A group a dragged card came near: a drawn frame, or a card that is a group on its own. */
-type DropCandidate = Omit<CanvasDrop, "nodeId" | "refusal" | "slot"> & {
+type DropCandidate = Omit<
+  CanvasDrop,
+  "groupId" | "nodeId" | "refusal" | "slot"
+> & {
   /** Collapsed to one card, so it shows no slots to choose between. */
   collapsed: boolean;
   /** The box on screen the card is measured against. */
@@ -103,6 +115,10 @@ type DropCandidate = Omit<CanvasDrop, "nodeId" | "refusal" | "slot"> & {
  * back in its group, and in the slot it was dropped on. Only for a drop whose
  * `refusal` is null. It writes what the drop says without judging it again, and
  * leaves a sandbox order code owns alone.
+ *
+ * With an empty `groupId` it writes no cosmetic slot, which is how the rules try
+ * a drop out before they know which group it lands in. Membership is the same
+ * either way: a slot only sorts a group, it never decides who is in it.
  */
 export function applyCanvasDrop(
   graph: FlatGraph,
@@ -185,6 +201,17 @@ export function canvasDropTarget(params: {
   );
 }
 
+/**
+ * The slot the drawn graph should open for this drop, or null when none does.
+ * Only a frame opens one, and only for a drop it will take: a refused drop is
+ * outlined instead, and two loose cards have no frame to grow yet.
+ */
+export function pendingDropOf(drop: CanvasDrop | null): PendingDrop | null {
+  return drop !== null && drop.refusal === null && drop.frameId !== null
+    ? { frameId: drop.frameId, slot: drop.slot }
+    : null;
+}
+
 /** Whether two drop offers say the same thing, so the canvas can keep the first. */
 export function sameCanvasDrop(
   a: CanvasDrop | null,
@@ -246,8 +273,13 @@ function candidatesFor(
 ): DropCandidate[] {
   const servers = serversByNode(graph.mcpServers ?? []);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const frames = framesOf(
+    deriveGroups(graph.nodes, graph.edges, graph.mcpServers),
+  );
+  const framed = new Set(frames.flatMap((frame) => frame.memberIds));
+  const drawn = new Set(frames.map((frame) => frame.id));
   // Groups as they would be with nothing pulled out, so a card holding the flag
-  // still offers the group it came from.
+  // still says which group it came from.
   const homes = deriveGroups(
     setUngrouped(
       graph.nodes,
@@ -257,10 +289,6 @@ function candidatesFor(
     graph.edges,
     graph.mcpServers,
   );
-  const frames = framesOf(
-    deriveGroups(graph.nodes, graph.edges, graph.mcpServers),
-  );
-  const framed = new Set(frames.flatMap((frame) => frame.memberIds));
   const owners = agentOwners(graph.nodes, graph.edges);
 
   return [
@@ -294,6 +322,10 @@ function candidatesFor(
       const group = frameGroupOf(node, servers);
       if (!group) return [];
       const home = homes.find((item) => item.memberIds.includes(node.id));
+      // A card pulled out of a frame that is still drawn rejoins through the
+      // frame, not through the card: dropping onto the card would pull it back
+      // in as well, which is not the two-card group the preview would promise.
+      if (home && drawn.has(home.id)) return [];
 
       return [
         {
@@ -345,6 +377,8 @@ function offerOf(
   );
   const drop: CanvasDrop = {
     frameId: target.frameId,
+    // Not known until the drop has been tried: see `applyCanvasDrop`.
+    groupId: "",
     key: target.key,
     kind: target.kind,
     label: target.label,
@@ -355,33 +389,59 @@ function offerOf(
     slot: cursorSlot,
   };
   const blocked = blockingReason(graph, dragged, target, context.group);
-  const landed =
-    blocked === null
-      ? groupOf(applyCanvasDrop(graph, drop), graph.mcpServers, dragged.id)
+  const after = blocked === null ? applyCanvasDrop(graph, drop) : null;
+  const landed = after ? groupOf(after, graph.mcpServers, dragged.id) : null;
+  // Exactly this group, plus the card. A bigger one means the drop would move
+  // members the preview never named, so it is not the drop that was offered.
+  const joined =
+    landed !== null &&
+    landed.memberIds.length === target.memberIds.length + 1 &&
+    target.memberIds.every((id) => landed.memberIds.includes(id));
+  // The layout write refuses a graph that breaks a runtime rule, so a drop that
+  // would break one is refused here rather than saved and rolled back. Reordering
+  // an agent's sandboxes can: only its first backs a workspace.
+  const problem =
+    after !== null && joined
+      ? introducedRuntimeRefsProblem(
+          { edges: graph.edges, nodes: graph.nodes },
+          { edges: after.edges, nodes: after.nodes },
+        )
       : null;
-  const split =
-    blocked === null &&
-    (landed === null ||
-      !target.memberIds.every((id) => landed.memberIds.includes(id)));
 
   return {
     ...drop,
-    refusal: blocked ?? (split ? splitReason(graph, dragged, target) : null),
-    // The slot shown is the one the card really takes. Where code owns a sandbox
-    // group's order, that is the place the rules give it, not the cursor's.
-    slot: landed ? landed.memberIds.indexOf(dragged.id) : cursorSlot,
+    groupId: landed?.id ?? "",
+    refusal:
+      blocked ??
+      (problem !== null ? runtimeRefsProblemText(problem) : null) ??
+      (after !== null && !joined ? splitReason(graph, dragged, target) : null),
+    // The slot shown is the one the card really takes. A group that orders itself
+    // keeps the place its own rules give; every other group takes the cursor's.
+    slot:
+      ordersItself(target) && landed !== null
+        ? landed.memberIds.indexOf(dragged.id)
+        : cursorSlot,
   };
 }
 
 /**
- * Nodes with the drop's order written where the derivation reads it.
- *
- * Two groups already order themselves by something that means more than looks,
- * so neither stores a slot: a sandbox group is its agents' `sandboxes`, which the
- * drop rewrites instead, and a machine MCP group follows the computers its
- * servers run on, so that its runs-on edges never cross. Every other group's
- * order is cosmetic and each member keeps its own slot. An agent code manages
- * keeps the order its project gives it.
+ * Whether the group's own order means more than looks, so a drop stores no slot
+ * for it: a sandbox group is its agents' `sandboxes`, which the drop rewrites
+ * instead, and a machine MCP group follows the computers its servers run on, so
+ * that its runs-on edges never cross.
+ */
+function ordersItself(group: Pick<CanvasDrop, "key" | "kind">): boolean {
+  return (
+    group.kind === "sandbox" ||
+    (group.kind === "mcp" && group.key === "machine")
+  );
+}
+
+/**
+ * Nodes with the drop's order written where the derivation reads it: a sandbox
+ * group rewrites its agents' `sandboxes`, and every group whose order is only
+ * cosmetic writes each member's own slot. A group that orders itself stores
+ * nothing, and an agent code manages keeps the order its project gives it.
  */
 function orderedNodes(
   nodes: readonly Node[],
@@ -389,16 +449,22 @@ function orderedNodes(
   drop: CanvasDrop,
   order: readonly string[],
 ): Node[] {
-  if (drop.kind === "mcp" && drop.key === "machine") return [...nodes];
   if (drop.kind !== "sandbox") {
+    if (ordersItself(drop) || drop.groupId === "") return [...nodes];
     const slots = new Map(order.map((id, index) => [id, index]));
 
     return nodes.map((node) => {
       const slot = slots.get(node.id);
 
-      return slot === undefined || node.data.frameOrder === slot
+      return slot === undefined
         ? node
-        : { ...node, data: { ...node.data, frameOrder: slot } };
+        : {
+            ...node,
+            data: {
+              ...node.data,
+              frameSlot: { group: drop.groupId, slot: slot },
+            },
+          };
     });
   }
   const previous = order[drop.slot - 1];

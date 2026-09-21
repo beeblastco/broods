@@ -78,6 +78,13 @@ test("a workspace over a sandbox group is refused and opens no slot", async ({
   const fixture = page.locator('[data-fixture="canvas-drop"]');
   await fixture.scrollIntoViewIfNeeded();
 
+  const log = fixture.locator('[data-testid="drop-log"]');
+  // A drop that works first, so the log has something a refused drop could
+  // wrongly overwrite.
+  await aim(page, fixture, "spare", await belowMiddleOf(fixture, "box-two"));
+  await page.mouse.up();
+  await expect(log).toHaveText("joined Cloud sandbox at 2");
+
   await aim(page, fixture, "notes", await aboveMiddleOf(fixture, "box-one"));
   await expect(fixture.locator('[data-slot="canvas-refusal"]')).toContainText(
     "A workspace joins no sandbox group.",
@@ -85,7 +92,7 @@ test("a workspace over a sandbox group is refused and opens no slot", async ({
   await expect(fixture.locator('[data-slot="frame-drop-slot"]')).toHaveCount(0);
 
   await page.mouse.up();
-  await expect(fixture.locator('[data-testid="drop-log"]')).toHaveText("");
+  await expect(log).toHaveText("joined Cloud sandbox at 2");
   // Still a card, still out of every group.
   await expect(
     fixture.locator('.react-flow__node[data-id="notes"] [data-slot="card"]'),
@@ -105,6 +112,14 @@ test("two loose cards outline the group they would form", async ({ page }) => {
   await aim(page, fixture, "spare", await centreOf(nodeOf(fixture, "solo")));
   await expect(preview).toBeVisible();
   await expect(preview).toContainText("Cloud sandbox");
+  // The box is the frame that will form, one chip wide, not a box drawn around
+  // wherever the two cards happen to be sitting.
+  const box = await preview.boundingBox();
+  const card = await nodeOf(fixture, "solo").boundingBox();
+  expect(box?.width ?? 0).toBeLessThan((card?.width ?? 0) * 1.4);
+  await expect(
+    fixture.locator('[data-slot="canvas-drop-preview-slot"]'),
+  ).toBeVisible();
 
   await page.mouse.up();
   await expect(fixture.locator('[data-testid="drop-log"]')).toContainText(

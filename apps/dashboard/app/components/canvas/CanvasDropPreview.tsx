@@ -1,11 +1,10 @@
 "use client";
 
 /**
- * What a drag says about the group under it: a dashed box around the two cards
- * that would become a group, or the reason the group it is over will not take
- * the card. A frame that will take it opens its own slot, so this draws nothing
- * over one. A child of `<ReactFlow>`, like the connection refusal it shares its
- * notice with.
+ * What a drag says about the group under it: the frame two loose cards would
+ * become, or the reason the group it is over will not take the card. A frame that
+ * will take it opens its own slot, so this draws nothing over one. A child of
+ * `<ReactFlow>`, like the connection refusal it shares its notice with.
  */
 import {
   CanvasNotice,
@@ -16,8 +15,14 @@ import type { CanvasDrop } from "@/app/lib/canvasDropTarget";
 import {
   FRAME_HEADER_HEIGHT,
   FRAME_PADDING,
+  frameMemberPositions,
+  frameSize,
+  type FrameKind,
 } from "@broods/convex/model/canvasFrames";
 import { useInternalNode, ViewportPortal } from "@xyflow/react";
+
+/** The id the pending slot holds while the frame is only a preview. */
+const SLOT_ID = "canvas-drop-preview-slot";
 
 export function CanvasDropPreview({
   drop,
@@ -39,39 +44,44 @@ export function CanvasDropPreview({
   if (drop.frameId !== null || drop.memberIds.length !== 1) return null;
 
   return (
-    <FormingBox
-      draggedId={drop.nodeId}
+    <FormingFrame
+      kind={drop.kind}
       label={drop.label}
-      partnerId={drop.memberIds[0]}
+      memberId={drop.memberIds[0]}
+      slot={drop.slot}
     />
   );
 }
 
 /**
- * The group two loose cards would form: the box a frame would draw around both,
- * already carrying the name that frame will take. Drawn in flow coordinates, so
- * it pans and zooms with the cards and follows the one being dragged.
+ * The frame two loose cards would form: its box, at the size and place it will
+ * really take, with the slot the dragged card would fill.
+ *
+ * A new frame takes the origin of the card already in the group, which is what
+ * `reconcileFramePositions` gives it, so the preview is the outcome rather than a
+ * box drawn around wherever the two cards happen to be.
  */
-function FormingBox({
-  draggedId,
+function FormingFrame({
+  kind,
   label,
-  partnerId,
+  memberId,
+  slot,
 }: {
-  draggedId: string;
+  kind: FrameKind;
   label: string;
-  partnerId: string;
+  memberId: string;
+  slot: number;
 }): React.JSX.Element | null {
-  const dragged = useInternalNode(draggedId);
-  const partner = useInternalNode(partnerId);
-  if (!dragged || !partner) return null;
-  const boxes = [dragged, partner].map((node) => ({
-    bottom: node.internals.positionAbsolute.y + (node.measured.height ?? 0),
-    right: node.internals.positionAbsolute.x + (node.measured.width ?? 0),
-    x: node.internals.positionAbsolute.x,
-    y: node.internals.positionAbsolute.y,
-  }));
-  const x = Math.min(...boxes.map((box) => box.x)) - FRAME_PADDING;
-  const y = Math.min(...boxes.map((box) => box.y)) - FRAME_HEADER_HEIGHT;
+  const member = useInternalNode(memberId);
+  if (!member) return null;
+  const shape = { kind: kind, memberIds: [memberId] };
+  shape.memberIds.splice(slot, 0, SLOT_ID);
+  const size = frameSize(shape);
+  const origin = {
+    x: member.internals.positionAbsolute.x - FRAME_PADDING,
+    y: member.internals.positionAbsolute.y - FRAME_HEADER_HEIGHT,
+  };
+  const slotAt = frameMemberPositions(origin, shape).get(SLOT_ID);
 
   return (
     <ViewportPortal>
@@ -79,16 +89,26 @@ function FormingBox({
         data-slot="canvas-drop-preview"
         className="pointer-events-none absolute top-(--preview-y) left-(--preview-x) h-(--preview-height) w-(--preview-width) rounded-md border border-dashed border-canvas-mount"
         style={{
-          "--preview-height": `${Math.max(...boxes.map((box) => box.bottom)) + FRAME_PADDING - y}px`,
-          "--preview-width": `${Math.max(...boxes.map((box) => box.right)) + FRAME_PADDING - x}px`,
-          "--preview-x": `${x}px`,
-          "--preview-y": `${y}px`,
+          "--preview-height": `${size.height}px`,
+          "--preview-width": `${size.width}px`,
+          "--preview-x": `${origin.x}px`,
+          "--preview-y": `${origin.y}px`,
         }}
       >
         <div className="flex h-7 items-center px-2.5 text-2xs text-canvas-mount">
           {label}
         </div>
       </div>
+      {slotAt && (
+        <div
+          data-slot="canvas-drop-preview-slot"
+          className="pointer-events-none absolute top-(--slot-y) left-(--slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
+          style={{
+            "--slot-x": `${slotAt.x}px`,
+            "--slot-y": `${slotAt.y}px`,
+          }}
+        />
+      )}
     </ViewportPortal>
   );
 }

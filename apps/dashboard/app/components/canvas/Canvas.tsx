@@ -64,6 +64,7 @@ import {
 import {
   applyCanvasDrop,
   canvasDropTarget,
+  pendingDropOf,
   sameCanvasDrop,
   type CanvasDrop,
 } from "@/app/lib/canvasDropTarget";
@@ -532,10 +533,7 @@ function CanvasInner({
         collapsedFrames,
         expandedMemberId,
         framedGraphRef.current,
-        // A frame marks the drop it will take; a refused one is outlined instead.
-        drop && drop.refusal === null && drop.frameId !== null
-          ? { frameId: drop.frameId, slot: drop.slot }
-          : null,
+        pendingDropOf(drop),
       ),
     [nodes, edges, mcpServers, collapsedFrames, expandedMemberId, drop],
   );
@@ -1143,10 +1141,15 @@ function CanvasInner({
     [editGraph],
   );
 
-  /** Block DB-sync resets while a drag is in flight so remote echoes can't clobber it. */
+  /**
+   * Block DB-sync resets while a drag is in flight so remote echoes can't clobber
+   * it, and drop any refusal left over from a connection: the canvas shows one
+   * notice, and this drag is about to own it.
+   */
   const onNodeDragStart: OnNodeDrag = useCallback(() => {
     isDraggingNode.current = true;
-  }, []);
+    clearRefusal();
+  }, [clearRefusal]);
 
   /**
    * Offer the group under the card being dragged. One card only: dragging a
