@@ -74,6 +74,8 @@ export type NodeLinkAction =
       locked: boolean;
       /** A workspace↔sandbox mount reads "Unmount". */
       mount: boolean;
+      /** The linked card's node type, which picks the row's icon. */
+      otherType: Node["type"];
     };
 
 /**
@@ -283,6 +285,7 @@ export function nodeLinkActions(
             : `called by ${cardLabel(other)}`,
       locked: edge.deletable === false,
       mount: edgeKind(edge) === "mount",
+      otherType: other.type,
     });
 
     return actions;

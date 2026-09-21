@@ -1,6 +1,6 @@
 import { dns } from "bun";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { mcpConnection } from "../src/harness/mcp/client.ts";
+import { listMcpTools, mcpConnection } from "../src/harness/mcp/client.ts";
 import {
   clearMcpOauthTokens,
   mcpAccessToken,
@@ -251,5 +251,34 @@ describe("mcpConnection oauth overlay", () => {
 
     expect(connection.oauth).toBeUndefined();
     expect(connection.headers).toEqual({ "X-Extra": "1" });
+  });
+});
+
+describe("mcp transport fetch", () => {
+  it("refuses a server url that resolves to a private address", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "10.0.0.8", family: 4, ttl: 30 },
+    ]);
+    const dialed: string[] = [];
+    globalThis.fetch = (async (input) => {
+      dialed.push(String(input));
+
+      return new Response("{}");
+    }) as typeof fetch;
+    try {
+      await expect(
+        listMcpTools(
+          mcpConnection(
+            oauthRecord({ oauth: undefined, url: "https://mcp.example.com/" }),
+            undefined,
+          ),
+        ),
+      ).rejects.toThrow(/resolves to a private address/);
+    } finally {
+      lookup.mockRestore();
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(dialed).toEqual([]);
   });
 });

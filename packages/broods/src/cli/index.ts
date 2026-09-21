@@ -993,7 +993,8 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   if (missingPolicies.length > 0) {
     printWarning(
       `⚠ ${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
-        `in this deploy and will be ignored at runtime: ${missingPolicies.join(", ")}`,
+        `in this deploy. One that is not an existing policy id refuses every action ` +
+        `at runtime: ${missingPolicies.join(", ")}`,
     );
   }
 }

@@ -4,7 +4,7 @@
  */
 
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
-import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
+import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
@@ -21,7 +21,6 @@ import {
 import {
   booleanEnv,
   getHarnessPublicUrl,
-  optionalEnv,
   positiveIntegerEnv,
 } from "../shared/env.ts";
 import {
@@ -372,13 +371,8 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
     return methodNotAllowed(["POST"]);
   }
 
-  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
   const token = extractBearerToken(request.headers.authorization);
-  if (
-    !serviceSecret ||
-    !token ||
-    !timingSafeStringEqual(token, serviceSecret)
-  ) {
+  if (!token || !isServiceToken(request.headers, token)) {
     return errorResponse(401, "Unauthorized");
   }
 

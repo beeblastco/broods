@@ -167,6 +167,33 @@ const CASES: DecisionCase[] = [
     auditedRuleIds: ["watch"],
     allow: false,
   },
+  {
+    name: "audited allow beside an enforcing allow-list still default-denies",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "enforce",
+          rules: [
+            {
+              id: "allow-read",
+              effect: "allow",
+              actions: ["tool.call"],
+              resources: { toolNames: ["read"] },
+            },
+          ],
+        },
+        {
+          mode: "audit",
+          rules: [{ id: "trial", effect: "allow", actions: ["tool.call"] }],
+        },
+      ],
+    },
+    matchedRuleIds: [],
+    auditedRuleIds: [],
+    allow: false,
+  },
 ];
 
 async function main(): Promise<number> {

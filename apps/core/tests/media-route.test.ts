@@ -38,12 +38,12 @@ mock.module("../src/shared/s3.ts", () => ({
 const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
-const SECRET = "service-auth-secret";
+const SECRET = "media-ticket-secret";
 
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  process.env.SERVICE_AUTH_SECRET = SECRET;
+  process.env.MEDIA_TICKET_SECRET = SECRET;
   headS3ObjectMock.mockClear();
   readS3BytesMock.mockClear();
   headS3ObjectMock.mockImplementation(async () => ({
@@ -92,6 +92,7 @@ describe("handleMediaRequest", () => {
 
   it("refuses a ticket sealed with another secret", async (): Promise<void> => {
     const { handleMediaRequest } = await import("../src/media.ts");
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
     const forged = sealMediaTicket(
       {
         accountId: ACCOUNT,
@@ -99,13 +100,22 @@ describe("handleMediaRequest", () => {
         namespace: NS,
         path: "pics/shot.png",
       },
-      "not-the-service-secret",
+      "service-secret",
     );
 
     const response = await handleMediaRequest(mediaRequest(forged));
 
     expect(response.status).toBe(404);
     expect(readS3BytesMock).not.toHaveBeenCalled();
+  });
+
+  it("still opens a ticket sealed with a rotated-out secret that is kept in the list", async (): Promise<void> => {
+    const { handleMediaRequest } = await import("../src/media.ts");
+    process.env.MEDIA_TICKET_SECRET = `next-secret, ${SECRET}`;
+
+    const response = await handleMediaRequest(mediaRequest(ticket()));
+
+    expect(response.status).toBe(200);
   });
 
   it("types the response from the extension, not from the stored object", async (): Promise<void> => {
