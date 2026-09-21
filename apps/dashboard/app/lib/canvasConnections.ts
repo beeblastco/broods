@@ -1,7 +1,8 @@
 /**
- * The rule that decides whether an edge the user drags is allowed. React Flow
- * calls it while the line is still in the air, to highlight or refuse the drop,
- * and the canvas calls nothing else before saving the edge.
+ * The rule that decides whether an edge the user drags is allowed, and the
+ * sentence that says why not. React Flow asks while the line is still in the
+ * air, the canvas shows the reason at the top, and nothing else is checked
+ * before the edge is saved.
  *
  * Pure and exported on purpose: the rules are subtle enough that the
  * `/ui-gallery` connection fixture drives this exact function, so a spec can
@@ -13,30 +14,39 @@ import {
   isSideHandle,
 } from "@/app/components/canvas/edgeOwnership";
 import {
+  cardLabel,
   introducedRuntimeRefsProblem,
   type FlatGraph,
 } from "@/app/lib/canvasFrameEdits";
+import { runtimeRefsProblemText } from "@/app/lib/canvasRuntimeRefs";
 import type { Connection, Edge } from "@xyflow/react";
 
 /** The graph a connection is judged against. */
 export type ConnectionGraph = Pick<FlatGraph, "edges" | "nodes">;
 
 /**
- * Whether the canvas accepts this connection. Refused when either end is
- * missing, when the two ends already share an edge, when code owns the wiring,
- * when only one end sits on a side handle, or when the edge would leave an
- * agent with a workspace mounted on a sandbox that is not its first.
+ * Why the canvas refuses this connection, as the sentence the refusal notice
+ * shows, or null when it is accepted. Refused when either end is missing, when
+ * the two ends already share an edge, when code owns the wiring, when only one
+ * end sits on a side handle, or when the edge would leave an agent with a
+ * workspace mounted on a sandbox that is not its first.
  */
-export function isValidCanvasConnection(
+export function connectionRefusal(
   graph: ConnectionGraph,
   connection: Connection | Edge,
-): boolean {
-  if (connection.source === connection.target) return false;
+): string | null {
+  if (connection.source === connection.target) {
+    return "A card can't connect to itself.";
+  }
 
   const srcNode = graph.nodes.find((node) => node.id === connection.source);
   const tgtNode = graph.nodes.find((node) => node.id === connection.target);
   // Frames are drawn, not stored, so nothing connects to one.
-  if (!srcNode || !tgtNode) return false;
+  if (!srcNode || !tgtNode) {
+    return "A group can't take a connection. Open it and connect to a card inside.";
+  }
+  const srcLabel = cardLabel(srcNode);
+  const tgtLabel = cardLabel(tgtNode);
   const isMountPair =
     (srcNode.type === "workspace" || srcNode.type === "sandbox") &&
     (tgtNode.type === "workspace" || tgtNode.type === "sandbox");
@@ -51,7 +61,7 @@ export function isValidCanvasConnection(
           edge.target === connection.target,
       )
     : hasEdgeBetween(graph.edges, connection.source, connection.target);
-  if (duplicate) return false;
+  if (duplicate) return `${srcLabel} is already connected to ${tgtLabel}.`;
   // Code owns this wiring: the agent would ignore the edge, the canvas would
   // lock it, and the next deploy would remove it.
   if (
@@ -61,28 +71,37 @@ export function isValidCanvasConnection(
         (nodeId === srcNode.id ? srcNode : tgtNode).data.managedBy,
     )
   ) {
-    return false;
+    return `${srcLabel} and ${tgtLabel} are managed through code. Wire them there and deploy.`;
   }
 
-  // Side handles serve mounts (workspace↔sandbox) and subagent links
-  // (agent↔agent) only; those pairs must use the sides on BOTH ends, never the
-  // top/bottom handles. A half-side edge would encode a null handle into its id
-  // and fail to hydrate after a reload.
-  const sourceIsSide = isSideHandle(connection.sourceHandle);
-  const targetIsSide = isSideHandle(connection.targetHandle);
-  if (sourceIsSide || targetIsSide) {
-    // A mount that would back a workspace from an agent's later sandbox is
-    // refused too.
-    return (
-      sourceIsSide &&
-      targetIsSide &&
-      (isAgentPair ||
-        (isMountPair && !wouldStrandAWorkspace(graph, connection, "mount")))
-    );
-  }
-  if (isMountPair || isAgentPair) return false;
+  const wrongHandles = handleRefusal(
+    connection,
+    isAgentPair ? "subagent" : isMountPair ? "mount" : "service",
+    srcLabel,
+    tgtLabel,
+  );
+  // A subagent link carries no runtime refs, so its handles are its only rule.
+  if (wrongHandles !== null || isAgentPair) return wrongHandles;
 
-  return !wouldStrandAWorkspace(graph, connection, undefined);
+  // An edge that would back a workspace from an agent's later sandbox is
+  // refused too. A problem the graph already had is not this edge's to answer for.
+  const problem = introducedRuntimeRefsProblem(
+    { edges: graph.edges, nodes: graph.nodes },
+    {
+      edges: [
+        ...graph.edges,
+        {
+          id: isMountPair ? "mount:candidate" : "candidate",
+          source: connection.source,
+          target: connection.target,
+          type: isMountPair ? "mount" : undefined,
+        },
+      ],
+      nodes: graph.nodes,
+    },
+  );
+
+  return problem ? `${runtimeRefsProblemText(problem)}.` : null;
 }
 
 /** Whether these two nodes already share an edge, in either direction. */
@@ -99,26 +118,27 @@ export function hasEdgeBetween(
 }
 
 /**
- * Whether adding this edge puts a workspace on a sandbox that is not its
- * agent's first, which the config API refuses. A problem the graph already had
- * is not this edge's to answer for.
+ * Side handles serve mounts (workspace↔sandbox) and subagent links
+ * (agent↔agent) only; those pairs must use the sides on BOTH ends, never the
+ * top/bottom handles. A half-side edge would encode a null handle into its id
+ * and fail to hydrate after a reload.
  */
-function wouldStrandAWorkspace(
-  graph: ConnectionGraph,
+function handleRefusal(
   connection: Connection | Edge,
-  type: "mount" | undefined,
-): boolean {
-  const candidate: Edge = {
-    id: type === undefined ? "candidate" : "mount:candidate",
-    source: connection.source,
-    target: connection.target,
-    type: type,
-  };
+  kind: "mount" | "service" | "subagent",
+  srcLabel: string,
+  tgtLabel: string,
+): string | null {
+  const sourceIsSide = isSideHandle(connection.sourceHandle);
+  const targetIsSide = isSideHandle(connection.targetHandle);
+  if (kind === "service") {
+    return sourceIsSide || targetIsSide
+      ? "Side handles link two agents, or mount a workspace on a sandbox. Attach a service from the bottom of its agent to the top of the card."
+      : null;
+  }
+  if (sourceIsSide && targetIsSide) return null;
 
-  return (
-    introducedRuntimeRefsProblem(
-      { edges: graph.edges, nodes: graph.nodes },
-      { edges: [...graph.edges, candidate], nodes: graph.nodes },
-    ) !== null
-  );
+  return kind === "mount"
+    ? `Mount ${srcLabel} on ${tgtLabel} from side handle to side handle.`
+    : `Link ${srcLabel} to ${tgtLabel} from side handle to side handle.`;
 }

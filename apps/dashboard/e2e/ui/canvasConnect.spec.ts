@@ -31,8 +31,50 @@ test("an agent's edge lands on a card or a chip dropped anywhere on it", async (
   await expect(log).toContainText("xy-edge__beta-box-onetop");
 });
 
+/**
+ * A refused drop used to vanish with nothing on screen to say why. The reason
+ * shows at the top while the line is aimed at the card, and stays after the
+ * drop until it is dismissed.
+ */
+test("a refused connection says why, while aimed and after the drop", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-connect"]');
+  await fixture.scrollIntoViewIfNeeded();
+  const notice = fixture.locator('[data-slot="canvas-refusal"]');
+  const outline = fixture.locator('[data-slot="canvas-refused-outline"]');
+
+  await aimFromAgent(page, fixture, "alpha", "box-one");
+  await expect(notice).toContainText("alpha is already connected to box-one.");
+  await expect(notice).toContainText("Release to cancel");
+  // The outline sits on the refused chip, within a pixel of its box.
+  const chip = await fixture
+    .locator('.react-flow__node[data-id="box-one"]')
+    .boundingBox();
+  const box = await outline.boundingBox();
+  expect(Math.abs((box?.x ?? 0) - (chip?.x ?? -9))).toBeLessThan(1.5);
+  expect(Math.abs((box?.width ?? 0) - (chip?.width ?? -9))).toBeLessThan(1.5);
+
+  await page.mouse.up();
+  await expect(notice).toContainText("alpha is already connected to box-one.");
+  await notice.getByRole("button", { name: "Dismiss" }).click();
+  await expect(notice).toHaveCount(0);
+});
+
 /** Press the agent's bottom handle and release over the target's middle. */
 async function dragFromAgent(
+  page: Page,
+  fixture: Locator,
+  agentId: string,
+  targetId: string,
+): Promise<void> {
+  await aimFromAgent(page, fixture, agentId, targetId);
+  await page.mouse.up();
+}
+
+/** Press the agent's bottom handle and hold the line over the target's middle. */
+async function aimFromAgent(
   page: Page,
   fixture: Locator,
   agentId: string,
@@ -55,7 +97,6 @@ async function dragFromAgent(
       from.y + ((to.y - from.y) * step) / DRAG_STEPS,
     );
   }
-  await page.mouse.up();
 }
 
 async function centreOf(locator: Locator): Promise<{ x: number; y: number }> {

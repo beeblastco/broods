@@ -10,12 +10,21 @@ import {
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { CanvasFramesProvider } from "@/app/components/canvas/CanvasFramesContext";
 import {
+  CanvasNodeMenu,
+  type CanvasNodeMenuEntries,
+} from "@/app/components/canvas/CanvasNodeMenu";
+import {
+  CanvasRefusal,
+  type CanvasRefusalHandle,
+} from "@/app/components/canvas/CanvasRefusal";
+import {
   AGENT_EDGE_STROKE,
   DeletableEdge,
 } from "@/app/components/canvas/DeletableEdge";
 import {
   connectionEdge,
   isCodeManagedEdge,
+  isCodeManagedOwner,
 } from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -44,13 +53,11 @@ import {
   acceptsNewMember,
   boardRects,
   frameGroupActions,
-  frameMemberActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
+  nodeLinkActions,
   reconcileFramePositions,
   setUngrouped,
-  type FrameGroupAction,
-  type FrameMemberAction,
 } from "@/app/lib/canvasFrameEdits";
 import {
   applyFramedNodeChanges,
@@ -59,7 +66,10 @@ import {
   serversByNode,
   type FramedGraph,
 } from "@/app/lib/canvasFrameNodes";
-import { isValidCanvasConnection } from "@/app/lib/canvasConnections";
+import {
+  connectionRefusal,
+  type ConnectionGraph,
+} from "@/app/lib/canvasConnections";
 import { toErrorMessage } from "@/app/lib/errors";
 import { reportPerf } from "@/app/lib/perfReport";
 import {
@@ -67,6 +77,7 @@ import {
   defaultRuntimeNodeData,
   deriveAgentRuntimeRefs,
   deriveSubagentRefs,
+  runtimeRefsProblemText,
   serializeRuntimeRefs,
   serializeSubagentRefs,
   writeChangedRefs,
@@ -101,22 +112,13 @@ import {
   type Node,
   type NodeMouseHandler,
   type OnConnect,
+  type OnConnectEnd,
   type OnEdgesChange,
   type OnNodeDrag,
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import {
-  Bot,
-  Box,
-  FolderOpen,
-  Group,
-  Plug,
-  Sparkles,
-  Star,
-  Ungroup,
-  Unlink,
-} from "lucide-react";
+import { Bot, Box, FolderOpen, Group, Plug, Sparkles } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import {
@@ -484,6 +486,9 @@ function CanvasInner({
   );
   const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
   const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
+  // What the right-clicked card offers; null on a frame or the empty canvas,
+  // which get "Add to this group" and "Add service".
+  const [nodeMenu, setNodeMenu] = useState<CanvasNodeMenuEntries | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
@@ -606,9 +611,7 @@ function CanvasInner({
         { edges: currentEdges, nodes: currentNodes },
       );
       if (problem) {
-        setSaveError(
-          `${problem.workspaceName} is mounted on ${problem.sandboxLabel}, and only an agent's default sandbox can back a workspace`,
-        );
+        setSaveError(runtimeRefsProblemText(problem));
         setSaveState("error");
         hasLocalChanges.current = false;
         setResyncToken((token) => token + 1);
@@ -920,12 +923,25 @@ function CanvasInner({
    * Global connection validator. Controls which connections ReactFlow highlights
    * and allows visually. Called before onConnect fires.
    */
+  const getConnectionGraph = useCallback(
+    (): ConnectionGraph => ({
+      edges: edgesRef.current,
+      nodes: nodesRef.current,
+    }),
+    [],
+  );
   const isValidConnection = useCallback(
-    (connection: Connection | Edge) =>
-      isValidCanvasConnection(
-        { edges: edgesRef.current, nodes: nodesRef.current },
-        connection,
-      ),
+    (connection: Connection | Edge): boolean =>
+      connectionRefusal(getConnectionGraph(), connection) === null,
+    [getConnectionGraph],
+  );
+  // The refusal notice keeps its own state (see CanvasRefusal); the canvas only
+  // forwards the two events it cannot see from inside the flow.
+  const refusalRef = useRef<CanvasRefusalHandle>(null);
+  const clearRefusal = useCallback((): void => refusalRef.current?.clear(), []);
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event, connection): void =>
+      refusalRef.current?.onConnectEnd(event, connection),
     [],
   );
 
@@ -964,7 +980,8 @@ function CanvasInner({
   }, [screenToFlowPosition]);
 
   const onContextMenu = useCallback(
-    (event: React.MouseEvent) => {
+    (event: React.MouseEvent): void => {
+      clearRefusal();
       lastRightClick.current = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
@@ -973,9 +990,34 @@ function CanvasInner({
         event.target instanceof Element
           ? event.target.closest<HTMLElement>(".react-flow__node")
           : null;
-      setMenuNodeId(nodeElement?.dataset.id ?? null);
+      const nodeId = nodeElement?.dataset.id ?? null;
+      setMenuNodeId(nodeId);
+      // Built once per right-click, not memoized on the graph: a memo would
+      // rebuild the groups on every frame of a later drag.
+      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
+      setNodeMenu(
+        menuNode
+          ? {
+              deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
+              groups: frameGroupActions(
+                {
+                  edges: edgesRef.current,
+                  mcpServers: mcpServers,
+                  nodes: nodesRef.current,
+                },
+                menuNode.id,
+              ),
+              links: nodeLinkActions(
+                nodesRef.current,
+                edgesRef.current,
+                menuNode.id,
+              ),
+              nodeId: menuNode.id,
+            }
+          : null,
+      );
     },
-    [screenToFlowPosition],
+    [clearRefusal, screenToFlowPosition, mcpServers],
   );
 
   /**
@@ -1141,28 +1183,47 @@ function CanvasInner({
     scheduleSave();
   }, [scheduleSave]);
 
-  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-    // A frame focuses its members like a selected node, with no panel and no Delete.
-    if (node.type === "frame") {
-      setSelectedNode(null);
-      setFocusedFrameId(node.id);
-
-      return;
-    }
+  /** Select a card and open its side panel; a click and the menu's Open both land here. */
+  const openNode = useCallback((nodeId: string): void => {
+    // The flat node, so the panel and the re-centre read absolute positions.
+    const node = nodesRef.current.find((item) => item.id === nodeId);
+    if (!node) return;
     setFocusedFrameId(null);
     // Stamped here so the panel can report how long it took to appear. Most of
     // that window is its own dynamic import, not React.
     setSelectedAt(performance.now());
-    // The flat node, so the panel and the re-centre read absolute positions.
-    setSelectedNode(
-      nodesRef.current.find((item) => item.id === node.id) ?? node,
-    );
+    setSelectedNode(node);
   }, []);
 
+  /** The menu's Delete: the side panel owns the confirmation, as for the Delete key. */
+  const requestNodeDelete = useCallback(
+    (nodeId: string): void => {
+      openNode(nodeId);
+      setDeleteRequestToken((token) => token + 1);
+    },
+    [openNode],
+  );
+
+  const onNodeClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      clearRefusal();
+      // A frame focuses its members like a selected node, with no panel and no Delete.
+      if (node.type === "frame") {
+        setSelectedNode(null);
+        setFocusedFrameId(node.id);
+
+        return;
+      }
+      openNode(node.id);
+    },
+    [clearRefusal, openNode],
+  );
+
   const onPaneClick = useCallback(() => {
+    clearRefusal();
     setSelectedNode(null);
     setFocusedFrameId(null);
-  }, []);
+  }, [clearRefusal]);
   const onOpenCreateConfig = useCallback(
     (position?: FlowPosition) => {
       setAgentCreatePosition(position ?? getFreeAddPosition());
@@ -1296,25 +1357,6 @@ function CanvasInner({
       workspaceOnly,
     ],
   );
-  // The right-clicked chip, or card that would be one, and what it offers; null
-  // falls back to "Add service", which is what every other card gets.
-  const chipMenu = useMemo(() => {
-    const menuNode = nodes.find((node) => node.id === menuNodeId);
-    const groupable =
-      menuNode?.type === "sandbox" ||
-      menuNode?.type === "workspace" ||
-      menuNode?.type === "mcp";
-    if (!menuNode || !groupable) return null;
-    const actions = frameMemberActions(nodes, edges, menuNode.id);
-    const groups = frameGroupActions(
-      { edges: edges, mcpServers: mcpServers, nodes: nodes },
-      menuNode.id,
-    );
-
-    return actions.length > 0 || groups.length > 0
-      ? { actions: actions, groups: groups, memberId: menuNode.id }
-      : null;
-  }, [menuNodeId, nodes, edges, mcpServers]);
   // The right-clicked frame, when a service added to it would land in it.
   const frameMenu = useMemo(() => {
     const frame = framedGraph.frames.find((item) => item.id === menuNodeId);
@@ -1450,6 +1492,8 @@ function CanvasInner({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectStart={clearRefusal}
+        onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
@@ -1482,6 +1526,7 @@ function CanvasInner({
         <Panel position="top-left">
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
+        <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
         {/* Save status lives away from the controls so it never crowds or
             reflows them; it clears itself once a save lands. */}
         <Panel position="bottom-left">
@@ -1520,26 +1565,19 @@ function CanvasInner({
                 {flow}
               </CanvasFramesProvider>
             </ContextMenuTrigger>
-            {canWrite && chipMenu && (
-              <ContextMenuContent className="w-56">
-                {chipMenu.actions.length > 0 && (
-                  <FrameMemberMenuItems
-                    actions={chipMenu.actions}
-                    memberId={chipMenu.memberId}
-                    onMakeDefault={makeDefault}
-                    onRemoveEdge={removeEdge}
-                  />
-                )}
-                {chipMenu.actions.length > 0 && chipMenu.groups.length > 0 && (
-                  <ContextMenuSeparator />
-                )}
-                <FrameGroupMenuItems
-                  actions={chipMenu.groups}
+            {canWrite && nodeMenu && (
+              <ContextMenuContent className="w-60">
+                <CanvasNodeMenu
+                  {...nodeMenu}
+                  onOpen={openNode}
+                  onDelete={requestNodeDelete}
+                  onMakeDefault={makeDefault}
+                  onRemoveEdge={removeEdge}
                   onSetUngrouped={setNodesUngrouped}
                 />
               </ContextMenuContent>
             )}
-            {canWrite && !chipMenu && frameMenu && (
+            {canWrite && !nodeMenu && frameMenu && (
               <ContextMenuContent className="w-56">
                 <ContextMenuGroup>
                   <ContextMenuLabel
@@ -1558,7 +1596,7 @@ function CanvasInner({
                 </ContextMenuGroup>
               </ContextMenuContent>
             )}
-            {canWrite && !chipMenu && !frameMenu && (
+            {canWrite && !nodeMenu && !frameMenu && (
               <ContextMenuContent className="w-48">
                 <ContextMenuGroup>
                   <ContextMenuLabel
@@ -1658,102 +1696,4 @@ function useEverTrue(flag: boolean): boolean {
   if (flag && !seen) setSeen(true);
 
   return seen || flag;
-}
-
-/** Right-click entries for the group a node is in, or the one it was pulled out of. */
-function FrameGroupMenuItems({
-  actions,
-  onSetUngrouped,
-}: {
-  actions: readonly FrameGroupAction[];
-  onSetUngrouped: (nodeIds: readonly string[], ungrouped: boolean) => void;
-}): React.JSX.Element {
-  return (
-    <ContextMenuGroup>
-      {actions.map((action) => (
-        <ContextMenuItem
-          key={action.kind}
-          className="cursor-pointer"
-          onClick={() =>
-            onSetUngrouped(action.nodeIds, action.kind !== "rejoin")
-          }
-        >
-          {action.kind === "rejoin" ? <Group /> : <Ungroup />}
-          {groupActionLabel(action)}
-        </ContextMenuItem>
-      ))}
-    </ContextMenuGroup>
-  );
-}
-
-/** Right-click entries for a chip or lone resource card, one set per agent that wires it directly. */
-function FrameMemberMenuItems({
-  actions,
-  memberId,
-  onMakeDefault,
-  onRemoveEdge,
-}: {
-  actions: readonly FrameMemberAction[];
-  memberId: string;
-  onMakeDefault: (agentId: string, sandboxId: string) => void;
-  onRemoveEdge: (edgeId: string) => void;
-}): React.JSX.Element {
-  return (
-    <ContextMenuGroup>
-      {actions.map((action) =>
-        action.kind === "make-default" ? (
-          action.disabledReason ? (
-            // A disabled item takes no pointer events, so the cursor and the
-            // reason's tooltip sit on this wrapper.
-            <div
-              key={`default:${action.agentId}`}
-              className="cursor-not-allowed"
-              title={action.disabledReason}
-            >
-              <ContextMenuItem disabled className="flex-col items-start">
-                <span className="flex items-center gap-2">
-                  <Star />
-                  {makeDefaultLabel(action.agentLabel)}
-                </span>
-                <span className="text-2xs text-muted-foreground">
-                  {action.disabledReason}
-                </span>
-              </ContextMenuItem>
-            </div>
-          ) : (
-            <ContextMenuItem
-              key={`default:${action.agentId}`}
-              className="cursor-pointer"
-              onClick={() => onMakeDefault(action.agentId, memberId)}
-            >
-              <Star />
-              {makeDefaultLabel(action.agentLabel)}
-            </ContextMenuItem>
-          )
-        ) : (
-          <ContextMenuItem
-            key={`remove:${action.edgeId}`}
-            className="cursor-pointer"
-            onClick={() => onRemoveEdge(action.edgeId)}
-          >
-            <Unlink />
-            Remove from {action.agentLabel ?? "agent"}
-          </ContextMenuItem>
-        ),
-      )}
-    </ContextMenuGroup>
-  );
-}
-
-function groupActionLabel(action: FrameGroupAction): string {
-  if (action.kind === "rejoin") return `Return to ${action.frameLabel}`;
-  if (action.kind === "ungroup-all") {
-    return `Ungroup all ${action.nodeIds.length}`;
-  }
-
-  return "Pull out of group";
-}
-
-function makeDefaultLabel(agentLabel: string | null): string {
-  return agentLabel ? `Make default for ${agentLabel}` : "Make default";
 }

@@ -290,8 +290,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // The tab panel mounts lazily, so the request usually lands before the tab
   // has ever rendered and child-local state would miss it. Render-time
   // adjustment, not an effect; the locked gate below closes it when delete is
-  // blocked (ownership pending or code-owned).
-  const [prevDeleteToken, setPrevDeleteToken] = useState(deleteRequestToken);
+  // blocked (ownership pending or code-owned). Starts at 0, not at the current
+  // token: the card menu's Delete is what mounts this panel the first time, and
+  // that request has to open the dialog too.
+  const [prevDeleteToken, setPrevDeleteToken] = useState(0);
   if (deleteRequestToken !== prevDeleteToken) {
     setPrevDeleteToken(deleteRequestToken);
     if (deleteRequestToken > 0) {

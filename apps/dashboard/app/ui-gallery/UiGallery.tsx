@@ -18,10 +18,20 @@ import {
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
+import { CanvasNodeMenu } from "@/app/components/canvas/CanvasNodeMenu";
+import {
+  CanvasRefusal,
+  type CanvasRefusalHandle,
+} from "@/app/components/canvas/CanvasRefusal";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@/app/components/ui/context-menu";
 import {
   Select,
   SelectContent,
@@ -30,13 +40,17 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
+import { frameGroupActions, nodeLinkActions } from "@/app/lib/canvasFrameEdits";
 import {
   buildFramedGraph,
   serversByNode,
   type StageMcpServer,
 } from "@/app/lib/canvasFrameNodes";
 import { connectionEdge } from "@/app/components/canvas/edgeOwnership";
-import { isValidCanvasConnection } from "@/app/lib/canvasConnections";
+import {
+  connectionRefusal,
+  type ConnectionGraph,
+} from "@/app/lib/canvasConnections";
 import { analyzeCanvasInfra } from "@/app/lib/canvasRuntimeRefs";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -55,7 +69,13 @@ import {
 } from "@xyflow/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 
@@ -321,6 +341,16 @@ export function UiGallery(): React.JSX.Element {
         <CanvasConnectFixture />
       </section>
 
+      <section data-fixture="canvas-node-menu" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Canvas card menu</h2>
+        {/* The frames stage above, read by the real menu builders: coder has a
+            code-managed link, handbook sits in a group. */}
+        <div className="flex gap-2">
+          <CanvasNodeMenuFixture nodeId="coder" />
+          <CanvasNodeMenuFixture nodeId="handbook" />
+        </div>
+      </section>
+
       <section data-fixture="press-drag" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Press that wanders</h2>
         {/* One of each control a press lands on, with the state it changes
@@ -469,6 +499,11 @@ function CanvasConnectFixture(): React.JSX.Element {
     }),
     [edges, expandedMemberId],
   );
+  const getGraph = useCallback(
+    (): ConnectionGraph => ({ edges: edges, nodes: CONNECT_NODES }),
+    [edges],
+  );
+  const refusalRef = useRef<CanvasRefusalHandle>(null);
 
   return (
     <InfraAnalysisProvider value={CONNECT_ANALYSIS}>
@@ -491,10 +526,11 @@ function CanvasConnectFixture(): React.JSX.Element {
               void instance.fitView(FIT_VIEW_OPTIONS);
             }}
             isValidConnection={(connection) =>
-              isValidCanvasConnection(
-                { edges: edges, nodes: CONNECT_NODES },
-                connection,
-              )
+              connectionRefusal(getGraph(), connection) === null
+            }
+            onConnectStart={() => refusalRef.current?.clear()}
+            onConnectEnd={(event, connection) =>
+              refusalRef.current?.onConnectEnd(event, connection)
             }
             onConnect={(connection) =>
               setEdges((current) => [
@@ -518,6 +554,7 @@ function CanvasConnectFixture(): React.JSX.Element {
               gap={GRID}
               size={2}
             />
+            <CanvasRefusal ref={refusalRef} getGraph={getGraph} />
           </ReactFlow>
         </div>
         <output
@@ -528,6 +565,47 @@ function CanvasConnectFixture(): React.JSX.Element {
         </output>
       </CanvasFramesProvider>
     </InfraAnalysisProvider>
+  );
+}
+
+/** A right-click target that opens the card menu the canvas would, for one fixture node. */
+function CanvasNodeMenuFixture({
+  nodeId,
+}: {
+  nodeId: string;
+}): React.JSX.Element {
+  const [last, setLast] = useState("none");
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        data-testid={`menu-target-${nodeId}`}
+        className="flex h-16 w-44 cursor-context-menu flex-col justify-center rounded-md border border-border px-3 text-xs"
+      >
+        {nodeId}
+        <output className="text-2xs text-muted-foreground">{last}</output>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-60">
+        <CanvasNodeMenu
+          nodeId={nodeId}
+          links={nodeLinkActions(FRAME_NODES, FRAME_EDGES, nodeId)}
+          groups={frameGroupActions(
+            {
+              edges: FRAME_EDGES,
+              mcpServers: FRAME_MCP_SERVERS,
+              nodes: FRAME_NODES,
+            },
+            nodeId,
+          )}
+          deleteLocked={nodeId === "coder"}
+          onOpen={() => setLast("open")}
+          onDelete={() => setLast("delete")}
+          onMakeDefault={() => setLast("make-default")}
+          onRemoveEdge={(edgeId) => setLast(`unlink ${edgeId}`)}
+          onSetUngrouped={(nodeIds) => setLast(`group ${nodeIds.join(",")}`)}
+        />
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 

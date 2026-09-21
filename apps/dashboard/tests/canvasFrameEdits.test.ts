@@ -3,7 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 import {
   acceptsNewMember,
   frameGroupActions,
-  frameMemberActions,
+  nodeLinkActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   reconcileFramePositions,
@@ -250,9 +250,59 @@ describe("pulling members out of a group", () => {
   });
 });
 
+describe("nodeLinkActions", () => {
+  test("a card lists every link it has, a mount as a mount and a code-owned edge locked", () => {
+    const edges = EDGES.map((item) =>
+      item.source === "agent" && item.target === "notes"
+        ? { ...item, deletable: false }
+        : item,
+    );
+
+    expect(nodeLinkActions(NODES, edges, "notes")).toEqual([
+      {
+        edgeId: "xy-edge__agent-notes",
+        kind: "unlink",
+        label: "agent",
+        locked: true,
+        mount: false,
+      },
+      {
+        edgeId: "mount:alpha-right-notes-left",
+        kind: "unlink",
+        label: "alpha",
+        locked: false,
+        mount: true,
+      },
+    ]);
+    // An agent card gets a row per service it wires.
+    expect(
+      nodeLinkActions(NODES, EDGES, "agent").map((link) =>
+        link.kind === "unlink" ? link.label : link.kind,
+      ),
+    ).toEqual(["alpha", "bravo", "notes"]);
+  });
+
+  test("two agents that call each other get one row per direction", () => {
+    const nodes = [...NODES, node("helper", "agent", { x: 720, y: 0 })];
+    const edges: Edge[] = [
+      subagent("agent", "helper"),
+      subagent("helper", "agent"),
+    ];
+
+    expect(
+      nodeLinkActions(nodes, edges, "agent").map((link) =>
+        link.kind === "unlink" ? [link.label, link.edgeId] : link.kind,
+      ),
+    ).toEqual([
+      ["calls helper", "subagent:agent-right-helper-left"],
+      ["called by helper", "subagent:helper-right-agent-left"],
+    ]);
+  });
+});
+
 describe("runtime ref guards", () => {
   test("make default is refused while a workspace is mounted on the current default", () => {
-    const [makeDefault] = frameMemberActions(NODES, EDGES, "bravo");
+    const [makeDefault] = nodeLinkActions(NODES, EDGES, "bravo");
 
     expect(makeDefault).toEqual({
       agentId: "agent",
@@ -262,7 +312,7 @@ describe("runtime ref guards", () => {
     });
     // Unmounted, the same move is allowed and puts bravo first.
     const unmounted = EDGES.filter((item) => item.type !== "mount");
-    const [allowed] = frameMemberActions(NODES, unmounted, "bravo");
+    const [allowed] = nodeLinkActions(NODES, unmounted, "bravo");
     expect(allowed).toMatchObject({ disabledReason: null });
     const [agent] = makeDefaultSandbox(NODES, unmounted, "agent", "bravo");
     expect(agent.data.sandboxOrder).toEqual(["bravo", "alpha"]);
@@ -337,6 +387,18 @@ function node(
     id: id,
     position: position,
     type: type,
+  };
+}
+
+/** A subagent link as the canvas stores it: side handle to side handle. */
+function subagent(source: string, target: string): Edge {
+  return {
+    id: `subagent:${source}-right-${target}-left`,
+    source: source,
+    sourceHandle: "right",
+    target: target,
+    targetHandle: "left",
+    type: "subagent",
   };
 }
 

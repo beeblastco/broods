@@ -1,6 +1,6 @@
 /**
  * Edits on the flat canvas graph that frames care about: where cards go when
- * an edit changes which frame they belong to and what a chip's menu offers.
+ * an edit changes which frame they belong to and what a card's menu offers.
  * Pure, so each rule is unit-tested here.
  */
 import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
@@ -54,18 +54,27 @@ export type FrameGroupAction = {
 };
 
 /**
- * What a right-click on a chip can do, per agent that wires it directly.
+ * What a right-click on a card can do to its links: one `unlink` per stored
+ * edge, named after the card at the other end and locked when code owns the
+ * edge, plus make default for a sandbox under each agent that wires it.
  * `agentLabel` names the agent only when several do, so the entries differ.
  * Make default carries why it is refused, when the config API would refuse it.
  */
-export type FrameMemberAction =
+export type NodeLinkAction =
   | {
       kind: "make-default";
       agentId: string;
       agentLabel: string | null;
       disabledReason: string | null;
     }
-  | { kind: "remove"; agentLabel: string | null; edgeId: string };
+  | {
+      kind: "unlink";
+      edgeId: string;
+      label: string;
+      locked: boolean;
+      /** A workspace↔sandbox mount reads "Unmount". */
+      mount: boolean;
+    };
 
 /**
  * Whether a service added to a frame would land in it. A fresh node carries
@@ -103,6 +112,11 @@ export function boardRects(
       ...node.position,
       ...(sizes.get(node.id) ?? CARD_SIZE),
     }));
+}
+
+/** The name a card shows, as menus and refusal sentences say it. */
+export function cardLabel(node: Node): string {
+  return typeof node.data.label === "string" ? node.data.label : node.id;
 }
 
 /**
@@ -160,76 +174,6 @@ export function frameGroupActions(
 }
 
 /**
- * Chip context menu entries. Make default only where the sandbox is not
- * already first and the agent is not code-managed (code owns its order), and
- * disabled where the new order breaks the runtime rules; remove only where the
- * edge is not locked.
- */
-export function frameMemberActions(
-  nodes: Node[],
-  edges: Edge[],
-  memberId: string,
-): FrameMemberAction[] {
-  const member = nodes.find((node) => node.id === memberId);
-  if (!member) return [];
-  const agents = new Map(
-    nodes
-      .filter((node) => node.type === "agent")
-      .map((node) => [node.id, node]),
-  );
-  const wired = edges.flatMap((edge) => {
-    if (edgeKind(edge) !== "default") return [];
-    const otherId =
-      edge.source === memberId
-        ? edge.target
-        : edge.target === memberId
-          ? edge.source
-          : null;
-    const agent = otherId === null ? undefined : agents.get(otherId);
-
-    return agent ? [{ agent: agent, edge: edge }] : [];
-  });
-  const labelFor = (agent: Node): string | null =>
-    wired.length > 1 && typeof agent.data.label === "string"
-      ? agent.data.label
-      : null;
-
-  return wired.flatMap(({ agent, edge }): FrameMemberAction[] => {
-    const actions: FrameMemberAction[] = [];
-    if (
-      member.type === "sandbox" &&
-      !isCodeManagedOwner(agent.data.managedBy) &&
-      agentSandboxOrder(agent, nodes, edges)[0] !== memberId
-    ) {
-      const problem = introducedRuntimeRefsProblem(
-        { edges: edges, nodes: nodes },
-        {
-          edges: edges,
-          nodes: makeDefaultSandbox(nodes, edges, agent.id, memberId),
-        },
-      );
-      actions.push({
-        agentId: agent.id,
-        agentLabel: labelFor(agent),
-        disabledReason: problem
-          ? `${problem.workspaceName} is mounted on ${problem.sandboxLabel}`
-          : null,
-        kind: "make-default",
-      });
-    }
-    if (edge.deletable !== false) {
-      actions.push({
-        agentLabel: labelFor(agent),
-        edgeId: edge.id,
-        kind: "remove",
-      });
-    }
-
-    return actions;
-  });
-}
-
-/**
  * The first runtime-ref problem `after` has that `before` did not, or null.
  * Used to refuse an edit up front: a problem the graph already had is not
  * this edit's to block. Problems match on resource ids, so renaming a sandbox
@@ -269,6 +213,79 @@ export function makeDefaultSandbox<T extends LayoutNode>(
       ...node,
       data: { ...node.data, sandboxOrder: [sandboxId, ...rest] },
     };
+  });
+}
+
+/**
+ * A card's link entries for its context menu, one per stored edge it has. Make
+ * default only where the sandbox is not already first and the agent is not
+ * code-managed (code owns its order), and disabled where the new order breaks
+ * the runtime rules. An edge code owns is listed locked, so the menu shows the
+ * link and that it cannot be cut here.
+ */
+export function nodeLinkActions(
+  nodes: Node[],
+  edges: Edge[],
+  nodeId: string,
+): NodeLinkAction[] {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node) return [];
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  const linked = edges.flatMap((edge) => {
+    const otherId =
+      edge.source === nodeId
+        ? edge.target
+        : edge.target === nodeId
+          ? edge.source
+          : null;
+    const other = otherId === null ? undefined : byId.get(otherId);
+
+    return other ? [{ edge: edge, other: other }] : [];
+  });
+  const wiringAgents = linked.filter(
+    ({ edge, other }) => edgeKind(edge) === "default" && other.type === "agent",
+  ).length;
+
+  return linked.flatMap(({ edge, other }): NodeLinkAction[] => {
+    const actions: NodeLinkAction[] = [];
+    if (
+      node.type === "sandbox" &&
+      other.type === "agent" &&
+      edgeKind(edge) === "default" &&
+      !isCodeManagedOwner(other.data.managedBy) &&
+      agentSandboxOrder(other, nodes, edges)[0] !== nodeId
+    ) {
+      const problem = introducedRuntimeRefsProblem(
+        { edges: edges, nodes: nodes },
+        {
+          edges: edges,
+          nodes: makeDefaultSandbox(nodes, edges, other.id, nodeId),
+        },
+      );
+      actions.push({
+        agentId: other.id,
+        agentLabel: wiringAgents > 1 ? cardLabel(other) : null,
+        disabledReason: problem
+          ? `${problem.workspaceName} is mounted on ${problem.sandboxLabel}`
+          : null,
+        kind: "make-default",
+      });
+    }
+    actions.push({
+      edgeId: edge.id,
+      kind: "unlink",
+      // Subagent links run both ways between two agents, so the row says which.
+      label:
+        edgeKind(edge) !== "subagent"
+          ? cardLabel(other)
+          : edge.source === nodeId
+            ? `calls ${cardLabel(other)}`
+            : `called by ${cardLabel(other)}`,
+      locked: edge.deletable === false,
+      mount: edgeKind(edge) === "mount",
+    });
+
+    return actions;
   });
 }
 

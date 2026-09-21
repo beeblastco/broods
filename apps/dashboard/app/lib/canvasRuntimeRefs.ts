@@ -280,6 +280,11 @@ export function runtimeRefsProblems(
   );
 }
 
+/** Why the config API refuses a problem, without the full stop. */
+export function runtimeRefsProblemText(problem: RuntimeRefsProblem): string {
+  return `${problem.workspaceName} is mounted on ${problem.sandboxLabel}, and only an agent's default sandbox can back a workspace`;
+}
+
 /** Stable serialization for change detection before writing Convex mutations. */
 export function serializeRuntimeRefs(refs: AgentRuntimeRefs): string {
   return JSON.stringify({
