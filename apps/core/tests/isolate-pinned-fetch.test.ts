@@ -14,7 +14,7 @@ describe("isDeniedAddress", () => {
     expect(isDeniedAddress("::ffff:169.254.169.254")).toBe(true);
   });
 
-  it("denies IPv6 loopback, unspecified, link-local, and ULA addresses", () => {
+  it("denies IPv6 loopback, unspecified, link-local, ULA, site-local, multicast, and v4-embedding addresses", () => {
     expect(isDeniedAddress("::")).toBe(true);
     expect(isDeniedAddress("::1")).toBe(true);
     expect(isDeniedAddress("fe80::1")).toBe(true);
@@ -22,10 +22,18 @@ describe("isDeniedAddress", () => {
     expect(isDeniedAddress("febf::1")).toBe(true);
     expect(isDeniedAddress("fc00::1")).toBe(true);
     expect(isDeniedAddress("fd00::1")).toBe(true);
+    expect(isDeniedAddress("fec0::1")).toBe(true);
+    expect(isDeniedAddress("feff::1")).toBe(true);
+    expect(isDeniedAddress("ff02::1")).toBe(true);
+    expect(isDeniedAddress("64:ff9b::7f00:1")).toBe(true);
+    expect(isDeniedAddress("2002:7f00:1::1")).toBe(true);
+    expect(isDeniedAddress("::7f00:1")).toBe(true);
+    expect(isDeniedAddress("0:0:0:0:0:ffff:7f00:1")).toBe(true);
   });
 
   it("allows a normal public IP", () => {
     expect(isDeniedAddress("93.184.216.34")).toBe(false);
+    expect(isDeniedAddress("2606:4700::1111")).toBe(false);
   });
 });
 
