@@ -25,6 +25,7 @@ import {
   parseJson,
 } from "./utils.ts";
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export type AgentTestGatewayData = {
   kind: "agent-test";
@@ -956,6 +957,7 @@ function coreHeaders(
     Accept: "application/json",
     Authorization: `Bearer ${socket.data.token}`,
     "Content-Type": "application/json",
+    [VIA_GATEWAY_HEADER]: "1",
   };
 }
 
