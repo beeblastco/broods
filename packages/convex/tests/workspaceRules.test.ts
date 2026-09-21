@@ -332,7 +332,7 @@ describe("workspace storage access", () => {
           },
         },
       }),
-    ).toThrow("roleArn must be a role in your own AWS account");
+    ).toThrow("roleArn must not be a role in the platform AWS account");
     expect(() =>
       normalizeWorkspaceConfig({
         storage: {
@@ -362,6 +362,15 @@ describe("workspace storage access", () => {
     expect(normalizeWorkspaceConfig({ storage: storage }).storage).toEqual(
       storage,
     );
+    const clusterStorage = { ...OWN_BUCKET, endpoint: "http://minio:9000" };
+    expect(
+      normalizeWorkspaceConfig({ storage: clusterStorage }).storage,
+    ).toEqual(clusterStorage);
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...OWN_BUCKET, endpoint: "http://r2.example.com" },
+      }),
+    ).toThrow("config.storage.endpoint must use https");
   });
 
   it("refuses a stored row that names a bucket without its own auth at resolve time", async () => {

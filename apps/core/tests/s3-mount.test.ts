@@ -138,7 +138,7 @@ describe("resolveS3MountIdentity", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::3:role/platform";
     expect(() =>
       resolveS3MountIdentity({ storage: BYO_STORAGE, namespace: NS }),
-    ).toThrow("roleArn must be a role in your own AWS account");
+    ).toThrow("roleArn must not be a role in the platform AWS account");
   });
 
   it("requires public https endpoints unless the operator allows private ones", () => {
@@ -163,6 +163,15 @@ describe("resolveS3MountIdentity", () => {
     expect(resolveS3MountIdentity(privateOption).endpoint).toBe(
       "https://localhost:9000",
     );
+  });
+
+  it("ignores the sandbox endpoint when the workspace sets its own", () => {
+    const identity = resolveS3MountIdentity({
+      storage: { ...BYO_STORAGE, endpoint: "https://r2.example.com" },
+      namespace: NS,
+      endpoint: "http://10.0.0.5:9000",
+    });
+    expect(identity.endpoint).toBe("https://r2.example.com");
   });
 
   it("throws when neither storage.bucket nor a managed bucket is available", () => {

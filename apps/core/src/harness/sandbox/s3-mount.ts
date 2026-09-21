@@ -175,7 +175,9 @@ export async function resolveS3Mount(
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
   if (storage) workspaceStorageOwnAuth(storage);
-  if (ctx.endpoint) assertStorageEndpoint(ctx.endpoint, "options.s3Endpoint");
+  if (!storage?.endpoint && ctx.endpoint) {
+    assertStorageEndpoint(ctx.endpoint, "options.s3Endpoint");
+  }
   const bucket = storage?.bucket ?? ctx.managedBucket;
   if (!bucket) {
     throw new Error(

@@ -100,7 +100,8 @@ Deployment environment variables:
   its own `storage.bucket`; set `MICROVM_ARTIFACTS_BUCKET_NAME` (sst output
   `microvmArtifactsBucketName`) to refuse that bucket too.
 - `ALLOW_PRIVATE_STORAGE_ENDPOINTS`: `true` lets a self-hosted deployment accept
-  a private workspace `storage.endpoint`. Set the same value on core.
+  a private workspace `storage.endpoint`, over `http` or `https`. A public host
+  stays `https` only. Set the same value on core.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: AES-GCM secret for agent and sandbox config CRUD.
 - `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.

@@ -162,11 +162,13 @@ the managed bucket, so a workspace that sets `bucket` is rejected unless:
 
 - `auth.type` is `assumeRole`. `managed` auth, or no auth, is only valid without a `bucket`.
 - `bucket` is not one of the platform's own buckets (compared case-insensitively).
-- `auth.roleArn` is an IAM role ARN in your AWS account, not the platform's.
+- `auth.roleArn` is an IAM role ARN outside the platform AWS account.
 - `endpoint`, when set, is a public `https` URL, and it is only valid together with
   `bucket`. The sandbox `options.s3Endpoint` follows the same rule. A self-hosted
   deployment can allow private endpoints (a MinIO on the cluster network) by setting
-  `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and the Convex deployment.
+  `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and the Convex deployment. That
+  covers private addresses and single-label hosts like `http://minio:9000`. A public
+  host still needs `https`.
 
 The config API, `broods deploy` and the dashboard canvas all check these on save.
 Core and the config plane check them again every time the storage is resolved, so a
@@ -180,10 +182,10 @@ protocol (e.g. native Azure Blob / GCS), not a different S3 vendor.
 Authentication (`storage.auth`) is **keyless**. No access keys are stored in the
 workspace config, which is plaintext:
 
-| `auth.type`         | Credentials                                  | Use                                        |
-| ------------------- | -------------------------------------------- | ------------------------------------------ |
-| `managed` (default) | broods-managed platform role                 | the managed bucket only, never a `bucket`  |
-| `assumeRole`        | your cross-account IAM role, assumed per run | a bucket in your own AWS account, required |
+| `auth.type`         | Credentials                                  | Use                                       |
+| ------------------- | -------------------------------------------- | ----------------------------------------- |
+| `managed` (default) | broods-managed platform role                 | the managed bucket only, never a `bucket` |
+| `assumeRole`        | your cross-account IAM role, assumed per run | a bucket that role can reach, required    |
 
 For `assumeRole` the harness calls STS `AssumeRole` and narrows the session with a
 policy scoped to `bucket/prefix*`, so the short-lived credentials can only touch the
@@ -210,7 +212,7 @@ its `/run` lifecycle hook, fed the scoped credentials via the MicroVM `runHookPa
 
 > Static access keys for non-AWS stores (R2/MinIO tokens) are not supported yet, and
 > `assumeRole` is an AWS STS call. Until an access-key auth type lands, a
-> bring-your-own bucket means a bucket in your own AWS account.
+> bring-your-own bucket needs an AWS IAM role outside the platform account.
 
 ## Code-first configuration
 

@@ -8,7 +8,7 @@
  * names of both sides.
  */
 
-import { assertPublicHttpsUrl } from "./agentRules";
+import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
 
@@ -67,11 +67,16 @@ export interface WorkspaceConfig {
 }
 
 /**
- * A storage endpoint is a public https URL. A self-host operator allows private
- * endpoints with ALLOW_PRIVATE_STORAGE_ENDPOINTS=true.
+ * A storage endpoint is a public https URL. ALLOW_PRIVATE_STORAGE_ENDPOINTS=true
+ * lets a self-host operator also use a private or single-label host, over http
+ * or https. A public host stays https only.
  */
 export function assertStorageEndpoint(value: string, label: string): void {
-  if (process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS === "true") return;
+  if (
+    process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS === "true" &&
+    isClusterEndpoint(value)
+  )
+    return;
   assertPublicHttpsUrl(value, label);
 }
 
@@ -224,7 +229,7 @@ export function workspaceStorageOwnAuth(
     )
   ) {
     throw new Error(
-      "config.storage.auth.roleArn must be a role in your own AWS account",
+      "config.storage.auth.roleArn must not be a role in the platform AWS account",
     );
   }
 
@@ -301,6 +306,21 @@ function assertOptionalEnum<T extends string>(
   ) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
+}
+
+/** An http(s) URL whose host is private or a single-label service name. */
+function isClusterEndpoint(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  return (
+    ["http:", "https:"].includes(url.protocol) &&
+    (isPrivateHostname(url.hostname) || !/[.:]/.test(url.hostname))
+  );
 }
 
 function normalizeHarnessFeature(

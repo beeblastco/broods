@@ -1706,7 +1706,7 @@ paths:
                                 type: { type: string, enum: [managed] }
                             - type: object
                               required: [type, roleArn]
-                              description: An IAM role in your own AWS account, assumed per run with a session scoped to `bucket/prefix`.
+                              description: An IAM role outside the platform AWS account, assumed per run with a session scoped to `bucket/prefix`.
                               properties:
                                 type: { type: string, enum: [assumeRole] }
                                 roleArn: { type: string }

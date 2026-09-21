@@ -533,9 +533,7 @@ async function materializeWorkspaceNode(
     options;
   const { resourceId, changed, now } = options;
   // Same rules as the config API: a canvas save never stores what it refuses.
-  const config = normalizeWorkspaceConfig(
-    asRecord(data.config).storage ? data.config : undefined,
-  );
+  const config = normalizeWorkspaceConfig(data.config);
   const normalized = resourceId
     ? ctx.db.normalizeId("workspaceConfigs", resourceId)
     : null;
