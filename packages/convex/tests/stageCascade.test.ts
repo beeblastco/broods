@@ -261,6 +261,66 @@ describe("deleteStageContents", () => {
     expect(orphaned).toEqual([]);
   });
 
+  test("deletes the account's own agents row and leaves another account's alone", async () => {
+    const t = cascadeTest();
+    const { accountId, projectId, stageId } = await seedFullStage(t);
+    const { ownAgentId, foreignAgentId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const foreignOrgId = await ctx.db.insert("orgs", {
+        name: "other",
+        slug: "other",
+        ownerAuthId: "auth_other",
+        plan: "free" as const,
+        createdAt: now,
+      });
+      const foreignAccountId = await ctx.db.insert("accounts", {
+        orgId: foreignOrgId,
+        username: "other",
+        secretHash: "hash-other",
+        status: "active" as const,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const agentIds = {
+        ownAgentId: await ctx.db.insert("agents", {
+          accountId: accountId,
+          name: "ours",
+          createdAt: now,
+          updatedAt: now,
+        }),
+        foreignAgentId: await ctx.db.insert("agents", {
+          accountId: foreignAccountId,
+          name: "theirs",
+          createdAt: now,
+          updatedAt: now,
+        }),
+      };
+      for (const agentId of Object.values(agentIds)) {
+        await ctx.db.insert("agentConfigs", {
+          authId: AUTH_ID,
+          name: agentId,
+          agentId: agentId,
+          projectId: projectId,
+          stageId: stageId,
+          updatedAt: now,
+        });
+      }
+
+      return agentIds;
+    });
+
+    await t.run(async (ctx) => {
+      const stage = await ctx.db.get(stageId);
+      await deleteStageContents(ctx, stage!);
+    });
+
+    expect(await rowsForStage(t, "agentConfigs", stageId)).toEqual([]);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(ownAgentId)).toBeNull();
+      expect(await ctx.db.get(foreignAgentId)).not.toBeNull();
+    });
+  });
+
   // The webhook lookup ignores stageId, so an orphaned record both routes
   // inbound messages into the dead stage and permanently squats the
   // (accountId, platform, externalId) slot that `create` guards.

@@ -143,7 +143,7 @@ describe("agent config branches core reads", () => {
         .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
         .first();
       if (!config) throw new Error("API agent has no config row");
-      await pushEncryptedConfigToAgentRow(ctx, config._id);
+      await pushEncryptedConfigToAgentRow(ctx, config._id, accountId);
     });
 
     expect(await runtimeConfigByName(tt, "api-agent")).toMatchObject({

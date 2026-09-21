@@ -145,6 +145,7 @@ export const deleteResourceBySecretHash = internalMutation({
     if (kind === "agent") {
       await deleteAgentResource(
         ctx,
+        account._id,
         resolved.projectDoc._id,
         resolved.stageDoc._id,
         normalizedName,
@@ -871,7 +872,13 @@ export const syncManifestBySecretHash = internalMutation({
     });
 
     if (prune === true) {
-      await pruneAgents(ctx, projectDoc._id, stageDoc._id, manifest.resources);
+      await pruneAgents(
+        ctx,
+        account._id,
+        projectDoc._id,
+        stageDoc._id,
+        manifest.resources,
+      );
       await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
       await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
       await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);

@@ -223,8 +223,11 @@ async function mutateAgentWebhooks(
     extraConfig: extra,
     updatedAt: Date.now(),
   });
-  await ensureAgentsRowForConfig(ctx, agentConfigId, authId);
-  await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
+  const accountId = await accountIdForProject(ctx, config.projectId);
+  if (accountId) {
+    await ensureAgentsRowForConfig(ctx, agentConfigId, authId, accountId);
+    await pushEncryptedConfigToAgentRow(ctx, agentConfigId, accountId);
+  }
 }
 
 /** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */

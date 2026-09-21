@@ -3,7 +3,7 @@
  * accountId against the caller-supplied accountId for defence in depth.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -27,6 +27,16 @@ const agentDoc = v.object({
   ...agentsFields,
   _id: v.id("agents"),
   _creationTime: v.number(),
+});
+
+const foreignAgentLink = v.object({
+  configId: v.id("agentConfigs"),
+  configName: v.string(),
+  projectId: v.id("projects"),
+  stageId: v.id("stages"),
+  projectAccountId: v.union(v.id("accounts"), v.null()),
+  agentId: v.id("agents"),
+  agentAccountId: v.id("accounts"),
 });
 
 export const create = internalMutation({
@@ -159,6 +169,48 @@ export const listPage = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .paginate(args.paginationOpts);
+  },
+});
+
+/**
+ * Incident check: pages the whole `agentConfigs` table and keeps the configs
+ * whose linked `agents` row belongs to an account other than the one that owns
+ * the config's project. A healthy deployment returns empty pages.
+ */
+export const listForeignAgentLinks = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  returns: v.object({
+    page: v.array(foreignAgentLink),
+    ...paginationCursorFields,
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<PaginationResult<Infer<typeof foreignAgentLink>>> => {
+    const configs = await ctx.db
+      .query("agentConfigs")
+      .paginate(args.paginationOpts);
+    const page: Infer<typeof foreignAgentLink>[] = [];
+    for (const config of configs.page) {
+      const normalized = config.agentId
+        ? ctx.db.normalizeId("agents", config.agentId)
+        : null;
+      const agent = normalized ? await ctx.db.get(normalized) : null;
+      if (!agent) continue;
+      const projectAccountId = await accountIdForProject(ctx, config.projectId);
+      if (agent.accountId === projectAccountId) continue;
+      page.push({
+        configId: config._id,
+        configName: config.name,
+        projectId: config.projectId,
+        stageId: config.stageId,
+        projectAccountId: projectAccountId,
+        agentId: agent._id,
+        agentAccountId: agent.accountId,
+      });
+    }
+
+    return { ...configs, page: page };
   },
 });
 

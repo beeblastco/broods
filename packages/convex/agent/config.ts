@@ -166,20 +166,28 @@ export const create = mutation({
 
     // Provision the broods agents row so the harness can resolve
     // this config by its public agentId. No-ops if the org isn't yet
-    // provisioned with a broods account.
-    await ensureAgentsRowForConfig(ctx, configId, authUser.id);
-    await pushEncryptedConfigToAgentRow(ctx, configId);
-    const created = await ctx.db.get(configId);
-    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
-      projectId: projectId,
-      stageId: stageId,
-      action: "created",
-      agentId: created?.agentId,
-      configId: configId,
-      name: trimmedName,
-      summary: "Agent configuration created",
-      details: { configId: configId },
-    });
+    // provisioned with a broods account, and so does the audit entry, which
+    // is filed per account.
+    const accountId = await accountIdForProject(ctx, projectId);
+    if (accountId) {
+      const agentRowId = await ensureAgentsRowForConfig(
+        ctx,
+        configId,
+        authUser.id,
+        accountId,
+      );
+      await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
+      await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
+        projectId: projectId,
+        stageId: stageId,
+        action: "created",
+        agentId: agentRowId,
+        configId: configId,
+        name: trimmedName,
+        summary: "Agent configuration created",
+        details: { configId: configId },
+      });
+    }
 
     return configId;
   },
@@ -231,37 +239,38 @@ export const remove = mutation({
     // is only removed when the whole stage is deleted (see stage.ts).
 
     // Clean up the linked broods `agents` row if present so the
-    // harness side stays consistent with the dashboard's canvas.
-    if (existing.agentId) {
-      const normalized = ctx.db.normalizeId("agents", existing.agentId);
-      if (normalized) {
-        const agent = await ctx.db.get(normalized);
-        if (agent) {
-          await ctx.db.delete(normalized);
-          // Its conversations, queued work and status rows are keyed by agent
-          // and nothing else would ever collect them. Batches continue on their
-          // own, so this is scheduled rather than awaited to completion.
-          await ctx.scheduler.runAfter(
-            0,
-            internal.runtime.deleteAgentRuntimeData,
-            {
-              accountId: agent.accountId,
-              agentId: normalized,
-            },
-          );
-        }
-      }
+    // harness side stays consistent with the dashboard's canvas. Only a row
+    // owned by this project's account is this config's to delete; a link to
+    // any other row is dropped with the config and the row is left alone.
+    const accountId = await accountIdForProject(ctx, existing.projectId);
+    const normalized = existing.agentId
+      ? ctx.db.normalizeId("agents", existing.agentId)
+      : null;
+    const agent = normalized ? await ctx.db.get(normalized) : null;
+    const ownsAgent = agent !== null && agent.accountId === accountId;
+    if (agent && ownsAgent) {
+      await ctx.db.delete(agent._id);
+      // Its conversations, queued work and status rows are keyed by agent
+      // and nothing else would ever collect them. Batches continue on their
+      // own, so this is scheduled rather than awaited to completion.
+      await ctx.scheduler.runAfter(0, internal.runtime.deleteAgentRuntimeData, {
+        accountId: agent.accountId,
+        agentId: agent._id,
+      });
     }
 
     await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
       projectId: existing.projectId,
       stageId: existing.stageId,
       action: "deleted",
-      agentId: existing.agentId,
+      agentId: ownsAgent ? existing.agentId : undefined,
       configId: configId,
       name: existing.name,
       summary: "Agent configuration deleted",
-      details: { configId: configId },
+      details: {
+        configId: configId,
+        ...(agent && !ownsAgent ? { foreignAgentRowSkipped: true } : {}),
+      },
     });
     await ctx.db.delete(configId);
 
@@ -290,7 +299,6 @@ export const update = mutation({
     runtimeVariables: v.optional(
       v.array(v.object({ key: v.string(), value: v.string() })),
     ),
-    agentId: v.optional(v.string()),
     extraConfig: v.optional(v.any()),
   },
   returns: v.id("agentConfigs"),
@@ -329,13 +337,18 @@ export const update = mutation({
 
     // Keep the broods `agents` row aligned; this also provisions
     // the runtime row when an org account was created after the config.
-    await ensureAgentsRowForConfig(ctx, configId, user.id);
-    await syncAgentRowFields(ctx, configId, {
-      name: updates.name,
-      description: updates.description,
-    });
-    await pushEncryptedConfigToAgentRow(ctx, configId);
+    const accountId = await accountIdForProject(ctx, existing.projectId);
+    if (accountId) {
+      await ensureAgentsRowForConfig(ctx, configId, user.id, accountId);
+      await syncAgentRowFields(ctx, configId, accountId, {
+        name: updates.name,
+        description: updates.description,
+      });
+      await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
+    }
     const updated = await ctx.db.get(configId);
+    const agentRowRelinked =
+      existing.agentId !== undefined && updated?.agentId !== existing.agentId;
     await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
       projectId: existing.projectId,
       stageId: existing.stageId,
@@ -344,7 +357,11 @@ export const update = mutation({
       configId: configId,
       name: updated?.name ?? existing.name,
       summary: "Agent configuration updated",
-      details: { configId: configId, changedFields: Object.keys(patch).sort() },
+      details: {
+        configId: configId,
+        changedFields: Object.keys(patch).sort(),
+        ...(agentRowRelinked ? { agentRowRelinked: true } : {}),
+      },
     });
 
     return configId;
@@ -424,8 +441,14 @@ export const updateRuntimeRefs = mutation({
 
     // Provisioning stays unconditional. A canvas save is where an agent whose
     // org gained an account after the config was made first gets its row.
-    const agentRowId = await ensureAgentsRowForConfig(ctx, configId, user.id);
-    const provisionedNow = !existing.agentId && !!agentRowId;
+    // Replacing a link to a row outside this project's account counts as
+    // provisioning too.
+    const accountId = await accountIdForProject(ctx, existing.projectId);
+    const agentRowId = accountId
+      ? await ensureAgentsRowForConfig(ctx, configId, user.id, accountId)
+      : null;
+    const provisionedNow =
+      agentRowId !== null && agentRowId !== existing.agentId;
 
     // Skip the patch and encryption push when nothing changed. Every canvas
     // save derives refs for all agents, so most calls land here. A row created
@@ -447,7 +470,9 @@ export const updateRuntimeRefs = mutation({
       extraConfig: extraConfig,
       updatedAt: Date.now(),
     });
-    await pushEncryptedConfigToAgentRow(ctx, configId);
+    if (accountId) {
+      await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
+    }
 
     return configId;
   },
@@ -486,14 +511,20 @@ export const updateSubagentRefs = mutation({
     }
 
     // Map each callee config to its broods agents-row id, skipping
-    // self-calls and any config the caller doesn't own or can't provision.
+    // self-calls, configs outside this project (another project can belong to
+    // another account) and any config the caller can't provision.
+    const accountId = await accountIdForProject(ctx, existing.projectId);
     const allowed: string[] = [];
     for (const calleeId of calleeConfigIds) {
-      if (calleeId === configId) continue;
+      if (!accountId || calleeId === configId) continue;
       const callee = await ctx.db.get(calleeId);
-      if (!callee || !(await canAccessAgentConfig(ctx, user.id, callee)))
-        continue;
-      const agentRowId = await ensureAgentsRowForConfig(ctx, calleeId, user.id);
+      if (!callee || callee.projectId !== existing.projectId) continue;
+      const agentRowId = await ensureAgentsRowForConfig(
+        ctx,
+        calleeId,
+        user.id,
+        accountId,
+      );
       if (agentRowId) allowed.push(agentRowId);
     }
     allowed.sort();
@@ -524,8 +555,10 @@ export const updateSubagentRefs = mutation({
       updatedAt: Date.now(),
     });
 
-    await ensureAgentsRowForConfig(ctx, configId, user.id);
-    await pushEncryptedConfigToAgentRow(ctx, configId);
+    if (accountId) {
+      await ensureAgentsRowForConfig(ctx, configId, user.id, accountId);
+      await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
+    }
 
     return configId;
   },
@@ -602,7 +635,7 @@ async function recordAgentConfigAudit(
     projectId: Id<"projects">;
     stageId: Id<"stages">;
     action: string;
-    agentId?: string;
+    agentId?: string | null;
     configId: Id<"agentConfigs">;
     name?: string;
     summary: string;

@@ -27,6 +27,7 @@ import {
   saveAgentRuntimeSecrets,
 } from "./agentRuntimeSecrets";
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
+import { accountIdForProject } from "./auditEvents";
 import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { loadMcpServersByNode } from "./mcp";
@@ -161,17 +162,17 @@ export async function backSyncCanvasFromAgentRow(
 
 /**
  * Points `agentConfigs[configId].agentId` at a live `agents` row.
- * Idempotent: if `agentId` is already set and the row it names belongs to the
- * owning account, this returns it unchanged.
+ * Idempotent: if `agentId` is already set and the row it names belongs to
+ * `accountId`, this returns it unchanged.
  *
- * Callers that authenticated as an account must pass `accountId`: the active
- * org is dashboard state and can name a different tenant than the credential.
+ * `accountId` is the account of the config's project, never the caller's
+ * active org: that is dashboard state and can name a different tenant.
  */
 export async function ensureAgentsRowForConfig(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
   authId: string,
-  accountId?: Id<"accounts">,
+  accountId: Id<"accounts">,
 ): Promise<Id<"agents"> | null> {
   const config = await ctx.db.get(configId);
   if (!config || config.authId !== authId) return null;
@@ -182,19 +183,11 @@ export async function ensureAgentsRowForConfig(
       const existing = await ctx.db.get(normalized);
       // A row under another account is a mis-filed agent from an earlier sync,
       // not this account's agent: recreate rather than keep handing it back.
-      if (
-        existing &&
-        (accountId === undefined || existing.accountId === accountId)
-      ) {
-        return existing._id;
-      }
+      if (existing?.accountId === accountId) return existing._id;
     }
   }
 
-  const account =
-    accountId !== undefined
-      ? await ctx.db.get(accountId)
-      : await resolveActiveAccountForAuthId(ctx, authId);
+  const account = await ctx.db.get(accountId);
   if (!account) return null;
 
   const now = Date.now();
@@ -292,10 +285,14 @@ export async function mirrorAgentRowOntoConfig(
  *      not provisioned with a broods account).
  * Throws when a linked core agent exists but the shared encryption secret is
  * missing, because otherwise the runtime would keep stale or empty config.
+ *
+ * Only a row owned by `accountId`, the account of the config's project, is
+ * written. A link to any other account's row is left alone.
  */
 export async function pushEncryptedConfigToAgentRow(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
+  accountId: Id<"accounts">,
 ): Promise<void> {
   const config = await ctx.db.get(configId);
   if (!config?.agentId) return;
@@ -308,7 +305,7 @@ export async function pushEncryptedConfigToAgentRow(
   const normalized = ctx.db.normalizeId("agents", config.agentId);
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);
-  if (!agent) return;
+  if (agent?.accountId !== accountId) return;
 
   const variables = await loadAgentRuntimeSecrets(ctx, configId);
 
@@ -341,7 +338,7 @@ export async function pushEncryptedConfigToAgentRow(
     encryptionTag: encrypted.tag,
     updatedAt: Date.now(),
   });
-  await refreshAccountChannelEndpoints(ctx, agent.accountId);
+  await refreshAccountChannelEndpoints(ctx, accountId);
 }
 
 /**
@@ -362,6 +359,7 @@ export async function refreshAgentConfigsForEnvironmentVariable(
       q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
+  const accountId = await accountIdForProject(ctx, projectId);
 
   for (const config of configs) {
     const referencesVariable = config.runtimeVariables?.some(
@@ -388,7 +386,9 @@ export async function refreshAgentConfigsForEnvironmentVariable(
       runtimeVariables: publicRuntimeVariables,
       updatedAt: Date.now(),
     });
-    await pushEncryptedConfigToAgentRow(ctx, config._id);
+    if (accountId) {
+      await pushEncryptedConfigToAgentRow(ctx, config._id, accountId);
+    }
   }
 }
 
@@ -419,12 +419,14 @@ export async function resolveActiveAccountForAuthId(
 
 /**
  * Mirrors name/description edits from `agentConfigs` onto the linked
- * `agents` row when one exists. Silently no-ops if the row is missing. The
- * next `ensureAgentsRowForConfig` call provisions it.
+ * `agents` row when one exists. Silently no-ops if the row is missing or is
+ * not owned by `accountId`. The next `ensureAgentsRowForConfig` call
+ * provisions it.
  */
 export async function syncAgentRowFields(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
+  accountId: Id<"accounts">,
   patch: { name?: string; description?: string },
 ): Promise<void> {
   if (patch.name === undefined && patch.description === undefined) return;
@@ -433,7 +435,7 @@ export async function syncAgentRowFields(
   const normalized = ctx.db.normalizeId("agents", config.agentId);
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);
-  if (!agent) return;
+  if (agent?.accountId !== accountId) return;
 
   await ctx.db.patch(normalized, {
     ...(patch.name !== undefined ? { name: patch.name } : {}),

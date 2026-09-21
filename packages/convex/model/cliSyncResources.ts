@@ -34,8 +34,10 @@ import {
 } from "./cliSync";
 import { isPlainObject, stableJson } from "./objects";
 
+/** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
 export async function deleteAgentResource(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
   name: string,
@@ -57,7 +59,7 @@ export async function deleteAgentResource(
     const agentId = ctx.db.normalizeId("agents", config.agentId);
     if (agentId) {
       const agent = await ctx.db.get(agentId);
-      if (agent) await ctx.db.delete(agentId);
+      if (agent?.accountId === accountId) await ctx.db.delete(agentId);
     }
   }
   await ctx.db.delete(config._id);
@@ -103,8 +105,10 @@ export async function deleteWorkspaceResource(
   await ctx.db.delete(workspace._id);
 }
 
+/** Prunes undeclared CLI agents, and their `agents` rows when `accountId` owns them. */
 export async function pruneAgents(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
   resources: CliResource[],
@@ -126,7 +130,7 @@ export async function pruneAgents(
       const agentId = ctx.db.normalizeId("agents", config.agentId);
       if (agentId) {
         const agent = await ctx.db.get(agentId);
-        if (agent) await ctx.db.delete(agentId);
+        if (agent?.accountId === accountId) await ctx.db.delete(agentId);
       }
     }
     await ctx.db.delete(config._id);
@@ -319,11 +323,11 @@ export async function syncAgentResources(
         target.authId,
         account._id,
       );
-      await syncAgentRowFields(ctx, target._id, {
+      await syncAgentRowFields(ctx, target._id, account._id, {
         name: name,
         description: resource.description,
       });
-      await pushEncryptedConfigToAgentRow(ctx, target._id);
+      await pushEncryptedConfigToAgentRow(ctx, target._id, account._id);
       const refreshed = await ctx.db.get(target._id);
       if (refreshed?.agentId) ids[name] = refreshed.agentId;
       if (hasSubagentAllowed(nested))
@@ -357,7 +361,7 @@ export async function syncAgentResources(
       });
       await saveAgentRuntimeSecrets(ctx, configId, runtimeVariables);
       await ensureAgentsRowForConfig(ctx, configId, authId, account._id);
-      await pushEncryptedConfigToAgentRow(ctx, configId);
+      await pushEncryptedConfigToAgentRow(ctx, configId, account._id);
       const created = await ctx.db.get(configId);
       if (created?.agentId) ids[name] = created.agentId;
       if (hasSubagentAllowed(nested))
@@ -365,7 +369,7 @@ export async function syncAgentResources(
     }
   }
 
-  await resolveSubagentReferences(ctx, pendingSubagentRefs, ids);
+  await resolveSubagentReferences(ctx, account._id, pendingSubagentRefs, ids);
 
   return ids;
 }
@@ -664,6 +668,7 @@ function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
  */
 async function resolveSubagentReferences(
   ctx: MutationCtx,
+  accountId: Id<"accounts">,
   pending: Array<{
     configId: Id<"agentConfigs">;
     nested: Record<string, unknown>;
@@ -681,6 +686,6 @@ async function resolveSubagentReferences(
       extraConfig: flat.extraConfig,
       updatedAt: Date.now(),
     });
-    await pushEncryptedConfigToAgentRow(ctx, configId);
+    await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
   }
 }
