@@ -8,6 +8,7 @@
  */
 
 import type { McpOauth } from "../../shared/domain/mcp.ts";
+import { publicHostFetch } from "../../shared/http.ts";
 
 export const DEFAULT_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -97,12 +98,10 @@ async function mintAccessToken(
   });
   let response: Response;
   try {
-    response = await fetch(oauth.tokenUrl, {
+    response = await publicHostFetch(oauth.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
-      // The body carries the client secret; never follow it to another host.
-      redirect: "error",
     });
   } catch (error) {
     throw failure(error instanceof Error ? error.message : String(error));

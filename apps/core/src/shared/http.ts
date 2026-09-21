@@ -150,8 +150,9 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 }
 
 /**
- * `fetch` for tenant-configured model endpoints: resolve the hostname, refuse it
- * when any address is private, link-local or a metadata range, then connect to
+ * `fetch` for a tenant-configured endpoint (model base URL, MCP server, its
+ * OAuth token URL): resolve the hostname, refuse it when any address is
+ * private, link-local or a metadata range, then connect to
  * the validated address with the name pinned into SNI and `Host`. That is what
  * stops a public name that later resolves inward, with no rebind window, since
  * `assertPublicHttpsUrl` only sees the hostname string at config time. Bun's

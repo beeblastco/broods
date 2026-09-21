@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { dns } from "bun";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mcpConnection } from "../src/harness/mcp/client.ts";
 import {
   clearMcpOauthTokens,
@@ -8,6 +9,8 @@ import {
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 
 const TOKEN_URL = "https://oauth.test/token";
+// publicHostFetch dials the resolved address with the name in the Host header.
+const PINNED_TOKEN_URL = "https://93.184.216.34/token";
 
 const originalFetch = globalThis.fetch;
 
@@ -51,9 +54,15 @@ function oauthRecord(overrides: Partial<McpRecord> = {}): McpRecord {
 /** Stub the token endpoint; returns the recorded requests. */
 function stubTokenEndpoint(
   responses: Array<{ status?: number; body: unknown }>,
-): Array<{ url: string; body: string; redirect: RequestInit["redirect"] }> {
+): Array<{
+  url: string;
+  host: string | null;
+  body: string;
+  redirect: RequestInit["redirect"];
+}> {
   const requests: Array<{
     url: string;
+    host: string | null;
     body: string;
     redirect: RequestInit["redirect"];
   }> = [];
@@ -63,6 +72,7 @@ function stubTokenEndpoint(
   ): Promise<Response> => {
     requests.push({
       url: String(input),
+      host: new Headers(init?.headers).get("host"),
       body: String(init?.body ?? ""),
       redirect: init?.redirect,
     });
@@ -77,7 +87,14 @@ function stubTokenEndpoint(
 }
 
 describe("mcp oauth access tokens", () => {
+  let lookup: ReturnType<typeof spyOn<typeof dns, "lookup">>;
+  beforeEach(() => {
+    lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
+  });
   afterEach(() => {
+    lookup.mockRestore();
     globalThis.fetch = originalFetch;
     clearMcpOauthTokens();
   });
@@ -91,7 +108,8 @@ describe("mcp oauth access tokens", () => {
 
     expect(token).toBe("token-a");
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.url).toBe(TOKEN_URL);
+    expect(requests[0]!.url).toBe(PINNED_TOKEN_URL);
+    expect(requests[0]!.host).toBe("oauth.test");
     expect(requests[0]!.redirect).toBe("error");
     const params = new URLSearchParams(requests[0]!.body);
     expect(params.get("grant_type")).toBe("refresh_token");
