@@ -57,8 +57,8 @@ import type {
 import {
   modelValueToUserParts,
   prependTextToUserParts,
+  subagentConfig,
   VIRTUAL_AGENT_PREFIX,
-  withoutNestedSubagents,
 } from "./tools/utils.ts";
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
@@ -320,7 +320,7 @@ export class SubagentCoordinator {
         runId: runId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
-        agentConfig: withoutNestedSubagents(agent.config),
+        agentConfig: subagentConfig(agent.config, this.parentAgentConfig),
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey: publicConversationKey,
         conversationKey: scopedDirectConversationKey(
@@ -344,7 +344,10 @@ export class SubagentCoordinator {
       runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      agentConfig: withoutNestedSubagents(this.parentAgentConfig),
+      agentConfig: subagentConfig(
+        this.parentAgentConfig,
+        this.parentAgentConfig,
+      ),
       publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
