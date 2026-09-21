@@ -24,6 +24,8 @@ declare global {
 // How long `publicHostFetch` reuses a validated address before it resolves
 // again. Reuse is safe because the socket is pinned to that address.
 const PUBLIC_HOST_TTL_MS = 30_000;
+// Tenants pick the hostnames, so the cache is emptied before it can grow without end.
+const PUBLIC_HOSTS_MAX = 1_024;
 
 const publicHosts = new Map<string, { address: string; expiresAt: number }>();
 
@@ -190,6 +192,9 @@ export async function publicHostFetch(
       address: pinned.family === 6 ? `[${pinned.address}]` : pinned.address,
       expiresAt: Date.now() + PUBLIC_HOST_TTL_MS,
     };
+    if (publicHosts.size >= PUBLIC_HOSTS_MAX) {
+      publicHosts.clear();
+    }
     publicHosts.set(hostname, validated);
   }
   url.hostname = validated.address;
