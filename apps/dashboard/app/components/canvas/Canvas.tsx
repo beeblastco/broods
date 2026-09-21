@@ -981,6 +981,7 @@ function CanvasInner({
 
   const onContextMenu = useCallback(
     (event: React.MouseEvent): void => {
+      clearRefusal();
       lastRightClick.current = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
@@ -1016,7 +1017,7 @@ function CanvasInner({
           : null,
       );
     },
-    [screenToFlowPosition, mcpServers],
+    [clearRefusal, screenToFlowPosition, mcpServers],
   );
 
   /**

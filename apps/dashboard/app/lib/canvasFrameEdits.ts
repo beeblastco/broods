@@ -274,7 +274,13 @@ export function nodeLinkActions(
     actions.push({
       edgeId: edge.id,
       kind: "unlink",
-      label: cardLabel(other),
+      // Subagent links run both ways between two agents, so the row says which.
+      label:
+        edgeKind(edge) !== "subagent"
+          ? cardLabel(other)
+          : edge.source === nodeId
+            ? `calls ${cardLabel(other)}`
+            : `called by ${cardLabel(other)}`,
       locked: edge.deletable === false,
       mount: edgeKind(edge) === "mount",
     });

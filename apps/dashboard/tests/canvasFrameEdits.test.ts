@@ -281,6 +281,23 @@ describe("nodeLinkActions", () => {
       ),
     ).toEqual(["alpha", "bravo", "notes"]);
   });
+
+  test("two agents that call each other get one row per direction", () => {
+    const nodes = [...NODES, node("helper", "agent", { x: 720, y: 0 })];
+    const edges: Edge[] = [
+      subagent("agent", "helper"),
+      subagent("helper", "agent"),
+    ];
+
+    expect(
+      nodeLinkActions(nodes, edges, "agent").map((link) =>
+        link.kind === "unlink" ? [link.label, link.edgeId] : link.kind,
+      ),
+    ).toEqual([
+      ["calls helper", "subagent:agent-right-helper-left"],
+      ["called by helper", "subagent:helper-right-agent-left"],
+    ]);
+  });
 });
 
 describe("runtime ref guards", () => {
@@ -370,6 +387,18 @@ function node(
     id: id,
     position: position,
     type: type,
+  };
+}
+
+/** A subagent link as the canvas stores it: side handle to side handle. */
+function subagent(source: string, target: string): Edge {
+  return {
+    id: `subagent:${source}-right-${target}-left`,
+    source: source,
+    sourceHandle: "right",
+    target: target,
+    targetHandle: "left",
+    type: "subagent",
   };
 }
 
