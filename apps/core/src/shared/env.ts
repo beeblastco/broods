@@ -5,6 +5,21 @@ export function requireEnv(name: string): string {
   return value;
 }
 
+/** A rotatable secret: comma-separated, first entry seals, every entry opens. */
+export function requireSecretsEnv(name: string): [string, ...string[]] {
+  const [first, ...rest] = [
+    ...new Set(
+      requireEnv(name)
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!first) throw new Error(`Missing required environment variable: ${name}`);
+
+  return [first, ...rest];
+}
+
 export function optionalEnv(name: string): string | undefined {
   const value = process.env[name];
 

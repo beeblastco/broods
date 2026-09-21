@@ -16,6 +16,7 @@ import {
   type ApiResource,
 } from "../model/apiAuthorization";
 import type { ConfigAuditActor } from "../model/auditEvents";
+import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
   handleAgentChannelDirectoryRoute,
@@ -105,6 +106,12 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
 
     return await dispatchResourceRoute(ctx, req, account._id, actor, route);
   } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message.startsWith(POLICY_STILL_REFERENCED)
+    ) {
+      return jsonError(409, err.message);
+    }
     if (isClientInputError(err)) {
       return jsonError(clientErrorStatus(err), err.message);
     }
@@ -169,12 +176,7 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
 function clientErrorStatus(error: Error): number {
   if (error.message.startsWith("Skill path belongs to another account:"))
     return 401;
-  if (
-    error.message.startsWith("Agent name already exists:") ||
-    error.message.includes("is still referenced by")
-  ) {
-    return 409;
-  }
+  if (error.message.startsWith("Agent name already exists:")) return 409;
   if (
     error.message.startsWith("Skill not found:") ||
     error.message.startsWith("Subagent not found:") ||
@@ -348,7 +350,6 @@ function isClientInputError(error: unknown): error is Error {
     "Policy document",
     "Policy rule",
     "Policy does not belong",
-    'Policy "',
     "roleId must",
     "ttlSeconds must",
     "projectId and stageId",
