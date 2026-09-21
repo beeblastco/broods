@@ -106,7 +106,7 @@ const TLS_KEY = readFileSync(
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  process.env.SERVICE_AUTH_SECRET = "service-auth-secret";
+  process.env.MEDIA_TICKET_SECRET = "media-ticket-secret";
   process.env.PUBLIC_BASE_URL = "https://core.example";
   headS3ObjectMock.mockClear();
   writeS3ObjectMock.mockClear();
@@ -195,7 +195,7 @@ describe("ingestInboundAttachments", () => {
     const token = String(image.image).slice(
       "https://core.example/v1/media/".length,
     );
-    const ticket = openMediaTicket(token, "service-auth-secret");
+    const ticket = openMediaTicket(token, ["media-ticket-secret"]);
     expect(ticket).not.toBeNull();
     expect(ticket).not.toHaveProperty("workspaceId");
     expect(ticket?.path).toStartWith("media/");
@@ -913,7 +913,7 @@ function loopbackTransport(
 }
 
 function sealedImageMessage(ticket: MediaTicket): ModelMessage {
-  const token = sealMediaTicket(ticket, "service-auth-secret");
+  const token = sealMediaTicket(ticket, "media-ticket-secret");
 
   return {
     role: "user",

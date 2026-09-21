@@ -482,6 +482,8 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
+A policy reference that no longer resolves, such as a deleted policy or a mistyped id, refuses every action for that agent until you fix or remove the reference. `broods deploy` warns when an agent lists a policy name the deploy does not declare.
+
 Policy rules can scope by resource selectors like `toolNames`, `mcpIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. A `filePaths` entry is a workspace-relative prefix (`secrets/`, not `/workspace/secrets`), matched against the path the tool resolves; `bash` carries no path, so scope shell commands by `toolNames` and conditions instead. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `mcpId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
 - `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an MCP tool's `<server>__<tool>` name.

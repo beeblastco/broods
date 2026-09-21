@@ -265,6 +265,7 @@ describe("nodeLinkActions", () => {
         label: "agent",
         locked: true,
         mount: false,
+        otherType: "agent",
       },
       {
         edgeId: "mount:alpha-right-notes-left",
@@ -272,6 +273,7 @@ describe("nodeLinkActions", () => {
         label: "alpha",
         locked: false,
         mount: true,
+        otherType: "sandbox",
       },
     ]);
     // An agent card gets a row per service it wires.

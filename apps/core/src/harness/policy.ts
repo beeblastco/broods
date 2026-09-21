@@ -10,6 +10,7 @@ import {
   shadow,
   type PolicyClient,
 } from "@ai-sdk/policy-opa";
+import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
 import type {
   ToolApprovalConfiguration,
   ToolApprovalStatus,
@@ -25,7 +26,6 @@ import type {
 } from "../shared/domain/policy.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
-import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
 import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
 import { getStorage } from "../shared/storage.ts";
 import type {
@@ -286,14 +286,13 @@ export async function evaluateChannelInvoke(
   input: Omit<PolicyDecisionInput, "action">,
 ): Promise<PolicyDecision | undefined> {
   if (!isPolicyEnabled(agentConfig) || !input.accountId) return undefined;
+  let mode: PolicyMode | undefined;
   try {
-    // Loading the documents sits inside the try on purpose: a control-plane
-    // blip must fail closed like an unreachable OPA, not throw past the caller.
     const policies = await loadPolicyDocuments(
       input.accountId,
       agentConfig.policies ?? [],
     );
-    const mode = enforcingMode(policies);
+    mode = enforcingMode(policies);
     const decision = await policyClient().evaluate<
       PolicyDecisionInput & { policies: PolicyDocument[] },
       {
@@ -310,7 +309,7 @@ export async function evaluateChannelInvoke(
 
     return {
       // No decision means OPA does not carry the package: only a place where
-      // nothing enforces stays open, as the tool gate does.
+      // nothing enforces stays open.
       allowed: decision ? decision.allowed === true : mode === "audit",
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
@@ -325,11 +324,11 @@ export async function evaluateChannelInvoke(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fail closed: when the document load is what threw, there is no way to
-    // tell an auditing place from an enforcing one here.
+    // `mode` is unset when the document load threw: an auditing place cannot
+    // be told from an enforcing one, so refuse. An OPA outage alone keeps it.
     return {
-      allowed: false,
-      mode: "enforce",
+      allowed: mode === "audit",
+      mode: mode ?? "enforce",
       reason: "Policy evaluation failed",
       matchedRuleIds: [],
       auditedRuleIds: [],

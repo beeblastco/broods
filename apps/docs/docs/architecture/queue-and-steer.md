@@ -205,6 +205,10 @@ contiguous `steer` prefix at the head of the FIFO is combined and injected. A
 run has no next model call, that same contiguous steer prefix becomes one
 follow-up application while every contributor retains its own status.
 
+In a channel the prefix also stops at a different sender. A message from someone
+other than the person whose turn is running waits and runs as its own turn, so
+policy checks it against its own user id and roles.
+
 Initial limits are configurable, with conservative defaults of 100 queued
 envelopes and 1 MiB of serialized queued events per conversation. Acceptance is
 atomic: an envelope is either durably inserted with a status record or rejected.
