@@ -132,6 +132,29 @@ describe("deriveCanvasGroups", () => {
     ).toEqual([["s1", "s2"]]);
   });
 
+  it("puts members where a drop left them, and the rest after", () => {
+    const nodes = [
+      node("a1", "agent"),
+      node("w1", "workspace", { frameOrder: 2 }),
+      node("w2", "workspace", { frameOrder: 0 }),
+      node("w3", "workspace", { frameOrder: 1 }),
+      // Joined after the drop, so no slot of its own: it sorts last.
+      node("w4", "workspace"),
+    ];
+    const edges = [
+      edge("a1", "w1"),
+      edge("a1", "w2"),
+      edge("a1", "w3"),
+      edge("a1", "w4"),
+    ];
+
+    expect(
+      framesOf(deriveCanvasGroups(nodes, edges, NO_SERVERS)).map(
+        (frame) => frame.memberIds,
+      ),
+    ).toEqual([["w2", "w3", "w1", "w4"]]);
+  });
+
   it("leaves unreached resources ungrouped, and groups a mounted sandbox with its agent", () => {
     const frames = deriveCanvasGroups(
       [

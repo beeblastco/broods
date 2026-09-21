@@ -5,6 +5,10 @@
  * Expanded, it is only the dashed box and header; the member chips render
  * themselves inside it. Collapsed, it is one compact card that names its
  * members and sums up their state.
+ *
+ * While a card is being dropped on it the box grows by one row and marks the
+ * slot that card will take. The growth and the chips sliding to their new slots
+ * are the frame's own transitions, so nothing here animates by hand.
  */
 import {
   useCanvasFrames,
@@ -13,6 +17,7 @@ import {
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { useNow } from "@/app/hooks/useNow";
+import { FRAME_PADDING } from "@broods/convex/model/canvasFrames";
 import type { FrameNodeType } from "@/app/lib/canvasFrameNodes";
 import type { CanvasInfraAnalysis } from "@/app/lib/canvasRuntimeRefs";
 import { machineStateByName } from "@/app/lib/machineConnection";
@@ -33,7 +38,7 @@ export function FrameNode({
   id,
   data,
 }: NodeProps<FrameNodeType>): React.JSX.Element {
-  const { collapsed, frame, members } = data;
+  const { collapsed, dropSlotY, frame, members } = data;
   const frames = useCanvasFrames();
   const infraAnalysis = useInfraAnalysis();
   const now = useNow();
@@ -53,8 +58,20 @@ export function FrameNode({
           : // Dashed and lighter than a card's, so a group reads as one box without
             // drawing harder than the cards inside it.
             "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
+        // The colour mounts and the drop slot share: this group is taking the card.
+        dropSlotY !== undefined && "border-canvas-mount",
       )}
     >
+      {dropSlotY !== undefined && (
+        <div
+          data-slot="frame-drop-slot"
+          className="absolute top-(--drop-slot-y) left-(--drop-slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
+          style={{
+            "--drop-slot-x": `${FRAME_PADDING}px`,
+            "--drop-slot-y": `${dropSlotY}px`,
+          }}
+        />
+      )}
       {/* Bundle edges from the agent land on top; mount and runs-on edges
           re-point to the sides while the frame is collapsed. */}
       <Handle

@@ -13,6 +13,7 @@ import {
   CanvasNodeMenu,
   type CanvasNodeMenuEntries,
 } from "@/app/components/canvas/CanvasNodeMenu";
+import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
 import {
   CanvasRefusal,
   type CanvasRefusalHandle,
@@ -60,6 +61,12 @@ import {
   reconcileFramePositions,
   setUngrouped,
 } from "@/app/lib/canvasFrameEdits";
+import {
+  applyCanvasDrop,
+  canvasDropTarget,
+  sameCanvasDrop,
+  type CanvasDrop,
+} from "@/app/lib/canvasDropTarget";
 import {
   applyFramedNodeChanges,
   buildFramedGraph,
@@ -477,6 +484,8 @@ function CanvasInner({
   const [collapsedFrames, setCollapsedFrames] = useState(() =>
     readCollapsedFrames(collapsedKey),
   );
+  // The group under the card being dragged, and why it will not take it.
+  const [drop, setDrop] = useState<CanvasDrop | null>(null);
   const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
   const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
   // What the right-clicked card offers; null on a frame or the empty canvas,
@@ -502,6 +511,8 @@ function CanvasInner({
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const isDraggingNode = useRef(false);
+  // Read on release, when the state the preview renders from is a render behind.
+  const dropRef = useRef<CanvasDrop | null>(null);
   const didInitialFit = useRef(false);
   const framedGraphRef = useRef<FramedGraph | null>(null);
   // The last layout the database sent, for telling an edit's ref problems
@@ -521,8 +532,12 @@ function CanvasInner({
         collapsedFrames,
         expandedMemberId,
         framedGraphRef.current,
+        // Only a frame opens a slot, and only for a drop it will take.
+        drop && drop.refusal === null && drop.frameId !== null
+          ? { frameId: drop.frameId, slot: drop.slot }
+          : null,
       ),
-    [nodes, edges, mcpServers, collapsedFrames, expandedMemberId],
+    [nodes, edges, mcpServers, collapsedFrames, expandedMemberId, drop],
   );
 
   useEffect(() => {
@@ -1134,6 +1149,34 @@ function CanvasInner({
   }, []);
 
   /**
+   * Offer the group under the card being dragged. One card only: dragging a
+   * selection is a move, not a gesture at a group. The target is worked out on
+   * every move but written only when it changes, so a crossing re-renders the
+   * canvas and a pixel does not.
+   */
+  const onNodeDrag: OnNodeDrag = useCallback(
+    (_event, grabbed, dragged) => {
+      const next =
+        dragged.length === 1 && grabbed.type !== "frame"
+          ? canvasDropTarget({
+              expandedMemberId: expandedMemberId,
+              graph: {
+                edges: edgesRef.current,
+                mcpServers: mcpServers,
+                nodes: nodesRef.current,
+              },
+              nodeId: grabbed.id,
+              position: grabbed.position,
+            })
+          : null;
+      if (sameCanvasDrop(dropRef.current, next)) return;
+      dropRef.current = next;
+      setDrop(next);
+    },
+    [expandedMemberId, mcpServers],
+  );
+
+  /**
    * Settle a drop. ReactFlow snaps the grabbed card to the dot grid and moves
    * the rest of the selection by the same offset, so nothing stops a card from
    * landing on top of another. Every dragged card steps to the nearest clear
@@ -1143,6 +1186,21 @@ function CanvasInner({
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, grabbed, dragged) => {
       isDraggingNode.current = false;
+      const pending = dropRef.current;
+      dropRef.current = null;
+      setDrop(null);
+      if (pending?.refusal === null && pending.nodeId === grabbed.id) {
+        // The group takes it. `editGraph` settles the frame it joins around it,
+        // so the card needs no clear spot of its own.
+        editGraph((nodes, edges) =>
+          applyCanvasDrop(
+            { edges: edges, mcpServers: mcpServers, nodes: nodes },
+            pending,
+          ),
+        );
+
+        return;
+      }
       const draggedIds = new Set(dragged.map((node) => node.id));
       const graph = framedGraphRef.current;
       // Dragged frames count where they were dropped, which the graph from the
@@ -1167,7 +1225,7 @@ function CanvasInner({
       setNodes((nds) => applyPositions(nds, settled));
       scheduleSave();
     },
-    [setNodes, scheduleSave],
+    [setNodes, scheduleSave, editGraph, mcpServers],
   );
 
   /** Persist and close side panel when nodes are deleted via keyboard/context actions. */
@@ -1488,6 +1546,7 @@ function CanvasInner({
         onConnectStart={clearRefusal}
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
+        onNodeDrag={onNodeDrag}
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
@@ -1520,6 +1579,7 @@ function CanvasInner({
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
         <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
+        <CanvasDropPreview drop={drop} />
         {/* Save status lives away from the controls so it never crowds or
             reflows them; it clears itself once a save lands. */}
         <Panel position="bottom-left">
