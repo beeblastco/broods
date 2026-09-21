@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
-/** A canvas save writes each dashboard agent's sandboxes and workspaces. */
+/** Canvas saves write runtime refs. A config only reaches its own agents row. */
 
 import { convexTest } from "convex-test";
-import { describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { api, internal } from "../_generated/api";
+import type { Doc, Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
@@ -23,10 +23,117 @@ const refsTest = (): ReturnType<typeof convexTest> =>
 type T = ReturnType<typeof refsTest>;
 
 type Seeded = {
+  accountId: Id<"accounts">;
   configId: Id<"agentConfigs">;
   keptSandboxId: Id<"sandboxConfigs">;
   prunedSandboxId: Id<"sandboxConfigs">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
 };
+
+describe("agent row ownership", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("update takes no agent id from the client", async () => {
+    const t = refsTest();
+    const { configId, foreignAgentId } = await seedForeignLink(t, "unlinked");
+
+    await expect(
+      t.mutation(api.agent.config.update, {
+        configId: configId,
+        // @ts-expect-error the server owns agentId, it is not a public arg
+        agentId: foreignAgentId,
+      }),
+    ).rejects.toThrow();
+    expect((await docOf(t, configId))?.agentId).toBeUndefined();
+  });
+
+  test("update syncs the account's own row", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = refsTest();
+    const { accountId, configId } = await seedForeignLink(t, "unlinked");
+
+    await t.mutation(api.agent.config.update, {
+      configId: configId,
+      name: "renamed",
+    });
+    const linkedId = (await docOf(t, configId))?.agentId as Id<"agents">;
+    await t.mutation(api.agent.config.update, {
+      configId: configId,
+      description: "second save",
+    });
+
+    expect((await docOf(t, configId))?.agentId).toBe(linkedId);
+    const agent = await docOf(t, linkedId);
+    expect(agent).toMatchObject({
+      accountId: accountId,
+      name: "renamed",
+      description: "second save",
+    });
+    expect(agent?.encryptedConfig).toBeTruthy();
+  });
+
+  test("update replaces a link to another account's row and leaves that row alone", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = refsTest();
+    const { accountId, configId, foreignAgentId } = await seedForeignLink(
+      t,
+      "linked",
+    );
+    const before = await docOf(t, foreignAgentId);
+
+    await t.mutation(api.agent.config.update, {
+      configId: configId,
+      name: "renamed",
+    });
+
+    expect(await docOf(t, foreignAgentId)).toEqual(before);
+    const linkedId = (await docOf(t, configId))?.agentId as Id<"agents">;
+    expect(linkedId).not.toBe(foreignAgentId);
+    expect(await docOf(t, linkedId)).toMatchObject({
+      accountId: accountId,
+      name: "renamed",
+    });
+  });
+
+  test("remove deletes the config and leaves another account's row alone", async () => {
+    const t = refsTest();
+    const { configId, foreignAgentId } = await seedForeignLink(t, "linked");
+    const before = await docOf(t, foreignAgentId);
+
+    await t.mutation(api.agent.config.remove, { configId: configId });
+
+    expect(await docOf(t, configId)).toBeNull();
+    expect(await docOf(t, foreignAgentId)).toEqual(before);
+    const scheduled = await t.run(async (ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(scheduled).toEqual([]);
+  });
+
+  test("the incident query lists only configs linked across accounts", async () => {
+    const t = refsTest();
+    const { accountId, configId, foreignAgentId } = await seedForeignLink(
+      t,
+      "linked",
+    );
+
+    const links = await t.query(internal.agent.agents.listForeignAgentLinks, {
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+
+    expect(links.page).toMatchObject([
+      {
+        configId: configId,
+        projectAccountId: accountId,
+        agentId: foreignAgentId,
+      },
+    ]);
+    expect(links.page[0].agentAccountId).not.toBe(accountId);
+  });
+});
 
 describe("updateRuntimeRefs", () => {
   test("refuses an order that puts a workspace's sandbox after the default", async () => {
@@ -69,6 +176,13 @@ describe("updateRuntimeRefs", () => {
     });
   });
 });
+
+async function docOf<Table extends "agentConfigs" | "agents">(
+  t: T,
+  id: Id<Table>,
+): Promise<Doc<Table> | null> {
+  return await t.run(async (ctx) => await ctx.db.get(id));
+}
 
 async function extraConfigOf(
   t: T,
@@ -153,9 +267,66 @@ async function seed(
     });
 
     return {
+      accountId: accountId,
       configId: configId,
       keptSandboxId: keptSandboxId,
       prunedSandboxId: prunedSandboxId,
+      projectId: projectId,
+      stageId: stageId,
+    };
+  });
+}
+
+/**
+ * The seeded org plus a second account's `agents` row, and a config the
+ * caller authored that either names that row or names none.
+ */
+async function seedForeignLink(
+  t: T,
+  link: "linked" | "unlinked",
+): Promise<{
+  accountId: Id<"accounts">;
+  configId: Id<"agentConfigs">;
+  foreignAgentId: Id<"agents">;
+}> {
+  const { accountId, projectId, stageId } = await seed(t, []);
+
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const foreignOrgId = await ctx.db.insert("orgs", {
+      name: "other",
+      slug: "other",
+      ownerAuthId: "auth_other",
+      plan: "free" as const,
+      createdAt: now,
+    });
+    const foreignAccountId = await ctx.db.insert("accounts", {
+      orgId: foreignOrgId,
+      username: "other",
+      secretHash: "hash-other",
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const foreignAgentId = await ctx.db.insert("agents", {
+      accountId: foreignAccountId,
+      name: "theirs",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const configId = await ctx.db.insert("agentConfigs", {
+      authId: OWNER_AUTH_ID,
+      name: "mine",
+      agentId: link === "linked" ? foreignAgentId : undefined,
+      projectId: projectId,
+      stageId: stageId,
+      updatedAt: now,
+    });
+
+    return {
+      accountId: accountId,
+      configId: configId,
+      foreignAgentId: foreignAgentId,
     };
   });
 }

@@ -12,10 +12,11 @@ import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { accountIdForProject } from "./model/auditEvents";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
-import { stageNameEquals } from "./model/projectScope";
+import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { stagesFields } from "./schema";
 
 const deploymentRegion = v.union(
@@ -276,7 +277,8 @@ export const remove = mutation({
 /**
  * Cascade-deletes every resource scoped to a stage: agent configs (plus their
  * deployments and linked broods `agents` rows), the canvas layout, MCP
- * servers, env vars, and deploy keys.
+ * servers, env vars, and deploy keys. A linked `agents` row goes only when the
+ * project's account owns it.
  */
 export async function deleteStageContents(
   ctx: MutationCtx,
@@ -290,15 +292,21 @@ export async function deleteStageContents(
       q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
-  for (const config of configs) {
-    if (config.agentId) {
-      const normalized = ctx.db.normalizeId("agents", config.agentId);
-      if (normalized) {
-        const agent = await ctx.db.get(normalized);
-        if (agent) await ctx.db.delete(normalized);
-      }
-    }
+  // `agentsInStage` keeps only rows the project's account owns. Two configs
+  // can name one row, so ids are deduplicated before deleting.
+  const accountId = await accountIdForProject(ctx, projectId);
+  const ownAgents = accountId
+    ? await agentsInStage(
+        ctx,
+        { projectId: projectId, stageId: stageId },
+        accountId,
+      )
+    : [];
+  for (const agentId of new Set(ownAgents.map((agent) => agent._id))) {
+    await ctx.db.delete(agentId);
+  }
 
+  for (const config of configs) {
     // Runtime secrets are keyed to the agent config, so they orphan unless
     // deleted alongside it.
     const runtimeSecrets = await ctx.db
@@ -450,6 +458,7 @@ export async function duplicateStageContents(
     )
     .collect();
 
+  const accountId = await accountIdForProject(ctx, projectId);
   const configIdMap = new Map<Id<"agentConfigs">, Id<"agentConfigs">>();
   const agentIdMap = new Map<string, string>();
   for (const source of sourceConfigs) {
@@ -461,7 +470,9 @@ export async function duplicateStageContents(
     });
     configIdMap.set(source._id, newConfigId);
 
-    const newAgentId = await ensureAgentsRowForConfig(ctx, newConfigId, authId);
+    const newAgentId = accountId
+      ? await ensureAgentsRowForConfig(ctx, newConfigId, authId, accountId)
+      : null;
     if (source.agentId && newAgentId)
       agentIdMap.set(source.agentId, newAgentId);
   }
@@ -507,7 +518,9 @@ export async function duplicateStageContents(
       });
     }
 
-    await pushEncryptedConfigToAgentRow(ctx, newConfigId);
+    if (accountId) {
+      await pushEncryptedConfigToAgentRow(ctx, newConfigId, accountId);
+    }
   }
 
   // 4. Clone the canvas layout, repointing agent and MCP nodes at the clones.
