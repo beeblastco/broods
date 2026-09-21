@@ -10,6 +10,7 @@
 import {
   InvokeWithResponseStreamCommand,
   LambdaClient,
+  type InvokeWithResponseStreamResponseEvent,
 } from "@aws-sdk/client-lambda";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
@@ -109,9 +110,7 @@ describe("hosted MCP fetch adapter", () => {
 
 describe("hosted MCP invoke", () => {
   it("carries the account id as the Lambda tenant id", async () => {
-    // Presigning the bundle URL is offline only with static keys. AWS_PROFILE
-    // outranks them in the provider chain, so it goes: a developer's real
-    // profile must never sign here.
+    // AWS_PROFILE outranks static keys; a real profile must never sign here.
     delete process.env.AWS_PROFILE;
     process.env.AWS_REGION = "eu-west-1";
     process.env.AWS_ACCESS_KEY_ID = "test";
@@ -122,7 +121,9 @@ describe("hosted MCP invoke", () => {
       `${JSON.stringify({ t: "final", id: "1", result: ok("{}") })}\n{"t":"end"}\n`,
     );
     const send = spyOn(LambdaClient.prototype, "send").mockImplementation(
-      async () => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
+      async (): Promise<{
+        EventStream: InvokeWithResponseStreamResponseEvent[];
+      }> => ({ EventStream: [{ PayloadChunk: { Payload: frames } }] }),
     );
 
     try {

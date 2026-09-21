@@ -226,10 +226,7 @@ async function drainInvokeStream(
     new InvokeWithResponseStreamCommand({
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
-      // The function runs in PER_TENANT isolation: Lambda refuses an invoke
-      // without a tenant id and never shares an execution environment across
-      // two of them. A Convex account id fits the [a-zA-Z0-9._:/=+-@ ]{1,256}
-      // the API allows, so it rides as is.
+      // PER_TENANT function: Lambda refuses an invoke without a tenant id.
       TenantId: payload.accountId,
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),

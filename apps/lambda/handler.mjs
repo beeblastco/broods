@@ -3,11 +3,10 @@
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
  * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. The function runs in
- * PER_TENANT isolation with the account id as tenant id, so an execution
- * environment, its warm child and its /tmp only ever serve one account. The
- * scrubbed child stays as a containment layer inside that environment, not a
- * trust boundary. Same-UID, so keep the execution role empty.
+ * bounded and retired on any batch-level failure. PER_TENANT isolation
+ * gives each account its own execution environments; the child stays a
+ * containment layer, not a trust boundary. Same-UID, so keep the execution
+ * role empty.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +
  * forward + clean up.
  */

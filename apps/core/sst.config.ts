@@ -805,11 +805,8 @@ export default $config({
 
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME with the account id as TenantId. PER_TENANT
-    // isolation keeps two accounts off one execution environment. The mode is
-    // immutable after create, so changing it means a new logical id and a new
-    // physical name, never an in-place edit. It rules out a function URL,
-    // provisioned concurrency and SnapStart; keep all three off.
+    // TOOL_RUNNER_FUNCTION_NAME. PER_TENANT is immutable after create and
+    // rules out a function URL, provisioned concurrency and SnapStart.
     const mcpRunnerFn = new sst.aws.Function("McpRunner", {
       handler: "../lambda/handler.handler",
       runtime: "nodejs22.x",
