@@ -1,10 +1,17 @@
 #!/bin/sh
-# Lint + format gate on staged files. Wired by the root `prepare` script
+# Secret scan + lint + format gate on staged files. Wired by the root `prepare` script
 # (`git config core.hooksPath .githooks`). Typecheck stays in CI, too slow here.
 set -e
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
+
+# CI `secrets-scan` is the hard gate, so a missing binary only warns.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner --redact
+else
+  echo "warning: gitleaks not installed, secret scan skipped"
+fi
 
 lintable=$(echo "$staged" | grep -E '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' || true)
 if [ -n "$lintable" ]; then

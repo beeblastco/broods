@@ -1,0 +1,53 @@
+# An allowlist without `targetRules` skips its paths outright, even under
+# `condition = "AND"`, so every entry names the rules it silences.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Made-up keys the benchmark inputs feed to the config and log redaction cases"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)bench/cases/''']
+
+[[allowlists]]
+description = "Self-signed TLS key the attachment tests serve from localhost"
+targetRules = ["private-key"]
+paths = ['''(^|/)apps/core/tests/helpers/fixtures/[^/]+\.pem$''']
+
+[[allowlists]]
+description = "Throwaway RSA key the GitHub Actions OIDC test signs with"
+targetRules = ["private-key"]
+paths = ['''(^|/)apps/core/tests/github-actions\.test\.ts$''']
+
+[[allowlists]]
+description = "WorkOS placeholder the dashboard e2e config falls back to"
+targetRules = ["stripe-access-token"]
+condition = "AND"
+paths = ['''(^|/)apps/dashboard/playwright\.config\.ts$''']
+regexes = ['''sk_test_placeholder''']
+
+[[allowlists]]
+description = "Conversation and reservation keys are identifiers, not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)tests/''',
+  '''\.test\.ts$''',
+  '''(^|/)apps/docs/docs/architecture/queue-and-steer\.md$''',
+]
+regexes = ['''(?i)(conversation_?key|reservationKey)\b''']
+
+[[allowlists]]
+description = "Truncated example value in the OpenAPI spec"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)apps/docs/docs/api-reference/openapi\.yaml$''']
+regexes = ['''fp_acct_xyz789''']
+
+[[allowlists]]
+description = "Revoked GitHub token in 7664f775, history not rewritten"
+targetRules = ["github-fine-grained-pat", "curl-auth-header"]
+condition = "AND"
+commits = ["7664f775376e56f04bf3931598fcc7beb1b81b0b"]
+paths = ['''settings/components/PluginsPanel\.tsx$''']
