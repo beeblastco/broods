@@ -355,10 +355,9 @@ describe("agent.invoke gate", () => {
     ).toBeUndefined();
   });
 
-  it("refuses when a configured policy resolves to no documents", async (): Promise<void> => {
-    // A policy id that no longer resolves used to read as "no policy" here and
-    // as "nothing allowed" at the tool gate: the agent answered while every
-    // tool call was refused. Both gates refuse now.
+  it("sends a deny-all document for a policy that resolves to nothing", async (): Promise<void> => {
+    // A deleted policy used to vanish from the set. If it was the only
+    // enforcing one, both gates dropped to audit and let everything through.
     setStorageForTests({
       agentPolicies: { getById: async (): Promise<null> => null },
     } as unknown as Storage);
@@ -369,13 +368,19 @@ describe("agent.invoke gate", () => {
         channel: "zalo",
       });
 
-      expect(decision).toEqual({
-        allowed: false,
-        mode: "enforce",
-        reason: "No allow policy rule matched",
-        matchedRuleIds: [],
-        auditedRuleIds: [],
-      });
+      expect(decision?.allowed).toBe(false);
+      expect(decision?.mode).toBe("enforce");
+      expect(seenPolicyInputs.at(-1)).toEqual(
+        expect.objectContaining({
+          action: "agent.invoke",
+          policies: [
+            expect.objectContaining({
+              mode: "enforce",
+              rules: [expect.objectContaining({ id: "unresolved-policy" })],
+            }),
+          ],
+        }),
+      );
     } finally {
       setStorageForTests({
         agentPolicies: { getById: async () => policyRecord() },

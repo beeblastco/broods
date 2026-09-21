@@ -25,6 +25,7 @@ import type {
 } from "../shared/domain/policy.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
+import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
 import { COMPUTER_READ_ACTIONS } from "../shared/machine-socket.ts";
 import { getStorage } from "../shared/storage.ts";
 import type {
@@ -57,6 +58,20 @@ const POLICY_INPUT_PREVIEW_MAX = 160;
 const POLICY_REDACTED_VALUE = "[redacted]";
 const SENSITIVE_INPUT_KEY =
   /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
+
+// A policy only ever refuses, so a reference that resolves to nothing must not
+// read as "no policy": it refuses everything until the reference is fixed.
+const UNRESOLVED_POLICY: PolicyDocument = {
+  version: 1,
+  mode: "enforce",
+  rules: [
+    {
+      id: "unresolved-policy",
+      effect: "deny",
+      actions: [...AGENT_POLICY_ACTIONS],
+    },
+  ],
+};
 
 type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
@@ -278,18 +293,6 @@ export async function evaluateChannelInvoke(
       agentConfig.policies ?? [],
     );
     const mode = enforcingMode(policies);
-    // Policy is configured but nothing resolved: refuse like the tool gate
-    // does, rather than letting a broken reference read as "no policy".
-    if (policies.length === 0) {
-      return {
-        allowed: false,
-        mode: "enforce",
-        reason: "No allow policy rule matched",
-        matchedRuleIds: [],
-        auditedRuleIds: [],
-      };
-    }
-
     const decision = await policyClient().evaluate<
       PolicyDecisionInput & { policies: PolicyDocument[] },
       {
@@ -305,7 +308,9 @@ export async function evaluateChannelInvoke(
     });
 
     return {
-      allowed: decision?.allowed !== false,
+      // No decision means OPA does not carry the package: only a place where
+      // nothing enforces stays open, as the tool gate does.
+      allowed: decision ? decision.allowed === true : mode === "audit",
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
       matchedRuleIds: decision?.matchedRuleIds ?? [],
@@ -319,8 +324,8 @@ export async function evaluateChannelInvoke(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fail closed: the modes live in the documents this call could not read, so
-    // there is no way to tell an auditing place from an enforcing one here.
+    // Fail closed: when the document load is what threw, there is no way to
+    // tell an auditing place from an enforcing one here.
     return {
       allowed: false,
       mode: "enforce",
@@ -522,8 +527,6 @@ async function loadPolicyDocuments(
       getStorage().agentPolicies.getById(accountId, policyId),
     ),
   );
-  // A reference that resolves to nothing is a misconfiguration, not an empty
-  // policy: say so, or the rule silently stops applying.
   const missing = requested.filter((_, index) => !records[index]);
   if (missing.length > 0) {
     logWarn("Policy references did not resolve", {
@@ -532,9 +535,7 @@ async function loadPolicyDocuments(
     });
   }
 
-  return records
-    .filter((record): record is NonNullable<typeof record> => Boolean(record))
-    .map((record) => record.document);
+  return records.map((record) => record?.document ?? UNRESOLVED_POLICY);
 }
 
 function policyClient(): PolicyClient {
