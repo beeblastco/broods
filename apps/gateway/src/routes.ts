@@ -8,6 +8,9 @@
  * the config list is the exception table in front of it.
  */
 
+// Core routes only Convex calls, in-cluster with the service token. 404 here.
+const INTERNAL_CORE_PATHS = new Set(["/v1/cron-runs", "/v1/mcp-service/rpc"]);
+
 const observabilityWebSocketPattern =
   /^\/v1\/projects\/([^/]+)\/stages\/([^/]+)\/observability\/ws$/;
 
@@ -56,6 +59,10 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
     /^\/v1\/channels(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/crons(?:\/[^/]+(?:\/runs)?)?$/.test(pathname)
   );
+}
+
+export function isInternalCorePath(pathname: string): boolean {
+  return INTERNAL_CORE_PATHS.has(pathname.replace(/\/+$/, ""));
 }
 
 export function isWebSocketPath(pathname: string): boolean {

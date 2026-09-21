@@ -855,8 +855,6 @@ async function uploadMedia(
       },
       method: "POST",
       // The account's token rides this request and an upload never redirects.
-      // `downloadMedia` keeps fetch's default because authenticated media is
-      // allowed to redirect to a CDN.
       redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
