@@ -111,8 +111,7 @@ export function sealTerminalTicket(
   ].join(".");
 }
 
-// Derived with a purpose label, so the same value set for another ticket kind
-// still yields a different key.
+// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256")
     .update(`sandbox-terminal-ticket:${secret}`)

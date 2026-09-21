@@ -117,7 +117,7 @@ flowchart TD
   Account --> Namespace["prefix event/conversation keys<br/>acct:\{accountId\}:..."]
 ```
 
-A third auth path exists for trusted platform services: a request bearing `SERVICE_AUTH_SECRET` plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. Only the Convex backend uses it, on core's in-cluster address. It is refused on any request that came through the gateway, which marks every request it proxies and drops a client `X-Account-Id`. The secret does nothing else: stage session tickets, terminal tickets and media links each have their own (see [Operations](./operations.md#service-secrets)).
+A third auth path exists for trusted platform services: a request bearing `SERVICE_AUTH_SECRET` plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. Only Convex uses it, on core's in-cluster address, and it is refused on any request that came through the gateway. Tickets and media links have their own secrets (see [Operations](./operations.md#service-secrets)).
 
 Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId` and the channel name. They never name an agent: the credentials that verify the request pick the receiving agent, and a [channel record](channels/channel-records.md) binds each place to the agent that answers there.
 

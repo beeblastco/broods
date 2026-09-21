@@ -57,11 +57,7 @@ export function extractBearerToken(
   return token;
 }
 
-/**
- * Whether `token` is the service token on a request that may use it. The token
- * is for in-cluster callers only, so a request the gateway proxied never
- * qualifies, whatever it carries.
- */
+/** The service token is in-cluster only: never valid on a gateway-proxied request. */
 export function isServiceToken(
   headers: Record<string, string>,
   token: string,

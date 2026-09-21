@@ -575,10 +575,7 @@ async function resolveStageContext(
   };
 }
 
-/**
- * Signs stage session tickets and nothing else: the same value as core's
- * `STAGE_TICKET_SECRET`, which verifies them.
- */
+/** Same value as core's `STAGE_TICKET_SECRET`, which verifies what this signs. */
 function stageTicketSecret(): string {
   const secret = process.env.STAGE_TICKET_SECRET;
   if (!secret) {

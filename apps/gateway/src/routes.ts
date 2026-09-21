@@ -5,13 +5,10 @@
  * the wrong upstream.
  *
  * Every public path is under `/v1/`, so `isCoreHttpRoute` is the catch-all and
- * the config list is the exception table in front of it. `isInternalCorePath`
- * names the core routes only in-cluster callers use; the public door 404s them.
+ * the config list is the exception table in front of it.
  */
 
-// Both authenticate with the service token, which never crosses this gateway:
-// the Convex crons component fires `/v1/cron-runs`, and the Convex MCP actions
-// call `/v1/mcp-service/rpc`. Each reaches core on its in-cluster address.
+// Core routes only Convex calls, in-cluster with the service token. 404 here.
 const INTERNAL_CORE_PATHS = new Set(["/v1/cron-runs", "/v1/mcp-service/rpc"]);
 
 const observabilityWebSocketPattern =

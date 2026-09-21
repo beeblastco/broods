@@ -128,8 +128,7 @@ export function warnDeprecatedQueryToken(request: Request, url: URL): void {
  * caller, e.g. Convex or a channel webhook) or the origin is not allowed, so a
  * disallowed cross-origin call gets no `Access-Control-Allow-Origin` and the
  * browser blocks it. Credentials are never allowed: the dashboard authenticates
- * with a bearer token, not a cookie. `x-account-id` is allowed only while the
- * gateway forwards it.
+ * with a bearer token, not a cookie.
  */
 export function corsHeaders(
   origin: string | null,

@@ -15,11 +15,7 @@ type FetchLike = (
 export type ProxyOptions = {
   /** Request id forwarded to core so both hops log the same one. */
   requestId?: string;
-  /**
-   * Whether a client `X-Account-Id` is forwarded. Only the service token reads
-   * it, and that token reaches core in-cluster, so the public door drops the
-   * header unless `GATEWAY_FORWARD_ACCOUNT_ID=true`.
-   */
+  /** Forward a client `X-Account-Id`. Off unless `GATEWAY_FORWARD_ACCOUNT_ID=true`. */
   forwardAccountId?: boolean;
 };
 
@@ -42,7 +38,7 @@ export async function proxyHttp(
   headers.delete("connection");
   headers.delete("upgrade");
   if (options.forwardAccountId !== true) headers.delete("x-account-id");
-  // `set` replaces any copy the client sent, so upstream can trust its presence.
+  // `set`, not `append`: a client copy must never survive.
   headers.set(VIA_GATEWAY_HEADER, "1");
 
   for (const coreBaseUrl of coreBaseUrls) {

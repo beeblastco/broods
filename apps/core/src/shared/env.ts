@@ -5,11 +5,7 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/**
- * A required secret that may be rotated: comma-separated, first entry seals,
- * every entry opens. Rotate by prepending the new value, then dropping the old
- * one once nothing sealed with it should open any more.
- */
+/** A rotatable secret: comma-separated, first entry seals, every entry opens. */
 export function requireSecretsEnv(name: string): [string, ...string[]] {
   const [first, ...rest] = [
     ...new Set(

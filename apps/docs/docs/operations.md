@@ -179,12 +179,12 @@ Runtime notes:
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
 - Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload straight to core at `BROODS_ACCOUNT_MANAGE_URL` (the in-cluster service address), authenticated with `SERVICE_AUTH_SECRET`. No AWS scheduler infrastructure is involved.
-- The service token never crosses the public door. Only the Convex deployment sends it (cron dispatch, MCP runtime verbs, sandbox lifecycle and cleanup), always to core's in-cluster address. Three rules keep it that way:
+- The service token never crosses the public door. Only Convex sends it, always to core's in-cluster address. Three rules enforce that:
   - the gateway drops a client `X-Account-Id` unless `GATEWAY_FORWARD_ACCOUNT_ID=true`;
-  - the gateway stamps `x-broods-via-gateway` on every request it proxies, replacing any copy the client sent, and core and the config plane refuse the service token whenever that header is present;
-  - the gateway answers 404 for `/v1/cron-runs` and `/v1/mcp-service/rpc`, the two core routes only Convex calls. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
+  - the gateway sets `x-broods-via-gateway` on every upstream request, and core and the config plane refuse the service token when it is present;
+  - the gateway answers 404 for `/v1/cron-runs` and `/v1/mcp-service/rpc`. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
 
-  A deployment whose Convex backend cannot reach core directly has to fix that first (`bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if one blocks it). The two gateway flags do not bring the old path back: core still refuses a service token that came through the gateway.
+  If Convex cannot reach core directly, fix that first: `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if needed. The two flags do not restore the old path.
 
 ### Service secrets
 
@@ -197,7 +197,7 @@ Four secrets, one job each. None falls back to another, and core and the gateway
 | `TERMINAL_TICKET_SECRET` | Seals and opens sandbox terminal tickets                     | core (seals), gateway    |
 | `MEDIA_TICKET_SECRET`    | Seals and opens `/v1/media/{ticket}` links                   | core                     |
 
-`TERMINAL_TICKET_SECRET` is the only secret the gateway holds. `TERMINAL_TICKET_SECRET` and `MEDIA_TICKET_SECRET` take a comma-separated list: the first entry seals, every entry opens. Rotate one by prepending the new value, rolling the pods, and dropping the old value once its tickets should stop opening (two minutes for a terminal ticket; a media link never expires, so dropping its secret is what revokes it). `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values: set the new one on both sides together. A stage ticket lives minutes, so the dashboard mints a fresh one on the next request.
+`TERMINAL_TICKET_SECRET` is the gateway's only secret. It and `MEDIA_TICKET_SECRET` take a comma-separated list: the first entry seals, every entry opens. To rotate, prepend the new value, roll the pods, then drop the old value. A media link never expires, so dropping its secret is what revokes it. `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values: change both sides together.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 

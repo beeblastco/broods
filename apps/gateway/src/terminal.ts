@@ -2,6 +2,7 @@ import {
   openTerminalTicket,
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 
@@ -94,6 +95,9 @@ export function openTerminalUpstream(
     upstream = new WebSocket(ticket.url, {
       headers: {
         [ticket.authorizationHeader ?? "authorization"]: ticket.authorization,
+        ...(socket.data.kind === "machine"
+          ? { [VIA_GATEWAY_HEADER]: "1" }
+          : {}),
       },
     } as unknown as string[]);
   } catch {

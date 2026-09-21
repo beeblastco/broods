@@ -75,12 +75,10 @@ export interface GatewayConfig {
   authFailureLimiter: RateLimiter;
   configBaseUrl: string | undefined;
   coreBaseUrls: string[];
-  /** 404 the core routes only in-cluster callers use. */
   denyInternalPaths: boolean;
   httpLimiter: RateLimiter | undefined;
   limits: GatewayLimits;
   proxyOptions: ProxyOptions;
-  /** Every live `TERMINAL_TICKET_SECRET` entry; the gateway's only secret. */
   terminalTicketSecrets: string[];
   upgradeLimiter: RateLimiter;
 }
@@ -477,7 +475,6 @@ export function gatewayConfigFromEnv(): GatewayConfig {
     coreBaseUrls: normalizedCoreBaseUrls(
       process.env.BROODS_CORE_URLS?.split(",") ?? [],
     ),
-    // On unless an internal caller still has to come in through this door.
     denyInternalPaths: process.env.GATEWAY_DENY_INTERNAL_PATHS !== "false",
     // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
     // count of its own. Left off by default because channel webhooks arrive on
@@ -488,13 +485,10 @@ export function gatewayConfigFromEnv(): GatewayConfig {
         ? new RateLimiter(httpRequestsPerMinute, 60_000)
         : undefined,
     limits: gatewayLimitsFromEnv(),
-    // Off unless asked for: the only reader of the header is the service
-    // token, which reaches core in-cluster and never through this door.
+    // Only the service token reads the header, and it never crosses this door.
     proxyOptions: {
       forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID === "true",
     },
-    // Throws when unset, so a gateway that cannot open a terminal ticket never
-    // starts serving.
     terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
     upgradeLimiter: new RateLimiter(
       Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,

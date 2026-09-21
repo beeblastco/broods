@@ -204,7 +204,6 @@ describe("resolveBearerAuth", () => {
         [VIA_GATEWAY_HEADER]: "1",
       }),
     ).toBeNull();
-    // The cron trigger checks the same rule without an account header.
     expect(isServiceToken({}, "service-secret")).toBe(true);
     expect(
       isServiceToken({ [VIA_GATEWAY_HEADER]: "1" }, "service-secret"),
@@ -280,7 +279,6 @@ describe("stage session tickets", () => {
   });
 
   it("rejects a ticket signed with another secret, expired, or for a disabled account", async () => {
-    // The service secret is a different key: it must not open a stage ticket.
     const foreign = await sealStageSessionTicket(ticket, "service-secret");
     expect(
       await resolveBearerAuth({ authorization: `Bearer ${foreign}` }),

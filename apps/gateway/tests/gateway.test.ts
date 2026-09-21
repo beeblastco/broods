@@ -2936,7 +2936,6 @@ test("CORS: an allowed origin gets reflected headers, a disallowed or absent one
   );
   expect(allowed["Access-Control-Allow-Methods"]).toContain("POST");
   expect(allowed["Access-Control-Allow-Headers"]).toContain("authorization");
-  // Advertised only while the gateway forwards it.
   expect(allowed["Access-Control-Allow-Headers"]).not.toContain("x-account-id");
   expect(
     corsHeaders("https://dashboard.dev.broods.app", patterns, true)[

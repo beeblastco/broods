@@ -5,11 +5,7 @@
  * resolveBearerAuth service-token branch checks both.
  */
 
-/**
- * The gateway stamps this on every request it proxies, after dropping any copy
- * the client sent. Internal callers reach core and the config plane directly
- * and never carry it, so the service token is refused wherever it is present.
- */
+/** Set by the gateway on every upstream request; the service token is refused with it. */
 export const VIA_GATEWAY_HEADER = "x-broods-via-gateway";
 
 export function serviceEnv(): { url: string; secret: string } {

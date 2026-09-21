@@ -436,8 +436,7 @@ describe("account-manage sandbox endpoints", () => {
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     expect(body.expiresAt).toBeGreaterThan(Date.now());
-    // The browser-held token is opaque; only the terminal ticket secret opens
-    // it, and the service secret is not that.
+    // The browser-held token is opaque; only the terminal ticket secret opens it.
     expect(body.token).not.toContain("tenant-key");
     expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
     expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({

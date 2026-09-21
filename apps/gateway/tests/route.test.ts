@@ -245,7 +245,6 @@ test("core routes only in-cluster callers use are a 404 at the public door", asy
   expect((await post("/v1/mcp-service/rpc"))!.status).toBe(404);
   expect(forwarded).toEqual([]);
 
-  // Public neighbours still reach core.
   expect((await post("/v1/sandboxes/sbx_1/terminate"))!.status).toBe(204);
   expect((await post("/v1/internal/observability-scope"))!.status).toBe(204);
   expect(forwarded).toEqual([
@@ -328,7 +327,6 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     delete process.env.GATEWAY_DENY_INTERNAL_PATHS;
     delete process.env.TERMINAL_TICKET_SECRET;
 
-    // The terminal ticket secret is the gateway's one required secret.
     expect(() => gatewayConfigFromEnv()).toThrow("TERMINAL_TICKET_SECRET");
     process.env.TERMINAL_TICKET_SECRET = "next-secret, old-secret,next-secret";
 

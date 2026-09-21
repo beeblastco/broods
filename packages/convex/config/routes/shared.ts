@@ -463,8 +463,7 @@ async function resolveBearerAuth(
     return { kind: "admin" };
   }
 
-  // The service token is for in-cluster callers: a request the gateway proxied
-  // never qualifies.
+  // In-cluster only: never valid on a gateway-proxied request.
   const serviceSecret = process.env.SERVICE_AUTH_SECRET;
   if (
     serviceSecret &&

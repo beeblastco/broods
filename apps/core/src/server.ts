@@ -174,8 +174,7 @@ if (import.meta.main) {
   const { isMachineUpgrade, machineWebSocketHandler, upgradeMachineSocket } =
     await import("./harness/sandbox/machine-executor.ts");
 
-  // Each secret has one job; a missing one stops the boot instead of failing
-  // the first request that needs it.
+  // Fail the boot, not the first request that needs one.
   requireEnv("SERVICE_AUTH_SECRET");
   requireEnv("STAGE_TICKET_SECRET");
   requireSecretsEnv("MEDIA_TICKET_SECRET");

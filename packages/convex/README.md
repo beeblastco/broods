@@ -106,10 +106,8 @@ Deployment environment variables:
 - `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `SERVICE_AUTH_SECRET`: core's in-cluster URL
-  and the service bearer (same value as core's), used for sandbox lifecycle and
-  cleanup, MCP runtime verbs, and to POST fired cron runs to `/v1/cron-runs`.
-  The URL must not be the public gateway: core refuses the service token on a
-  request the gateway proxied.
+  and the service bearer (same value as core's). Never the public gateway URL:
+  core refuses the service token there.
 - `STAGE_TICKET_SECRET`: signs dashboard stage session tickets; same value as
   core's.
 

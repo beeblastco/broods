@@ -54,9 +54,8 @@ export function attachmentStorePrefix(accountId: string): string {
 }
 
 /**
- * Decrypts and validates a ticket against every live secret. Returns null
- * (never throws) on any tamper or wrong-secret failure, so the route answers 404
- * rather than leaking the reason.
+ * Tries every live secret. Returns null (never throws) on any tamper or
+ * wrong-secret failure, so the route answers 404 rather than leaking the reason.
  */
 export function openMediaTicket(
   token: string,
@@ -129,8 +128,7 @@ function openWithSecret(token: string, secret: string): MediaTicket | null {
   }
 }
 
-// Derived with a purpose label, so the same value set for another ticket kind
-// still yields a different key.
+// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256").update(`workspace-media-link:${secret}`).digest();
 }
