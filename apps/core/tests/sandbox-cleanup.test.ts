@@ -28,6 +28,9 @@ const deleteSandboxInstanceMock = mock(
     _onlyExpired?: boolean,
   ): Promise<boolean> => true,
 );
+const getSandboxExternalIdMock = mock(
+  async (_provider: string, _key: string): Promise<string | null> => null,
+);
 const removeSandboxInstanceMock = mock(
   async (
     _accountId: string,
@@ -44,7 +47,7 @@ mock.module("e2b", () => ({
   },
 }));
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
-  getSandboxExternalId: mock(async () => null),
+  getSandboxExternalId: getSandboxExternalIdMock,
   getSandboxReservationRecord: mock(async () => null),
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: mock(async () => {}),
@@ -55,7 +58,7 @@ mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: mock(async () => {}),
 }));
 
-const { releaseExpiredSandboxes } =
+const { releaseExpiredSandboxes, releaseReservedSandboxes } =
   await import("../src/shared/sandbox-cleanup.ts");
 
 setStorageForTests({
@@ -114,4 +117,27 @@ it("leaves a machine alone when a run refreshed its reservation since the listin
   expect(released).toEqual([]);
   expect(e2bKillMock).not.toHaveBeenCalled();
   expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+// Account delete disables the account before it releases, and Convex refuses a
+// row take on a disabled account. The machine goes down anyway, by the id the
+// stored row names; the cascade drops the row.
+it("tears down a live reservation when the row take is refused", async () => {
+  getSandboxExternalIdMock.mockImplementationOnce(
+    async (): Promise<string> => "sbx-live",
+  );
+  deleteSandboxInstanceMock.mockImplementation(async (): Promise<boolean> => {
+    throw new Error("Account is not active: acct-1");
+  });
+
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+  deleteSandboxInstanceMock.mockImplementation(
+    async (): Promise<boolean> => true,
+  );
+
+  expect(released).toBe(1);
+  expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-live"]);
+  expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-live", undefined],
+  ]);
 });

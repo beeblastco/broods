@@ -16,7 +16,7 @@ import type { WorkspaceStorageConfig } from "../shared/domain/workspace-config.t
 import { optionalEnv, requireEnv } from "../shared/env.ts";
 import { attachmentStorePrefix } from "../shared/media-ticket.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
-import { releaseExpiredSandboxes } from "../shared/sandbox-cleanup.ts";
+import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
 import { skillsBucketName } from "../shared/skills.ts";
 import { getStorage } from "../shared/storage.ts";
 import { workspaceNamespace } from "../shared/workspaces.ts";
@@ -67,13 +67,16 @@ export async function deleteAccountRuntimeData(
   // The stored rows, not keys derived from current configs: an isolated
   // namespace or a harness key would otherwise leak its machine at the provider.
   // Before the cascade, which drops the rows and the configs the release needs.
+  // Unconditional: the account is disabled, so Convex refuses a row take and no
+  // run can re-claim a machine while it goes down.
   const reservations = await runtime.query<ReservedSandbox[]>(
     "listAccountSandboxReservations",
     { accountId: account.accountId },
   );
-  const reservedSandboxesReleased = (
-    await releaseExpiredSandboxes(account.accountId, reservations)
-  ).length;
+  const reservedSandboxesReleased = await releaseReservedSandboxes(
+    account.accountId,
+    [...new Set(reservations.map((row): string => row.reservationKey))],
+  );
   const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),
     deleteWorkspaceFilesystems(account.accountId, workspaces),

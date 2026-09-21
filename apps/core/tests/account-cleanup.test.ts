@@ -114,10 +114,14 @@ it("registers agent/crons.remove as an internal mutation", () => {
   );
 });
 
-// Cleanup releases the reservation rows the account holds, whatever key shape
-// reserved them, and lists them before the cascade drops the rows.
-it("lists the account's stored reservations before the cascade", async () => {
+// Delete disables the account first, so Convex refuses every row take. A live
+// reservation goes down the unconditional release, never the sweeper's
+// expiry-gated one, and before the cascade drops its row. sandbox-sweeper.test.ts
+// mocks sandbox-cleanup.ts for the whole process, so only the mutation boundary
+// is visible from here; the teardown itself is in sandbox-cleanup.test.ts.
+it("releases a live reservation without the expiry condition before the cascade", async () => {
   const order: string[] = [];
+  const takes: Record<string, unknown>[] = [];
   setStorageForTests({
     workspaceConfigs: {
       list: async function () {
@@ -145,14 +149,15 @@ it("lists the account's stored reservations before the cascade", async () => {
         accountId: "acct_test",
         provider: "sandbox",
         reservationKey: "fs-abc/alias/telegram:1",
-        externalId: "sbx_1",
+        externalId: "sbx_live",
       },
     ];
   }) as never;
-  // The release itself takes and drops the row through its own mutations;
-  // only the cascade's position matters here.
-  runtime.mutate = (async (name: string) => {
-    if (name !== "deleteAccountRuntimeData") return false;
+  runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
+    if (name === "deleteSandboxReservation") {
+      takes.push(args);
+      throw new Error("Account is not active: acct_test");
+    }
     order.push(name);
 
     return {
@@ -179,6 +184,7 @@ it("lists the account's stored reservations before the cascade", async () => {
     "listAccountSandboxReservations",
     "deleteAccountRuntimeData",
   ]);
+  expect(takes.some((args): boolean => args.onlyExpired === true)).toBe(false);
 });
 
 // The adapter reaches this reference through an any-typed require, so nothing
