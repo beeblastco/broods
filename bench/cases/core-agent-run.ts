@@ -71,7 +71,7 @@ export const coreAgentRunCases: readonly BenchCase[] = [
         break;
       }
       await stream.consumeStream();
-      await stream.ensureFinalized();
+      await stream.ensureFinalized(true);
 
       return first;
     },
@@ -135,7 +135,7 @@ async function drain(stream: AgentLoopStream): Promise<Drained> {
     if (part.type === "text-delta") drained.text += part.text.length;
     if (part.type === "tool-result") drained.toolResults += 1;
   }
-  await stream.ensureFinalized();
+  await stream.ensureFinalized(true);
   if (stream.didFail())
     throw new Error(stream.failureText() ?? "agent run failed");
 
