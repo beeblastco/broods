@@ -49,6 +49,19 @@ export interface StatusAccessRequest {
   ingress: IngressStatusRecord;
 }
 
+/** True when the deployment is the stage this credential was issued for. */
+export function deploymentScopeMatches(
+  auth: StatusAccessAuth,
+  deployment: AgentDeploymentScope | null,
+): boolean {
+  return (
+    deployment?.accountId === auth.account.accountId &&
+    deployment.endpointId === auth.endpointId &&
+    deployment.projectSlug === auth.projectSlug &&
+    deployment.stageSlug === auth.stageSlug
+  );
+}
+
 export async function statusAccessDenial(
   auth: StatusAccessAuth,
   request: StatusAccessRequest,
@@ -149,16 +162,4 @@ function accessDenied(): StatusAccessDenial {
     code: "status_access_denied",
     message: "Status is not accessible from this deployment.",
   };
-}
-
-function deploymentScopeMatches(
-  auth: StatusAccessAuth,
-  deployment: AgentDeploymentScope | null,
-): boolean {
-  return (
-    deployment?.accountId === auth.account.accountId &&
-    deployment.endpointId === auth.endpointId &&
-    deployment.projectSlug === auth.projectSlug &&
-    deployment.stageSlug === auth.stageSlug
-  );
 }

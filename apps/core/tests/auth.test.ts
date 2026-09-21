@@ -132,6 +132,8 @@ describe("resolveBearerAuth", () => {
       projectSlug: "demo",
       stageSlug: "development",
     });
+    // Only a member-minted ticket may carry the mark that lifts the key's limits.
+    expect(auth).not.toHaveProperty("stageTicket");
   });
 
   it("resolves an fp_sts_ role session to role auth", async () => {
@@ -253,6 +255,7 @@ describe("stage session tickets", () => {
       endpointId: "stage-abcd1234",
       projectSlug: "shop",
       stageSlug: "development",
+      stageTicket: true,
     });
   });
 

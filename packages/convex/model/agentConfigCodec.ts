@@ -322,6 +322,9 @@ function assembleNestedConfig(
     ...(typeof extra.publicAccess === "boolean"
       ? { publicAccess: extra.publicAccess }
       : {}),
+    ...(typeof extra.allowRunOverrides === "boolean"
+      ? { allowRunOverrides: extra.allowRunOverrides }
+      : {}),
   };
 }
 
@@ -443,6 +446,8 @@ function collectExtraConfig(
   // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
   if (typeof nested.publicAccess === "boolean")
     extra.publicAccess = nested.publicAccess;
+  if (typeof nested.allowRunOverrides === "boolean")
+    extra.allowRunOverrides = nested.allowRunOverrides;
 
   return extra;
 }

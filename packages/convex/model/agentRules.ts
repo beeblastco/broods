@@ -58,6 +58,7 @@ export type AgentConfig = Record<string, unknown> & {
   scheduler?: { enabled?: boolean; [key: string]: unknown };
   policies?: string[];
   publicAccess?: boolean;
+  allowRunOverrides?: boolean;
 };
 
 /**
@@ -239,6 +240,7 @@ export function normalizeAgentConfig(
     );
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
+  assertOptionalBoolean(config.allowRunOverrides, "config.allowRunOverrides");
 
   return config;
 }

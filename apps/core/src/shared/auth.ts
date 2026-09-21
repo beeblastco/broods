@@ -28,6 +28,9 @@ export type AuthContext =
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
+      // Set when an org member minted the credential (fp_dts_ stage ticket).
+      // Unset means the permanent runtime key, the one a frontend may embed.
+      stageTicket?: true;
     }
   | {
       // Short-lived assume-role session minted by the config plane. What it
@@ -144,7 +147,8 @@ async function resolveRoleSessionAuth(
 /**
  * Resolve an fp_dts_ ticket the config plane minted for an org member. It is
  * the stage's deployment credential for its lifetime, so it lands on the same
- * `deployment` branch a runtime key does.
+ * `deployment` branch a runtime key does, marked so the limits that apply only
+ * to the embeddable key skip it.
  */
 async function resolveStageSessionAuth(
   token: string,
@@ -162,6 +166,7 @@ async function resolveStageSessionAuth(
     endpointId: ticket.endpointId,
     projectSlug: ticket.projectSlug,
     stageSlug: ticket.stageSlug,
+    stageTicket: true,
   };
 }
 

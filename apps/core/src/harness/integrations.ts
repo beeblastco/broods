@@ -3,6 +3,7 @@
  * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
+import type { ApiErrorInit } from "@broods/convex/model/apiError";
 import { context as otelContextApi } from "@opentelemetry/api";
 import type {
   JSONValue,
@@ -87,6 +88,7 @@ import {
   assertValidPublicEventId,
   channelScopeKeyFromConversation,
   createRunId,
+  DIRECT_API_CONVERSATION_PREFIX,
   isRunId,
   normalizeDirectIdentifier,
   parseAccountAgentScopedKey,
@@ -110,7 +112,7 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
-import { statusAccessDenial } from "./status-access.ts";
+import { deploymentScopeMatches, statusAccessDenial } from "./status-access.ts";
 import {
   getAsyncAgentResult,
   type AsyncAgentResultRecord,
@@ -397,6 +399,16 @@ interface WebhookRoute {
   accountId: string;
   channelName: string;
   endpointId?: string;
+}
+
+/** A deployment caller asked for something its credential may not do: a 403 with a code. */
+class DirectForbiddenError extends Error {
+  readonly init: ApiErrorInit;
+
+  constructor(message: string, init: ApiErrorInit) {
+    super(message);
+    this.init = init;
+  }
 }
 
 class DirectNotFoundError extends Error {}
@@ -776,18 +788,9 @@ async function handleHttpRequest(
         request.body,
         request.headers,
         auth.account,
-        context.agentLoader,
+        context,
+        auth,
       );
-      // Secure by default: the public runtime key only reaches agents that have
-      // explicitly opted into the public endpoint. Internal callers (account/
-      // admin secret), channel webhooks, and cron paths are never gated here.
-      if (parsed.agentConfig.publicAccess !== true) {
-        return errorResponse(
-          403,
-          `Agent ${parsed.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
-          { code: "public_access_disabled", param: "agentId" },
-        );
-      }
       if (parsed.background) {
         if (!handlers.handleAsyncRequest) {
           return notFoundResponse();
@@ -838,7 +841,7 @@ async function handleHttpRequest(
       request.body,
       request.headers,
       account,
-      context.agentLoader,
+      context,
     );
     if (parsed.background) {
       if (!handlers.handleAsyncRequest) {
@@ -1956,10 +1959,9 @@ async function parseDirectPayload(
   bodyText: string,
   headers: Record<string, string>,
   account: AccountRecord,
-  agentLoader: (
-    accountId: string,
-    agentId: string,
-  ) => Promise<AgentRecord | null>,
+  context: Pick<HttpRoutingContext, "agentLoader" | "deploymentLoader">,
+  // Set for a runtime key or stage ticket, whose reach this function narrows.
+  deploymentAuth?: Extract<AuthContext, { kind: "deployment" }>,
 ): Promise<DirectInboundEvent> {
   let parsed: unknown;
 
@@ -1992,10 +1994,15 @@ async function parseDirectPayload(
     throw new Error("Request body must include agentId");
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
-  const agent = await agentLoader(account.accountId, agentId);
+  const agent = await context.agentLoader(account.accountId, agentId);
   if (!agent || agent.status !== "active") {
     throw new DirectNotFoundError("Agent not found");
   }
+  const embeddableKey = await admitStageCredential(
+    deploymentAuth,
+    agent,
+    context,
+  );
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
   const conversation = directConversationKeys(
@@ -2003,6 +2010,7 @@ async function parseDirectPayload(
     continuation,
     account.accountId,
     agent.agentId,
+    embeddableKey,
   );
 
   const events = parseDirectIngressEvents(record);
@@ -2017,6 +2025,7 @@ async function parseDirectPayload(
   }
 
   const overrides = parseRunOverrides(record);
+  assertRunOverridesAllowed(embeddableKey, agent, overrides, events);
   assertOneDirectPayloadShape(continuation, {
     eventCount: events.length,
     answerCount: answers.length,
@@ -2070,10 +2079,19 @@ function directConversationKeys(
   continuation: boolean,
   accountId: string,
   agentId: string,
+  apiConversationsOnly: boolean,
 ): Pick<DirectInboundEvent, "conversationKey" | "publicConversationKey"> {
   if (continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX)) {
     const scope = parseAccountAgentScopedKey(requested);
-    if (!scope || scope.accountId !== accountId || scope.agentId !== agentId) {
+    // A channel session belongs to the people in that channel, so an
+    // embeddable key re-enters only conversations the direct API opened.
+    if (
+      !scope ||
+      scope.accountId !== accountId ||
+      scope.agentId !== agentId ||
+      (apiConversationsOnly &&
+        !scope.key.startsWith(DIRECT_API_CONVERSATION_PREFIX))
+    ) {
       throw new DirectNotFoundError("Conversation not found");
     }
 
@@ -2120,6 +2138,61 @@ function assertOneDirectPayloadShape(
       "Request body cannot combine events with answers; send the answers first",
     );
   }
+}
+
+/**
+ * Whoever holds the embeddable key would otherwise pick the prompt and the
+ * spend, so `system` and `model` are the agent's to open up.
+ */
+function assertRunOverridesAllowed(
+  embeddableKey: boolean,
+  agent: AgentRecord,
+  overrides: RunOverrides | undefined,
+  events: DirectIngressEvent[],
+): void {
+  if (
+    embeddableKey &&
+    agent.config.allowRunOverrides !== true &&
+    (overrides !== undefined || events.some((event) => event.role === "system"))
+  ) {
+    throw new DirectForbiddenError(
+      `Agent ${agent.agentId} does not accept system messages or model overrides from a runtime key. Set allowRunOverrides: true and redeploy to allow them.`,
+      { code: "run_overrides_disabled", param: "allowRunOverrides" },
+    );
+  }
+}
+
+/**
+ * A stage credential reaches only public agents of its own stage. Internal
+ * callers (account/admin secret), channel webhooks and cron are never gated
+ * here. Answers whether the caller holds the permanent runtime key: that one a
+ * frontend embeds, so the run limits apply to it. A stage ticket was minted
+ * for an org member and keeps the wider reach the dashboard uses.
+ */
+async function admitStageCredential(
+  auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
+  agent: AgentRecord,
+  context: Pick<HttpRoutingContext, "deploymentLoader">,
+): Promise<boolean> {
+  if (!auth) return false;
+  // An agent of another stage answers exactly like one that does not exist.
+  if (
+    !deploymentScopeMatches(
+      auth,
+      await context.deploymentLoader(agent.accountId, agent.agentId),
+    )
+  ) {
+    throw new DirectNotFoundError("Agent not found");
+  }
+  // Secure by default: the public endpoint is closed until the agent opts in.
+  if (agent.config.publicAccess !== true) {
+    throw new DirectForbiddenError(
+      `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
+      { code: "public_access_disabled", param: "agentId" },
+    );
+  }
+
+  return auth.stageTicket !== true;
 }
 
 /** One entry per open prompt, labels keyed by question id. */
@@ -2351,6 +2424,9 @@ function unauthorizedResponse(): Response {
 }
 
 function badRequestResponse(err: unknown): Response {
+  if (err instanceof DirectForbiddenError) {
+    return errorResponse(403, err.message, err.init);
+  }
   if (err instanceof DirectNotFoundError) {
     return errorResponse(404, err.message);
   }
