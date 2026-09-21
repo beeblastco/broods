@@ -96,7 +96,12 @@ Deployment environment variables:
 - `CONVEX_AWS_EXTERNAL_ID`: assume-role external id (default
   `broods-convex`).
 - `SKILLS_BUCKET_NAME`, `TOOL_BUNDLES_BUCKET_NAME`, `FILESYSTEM_BUCKET_NAME`:
-  the stage's S3 buckets (sst outputs).
+  the stage's S3 buckets (sst outputs). A workspace may not name any of them as
+  its own `storage.bucket`; set `MICROVM_ARTIFACTS_BUCKET_NAME` (sst output
+  `microvmArtifactsBucketName`) to refuse that bucket too.
+- `ALLOW_PRIVATE_STORAGE_ENDPOINTS`: `true` lets a self-hosted deployment accept
+  a private workspace `storage.endpoint`, over `http` or `https`. A public host
+  stays `https` only. Set the same value on core.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: AES-GCM secret for agent and sandbox config CRUD.
 - `ADMIN_ACCOUNT_SECRET`: admin bearer secret accepted by account admin HTTP
   routes in `config/http.ts`.

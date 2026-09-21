@@ -5,16 +5,28 @@
  * caller-supplied accountId.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
+import {
+  normalizeWorkspaceConfig,
+  type WorkspaceConfig,
+} from "../model/workspaceRules";
 import { workspaceConfigsFields, paginationCursorFields } from "../schema";
 
 const workspaceConfigDoc = v.object({
   ...workspaceConfigsFields,
   _id: v.id("workspaceConfigs"),
   _creationTime: v.number(),
+});
+
+const storageRuleViolation = v.object({
+  workspaceId: v.id("workspaceConfigs"),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  bucket: v.optional(v.string()),
+  reason: v.string(),
 });
 
 /**
@@ -69,6 +81,57 @@ export const listPage = internalQuery({
         q.eq("accountId", args.accountId),
       )
       .paginate(args.paginationOpts);
+  },
+});
+
+/**
+ * One page of stored workspaces that today's config rules refuse. Rows written
+ * before a rule existed are never rewritten, they fail to resolve.
+ */
+export const listStorageRuleViolations = internalQuery({
+  args: { paginationOpts: paginationOptsValidator },
+  returns: v.object({
+    violations: v.array(storageRuleViolation),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    violations: Infer<typeof storageRuleViolation>[];
+    isDone: boolean;
+    continueCursor: string;
+  }> => {
+    const result = await ctx.db
+      .query("workspaceConfigs")
+      .paginate(args.paginationOpts);
+    const violations = result.page.flatMap((doc) => {
+      try {
+        normalizeWorkspaceConfig(doc.config);
+
+        return [];
+      } catch (error) {
+        const bucket = (doc.config as Partial<WorkspaceConfig> | null)?.storage
+          ?.bucket;
+
+        return [
+          {
+            workspaceId: doc._id,
+            accountId: doc.accountId,
+            name: doc.name,
+            ...(typeof bucket === "string" ? { bucket: bucket } : {}),
+            reason: error instanceof Error ? error.message : String(error),
+          },
+        ];
+      }
+    });
+
+    return {
+      violations: violations,
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
   },
 });
 

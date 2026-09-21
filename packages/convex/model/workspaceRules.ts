@@ -4,14 +4,30 @@
  * contract is unchanged. Workspace config holds no secrets (a roleArn is not
  * a secret), so it is stored and returned in plaintext. Pure module, safe
  * for the default Convex runtime. The public projection lives in
- * ./responses.ts.
+ * ./responses.ts. Core runs the storage access rule too, so it reads the env
+ * names of both sides.
  */
 
+import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
+const PLATFORM_BUCKET_ENV_NAMES = [
+  "FILESYSTEM_BUCKET_NAME",
+  "SKILLS_BUCKET_NAME",
+  "TOOL_BUNDLES_BUCKET_NAME",
+  "MICROVM_ARTIFACTS_BUCKET_NAME",
+];
+// The account id inside these ARNs is the platform account.
+const PLATFORM_ROLE_ARN_ENV_NAMES = [
+  "CONVEX_AWS_ROLE_ARN",
+  "SANDBOX_MOUNT_ROLE_ARN",
+  "MICROVM_EXECUTION_ROLE_ARN",
+  "MICROVM_BUILD_ROLE_ARN",
+];
+const ROLE_ARN_PATTERN = /^arn:[a-z-]+:iam::(\d+):role\/.+$/;
 
 /** Per-file cap, enforced on the S3 write path and on dashboard uploads. */
 export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
@@ -23,6 +39,12 @@ export type WorkspaceStorageProvider =
 export type WorkspaceStorageAuth =
   | { type: "managed" }
   | { type: "assumeRole"; roleArn: string; externalId?: string };
+
+/** The only auth that reaches a bucket the workspace names itself. */
+export type WorkspaceStorageOwnAuth = Extract<
+  WorkspaceStorageAuth,
+  { type: "assumeRole" }
+>;
 
 export interface WorkspaceStorageConfig {
   provider: WorkspaceStorageProvider;
@@ -42,6 +64,20 @@ export interface WorkspaceConfig {
     workspace?: { enabled?: boolean };
     memory?: { enabled?: boolean };
   };
+}
+
+/**
+ * A storage endpoint is a public https URL. ALLOW_PRIVATE_STORAGE_ENDPOINTS=true
+ * lets a self-host operator also use a private or single-label host, over http
+ * or https. A public host stays https only.
+ */
+export function assertStorageEndpoint(value: string, label: string): void {
+  if (
+    process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS === "true" &&
+    isClusterEndpoint(value)
+  )
+    return;
+  assertPublicHttpsUrl(value, label);
 }
 
 /**
@@ -150,6 +186,57 @@ export function normalizeUpdateWorkspaceConfigInput(
 }
 
 /**
+ * A workspace that names its own bucket brings its own credentials; platform
+ * credentials only ever reach the managed bucket. Run on save and on every
+ * resolve, so a stored row that breaks the rule fails closed.
+ * @returns the bucket's own auth, or undefined for the managed bucket
+ */
+export function workspaceStorageOwnAuth(
+  storage: WorkspaceStorageConfig,
+): WorkspaceStorageOwnAuth | undefined {
+  if (storage.endpoint) {
+    if (!storage.bucket) {
+      throw new Error(
+        "config.storage.endpoint requires config.storage.bucket; the managed bucket has no custom endpoint",
+      );
+    }
+    assertStorageEndpoint(storage.endpoint, "config.storage.endpoint");
+  }
+  if (!storage.bucket) return undefined;
+  const bucket = storage.bucket.toLowerCase();
+  if (
+    PLATFORM_BUCKET_ENV_NAMES.some(
+      (name) => process.env[name]?.toLowerCase() === bucket,
+    )
+  ) {
+    throw new Error(
+      "config.storage.bucket must be a bucket you own; omit it to use the managed bucket",
+    );
+  }
+  if (storage.auth?.type !== "assumeRole") {
+    throw new Error(
+      'config.storage.auth.type "assumeRole" is required when config.storage.bucket is set; a named bucket is only reached with its own credentials',
+    );
+  }
+  const roleAccountId = ROLE_ARN_PATTERN.exec(storage.auth.roleArn)?.[1];
+  if (!roleAccountId) {
+    throw new Error("config.storage.auth.roleArn must be an IAM role ARN");
+  }
+  if (
+    process.env.AWS_ACCOUNT_ID === roleAccountId ||
+    PLATFORM_ROLE_ARN_ENV_NAMES.some((name) =>
+      process.env[name]?.includes(`::${roleAccountId}:`),
+    )
+  ) {
+    throw new Error(
+      "config.storage.auth.roleArn must not be a role in the platform AWS account",
+    );
+  }
+
+  return storage.auth;
+}
+
+/**
  * Derive a workspace's `fs-…` filesystem namespace. Matches core's
  * normalizeFilesystemNamespace byte-for-byte: S3 keys live under this prefix
  * and workspace-bound sandbox reservation keys are the namespace itself or
@@ -221,6 +308,21 @@ function assertOptionalEnum<T extends string>(
   }
 }
 
+/** An http(s) URL whose host is private or a single-label service name. */
+function isClusterEndpoint(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  return (
+    ["http:", "https:"].includes(url.protocol) &&
+    (isPrivateHostname(url.hostname) || !/[.:]/.test(url.hostname))
+  );
+}
+
 function normalizeHarnessFeature(
   value: unknown,
   name: string,
@@ -265,8 +367,7 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     );
   }
   const auth = normalizeWorkspaceStorageAuth(value.auth);
-
-  return {
+  const storage: WorkspaceStorageConfig = {
     provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
     ...(bucket ? { bucket: bucket } : {}),
     ...(region ? { region: region } : {}),
@@ -274,6 +375,9 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
     ...(prefix ? { prefix: prefix } : {}),
     ...(auth ? { auth: auth } : {}),
   };
+  workspaceStorageOwnAuth(storage);
+
+  return storage;
 }
 
 function normalizeWorkspaceStorageAuth(

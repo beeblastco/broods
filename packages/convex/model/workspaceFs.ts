@@ -22,6 +22,7 @@ import {
   MAX_WORKSPACE_FILE_BYTES,
   normalizeFilePath,
   workspaceNamespace,
+  workspaceStorageOwnAuth,
   type WorkspaceStorageConfig,
 } from "./workspaceRules";
 
@@ -307,25 +308,21 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
 
     return { bucket: filesystemBucketName(), prefix: `${namespace}/` };
   }
+  const auth = workspaceStorageOwnAuth(storage);
+  if (!auth) throw new Error("Workspace storage has no credentials of its own");
   const prefix = normalizePrefix(storage.prefix);
-  const roleArn =
-    storage.auth?.type === "assumeRole" ? storage.auth.roleArn : undefined;
-  const credentials = roleArn
-    ? await assumeScopedS3Credentials({
-        roleArn: roleArn,
-        bucket: storage.bucket,
-        prefix: prefix,
-        ...(storage.auth?.type === "assumeRole" && storage.auth.externalId
-          ? { externalId: storage.auth.externalId }
-          : {}),
-      })
-    : undefined;
+  const credentials = await assumeScopedS3Credentials({
+    roleArn: auth.roleArn,
+    bucket: storage.bucket,
+    prefix: prefix,
+    ...(auth.externalId ? { externalId: auth.externalId } : {}),
+  });
 
   return {
     bucket: storage.bucket,
     prefix: prefix,
     access: {
-      ...(credentials ? { credentials: credentials } : {}),
+      credentials: credentials,
       ...(storage.region ? { region: storage.region } : {}),
       ...(storage.endpoint ? { endpoint: storage.endpoint } : {}),
     },

@@ -141,23 +141,39 @@ The model-facing workspace tools read sandbox-backed workspaces through the moun
 ## Bring-your-own bucket
 
 By default a workspace lives in the broods-managed bucket. A workspace can instead
-point `storage` at a bucket you own: any S3-compatible store (AWS S3, Cloudflare R2,
-MinIO, Wasabi, Backblaze B2) selected with an `endpoint`:
+point `storage` at a bucket you own:
 
 ```ts
 storage: {
   provider: "s3",
   bucket: "acme-workspaces",
   region: "us-west-2",
-  endpoint: "https://<account>.r2.cloudflarestorage.com", // omit for AWS S3
   prefix: "agents/",            // required: the mount is scoped to bucket/prefix/
-  auth: {
+  auth: {                       // required: your bucket, your credentials
     type: "assumeRole",
     roleArn: "arn:aws:iam::111122223333:role/broods-mount",
     externalId: "<shared secret>", // confused-deputy guard for cross-account roles
   },
 }
 ```
+
+The rule is **your bucket, your credentials**. Platform credentials only ever reach
+the managed bucket, so a workspace that sets `bucket` is rejected unless:
+
+- `auth.type` is `assumeRole`. `managed` auth, or no auth, is only valid without a `bucket`.
+- `bucket` is not one of the platform's own buckets (compared case-insensitively).
+- `auth.roleArn` is an IAM role ARN outside the platform AWS account.
+- `endpoint`, when set, is a public `https` URL, and it is only valid together with
+  `bucket`. The sandbox `options.s3Endpoint` follows the same rule. A self-hosted
+  deployment can allow private endpoints (a MinIO on the cluster network) by setting
+  `ALLOW_PRIVATE_STORAGE_ENDPOINTS=true` on both core and the Convex deployment. That
+  covers private addresses and single-label hosts like `http://minio:9000`. A public
+  host still needs `https`.
+
+The config API, `broods deploy` and the dashboard canvas all check these on save.
+Core and the config plane check them again every time the storage is resolved, so a
+workspace stored before a rule existed fails with the same error instead of
+falling back to platform credentials. Fix its `storage` and save it again.
 
 `endpoint` selects _where_ the S3 API lives. Every S3-compatible vendor stays
 `provider: "s3"` and only changes the host. `provider` is reserved for a different
@@ -166,10 +182,10 @@ protocol (e.g. native Azure Blob / GCS), not a different S3 vendor.
 Authentication (`storage.auth`) is **keyless**. No access keys are stored in the
 workspace config, which is plaintext:
 
-| `auth.type`         | Credentials                                  | Use                              |
-| ------------------- | -------------------------------------------- | -------------------------------- |
-| `managed` (default) | broods-managed platform role                 | the managed bucket               |
-| `assumeRole`        | your cross-account IAM role, assumed per run | a bucket in your own AWS account |
+| `auth.type`         | Credentials                                  | Use                                       |
+| ------------------- | -------------------------------------------- | ----------------------------------------- |
+| `managed` (default) | broods-managed platform role                 | the managed bucket only, never a `bucket` |
+| `assumeRole`        | your cross-account IAM role, assumed per run | a bucket that role can reach, required    |
 
 For `assumeRole` the harness calls STS `AssumeRole` and narrows the session with a
 policy scoped to `bucket/prefix*`, so the short-lived credentials can only touch the
@@ -194,8 +210,9 @@ mounts via `mount-s3` with the assumed credentials passed per-exec; Daytona inje
 them into the run's environment. The Lambda MicroVM provider mounts the same way from
 its `/run` lifecycle hook, fed the scoped credentials via the MicroVM `runHookPayload`.
 
-> Static access keys for non-AWS stores (R2/MinIO tokens) are not stored yet. Use
-> `assumeRole` (AWS) or the managed bucket for now.
+> Static access keys for non-AWS stores (R2/MinIO tokens) are not supported yet, and
+> `assumeRole` is an AWS STS call. Until an access-key auth type lands, a
+> bring-your-own bucket needs an AWS IAM role outside the platform account.
 
 ## Code-first configuration
 
@@ -214,7 +231,7 @@ Omit `partitioned` for a shared root workspace.
 
 ## Future external storage
 
-S3-compatible object stores (Cloudflare R2, MinIO, Wasabi, B2) are already reachable through [bring-your-own bucket](#bring-your-own-bucket) by setting an `endpoint`. Additional work can add non-S3 providers such as Google Drive, native Google Cloud Storage, or Azure Blob behind a new `storage.provider`. Those providers should still connect through the sandbox mount model:
+S3-compatible object stores (Cloudflare R2, MinIO, Wasabi, B2) need an access-key auth type that references account environment variables; `endpoint` is already part of the [bring-your-own bucket](#bring-your-own-bucket) contract for them. Additional work can add non-S3 providers such as Google Drive, native Google Cloud Storage, or Azure Blob behind a new `storage.provider`. Those providers should still connect through the sandbox mount model:
 
 - keep one logical workspace namespace for memory notes, task notes, staged skills, and files
 - mount or sync that namespace into `options.workspaceRoot`

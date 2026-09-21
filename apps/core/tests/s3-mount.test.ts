@@ -34,14 +34,20 @@ const BYO_STORAGE = {
   auth: { type: "assumeRole" as const, roleArn: "arn:aws:iam::3:role/byo" },
 };
 
+const RULE_ENV_NAMES = [
+  "SANDBOX_MOUNT_ROLE_ARN",
+  "FILESYSTEM_BUCKET_NAME",
+  "ALLOW_PRIVATE_STORAGE_ENDPOINTS",
+];
+
 beforeEach(() => {
   lastAssumeRoleInput = undefined;
   assumeRoleSendMock.mockClear();
-  delete process.env.SANDBOX_MOUNT_ROLE_ARN;
+  for (const name of RULE_ENV_NAMES) delete process.env[name];
 });
 
 afterEach(() => {
-  delete process.env.SANDBOX_MOUNT_ROLE_ARN;
+  for (const name of RULE_ENV_NAMES) delete process.env[name];
 });
 
 describe("resolveS3MountIdentity", () => {
@@ -77,7 +83,7 @@ describe("resolveS3MountIdentity", () => {
     expect(
       resolveS3MountIdentity({
         storage: {
-          provider: "s3",
+          ...BYO_STORAGE,
           bucket: "acme",
           prefix: "/agents",
           region: "eu-west-1",
@@ -97,13 +103,13 @@ describe("resolveS3MountIdentity", () => {
   it("refuses a bring-your-own bucket without a prefix instead of mounting the whole bucket", () => {
     expect(() =>
       resolveS3MountIdentity({
-        storage: { provider: "s3", bucket: "acme" },
+        storage: { ...BYO_STORAGE, prefix: undefined },
         namespace: NS,
       }),
     ).toThrow("storage.prefix is required for a bring-your-own bucket");
     expect(() =>
       resolveS3MountIdentity({
-        storage: { provider: "s3", bucket: "acme", prefix: "/" },
+        storage: { ...BYO_STORAGE, prefix: "/" },
         namespace: NS,
       }),
     ).toThrow("storage.prefix is required for a bring-your-own bucket");
@@ -112,10 +118,60 @@ describe("resolveS3MountIdentity", () => {
   it("adds isolation folders under a bring-your-own bucket prefix without changing buckets", () => {
     expect(
       resolveS3MountIdentity({
-        storage: { provider: "s3", bucket: "acme", prefix: "agents/" },
+        storage: { ...BYO_STORAGE, bucket: "acme" },
         namespace: `${NS}/support`,
       }),
     ).toEqual({ bucket: "acme", prefix: "agents/support/" });
+  });
+
+  it("refuses a platform bucket, whatever its case", () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "Managed-Bucket";
+    expect(() =>
+      resolveS3MountIdentity({
+        storage: { ...BYO_STORAGE, bucket: "managed-BUCKET" },
+        namespace: NS,
+      }),
+    ).toThrow("config.storage.bucket must be a bucket you own");
+  });
+
+  it("refuses a role in the platform account", () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::3:role/platform";
+    expect(() =>
+      resolveS3MountIdentity({ storage: BYO_STORAGE, namespace: NS }),
+    ).toThrow("roleArn must not be a role in the platform AWS account");
+  });
+
+  it("requires public https endpoints unless the operator allows private ones", () => {
+    const privateStorage = { ...BYO_STORAGE, endpoint: "http://10.0.0.5:9000" };
+    const privateOption = {
+      storage: undefined,
+      namespace: NS,
+      managedBucket: "managed-bucket",
+      endpoint: "https://localhost:9000",
+    };
+    expect(() =>
+      resolveS3MountIdentity({ storage: privateStorage, namespace: NS }),
+    ).toThrow("config.storage.endpoint must use https");
+    expect(() => resolveS3MountIdentity(privateOption)).toThrow(
+      "options.s3Endpoint must not point to a private or internal address",
+    );
+    process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS = "true";
+    expect(
+      resolveS3MountIdentity({ storage: privateStorage, namespace: NS })
+        .endpoint,
+    ).toBe("http://10.0.0.5:9000");
+    expect(resolveS3MountIdentity(privateOption).endpoint).toBe(
+      "https://localhost:9000",
+    );
+  });
+
+  it("ignores the sandbox endpoint when the workspace sets its own", () => {
+    const identity = resolveS3MountIdentity({
+      storage: { ...BYO_STORAGE, endpoint: "https://r2.example.com" },
+      namespace: NS,
+      endpoint: "http://10.0.0.5:9000",
+    });
+    expect(identity.endpoint).toBe("https://r2.example.com");
   });
 
   it("throws when neither storage.bucket nor a managed bucket is available", () => {
@@ -126,14 +182,24 @@ describe("resolveS3MountIdentity", () => {
 });
 
 describe("mountRoleArn", () => {
-  it("prefers the storage assume-role over the platform role", () => {
+  it("uses the workspace's own role for a bucket it names", () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
-    expect(
-      mountRoleArn({
-        provider: "s3",
-        auth: { type: "assumeRole", roleArn: "arn:aws:iam::2:role/byo" },
-      }),
-    ).toBe("arn:aws:iam::2:role/byo");
+    expect(mountRoleArn(BYO_STORAGE)).toBe("arn:aws:iam::3:role/byo");
+  });
+
+  it("never falls back to the platform role for a named bucket", async () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN = "arn:aws:iam::1:role/platform";
+    const storage = { provider: "s3" as const, bucket: "acme", prefix: "a/" };
+    const expected =
+      '"assumeRole" is required when config.storage.bucket is set';
+    expect(() => mountRoleArn(storage)).toThrow(expected);
+    expect(() =>
+      mountRoleArn({ ...storage, auth: { type: "managed" } }),
+    ).toThrow(expected);
+    await expect(
+      resolveS3ReadTarget({ storage: storage, namespace: NS }),
+    ).rejects.toThrow(expected);
+    expect(assumeRoleSendMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the platform role for managed storage", () => {

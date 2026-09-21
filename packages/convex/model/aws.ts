@@ -27,12 +27,12 @@ interface AwsAccess {
 }
 
 /**
- * Overrides for reaching a bucket the config plane does not own. Mirrors core's
- * `S3Access` (apps/core `src/shared/s3.ts`) so a bring-your-own-bucket workspace
- * reads the same objects here and in the harness.
+ * Access to a bucket the config plane does not own. Mirrors core's `S3Access`
+ * (apps/core `src/shared/s3.ts`), except credentials are required: a foreign
+ * bucket is never reached on the config plane's own role.
  */
 export interface S3Access {
-  credentials?: {
+  credentials: {
     accessKeyId: string;
     secretAccessKey: string;
     sessionToken: string;
@@ -57,7 +57,7 @@ export async function assumeScopedS3Credentials(params: {
   bucket: string;
   prefix: string;
   externalId?: string;
-}): Promise<NonNullable<S3Access["credentials"]>> {
+}): Promise<S3Access["credentials"]> {
   const access = awsAccess();
   const objectResource = `arn:aws:s3:::${params.bucket}/${params.prefix}*`;
   const statements = [
@@ -113,7 +113,7 @@ export async function assumeScopedS3Credentials(params: {
 /**
  * Build an S3 client authenticated as the Convex config plane, or as the scoped
  * session a bring-your-own bucket supplies.
- * @param access optional credentials/region/endpoint overrides for a foreign bucket
+ * @param access credentials/region/endpoint for a foreign bucket
  * @returns an S3 client
  */
 export async function s3Client(access?: S3Access): Promise<S3Client> {
@@ -121,7 +121,7 @@ export async function s3Client(access?: S3Access): Promise<S3Client> {
 
   return new S3Client({
     region: access?.region ?? config.region,
-    credentials: access?.credentials ?? (await assumeCredentials()),
+    credentials: access ? access.credentials : await assumeCredentials(),
     // Path style with a custom endpoint, matching core's awsClient: a non-AWS S3
     // endpoint rarely resolves virtual-hosted bucket subdomains.
     ...(access?.endpoint

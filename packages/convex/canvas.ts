@@ -12,6 +12,7 @@ import { stableJson } from "./model/objects";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
+import { normalizeWorkspaceConfig } from "./model/workspaceRules";
 
 export const canvasEdgeValidator = v.object({
   id: v.string(),
@@ -531,9 +532,8 @@ async function materializeWorkspaceNode(
   const { account, projectId, stageId, node, data, name, description } =
     options;
   const { resourceId, changed, now } = options;
-  const config = asRecord(data.config).storage
-    ? data.config
-    : { storage: { provider: "s3" } };
+  // Same rules as the config API: a canvas save never stores what it refuses.
+  const config = normalizeWorkspaceConfig(data.config);
   const normalized = resourceId
     ? ctx.db.normalizeId("workspaceConfigs", resourceId)
     : null;

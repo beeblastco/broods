@@ -3,15 +3,33 @@
  * workspace-config.test.ts when the normalizers moved here.
  */
 
-import { describe, expect, it } from "vitest";
+/// <reference types="vite/client" />
+import { convexTest } from "convex-test";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import { toPublicWorkspaceConfigResponse } from "../model/responses";
+import { normalizeSandboxConfig } from "../model/sandboxRules";
+import { listWorkspaceFiles } from "../model/workspaceFs";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
+import schema from "../schema";
+
+const modules = import.meta.glob("../**/*.ts");
+
+const OWN_BUCKET = {
+  provider: "s3" as const,
+  bucket: "acme",
+  prefix: "agents/",
+  auth: {
+    type: "assumeRole" as const,
+    roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+  },
+};
 
 describe("workspace config", () => {
   it("defaults to an s3 workspace when config is empty or null", () => {
@@ -269,8 +287,168 @@ describe("workspace storage prefix", () => {
     );
     expect(
       normalizeWorkspaceConfig({
-        storage: { provider: "s3", bucket: "acme", prefix: "agents" },
+        storage: { ...OWN_BUCKET, prefix: "agents" },
       }).storage,
-    ).toEqual({ provider: "s3", bucket: "acme", prefix: "agents" });
+    ).toEqual({ ...OWN_BUCKET, prefix: "agents" });
+  });
+});
+
+describe("workspace storage access", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("requires a named bucket to bring its own auth", () => {
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3", bucket: "acme", prefix: "agents" },
+      }),
+    ).toThrow('"assumeRole" is required when config.storage.bucket is set');
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...OWN_BUCKET, auth: { type: "managed" } },
+      }),
+    ).toThrow('"assumeRole" is required when config.storage.bucket is set');
+  });
+
+  it("refuses a platform bucket, whatever its case", () => {
+    vi.stubEnv("SKILLS_BUCKET_NAME", "Platform-Skills");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...OWN_BUCKET, bucket: "platform-SKILLS" },
+      }),
+    ).toThrow("config.storage.bucket must be a bucket you own");
+  });
+
+  it("refuses a role in the platform account", () => {
+    vi.stubEnv("CONVEX_AWS_ROLE_ARN", "arn:aws:iam::999900001111:role/convex");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: {
+          ...OWN_BUCKET,
+          auth: {
+            type: "assumeRole",
+            roleArn: "arn:aws:iam::999900001111:role/anything",
+          },
+        },
+      }),
+    ).toThrow("roleArn must not be a role in the platform AWS account");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: {
+          ...OWN_BUCKET,
+          auth: { type: "assumeRole", roleArn: "not-an-arn" },
+        },
+      }),
+    ).toThrow("roleArn must be an IAM role ARN");
+  });
+
+  it("requires a public https endpoint unless the operator allows private ones", () => {
+    const storage = { ...OWN_BUCKET, endpoint: "http://10.0.0.5:9000" };
+    expect(() => normalizeWorkspaceConfig({ storage: storage })).toThrow(
+      "config.storage.endpoint must use https",
+    );
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...OWN_BUCKET, endpoint: "https://169.254.169.254" },
+      }),
+    ).toThrow("must not point to a private or internal address");
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { provider: "s3", endpoint: "https://r2.example.com" },
+      }),
+    ).toThrow("config.storage.endpoint requires config.storage.bucket");
+    vi.stubEnv("ALLOW_PRIVATE_STORAGE_ENDPOINTS", "true");
+    expect(normalizeWorkspaceConfig({ storage: storage }).storage).toEqual(
+      storage,
+    );
+    const clusterStorage = { ...OWN_BUCKET, endpoint: "http://minio:9000" };
+    expect(
+      normalizeWorkspaceConfig({ storage: clusterStorage }).storage,
+    ).toEqual(clusterStorage);
+    expect(() =>
+      normalizeWorkspaceConfig({
+        storage: { ...OWN_BUCKET, endpoint: "http://r2.example.com" },
+      }),
+    ).toThrow("config.storage.endpoint must use https");
+  });
+
+  it("refuses a stored row that names a bucket without its own auth at resolve time", async () => {
+    await expect(
+      listWorkspaceFiles({
+        accountId: "acct_1",
+        workspaceId: "ws_1",
+        storage: { provider: "s3", bucket: "acme", prefix: "agents/" },
+      }),
+    ).rejects.toThrow(
+      '"assumeRole" is required when config.storage.bucket is set',
+    );
+  });
+
+  it("lists the stored rows the rules refuse", async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const refusedId = await t.run(async (ctx) => {
+      const orgId = await ctx.db.insert("orgs", {
+        name: "Beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const accountId = await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast",
+        secretHash: "hash",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const row = {
+        accountId: accountId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await ctx.db.insert("workspaceConfigs", {
+        ...row,
+        name: "managed",
+        config: { storage: { provider: "s3" } },
+      });
+      await ctx.db.insert("workspaceConfigs", {
+        ...row,
+        name: "own",
+        config: { storage: OWN_BUCKET },
+      });
+
+      return await ctx.db.insert("workspaceConfigs", {
+        ...row,
+        name: "refused",
+        config: { storage: { provider: "s3", bucket: "acme", prefix: "a/" } },
+      });
+    });
+
+    const result = await t.query(
+      internal.workspace.configs.listStorageRuleViolations,
+      { paginationOpts: { numItems: 10, cursor: null } },
+    );
+    expect(result.isDone).toBe(true);
+    expect(result.violations).toEqual([
+      expect.objectContaining({
+        workspaceId: refusedId,
+        name: "refused",
+        bucket: "acme",
+      }),
+    ]);
+  });
+
+  it("applies the same endpoint rule to the sandbox s3Endpoint option", () => {
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { s3Endpoint: "https://localhost:9000" },
+      }),
+    ).toThrow(
+      "config.options.s3Endpoint must not point to a private or internal address",
+    );
   });
 });
