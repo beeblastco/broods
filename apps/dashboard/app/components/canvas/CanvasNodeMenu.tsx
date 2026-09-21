@@ -6,36 +6,22 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/app/components/ui/context-menu";
+import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
 import type {
   FrameGroupAction,
   NodeLinkAction,
 } from "@/app/lib/canvasFrameEdits";
 import {
-  Bot,
-  Box,
-  FolderOpen,
   Group,
   Lock,
   PanelRight,
-  Plug,
-  Sparkles,
   Star,
   Trash2,
   Ungroup,
   Unlink,
-  type LucideIcon,
 } from "lucide-react";
 
 const CODE_MANAGED = "managed through code";
-
-/** The icon each card type wears on the canvas, so a link row reads as the card it goes to. */
-const LINK_ICONS: Partial<Record<string, LucideIcon>> = {
-  agent: Bot,
-  mcp: Plug,
-  sandbox: Box,
-  skill: Sparkles,
-  workspace: FolderOpen,
-};
 
 /** What one card's menu lists; the canvas builds it on the right-click. */
 export type CanvasNodeMenuEntries = {
@@ -167,7 +153,8 @@ function LinkIcon({
 }: {
   otherType: string | undefined;
 }): React.JSX.Element {
-  const Icon = LINK_ICONS[otherType ?? ""] ?? Unlink;
+  const Icon =
+    NODE_TEMPLATES.find((item) => item.type === otherType)?.icon ?? Unlink;
 
   return <Icon />;
 }
@@ -175,7 +162,8 @@ function LinkIcon({
 /**
  * A menu item that may be refused. A disabled item takes no pointer events, so
  * the not-allowed cursor and the reason's tooltip sit on a wrapper. One that
- * code owns keeps its full colour and trails a lock; any other refusal fades.
+ * code owns keeps its full colour and trails a lock, with the reason spelled
+ * out for a screen reader since the icon is hidden from it; any other refusal fades.
  */
 function LockableItem({
   lockedReason,
@@ -205,7 +193,12 @@ function LockableItem({
     <div className="cursor-not-allowed" title={lockedReason}>
       <ContextMenuItem disabled variant={codeOwned ? "locked" : "default"}>
         {children}
-        {codeOwned && <Lock className="ml-auto size-3.5" />}
+        {codeOwned && (
+          <>
+            <Lock className="ml-auto size-3.5" />
+            <span className="sr-only">{lockedReason}</span>
+          </>
+        )}
       </ContextMenuItem>
     </div>
   );
