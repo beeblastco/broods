@@ -7,8 +7,7 @@ flowchart TD
   Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(config/http + agent/crons)"]
   Config --> Jobs["crons table (Convex)"]
   Config --> Component["Convex crons component<br/>schedule lifecycle"]
-  Component -->|"dispatch action POST"| Gateway["gateway"]
-  Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
+  Component -->|"dispatch action POST<br/>in-cluster"| Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> Results["AsyncAgentResult + Conversations"]

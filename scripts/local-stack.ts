@@ -70,7 +70,10 @@ interface InstancePorts {
 interface InstanceSecrets {
   accountConfigEncryption: string;
   adminAccount: string;
+  mediaTicket: string;
   serviceAuth: string;
+  stageTicket: string;
+  terminalTicket: string;
 }
 
 interface InstanceState {
@@ -557,7 +560,8 @@ function configureDeploymentEnv(state: InstanceState): void {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${state.ports.core}`,
-    BROODS_SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
+    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
+    STAGE_TICKET_SECRET: state.secrets.stageTicket,
     WORKOS_API_KEY: "sk_local_dummy",
     WORKOS_CLIENT_ID: "client_local_dummy",
     WORKOS_WEBHOOK_SECRET: "whsec_local_dummy",
@@ -725,10 +729,13 @@ function startCore(state: InstanceState): void {
       ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
       CONVEX_DEPLOY_KEY: state.adminKey ?? "",
       CONVEX_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      MEDIA_TICKET_SECRET: state.secrets.mediaTicket,
       PORT: String(state.ports.core),
       PUBLIC_BASE_URL: `http://127.0.0.1:${state.ports.gateway}`,
       SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
       SERVICE_NAME: `local-${state.instanceId}-core`,
+      STAGE_TICKET_SECRET: state.secrets.stageTicket,
+      TERMINAL_TICKET_SECRET: state.secrets.terminalTicket,
     },
     instanceId: state.instanceId,
     logName: "core",
@@ -751,6 +758,7 @@ function startGateway(state: InstanceState): void {
       BROODS_CONFIG_URL: `http://127.0.0.1:${state.ports.convexSite}`,
       BROODS_CORE_URLS: `http://127.0.0.1:${state.ports.core}`,
       PORT: String(state.ports.gateway),
+      TERMINAL_TICKET_SECRET: state.secrets.terminalTicket,
     },
     instanceId: state.instanceId,
     logName: "gateway",
@@ -1144,6 +1152,11 @@ function instanceDir(instanceId: string): string {
 function loadOrCreateState(): InstanceState {
   const instanceId = currentInstanceId();
   const existing = loadState(instanceId);
+  if (existing && !existing.secrets.stageTicket) {
+    throw new Error(
+      "this stack predates the per-purpose secrets; run `up --fresh` to recreate it",
+    );
+  }
   if (existing) return existing;
 
   const state: InstanceState = {
@@ -1154,7 +1167,10 @@ function loadOrCreateState(): InstanceState {
     secrets: {
       accountConfigEncryption: randomBytes(24).toString("hex"),
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
+      mediaTicket: randomBytes(24).toString("hex"),
       serviceAuth: randomBytes(24).toString("hex"),
+      stageTicket: randomBytes(24).toString("hex"),
+      terminalTicket: randomBytes(24).toString("hex"),
     },
   };
   saveState(state);
