@@ -2,7 +2,13 @@
  * Transactional persistence for the core runtime.
  */
 
-import { type Infer, type ObjectType, v } from "convex/values";
+import {
+  getConvexSize,
+  type Infer,
+  type ObjectType,
+  v,
+  type Value,
+} from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -19,9 +25,10 @@ import {
 } from "./schema";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-// Rows are whole messages; a page of tool results at 512 rows crosses the
-// per-query read limit and the conversation stops loading.
-const CONVERSATION_EVENT_PAGE_SIZE = 64;
+// Bytes and not rows bound a page: the per-query read limit counts bytes, and
+// one tool result can weigh as much as a thousand text rows.
+const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
+const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
@@ -180,12 +187,25 @@ export const listConversationEvents = internalQuery({
               .gt("cursor", args.afterCursor)
           : q.eq("conversationKey", args.conversationKey),
       );
-    const rows = await query.take(CONVERSATION_EVENT_PAGE_SIZE + 1);
-    const page = rows.slice(0, CONVERSATION_EVENT_PAGE_SIZE);
-    const isDone = rows.length <= CONVERSATION_EVENT_PAGE_SIZE;
+    const page: { cursor: string; event: Value }[] = [];
+    let pageBytes = 0;
+    let isDone = true;
+    for await (const row of query) {
+      // The first row always lands, so a page is never empty and the cursor
+      // always moves, even past one row larger than the budget.
+      if (
+        page.length >= CONVERSATION_EVENT_PAGE_SIZE ||
+        pageBytes >= CONVERSATION_EVENT_PAGE_BYTES
+      ) {
+        isDone = false;
+        break;
+      }
+      page.push({ cursor: row.cursor, event: row.event });
+      pageBytes += getConvexSize(row.event);
+    }
 
     return {
-      page: page.map((row) => ({ cursor: row.cursor, event: row.event })),
+      page: page,
       isDone: isDone,
       continueCursor: isDone ? null : (page.at(-1)?.cursor ?? null),
     };

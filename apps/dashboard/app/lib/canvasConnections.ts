@@ -11,6 +11,7 @@
 import {
   connectionEdge,
   isCodeManagedEdge,
+  isCodeManagedOwner,
   isSideHandle,
 } from "@/app/components/canvas/edgeOwnership";
 import {
@@ -71,7 +72,13 @@ export function connectionRefusal(
         (nodeId === srcNode.id ? srcNode : tgtNode).data.managedBy,
     )
   ) {
-    return `${srcLabel} and ${tgtLabel} are managed through code. Wire them there and deploy.`;
+    // Names only the ends code owns. A `cli-` edge id alone locks the edge, so
+    // the other end can be a card made here.
+    const owned = [srcNode, tgtNode]
+      .filter((node) => isCodeManagedOwner(node.data.managedBy))
+      .map(cardLabel);
+
+    return `Code manages ${owned.length > 0 ? owned.join(" and ") : srcLabel}. Add this link there and deploy.`;
   }
 
   const wrongHandles = handleRefusal(
@@ -133,7 +140,7 @@ function handleRefusal(
   const targetIsSide = isSideHandle(connection.targetHandle);
   if (kind === "service") {
     return sourceIsSide || targetIsSide
-      ? "Side handles link two agents, or mount a workspace on a sandbox. Attach a service from the bottom of its agent to the top of the card."
+      ? "Side handles link two agents or mount a workspace. Connect a service from its agent's bottom to the card's top."
       : null;
   }
   if (sourceIsSide && targetIsSide) return null;

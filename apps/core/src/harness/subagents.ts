@@ -456,9 +456,9 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Ephemeral child turns use an in-memory session wrapper. Persistent child
-   * turns write the task prompt and generated child messages to the child
-   * conversation while keeping inherited parent context ephemeral.
+   * Ephemeral child turns run on a `persist: false` Session and store nothing.
+   * Persistent child turns write the task prompt and generated child messages
+   * to the child conversation while keeping inherited parent context ephemeral.
    */
   private async runTask(
     task: ResolvedSubagentTask,

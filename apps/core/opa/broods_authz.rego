@@ -66,6 +66,7 @@ decision := {
   count(blocking_rules) == 0
   count(audited_rules) == 0
   count(allow_rules) > 0
+  open
 }
 
 decision := {
@@ -82,8 +83,9 @@ decision := {
   not enforcing
 }
 
-# Default-deny only bites once something enforces, and an allow rule lifts it.
-open if count(allow_rules) > 0
+# Default-deny only bites once something enforces, and only an enforcing
+# policy's allow rule lifts it.
+open if count(enforcing_allow_rules) > 0
 
 open if not enforcing
 
@@ -106,6 +108,11 @@ deny_rules := [rule |
 allow_rules := [rule |
   rule := matching_rules[_]
   rule.effect == "allow"
+]
+
+enforcing_allow_rules := [rule |
+  rule := allow_rules[_]
+  rule.mode == "enforce"
 ]
 
 # Each matched rule carries the mode of the policy that owns it, so the verdict

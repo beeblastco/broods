@@ -6,7 +6,7 @@
  */
 
 import {
-  roleDenial,
+  authorize,
   rolePrincipal,
   type RolePrincipal,
 } from "@broods/convex/model/apiAuthorization";
@@ -319,13 +319,21 @@ async function claimSandbox(
   // Claiming a machine is a write on that sandbox, so a role session needs
   // sandboxes:write for it. The name only arrives in the hello, hence here.
   const denied =
-    !record ||
-    (socket.data.role !== undefined &&
-      roleDenial(rolePrincipal(socket.data.role), "POST", {
-        type: "sandboxes",
-        id: record.sandboxId,
-      }) !== null);
+    record !== undefined &&
+    socket.data.role !== undefined &&
+    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
+      type: "sandboxes",
+      id: record.sandboxId,
+    }).allow;
   if (denied) {
+    logWarn("Machine sandbox claim refused", {
+      accountId: accountId,
+      sandbox: record.name,
+      roleId: socket.data.role?.roleId,
+      host: hello.hostname,
+    });
+  }
+  if (!record || denied) {
     socket.close(
       MACHINE_CLOSE.unknownSandbox.code,
       MACHINE_CLOSE.unknownSandbox.reason,
