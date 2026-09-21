@@ -12,6 +12,7 @@ import {
   type ModelMessage,
   type SystemModelMessage,
   type ToolModelMessage,
+  type ToolResultPart,
   type UserContent,
   type UserModelMessage,
 } from "ai";
@@ -68,6 +69,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import { truncateText } from "./sandbox/utils.ts";
 import {
   listConfiguredSkillMetadata,
   loadConfiguredHarnessSkills,
@@ -75,6 +77,11 @@ import {
   type SkillMetadata,
 } from "./skills.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
+
+const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// Convex refuses a document over 1 MiB. One tool message shares this budget
+// across its results, which leaves room for the rest of the row.
+const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
 
 // What started a run when it was not a person asking: so far only the scheduler
 // firing a cron. It names the root trace span and withholds every schedule tool.
@@ -1609,7 +1616,18 @@ function sanitizeAssistantMessage(
 function sanitizeToolMessage(
   message: ToolModelMessage,
 ): ToolModelMessage | null {
-  const content = message.content.filter(isPersistedToolContentPart);
+  const parts = message.content.filter(isPersistedToolContentPart);
+  const resultCount = parts.filter(
+    (part): boolean => part.type === "tool-result",
+  ).length;
+  const limit = Math.floor(
+    STORED_TOOL_MESSAGE_BYTES / Math.max(resultCount, 1),
+  );
+  const content = parts.map((part): ToolModelMessage["content"][number] =>
+    part.type === "tool-result"
+      ? { ...part, output: storableToolResultOutput(part.output, limit) }
+      : part,
+  );
 
   return content.length > 0 ? { ...message, content: content } : null;
 }
@@ -1647,9 +1665,67 @@ function sanitizeUserMessage(
   return message.content.length > 0
     ? {
         ...message,
-        content: [{ type: "text", text: "[attachment not retained]" }],
+        content: [{ type: "text", text: ATTACHMENT_NOT_RETAINED }],
       }
     : null;
+}
+
+/**
+ * A tool result as a stored row can hold it. Media follows the rule in
+ * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
+ * `limit` is stored as truncated text, so one oversized result can not fail the
+ * write and end the run.
+ */
+function storableToolResultOutput(
+  output: ToolResultPart["output"],
+  limit: number,
+): ToolResultPart["output"] {
+  if (output.type === "execution-denied") {
+    return output;
+  }
+  let stored = output;
+  if (output.type === "content") {
+    const value = output.value.filter((part): boolean => {
+      switch (part.type) {
+        case "file-data":
+        case "image-data":
+          return false;
+        case "file":
+          return part.data.type === "url"
+            ? isStorableMediaReference(part.data)
+            : part.data.type !== "data";
+        case "file-url":
+        case "image-url":
+          return isStorableMediaReference(part.url);
+        default:
+          return true;
+      }
+    });
+    stored = {
+      ...output,
+      value:
+        value.length > 0
+          ? value
+          : [{ type: "text", text: ATTACHMENT_NOT_RETAINED }],
+    };
+  }
+  const text = truncateText(
+    typeof stored.value === "string"
+      ? stored.value
+      : JSON.stringify(stored.value),
+    limit,
+  );
+  if (!text.truncated) {
+    return stored;
+  }
+
+  return {
+    type:
+      output.type === "error-text" || output.type === "error-json"
+        ? "error-text"
+        : "text",
+    value: text.value,
+  };
 }
 
 async function timePhase<T>(
