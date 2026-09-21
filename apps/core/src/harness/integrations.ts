@@ -401,7 +401,6 @@ interface WebhookRoute {
   endpointId?: string;
 }
 
-/** A deployment caller asked for something its credential may not do: a 403 with a code. */
 class DirectForbiddenError extends Error {
   readonly init: ApiErrorInit;
 
@@ -1960,7 +1959,6 @@ async function parseDirectPayload(
   headers: Record<string, string>,
   account: AccountRecord,
   context: Pick<HttpRoutingContext, "agentLoader" | "deploymentLoader">,
-  // Set for a runtime key or stage ticket, whose reach this function narrows.
   deploymentAuth?: Extract<AuthContext, { kind: "deployment" }>,
 ): Promise<DirectInboundEvent> {
   let parsed: unknown;
@@ -2083,8 +2081,8 @@ function directConversationKeys(
 ): Pick<DirectInboundEvent, "conversationKey" | "publicConversationKey"> {
   if (continuation && requested.startsWith(ACCOUNT_NAMESPACE_PREFIX)) {
     const scope = parseAccountAgentScopedKey(requested);
-    // A channel session belongs to the people in that channel, so an
-    // embeddable key re-enters only conversations the direct API opened.
+    // A channel session belongs to its channel: the embeddable key continues
+    // only conversations the direct API opened.
     if (
       !scope ||
       scope.accountId !== accountId ||
@@ -2141,9 +2139,35 @@ function assertOneDirectPayloadShape(
 }
 
 /**
- * Whoever holds the embeddable key would otherwise pick the prompt and the
- * spend, so `system` and `model` are the agent's to open up.
+ * Throws unless the agent is public and in the credential's stage. True for
+ * the embeddable runtime key, false for a member's ticket or no credential.
  */
+async function admitStageCredential(
+  auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
+  agent: AgentRecord,
+  context: Pick<HttpRoutingContext, "deploymentLoader">,
+): Promise<boolean> {
+  if (!auth) return false;
+  // Another stage's agent answers like an unknown one, so nothing leaks.
+  if (
+    !deploymentScopeMatches(
+      auth,
+      await context.deploymentLoader(agent.accountId, agent.agentId),
+    )
+  ) {
+    throw new DirectNotFoundError("Agent not found");
+  }
+  if (agent.config.publicAccess !== true) {
+    throw new DirectForbiddenError(
+      `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
+      { code: "public_access_disabled", param: "agentId" },
+    );
+  }
+
+  return auth.stageTicket !== true;
+}
+
+/** The embeddable key picks neither prompt nor spend unless the agent opts in. */
 function assertRunOverridesAllowed(
   embeddableKey: boolean,
   agent: AgentRecord,
@@ -2160,39 +2184,6 @@ function assertRunOverridesAllowed(
       { code: "run_overrides_disabled", param: "allowRunOverrides" },
     );
   }
-}
-
-/**
- * A stage credential reaches only public agents of its own stage. Internal
- * callers (account/admin secret), channel webhooks and cron are never gated
- * here. Answers whether the caller holds the permanent runtime key: that one a
- * frontend embeds, so the run limits apply to it. A stage ticket was minted
- * for an org member and keeps the wider reach the dashboard uses.
- */
-async function admitStageCredential(
-  auth: Extract<AuthContext, { kind: "deployment" }> | undefined,
-  agent: AgentRecord,
-  context: Pick<HttpRoutingContext, "deploymentLoader">,
-): Promise<boolean> {
-  if (!auth) return false;
-  // An agent of another stage answers exactly like one that does not exist.
-  if (
-    !deploymentScopeMatches(
-      auth,
-      await context.deploymentLoader(agent.accountId, agent.agentId),
-    )
-  ) {
-    throw new DirectNotFoundError("Agent not found");
-  }
-  // Secure by default: the public endpoint is closed until the agent opts in.
-  if (agent.config.publicAccess !== true) {
-    throw new DirectForbiddenError(
-      `Agent ${agent.agentId} is not publicly accessible. Enable public access and redeploy, or reach it through an internal endpoint or channel webhook.`,
-      { code: "public_access_disabled", param: "agentId" },
-    );
-  }
-
-  return auth.stageTicket !== true;
 }
 
 /** One entry per open prompt, labels keyed by question id. */

@@ -639,9 +639,8 @@ export type AgentDefinitionConfig = EnvRefString<
    */
   publicAccess?: boolean;
   /**
-   * Let a runtime-key caller send `system` messages and `model` overrides on
-   * a run. Off by default: the runtime key is embeddable, so a caller holding
-   * it is refused with `403 run_overrides_disabled` until this is set.
+   * Let a runtime-key caller send `system` and `model` overrides on a run. Off
+   * by default: such a run is refused with `403 run_overrides_disabled`.
    */
   allowRunOverrides?: boolean;
 };

@@ -1025,8 +1025,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             <TabsContent value="test" className="flex flex-col overflow-hidden">
               <TestTab
                 activeDeployment={activeDeployment}
-                // The member's ticket first: core limits what the permanent
-                // key may send on a run.
+                // Ticket first: core limits the permanent key's run overrides.
                 deploymentApiKey={stageSession ?? deploymentApiKey}
                 agentId={agentConfigId ?? ""}
                 nodeColor={nodeData?.properties?.color}

@@ -49,7 +49,6 @@ export interface StatusAccessRequest {
   ingress: IngressStatusRecord;
 }
 
-/** True when the deployment is the stage this credential was issued for. */
 export function deploymentScopeMatches(
   auth: StatusAccessAuth,
   deployment: AgentDeploymentScope | null,

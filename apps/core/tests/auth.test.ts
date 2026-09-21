@@ -132,7 +132,6 @@ describe("resolveBearerAuth", () => {
       projectSlug: "demo",
       stageSlug: "development",
     });
-    // Only a member-minted ticket may carry the mark that lifts the key's limits.
     expect(auth).not.toHaveProperty("stageTicket");
   });
 
