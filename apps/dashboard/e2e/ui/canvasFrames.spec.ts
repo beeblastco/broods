@@ -107,7 +107,7 @@ test("every card is one size, every group row another, whatever the card says", 
   await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
   const zoom = await flowScale(fixture);
 
-  // Cards: agents, the lone sandbox, the session store, the ungrouped servers.
+  // Cards: agents, the lone sandbox, the ungrouped servers.
   const cards = await fixture.locator('[data-slot="card"]').all();
   expect(cards.length).toBeGreaterThan(4);
   for (const card of cards) {
@@ -521,7 +521,7 @@ test("edges of different agents or kinds never draw over each other", async ({
   );
 
   // Agent, bundle, mount, inherited, runs-on and sub-agent edges all drawn.
-  expect(checked).toBe(14);
+  expect(checked).toBe(13);
   expect(overlaps).toEqual([]);
 });
 
@@ -586,7 +586,7 @@ test("hovering any edge's line shows a lock or a trash: trash only where it can 
       "runs-on:blender-kien-mac": "locked",
       "subagent:coder-right-reviewer-left": "delete",
       "subagent:tracy-right-coder-left": "locked",
-      "xy-edge__tracy-session": "delete",
+      "xy-edge__tracy-internal-sandbox": "delete",
     }),
   );
   for (const [id, reason] of [
