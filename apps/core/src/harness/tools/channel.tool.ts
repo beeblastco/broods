@@ -396,7 +396,7 @@ async function resolveImages(
       "Error: send-images needs either file_paths (workspace files) or urls (public image URLs)",
     );
   }
-  const rejected = urls.find((url) => !/^https?:\/\//i.test(url));
+  const rejected = urls.find((url): boolean => !/^https?:\/\//i.test(url));
   if (rejected !== undefined) {
     return toolError(`Error: not a public http(s) URL: ${rejected}`);
   }
