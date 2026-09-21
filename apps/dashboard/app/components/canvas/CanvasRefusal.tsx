@@ -38,17 +38,21 @@ export function CanvasRefusal({
   if (refusal === null) return null;
 
   // The red is the destructive button's, translucent in dark mode, so it sits
-  // on an opaque backing or the cards under it show through. `w-max` because
-  // the panel is centred with `left: 50%`, which caps a shrink-to-fit box at
-  // half the canvas and wraps a sentence that has room.
+  // on an opaque backing or the cards under it show through. The panel spans
+  // the canvas and centres the box itself: React Flow's own top-center sits at
+  // `left: 50%`, which caps a shrink-to-fit box at half the canvas and wraps a
+  // sentence that has room. The strip takes no clicks, only the box does.
   return (
     <>
-      <Panel position="top-center">
-        <div className="rounded-lg bg-background shadow-sm">
+      <Panel
+        position="top-left"
+        className="pointer-events-none right-0 flex justify-center"
+      >
+        <div className="pointer-events-auto rounded-lg bg-background shadow-sm">
           <div
             aria-live="polite"
             data-slot="canvas-refusal"
-            className="flex w-max max-w-xl items-center gap-2 rounded-lg bg-destructive px-2 py-1 text-xs text-white dark:bg-destructive/60"
+            className="flex max-w-xl items-center gap-2 rounded-lg bg-destructive px-2 py-1 text-xs text-white dark:bg-destructive/60"
           >
             <span className="min-w-0">{refusal.message}</span>
             {refusal.dropped ? (
