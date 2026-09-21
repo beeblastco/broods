@@ -208,10 +208,14 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       const cwd = request.namespace
         ? workspacePath(request, this.#workspaceRoot())
         : undefined;
-      const result = await sandbox.exec(request.code, {
-        ...(cwd ? { cwd: cwd } : {}),
-        env: mergeSandboxEnv(this.#config.envVars, request.envVars),
-      });
+      // The workdir API has no exec timeout, so the command carries its own.
+      const result = await sandbox.exec(
+        `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
+        {
+          ...(cwd ? { cwd: cwd } : {}),
+          env: mergeSandboxEnv(this.#config.envVars, request.envVars),
+        },
+      );
       const stdout = truncateText(
         result.stdout ?? "",
         request.outputLimitBytes,
@@ -229,6 +233,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         stderr: stderr.value,
         durationMs: Date.now() - startedAt,
         truncated: stdout.truncated || stderr.truncated,
+        timedOut: result.exit_code === 124,
         provider: "sandbox",
       };
     } finally {
