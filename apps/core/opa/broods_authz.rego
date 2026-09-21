@@ -33,16 +33,15 @@ decision := {
   "mode": mode,
   "reason": "No allow policy rule matched",
   "matchedRuleIds": [],
-  "auditedRuleIds": [],
+  "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
   count(blocking_rules) == 0
-  count(deny_rules) == 0
-  count(allow_rules) == 0
-  enforcing
+  not open
 }
 
 # A deny from a policy still in audit is reported and then let through, so the
-# rollout can be watched on live traffic without refusing anyone.
+# rollout can be watched on live traffic without refusing anyone. It never opens
+# a place on its own: an enforcing allow-list beside it still has to match.
 decision := {
   "allow": true,
   "allowed": true,
@@ -53,6 +52,7 @@ decision := {
 } if {
   count(blocking_rules) == 0
   count(audited_rules) > 0
+  open
 }
 
 decision := {
@@ -81,6 +81,11 @@ decision := {
   count(allow_rules) == 0
   not enforcing
 }
+
+# Default-deny only bites once something enforces, and an allow rule lifts it.
+open if count(allow_rules) > 0
+
+open if not enforcing
 
 # Only an enforcing policy's deny actually refuses.
 blocking_rules := [rule |
