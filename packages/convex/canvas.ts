@@ -24,7 +24,6 @@ export const canvasNodeValidator = v.object({
   id: v.string(),
   type: v.union(
     v.literal("agent"),
-    v.literal("database"),
     v.literal("sandbox"),
     v.literal("workspace"),
     v.literal("mcp"),

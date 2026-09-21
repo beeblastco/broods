@@ -103,7 +103,6 @@ describe("tidyCanvasLayout", () => {
   const nodes = [
     node("a1", "agent", "support"),
     node("a2", "agent", "triage"),
-    node("d1", "database", "session"),
     node("m1", "mcp", "linear"),
     node("s1", "sandbox", "py-sbx"),
     node("s2", "sandbox", "node-sbx"),
@@ -112,7 +111,6 @@ describe("tidyCanvasLayout", () => {
     node("x1", "mcp", "unwired"),
   ];
   const edges = [
-    edge("a1", "d1"),
     edge("a1", "m1"),
     edge("a1", "s1"),
     edge("a1", "w1"),
@@ -132,15 +130,13 @@ describe("tidyCanvasLayout", () => {
   it("puts agents on the top row above their own services", () => {
     expect(positions.get("a1")?.y).toBe(0);
     expect(positions.get("a2")?.y).toBe(0);
-    for (const id of ["d1", "m1", "s1", "s2", "k1"]) {
+    for (const id of ["m1", "s1", "s2", "k1"]) {
       expect(positions.get(id)!.y).toBeGreaterThan(NODE_HEIGHT);
     }
   });
 
   it("orders an agent's services into typed columns", () => {
-    // database, mcp, sandbox for `support`: the session column sits left of the
-    // mcp column, which sits next to the sandbox column its runs-on edge reaches.
-    expect(positions.get("d1")!.x).toBeLessThan(positions.get("m1")!.x);
+    // mcp, sandbox for `support`: the mcp column sits left of the sandbox column.
     expect(positions.get("m1")!.x).toBeLessThan(positions.get("s1")!.x);
   });
 
@@ -416,7 +412,6 @@ describe("tidyCanvasLayout", () => {
     // service deep in a column, so buses pile up and gutters carry lanes.
     const many = [
       node("a1", "agent", "tracy"),
-      node("d1", "database", "session"),
       node("m1", "mcp", "github"),
       node("m2", "mcp", "linear"),
       node("s1", "sandbox", "cloud-a"),
@@ -428,8 +423,8 @@ describe("tidyCanvasLayout", () => {
       node("k1", "skill", "pdf"),
     ];
     const wiring = [
-      ...["d1", "m1", "m2", "s1", "s2", "s3", "s4", "w1", "w2", "k1"].map(
-        (id) => edge("a1", id),
+      ...["m1", "m2", "s1", "s2", "s3", "s4", "w1", "w2", "k1"].map((id) =>
+        edge("a1", id),
       ),
       edge("w1", "s1", "mount"),
     ];
@@ -481,10 +476,10 @@ describe("tidyCanvasLayout", () => {
     const skills = ["k1", "k2", "k3"];
     const nodes = [
       node("a1", "agent", "support"),
-      node("d1", "database", "session"),
+      node("m1", "mcp", "github"),
       ...skills.map((id) => node(id, "skill", id)),
     ];
-    const edges = [edge("a1", "d1"), ...skills.map((id) => edge("a1", id))];
+    const edges = [edge("a1", "m1"), ...skills.map((id) => edge("a1", id))];
     const laid = tidyCanvasLayout(nodes, edges, NO_SERVERS);
     const boxes = boardBoxes(nodes, edges, laid);
     const routes = routeCanvasEdges(

@@ -97,8 +97,8 @@ const FIT_NODES: Node[] = [0, 250, 500].flatMap((x) =>
  * Tracy's stage as the frames canvas draws it: a cloud sandbox alone as a
  * card and two computers framed, one connected and one offline; a mounted and
  * an inherited workspace framed, and two read-only ones shared with a coder
- * sub-agent; MCP servers on each transport, the url ones disabled; a session
- * store; a code-managed sub-agent link and a user-owned one after it. Laid out by
+ * sub-agent; MCP servers on each transport, the url ones disabled;
+ * a code-managed sub-agent link and a user-owned one after it. Laid out by
  * the same tidy layout the canvas button runs, so everything lands where a
  * real stage puts it.
  */
@@ -111,7 +111,6 @@ const FRAME_MCP_SERVERS: StageMcpServer[] = [
 
 const FRAME_EDGES: Edge[] = [
   ...[
-    "session",
     "internal-sandbox",
     "kien-mac",
     "phicks-mac",
@@ -162,7 +161,6 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     }),
     fixtureNode("coder", "agent"),
     fixtureNode("reviewer", "agent"),
-    fixtureNode("session", "database"),
     fixtureNode("internal-sandbox", "sandbox", {
       config: { provider: "sandbox" },
     }),

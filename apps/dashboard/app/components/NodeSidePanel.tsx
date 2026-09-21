@@ -6,7 +6,10 @@ import {
   agentStatusConfig,
   statusConfig,
 } from "@/app/components/node/BaseNode";
-import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
+import {
+  CONFIG_TAB_BRANCHES,
+  ConfigTab,
+} from "@/app/components/side-panel/ConfigTab";
 import {
   DetailsTab,
   type AgentProvider,
@@ -16,7 +19,6 @@ import {
   SandboxResourceDetailsTab,
   WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
-import { SessionDetailsTab } from "@/app/components/side-panel/SessionDetailsTab";
 import {
   SettingsTab,
   type NodeType,
@@ -125,7 +127,6 @@ type HeaderStatusBadge = {
 
 const PANEL_TITLES: Record<NodeType, string> = {
   agent: "Agent",
-  database: "Session",
   mcp: "MCP Server",
   workspace: "Workspace",
   sandbox: "Sandbox",
@@ -352,15 +353,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       };
     }
 
-    if (nodeType === "database") {
-      // Mirror the canvas node: conversation persistence is always on once wired to an agent.
-      return {
-        text: isConnectedToAgent ? "Persistent" : "Unconnected",
-        color: isConnectedToAgent ? "bg-success" : "bg-destructive",
-        variant: isConnectedToAgent ? "success" : "destructive",
-      };
-    }
-
     if (!isConnectedToAgent) {
       return {
         text: "Unconnected",
@@ -418,7 +410,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     isMcp,
     canQueryMcpStatus,
     mcpServer,
-    nodeType,
     isConnectedToAgent,
     isWorkspace,
     isSandbox,
@@ -449,10 +440,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
       const edited = (value as Record<string, unknown>) ?? {};
       // Preserve all existing branches (tools, skills, workspace, etc.);
-      // only replace the three branches the Config tab exposes.
+      // only replace the branches the Config tab exposes.
       const base = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
       const merged: Record<string, unknown> = { ...base };
-      for (const branch of ["agent", "model", "provider"] as const) {
+      for (const branch of CONFIG_TAB_BRANCHES) {
         if (branch in edited) {
           merged[branch] = edited[branch];
         } else {
@@ -927,15 +918,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   setEditName(p);
                   onUpdateNodeLabel(node.id, p);
                 }}
-              />
-            ) : nodeType === "database" && node ? (
-              <SessionDetailsTab
-                nodeId={node.id}
-                editName={editName}
-                setEditName={setEditName}
-                onSaveName={handleSaveName}
-                nameChanged={!!nameChanged}
-                isSaving={isSaving}
               />
             ) : (
               <ServiceDetailsTab
