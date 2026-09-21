@@ -897,6 +897,65 @@ describe("session compaction", () => {
     expect(generateTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("measures the pruned view, so a stored tool result the model never gets does not trigger it", async () => {
+    const { compactSessionContext } =
+      await import("../src/harness/compaction.ts");
+    const messages = [
+      { role: "user", content: "read the log" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            input: { shell: "cat log" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            output: { type: "text", value: "log line\n".repeat(500) },
+          },
+        ],
+      },
+      { role: "assistant", content: "the log is clean" },
+      { role: "user", content: "thanks" },
+    ] as actualAi.ModelMessage[];
+    const compaction = { enabled: true, maxContextLength: 1_000 };
+
+    expect(
+      await compactSessionContext({
+        conversationKey: "conversation",
+        system: [],
+        messages: messages,
+        agentConfig: {
+          ...compactingAgentConfig,
+          session: { compaction: compaction },
+        },
+      }),
+    ).toBeNull();
+    expect(generateTextMock).not.toHaveBeenCalled();
+
+    // With pruning off the model gets the tool result, so it counts.
+    expect(
+      await compactSessionContext({
+        conversationKey: "conversation",
+        system: [],
+        messages: messages,
+        agentConfig: {
+          ...compactingAgentConfig,
+          session: { compaction: compaction, pruning: { enabled: false } },
+        },
+      }),
+    ).not.toBeNull();
+  });
+
   it("summarizes on demand regardless of config, folding instructions in", async () => {
     const { summarizeConversation, isCompactionSummaryMessage } =
       await import("../src/harness/compaction.ts");
