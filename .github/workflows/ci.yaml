@@ -74,6 +74,51 @@ jobs:
       - name: Build Lambda binaries
         run: bun run build
 
+  secrets-scan:
+    # gitleaks over the commits this event brings in: the pull request's range,
+    # or what a push added. Rules and allowlists: .gitleaks.toml. The pre-commit
+    # hook runs the same scan on staged files but skips when gitleaks is not
+    # installed, so this job is the gate.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # The range scan walks history, and nothing in this job pushes.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        # Pinned release, checked against its published sha256 before it runs.
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check
+          mkdir -p /tmp/gitleaks
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp/gitleaks gitleaks
+
+      - name: Scan new commits for secrets
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ -n "$PR_BASE" ]]; then
+            range="$PR_BASE..$PR_HEAD"
+          elif git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+            range="$PUSH_BEFORE..$GITHUB_SHA"
+          else
+            # New branch or force push: `before` is zeros or gone, so scan what
+            # dev does not have yet.
+            range="origin/dev..$GITHUB_SHA"
+          fi
+          /tmp/gitleaks/gitleaks git --no-banner --redact --log-opts="$range" .
+
   performance:
     # Deterministic CPU-only benchmarks over the per-request, per-turn and
     # per-line hot paths. Absolute product ceilings block on any runner; drift

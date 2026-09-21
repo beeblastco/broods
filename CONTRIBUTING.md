@@ -65,8 +65,8 @@ cd packages/demos/basic-stream && bun run start
 
 ## Security
 
-- Do not commit real secrets. `.env` files stay package-local.
-- If you find a security vulnerability, please report it privately rather than opening a public issue.
+- Do not commit real secrets. `.env` files stay package-local. The pre-commit hook and the CI `secrets-scan` job run gitleaks (`brew install gitleaks` to get the local scan).
+- Found a security vulnerability? Report it privately, as [SECURITY.md](SECURITY.md) describes. Do not open a public issue.
 
 ## CI
 
