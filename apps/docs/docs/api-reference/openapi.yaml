@@ -4070,7 +4070,8 @@ components:
               workspaceId: { type: string }
           description: >-
             Picks among the workspaces the agent already attaches, by
-            workspaceId. An id the agent does not attach is dropped.
+            workspaceId. An id the agent does not attach is dropped. A record
+            that names only such ids runs with no workspace.
         policies:
           type: array
           items: { type: string }
