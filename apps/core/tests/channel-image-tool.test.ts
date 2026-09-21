@@ -46,7 +46,7 @@ const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   "time",
 ]);
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
-const SECRET = "service-auth-secret";
+const SECRET = "media-ticket-secret";
 const WORKSPACE: ResolvedWorkspace = {
   name: "notes",
   workspaceId: "ws_a",
@@ -58,7 +58,7 @@ beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.PUBLIC_BASE_URL = "https://gateway.test";
-  process.env.SERVICE_AUTH_SECRET = SECRET;
+  process.env.MEDIA_TICKET_SECRET = SECRET;
   s3ObjectExistsMock.mockClear();
 });
 
@@ -105,7 +105,7 @@ describe("sendImagesTool", () => {
     expect(
       openMediaTicket(
         sent[0]!.url.slice("https://gateway.test/v1/media/".length),
-        SECRET,
+        [SECRET],
       ),
     ).toEqual({
       accountId: ACCOUNT,
@@ -321,10 +321,9 @@ describe("sendFilesTool", () => {
     // The fallback link is the same sealed ticket the attachment path hands over.
     const url = sentText.slice(sentText.indexOf("https://"));
     expect(
-      openMediaTicket(
-        url.slice("https://gateway.test/v1/media/".length),
+      openMediaTicket(url.slice("https://gateway.test/v1/media/".length), [
         SECRET,
-      ),
+      ]),
     ).toEqual({
       accountId: ACCOUNT,
       workspaceId: "ws_a",

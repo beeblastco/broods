@@ -172,7 +172,7 @@ export interface McpDefinitionConfig {
    * Hosted alternative to `url`: declare the server inline as
    * `handler: createMcpHandler(...)` from @modelcontextprotocol/server,
    * right next to the `defineMcp` call. The CLI bundles the defining module
-   * and the tool-runner Lambda hosts it, one invoke per batch of requests.
+   * and the mcp-runner Lambda hosts it, one invoke per batch of requests.
    */
   handler?: McpHandler;
   /**
