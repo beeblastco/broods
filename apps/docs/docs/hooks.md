@@ -102,7 +102,7 @@ Channel hooks (`onMessageReceived` / `onMessageSending`) never fire for subagent
 ## Rules
 
 - **Isolate-only & self-contained.** Handlers run in a fresh V8 isolate with only `ctx`, `event`, and JS built-ins. No imports, `require`, `node:` modules, or closure variables. Bundles that need those are rejected at upload.
-- **Non-fatal.** A hook that throws or times out is logged and skipped; the agent run continues with unmutated state. Hooks are wall-clock bounded.
+- **Non-fatal.** A hook that throws or times out is logged and skipped; the agent run continues with unmutated state. Hooks are wall-clock bounded. So a hook deny is best effort. Anything that must hold belongs in a policy, which only ever refuses.
 - **Streaming caveat.** `onFinish` output transforms change the delivered/stored final result; tokens already streamed over SSE cannot be recalled.
 - **Return is field-scoped.** Only the fields listed for an event are honored; anything else is dropped. The return may be at most 128 KB larger than the event the hook received, so `onStart` can rewrite a long `messages` list in place.
 - **`console` is wired to the log pipeline.** `console.log`/`info` land at INFO, `warn` and `error` at their own levels, and `debug` at DEBUG. They carry the run's tenant context, so they appear in the dashboard Monitoring tab alongside harness logs, tagged `source: "user-code"`, and in `broods logs` / `broods stream` once you ask for their level (the terminal tails WARN+ by default). DEBUG is the exception. Like every DEBUG line it goes to stdout and OTLP, never to the live stream, so it shows up only in durable history: the dashboard's Monitoring tab and the `broods logs --all` backfill, never a live tail.
