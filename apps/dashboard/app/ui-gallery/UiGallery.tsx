@@ -19,8 +19,10 @@ import {
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { CanvasNodeMenu } from "@/app/components/canvas/CanvasNodeMenu";
-import { CanvasRefusalNotice } from "@/app/components/canvas/CanvasRefusalNotice";
-import { useConnectionRefusal } from "@/app/components/canvas/useConnectionRefusal";
+import {
+  CanvasRefusal,
+  type CanvasRefusalHandle,
+} from "@/app/components/canvas/CanvasRefusal";
 import { DetailPanel, DetailSplit } from "@/app/components/DetailSplit";
 import { OnboardingDialog } from "@/app/components/OnboardingDialog";
 import { StatusDot } from "@/app/components/StatusDot";
@@ -60,7 +62,6 @@ import { applyTidyLayout, GRID } from "@broods/convex/model/canvasLayout";
 import {
   Background,
   ConnectionMode,
-  Panel,
   ReactFlow,
   ReactFlowProvider,
   type Edge,
@@ -68,7 +69,13 @@ import {
 } from "@xyflow/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
 
@@ -331,10 +338,7 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="canvas-connect" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas connections</h2>
-        {/* The refusal notice reads the connection in flight from the store. */}
-        <ReactFlowProvider>
-          <CanvasConnectFixture />
-        </ReactFlowProvider>
+        <CanvasConnectFixture />
       </section>
 
       <section data-fixture="canvas-node-menu" className="flex flex-col gap-2">
@@ -499,18 +503,14 @@ function CanvasConnectFixture(): React.JSX.Element {
     (): ConnectionGraph => ({ edges: edges, nodes: CONNECT_NODES }),
     [edges],
   );
-  const { clear, onConnectEnd, refusal } = useConnectionRefusal(getGraph);
+  const refusalRef = useRef<CanvasRefusalHandle>(null);
 
   return (
     <InfraAnalysisProvider value={CONNECT_ANALYSIS}>
       <CanvasFramesProvider value={frames}>
         <div className="h-96 w-[52rem] rounded-lg border border-border">
           <ReactFlow
-            nodes={graph.nodes.map((node) =>
-              node.id === refusal?.nodeId
-                ? { ...node, className: "canvas-refused" }
-                : node,
-            )}
+            nodes={graph.nodes}
             edges={graph.edges}
             nodeTypes={CANVAS_NODE_TYPES}
             edgeTypes={CANVAS_EDGE_TYPES}
@@ -528,8 +528,10 @@ function CanvasConnectFixture(): React.JSX.Element {
             isValidConnection={(connection) =>
               connectionRefusal(getGraph(), connection) === null
             }
-            onConnectStart={clear}
-            onConnectEnd={onConnectEnd}
+            onConnectStart={() => refusalRef.current?.clear()}
+            onConnectEnd={(event, connection) =>
+              refusalRef.current?.onConnectEnd(event, connection)
+            }
             onConnect={(connection) =>
               setEdges((current) => [
                 ...current,
@@ -552,9 +554,7 @@ function CanvasConnectFixture(): React.JSX.Element {
               gap={GRID}
               size={2}
             />
-            <Panel position="top-center">
-              <CanvasRefusalNotice refusal={refusal} onDismiss={clear} />
-            </Panel>
+            <CanvasRefusal ref={refusalRef} getGraph={getGraph} />
           </ReactFlow>
         </div>
         <output

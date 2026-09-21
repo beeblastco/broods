@@ -43,12 +43,18 @@ test("a refused connection says why, while aimed and after the drop", async ({
   const fixture = page.locator('[data-fixture="canvas-connect"]');
   await fixture.scrollIntoViewIfNeeded();
   const notice = fixture.locator('[data-slot="canvas-refusal"]');
-  const target = fixture.locator('.react-flow__node[data-id="box-one"]');
+  const outline = fixture.locator('[data-slot="canvas-refused-outline"]');
 
   await aimFromAgent(page, fixture, "alpha", "box-one");
   await expect(notice).toContainText("alpha is already connected to box-one.");
   await expect(notice).toContainText("Release to cancel");
-  await expect(target).toHaveClass(/canvas-refused/);
+  // The outline sits on the refused chip, within a pixel of its box.
+  const chip = await fixture
+    .locator('.react-flow__node[data-id="box-one"]')
+    .boundingBox();
+  const box = await outline.boundingBox();
+  expect(Math.abs((box?.x ?? 0) - (chip?.x ?? -9))).toBeLessThan(1.5);
+  expect(Math.abs((box?.width ?? 0) - (chip?.width ?? -9))).toBeLessThan(1.5);
 
   await page.mouse.up();
   await expect(notice).toContainText("alpha is already connected to box-one.");

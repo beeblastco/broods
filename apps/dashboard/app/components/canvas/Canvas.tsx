@@ -13,7 +13,10 @@ import {
   CanvasNodeMenu,
   type CanvasNodeMenuEntries,
 } from "@/app/components/canvas/CanvasNodeMenu";
-import { CanvasRefusalNotice } from "@/app/components/canvas/CanvasRefusalNotice";
+import {
+  CanvasRefusal,
+  type CanvasRefusalHandle,
+} from "@/app/components/canvas/CanvasRefusal";
 import {
   AGENT_EDGE_STROKE,
   DeletableEdge,
@@ -29,7 +32,6 @@ import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisCont
 import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
-import { useConnectionRefusal } from "@/app/components/canvas/useConnectionRefusal";
 import { AgentNode } from "@/app/components/node/Agent";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { FrameNode } from "@/app/components/node/FrameNode";
@@ -110,6 +112,7 @@ import {
   type Node,
   type NodeMouseHandler,
   type OnConnect,
+  type OnConnectEnd,
   type OnEdgesChange,
   type OnNodeDrag,
   type OnNodesChange,
@@ -932,11 +935,15 @@ function CanvasInner({
       connectionRefusal(getConnectionGraph(), connection) === null,
     [getConnectionGraph],
   );
-  const {
-    clear: clearRefusal,
-    onConnectEnd,
-    refusal,
-  } = useConnectionRefusal(getConnectionGraph);
+  // The refusal notice keeps its own state (see CanvasRefusal); the canvas only
+  // forwards the two events it cannot see from inside the flow.
+  const refusalRef = useRef<CanvasRefusalHandle>(null);
+  const clearRefusal = useCallback((): void => refusalRef.current?.clear(), []);
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event, connection): void =>
+      refusalRef.current?.onConnectEnd(event, connection),
+    [],
+  );
 
   const onConnect: OnConnect = useCallback(
     (params) => {
@@ -1443,19 +1450,10 @@ function CanvasInner({
     return lit;
   }, [focusedIds, framedGraph.frames]);
 
-  // The card a refusal is about is marked, while the line is aimed at it and
-  // after the drop; `.canvas-refused` in globals.css turns its border red.
-  const refusedNodeId = refusal?.nodeId;
   const displayNodes = useMemo(() => {
-    // No refusal is every drag frame but a few, so that path maps nothing.
-    const marked = refusedNodeId
-      ? framedGraph.nodes.map((n) =>
-          n.id === refusedNodeId ? { ...n, className: "canvas-refused" } : n,
-        )
-      : framedGraph.nodes;
-    if (!litIds) return marked;
+    if (!litIds) return framedGraph.nodes;
 
-    return marked.map((n) => {
+    return framedGraph.nodes.map((n) => {
       if (litIds.has(n.id)) return n;
       let dimmed = dimmedNodeCache.get(n);
       if (!dimmed) {
@@ -1465,7 +1463,7 @@ function CanvasInner({
 
       return dimmed;
     });
-  }, [framedGraph.nodes, litIds, refusedNodeId]);
+  }, [framedGraph.nodes, litIds]);
 
   const displayEdges = useMemo(() => {
     // Dedupe defensively so legacy data with a stale-id edge can't crash the renderer
@@ -1527,9 +1525,7 @@ function CanvasInner({
         <Panel position="top-left">
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
-        <Panel position="top-center">
-          <CanvasRefusalNotice refusal={refusal} onDismiss={clearRefusal} />
-        </Panel>
+        <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
         {/* Save status lives away from the controls so it never crowds or
             reflows them; it clears itself once a save lands. */}
         <Panel position="bottom-left">

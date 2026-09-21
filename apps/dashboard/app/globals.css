@@ -283,13 +283,7 @@ body {
 }
 
 /* A refused connection, matching the notice at the top of the canvas: the line
-   turns red over a card that will not take it, and that card keeps a red border
-   until the refusal clears. Unlayered, so it beats the card's border utility. */
+   turns red over a card that will not take it. CanvasRefusal outlines the card. */
 .react-flow__connection.invalid .react-flow__connection-path {
   stroke: var(--color-destructive);
-}
-
-.react-flow__node.canvas-refused [data-slot="card"],
-.react-flow__node.canvas-refused [data-slot="resource-chip"] {
-  border-color: var(--color-destructive);
 }
