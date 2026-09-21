@@ -216,10 +216,13 @@ describe("matrix channel adapter", () => {
     const plaintext = Buffer.from("voice note bytes");
     const encrypted = await encryptForTest(plaintext);
     const requested: string[] = [];
+    const redirects: Array<RequestInit["redirect"]> = [];
     globalThis.fetch = (async (
       input: string | URL | Request,
+      init?: RequestInit,
     ): Promise<Response> => {
       requested.push(String(input));
+      redirects.push(init?.redirect);
 
       return new Response(encrypted.ciphertext);
     }) as typeof fetch;
@@ -251,6 +254,7 @@ describe("matrix channel adapter", () => {
     expect(requested).toEqual([
       `${API_URL}/_matrix/client/v1/media/download/example.org/media-1`,
     ]);
+    expect(redirects).toEqual(["error"]);
   });
 });
 

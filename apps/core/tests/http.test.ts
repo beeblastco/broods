@@ -1,6 +1,10 @@
 import { dns } from "bun";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { assertPublicHttpsUrl, publicHostFetch } from "../src/shared/http.ts";
+import {
+  assertPublicHttpsUrl,
+  publicHostFetch,
+  resetPublicHostsForTests,
+} from "../src/shared/http.ts";
 
 describe("assertPublicHttpsUrl", () => {
   it("accepts public https URLs", () => {
@@ -37,6 +41,7 @@ describe("assertPublicHttpsUrl", () => {
       "https://192.168.1.1/hook",
       "https://169.254.169.254/latest/meta-data",
       "https://100.64.0.1/hook",
+      "https://198.18.0.1/hook",
       "https://0.0.0.0/hook",
       "https://[::1]/hook",
       "https://[fc00::1]/hook",
@@ -68,6 +73,7 @@ describe("publicHostFetch", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetPublicHostsForTests();
   });
 
   it("refuses private hostnames and literal private addresses before connecting", async () => {
@@ -155,5 +161,30 @@ describe("publicHostFetch", () => {
     expect(new Headers(init.headers).get("host")).toBe("api.example.com:8443");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer k");
     expect(init.tls?.serverName).toBe("api.example.com");
+  });
+
+  it("reuses a validated address without a second lookup", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await publicHostFetch("https://api.example.com/v1/chat");
+      await publicHostFetch("https://api.example.com/v1/models");
+
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
+
+    expect(urls).toEqual([
+      "https://93.184.216.34/v1/chat",
+      "https://93.184.216.34/v1/models",
+    ]);
   });
 });

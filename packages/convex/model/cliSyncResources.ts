@@ -274,9 +274,9 @@ export async function syncAgentResources(
     const name = resourceName(resource.name);
     const envNames = new Set<string>();
     const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
-    // Policy refs that resolve to no policy resource in this deploy stay
-    // behind as raw strings the runtime later drops, silently weakening the
-    // intended policy set. Surface them as a deploy warning instead.
+    // A policy ref that names no policy resource in this deploy stays a raw
+    // string. Unless it is an existing policy id, the runtime refuses every
+    // action for that agent, so the deploy warns about it.
     if (Array.isArray(withEnvRefs.policies)) {
       for (const entry of withEnvRefs.policies) {
         if (typeof entry === "string" && !policyIds[entry])
