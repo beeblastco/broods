@@ -921,43 +921,29 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("carries the parent deployment scope into the ephemeral child session", async () => {
-    const { createEphemeralChildSession } =
-      await import("../src/harness/subagents.ts");
-    const childSession = {
-      accountId: "account_1",
-      agentId: "virtual_subagent_x",
-      conversationKey: "conv-key",
-      eventId: "event-x",
-      endpointId: "env-1d88x06b",
-      projectSlug: "channel-telegram",
-      stageSlug: "development",
-      filesystemNamespace: () => "ns",
-      resolvedWorkspaces: () => [],
-      sandboxes: () => [
-        { name: "own-sandbox", sandbox: {} },
-        { name: "browser-sandbox", sandbox: {} },
-      ],
-      loadSkillPrompt: async () => "",
-      createEphemeralTurnContext: async () => ({ system: [] }),
-    } as never;
+  it("writes nothing to the conversation for an ephemeral child", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const originalMutation = runtime.mutate;
+    const mutate = mock(async () => true);
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      const session = new Session({
+        eventId: "event-x",
+        conversationKey: "conv-key",
+        accountId: "account_1",
+        agentId: "virtual_subagent_x",
+        persist: false,
+      });
 
-    const ephemeral = createEphemeralChildSession(childSession, []);
+      const createdAt = await session.persistModelMessages([
+        { role: "assistant", content: "done" },
+      ]);
 
-    // A child reaches the same sandboxes as the agent it runs for.
-    expect(ephemeral.sandboxes().map((entry): string => entry.name)).toEqual([
-      "own-sandbox",
-      "browser-sandbox",
-    ]);
-
-    // Without the deployment scope, runAgentLoop stamps empty project/stage/
-    // endpoint_id on the subtask span: publishSpan early-returns (no live span) AND
-    // the dashboard's project+stage-scoped Tempo backfill never matches it, so
-    // subagents are invisible in tracing and a reload doesn't bring them back.
-    expect(ephemeral.endpointId).toBe("env-1d88x06b");
-    expect(ephemeral.projectSlug).toBe("channel-telegram");
-    expect(ephemeral.stageSlug).toBe("development");
-    expect(ephemeral.accountId).toBe("account_1");
+      expect(createdAt).toEqual([]);
+      expect(mutate).not.toHaveBeenCalled();
+    } finally {
+      runtime.mutate = originalMutation;
+    }
   });
 
   it("rejects coordinator-level conversation keys in ephemeral mode", async () => {
