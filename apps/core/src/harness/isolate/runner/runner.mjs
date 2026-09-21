@@ -220,6 +220,7 @@ async function runIsolateJob(
 
   const context = await isolate.createContext();
   const timers = new Set();
+  let closed = false;
   try {
     await context.global.set("globalThis", context.global.derefInto());
     // Besides ctx/input, inject the minimal runtime surface tool bundles
@@ -364,11 +365,14 @@ async function runIsolateJob(
         }),
         // Tracked so the finally clears them: release() drops only this handle,
         // and a timer holding fireTimer would keep firing under the next call.
+        // `closed` stops an interval that was mid-fire at the finally from re-arming.
         new ivm.Callback(
           (id, ms) => {
+            if (closed) return;
             const timer = setTimeout(
               () => {
                 timers.delete(timer);
+                // A fire on a released context rejects; nothing is left to tell.
                 fireTimer?.apply(undefined, [id]).catch(() => {});
               },
               Math.min(ms, 60_000),
@@ -510,6 +514,7 @@ async function runIsolateJob(
       },
     );
   } finally {
+    closed = true;
     for (const timer of timers) clearTimeout(timer);
     // Free the context but keep the isolate warm for the next same-tenant call.
     try {
