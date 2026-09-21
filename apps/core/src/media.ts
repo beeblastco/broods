@@ -8,7 +8,7 @@
  * authenticated routes.
  */
 
-import { requireEnv } from "./shared/env.ts";
+import { requireEnv, requireSecretsEnv } from "./shared/env.ts";
 import { errorResponse, type CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
 import {
@@ -55,7 +55,7 @@ export async function handleMediaRequest(
 ): Promise<Response> {
   const token = request.path.slice(MEDIA_PATH_PREFIX.length);
   const ticket = token
-    ? openMediaTicket(token, requireEnv("SERVICE_AUTH_SECRET"))
+    ? openMediaTicket(token, requireSecretsEnv("MEDIA_TICKET_SECRET"))
     : null;
   if (!ticket) {
     logWarn("media.ticket rejected", { path: request.path });

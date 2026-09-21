@@ -60,9 +60,22 @@ describe("connectionRefusal", () => {
         { edges: EDGES, nodes: managed },
         connect("coder", "notes"),
       ),
-    ).toBe(
-      "coder and notes are managed through code. Wire them there and deploy.",
+    ).toBe("Code manages coder and notes. Add this link there and deploy.");
+  });
+
+  test("a CLI agent's edge to a card made here names only the agent", () => {
+    const nodes = NODES.map((item) =>
+      item.id === "coder"
+        ? { ...item, id: "cli-coder", data: { ...item.data, managedBy: "cli" } }
+        : item,
     );
+
+    expect(
+      connectionRefusal(
+        { edges: [], nodes: nodes },
+        connect("cli-coder", "notes"),
+      ),
+    ).toBe("Code manages coder. Add this link there and deploy.");
   });
 });
 

@@ -33,7 +33,11 @@ import { channelAdapterFromConfig } from "./integrations.ts";
 import { createHash } from "node:crypto";
 import { basename } from "node:path/posix";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
-import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
+import {
+  getHarnessPublicUrl,
+  requireEnv,
+  requireSecretsEnv,
+} from "../shared/env.ts";
 import { guardedFetch } from "./isolate/runner/pinned-fetch.mjs";
 import type { PinnedFetchTransport } from "../shared/http.ts";
 import { logWarn } from "../shared/log.ts";
@@ -488,7 +492,7 @@ async function goneWorkspaceFile(
   const ticket = link
     ? openMediaTicket(
         link.slice(link.indexOf(MEDIA_PATH_PREFIX) + MEDIA_PATH_PREFIX.length),
-        requireEnv("SERVICE_AUTH_SECRET"),
+        requireSecretsEnv("MEDIA_TICKET_SECRET"),
       )
     : null;
   if (!ticket || !("workspaceId" in ticket)) {
@@ -905,7 +909,10 @@ async function writeMediaObject(
   if (!baseUrl) {
     return undefined;
   }
-  const token = sealMediaTicket(ticket, requireEnv("SERVICE_AUTH_SECRET"));
+  const token = sealMediaTicket(
+    ticket,
+    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
+  );
 
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }

@@ -5,13 +5,21 @@ import {
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
-  ContextMenuShortcut,
 } from "@/app/components/ui/context-menu";
+import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
 import type {
   FrameGroupAction,
   NodeLinkAction,
 } from "@/app/lib/canvasFrameEdits";
-import { Group, PanelRight, Star, Trash2, Ungroup, Unlink } from "lucide-react";
+import {
+  Group,
+  Lock,
+  PanelRight,
+  Star,
+  Trash2,
+  Ungroup,
+  Unlink,
+} from "lucide-react";
 
 const CODE_MANAGED = "managed through code";
 
@@ -26,7 +34,7 @@ export type CanvasNodeMenuEntries = {
 /**
  * What a right-click on a card offers: open its panel, one row per link, the
  * group it is in or was pulled out of, then delete. Links and delete that code
- * owns stay listed, disabled, so the menu says why they cannot change here.
+ * owns stay listed with a lock, the mark a locked edge wears, and say why on hover.
  * Grouping is canvas layout, not wiring, so it works on a code-managed card too.
  */
 export function CanvasNodeMenu({
@@ -46,9 +54,6 @@ export function CanvasNodeMenu({
   onRemoveEdge: (edgeId: string) => void;
   onSetUngrouped: (nodeIds: readonly string[], ungrouped: boolean) => void;
 }): React.JSX.Element {
-  const unlinks = links.filter((link) => link.kind === "unlink");
-  const allLocked = unlinks.length > 0 && unlinks.every((link) => link.locked);
-
   return (
     <>
       <ContextMenuGroup>
@@ -65,7 +70,7 @@ export function CanvasNodeMenu({
           <ContextMenuSeparator />
           <ContextMenuGroup>
             <ContextMenuLabel variant="muted" className="text-xs">
-              {allLocked ? `Links · ${CODE_MANAGED}` : "Links"}
+              Links
             </ContextMenuLabel>
             {links.map((link) =>
               link.kind === "make-default" ? (
@@ -92,11 +97,13 @@ export function CanvasNodeMenu({
                   lockedReason={link.locked ? CODE_MANAGED : null}
                   onClick={() => onRemoveEdge(link.edgeId)}
                 >
-                  <Unlink />
+                  <LinkIcon otherType={link.otherType} />
                   <span className="min-w-0 truncate">{link.label}</span>
-                  <ContextMenuShortcut>
-                    {link.locked ? "locked" : link.mount ? "Unmount" : "Unlink"}
-                  </ContextMenuShortcut>
+                  {!link.locked && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {link.mount ? "Unmount" : "Unlink"}
+                    </span>
+                  )}
                 </LockableItem>
               ),
             )}
@@ -134,16 +141,29 @@ export function CanvasNodeMenu({
         >
           <Trash2 />
           Delete
-          {deleteLocked && <ContextMenuShortcut>locked</ContextMenuShortcut>}
         </LockableItem>
       </ContextMenuGroup>
     </>
   );
 }
 
+/** The linked card's icon, or the broken chain for a type the canvas has no card for. */
+function LinkIcon({
+  otherType,
+}: {
+  otherType: string | undefined;
+}): React.JSX.Element {
+  const Icon =
+    NODE_TEMPLATES.find((item) => item.type === otherType)?.icon ?? Unlink;
+
+  return <Icon />;
+}
+
 /**
  * A menu item that may be refused. A disabled item takes no pointer events, so
- * the not-allowed cursor and the reason's tooltip sit on a wrapper.
+ * the not-allowed cursor and the reason's tooltip sit on a wrapper. One that
+ * code owns keeps its full colour and trails a lock, with the reason spelled
+ * out for a screen reader since the icon is hidden from it; any other refusal fades.
  */
 function LockableItem({
   lockedReason,
@@ -167,10 +187,19 @@ function LockableItem({
       </ContextMenuItem>
     );
   }
+  const codeOwned = lockedReason === CODE_MANAGED;
 
   return (
     <div className="cursor-not-allowed" title={lockedReason}>
-      <ContextMenuItem disabled>{children}</ContextMenuItem>
+      <ContextMenuItem disabled variant={codeOwned ? "locked" : "default"}>
+        {children}
+        {codeOwned && (
+          <>
+            <Lock className="ml-auto size-3.5" />
+            <span className="sr-only">{lockedReason}</span>
+          </>
+        )}
+      </ContextMenuItem>
     </div>
   );
 }

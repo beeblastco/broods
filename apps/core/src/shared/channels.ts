@@ -2,9 +2,9 @@
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
 import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
-import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
@@ -226,7 +226,11 @@ export async function channelAttachmentBytes(
     );
   }
 
-  return Buffer.from(response.bodyBytes);
+  return Buffer.from(
+    response.bodyBytes.buffer,
+    response.bodyBytes.byteOffset,
+    response.bodyBytes.byteLength,
+  );
 }
 
 /**
