@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as ai from "ai";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
+import { setStorageForTests } from "../src/shared/storage.ts";
+
+const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
@@ -15,6 +19,19 @@ interface TestCompletion {
   status: "completed" | "failed";
   response?: unknown;
   error?: string;
+}
+
+// The two streamText callbacks the ephemeral test drives.
+interface StreamTextStandInOptions {
+  prepareStep(args: { messages: ModelMessage[] }): Promise<unknown>;
+  onEnd(args: {
+    response: { messages: ModelMessage[] };
+    text: string;
+    finishReason: string;
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    steps: unknown[];
+    toolCalls: unknown[];
+  }): Promise<void>;
 }
 
 interface CoordinatorInternals {
@@ -921,28 +938,91 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("writes nothing to the conversation for an ephemeral child", async () => {
-    const { Session } = await import("../src/harness/session.ts");
+  it("runs an ephemeral child through its first step without storing it", async () => {
     const originalMutation = runtime.mutate;
-    const mutate = mock(async () => true);
-    runtime.mutate = mutate as typeof runtime.mutate;
-    try {
-      const session = new Session({
-        eventId: "event-x",
-        conversationKey: "conv-key",
-        accountId: "account_1",
-        agentId: "virtual_subagent_x",
-        persist: false,
+    const originalQuery = runtime.query;
+    const mutations: string[] = [];
+    const queries: string[] = [];
+    runtime.mutate = mock(async (name: string) => {
+      mutations.push(name);
+
+      return true;
+    }) as never;
+    runtime.query = mock(async (name: string) => {
+      queries.push(name);
+
+      return null;
+    }) as never;
+    setStorageForTests({
+      taskUsage: { record: async (): Promise<void> => {} },
+    } as never);
+    // No call may leave the process if the streamText stand-in is bypassed.
+    globalThis.fetch = mock(async () => {
+      throw new Error("network is blocked in this test");
+    }) as never;
+    // harness.test.ts leaves its own fake streamText on the shared "ai" module,
+    // so the real one is out of reach here. This one runs the loop's first
+    // prepareStep, where the hand-built child used to throw.
+    const previousStreamText = ai.streamText;
+    const streamText = mock((options: StreamTextStandInOptions) => {
+      const stream = new ReadableStream({
+        start: async (controller): Promise<void> => {
+          await options.prepareStep({
+            messages: [{ role: "user", content: "research" }],
+          });
+          await options.onEnd({
+            response: { messages: [{ role: "assistant", content: "done" }] },
+            text: "done",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            steps: [],
+            toolCalls: [],
+          });
+          controller.close();
+        },
       });
 
-      const createdAt = await session.persistModelMessages([
-        { role: "assistant", content: "done" },
-      ]);
+      return {
+        stream: stream,
+        consumeStream: async (): Promise<void> => {
+          const reader = stream.getReader();
+          while (!(await reader.read()).done) {}
+        },
+      };
+    });
+    mock.module("ai", () => ({ ...ai, streamText: streamText }));
+    const { Session } = await import("../src/harness/session.ts");
+    const renew = spyOn(Session.prototype, "renewConversationLease");
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "ephemeral" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.completeSuccessfulRun = mock(async () => {});
 
-      expect(createdAt).toEqual([]);
-      expect(mutate).not.toHaveBeenCalled();
+    try {
+      await internals.runTask({
+        ...resolvedTask(),
+        agentConfig: {
+          provider: { google: { apiKey: "test-key" } },
+          model: { provider: "google", modelId: "gemini-test" },
+        },
+      });
+
+      expect(renew).toHaveBeenCalledTimes(1);
+      expect(internals.completeSuccessfulRun).toHaveBeenCalledTimes(1);
+      expect(mutations).toEqual([]);
+      expect(queries).not.toContain("listConversationEvents");
     } finally {
+      renew.mockRestore();
+      mock.module("ai", () => ({ ...ai, streamText: previousStreamText }));
+      globalThis.fetch = originalFetch;
+      setStorageForTests(null);
       runtime.mutate = originalMutation;
+      runtime.query = originalQuery;
     }
   });
 

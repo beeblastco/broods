@@ -1091,12 +1091,14 @@ function parseReviewCommentEvent(
 }
 
 // Thread text is written by anyone on the repo and must not be able to close
-// the context block it is quoted in.
+// the context block it is quoted in. Only this tag's `<` is escaped, so code
+// in a comment reads as written.
 function safeText(value: string | null | undefined): string {
   return (
     value
       ?.trim()
-      .replaceAll("github_thread_context", "github-thread-context") ?? ""
+      .replace(/github_thread_context/gi, "github-thread-context")
+      .replace(/<(?=\s*\/?\s*github-thread-context)/g, "&lt;") ?? ""
   );
 }
 

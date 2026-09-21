@@ -145,23 +145,8 @@ export function prependTextToUserParts(
     : [{ type: "text", text: prefix }, ...parts];
 }
 
-export function subagentNotFound(taskId: string): string {
-  return `Error: no subagent task found for ${taskId}`;
-}
-
-/** Throw native errors from execute so the AI SDK selects its error result path. */
-export const toolError = (value: string): never => {
-  throw new Error(
-    isFatalSandboxSetupError(value) ? `Sandbox setup failed: ${value}` : value,
-  );
-};
-
-/** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
-export const toolText = (value: string): string => value;
-
-// A child never outranks the parent in the place the parent runs: the parent's
-// effective policies and withheld tools (a channel record's included) carry
-// over, and a child never spawns subagents of its own.
+// A child carries the parent's effective policies and withheld tools (a channel
+// record's included), and never spawns subagents of its own.
 export function subagentConfig(
   config: AgentConfig,
   parent: AgentConfig,
@@ -183,6 +168,20 @@ export function subagentConfig(
     },
   };
 }
+
+export function subagentNotFound(taskId: string): string {
+  return `Error: no subagent task found for ${taskId}`;
+}
+
+/** Throw native errors from execute so the AI SDK selects its error result path. */
+export const toolError = (value: string): never => {
+  throw new Error(
+    isFatalSandboxSetupError(value) ? `Sandbox setup failed: ${value}` : value,
+  );
+};
+
+/** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
+export const toolText = (value: string): string => value;
 
 function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);

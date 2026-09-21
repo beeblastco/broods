@@ -127,6 +127,7 @@ const streamTextMock = mock(
     onChunk?: unknown;
     onError(args: { error: unknown }): Promise<void>;
     onEnd(args: {
+      response?: { id: string; modelId: string; timestamp: Date };
       responseMessages: unknown[];
       text: string;
       finishReason: string;
@@ -339,6 +340,12 @@ const streamTextMock = mock(
             metadata: { run: "test" },
           });
           await options.onEnd({
+            // Structured output parsing reads the response metadata.
+            response: {
+              id: "response-1",
+              modelId: "gemini-custom",
+              timestamp: new Date("2024-01-02T03:04:05.000Z"),
+            },
             responseMessages: [
               { role: "assistant", content: '{"answer":"done"}' },
             ],
@@ -737,7 +744,7 @@ describe("runAgentLoop", () => {
     expect(applySteeringIngress).not.toHaveBeenCalled();
   });
 
-  it("stores every step of a tool turn, not only the last", async () => {
+  it("stores every step of a tool turn", async () => {
     installHarnessEnv();
     streamTextScenario = "real-two-step";
     const { runAgentLoop } = await import("../src/harness/harness.ts");

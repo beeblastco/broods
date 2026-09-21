@@ -13,6 +13,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
+import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
 import {
   appliedIngressModeValidator,
   ingressModeValidator,
@@ -110,6 +111,9 @@ const ownerRenewalResultValidator = v.union(
   v.literal("stopped"),
   v.literal("stale"),
 );
+
+// The part of a channel delivery that names who sent the message.
+type DeliverySender = { identity?: { userId?: string } } | null | undefined;
 
 type PublicDeploymentIngress = {
   accountId: string;
@@ -305,25 +309,26 @@ export const acquireClear = internalMutation({
   },
 });
 
-/** Appends one history event only for the current fenced owner. */
+/** Appends history events only for the current fenced owner, all or none. */
 export const appendConversationEvent = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
-    cursor: v.string(),
-    event: v.any(),
+    ...conversationEventArgs,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
     await requireActiveAccount(ctx, coordinator.accountId);
-    await ctx.db.insert("runtimeConversationEvents", {
-      accountId: coordinator.accountId,
-      conversationKey: args.conversationKey,
-      cursor: args.cursor,
-      event: args.event,
-    });
+    for (const entry of conversationEventsFromArgs(args)) {
+      await ctx.db.insert("runtimeConversationEvents", {
+        accountId: coordinator.accountId,
+        conversationKey: args.conversationKey,
+        cursor: entry.cursor,
+        event: entry.event,
+      });
+    }
 
     return null;
   },
@@ -352,8 +357,17 @@ export const applySteering = internalMutation({
       )
       .take(MAX_DRAIN_ENVELOPES);
     const active = rows.filter((row) => row.expiresAt > now);
-    const selected =
-      active[0]?.requestedMode === "steer" ? contiguousModePrefix(active) : [];
+    const steering = active[0]?.requestedMode === "steer";
+    // A steer joins the running turn, so it must come from that turn's sender.
+    const owner = steering
+      ? await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+          .unique()
+      : null;
+    const selected = steering
+      ? contiguousModePrefix(active, owner?.delivery)
+      : [];
     if (selected.length === 0) {
       if (
         queue.queuedCount !== coordinator.queuedCount ||
@@ -1014,14 +1028,23 @@ function ingressStatusResult(
   };
 }
 
-/** The leading run of rows that share the first row's requestedMode. */
+/**
+ * The leading run of rows that share the first row's requestedMode and the
+ * sender's userId, so one turn never runs two people's messages.
+ */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
+  sender: DeliverySender = rows[0]?.delivery,
 ): Doc<"runtimeIngressEnvelopes">[] {
   if (rows.length === 0) return [];
-  const end = rows.findIndex(
-    (row) => row.requestedMode !== rows[0]!.requestedMode,
-  );
+  const end = rows.findIndex((row): boolean => {
+    const delivery: DeliverySender = row.delivery;
+
+    return (
+      row.requestedMode !== rows[0]!.requestedMode ||
+      delivery?.identity?.userId !== sender?.identity?.userId
+    );
+  });
 
   return end === -1 ? rows : rows.slice(0, end);
 }

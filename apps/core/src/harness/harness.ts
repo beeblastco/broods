@@ -1649,12 +1649,12 @@ export async function runAgentLoop(
 
       try {
         const unpersisted = responseMessages.slice(persistedResponseCount);
-        persistedResponseCount = responseMessages.length;
         await session.persistModelMessages(
           approvalRequests.length > 0
             ? withApprovalToolCalls(unpersisted, approvalRequests)
             : unpersisted,
         );
+        persistedResponseCount = responseMessages.length;
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
