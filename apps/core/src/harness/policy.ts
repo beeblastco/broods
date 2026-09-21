@@ -40,6 +40,7 @@ import {
   machineSandboxes,
   resolveWorkspace,
   targetsAgentSandbox,
+  toWorkspaceRelative,
 } from "./tools/filesystem-utils.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
@@ -414,12 +415,11 @@ export function policyInputForTool(
           (entry): boolean => entry.name === sandboxTarget,
         )
     : undefined;
+  // grep and glob search from `path`; the regex is not a file.
+  const rawPath =
+    toolName === "grep" || toolName === "glob" ? record.path : record.file_path;
   const filePath =
-    typeof record.file_path === "string"
-      ? record.file_path
-      : typeof record.pattern === "string"
-        ? record.pattern
-        : undefined;
+    typeof rawPath === "string" ? policyFilePath(rawPath) : undefined;
   const base = {
     toolName: toolName,
     ...(options.mcpIdsByName?.get(toolName)
@@ -548,6 +548,18 @@ function policyClient(): PolicyClient {
     }),
     OPA_EVALUATE_TIMEOUT_MS,
   );
+}
+
+// The same workspace-relative form the tools resolve, so a `secrets/` prefix
+// rule sees `secrets/x` however the model spelled it. A traversal is left raw
+// for the rule to judge: the tool refuses it anyway, and the SDK calls toInput
+// outside its own try, so this must not throw.
+function policyFilePath(rawPath: string): string {
+  try {
+    return toWorkspaceRelative(rawPath);
+  } catch {
+    return rawPath;
+  }
 }
 
 function resolveWorkspaceForPolicy(

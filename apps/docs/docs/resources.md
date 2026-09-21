@@ -444,8 +444,8 @@ export const workspacePolicy = definePolicy({
     {
       id: "deny-secrets",
       effect: "deny",
-      actions: ["workspace.write", "workspace.exec"],
-      resources: { filePaths: ["/workspace/secrets"] },
+      actions: ["workspace.read", "workspace.write"],
+      resources: { filePaths: ["secrets/"] },
     },
     {
       id: "deny-rm-rf",
@@ -480,7 +480,7 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
-Policy rules can scope by resource selectors like `toolNames`, `mcpIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `mcpId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
+Policy rules can scope by resource selectors like `toolNames`, `mcpIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. A `filePaths` entry is a workspace-relative prefix (`secrets/`, not `/workspace/secrets`), matched against the path the tool resolves; `bash` carries no path, so scope shell commands by `toolNames` and conditions instead. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `mcpId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
 - `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an MCP tool's `<server>__<tool>` name.
 - `mcpId`: stable MCP server row id when the call is for an MCP server tool.

@@ -55,6 +55,38 @@ describe("agent policy input", () => {
       workspaceName: "repo",
     });
 
+    // A `filePaths` prefix rule must see the path the tool resolves, not the
+    // spelling the model chose; grep and glob search from `path`, not the regex.
+    expect(
+      policyInputForTool(
+        "write",
+        { workspace: "repo", file_path: "./secrets/key" },
+        workspaces,
+      ).filePath,
+    ).toBe("secrets/key");
+    // `..` inside a name is a name the tool accepts, so the rule sees it resolved.
+    expect(
+      policyInputForTool(
+        "write",
+        { workspace: "repo", file_path: "./secrets/a..b" },
+        workspaces,
+      ).filePath,
+    ).toBe("secrets/a..b");
+    expect(
+      policyInputForTool(
+        "read",
+        { workspace: "repo", file_path: "../etc/passwd" },
+        workspaces,
+      ).filePath,
+    ).toBe("../etc/passwd");
+    expect(
+      policyInputForTool(
+        "grep",
+        { workspace: "repo", pattern: "API_KEY", path: "/secrets" },
+        workspaces,
+      ).filePath,
+    ).toBe("secrets");
+
     // memory_save derives its target path from the title, so the policy input
     // carries the same workspace.write + filePath surface as write/edit.
     expect(

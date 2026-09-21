@@ -3996,7 +3996,10 @@ components:
         mcpIds: { type: array, items: { type: string } }
         workspaceIds: { type: array, items: { type: string } }
         workspaceNames: { type: array, items: { type: string } }
-        filePaths: { type: array, items: { type: string } }
+        filePaths:
+          type: array
+          items: { type: string }
+          description: Workspace-relative path prefixes, e.g. `secrets/`. Matched against the path a read, write, edit, glob or grep call resolves; bash carries no path.
         subagentIds: { type: array, items: { type: string } }
         skillPaths: { type: array, items: { type: string } }
         resourceIds:
