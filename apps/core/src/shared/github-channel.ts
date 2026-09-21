@@ -1090,8 +1090,14 @@ function parseReviewCommentEvent(
   });
 }
 
+// Thread text is written by anyone on the repo and must not be able to close
+// the context block it is quoted in.
 function safeText(value: string | null | undefined): string {
-  return value?.trim() ?? "";
+  return (
+    value
+      ?.trim()
+      .replaceAll("github_thread_context", "github-thread-context") ?? ""
+  );
 }
 
 function toGitHubSource(source: Record<string, unknown>): GitHubSource {
