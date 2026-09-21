@@ -114,6 +114,11 @@ export function boardRects(
     }));
 }
 
+/** The name a card shows, as menus and refusal sentences say it. */
+export function cardLabel(node: Node): string {
+  return typeof node.data.label === "string" ? node.data.label : node.id;
+}
+
 /**
  * Group entries for a node's context menu: a member can leave its frame or
  * dissolve it, a node that was pulled out can go back. Rejoining takes the
@@ -169,75 +174,6 @@ export function frameGroupActions(
 }
 
 /**
- * A card's link entries for its context menu, one per stored edge it has. Make
- * default only where the sandbox is not already first and the agent is not
- * code-managed (code owns its order), and disabled where the new order breaks
- * the runtime rules. An edge code owns is listed locked, so the menu shows the
- * link and that it cannot be cut here.
- */
-export function nodeLinkActions(
-  nodes: Node[],
-  edges: Edge[],
-  nodeId: string,
-): NodeLinkAction[] {
-  const node = nodes.find((item) => item.id === nodeId);
-  if (!node) return [];
-  const byId = new Map(nodes.map((item) => [item.id, item]));
-  const linked = edges.flatMap((edge) => {
-    const otherId =
-      edge.source === nodeId
-        ? edge.target
-        : edge.target === nodeId
-          ? edge.source
-          : null;
-    const other = otherId === null ? undefined : byId.get(otherId);
-
-    return other ? [{ edge: edge, other: other }] : [];
-  });
-  const wiringAgents = linked.filter(
-    ({ edge, other }) => edgeKind(edge) === "default" && other.type === "agent",
-  ).length;
-  const labelOf = (item: Node): string =>
-    typeof item.data.label === "string" ? item.data.label : item.id;
-
-  return linked.flatMap(({ edge, other }): NodeLinkAction[] => {
-    const actions: NodeLinkAction[] = [];
-    if (
-      node.type === "sandbox" &&
-      other.type === "agent" &&
-      edgeKind(edge) === "default" &&
-      !isCodeManagedOwner(other.data.managedBy) &&
-      agentSandboxOrder(other, nodes, edges)[0] !== nodeId
-    ) {
-      const problem = introducedRuntimeRefsProblem(
-        { edges: edges, nodes: nodes },
-        {
-          edges: edges,
-          nodes: makeDefaultSandbox(nodes, edges, other.id, nodeId),
-        },
-      );
-      actions.push({
-        agentId: other.id,
-        agentLabel: wiringAgents > 1 ? labelOf(other) : null,
-        disabledReason: problem
-          ? `${problem.workspaceName} is mounted on ${problem.sandboxLabel}`
-          : null,
-        kind: "make-default",
-      });
-    }
-    actions.push({
-      edgeId: edge.id,
-      kind: "unlink",
-      label: labelOf(other),
-      locked: edge.deletable === false,
-      mount: edgeKind(edge) === "mount",
-    });
-
-    return actions;
-  });
-}
-
-/**
  * The first runtime-ref problem `after` has that `before` did not, or null.
  * Used to refuse an edit up front: a problem the graph already had is not
  * this edit's to block. Problems match on resource ids, so renaming a sandbox
@@ -277,6 +213,73 @@ export function makeDefaultSandbox<T extends LayoutNode>(
       ...node,
       data: { ...node.data, sandboxOrder: [sandboxId, ...rest] },
     };
+  });
+}
+
+/**
+ * A card's link entries for its context menu, one per stored edge it has. Make
+ * default only where the sandbox is not already first and the agent is not
+ * code-managed (code owns its order), and disabled where the new order breaks
+ * the runtime rules. An edge code owns is listed locked, so the menu shows the
+ * link and that it cannot be cut here.
+ */
+export function nodeLinkActions(
+  nodes: Node[],
+  edges: Edge[],
+  nodeId: string,
+): NodeLinkAction[] {
+  const node = nodes.find((item) => item.id === nodeId);
+  if (!node) return [];
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  const linked = edges.flatMap((edge) => {
+    const otherId =
+      edge.source === nodeId
+        ? edge.target
+        : edge.target === nodeId
+          ? edge.source
+          : null;
+    const other = otherId === null ? undefined : byId.get(otherId);
+
+    return other ? [{ edge: edge, other: other }] : [];
+  });
+  const wiringAgents = linked.filter(
+    ({ edge, other }) => edgeKind(edge) === "default" && other.type === "agent",
+  ).length;
+
+  return linked.flatMap(({ edge, other }): NodeLinkAction[] => {
+    const actions: NodeLinkAction[] = [];
+    if (
+      node.type === "sandbox" &&
+      other.type === "agent" &&
+      edgeKind(edge) === "default" &&
+      !isCodeManagedOwner(other.data.managedBy) &&
+      agentSandboxOrder(other, nodes, edges)[0] !== nodeId
+    ) {
+      const problem = introducedRuntimeRefsProblem(
+        { edges: edges, nodes: nodes },
+        {
+          edges: edges,
+          nodes: makeDefaultSandbox(nodes, edges, other.id, nodeId),
+        },
+      );
+      actions.push({
+        agentId: other.id,
+        agentLabel: wiringAgents > 1 ? cardLabel(other) : null,
+        disabledReason: problem
+          ? `${problem.workspaceName} is mounted on ${problem.sandboxLabel}`
+          : null,
+        kind: "make-default",
+      });
+    }
+    actions.push({
+      edgeId: edge.id,
+      kind: "unlink",
+      label: cardLabel(other),
+      locked: edge.deletable === false,
+      mount: edgeKind(edge) === "mount",
+    });
+
+    return actions;
   });
 }
 

@@ -14,11 +14,12 @@ import {
   isSideHandle,
 } from "@/app/components/canvas/edgeOwnership";
 import {
+  cardLabel,
   introducedRuntimeRefsProblem,
   type FlatGraph,
 } from "@/app/lib/canvasFrameEdits";
 import { runtimeRefsProblemText } from "@/app/lib/canvasRuntimeRefs";
-import type { Connection, Edge, Node } from "@xyflow/react";
+import type { Connection, Edge } from "@xyflow/react";
 
 /** The graph a connection is judged against. */
 export type ConnectionGraph = Pick<FlatGraph, "edges" | "nodes">;
@@ -44,8 +45,8 @@ export function connectionRefusal(
   if (!srcNode || !tgtNode) {
     return "A group can't take a connection. Open it and connect to a card inside.";
   }
-  const srcLabel = labelOf(srcNode);
-  const tgtLabel = labelOf(tgtNode);
+  const srcLabel = cardLabel(srcNode);
+  const tgtLabel = cardLabel(tgtNode);
   const isMountPair =
     (srcNode.type === "workspace" || srcNode.type === "sandbox") &&
     (tgtNode.type === "workspace" || tgtNode.type === "sandbox");
@@ -140,8 +141,4 @@ function handleRefusal(
   return kind === "mount"
     ? `Mount ${srcLabel} on ${tgtLabel} from side handle to side handle.`
     : `Link ${srcLabel} to ${tgtLabel} from side handle to side handle.`;
-}
-
-function labelOf(node: Node): string {
-  return typeof node.data.label === "string" ? node.data.label : node.id;
 }

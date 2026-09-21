@@ -9,7 +9,10 @@ import {
   type CanvasSaveState,
 } from "@/app/components/canvas/CanvasSaveStatus";
 import { CanvasFramesProvider } from "@/app/components/canvas/CanvasFramesContext";
-import { CanvasNodeMenu } from "@/app/components/canvas/CanvasNodeMenu";
+import {
+  CanvasNodeMenu,
+  type CanvasNodeMenuEntries,
+} from "@/app/components/canvas/CanvasNodeMenu";
 import { CanvasRefusalNotice } from "@/app/components/canvas/CanvasRefusalNotice";
 import {
   AGENT_EDGE_STROKE,
@@ -112,14 +115,7 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import {
-  Bot,
-  Box,
-  FolderOpen,
-  Group,
-  Plug,
-  Sparkles,
-} from "lucide-react";
+import { Bot, Box, FolderOpen, Group, Plug, Sparkles } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import {
@@ -487,6 +483,9 @@ function CanvasInner({
   );
   const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
   const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
+  // What the right-clicked card offers; null on a frame or the empty canvas,
+  // which get "Add to this group" and "Add service".
+  const [nodeMenu, setNodeMenu] = useState<CanvasNodeMenuEntries | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
@@ -983,9 +982,34 @@ function CanvasInner({
         event.target instanceof Element
           ? event.target.closest<HTMLElement>(".react-flow__node")
           : null;
-      setMenuNodeId(nodeElement?.dataset.id ?? null);
+      const nodeId = nodeElement?.dataset.id ?? null;
+      setMenuNodeId(nodeId);
+      // Built once per right-click, not memoized on the graph: a memo would
+      // rebuild the groups on every frame of a later drag.
+      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
+      setNodeMenu(
+        menuNode
+          ? {
+              deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
+              groups: frameGroupActions(
+                {
+                  edges: edgesRef.current,
+                  mcpServers: mcpServers,
+                  nodes: nodesRef.current,
+                },
+                menuNode.id,
+              ),
+              links: nodeLinkActions(
+                nodesRef.current,
+                edgesRef.current,
+                menuNode.id,
+              ),
+              nodeId: menuNode.id,
+            }
+          : null,
+      );
     },
-    [screenToFlowPosition],
+    [screenToFlowPosition, mcpServers],
   );
 
   /**
@@ -1325,22 +1349,6 @@ function CanvasInner({
       workspaceOnly,
     ],
   );
-  // The right-clicked card and what it offers; null on a frame or the empty
-  // canvas, which get "Add to this group" and "Add service".
-  const nodeMenu = useMemo(() => {
-    const menuNode = nodes.find((node) => node.id === menuNodeId);
-    if (!menuNode) return null;
-
-    return {
-      deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
-      groups: frameGroupActions(
-        { edges: edges, mcpServers: mcpServers, nodes: nodes },
-        menuNode.id,
-      ),
-      links: nodeLinkActions(nodes, edges, menuNode.id),
-      nodeId: menuNode.id,
-    };
-  }, [menuNodeId, nodes, edges, mcpServers]);
   // The right-clicked frame, when a service added to it would land in it.
   const frameMenu = useMemo(() => {
     const frame = framedGraph.frames.find((item) => item.id === menuNodeId);
@@ -1439,9 +1447,12 @@ function CanvasInner({
   // after the drop; `.canvas-refused` in globals.css turns its border red.
   const refusedNodeId = refusal?.nodeId;
   const displayNodes = useMemo(() => {
-    const marked = framedGraph.nodes.map((n) =>
-      n.id === refusedNodeId ? { ...n, className: "canvas-refused" } : n,
-    );
+    // No refusal is every drag frame but a few, so that path maps nothing.
+    const marked = refusedNodeId
+      ? framedGraph.nodes.map((n) =>
+          n.id === refusedNodeId ? { ...n, className: "canvas-refused" } : n,
+        )
+      : framedGraph.nodes;
     if (!litIds) return marked;
 
     return marked.map((n) => {

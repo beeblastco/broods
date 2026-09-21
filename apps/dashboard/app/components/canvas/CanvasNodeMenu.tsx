@@ -15,6 +15,14 @@ import { Group, PanelRight, Star, Trash2, Ungroup, Unlink } from "lucide-react";
 
 const CODE_MANAGED = "managed through code";
 
+/** What one card's menu lists; the canvas builds it on the right-click. */
+export type CanvasNodeMenuEntries = {
+  nodeId: string;
+  links: readonly NodeLinkAction[];
+  groups: readonly FrameGroupAction[];
+  deleteLocked: boolean;
+};
+
 /**
  * What a right-click on a card offers: open its panel, one row per link, the
  * group it is in or was pulled out of, then delete. Links and delete that code
@@ -31,11 +39,7 @@ export function CanvasNodeMenu({
   onMakeDefault,
   onRemoveEdge,
   onSetUngrouped,
-}: {
-  nodeId: string;
-  links: readonly NodeLinkAction[];
-  groups: readonly FrameGroupAction[];
-  deleteLocked: boolean;
+}: CanvasNodeMenuEntries & {
   onOpen: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onMakeDefault: (agentId: string, sandboxId: string) => void;
