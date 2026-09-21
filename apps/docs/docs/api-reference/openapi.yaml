@@ -2377,12 +2377,16 @@ paths:
     delete:
       tags: [Policies]
       summary: Delete agent policy
+      description: >-
+        Refused with 409 while an agent or a channel record still lists the
+        policy in `policies`. Detach it first.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
       responses:
         "200": { description: Deleted }
         "404": { description: Not found }
+        "409": { description: Still referenced by an agent or channel record }
 
   /v1/roles:
     post:
