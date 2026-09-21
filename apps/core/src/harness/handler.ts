@@ -140,6 +140,17 @@ const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
 );
 const WORKER_SLOT_GRACE_MS = 5_000;
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
+// Chunks arrive faster than a Convex round trip, so a streamed chunk checks
+// ownership on this clock. A frame the client acts on checks exactly: a stale
+// run must not land one in a stream the next owner is writing to.
+const OWNER_CHECK_INTERVAL_MS = 2_000;
+const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<unknown> = new Set([
+  "done",
+  "error",
+  "question-request",
+  "structured-output",
+  "tool-approval-request",
+]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
 const pendingWorkerPayloads: [
@@ -1216,9 +1227,10 @@ async function handleNatsWorkerRequest(
 
     ({ session } = turn);
     const { turnContext } = turn;
+    const checkOwner = ownerCheckForStream(session);
     const fencedPublisher: NatsPublisher = {
       publish: async (data) => {
-        await session!.assertCurrentOwner();
+        await checkOwner(data);
         await publisher.publish(data);
       },
       close: () => publisher.close(),
@@ -2587,6 +2599,7 @@ function createDirectContinuationSseBody(
         );
         let transferred = false;
         let terminalFailureDrained = false;
+        const checkOwner = ownerCheckForStream(session);
 
         try {
           const result = await runParentContinuationLoop({
@@ -2597,7 +2610,7 @@ function createDirectContinuationSseBody(
             agentConfig: event.agentConfig,
             consumeStream: (stream) =>
               pipeAgentStream(stream, async (chunk): Promise<void> => {
-                await session.assertCurrentOwner();
+                await checkOwner(chunk);
                 controller.enqueue(
                   textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
                 );
@@ -3184,6 +3197,23 @@ function eventPublicConversationKey(
   agentId?: string,
 ): string {
   return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
+}
+
+function ownerCheckForStream(
+  session: Session,
+): (frame: Record<string, unknown>) => Promise<void> {
+  let checkedAt = 0;
+
+  return async (frame): Promise<void> => {
+    if (
+      !OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type) &&
+      Date.now() - checkedAt < OWNER_CHECK_INTERVAL_MS
+    ) {
+      return;
+    }
+    await session.assertCurrentOwner();
+    checkedAt = Date.now();
+  };
 }
 
 function parseAccountAgentFromScopedKey(
