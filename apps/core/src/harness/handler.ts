@@ -1526,8 +1526,11 @@ export async function handleChannelRequest(
                 ? {
                     streamMessage: async (stream) => {
                       await session.assertCurrentOwner();
+                      // A channel that cannot post a live stream stops reading
+                      // and hands the reply back as text, so the run keeps
+                      // going and the drain below finishes it.
                       const streamedResult = await event.channel.stream!(
-                        readAgentFullStream(stream),
+                        readAgentFullStream(stream, false),
                       );
                       streamed = Boolean(streamedResult);
                       if (!streamed) await stream.consumeStream();
@@ -2600,6 +2603,10 @@ function createDirectContinuationSseBody(
         );
         let transferred = false;
         let terminalFailureDrained = false;
+        // Once the client is gone the enqueue below throws about its closed
+        // controller, which says nothing about the run. The run's own reason is
+        // the one worth storing and logging.
+        let streamFailureText: string | null = null;
 
         try {
           const result = await runParentContinuationLoop({
@@ -2608,13 +2615,18 @@ function createDirectContinuationSseBody(
             asyncToolCoordinator: asyncToolCoordinator,
             initialTurnContext: initialTurnContext,
             agentConfig: event.agentConfig,
-            consumeStream: (stream) =>
-              pipeAgentStream(stream, async (chunk): Promise<void> => {
-                await session.assertCurrentOwner();
-                controller.enqueue(
-                  textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                );
-              }),
+            consumeStream: async (stream): Promise<void> => {
+              try {
+                await pipeAgentStream(stream, async (chunk): Promise<void> => {
+                  await session.assertCurrentOwner();
+                  controller.enqueue(
+                    textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+                  );
+                });
+              } finally {
+                streamFailureText = stream.failureText();
+              }
+            },
             onHeartbeat: async (pendingCount) => {
               await session.assertCurrentOwner();
               controller.enqueue(
@@ -2652,7 +2664,9 @@ function createDirectContinuationSseBody(
             transferred = await dispatchNextIngress(session, event);
           }
         } catch (err) {
-          const error = err instanceof Error ? err.message : String(err);
+          const error =
+            streamFailureText ??
+            (err instanceof Error ? err.message : String(err));
           logError("Direct continuation stream failed", {
             eventId: event.eventId,
             error: error,

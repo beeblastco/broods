@@ -820,6 +820,20 @@ describe("runAgentLoop", () => {
     );
   });
 
+  it("keeps the run alive when a reader that drains on its own leaves early", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // A channel adapter that cannot post the stream: it stops on the first
+    // delta and hands the reply back, then the caller drains what is left.
+    for await (const chunk of readAgentFullStream(stream, false)) {
+      if ((chunk as { type?: string }).type === "text-delta") break;
+    }
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
   it("keeps a finished run completed when the reader leaves during onEnd", async () => {
     const writes: TaskUsageInput[] = [];
     setStorageForTests(usageStorage(writes));
