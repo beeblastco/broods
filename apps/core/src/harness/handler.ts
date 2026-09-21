@@ -144,7 +144,7 @@ const MAX_PENDING_WORKER_PAYLOADS = 1000;
 // run must not land one in a stream the next owner is writing to. `waiting` is
 // the heartbeat: it fires on a timer, not per token, so exact costs nothing.
 const OWNER_CHECK_INTERVAL_MS = 2_000;
-const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<unknown> = new Set([
+const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "done",
   "error",
   "question-request",
@@ -295,10 +295,10 @@ export function ownerCheckForStream(
   let checkedAt = Number.NEGATIVE_INFINITY;
 
   return async (frame): Promise<void> => {
-    if (
-      !OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type) &&
-      performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS
-    ) {
+    const exact =
+      typeof frame.type === "string" &&
+      OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
+    if (!exact && performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS) {
       return;
     }
     await session.assertCurrentOwner();
