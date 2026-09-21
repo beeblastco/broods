@@ -1,8 +1,5 @@
 /// <reference types="vite/client" />
-/**
- * A canvas save writes each dashboard agent's sandboxes and workspaces, and a
- * config only ever reaches the `agents` row its own account owns.
- */
+/** Canvas saves write runtime refs. A config only reaches its own agents row. */
 
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -110,7 +107,6 @@ describe("agent row ownership", () => {
 
     expect(await docOf(t, configId)).toBeNull();
     expect(await docOf(t, foreignAgentId)).toEqual(before);
-    // No runtime data deletion was queued for the other account's agent.
     const scheduled = await t.run(async (ctx) =>
       ctx.db.system.query("_scheduled_functions").collect(),
     );

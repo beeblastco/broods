@@ -285,9 +285,7 @@ export async function mirrorAgentRowOntoConfig(
  *      not provisioned with a broods account).
  * Throws when a linked core agent exists but the shared encryption secret is
  * missing, because otherwise the runtime would keep stale or empty config.
- *
- * Only a row owned by `accountId`, the account of the config's project, is
- * written. A link to any other account's row is left alone.
+ * Writes only a row that `accountId`, the config's project account, owns.
  */
 export async function pushEncryptedConfigToAgentRow(
   ctx: MutationCtx,
@@ -419,9 +417,8 @@ export async function resolveActiveAccountForAuthId(
 
 /**
  * Mirrors name/description edits from `agentConfigs` onto the linked
- * `agents` row when one exists. Silently no-ops if the row is missing or is
- * not owned by `accountId`. The next `ensureAgentsRowForConfig` call
- * provisions it.
+ * `agents` row when one exists. Silently no-ops if the row is missing or not
+ * owned by `accountId`. The next `ensureAgentsRowForConfig` call provisions it.
  */
 export async function syncAgentRowFields(
   ctx: MutationCtx,

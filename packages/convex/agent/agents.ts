@@ -173,9 +173,8 @@ export const listPage = internalQuery({
 });
 
 /**
- * Incident check: pages the whole `agentConfigs` table and keeps the configs
- * whose linked `agents` row belongs to an account other than the one that owns
- * the config's project. A healthy deployment returns empty pages.
+ * Incident check: configs whose linked `agents` row belongs to another account
+ * than their project's. Pages the whole table; healthy pages are empty.
  */
 export const listForeignAgentLinks = internalQuery({
   args: { paginationOpts: paginationOptsValidator },

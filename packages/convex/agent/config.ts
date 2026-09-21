@@ -166,28 +166,23 @@ export const create = mutation({
 
     // Provision the broods agents row so the harness can resolve
     // this config by its public agentId. No-ops if the org isn't yet
-    // provisioned with a broods account, and so does the audit entry, which
-    // is filed per account.
+    // provisioned with a broods account.
     const accountId = await accountIdForProject(ctx, projectId);
     if (accountId) {
-      const agentRowId = await ensureAgentsRowForConfig(
-        ctx,
-        configId,
-        authUser.id,
-        accountId,
-      );
+      await ensureAgentsRowForConfig(ctx, configId, authUser.id, accountId);
       await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
-      await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
-        projectId: projectId,
-        stageId: stageId,
-        action: "created",
-        agentId: agentRowId,
-        configId: configId,
-        name: trimmedName,
-        summary: "Agent configuration created",
-        details: { configId: configId },
-      });
     }
+    const created = await ctx.db.get(configId);
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
+      projectId: projectId,
+      stageId: stageId,
+      action: "created",
+      agentId: created?.agentId,
+      configId: configId,
+      name: trimmedName,
+      summary: "Agent configuration created",
+      details: { configId: configId },
+    });
 
     return configId;
   },
@@ -239,16 +234,15 @@ export const remove = mutation({
     // is only removed when the whole stage is deleted (see stage.ts).
 
     // Clean up the linked broods `agents` row if present so the
-    // harness side stays consistent with the dashboard's canvas. Only a row
-    // owned by this project's account is this config's to delete; a link to
-    // any other row is dropped with the config and the row is left alone.
+    // harness side stays consistent with the dashboard's canvas. A row under
+    // another account is never this config's to delete.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const normalized = existing.agentId
       ? ctx.db.normalizeId("agents", existing.agentId)
       : null;
     const agent = normalized ? await ctx.db.get(normalized) : null;
-    const ownsAgent = agent !== null && agent.accountId === accountId;
-    if (agent && ownsAgent) {
+    const foreignAgent = agent !== null && agent.accountId !== accountId;
+    if (agent && !foreignAgent) {
       await ctx.db.delete(agent._id);
       // Its conversations, queued work and status rows are keyed by agent
       // and nothing else would ever collect them. Batches continue on their
@@ -263,13 +257,13 @@ export const remove = mutation({
       projectId: existing.projectId,
       stageId: existing.stageId,
       action: "deleted",
-      agentId: ownsAgent ? existing.agentId : undefined,
+      agentId: foreignAgent ? undefined : existing.agentId,
       configId: configId,
       name: existing.name,
       summary: "Agent configuration deleted",
       details: {
         configId: configId,
-        ...(agent && !ownsAgent ? { foreignAgentRowSkipped: true } : {}),
+        ...(foreignAgent ? { foreignAgentRowSkipped: true } : {}),
       },
     });
     await ctx.db.delete(configId);
@@ -441,8 +435,7 @@ export const updateRuntimeRefs = mutation({
 
     // Provisioning stays unconditional. A canvas save is where an agent whose
     // org gained an account after the config was made first gets its row.
-    // Replacing a link to a row outside this project's account counts as
-    // provisioning too.
+    // A replaced foreign link counts as provisioned too.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const agentRowId = accountId
       ? await ensureAgentsRowForConfig(ctx, configId, user.id, accountId)
@@ -511,8 +504,8 @@ export const updateSubagentRefs = mutation({
     }
 
     // Map each callee config to its broods agents-row id, skipping
-    // self-calls, configs outside this project (another project can belong to
-    // another account) and any config the caller can't provision.
+    // self-calls, configs outside this project (it can belong to another
+    // account) and any config the caller can't provision.
     const accountId = await accountIdForProject(ctx, existing.projectId);
     const allowed: string[] = [];
     for (const calleeId of calleeConfigIds) {
@@ -635,7 +628,7 @@ async function recordAgentConfigAudit(
     projectId: Id<"projects">;
     stageId: Id<"stages">;
     action: string;
-    agentId?: string | null;
+    agentId?: string;
     configId: Id<"agentConfigs">;
     name?: string;
     summary: string;
