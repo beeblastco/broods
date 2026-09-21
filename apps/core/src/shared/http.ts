@@ -21,6 +21,12 @@ declare global {
   }
 }
 
+// How long `publicHostFetch` reuses a validated address before it resolves
+// again. Reuse is safe because the socket is pinned to that address.
+const PUBLIC_HOST_TTL_MS = 30_000;
+
+const publicHosts = new Map<string, { address: string; expiresAt: number }>();
+
 /**
  * A transport-neutral inbound request. The server builds one per HTTP request;
  * handlers never see the underlying runtime. Headers are lowercased and the
@@ -152,12 +158,13 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 /**
  * `fetch` for a tenant-configured endpoint (model base URL, MCP server, its
  * OAuth token URL): resolve the hostname, refuse it when any address is
- * private, link-local or a metadata range, then connect to
- * the validated address with the name pinned into SNI and `Host`. That is what
- * stops a public name that later resolves inward, with no rebind window, since
+ * private, link-local or a metadata range, then connect to the validated
+ * address with the name pinned into SNI and `Host`. That is what stops a public
+ * name that later resolves inward, with no rebind window, since
  * `assertPublicHttpsUrl` only sees the hostname string at config time. Bun's
  * `fetch` keeps the streaming Web `Response` the AI SDK needs and `guardedFetch`
- * does not. `redirect: "error"` because a redirect would leave the pinned address.
+ * does not. `redirect: "error"` because a redirect would leave the pinned
+ * address.
  */
 export async function publicHostFetch(
   input: string | URL | Request,
@@ -169,15 +176,23 @@ export async function publicHostFetch(
   if (isPrivateHostname(hostname)) {
     throw new Error(`Refusing to reach private address ${hostname}`);
   }
-  const addresses = await dns.lookup(hostname);
-  const [pinned] = addresses;
-  if (!pinned) {
-    throw new Error(`${hostname} did not resolve`);
+  let validated = publicHosts.get(hostname);
+  if (!validated || validated.expiresAt <= Date.now()) {
+    const addresses = await dns.lookup(hostname);
+    const [pinned] = addresses;
+    if (!pinned) {
+      throw new Error(`${hostname} did not resolve`);
+    }
+    if (addresses.some((entry): boolean => isDeniedAddress(entry.address))) {
+      throw new Error(`${hostname} resolves to a private address`);
+    }
+    validated = {
+      address: pinned.family === 6 ? `[${pinned.address}]` : pinned.address,
+      expiresAt: Date.now() + PUBLIC_HOST_TTL_MS,
+    };
+    publicHosts.set(hostname, validated);
   }
-  if (addresses.some((entry) => isDeniedAddress(entry.address))) {
-    throw new Error(`${hostname} resolves to a private address`);
-  }
-  url.hostname = pinned.family === 6 ? `[${pinned.address}]` : pinned.address;
+  url.hostname = validated.address;
   const request = input instanceof Request ? input : undefined;
   const headers = new Headers(init?.headers ?? request?.headers);
   headers.set("host", host);
@@ -191,6 +206,11 @@ export async function publicHostFetch(
     redirect: "error",
     tls: { serverName: hostname },
   });
+}
+
+/** Tests only: forget every validated address. */
+export function resetPublicHostsForTests(): void {
+  publicHosts.clear();
 }
 
 function isPrivateHostname(hostname: string): boolean {
