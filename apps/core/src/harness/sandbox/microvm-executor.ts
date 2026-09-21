@@ -93,9 +93,6 @@ const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
 // fast at first (a resumed VM is usually ready in well under a second) then backing
 // off. A flat delay put its whole value on the floor of every single call.
 const WARMUP_BUDGET_MS = 30_000;
-// Past the guest's own timeout: it answers timed_out itself, the signal only
-// covers a proxy that never answers.
-const EXEC_GRACE_MS = 15_000;
 const WARMUP_RETRY_MIN_DELAY_MS = 150;
 const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // A cached endpoint is a guess, so it gets a short warm-up before the call falls back
@@ -103,6 +100,9 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // warm VM answers in well under this; anything slower is a restore the authoritative
 // path handles with the full budget, or a VM that is gone.
 const CACHED_WARMUP_BUDGET_MS = 1_200;
+// Past the guest's own timeout: it answers timed_out itself, the signal only
+// covers a proxy that never answers.
+const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -746,7 +746,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
   // The resume is deliberately not polled to RUNNING: the endpoint survives suspend
-  // and #exec already retries the proxy's 502/503/504 while the snapshot restores, so
+  // and #exec already retries the proxy's 502/503 while the snapshot restores, so
   // waiting here only added a fixed delay to every warm call. A record with no
   // endpoint is the one case with nothing to POST to, so that alone still waits.
   async #reconnect(
@@ -1085,9 +1085,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         status: err instanceof Error ? err.message : "fetch error",
       };
     }
-    // 502/503/504 from the proxy mean "warming"; the image itself answers request-
-    // level errors with HTTP 200 + an ok:false body, so any other non-2xx is fatal.
-    if (res.status === 502 || res.status === 503 || res.status === 504) {
+    // 502/503 from the proxy mean "warming". A 504 means the proxy gave up on a
+    // guest that may be running the command, so it is fatal like any other non-2xx;
+    // the image itself answers request-level errors with HTTP 200 + an ok:false body.
+    if (res.status === 502 || res.status === 503) {
       return { retry: true, status: res.status };
     }
     const text = await res.text();

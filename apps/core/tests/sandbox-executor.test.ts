@@ -1013,6 +1013,77 @@ describe("createSandboxExecutor", () => {
     expect(posted.at(-1)).toContain("microvm-1");
   });
 
+  it("surfaces an exec that outlived its deadline instead of posting it again", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      code: "sleep infinity",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await executor.run({ ...request, code: "echo ok" });
+    const posted: string[] = [];
+    globalThis.fetch = (async (
+      _url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      posted.push(String(init?.body));
+      throw new DOMException("", "TimeoutError");
+    }) as unknown as typeof fetch;
+
+    await expect(executor.run(request)).rejects.toThrow(DOMException);
+    expect(
+      posted.filter((body): boolean => body.includes("sleep infinity")),
+    ).toHaveLength(1);
+  });
+
+  it("fails on a proxy 504 instead of posting the command again", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      code: "sleep 900",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await executor.run({ ...request, code: "echo ok" });
+    const posted: string[] = [];
+    globalThis.fetch = (async (
+      _url: string,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      posted.push(String(init?.body));
+
+      return new Response("", { status: 504 });
+    }) as unknown as typeof fetch;
+
+    await expect(executor.run(request)).rejects.toThrow(
+      "MicroVM exec failed (504)",
+    );
+    expect(
+      posted.filter((body): boolean => body.includes("sleep 900")),
+    ).toHaveLength(1);
+  });
+
   it("recreates the reserved MicroVM only when the provider says it is gone", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-gone";
