@@ -1,11 +1,15 @@
 /**
- * Content types for workspace files, by extension.
- * One table for both ways a file leaves: the media route sets this as the
- * response header for providers that fetch a URL, and the channel tools set it
- * on the attachment for providers that upload bytes. Two tables drift, and the
- * drift is invisible until a file previews on one channel and downloads on
- * another.
+ * Content types for workspace files, by extension, and the byte ceiling on an
+ * attachment. One table for both ways a file leaves: the media route sets this
+ * as the response header for providers that fetch a URL, and the channel tools
+ * set it on the attachment for providers that upload bytes. Two tables drift,
+ * and the drift is invisible until a file previews on one channel and downloads
+ * on another.
  */
+
+// One ceiling for everything stored, matching the public media route: past it
+// the route answers 413 and the link the model was handed would be dead.
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 const MEDIA_EXTENSION_TYPES: Record<string, string> = {
   aac: "audio/aac",

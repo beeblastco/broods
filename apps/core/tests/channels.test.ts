@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { UserContent } from "ai";
-import { extractText, isAllowedId } from "../src/shared/channels.ts";
+import type { ChannelImage } from "../src/shared/channels.ts";
+import {
+  channelAttachmentBytes,
+  extractText,
+  isAllowedId,
+} from "../src/shared/channels.ts";
 
 describe("shared channel helpers", () => {
   it("extracts and concatenates only text parts from structured user content", () => {
@@ -34,5 +39,24 @@ describe("shared channel helpers", () => {
   it("drops an id the payload never carried, and an empty list reaches nowhere", () => {
     expect(isAllowedId(new Set(["C1"]), undefined)).toBe(false);
     expect(isAllowedId(new Set(), "C1")).toBe(false);
+  });
+});
+
+describe("channelAttachmentBytes", () => {
+  it("refuses a model-chosen URL that is not public http(s)", async () => {
+    const image = (url: string): ChannelImage => ({
+      type: "image",
+      url: url,
+      name: "x.png",
+    });
+
+    await expect(
+      channelAttachmentBytes(image("file:///etc/hosts")),
+    ).rejects.toThrow("only http(s) URLs are supported");
+    await expect(
+      channelAttachmentBytes(image("http://169.254.169.254/latest")),
+    ).rejects.toThrow(
+      "blocked private or metadata address for 169.254.169.254",
+    );
   });
 });
