@@ -363,10 +363,6 @@ export function assertAgentRuntimeRefs(
 /**
  * A tenant-configured outbound URL: https only, never a loopback, private,
  * link-local or internal-looking host. A config-time string check.
- * @param value the URL to check
- * @param label the config path named in the error
- * @returns the parsed URL
- * @throws when the URL is malformed, not https, or points inward
  */
 export function assertPublicHttpsUrl(value: string, label: string): URL {
   let url: URL;

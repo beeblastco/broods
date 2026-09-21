@@ -2,10 +2,8 @@
  * Workspace S3 mount resolution, shared by the runtime-mount providers (workdir,
  * and later daytona). Turns a workspace's storage config (bucket / region /
  * endpoint / prefix / auth) plus the managed defaults into a concrete mount
- * target with credentials. A workspace that names its own bucket brings its own
- * credentials; the platform's only ever reach the managed bucket
- * (`workspaceStorageOwnAuth`, the rule the config plane also runs on save).
- * Three credential sources, in precedence:
+ * target with credentials. Platform credentials only ever reach the managed
+ * bucket (`workspaceStorageOwnAuth`). Three credential sources, in precedence:
  *   - `assumeRole` (bring-your-own bucket): assume the developer's cross-account
  *     role, scoped to their bucket/prefix. Keyless; pair with an ExternalId.
  *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
@@ -143,9 +141,8 @@ export async function assumeScopedMountCredentials(params: {
 }
 
 // The mount role for a workspace: its own role for a bucket it names, else the
-// platform role (SANDBOX_MOUNT_ROLE_ARN) for the managed bucket. Undefined => no
-// role; the provider supplies credentials another way. Sync, so the mount strategy
-// can branch on it. Throws when a named bucket has no credentials of its own.
+// platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
+// supplies credentials another way. Sync, so the mount strategy can branch on it.
 export function mountRoleArn(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
@@ -174,7 +171,7 @@ export async function resolveS3Mount(
 // Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
 // A bring-your-own bucket uses its own layout under a required prefix; the shared
 // managed bucket is partitioned by namespace. Every mount and read resolves here,
-// so this is where a stored workspace that breaks the storage access rule fails.
+// so the storage access rule is enforced here.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
   if (storage) workspaceStorageOwnAuth(storage);
@@ -266,9 +263,7 @@ function joinPrefix(
 function mountExternalId(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
-  return storage?.bucket
-    ? workspaceStorageOwnAuth(storage)?.externalId
-    : undefined;
+  return storage && workspaceStorageOwnAuth(storage)?.externalId;
 }
 
 function namespaceIsolationSuffix(namespace: string): string | undefined {

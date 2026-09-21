@@ -28,8 +28,7 @@ interface AwsAccess {
 
 /**
  * Access to a bucket the config plane does not own. Mirrors core's `S3Access`
- * (apps/core `src/shared/s3.ts`) so a bring-your-own-bucket workspace reads the
- * same objects here and in the harness. Credentials are required: a foreign
+ * (apps/core `src/shared/s3.ts`), except credentials are required: a foreign
  * bucket is never reached on the config plane's own role.
  */
 export interface S3Access {
@@ -113,8 +112,7 @@ export async function assumeScopedS3Credentials(params: {
 
 /**
  * Build an S3 client authenticated as the Convex config plane, or as the scoped
- * session a bring-your-own bucket supplies. The config plane's own credentials
- * are used only when no access object is passed at all.
+ * session a bring-your-own bucket supplies.
  * @param access credentials/region/endpoint for a foreign bucket
  * @returns an S3 client
  */

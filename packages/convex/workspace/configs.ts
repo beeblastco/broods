@@ -85,10 +85,8 @@ export const listPage = internalQuery({
 });
 
 /**
- * One page of stored workspaces that today's config rules refuse, such as a
- * named bucket with no credentials of its own or a platform bucket. Rows written
- * before a rule existed are never rewritten; they fail to resolve, and this
- * names them. Read-only, for a one-off audit.
+ * One page of stored workspaces that today's config rules refuse. Rows written
+ * before a rule existed are never rewritten, they fail to resolve.
  */
 export const listStorageRuleViolations = internalQuery({
   args: { paginationOpts: paginationOptsValidator },

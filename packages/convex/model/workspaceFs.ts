@@ -295,13 +295,11 @@ function normalizePrefix(prefix: string | undefined): string {
  * Resolve where a workspace's files live, mirroring core's
  * `resolveS3MountIdentity` / `resolveS3ReadTarget`: the managed bucket is
  * partitioned by hashed namespace and read on the config plane's own role, while
- * a bring-your-own bucket uses its own prefix and a scoped session on its role,
- * never the config plane's.
+ * a bring-your-own bucket uses its own prefix and a scoped session on its role.
  * This does not apply the runtime per-conversation isolation suffix. The
  * dashboard shows the workspace's base namespace, as it always has.
  * @param ref the workspace to resolve
  * @returns the bucket, key prefix and access to reach it
- * @throws when a named bucket breaks the storage access rule
  */
 async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const storage = ref.storage;
