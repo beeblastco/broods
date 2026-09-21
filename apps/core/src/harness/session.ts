@@ -1539,7 +1539,7 @@ function projectEntriesToMessages(
   entries: StoredConversationEntry[],
   model: string | undefined,
 ): ModelMessage[] {
-  return entries.flatMap(({ createdAt, event }): ModelMessage[] => {
+  const messages = entries.flatMap(({ createdAt, event }): ModelMessage[] => {
     switch (event.message.role) {
       case "system":
         return [];
@@ -1565,6 +1565,8 @@ function projectEntriesToMessages(
         return [event.message];
     }
   });
+
+  return withoutUnresolvedToolCalls(messages);
 }
 
 function projectSystemContextMessages(
@@ -1702,4 +1704,53 @@ function withoutStoredItems(
       .filter((part) => part.type !== "reasoning")
       .map(withoutStoredItemId),
   };
+}
+
+/**
+ * Drops a tool call the history never answers: an abandoned approval, or a step
+ * cut short. The AI SDK refuses such a history on every later turn. The call's
+ * message loses its stored-item state too, because the provider refuses a
+ * reasoning item without the call it produced. The approval the last message
+ * answers is still pending, so its call stays.
+ */
+function withoutUnresolvedToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  const pendingApprovalIds = new Set(
+    isToolApprovalResponseMessage(lastMessage)
+      ? lastMessage.content.flatMap((part): string[] =>
+          part.type === "tool-approval-response" ? [part.approvalId] : [],
+        )
+      : [],
+  );
+  const resolvedToolCallIds = new Set(
+    messages.flatMap((message): string[] =>
+      typeof message.content === "string"
+        ? []
+        : message.content.flatMap((part): string[] =>
+            part.type === "tool-result" ||
+            (part.type === "tool-approval-request" &&
+              pendingApprovalIds.has(part.approvalId))
+              ? [part.toolCallId]
+              : [],
+          ),
+    ),
+  );
+
+  return messages.flatMap((message): ModelMessage[] => {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      return [message];
+    }
+    const content = message.content.filter(
+      (part): boolean =>
+        (part.type !== "tool-call" && part.type !== "tool-approval-request") ||
+        (part.type === "tool-call" && part.providerExecuted === true) ||
+        resolvedToolCallIds.has(part.toolCallId),
+    );
+    if (content.length === message.content.length) {
+      return [message];
+    }
+    const repaired = withoutStoredItems({ ...message, content: content });
+
+    return repaired.content.length > 0 ? [repaired] : [];
+  });
 }

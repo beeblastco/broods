@@ -511,6 +511,52 @@ describe("session pruning", () => {
     ).toEqual(messages);
   });
 
+  it("keeps an old tool call on a stored-item provider and prunes it elsewhere", async () => {
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
+    const messages = [
+      { role: "user", content: "list files" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            input: { shell: "ls" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            output: { type: "text", value: "file.txt" },
+          },
+        ],
+      },
+      { role: "assistant", content: "one file" },
+      { role: "user", content: "thanks" },
+    ] as actualAi.ModelMessage[];
+
+    expect(
+      pruneSessionMessages(messages, {
+        model: { provider: "openai", modelId: "gpt-5.6" },
+      }),
+    ).toEqual(messages);
+    expect(
+      pruneSessionMessages(messages, {
+        model: { provider: "google", modelId: "gemini-test" },
+      }),
+    ).toEqual([
+      messages[0],
+      messages[3],
+      messages[4],
+    ] as actualAi.ModelMessage[]);
+  });
+
   it("keeps approval tool calls when the latest message is an approval response", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
@@ -605,20 +651,21 @@ describe("stored item projection", () => {
     provider: { openai: { apiKey: "openai-key" } },
     model: { provider: "openai", modelId: "gpt-5.6-luna" },
   };
+  const assistantContent: Exclude<actualAi.AssistantContent, string> = [
+    {
+      type: "reasoning",
+      text: "",
+      providerOptions: { openai: { itemId: "rs_1" } },
+    },
+    {
+      type: "text",
+      text: "answer",
+      providerOptions: { openai: { itemId: "msg_1" } },
+    },
+  ];
   const assistantMessage: actualAi.AssistantModelMessage = {
     role: "assistant",
-    content: [
-      {
-        type: "reasoning",
-        text: "",
-        providerOptions: { openai: { itemId: "rs_1" } },
-      },
-      {
-        type: "text",
-        text: "answer",
-        providerOptions: { openai: { itemId: "msg_1" } },
-      },
-    ],
+    content: assistantContent,
   };
 
   // One stored assistant row, so the assertion is purely on how projection
@@ -672,6 +719,69 @@ describe("stored item projection", () => {
         ],
       },
     ] as actualAi.ModelMessage[]);
+  });
+
+  it("drops an abandoned approval's tool call together with its reasoning", async () => {
+    const agentConfigs: AgentConfig[] = [
+      openaiAgentConfig,
+      compactingAgentConfig,
+    ];
+    for (const agentConfig of agentConfigs) {
+      const history = await stubHistory([
+        {
+          cursor: "1",
+          event: {
+            version: 1,
+            sourceEventId: "event",
+            model: `${agentConfig.model?.provider}/${agentConfig.model?.modelId}`,
+            message: {
+              role: "assistant",
+              content: [
+                ...assistantContent,
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "bash",
+                  input: { shell: "rm file.txt" },
+                  providerOptions: { openai: { itemId: "fc_1" } },
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId: "approval-1",
+                  toolCallId: "call-1",
+                },
+              ],
+            },
+          },
+        },
+        {
+          cursor: "2",
+          event: {
+            version: 1,
+            sourceEventId: "event",
+            message: { role: "user", content: "never mind" },
+          },
+        },
+      ]);
+      try {
+        const session = await newSession({
+          ...agentConfig,
+          session: undefined,
+        });
+
+        expect((await session.createTurnContext()).messages).toEqual([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "answer", providerOptions: { openai: {} } },
+            ],
+          },
+          { role: "user", content: "never mind", createdAt: "2" },
+        ] as actualAi.ModelMessage[]);
+      } finally {
+        history.restore();
+      }
+    }
   });
 });
 
