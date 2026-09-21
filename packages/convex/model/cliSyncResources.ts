@@ -33,6 +33,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { isPlainObject, stableJson } from "./objects";
+import { assertPolicyUnreferenced } from "./policyReferences";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
@@ -154,6 +155,7 @@ export async function prunePolicyResources(
     .collect();
   for (const policy of existing) {
     if (policy.managedBy === "cli" && !declared.has(policy.name)) {
+      await assertPolicyUnreferenced(ctx, policy);
       await ctx.db.patch(policy._id, {
         status: "deleted",
         deletedAt: Date.now(),

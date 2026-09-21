@@ -169,7 +169,12 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
 function clientErrorStatus(error: Error): number {
   if (error.message.startsWith("Skill path belongs to another account:"))
     return 401;
-  if (error.message.startsWith("Agent name already exists:")) return 409;
+  if (
+    error.message.startsWith("Agent name already exists:") ||
+    error.message.includes("is still referenced by")
+  ) {
+    return 409;
+  }
   if (
     error.message.startsWith("Skill not found:") ||
     error.message.startsWith("Subagent not found:") ||
@@ -343,6 +348,7 @@ function isClientInputError(error: unknown): error is Error {
     "Policy document",
     "Policy rule",
     "Policy does not belong",
+    'Policy "',
     "roleId must",
     "ttlSeconds must",
     "projectId and stageId",
