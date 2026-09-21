@@ -2,7 +2,10 @@
  * Workspace S3 mount resolution, shared by the runtime-mount providers (workdir,
  * and later daytona). Turns a workspace's storage config (bucket / region /
  * endpoint / prefix / auth) plus the managed defaults into a concrete mount
- * target with credentials. Three credential sources, in precedence:
+ * target with credentials. A workspace that names its own bucket brings its own
+ * credentials; the platform's only ever reach the managed bucket
+ * (`workspaceStorageOwnAuth`, the rule the config plane also runs on save).
+ * Three credential sources, in precedence:
  *   - `assumeRole` (bring-your-own bucket): assume the developer's cross-account
  *     role, scoped to their bucket/prefix. Keyless; pair with an ExternalId.
  *   - managed + platform role (SANDBOX_MOUNT_ROLE_ARN): assume the broods role,
@@ -16,6 +19,10 @@
  */
 
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
+import {
+  assertStorageEndpoint,
+  workspaceStorageOwnAuth,
+} from "@broods/convex/model/workspaceRules";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import type { S3Access } from "../../shared/s3.ts";
@@ -135,14 +142,15 @@ export async function assumeScopedMountCredentials(params: {
   };
 }
 
-// The mount role for a workspace: the developer's `assumeRole` role, else the
-// platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
-// supplies credentials another way. Sync, so the mount strategy can branch on it.
+// The mount role for a workspace: its own role for a bucket it names, else the
+// platform role (SANDBOX_MOUNT_ROLE_ARN) for the managed bucket. Undefined => no
+// role; the provider supplies credentials another way. Sync, so the mount strategy
+// can branch on it. Throws when a named bucket has no credentials of its own.
 export function mountRoleArn(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
-  return storage?.auth?.type === "assumeRole"
-    ? storage.auth.roleArn
+  return storage?.bucket
+    ? workspaceStorageOwnAuth(storage)?.roleArn
     : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
 }
 
@@ -165,9 +173,12 @@ export async function resolveS3Mount(
 
 // Resolve the mount identity (bucket / prefix / region / endpoint). No STS call.
 // A bring-your-own bucket uses its own layout under a required prefix; the shared
-// managed bucket is partitioned by namespace.
+// managed bucket is partitioned by namespace. Every mount and read resolves here,
+// so this is where a stored workspace that breaks the storage access rule fails.
 export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
+  if (storage) workspaceStorageOwnAuth(storage);
+  if (ctx.endpoint) assertStorageEndpoint(ctx.endpoint, "options.s3Endpoint");
   const bucket = storage?.bucket ?? ctx.managedBucket;
   if (!bucket) {
     throw new Error(
@@ -255,8 +266,8 @@ function joinPrefix(
 function mountExternalId(
   storage: WorkspaceStorageConfig | undefined,
 ): string | undefined {
-  return storage?.auth?.type === "assumeRole"
-    ? storage.auth.externalId
+  return storage?.bucket
+    ? workspaceStorageOwnAuth(storage)?.externalId
     : undefined;
 }
 

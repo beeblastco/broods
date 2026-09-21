@@ -22,6 +22,7 @@ import {
   MAX_WORKSPACE_FILE_BYTES,
   normalizeFilePath,
   workspaceNamespace,
+  workspaceStorageOwnAuth,
   type WorkspaceStorageConfig,
 } from "./workspaceRules";
 
@@ -294,11 +295,13 @@ function normalizePrefix(prefix: string | undefined): string {
  * Resolve where a workspace's files live, mirroring core's
  * `resolveS3MountIdentity` / `resolveS3ReadTarget`: the managed bucket is
  * partitioned by hashed namespace and read on the config plane's own role, while
- * a bring-your-own bucket uses its own prefix and a scoped session on its role.
+ * a bring-your-own bucket uses its own prefix and a scoped session on its role,
+ * never the config plane's.
  * This does not apply the runtime per-conversation isolation suffix. The
  * dashboard shows the workspace's base namespace, as it always has.
  * @param ref the workspace to resolve
  * @returns the bucket, key prefix and access to reach it
+ * @throws when a named bucket breaks the storage access rule
  */
 async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
   const storage = ref.storage;
@@ -307,25 +310,21 @@ async function resolveTarget(ref: WorkspaceFsRef): Promise<WorkspaceFsTarget> {
 
     return { bucket: filesystemBucketName(), prefix: `${namespace}/` };
   }
+  const auth = workspaceStorageOwnAuth(storage);
+  if (!auth) throw new Error("Workspace storage has no credentials of its own");
   const prefix = normalizePrefix(storage.prefix);
-  const roleArn =
-    storage.auth?.type === "assumeRole" ? storage.auth.roleArn : undefined;
-  const credentials = roleArn
-    ? await assumeScopedS3Credentials({
-        roleArn: roleArn,
-        bucket: storage.bucket,
-        prefix: prefix,
-        ...(storage.auth?.type === "assumeRole" && storage.auth.externalId
-          ? { externalId: storage.auth.externalId }
-          : {}),
-      })
-    : undefined;
+  const credentials = await assumeScopedS3Credentials({
+    roleArn: auth.roleArn,
+    bucket: storage.bucket,
+    prefix: prefix,
+    ...(auth.externalId ? { externalId: auth.externalId } : {}),
+  });
 
   return {
     bucket: storage.bucket,
     prefix: prefix,
     access: {
-      ...(credentials ? { credentials: credentials } : {}),
+      credentials: credentials,
       ...(storage.region ? { region: storage.region } : {}),
       ...(storage.endpoint ? { endpoint: storage.endpoint } : {}),
     },

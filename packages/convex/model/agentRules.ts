@@ -361,6 +361,28 @@ export function assertAgentRuntimeRefs(
 }
 
 /**
+ * A tenant-configured outbound URL: https only, never a loopback, private,
+ * link-local or internal-looking host. A config-time string check.
+ * @param value the URL to check
+ * @param label the config path named in the error
+ * @returns the parsed URL
+ * @throws when the URL is malformed, not https, or points inward
+ */
+export function assertPublicHttpsUrl(value: string, label: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} must be a valid URL`);
+  }
+  if (url.protocol !== "https:") throw new Error(`${label} must use https`);
+  if (isPrivateHostname(url.hostname))
+    throw new Error(`${label} must not point to a private or internal address`);
+
+  return url;
+}
+
+/**
  * The first sandbox after the default that also backs a workspace, which the
  * config API refuses: only the first sandbox mounts workspaces, a later one runs
  * with none. The dashboard checks a canvas edit with this before saving it.
@@ -1205,20 +1227,6 @@ function removeNullConfigValues(
       return [[key, entry]];
     }),
   );
-}
-
-function assertPublicHttpsUrl(value: string, label: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${label} must be a valid URL`);
-  }
-  if (url.protocol !== "https:") throw new Error(`${label} must use https`);
-  if (isPrivateHostname(url.hostname))
-    throw new Error(`${label} must not point to a private or internal address`);
-
-  return url;
 }
 
 function isPrivateHostname(hostname: string): boolean {

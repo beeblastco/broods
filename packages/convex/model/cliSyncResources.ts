@@ -33,6 +33,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { isPlainObject, stableJson } from "./objects";
+import { normalizeWorkspaceConfig } from "./workspaceRules";
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
 export async function deleteAgentResource(
@@ -597,6 +598,8 @@ export async function syncWorkspaceResources(
   const claimed = new Set<Id<"workspaceConfigs">>();
   for (const resource of workspaceResources) {
     assertSupportedWorkspaceStorage(resource);
+    // Same rules as the config API: a sync never stores what it refuses.
+    const config = normalizeWorkspaceConfig(resource.config);
     const name = resourceName(resource.name);
     const current = existing.find((entry) => entry.name === name);
     const target =
@@ -609,9 +612,7 @@ export async function syncWorkspaceResources(
           stableJson(
             renameComparableResource(entry.description, entry.config),
           ) ===
-            stableJson(
-              renameComparableResource(resource.description, resource.config),
-            ),
+            stableJson(renameComparableResource(resource.description, config)),
       );
     if (target) {
       claimed.add(target._id);
@@ -620,7 +621,7 @@ export async function syncWorkspaceResources(
         projectId: projectId,
         name: name,
         description: resource.description,
-        config: resource.config,
+        config: config,
         managedBy: "cli",
         updatedAt: Date.now(),
       });
@@ -638,7 +639,7 @@ export async function syncWorkspaceResources(
         stageId: stageId,
         name: name,
         description: resource.description,
-        config: resource.config,
+        config: config,
         managedBy: "cli",
         createdAt: now,
         updatedAt: now,

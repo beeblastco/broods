@@ -95,6 +95,9 @@ Override defaults with:
 }
 ```
 
+`options.s3Endpoint` must be a public `https` URL, the same rule as a workspace
+[`storage.endpoint`](../storage.md#bring-your-own-bucket).
+
 ## Dependencies
 
 Use an image or image builder with packages installed before runtime.

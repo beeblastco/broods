@@ -6,6 +6,7 @@
 
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
+import { assertStorageEndpoint } from "./workspaceRules";
 
 export const SANDBOX_PROVIDERS = [
   "sandbox",
@@ -608,6 +609,12 @@ function validateProviderOptions(
   }
   if (provider === "machine" && "cwd" in options) {
     requireString(options.cwd, "config.options.cwd");
+  }
+  if ("s3Endpoint" in options) {
+    assertStorageEndpoint(
+      requireString(options.s3Endpoint, "config.options.s3Endpoint"),
+      "config.options.s3Endpoint",
+    );
   }
   if (provider === "vercel") {
     if ("image" in options && typeof options.image !== "string") {

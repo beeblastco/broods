@@ -1683,8 +1683,34 @@ paths:
                   properties:
                     storage:
                       type: object
+                      description: Omit `bucket` for the managed bucket. A workspace that names its own `bucket` brings its own credentials, so `prefix` and `auth.type` `assumeRole` are then required. The request is rejected when `bucket` is a platform bucket, when `auth.roleArn` belongs to the platform AWS account, or when `endpoint` is not a public https URL.
                       properties:
                         provider: { type: string, enum: [s3] }
+                        bucket:
+                          type: string
+                          description: A bucket you own. Requires `prefix` and `auth.type` `assumeRole`.
+                        region: { type: string }
+                        endpoint:
+                          type: string
+                          format: uri
+                          description: S3-compatible endpoint for `bucket`. Must be a public https URL; only valid together with `bucket`.
+                        prefix:
+                          type: string
+                          description: Key prefix the workspace is scoped to. Required with `bucket`.
+                        auth:
+                          oneOf:
+                            - type: object
+                              required: [type]
+                              description: The managed bucket. Not valid together with `bucket`.
+                              properties:
+                                type: { type: string, enum: [managed] }
+                            - type: object
+                              required: [type, roleArn]
+                              description: An IAM role in your own AWS account, assumed per run with a session scoped to `bucket/prefix`.
+                              properties:
+                                type: { type: string, enum: [assumeRole] }
+                                roleArn: { type: string }
+                                externalId: { type: string }
                     isolation:
                       type: boolean
                       description: Enables hierarchical workspace folders. Omit or set false to share the workspace root.
@@ -1707,8 +1733,26 @@ paths:
                 value:
                   name: notes
                   config: { storage: { provider: s3 }, isolation: true }
+              ownBucket:
+                value:
+                  name: reports
+                  config:
+                    storage:
+                      provider: s3
+                      bucket: acme-workspaces
+                      region: us-west-2
+                      prefix: agents/
+                      auth:
+                        type: assumeRole
+                        roleArn: arn:aws:iam::111122223333:role/broods-mount
+                        externalId: shared-secret
       responses:
         "201": { description: Workspace created }
+        "400":
+          {
+            description: Invalid config,
+            including a named bucket without its own credentials,
+          }
     get:
       tags: [Workspaces]
       summary: List workspaces
