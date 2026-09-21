@@ -57,6 +57,13 @@ export const BUNDLE_EDGE_PREFIX = "bundle:";
 /** A collapsed frame is one card: header, member names, summary, at a card's size. */
 export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
 
+/**
+ * The id a pending drop's slot holds in a frame's member list. No node carries
+ * it: it sits in the list only so the frame's own geometry leaves a gap for the
+ * card about to land, and the chips under it slide down on their own transition.
+ */
+export const DROP_SLOT_ID = "canvas-drop-slot";
+
 const EDGE_CORNER_RADIUS = 8;
 
 /** An agent edge's drawn data: its lanes, when the router placed it. */
@@ -73,12 +80,21 @@ export type FramedGraph = {
 
 export type FrameNodeData = {
   collapsed: boolean;
+  /**
+   * Set while this frame is taking a card, which is a drop it will accept: a
+   * refused one is outlined instead. `slotY` is where the slot opens inside the
+   * box, and null for a collapsed frame, which draws no chips to open one.
+   */
+  drop?: { slotY: number | null };
   frame: CanvasFrame;
   /** Flat member nodes in slot order, for the collapsed card's names and summary. */
   members: Node[];
 };
 
 export type FrameNodeType = Node<FrameNodeData, "frame">;
+
+/** The frame taking a dragged card, and the slot it would take in it. */
+export type PendingDrop = { frameId: string; slot: number };
 
 /**
  * Why a side edge is drawn rather than stored: a mount re-pointed to a
@@ -138,6 +154,7 @@ export function applyFramedNodeChanges(
     memberFrames(frames),
     collapsed,
     null,
+    null,
   );
 
   return reuseUnchanged(
@@ -163,6 +180,7 @@ export function buildFramedGraph(
   collapsed: ReadonlySet<string>,
   expandedMemberId: string | null,
   previous: FramedGraph | null,
+  pendingDrop?: PendingDrop | null,
 ): FramedGraph {
   const frames = framesOf(deriveGroups(nodes, edges, mcpServers));
   const frameOf = memberFrames(frames);
@@ -172,6 +190,7 @@ export function buildFramedGraph(
     frameOf,
     collapsed,
     expandedMemberId,
+    pendingDrop ?? null,
   );
   const drawn = framedEdges(
     nodes,
@@ -470,6 +489,7 @@ function framedNodes(
   frameOf: ReadonlyMap<string, CanvasFrame>,
   collapsed: ReadonlySet<string>,
   expandedMemberId: string | null,
+  pendingDrop: PendingDrop | null,
 ): Node[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const frameNodes = new Map<string, FrameNodeType>();
@@ -479,13 +499,31 @@ function framedNodes(
     const isCollapsed = collapsed.has(frame.id);
     // A collapsed frame hides its chips, so nothing in it is open.
     const expanded = isCollapsed ? undefined : (expandedMemberId ?? undefined);
+    const taking = pendingDrop !== null && pendingDrop.frameId === frame.id;
+    // A collapsed frame is one card: it draws no chips, so it leaves no gap.
+    const pending = taking && !isCollapsed ? pendingDrop.slot : null;
+    const shape =
+      pending === null
+        ? frame
+        : {
+            kind: frame.kind,
+            memberIds: withDropSlot(frame.memberIds, pending),
+          };
     const size = isCollapsed
       ? { height: COLLAPSED_FRAME_HEIGHT, width: NODE_WIDTH }
-      : frameSize(frame, expanded);
+      : frameSize(shape, expanded);
+    const slotPositions = frameMemberPositions({ x: 0, y: 0 }, shape, expanded);
+    const dropSlot = slotPositions.get(DROP_SLOT_ID);
     frameNodes.set(frame.id, {
-      // Grows and shrinks with the chip a click opens, and with a collapse.
+      // Grows and shrinks with the chip a click opens, with a collapse, and
+      // around the slot a card being dropped on it opens.
       className: "transition-box duration-200 ease-out",
-      data: { collapsed: isCollapsed, frame: frame, members: members },
+      data: {
+        collapsed: isCollapsed,
+        frame: frame,
+        members: members,
+        ...(taking ? { drop: { slotY: dropSlot?.y ?? null } } : {}),
+      },
       height: size.height,
       id: frame.id,
       // Set up front: a frame object without `measured` makes React Flow
@@ -495,12 +533,8 @@ function framedNodes(
       type: "frame",
       width: size.width,
     });
-    for (const [id, slot] of frameMemberPositions(
-      { x: 0, y: 0 },
-      frame,
-      expanded,
-    )) {
-      slots.set(id, slot);
+    for (const [id, slot] of slotPositions) {
+      if (id !== DROP_SLOT_ID) slots.set(id, slot);
     }
   }
   const placed = new Set<string>();
@@ -817,4 +851,15 @@ function stepToward(
     x: from.x + Math.sign(to.x - from.x) * distance,
     y: from.y + Math.sign(to.y - from.y) * distance,
   };
+}
+
+/** A frame's member ids, with {@link DROP_SLOT_ID} in the slot a drop would take. */
+export function withDropSlot(
+  memberIds: readonly string[],
+  slot: number,
+): string[] {
+  const ids = [...memberIds];
+  ids.splice(slot, 0, DROP_SLOT_ID);
+
+  return ids;
 }

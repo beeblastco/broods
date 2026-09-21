@@ -132,6 +132,35 @@ describe("deriveCanvasGroups", () => {
     ).toEqual([["s1", "s2"]]);
   });
 
+  it("puts members where a drop left them, and the rest after", () => {
+    const group = "frame:a1:workspace:s3";
+    const nodes = [
+      node("a1", "agent"),
+      node("w1", "workspace", { frameSlot: { group: group, slot: 2 } }),
+      node("w2", "workspace", { frameSlot: { group: group, slot: 0 } }),
+      node("w3", "workspace", { frameSlot: { group: group, slot: 1 } }),
+      // Joined after the drop, so no slot of its own: it sorts last.
+      node("w4", "workspace"),
+      // A slot another group gave it does not count here, so it sorts last too.
+      node("w5", "workspace", {
+        frameSlot: { group: "frame:a9:workspace:s3", slot: 0 },
+      }),
+    ];
+    const edges = [
+      edge("a1", "w1"),
+      edge("a1", "w2"),
+      edge("a1", "w3"),
+      edge("a1", "w4"),
+      edge("a1", "w5"),
+    ];
+
+    expect(
+      framesOf(deriveCanvasGroups(nodes, edges, NO_SERVERS)).map(
+        (frame) => frame.memberIds,
+      ),
+    ).toEqual([["w2", "w3", "w1", "w4", "w5"]]);
+  });
+
   it("leaves unreached resources ungrouped, and groups a mounted sandbox with its agent", () => {
     const frames = deriveCanvasGroups(
       [
