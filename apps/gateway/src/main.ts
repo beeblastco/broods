@@ -6,6 +6,7 @@ import {
   MACHINE_WEBSOCKET_PATH,
   machineSocketUrl,
 } from "../../core/src/shared/machine-socket.ts";
+import { requireSecretsEnv } from "../../core/src/shared/env.ts";
 import { TERMINAL_WEBSOCKET_PATH } from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
@@ -23,7 +24,6 @@ import {
   openTerminalTicketWithSecrets,
   openTerminalUpstream,
   relayTerminalInput,
-  terminalServiceSecretsFromEnv,
   type MachineGatewayData,
   type RelayGatewayData,
   type TerminalGatewayData,
@@ -31,6 +31,7 @@ import {
 import {
   isConfigHttpPath,
   isCoreHttpRoute,
+  isInternalCorePath,
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
@@ -74,9 +75,11 @@ export interface GatewayConfig {
   authFailureLimiter: RateLimiter;
   configBaseUrl: string | undefined;
   coreBaseUrls: string[];
+  denyInternalPaths: boolean;
   httpLimiter: RateLimiter | undefined;
   limits: GatewayLimits;
   proxyOptions: ProxyOptions;
+  terminalTicketSecrets: string[];
   upgradeLimiter: RateLimiter;
 }
 
@@ -131,6 +134,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         headers: corsHeaders(
           request.headers.get("origin"),
           config.allowedOrigins,
+          config.proxyOptions.forwardAccountId,
         ),
       });
     }
@@ -173,7 +177,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         const token = websocketToken(request, url);
         const ticket = openTerminalTicketWithSecrets(
           token,
-          terminalServiceSecretsFromEnv(),
+          config.terminalTicketSecrets,
         );
         // A bad ticket still upgrades: the open handler closes it with a code
         // and reason the browser can show, where a 401 here would be a mute 1006.
@@ -342,7 +346,11 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       });
     }
 
-    if (!isCoreHttpRoute(url.pathname)) return jsonError(404, "Not found");
+    if (
+      !isCoreHttpRoute(url.pathname) ||
+      (config.denyInternalPaths && isInternalCorePath(url.pathname))
+    )
+      return jsonError(404, "Not found");
 
     return proxyHttp(request, config.coreBaseUrls, {
       ...config.proxyOptions,
@@ -366,7 +374,12 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       const origin = request.headers.get("origin");
 
       return withRequestId(
-        withCors(response, origin, config.allowedOrigins),
+        withCors(
+          response,
+          origin,
+          config.allowedOrigins,
+          config.proxyOptions.forwardAccountId,
+        ),
         requestId,
       );
     } catch (error) {
@@ -462,6 +475,7 @@ export function gatewayConfigFromEnv(): GatewayConfig {
     coreBaseUrls: normalizedCoreBaseUrls(
       process.env.BROODS_CORE_URLS?.split(",") ?? [],
     ),
+    denyInternalPaths: process.env.GATEWAY_DENY_INTERNAL_PATHS !== "false",
     // Proxied HTTP is unmetered unless this is set, and core keeps no per-IP
     // count of its own. Left off by default because channel webhooks arrive on
     // this branch from a provider's egress addresses: one number chosen here
@@ -471,11 +485,11 @@ export function gatewayConfigFromEnv(): GatewayConfig {
         ? new RateLimiter(httpRequestsPerMinute, 60_000)
         : undefined,
     limits: gatewayLimitsFromEnv(),
-    // Defaults on because Convex still reaches core through this gateway; flip
-    // to "false" once BROODS_ACCOUNT_MANAGE_URL points at core in-cluster.
+    // Only the service token reads the header, and it never crosses this door.
     proxyOptions: {
-      forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID !== "false",
+      forwardAccountId: process.env.GATEWAY_FORWARD_ACCOUNT_ID === "true",
     },
+    terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
     upgradeLimiter: new RateLimiter(
       Number(process.env.GATEWAY_UPGRADES_PER_MINUTE ?? "") || 120,
       60_000,

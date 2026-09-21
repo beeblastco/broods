@@ -14,6 +14,7 @@ import {
 } from "./provider.ts";
 import {
   hasPendingToolApprovalResponse,
+  pruneSessionMessages,
   stripReasoningFromMessages,
 } from "./pruning.ts";
 
@@ -39,7 +40,7 @@ export interface SummarizeConversationInput {
 
 /**
  * The automatic compaction gate: compacts only when the agent's compaction
- * config enables it and the serialized context exceeds the configured max.
+ * config enables it and the serialized pruned context exceeds the configured max.
  */
 export async function compactSessionContext(
   input: CompactionInput,
@@ -55,7 +56,10 @@ export async function compactSessionContext(
   const messages = stripReasoningFromMessages(input.messages);
   const maxContextLength =
     compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
-  if (estimateContextLength(input.system, messages) <= maxContextLength) {
+  // The limit is about what the model receives, so measure the pruned view. The
+  // summary still reads every message, since nothing reads them again after it.
+  const modelMessages = pruneSessionMessages(messages, input.agentConfig);
+  if (estimateContextLength(input.system, modelMessages) <= maxContextLength) {
     return null;
   }
 

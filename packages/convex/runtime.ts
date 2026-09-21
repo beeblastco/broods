@@ -2,7 +2,13 @@
  * Transactional persistence for the core runtime.
  */
 
-import { type Infer, v } from "convex/values";
+import {
+  getConvexSize,
+  type Infer,
+  type ObjectType,
+  v,
+  type Value,
+} from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -19,9 +25,10 @@ import {
 } from "./schema";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-// Rows are whole messages; a page of tool results at 512 rows crosses the
-// per-query read limit and the conversation stops loading.
-const CONVERSATION_EVENT_PAGE_SIZE = 64;
+// Bytes and not rows bound a page: the per-query read limit counts bytes, and
+// one tool result can weigh as much as a thousand text rows.
+const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
+const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
 
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
@@ -37,6 +44,14 @@ const RUNTIME_DELETE_BATCH_SIZE = 100;
 // sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
 // without deleting the sandbox first strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
+
+// `events` is a whole step in one write. `cursor` + `event` is the single-event
+// shape core sent before it batched, kept until that core has rolled out.
+export const conversationEventArgs = {
+  cursor: v.optional(v.string()),
+  event: v.optional(v.any()),
+  events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
+};
 
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
@@ -131,18 +146,22 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * @returns null after the event is persisted
+ * @returns null after the events are persisted
  */
 export const appendConversationEvent = internalMutation({
-  args: { conversationKey: v.string(), cursor: v.string(), event: v.any() },
+  args: { conversationKey: v.string(), ...conversationEventArgs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
-    await ctx.db.insert("runtimeConversationEvents", {
-      accountId: accountId,
-      ...args,
-    });
+    for (const entry of conversationEventsFromArgs(args)) {
+      await ctx.db.insert("runtimeConversationEvents", {
+        accountId: accountId,
+        conversationKey: args.conversationKey,
+        cursor: entry.cursor,
+        event: entry.event,
+      });
+    }
 
     return null;
   },
@@ -168,12 +187,25 @@ export const listConversationEvents = internalQuery({
               .gt("cursor", args.afterCursor)
           : q.eq("conversationKey", args.conversationKey),
       );
-    const rows = await query.take(CONVERSATION_EVENT_PAGE_SIZE + 1);
-    const page = rows.slice(0, CONVERSATION_EVENT_PAGE_SIZE);
-    const isDone = rows.length <= CONVERSATION_EVENT_PAGE_SIZE;
+    const page: { cursor: string; event: Value }[] = [];
+    let pageBytes = 0;
+    let isDone = true;
+    for await (const row of query) {
+      // The first row always lands, so a page is never empty and the cursor
+      // always moves, even past one row larger than the budget.
+      if (
+        page.length >= CONVERSATION_EVENT_PAGE_SIZE ||
+        pageBytes >= CONVERSATION_EVENT_PAGE_BYTES
+      ) {
+        isDone = false;
+        break;
+      }
+      page.push({ cursor: row.cursor, event: row.event });
+      pageBytes += getConvexSize(row.event);
+    }
 
     return {
-      page: page.map((row) => ({ cursor: row.cursor, event: row.event })),
+      page: page,
       isDone: isDone,
       continueCursor: isDone ? null : (page.at(-1)?.cursor ?? null),
     };
@@ -1212,6 +1244,18 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
+
+/** The events either accepted arg shape carries, in the order given. */
+export function conversationEventsFromArgs(
+  args: ObjectType<typeof conversationEventArgs>,
+): { cursor: string; event: unknown }[] {
+  return [
+    ...(args.events ?? []),
+    ...(args.cursor !== undefined
+      ? [{ cursor: args.cursor, event: args.event }]
+      : []),
+  ];
+}
 
 /**
  * @param value account-scoped runtime key

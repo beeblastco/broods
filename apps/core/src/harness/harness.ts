@@ -1371,6 +1371,26 @@ export async function runAgentLoop(
       taskCacheWriteTokens +=
         stepTokens.cacheWriteTokens ||
         extractCacheWriteTokens(configuredModel.providerName, meta);
+      // An aborted run never reaches onEnd, so finished steps are summed here.
+      // onEnd replaces both with its own totals.
+      const soFar = usageTokenTotals(taskUsage);
+      taskUsage = {
+        inputTokens: soFar.inputTokens + stepTokens.inputTokens,
+        inputTokenDetails: {
+          noCacheTokens: undefined,
+          cacheReadTokens:
+            soFar.cachedInputTokens + stepTokens.cachedInputTokens,
+          cacheWriteTokens:
+            soFar.cacheWriteTokens + stepTokens.cacheWriteTokens,
+        },
+        outputTokens: soFar.outputTokens + stepTokens.outputTokens,
+        outputTokenDetails: {
+          textTokens: undefined,
+          reasoningTokens: soFar.reasoningTokens + stepTokens.reasoningTokens,
+        },
+        totalTokens: soFar.totalTokens + stepTokens.totalTokens,
+      };
+      taskStepCount = stepNumber + 1;
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
@@ -1629,12 +1649,12 @@ export async function runAgentLoop(
 
       try {
         const unpersisted = responseMessages.slice(persistedResponseCount);
-        persistedResponseCount = responseMessages.length;
         await session.persistModelMessages(
           approvalRequests.length > 0
             ? withApprovalToolCalls(unpersisted, approvalRequests)
             : unpersisted,
         );
+        persistedResponseCount = responseMessages.length;
 
         // An empty final text is only a failure when nothing left the run.
         // A model that stopped cleanly after a successful delivery tool call
@@ -1928,10 +1948,20 @@ export async function runAgentLoop(
   // error on the first model call) and only onError fires, so a caller that
   // drains the stream directly would never finalize and the task span would
   // spin "running" forever. Idempotent via usageFinalized.
+  const originalConsumeStream = stream.consumeStream.bind(stream);
   const ensureFinalized = async (drained: boolean): Promise<void> => {
     if (!drained && !finishObserved) {
       terminalError ??= new Error("Caller stopped reading the stream");
       runAbort.abort(terminalError);
+    }
+    if (!drained && finishObserved && !usageFinalized) {
+      // onEnd is still persisting and will finalize the run as completed. The
+      // SDK closes the stream only after onEnd returns, so draining waits for it.
+      try {
+        await originalConsumeStream();
+      } catch {
+        // A failed drain falls through to the failed finalization below.
+      }
     }
     await finalizeHarnessStream();
     if (usageFinalized) return;
@@ -1955,7 +1985,6 @@ export async function runAgentLoop(
   // Wrap consumeStream so finalizeUsage fires in a finally block even when
   // streamText throws hard (e.g. network failure before any chunk arrives) and
   // onEnd / onError never run.
-  const originalConsumeStream = stream.consumeStream.bind(stream);
   const wrappedConsumeStream = async (): Promise<void> => {
     try {
       await originalConsumeStream();

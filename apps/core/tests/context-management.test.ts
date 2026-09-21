@@ -511,6 +511,52 @@ describe("session pruning", () => {
     ).toEqual(messages);
   });
 
+  it("keeps an old tool call on a stored-item provider and prunes it elsewhere", async () => {
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
+    const messages = [
+      { role: "user", content: "list files" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            input: { shell: "ls" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            output: { type: "text", value: "file.txt" },
+          },
+        ],
+      },
+      { role: "assistant", content: "one file" },
+      { role: "user", content: "thanks" },
+    ] as actualAi.ModelMessage[];
+
+    expect(
+      pruneSessionMessages(messages, {
+        model: { provider: "openai", modelId: "gpt-5.6" },
+      }),
+    ).toEqual(messages);
+    expect(
+      pruneSessionMessages(messages, {
+        model: { provider: "google", modelId: "gemini-test" },
+      }),
+    ).toEqual([
+      messages[0],
+      messages[3],
+      messages[4],
+    ] as actualAi.ModelMessage[]);
+  });
+
   it("keeps approval tool calls when the latest message is an approval response", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
@@ -578,6 +624,63 @@ describe("stored item persistence", () => {
     });
   });
 
+  it("writes a two-message step in one fenced mutation", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    const mutate = mock(
+      async (_name: string, _args: Record<string, unknown>) => null,
+    );
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      const session = new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        accountId: "acct",
+        agentId: "agent",
+        agentConfig: {},
+        ownerGeneration: 3,
+      });
+      const cursors = await session.persistModelMessages([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              input: { shell: "ls" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              output: { type: "text", value: "file.txt" },
+            },
+          ],
+        },
+      ]);
+
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate.mock.calls[0]?.[0]).toBe("appendFencedConversationEvent");
+      expect(mutate.mock.calls[0]?.[1]).toMatchObject({
+        ownerEventId: "event",
+        ownerGeneration: 3,
+        events: [
+          { cursor: cursors[0], event: { message: { role: "assistant" } } },
+          { cursor: cursors[1], event: { message: { role: "tool" } } },
+        ],
+      });
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("drops reasoning nobody sends back rather than storing dead weight", async () => {
     const { createStoredEventFromModelMessage } =
       await import("../src/harness/session.ts");
@@ -605,20 +708,21 @@ describe("stored item projection", () => {
     provider: { openai: { apiKey: "openai-key" } },
     model: { provider: "openai", modelId: "gpt-5.6-luna" },
   };
+  const assistantContent: Exclude<actualAi.AssistantContent, string> = [
+    {
+      type: "reasoning",
+      text: "",
+      providerOptions: { openai: { itemId: "rs_1" } },
+    },
+    {
+      type: "text",
+      text: "answer",
+      providerOptions: { openai: { itemId: "msg_1" } },
+    },
+  ];
   const assistantMessage: actualAi.AssistantModelMessage = {
     role: "assistant",
-    content: [
-      {
-        type: "reasoning",
-        text: "",
-        providerOptions: { openai: { itemId: "rs_1" } },
-      },
-      {
-        type: "text",
-        text: "answer",
-        providerOptions: { openai: { itemId: "msg_1" } },
-      },
-    ],
+    content: assistantContent,
   };
 
   // One stored assistant row, so the assertion is purely on how projection
@@ -672,6 +776,69 @@ describe("stored item projection", () => {
         ],
       },
     ] as actualAi.ModelMessage[]);
+  });
+
+  it("drops an abandoned approval's tool call together with its reasoning", async () => {
+    const agentConfigs: AgentConfig[] = [
+      openaiAgentConfig,
+      compactingAgentConfig,
+    ];
+    for (const agentConfig of agentConfigs) {
+      const history = await stubHistory([
+        {
+          cursor: "1",
+          event: {
+            version: 1,
+            sourceEventId: "event",
+            model: `${agentConfig.model?.provider}/${agentConfig.model?.modelId}`,
+            message: {
+              role: "assistant",
+              content: [
+                ...assistantContent,
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "bash",
+                  input: { shell: "rm file.txt" },
+                  providerOptions: { openai: { itemId: "fc_1" } },
+                },
+                {
+                  type: "tool-approval-request",
+                  approvalId: "approval-1",
+                  toolCallId: "call-1",
+                },
+              ],
+            },
+          },
+        },
+        {
+          cursor: "2",
+          event: {
+            version: 1,
+            sourceEventId: "event",
+            message: { role: "user", content: "never mind" },
+          },
+        },
+      ]);
+      try {
+        const session = await newSession({
+          ...agentConfig,
+          session: undefined,
+        });
+
+        expect((await session.createTurnContext()).messages).toEqual([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "answer", providerOptions: { openai: {} } },
+            ],
+          },
+          { role: "user", content: "never mind", createdAt: "2" },
+        ] as actualAi.ModelMessage[]);
+      } finally {
+        history.restore();
+      }
+    }
   });
 });
 
@@ -785,6 +952,65 @@ describe("session compaction", () => {
     });
     expect(googleModelMock).toHaveBeenCalledWith("gemini-test");
     expect(generateTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("measures the pruned view, so a stored tool result the model never gets does not trigger it", async () => {
+    const { compactSessionContext } =
+      await import("../src/harness/compaction.ts");
+    const messages = [
+      { role: "user", content: "read the log" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            input: { shell: "cat log" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            output: { type: "text", value: "log line\n".repeat(500) },
+          },
+        ],
+      },
+      { role: "assistant", content: "the log is clean" },
+      { role: "user", content: "thanks" },
+    ] as actualAi.ModelMessage[];
+    const compaction = { enabled: true, maxContextLength: 1_000 };
+
+    expect(
+      await compactSessionContext({
+        conversationKey: "conversation",
+        system: [],
+        messages: messages,
+        agentConfig: {
+          ...compactingAgentConfig,
+          session: { compaction: compaction },
+        },
+      }),
+    ).toBeNull();
+    expect(generateTextMock).not.toHaveBeenCalled();
+
+    // With pruning off the model gets the tool result, so it counts.
+    expect(
+      await compactSessionContext({
+        conversationKey: "conversation",
+        system: [],
+        messages: messages,
+        agentConfig: {
+          ...compactingAgentConfig,
+          session: { compaction: compaction, pruning: { enabled: false } },
+        },
+      }),
+    ).not.toBeNull();
   });
 
   it("summarizes on demand regardless of config, folding instructions in", async () => {
