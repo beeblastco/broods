@@ -480,7 +480,7 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
-A policy reference that no longer resolves, such as a deleted policy or a mistyped id, refuses every action for that agent until you fix or remove the reference. `broods deploy` warns when an agent lists a policy name the deploy does not declare.
+A policy reference that no longer resolves, such as a deleted policy or a mistyped id, refuses every action for that agent until you fix or remove the reference. `broods deploy` warns when an agent lists a policy name the deploy does not declare. Deleting a policy is refused while an agent's saved config or a channel record lists it, but that check does not read the deployed agent, so deleting a policy a deployed agent still lists makes that agent refuse every action until it is redeployed.
 
 Policy rules can scope by resource selectors like `toolNames`, `mcpIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `mcpId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
