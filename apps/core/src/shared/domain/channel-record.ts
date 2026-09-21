@@ -202,9 +202,5 @@ function selectWorkspaceRefs(
     }
   }
 
-  const selected = (agentRefs ?? []).filter((ref): boolean =>
-    named.has(ref.workspaceId),
-  );
-
-  return selected.length > 0 ? selected : undefined;
+  return (agentRefs ?? []).filter((ref): boolean => named.has(ref.workspaceId));
 }
