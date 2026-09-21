@@ -466,6 +466,7 @@ export class Session {
   }
 
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    if (!this.persist) return;
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
@@ -874,6 +875,7 @@ export class Session {
       afterCreatedAt?: string | null;
     } = {},
   ): Promise<StoredConversationEntry[]> {
+    if (!this.persist) return [];
     const entries: StoredConversationEntry[] = [];
     let afterCursor = options.afterCreatedAt ?? undefined;
     for (;;) {
