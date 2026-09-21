@@ -23,9 +23,13 @@ interface TestCompletion {
 
 // The two streamText callbacks the ephemeral test drives.
 interface StreamTextStandInOptions {
-  prepareStep(args: { messages: ModelMessage[] }): Promise<unknown>;
+  prepareStep(args: {
+    messages: ModelMessage[];
+    responseMessages: ModelMessage[];
+  }): Promise<unknown>;
   onEnd(args: {
     response: { messages: ModelMessage[] };
+    responseMessages: ModelMessage[];
     text: string;
     finishReason: string;
     usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -969,9 +973,11 @@ describe("SubagentCoordinator", () => {
         start: async (controller): Promise<void> => {
           await options.prepareStep({
             messages: [{ role: "user", content: "research" }],
+            responseMessages: [],
           });
           await options.onEnd({
             response: { messages: [{ role: "assistant", content: "done" }] },
+            responseMessages: [{ role: "assistant", content: "done" }],
             text: "done",
             finishReason: "stop",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
