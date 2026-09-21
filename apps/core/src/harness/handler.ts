@@ -142,7 +142,8 @@ const WORKER_SLOT_GRACE_MS = 5_000;
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on this clock. A frame the client acts on checks exactly: a stale
-// run must not land one in a stream the next owner is writing to.
+// run must not land one in a stream the next owner is writing to. `waiting` is
+// the heartbeat: it fires on a timer, not per token, so exact costs nothing.
 const OWNER_CHECK_INTERVAL_MS = 2_000;
 const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<unknown> = new Set([
   "done",
@@ -150,6 +151,7 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<unknown> = new Set([
   "question-request",
   "structured-output",
   "tool-approval-request",
+  "waiting",
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
@@ -281,6 +283,28 @@ export async function handler(
   // scope so concurrent tenants in the shared container process cannot clobber
   // each other's log redaction secrets or NATS routing tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
+}
+
+/**
+ * One per stream. The returned check runs before each frame goes out: exact
+ * for `OWNER_CHECK_EXACT_FRAME_TYPES`, at most once per interval for the rest.
+ */
+export function ownerCheckForStream(
+  session: Pick<Session, "assertCurrentOwner">,
+): (frame: Record<string, unknown>) => Promise<void> {
+  // performance.now() cannot step backwards the way Date.now() can.
+  let checkedAt = Number.NEGATIVE_INFINITY;
+
+  return async (frame): Promise<void> => {
+    if (
+      !OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type) &&
+      performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS
+    ) {
+      return;
+    }
+    await session.assertCurrentOwner();
+    checkedAt = performance.now();
+  };
 }
 
 /**
@@ -3197,23 +3221,6 @@ function eventPublicConversationKey(
   agentId?: string,
 ): string {
   return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
-}
-
-function ownerCheckForStream(
-  session: Session,
-): (frame: Record<string, unknown>) => Promise<void> {
-  let checkedAt = 0;
-
-  return async (frame): Promise<void> => {
-    if (
-      !OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type) &&
-      Date.now() - checkedAt < OWNER_CHECK_INTERVAL_MS
-    ) {
-      return;
-    }
-    await session.assertCurrentOwner();
-    checkedAt = Date.now();
-  };
 }
 
 function parseAccountAgentFromScopedKey(
