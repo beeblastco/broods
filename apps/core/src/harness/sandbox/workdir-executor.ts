@@ -233,7 +233,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         stderr: stderr.value,
         durationMs: Date.now() - startedAt,
         truncated: stdout.truncated || stderr.truncated,
-        timedOut: result.exit_code === 124,
+        // 124 is the TERM the wrapper sends, 137 the KILL `-k 5` follows with.
+        timedOut: result.exit_code === 124 || result.exit_code === 137,
         provider: "sandbox",
       };
     } finally {

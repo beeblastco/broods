@@ -365,20 +365,26 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
   });
 
-  it("reports the wrapper's exit 124 as a timeout", async (): Promise<void> => {
-    execResult = { exit_code: 124, stdout: "", stderr: "" };
-    const executor = await newExecutor({
-      provider: "sandbox",
-      options: { workdirUrl: BASE },
-    });
+  it("reports the wrapper's exit 124 and its follow-up kill as a timeout", async (): Promise<void> => {
+    for (const exitCode of [124, 137]) {
+      execResult = { exit_code: exitCode, stdout: "", stderr: "" };
+      const executor = await newExecutor({
+        provider: "sandbox",
+        options: { workdirUrl: BASE },
+      });
 
-    const result = await executor.run({
-      code: "sleep 60",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
-    });
+      const result = await executor.run({
+        code: "sleep 60",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
 
-    expect(result).toMatchObject({ ok: false, exitCode: 124, timedOut: true });
+      expect(result).toMatchObject({
+        ok: false,
+        exitCode: exitCode,
+        timedOut: true,
+      });
+    }
   });
 
   it("returns an ephemeral result without waiting for the sandbox delete", async (): Promise<void> => {
