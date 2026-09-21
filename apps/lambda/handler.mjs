@@ -3,8 +3,8 @@
  * runs one batch of requests (#397) in a child Node process with a scrubbed
  * env and a fresh per-invocation TMPDIR, and streams the child's raw NDJSON
  * frames to core. The child stays warm keyed by accountId + sha256 (#189),
- * bounded and retired on any batch-level failure. PER_TENANT isolation
- * gives each account its own execution environments; the child stays a
+ * bounded and retired on any batch-level failure. Under MCP_TENANT_ISOLATION,
+ * PER_TENANT gives each account its own execution environments; the child stays a
  * containment layer, not a trust boundary. Same-UID, so keep the execution
  * role empty.
  * Execution logic lives in child-runner.mjs; keep this file to spawn +

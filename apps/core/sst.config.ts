@@ -805,31 +805,43 @@ export default $config({
 
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME. PER_TENANT is immutable after create and
+    // TOOL_RUNNER_FUNCTION_NAME. MCP_TENANT_ISOLATION=true adds PER_TENANT
+    // mode, which AWS has to enable for the account first. The mode is immutable
+    // after create, so each mode owns its logical id and physical name. It also
     // rules out a function URL, provisioned concurrency and SnapStart.
-    const mcpRunnerFn = new sst.aws.Function("McpRunner", {
-      handler: "../lambda/handler.handler",
-      runtime: "nodejs22.x",
-      architecture: "arm64",
-      timeout: "35 seconds",
-      // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
-      // of a core, and this function's cost is almost all CPU, Node startup in
-      // the child plus parsing a bundle, so a smaller size bills roughly the
-      // same GB-ms while taking several times longer.
-      memory: "1769 MB",
-      copyFiles: [
-        {
-          from: "../lambda/child-runner.mjs",
-          to: "child-runner.mjs",
-        },
-      ],
-      transform: {
-        function: {
-          name: resourceName("mcp-runner", stage, region),
-          tenancyConfig: { tenantIsolationMode: "PER_TENANT" },
+    const mcpTenantIsolation = process.env.MCP_TENANT_ISOLATION === "true";
+    const mcpRunnerFn = new sst.aws.Function(
+      mcpTenantIsolation ? "McpRunner" : "ToolRunner",
+      {
+        handler: "../lambda/handler.handler",
+        runtime: "nodejs22.x",
+        architecture: "arm64",
+        timeout: "35 seconds",
+        // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
+        // of a core, and this function's cost is almost all CPU, Node startup in
+        // the child plus parsing a bundle, so a smaller size bills roughly the
+        // same GB-ms while taking several times longer.
+        memory: "1769 MB",
+        copyFiles: [
+          {
+            from: "../lambda/child-runner.mjs",
+            to: "child-runner.mjs",
+          },
+        ],
+        transform: {
+          function: {
+            name: resourceName(
+              mcpTenantIsolation ? "mcp-runner" : "tool-runner",
+              stage,
+              region,
+            ),
+            ...(mcpTenantIsolation
+              ? { tenancyConfig: { tenantIsolationMode: "PER_TENANT" } }
+              : {}),
+          },
         },
       },
-    });
+    );
 
     // Harness-side permissions for the container runtime user (CoreRuntimeUser
     // below); the account-manage set follows further down.
