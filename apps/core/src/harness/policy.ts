@@ -81,7 +81,8 @@ type RuntimeToolApproval = Extract<
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
 // any dotted path, so these are usable in rule conditions with no engine change.
-// userRoles is always present: a negated operator needs the attribute to match.
+// userRoles goes out even when empty, because a negated operator only matches an
+// attribute that is present. Only a channel turn, or a subagent under one, gets it.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
@@ -417,8 +418,13 @@ export function policyInputForTool(
   // grep and glob search from `path`; the regex is not a file.
   const searches = toolName === "grep" || toolName === "glob";
   const rawPath = searches ? record.path : record.file_path;
+  // A search with no `path` runs from the workspace root, so it still gets a path.
   const filePath =
-    typeof rawPath === "string" ? policyFilePath(rawPath, searches) : undefined;
+    typeof rawPath === "string"
+      ? policyFilePath(rawPath, searches)
+      : searches
+        ? ""
+        : undefined;
   const base = {
     toolName: toolName,
     ...(options.mcpIdsByName?.get(toolName)
@@ -435,7 +441,8 @@ export function policyInputForTool(
     ...(picked?.sandbox.permissionMode
       ? { sandboxPermissionMode: picked.sandbox.permissionMode }
       : {}),
-    ...(filePath ? { filePath: filePath } : {}),
+    ...(filePath !== undefined ? { filePath: filePath } : {}),
+    ...(searches ? { searchRoot: true } : {}),
   };
 
   if (toolName === "read" || toolName === "glob" || toolName === "grep")
@@ -549,13 +556,15 @@ function policyClient(): PolicyClient {
   );
 }
 
-// The form the tools resolve, and a search root ends in `/` so `secrets/` matches
-// it. A traversal stays raw: the SDK calls toInput outside its try, so no throw.
+// The form the tools resolve. A search root ends in `/` so `secrets/` matches it,
+// and the workspace root is "", the ancestor of every prefix. A traversal stays
+// raw: the SDK calls toInput outside its try, so no throw.
 function policyFilePath(rawPath: string, searchRoot: boolean): string {
   try {
     const path = toWorkspaceRelative(rawPath);
+    if (!searchRoot) return path;
 
-    return searchRoot && path !== "." ? `${path}/` : path;
+    return path === "." ? "" : `${path}/`;
   } catch {
     return rawPath;
   }

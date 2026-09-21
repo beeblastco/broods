@@ -80,21 +80,23 @@ describe("agent policy input", () => {
       ).filePath,
     ).toBe("../etc/passwd");
     // A search root ends in `/`, so a `secrets/` prefix covers the directory
-    // itself and leaves `secrets-public` alone. The workspace root stays `.`.
+    // itself and leaves `secrets-public` alone. The workspace root is "", named
+    // or not, so a deny on any prefix below it can refuse the search.
     for (const [toolName, path, filePath] of [
       ["grep", "secrets", "secrets/"],
       ["grep", "/secrets", "secrets/"],
       ["glob", "secrets/", "secrets/"],
       ["glob", "secrets-public", "secrets-public/"],
-      ["grep", ".", "."],
+      ["grep", ".", ""],
+      ["glob", undefined, ""],
     ] as const) {
       expect(
         policyInputForTool(
           toolName,
           { workspace: "repo", pattern: "API_KEY", path: path },
           workspaces,
-        ).filePath,
-      ).toBe(filePath);
+        ),
+      ).toMatchObject({ filePath: filePath, searchRoot: true });
     }
 
     // memory_save derives its target path from the title, so the policy input
