@@ -333,6 +333,7 @@ async function downloadMedia(
     `${trimSlash(connection.apiUrl)}/_matrix/client/v1/media/download/${encodeURIComponent(serverName!)}/${encodeURIComponent(mediaId!)}`,
     {
       headers: { Authorization: `Bearer ${connection.accessToken}` },
+      redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
   );
