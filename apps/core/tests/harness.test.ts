@@ -6,6 +6,7 @@ import * as actualAi from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
+import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import {
@@ -79,6 +80,8 @@ let streamTextScenario:
   | "delivery-tool-then-empty"
   | "multi-step-text"
   | "real-two-step" = "empty";
+// The model the last "real-two-step" run was given, so a test can read its calls.
+let twoStepModelInUse: MockLanguageModelV4 | undefined;
 
 const weatherTool = actualAi.tool({
   inputSchema: actualAi.jsonSchema<{ city: string }>({
@@ -178,9 +181,11 @@ const streamTextMock = mock(
     toolApproval?: unknown;
   }) => {
     if (streamTextScenario === "real-two-step") {
+      twoStepModelInUse = twoStepModel();
+
       return realStreamText({
         ...(options as Parameters<typeof realStreamText>[0]),
-        model: twoStepModel(),
+        model: twoStepModelInUse,
         tools: { weather: weatherTool },
       });
     }
@@ -799,45 +804,63 @@ describe("runAgentLoop", () => {
   });
 
   it("aborts and fails the run when the caller stops reading", async () => {
-    installHarnessEnv();
-    streamTextScenario = "real-two-step";
-    const { readAgentFullStream, runAgentLoop } =
-      await import("../src/harness/harness.ts");
-
-    const stream = await runAgentLoop(
-      {
-        conversationKey: "direct:conversation",
-        eventId: "direct-event",
-        filesystemNamespace: () => "fs-test",
-        resolvedWorkspaces: () => [],
-        sandboxes: () => [],
-        persistModelMessages: async (): Promise<string[]> => [],
-        renewConversationLease: async () => "renewed",
-        applySteeringIngress: async () => null,
-        loadRefreshedSystemPromptParts: async () => ({
-          systemContextSnapshot: { cursor: null, messages: [] },
-          system: [],
-        }),
-      } as never,
-      {
-        messages: [{ role: "user", content: "weather in Hanoi?" }],
-        system: [],
-        ephemeralSystem: [],
-        systemContextSnapshot: { cursor: null, messages: [] },
-      },
-      {
-        provider: { google: { apiKey: "google-key" } },
-        model: { provider: "google", modelId: "gemini-test" },
-      },
-      { onFinalText: async () => {}, onErrorText: async () => {} },
-    );
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // Leave while step 0's provider call is still streaming.
     for await (const chunk of readAgentFullStream(stream)) {
-      expect(chunk).toMatchObject({ type: "start" });
-      break;
+      if ((chunk as { type?: string }).type === "text-delta") break;
     }
 
     expect(stream.didFail()).toBe(true);
     expect(stream.failureText()).toBe("Caller stopped reading the stream");
+    // The abort reached the provider call, and the second step never started.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
+    expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
+      true,
+    );
+  });
+
+  it("keeps a finished run completed when the reader leaves during onEnd", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    // A slow store keeps onEnd running after the last chunk is out.
+    const stream = await startTwoStepTurn(async (): Promise<string[]> => {
+      await Bun.sleep(30);
+
+      return [];
+    });
+    for await (const chunk of readAgentFullStream(stream)) {
+      if ((chunk as { type?: string }).type === "finish") break;
+    }
+
+    expect(stream.didFail()).toBe(false);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
+  });
+
+  it("meters the steps an aborted run finished", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // Leave when step 1 opens: step 0 has ended, step 1's answer is 20 ms away.
+    let stepsStarted = 0;
+    for await (const chunk of readAgentFullStream(stream)) {
+      if ((chunk as { type?: string }).type !== "start-step") continue;
+      stepsStarted += 1;
+      if (stepsStarted === 2) break;
+    }
+
+    expect(stream.didFail()).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      status: "failed",
+      stepCount: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
   });
 
   it("sends the error hook when the model finishes with empty text", async () => {
@@ -2796,6 +2819,43 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
 function installHarnessEnv(): void {
   process.env.MAX_AGENT_ITERATIONS = "3";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
+}
+
+// Starts the "real-two-step" weather turn on the real SDK loop.
+async function startTwoStepTurn(
+  persistModelMessages: () => Promise<string[]> = async () => [],
+): Promise<AgentLoopStream> {
+  installHarnessEnv();
+  streamTextScenario = "real-two-step";
+  const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+  return runAgentLoop(
+    {
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      sandboxes: () => [],
+      persistModelMessages: persistModelMessages,
+      renewConversationLease: async () => "renewed",
+      applySteeringIngress: async () => null,
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never,
+    {
+      messages: [{ role: "user", content: "weather in Hanoi?" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    },
+    {
+      provider: { google: { apiKey: "google-key" } },
+      model: { provider: "google", modelId: "gemini-test" },
+    },
+    { onFinalText: async () => {}, onErrorText: async () => {} },
+  );
 }
 
 // Step 0 answers with text and a weather tool call, step 1 with text only.
