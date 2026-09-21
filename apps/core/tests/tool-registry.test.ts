@@ -177,6 +177,20 @@ describe("createTools", () => {
     expect(sendText).toHaveBeenCalledWith("[safe] still working");
   });
 
+  it("answers a send-images URL that is not http(s) with a tool error", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      { ...createToolContext(), channel: channelToolContext() },
+      {},
+    );
+
+    await expect(
+      channelToolExecute(tools["send-images"], {
+        urls: ["file:///etc/hosts"],
+      }),
+    ).rejects.toThrow("Error: not a public http(s) URL: file:///etc/hosts");
+  });
+
   it("keeps only send-update when the channel supports nothing else", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const tools = await createTools(

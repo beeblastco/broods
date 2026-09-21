@@ -30,6 +30,7 @@ import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
+import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
 import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { AgentNode } from "@/app/components/node/Agent";
@@ -118,7 +119,7 @@ import {
   type OnNodesChange,
 } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { Bot, Box, FolderOpen, Group, Plug, Sparkles } from "lucide-react";
+import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import {
@@ -181,14 +182,6 @@ export const CANVAS_EDGE_TYPES = {
   runsOn: RunsOnEdge,
   subagent: SubagentEdge,
 };
-
-const NODE_TEMPLATES = [
-  { type: "agent", label: "Agent", icon: Bot },
-  { type: "sandbox", label: "Sandbox", icon: Box },
-  { type: "workspace", label: "Workspace", icon: FolderOpen },
-  { type: "skill", label: "Skill", icon: Sparkles },
-  { type: "mcp", label: "MCP", icon: Plug },
-] as const;
 
 /** Static ReactFlow options hoisted outside components to avoid object churn on re-renders. */
 const PRO_OPTIONS = { hideAttribution: true } as const;

@@ -8,6 +8,7 @@
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -48,7 +49,6 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import {
   configString,
   isNoRunnersError,

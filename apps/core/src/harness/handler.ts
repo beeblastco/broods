@@ -4,7 +4,7 @@
  */
 
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
-import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
+import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
@@ -21,7 +21,6 @@ import {
 import {
   booleanEnv,
   getHarnessPublicUrl,
-  optionalEnv,
   positiveIntegerEnv,
 } from "../shared/env.ts";
 import {
@@ -372,13 +371,8 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
     return methodNotAllowed(["POST"]);
   }
 
-  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
   const token = extractBearerToken(request.headers.authorization);
-  if (
-    !serviceSecret ||
-    !token ||
-    !timingSafeStringEqual(token, serviceSecret)
-  ) {
+  if (!token || !isServiceToken(request.headers, token)) {
     return errorResponse(401, "Unauthorized");
   }
 
@@ -556,6 +550,9 @@ async function continueAfterAsyncToolSettlement(
       ? {
           replyTarget: {
             channelName: settled.delivery.channelName,
+            ...(settled.delivery.identity
+              ? { identity: settled.delivery.identity }
+              : {}),
             source: settled.delivery.source,
           },
         }
@@ -1337,7 +1334,7 @@ async function handleNatsWorkerRequest(
 }
 
 /** Run a channel webhook request and reply through that channel's ChannelActions. */
-async function handleChannelRequest(
+export async function handleChannelRequest(
   event: ChannelInboundEvent,
   context?: RequestContext,
 ): Promise<void> {
@@ -1818,6 +1815,9 @@ async function prepareDirectTurn(
       ? {
           kind: "channel",
           channelName: event.replyTarget.channelName,
+          ...(event.replyTarget.identity
+            ? { identity: event.replyTarget.identity }
+            : {}),
           source: event.replyTarget.source,
         }
       : undefined;
@@ -2075,6 +2075,7 @@ async function dispatchAppliedIngress(
       ? {
           replyTarget: {
             channelName: delivery.channel,
+            ...(delivery.identity ? { identity: delivery.identity } : {}),
             source: delivery.source ?? {},
           },
         }
@@ -2265,6 +2266,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     return {
       kind: "channel",
       channel: event.replyTarget.channelName,
+      ...(event.replyTarget.identity
+        ? { identity: event.replyTarget.identity }
+        : {}),
       source: event.replyTarget.source,
     };
   }

@@ -33,7 +33,11 @@ import {
   type CliResource,
 } from "./cliSync";
 import { isPlainObject, stableJson } from "./objects";
-import { assertPolicyUnreferenced } from "./policyReferences";
+import {
+  assertPolicyUnreferenced,
+  loadPolicyReferenceRows,
+  type PolicyReferenceRows,
+} from "./policyReferences";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
@@ -153,9 +157,15 @@ export async function prunePolicyResources(
     .query("agentPolicies")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
+  // One read per account for the whole prune, not one per pruned policy.
+  const rowsByAccount = new Map<Id<"accounts">, PolicyReferenceRows>();
   for (const policy of existing) {
     if (policy.managedBy === "cli" && !declared.has(policy.name)) {
-      await assertPolicyUnreferenced(ctx, policy);
+      const rows =
+        rowsByAccount.get(policy.accountId) ??
+        (await loadPolicyReferenceRows(ctx, policy.accountId));
+      rowsByAccount.set(policy.accountId, rows);
+      await assertPolicyUnreferenced(ctx, policy, rows);
       await ctx.db.patch(policy._id, {
         status: "deleted",
         deletedAt: Date.now(),
@@ -264,9 +274,9 @@ export async function syncAgentResources(
     const name = resourceName(resource.name);
     const envNames = new Set<string>();
     const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
-    // Policy refs that resolve to no policy resource in this deploy stay
-    // behind as raw strings the runtime later drops, silently weakening the
-    // intended policy set. Surface them as a deploy warning instead.
+    // A policy ref that names no policy resource in this deploy stays a raw
+    // string. Unless it is an existing policy id, the runtime refuses every
+    // action for that agent, so the deploy warns about it.
     if (Array.isArray(withEnvRefs.policies)) {
       for (const entry of withEnvRefs.policies) {
         if (typeof entry === "string" && !policyIds[entry])

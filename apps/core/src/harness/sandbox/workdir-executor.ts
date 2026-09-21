@@ -18,6 +18,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
@@ -68,7 +69,6 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
-import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import {
   configString,
   isSandboxGoneError,

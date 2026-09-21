@@ -225,6 +225,34 @@ test("a path on neither upstream is a 404", async () => {
   expect(response!.status).toBe(404);
 });
 
+test("core routes only in-cluster callers use are a 404 at the public door", async () => {
+  const forwarded: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    forwarded.push(new URL(String(input)).pathname);
+
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+  const gateway = createGateway(gatewayConfig());
+  const { server } = fakeServer();
+  const post = (path: string): Promise<Response | undefined> =>
+    gateway.fetch(
+      new Request(`https://gw.example${path}`, { method: "POST", body: "{}" }),
+      server,
+    );
+
+  expect((await post("/v1/cron-runs"))!.status).toBe(404);
+  expect((await post("/v1/cron-runs/"))!.status).toBe(404);
+  expect((await post("/v1/mcp-service/rpc"))!.status).toBe(404);
+  expect(forwarded).toEqual([]);
+
+  expect((await post("/v1/sandboxes/sbx_1/terminate"))!.status).toBe(204);
+  expect((await post("/v1/internal/observability-scope"))!.status).toBe(204);
+  expect(forwarded).toEqual([
+    "/v1/sandboxes/sbx_1/terminate",
+    "/v1/internal/observability-scope",
+  ]);
+});
+
 test("the opt-in HTTP ceiling meters the proxied branch", async () => {
   const gateway = createGateway(
     gatewayConfig({ httpLimiter: new RateLimiter(1, 60_000) }),
@@ -286,6 +314,8 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     "GATEWAY_UPGRADES_PER_MINUTE",
     "GATEWAY_HTTP_REQUESTS_PER_MINUTE",
     "GATEWAY_FORWARD_ACCOUNT_ID",
+    "GATEWAY_DENY_INTERNAL_PATHS",
+    "TERMINAL_TICKET_SECRET",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   try {
@@ -294,6 +324,11 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     process.env.GATEWAY_UPGRADES_PER_MINUTE = "7";
     delete process.env.GATEWAY_HTTP_REQUESTS_PER_MINUTE;
     delete process.env.GATEWAY_FORWARD_ACCOUNT_ID;
+    delete process.env.GATEWAY_DENY_INTERNAL_PATHS;
+    delete process.env.TERMINAL_TICKET_SECRET;
+
+    expect(() => gatewayConfigFromEnv()).toThrow("TERMINAL_TICKET_SECRET");
+    process.env.TERMINAL_TICKET_SECRET = "next-secret, old-secret,next-secret";
 
     const config = gatewayConfigFromEnv();
 
@@ -306,7 +341,9 @@ test("the env config resolves the upstreams and limiters the router reads", () =
     // Off unless set, because channel webhooks arrive on the proxied branch
     // from one provider's egress addresses.
     expect(config.httpLimiter).toBeUndefined();
-    expect(config.proxyOptions.forwardAccountId).toBe(true);
+    expect(config.proxyOptions.forwardAccountId).toBe(false);
+    expect(config.denyInternalPaths).toBe(true);
+    expect(config.terminalTicketSecrets).toEqual(["next-secret", "old-secret"]);
   } finally {
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key];
@@ -364,9 +401,11 @@ function gatewayConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     authFailureLimiter: new RateLimiter(20, 60_000),
     configBaseUrl: "https://config.example",
     coreBaseUrls: ["https://core.example"],
+    denyInternalPaths: true,
     httpLimiter: undefined,
     limits: limits(),
-    proxyOptions: { forwardAccountId: true },
+    proxyOptions: { forwardAccountId: false },
+    terminalTicketSecrets: ["terminal-secret"],
     upgradeLimiter: new RateLimiter(120, 60_000),
     ...overrides,
   };

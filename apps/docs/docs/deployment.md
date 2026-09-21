@@ -68,6 +68,8 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 
 `DaytonaApiKey` has no fallback. `sst deploy` fails without it.
 
+Core, the gateway and Convex also need the four service secrets as env. See [Service secrets](./operations.md#service-secrets) for which goes where.
+
 Provider and tool API keys are account-specific. Store them in the encrypted agent config under fields such as `config.provider.<provider>.apiKey` and `config.tools.<tool>.apiKey`.
 
 Agent policies use the Broods structured document shape and are evaluated by OPA at `/v1/data/broods/authz/decision`. The runtime defaults to `http://127.0.0.1:8181` for a colocated sidecar, or uses `OPA_BASE_URL` when an external/shared OPA service is configured. OPA errors fail closed in `enforce` mode and are logged without blocking in `audit` mode.
