@@ -870,7 +870,8 @@ export async function runAgentLoop(
         endpointId: session.endpointId,
         agentId: session.agentId ?? "unknown",
         conversationKey: session.conversationKey,
-        taskId: session.eventId,
+        // One row per model pass: a continuation pass shares the eventId.
+        taskId: `${session.eventId}#${traceId}`,
         modelProvider: configuredModel.providerName ?? "unknown",
         modelId: agentConfig.model?.modelId ?? "unknown",
         finishedAt: endTimeMs,
