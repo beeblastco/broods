@@ -38,7 +38,9 @@ export function CanvasRefusal({
   if (refusal === null) return null;
 
   // The red is the destructive button's, translucent in dark mode, so it sits
-  // on an opaque backing or the cards under it show through.
+  // on an opaque backing or the cards under it show through. `w-max` because
+  // the panel is centred with `left: 50%`, which caps a shrink-to-fit box at
+  // half the canvas and wraps a sentence that has room.
   return (
     <>
       <Panel position="top-center">
@@ -46,7 +48,7 @@ export function CanvasRefusal({
           <div
             aria-live="polite"
             data-slot="canvas-refusal"
-            className="flex max-w-xl items-center gap-2 rounded-lg bg-destructive px-2 py-1 text-xs text-white dark:bg-destructive/60"
+            className="flex w-max max-w-xl items-center gap-2 rounded-lg bg-destructive px-2 py-1 text-xs text-white dark:bg-destructive/60"
           >
             <span className="min-w-0">{refusal.message}</span>
             {refusal.dropped ? (
