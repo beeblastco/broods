@@ -227,9 +227,12 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
 };
 
 // Every consumer reads through this so a run is finalized, and aborted when
-// the consumer stops early, no matter how the read loop exits.
+// the consumer stops early, no matter how the read loop exits. A consumer that
+// drains the stream itself when it gives up passes false: the run has to
+// survive the early exit for that drain to finish it.
 export async function* readAgentFullStream(
   stream: AgentLoopStream,
+  abortOnEarlyExit = true,
 ): AsyncIterable<unknown> {
   const reader = stream.stream.getReader();
   let drained = false;
@@ -243,8 +246,12 @@ export async function* readAgentFullStream(
       yield value;
     }
   } finally {
-    await reader.cancel().catch((): void => {});
-    await stream.ensureFinalized(drained);
+    if (drained || abortOnEarlyExit) {
+      await reader.cancel().catch((): void => {});
+      await stream.ensureFinalized(drained);
+    } else {
+      reader.releaseLock();
+    }
   }
 }
 
@@ -615,13 +622,13 @@ export async function runAgentLoop(
       endpointId: session.endpointId,
       agentId: session.agentId,
       conversationKey: session.conversationKey,
-      delivery: session.delivery?.kind ?? "direct",
+      delivery: session.policyDelivery?.kind ?? "direct",
       channel:
-        session.delivery?.kind === "channel"
-          ? session.delivery.channelName
+        session.policyDelivery?.kind === "channel"
+          ? session.policyDelivery.channelName
           : undefined,
-      ...(session.delivery?.kind === "channel"
-        ? channelPolicyIdentity(session.delivery.identity)
+      ...(session.policyDelivery?.kind === "channel"
+        ? channelPolicyIdentity(session.policyDelivery.identity)
         : {}),
     },
     resolvedWorkspaces,

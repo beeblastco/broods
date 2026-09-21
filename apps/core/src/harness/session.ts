@@ -78,6 +78,9 @@ import {
 } from "./skills.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
+// Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
+// the fence fields and for the encoding the client adds around each event.
+const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Convex refuses a document over 1 MiB. One tool message shares this budget
 // across its results, which leaves room for the rest of the row.
@@ -239,6 +242,9 @@ export interface SessionOptions {
   // originating chat channel or WebSocket connection; absent for plain
   // direct/async API turns, which fall back to status polling.
   delivery?: AsyncToolDelivery;
+  // A subagent replies to its parent, not to the channel, so it has no
+  // `delivery`. Its policy input still has to name the parent's place and person.
+  policyDelivery?: AsyncToolDelivery;
   // Per-deployment id from the runtime key that authorized this turn. Present
   // for deployment-key traffic and resolved channel integrations.
   // Used to scope realtime telemetry to the dashboard's deployment view.
@@ -277,6 +283,7 @@ export class Session {
   readonly accountId: string | undefined;
   readonly agentId: string | undefined;
   readonly delivery: AsyncToolDelivery | undefined;
+  readonly policyDelivery: AsyncToolDelivery | undefined;
   readonly endpointId: string | undefined;
   readonly projectSlug: string | undefined;
   readonly stageSlug: string | undefined;
@@ -311,6 +318,7 @@ export class Session {
     this.agentId = options.agentId;
     this.agentConfig = options.agentConfig ?? {};
     this.delivery = options.delivery;
+    this.policyDelivery = options.policyDelivery ?? options.delivery;
     this.endpointId = options.endpointId;
     this.projectSlug = options.projectSlug;
     this.stageSlug = options.stageSlug;
@@ -461,20 +469,21 @@ export class Session {
     );
     if (events.length === 0) return [];
 
-    // One mutation per call, so a step is stored whole or not at all.
-    if (this.ownerGeneration !== undefined) {
-      await runtime.mutate("appendFencedConversationEvent", {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: this.ownerGeneration,
-        events: events,
-      });
-    } else {
-      await runtime.mutate("appendConversationEvent", {
-        conversationKey: this.conversationKey,
-        events: events,
-      });
+    // A step fits one mutation, but a harness run hands over its whole history
+    // at once and that can pass what Convex accepts in a single call.
+    let batch: typeof events = [];
+    let batchBytes = 0;
+    for (const entry of events) {
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
+      if (batch.length > 0 && batchBytes + entryBytes > APPEND_EVENT_BYTES) {
+        await this.appendConversationEvents(batch);
+        batch = [];
+        batchBytes = 0;
+      }
+      batch.push(entry);
+      batchBytes += entryBytes;
     }
+    await this.appendConversationEvents(batch);
 
     return events.map((entry): string => entry.cursor);
   }
@@ -735,6 +744,26 @@ export class Session {
   /** Resolved workspaces for this turn (first is the default). Empty when none. */
   resolvedWorkspaces(): ResolvedWorkspace[] {
     return this.resolvedRuntime?.workspaces ?? [];
+  }
+
+  /** One append mutation, fenced against the owner generation when there is one. */
+  private async appendConversationEvents(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): Promise<void> {
+    if (this.ownerGeneration !== undefined) {
+      await runtime.mutate("appendFencedConversationEvent", {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+        events: events,
+      });
+
+      return;
+    }
+    await runtime.mutate("appendConversationEvent", {
+      conversationKey: this.conversationKey,
+      events: events,
+    });
   }
 
   private async buildSystemPromptParts(

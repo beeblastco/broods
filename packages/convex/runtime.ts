@@ -146,6 +146,26 @@ export const releaseClaim = internalMutation({
 });
 
 /**
+ * The events either accepted arg shape carries, in the order given.
+ * @throws when the call carries no event at all
+ */
+export function conversationEventsFromArgs(
+  args: ObjectType<typeof conversationEventArgs>,
+): { cursor: string; event: unknown }[] {
+  const entries = [
+    ...(args.events ?? []),
+    ...(args.cursor !== undefined
+      ? [{ cursor: args.cursor, event: args.event }]
+      : []),
+  ];
+  if (entries.length === 0) {
+    throw new Error("No conversation events given");
+  }
+
+  return entries;
+}
+
+/**
  * @returns null after the events are persisted
  */
 export const appendConversationEvent = internalMutation({
@@ -1244,18 +1264,6 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
-
-/** The events either accepted arg shape carries, in the order given. */
-export function conversationEventsFromArgs(
-  args: ObjectType<typeof conversationEventArgs>,
-): { cursor: string; event: unknown }[] {
-  return [
-    ...(args.events ?? []),
-    ...(args.cursor !== undefined
-      ? [{ cursor: args.cursor, event: args.event }]
-      : []),
-  ];
-}
 
 /**
  * @param value account-scoped runtime key
