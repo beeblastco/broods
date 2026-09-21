@@ -41,7 +41,6 @@ import {
   openTerminalUpstream,
   relayTerminalInput,
   TERMINAL_TICKET_REJECTED,
-  terminalServiceSecretsFromEnv,
 } from "../src/terminal.ts";
 import {
   allowedOriginPatternsFromEnv,
@@ -59,6 +58,7 @@ import {
   withRequestId,
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 import {
   createSubagentTaskId,
   scopedDirectEventId,
@@ -2720,20 +2720,6 @@ test("maps with bounded concurrency, preserves order, and isolates failures", as
   ).toEqual([10, 20, "boom", 40, 50]);
 });
 
-test("collects stage service secrets from the env (multi-stage or single)", () => {
-  expect(
-    terminalServiceSecretsFromEnv({
-      BROODS_SERVICE_AUTH_SECRETS: "dev-secret, prod-secret,dev-secret",
-    }),
-  ).toEqual(["dev-secret", "prod-secret"]);
-  expect(
-    terminalServiceSecretsFromEnv({
-      BROODS_SERVICE_AUTH_SECRET: "only-secret",
-    }),
-  ).toEqual(["only-secret"]);
-  expect(terminalServiceSecretsFromEnv({})).toEqual([]);
-});
-
 test("opens a sealed terminal ticket with whichever stage secret verifies it", () => {
   const ticket = {
     url: "ws://sandbox-node.example:8080/v1/sandboxes/sb_1/pty",
@@ -2950,6 +2936,13 @@ test("CORS: an allowed origin gets reflected headers, a disallowed or absent one
   );
   expect(allowed["Access-Control-Allow-Methods"]).toContain("POST");
   expect(allowed["Access-Control-Allow-Headers"]).toContain("authorization");
+  // Advertised only while the gateway forwards it.
+  expect(allowed["Access-Control-Allow-Headers"]).not.toContain("x-account-id");
+  expect(
+    corsHeaders("https://dashboard.dev.broods.app", patterns, true)[
+      "Access-Control-Allow-Headers"
+    ],
+  ).toContain("x-account-id");
   expect(allowed["Vary"]).toBe("Origin");
   // No credentials: the dashboard sends a bearer token, not a cookie.
   expect(allowed["Access-Control-Allow-Credentials"]).toBeUndefined();
@@ -3465,11 +3458,13 @@ test("observability selectors keep a hostile stage slug inside the string", () =
   );
 });
 
-test("proxyHttp forwards X-Account-Id by default and drops it when told to", async () => {
+test("proxyHttp drops a client X-Account-Id unless told to forward it, and always marks the hop", async () => {
   const originalFetch = globalThis.fetch;
   const seen: Array<string | null> = [];
+  const marks: Array<string | null> = [];
   globalThis.fetch = (async (_input, init) => {
     seen.push(new Headers(init?.headers).get("x-account-id"));
+    marks.push(new Headers(init?.headers).get(VIA_GATEWAY_HEADER));
 
     return new Response("ok", { status: 200 });
   }) as typeof fetch;
@@ -3478,15 +3473,20 @@ test("proxyHttp forwards X-Account-Id by default and drops it when told to", asy
     const request = () =>
       new Request("https://gateway.example/v1/sandboxes/sb_1/terminate", {
         method: "POST",
-        headers: { "x-account-id": "acct_1", authorization: "Bearer svc" },
+        headers: {
+          "x-account-id": "acct_1",
+          authorization: "Bearer svc",
+          [VIA_GATEWAY_HEADER]: "client-value",
+        },
         body: "{}",
       });
     await proxyHttp(request(), ["https://core.example"]);
     await proxyHttp(request(), ["https://core.example"], {
-      forwardAccountId: false,
+      forwardAccountId: true,
     });
 
-    expect(seen).toEqual(["acct_1", null]);
+    expect(seen).toEqual([null, "acct_1"]);
+    expect(marks).toEqual(["1", "1"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

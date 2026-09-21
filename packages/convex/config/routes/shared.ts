@@ -16,6 +16,7 @@ import type {
   ConfigAuditResource,
 } from "../../model/auditEvents";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
+import { VIA_GATEWAY_HEADER } from "../../model/serviceBridge";
 import {
   json,
   jsonError,
@@ -284,7 +285,7 @@ export async function terminateReservedInstances(
   matches: (instance: Doc<"sandboxInstances">) => boolean,
 ): Promise<void> {
   const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+  const secret = process.env.SERVICE_AUTH_SECRET;
   if (!url || !secret) return;
 
   const instances: Doc<"sandboxInstances">[] = await ctx.runQuery(
@@ -462,9 +463,14 @@ async function resolveBearerAuth(
     return { kind: "admin" };
   }
 
-  const serviceSecret =
-    process.env.BROODS_SERVICE_AUTH_SECRET ?? process.env.SERVICE_AUTH_SECRET;
-  if (serviceSecret && digestEqual(tokenHash, await sha256Hex(serviceSecret))) {
+  // The service token is for in-cluster callers: a request the gateway proxied
+  // never qualifies.
+  const serviceSecret = process.env.SERVICE_AUTH_SECRET;
+  if (
+    serviceSecret &&
+    !req.headers.has(VIA_GATEWAY_HEADER) &&
+    digestEqual(tokenHash, await sha256Hex(serviceSecret))
+  ) {
     const accountId =
       req.headers.get("X-Account-Id") ?? req.headers.get("x-account-id") ?? "";
     const account: Doc<"accounts"> | null = accountId

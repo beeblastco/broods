@@ -257,7 +257,7 @@ export const mintStageSession = mutation({
         stageSlug: deployment.stageSlug,
         expiresAt: expiresAt,
       },
-      serviceSecret(),
+      stageTicketSecret(),
     );
 
     return { token: token, expiresAt: expiresAt };
@@ -576,14 +576,14 @@ async function resolveStageContext(
 }
 
 /**
- * The one service secret: `BROODS_SERVICE_AUTH_SECRET` here, the same value
- * as core's `SERVICE_AUTH_SECRET`, which also verifies stage session tickets.
+ * Signs stage session tickets and nothing else: the same value as core's
+ * `STAGE_TICKET_SECRET`, which verifies them.
  */
-function serviceSecret(): string {
-  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+function stageTicketSecret(): string {
+  const secret = process.env.STAGE_TICKET_SECRET;
   if (!secret) {
     throw new Error(
-      "BROODS_SERVICE_AUTH_SECRET is required to mint stage session tickets",
+      "STAGE_TICKET_SECRET is required to mint stage session tickets",
     );
   }
 

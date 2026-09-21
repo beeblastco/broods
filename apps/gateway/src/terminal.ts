@@ -40,22 +40,6 @@ const terminalState = new WeakMap<
   TerminalSocketState
 >();
 
-export function terminalServiceSecretsFromEnv(
-  env: Record<string, string | undefined> = process.env,
-): string[] {
-  const raw =
-    env.BROODS_SERVICE_AUTH_SECRETS ?? env.BROODS_SERVICE_AUTH_SECRET ?? "";
-
-  return [
-    ...new Set(
-      raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
 export function openTerminalTicketWithSecrets(
   token: string,
   secrets: string[],

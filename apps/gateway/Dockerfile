@@ -22,11 +22,13 @@ COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY package.json bun.lock ./
 COPY packages/broods ./packages/broods
+COPY apps/core/src/shared/env.ts ./apps/core/src/shared/env.ts
 COPY apps/core/src/shared/machine-socket.ts ./apps/core/src/shared/machine-socket.ts
 COPY apps/core/src/shared/nats.ts ./apps/core/src/shared/nats.ts
 COPY apps/core/src/shared/request-id.ts ./apps/core/src/shared/request-id.ts
 COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
 COPY packages/convex/model/httpJson.ts ./packages/convex/model/httpJson.ts
+COPY packages/convex/model/serviceBridge.ts ./packages/convex/model/serviceBridge.ts
 COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway

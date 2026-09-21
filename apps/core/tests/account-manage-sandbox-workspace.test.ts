@@ -26,6 +26,7 @@ const ACCOUNT_ID = "acct_test";
 const AUTH = { authorization: "Bearer fp_acct_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 const ORIGINAL_ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET;
+const ORIGINAL_TERMINAL_TICKET_SECRET = process.env.TERMINAL_TICKET_SECRET;
 const ORIGINAL_WORKDIR_URL = process.env.WORKDIR_URL;
 const ORIGINAL_WORKDIR_API_KEY = process.env.WORKDIR_API_KEY;
 const ORIGINAL_FILESYSTEM_BUCKET_NAME = process.env.FILESYSTEM_BUCKET_NAME;
@@ -161,6 +162,9 @@ afterEach(() => {
   if (ORIGINAL_SERVICE_AUTH_SECRET === undefined)
     delete process.env.SERVICE_AUTH_SECRET;
   else process.env.SERVICE_AUTH_SECRET = ORIGINAL_SERVICE_AUTH_SECRET;
+  if (ORIGINAL_TERMINAL_TICKET_SECRET === undefined)
+    delete process.env.TERMINAL_TICKET_SECRET;
+  else process.env.TERMINAL_TICKET_SECRET = ORIGINAL_TERMINAL_TICKET_SECRET;
   if (ORIGINAL_ADMIN_ACCOUNT_SECRET === undefined)
     delete process.env.ADMIN_ACCOUNT_SECRET;
   else process.env.ADMIN_ACCOUNT_SECRET = ORIGINAL_ADMIN_ACCOUNT_SECRET;
@@ -404,6 +408,7 @@ describe("account-manage sandbox endpoints", () => {
 
   it("mints a sealed terminal ticket that targets the reserved workdir PTY", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
     process.env.WORKDIR_URL = "https://workdir.example.com";
     process.env.WORKDIR_API_KEY = "tenant-key";
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -431,10 +436,11 @@ describe("account-manage sandbox endpoints", () => {
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     expect(body.expiresAt).toBeGreaterThan(Date.now());
-    // The browser-held token is opaque; only a stage secret opens it.
+    // The browser-held token is opaque; only the terminal ticket secret opens
+    // it, and the service secret is not that.
     expect(body.token).not.toContain("tenant-key");
-    expect(openTerminalTicket(body.token, "wrong-secret")).toBeNull();
-    expect(openTerminalTicket(body.token, "service-secret")).toMatchObject({
+    expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
+    expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
       url: "wss://workdir.example.com/v1/sandboxes/sbx_handler/pty",
       authorization: "Bearer tenant-key",
       accountId: ACCOUNT_ID,
@@ -443,6 +449,7 @@ describe("account-manage sandbox endpoints", () => {
 
   it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
     const created = await seedSandbox({
       provider: "lambda",
@@ -468,7 +475,7 @@ describe("account-manage sandbox endpoints", () => {
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
     // The gateway must send the shell token in the MicroVM proxy header, not
     // a bearer Authorization header.
-    expect(openTerminalTicket(body.token, "service-secret")).toMatchObject({
+    expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
       url: "wss://sbx-handler.lambda-microvm.eu-west-1.on.aws",
       authorization: "jwe-shell-token",
       authorizationHeader: "X-aws-proxy-auth",

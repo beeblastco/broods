@@ -7,13 +7,14 @@
 
 import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
+import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
 import {
   openStageSessionTicket,
   STAGE_SESSION_TICKET_PREFIX,
 } from "@broods/convex/model/stageSessionTicket";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
-import { optionalEnv } from "./env.ts";
+import { optionalEnv, requireEnv } from "./env.ts";
 import { getStorage } from "./storage.ts";
 
 export type AuthContext =
@@ -56,6 +57,23 @@ export function extractBearerToken(
   return token;
 }
 
+/**
+ * Whether `token` is the service token on a request that may use it. The token
+ * is for in-cluster callers only, so a request the gateway proxied never
+ * qualifies, whatever it carries.
+ */
+export function isServiceToken(
+  headers: Record<string, string>,
+  token: string,
+): boolean {
+  if (headers[VIA_GATEWAY_HEADER] !== undefined) return false;
+  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
+
+  return (
+    serviceSecret !== undefined && timingSafeStringEqual(token, serviceSecret)
+  );
+}
+
 export async function resolveBearerAuth(
   headers: Record<string, string>,
   options: { allowDisabledAccountSecret?: boolean } = {},
@@ -80,8 +98,7 @@ export async function resolveBearerAuth(
   // Service-token branch: used by cherry-coke server-side actions. Must
   // accompany an X-Account-Id header. The token is shared between all
   // SaaS callers; the account scope comes from the header.
-  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
-  if (serviceSecret && timingSafeStringEqual(token, serviceSecret)) {
+  if (isServiceToken(headers, token)) {
     const accountId = headers["x-account-id"] ?? headers["X-Account-Id"];
     if (!accountId) return null;
     const account = await getStorage().accounts.getById(accountId);
@@ -152,9 +169,10 @@ async function resolveRoleSessionAuth(
 async function resolveStageSessionAuth(
   token: string,
 ): Promise<AuthContext | null> {
-  const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
-  if (!serviceSecret) return null;
-  const ticket = await openStageSessionTicket(token, serviceSecret);
+  const ticket = await openStageSessionTicket(
+    token,
+    requireEnv("STAGE_TICKET_SECRET"),
+  );
   if (!ticket) return null;
   const account = await getStorage().accounts.getById(ticket.accountId);
   if (!account || account.status !== "active") return null;

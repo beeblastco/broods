@@ -34,7 +34,7 @@ export interface TerminalTicket {
 
 /**
  * Decrypts and validates a ticket. Returns null (never throws) on any tamper,
- * wrong-secret, or expiry failure so callers can try their other stage secrets.
+ * wrong-secret, or expiry failure so callers can try their other live secrets.
  */
 export function openTerminalTicket(
   token: string,
@@ -111,8 +111,8 @@ export function sealTerminalTicket(
   ].join(".");
 }
 
-// The ticket key is derived, not the raw service secret, so a leaked ticket key
-// context can never stand in for service-to-service auth.
+// Derived with a purpose label, so the same value set for another ticket kind
+// still yields a different key.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256")
     .update(`sandbox-terminal-ticket:${secret}`)

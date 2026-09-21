@@ -12,7 +12,12 @@ import {
   type CoreRequest,
   type RequestContext,
 } from "./shared/http.ts";
-import { optionalEnv, positiveIntegerEnv } from "./shared/env.ts";
+import {
+  optionalEnv,
+  positiveIntegerEnv,
+  requireEnv,
+  requireSecretsEnv,
+} from "./shared/env.ts";
 import { drainInFlight, waitUntil } from "./shared/in-flight.ts";
 import { resolveRequestId, withRequestId } from "./shared/request-id.ts";
 import { logError, logInfo } from "./shared/log.ts";
@@ -168,6 +173,13 @@ if (import.meta.main) {
     await import("./shared/sandbox-sweeper.ts");
   const { isMachineUpgrade, machineWebSocketHandler, upgradeMachineSocket } =
     await import("./harness/sandbox/machine-executor.ts");
+
+  // Each secret has one job; a missing one stops the boot instead of failing
+  // the first request that needs it.
+  requireEnv("SERVICE_AUTH_SECRET");
+  requireEnv("STAGE_TICKET_SECRET");
+  requireSecretsEnv("MEDIA_TICKET_SECRET");
+  requireSecretsEnv("TERMINAL_TICKET_SECRET");
 
   initOtel();
   // One warm isolate worker so the first uploaded-tool call does not pay Node
