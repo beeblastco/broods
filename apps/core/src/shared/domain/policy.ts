@@ -55,6 +55,8 @@ export interface PolicyDecisionInput {
   workspaceId?: string;
   workspaceName?: string;
   filePath?: string;
+  /** Set on grep and glob: `filePath` is the directory searched, "" for the root. */
+  searchRoot?: boolean;
   subagentId?: string;
   skillPath?: string;
   sandboxPermissionMode?: string;
