@@ -4507,7 +4507,10 @@ components:
           type: string
           description: >-
             External server's MCP endpoint (`transport: http`). http(s) only,
-            no embedded credentials. Exactly one of url, bundle or sandbox is
+            no embedded credentials. The host must resolve to a public address:
+            core refuses a private, loopback, link-local or metadata address,
+            and refuses a redirect. A server on your own machine goes through
+            `transport: machine`. Exactly one of url, bundle or sandbox is
             required.
         sandbox:
           type: string
