@@ -726,6 +726,7 @@ export async function runAgentLoop(
   // to avoid losing buffered telemetry during shutdown or suspension.
   let usageFinalized = false;
   let finishObserved = false;
+  let persistedResponseCount = 0;
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
@@ -1002,7 +1003,7 @@ export async function runAgentLoop(
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
     ],
-    prepareStep: async ({ messages }) => {
+    prepareStep: async ({ messages, responseMessages }) => {
       const renewal = await session.renewConversationLease();
       if (renewal === "stopped") {
         throw new Error(USER_STOP_MESSAGE);
@@ -1012,6 +1013,11 @@ export async function runAgentLoop(
           "Conversation ownership changed before the next model step",
         );
       }
+      // Before steering, so a steer message is stored after the step it interrupted.
+      await session.persistModelMessages(
+        responseMessages.slice(persistedResponseCount),
+      );
+      persistedResponseCount = responseMessages.length;
       const steering = await session.applySteeringIngress();
       let stepMessages = messages;
       if (steering) {
@@ -1556,6 +1562,7 @@ export async function runAgentLoop(
     },
     onEnd: async ({
       response,
+      responseMessages,
       text,
       finishReason,
       rawFinishReason,
@@ -1595,10 +1602,12 @@ export async function runAgentLoop(
       };
 
       try {
+        const unpersisted = responseMessages.slice(persistedResponseCount);
+        persistedResponseCount = responseMessages.length;
         await session.persistModelMessages(
           approvalRequests.length > 0
-            ? withApprovalToolCalls(response.messages, approvalRequests)
-            : response.messages,
+            ? withApprovalToolCalls(unpersisted, approvalRequests)
+            : unpersisted,
         );
 
         // An empty final text is only a failure when nothing left the run.
@@ -1879,6 +1888,7 @@ export async function runAgentLoop(
       try {
         await streamOptions.onEnd?.({
           response: await stream.response,
+          responseMessages: await stream.responseMessages,
           text: await stream.text,
           finishReason: await stream.finishReason,
           rawFinishReason: await stream.rawFinishReason,

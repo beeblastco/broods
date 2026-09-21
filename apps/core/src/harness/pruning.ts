@@ -27,11 +27,15 @@ export function pruneSessionMessages(
     // messages referencing stored items whose reasoning is gone, which is the
     // same rejection this retention exists to avoid, only deferred a turn.
     reasoning: "none",
-    // A final approval response needs the preceding assistant tool-call preserved
-    // so the AI SDK can match approvalId -> toolCallId on the next model run.
-    toolCalls: approvalResume
-      ? "before-last-2-messages"
-      : "before-last-message",
+    // Stripping a tool call leaves its reasoning item orphaned on a stored-item
+    // provider, so those keep every tool call. Elsewhere a final approval
+    // response needs the preceding assistant tool-call preserved so the AI SDK
+    // can match approvalId -> toolCallId on the next model run.
+    toolCalls: retainsReasoningParts(agentConfig)
+      ? "none"
+      : approvalResume
+        ? "before-last-2-messages"
+        : "before-last-message",
     emptyMessages: "remove",
   });
 }
