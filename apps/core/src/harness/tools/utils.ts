@@ -159,10 +159,24 @@ export const toolError = (value: string): never => {
 /** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
 
-/** Child agents never spawn their own subagents, whatever the base config says. */
-export function withoutNestedSubagents(config: AgentConfig): AgentConfig {
+// A child never outranks the parent in the place the parent runs: the parent's
+// effective policies and withheld tools (a channel record's included) carry
+// over, and a child never spawns subagents of its own.
+export function subagentConfig(
+  config: AgentConfig,
+  parent: AgentConfig,
+): AgentConfig {
+  const policies = [
+    ...new Set([...(parent.policies ?? []), ...(config.policies ?? [])]),
+  ];
+  const denyTools = [
+    ...new Set([...(parent.denyTools ?? []), ...(config.denyTools ?? [])]),
+  ];
+
   return {
     ...config,
+    ...(policies.length > 0 ? { policies: policies } : {}),
+    ...(denyTools.length > 0 ? { denyTools: denyTools } : {}),
     subagent: {
       ...config.subagent,
       enabled: false,
