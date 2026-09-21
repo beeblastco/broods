@@ -232,6 +232,9 @@ export interface SessionOptions {
   // originating chat channel or WebSocket connection; absent for plain
   // direct/async API turns, which fall back to status polling.
   delivery?: AsyncToolDelivery;
+  // A subagent replies to its parent, not to the channel, so it has no
+  // `delivery`. Its policy input still has to name the parent's place and person.
+  policyDelivery?: AsyncToolDelivery;
   // Per-deployment id from the runtime key that authorized this turn. Present
   // for deployment-key traffic and resolved channel integrations.
   // Used to scope realtime telemetry to the dashboard's deployment view.
@@ -270,6 +273,7 @@ export class Session {
   readonly accountId: string | undefined;
   readonly agentId: string | undefined;
   readonly delivery: AsyncToolDelivery | undefined;
+  readonly policyDelivery: AsyncToolDelivery | undefined;
   readonly endpointId: string | undefined;
   readonly projectSlug: string | undefined;
   readonly stageSlug: string | undefined;
@@ -304,6 +308,7 @@ export class Session {
     this.agentId = options.agentId;
     this.agentConfig = options.agentConfig ?? {};
     this.delivery = options.delivery;
+    this.policyDelivery = options.policyDelivery ?? options.delivery;
     this.endpointId = options.endpointId;
     this.projectSlug = options.projectSlug;
     this.stageSlug = options.stageSlug;

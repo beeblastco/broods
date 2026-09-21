@@ -47,7 +47,7 @@ decision := {
   "allowed": true,
   "mode": mode,
   "reason": sprintf("Audited by policy rule %s: would deny, policy is not enforcing", [audited_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
   count(blocking_rules) == 0
@@ -59,14 +59,13 @@ decision := {
   "allow": true,
   "allowed": true,
   "mode": mode,
-  "reason": sprintf("Allowed by policy rule %s", [allow_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "reason": sprintf("Allowed by policy rule %s", [opening_rules[0].id]),
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [],
 } if {
   count(blocking_rules) == 0
   count(audited_rules) == 0
-  count(allow_rules) > 0
-  open
+  count(opening_rules) > 0
 }
 
 decision := {
@@ -88,6 +87,12 @@ decision := {
 open if count(enforcing_allow_rules) > 0
 
 open if not enforcing
+
+# The allow rules that opened the place. An audit policy's allow rule beside an
+# enforcing one opened nothing, so the verdict does not name it.
+opening_rules := enforcing_allow_rules if enforcing
+
+opening_rules := allow_rules if not enforcing
 
 # Only an enforcing policy's deny actually refuses.
 blocking_rules := [rule |
@@ -138,8 +143,21 @@ resources_match(rule) if {
   selector_missing_or_matches(object.get(resources, "workspaceIds", null), object.get(input, "workspaceId", null), false)
   selector_missing_or_matches(object.get(resources, "workspaceNames", null), object.get(input, "workspaceName", null), false)
   selector_missing_or_matches(object.get(resources, "subagentIds", null), object.get(input, "subagentId", null), false)
-  selector_missing_or_matches(object.get(resources, "filePaths", null), object.get(input, "filePath", null), true)
+  file_paths_match(rule, object.get(resources, "filePaths", null))
   selector_missing_or_matches(object.get(resources, "skillPaths", null), object.get(input, "skillPath", null), true)
+}
+
+file_paths_match(_, prefixes) if {
+  selector_missing_or_matches(prefixes, object.get(input, "filePath", null), true)
+}
+
+# grep and glob read everything under their root, so a deny on `secrets/` also
+# covers a search rooted above it. Deny only: a root search is broader than an
+# allowed prefix, so it must not pass as one.
+file_paths_match(rule, prefixes) if {
+  rule.effect == "deny"
+  object.get(input, "searchRoot", false) == true
+  startswith(prefixes[_], input.filePath)
 }
 
 selector_missing_or_matches(values, _, _) if values == null
