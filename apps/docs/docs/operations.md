@@ -178,14 +178,26 @@ Runtime notes:
 - Async self-invocations run in-process (capped by `MAX_INPROCESS_WORKERS`).
 - Background-job callbacks use `PUBLIC_BASE_URL`.
 - The invocation deadline is synthesized from `REQUEST_TIMEOUT_BUDGET_MS` (default 10 minutes).
-- Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload to `/v1/cron-runs` through the gateway, authenticated with `BROODS_SERVICE_AUTH_SECRET` against `BROODS_ACCOUNT_MANAGE_URL` (both already in the Convex deployment env). No AWS scheduler infrastructure is involved.
-- The service token picks its account from `X-Account-Id`, so it should never have to cross the public door. Only the Convex deployment sends it (cron dispatch, sandbox cleanup on account or user deletion, the config-plane bridge); the dashboard reads `BROODS_ACCOUNT_MANAGE_URL` only to advertise a base URL to the CLI. Until the steps below are done the gateway forwards the header, which is the default. Runbook, dev first and then prod, each step reversible on its own:
-  1. Connectivity: from a pod in the `convex` namespace, `GET http://core-dev.beeblast.svc.cluster.local/healthz` must answer. If a NetworkPolicy blocks it, add an egress rule for the `beeblast` namespace first.
-  2. `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core-dev.beeblast.svc.cluster.local` on the dev Convex deployment.
-  3. Verify: fire one scheduled job and one sandbox terminate from the dashboard. Core logs show the request with the account header; gateway access logs show no `/v1/cron-runs` from Convex.
-  4. Set `GATEWAY_FORWARD_ACCOUNT_ID: "false"` in `infra/kubernetes/charts/releases/gateway-dev.yaml` and roll the gateway. After that, `curl -H "X-Account-Id: acct" -H "Authorization: Bearer $SERVICE" https://gateway.dev.broods.app/v1/cron-runs` is refused.
-  5. Repeat for prod with `core.beeblast.svc.cluster.local` and `gateway.yaml`.
-     Rollback: remove the flag (default forwards) and set the env back to the gateway URL.
+- Cron runs are dispatched by the Convex crons component: a Convex action POSTs the `{kind: "cron", accountId, cronId}` payload straight to core at `BROODS_ACCOUNT_MANAGE_URL` (the in-cluster service address), authenticated with `SERVICE_AUTH_SECRET`. No AWS scheduler infrastructure is involved.
+- The service token never crosses the public door. Only Convex sends it, always to core's in-cluster address. Three rules enforce that:
+  - the gateway drops a client `X-Account-Id` unless `GATEWAY_FORWARD_ACCOUNT_ID=true`;
+  - the gateway sets `x-broods-via-gateway` on every upstream request, and core and the config plane refuse the service token when it is present;
+  - the gateway answers 404 for `/v1/cron-runs` and `/v1/mcp-service/rpc`. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
+
+  If Convex cannot reach core directly, fix that first: `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if needed. The two flags do not restore the old path.
+
+### Service secrets
+
+Four secrets, one job each. None falls back to another, and core and the gateway refuse to start without theirs.
+
+| Secret                   | Job                                                          | Set on                   |
+| ------------------------ | ------------------------------------------------------------ | ------------------------ |
+| `SERVICE_AUTH_SECRET`    | Service bearer (with `X-Account-Id`) and the cron trigger    | core, Convex env         |
+| `STAGE_TICKET_SECRET`    | Signs and verifies `fp_dts_` dashboard stage session tickets | Convex env (signs), core |
+| `TERMINAL_TICKET_SECRET` | Seals and opens sandbox terminal tickets                     | core (seals), gateway    |
+| `MEDIA_TICKET_SECRET`    | Seals and opens `/v1/media/{ticket}` links                   | core                     |
+
+`TERMINAL_TICKET_SECRET` is the gateway's only secret. It and `MEDIA_TICKET_SECRET` take a comma-separated list: the first entry seals, every entry opens. To rotate, prepend the new value, roll the pods, then drop the old value. A media link never expires, so dropping its secret is what revokes it. `SERVICE_AUTH_SECRET` and `STAGE_TICKET_SECRET` are single values: change both sides together.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 
@@ -421,6 +433,6 @@ Common fields:
 - `model.step.finished` carries per-model-call `durationMs`, the AI SDK `usage`, response ID/model/timestamp, provider metadata, warning counts, and tool call/result counts
 - `model.invocation.finished` and `model.invocation.failed` carry final turn status, whole-run `durationMs`, AI SDK total token `usage`, step count, tool call count, `toolsUsed`, per-tool `toolUsage`, and compact `toolCalls` summaries
 - `toolName`, `toolCallId`, and `durationMs` for tool events
-- A `tool.call` span for a hosted MCP server tool also carries `tool.compute.type` (`"mcp-sandbox"`, the tool-runner Lambda) and `tool.compute.cpu_usec`, so a trace shows which runtime served the call and what it cost. Calls that shared one Lambda invoke each carry an even share of that invoke's CPU. Their absence means the call ran in-process.
+- A `tool.call` span for a hosted MCP server tool also carries `tool.compute.type` (`"mcp-sandbox"`, the mcp-runner Lambda) and `tool.compute.cpu_usec`, so a trace shows which runtime served the call and what it cost. Calls that shared one Lambda invoke each carry an even share of that invoke's CPU. Their absence means the call ran in-process. Execution environments are per account, so the first hosted call after an idle period is a cold start.
 
 Prompts, full tool inputs, tool outputs, request bodies, response bodies, and response headers are not logged by default. This keeps the CloudWatch stream useful for usage visualization while avoiding high-volume or sensitive payloads.
