@@ -16,7 +16,10 @@ test("a card's menu lists its links, locks the code-managed ones, and offers its
   const coder = fixture.getByTestId("menu-target-coder");
   await coder.click({ button: "right" });
   const menu = page.getByRole("menu");
-  await expect(menu.getByRole("menuitem", { name: /tracy/ })).toBeDisabled();
+  // The lock icon is hidden from a screen reader, so the row's name carries the reason.
+  await expect(
+    menu.getByRole("menuitem", { name: /tracy.*managed through code/ }),
+  ).toBeDisabled();
   await expect(menu.getByRole("menuitem", { name: /Delete/ })).toBeDisabled();
   await menu.getByRole("menuitem", { name: /reviewer/ }).click();
   await expect(coder).toContainText(

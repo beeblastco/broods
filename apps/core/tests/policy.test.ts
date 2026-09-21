@@ -79,13 +79,23 @@ describe("agent policy input", () => {
         workspaces,
       ).filePath,
     ).toBe("../etc/passwd");
-    expect(
-      policyInputForTool(
-        "grep",
-        { workspace: "repo", pattern: "API_KEY", path: "/secrets" },
-        workspaces,
-      ).filePath,
-    ).toBe("secrets");
+    // A search root ends in `/`, so a `secrets/` prefix covers the directory
+    // itself and leaves `secrets-public` alone. The workspace root stays `.`.
+    for (const [toolName, path, filePath] of [
+      ["grep", "secrets", "secrets/"],
+      ["grep", "/secrets", "secrets/"],
+      ["glob", "secrets/", "secrets/"],
+      ["glob", "secrets-public", "secrets-public/"],
+      ["grep", ".", "."],
+    ] as const) {
+      expect(
+        policyInputForTool(
+          toolName,
+          { workspace: "repo", pattern: "API_KEY", path: path },
+          workspaces,
+        ).filePath,
+      ).toBe(filePath);
+    }
 
     // memory_save derives its target path from the title, so the policy input
     // carries the same workspace.write + filePath surface as write/edit.

@@ -2,6 +2,7 @@ import {
   openTerminalTicket,
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
+import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 
@@ -39,22 +40,6 @@ const terminalState = new WeakMap<
   Bun.ServerWebSocket<RelayGatewayData>,
   TerminalSocketState
 >();
-
-export function terminalServiceSecretsFromEnv(
-  env: Record<string, string | undefined> = process.env,
-): string[] {
-  const raw =
-    env.BROODS_SERVICE_AUTH_SECRETS ?? env.BROODS_SERVICE_AUTH_SECRET ?? "";
-
-  return [
-    ...new Set(
-      raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
 
 export function openTerminalTicketWithSecrets(
   token: string,
@@ -110,6 +95,9 @@ export function openTerminalUpstream(
     upstream = new WebSocket(ticket.url, {
       headers: {
         [ticket.authorizationHeader ?? "authorization"]: ticket.authorization,
+        ...(socket.data.kind === "machine"
+          ? { [VIA_GATEWAY_HEADER]: "1" }
+          : {}),
       },
     } as unknown as string[]);
   } catch {
