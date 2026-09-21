@@ -1,6 +1,6 @@
 /**
  * Hosted MCP server transport (#331 phase 2, micro-batching #397). A hosted
- * row's endpoint is the tool-runner Lambda: this fetch adapter serializes a
+ * row's endpoint is the mcp-runner Lambda: this fetch adapter serializes a
  * web request, batches it with the sibling calls that arrive in the same
  * window, invokes the Lambda once per batch over InvokeWithResponseStream,
  * and once the batch's terminal NDJSON frame (../frames.ts) arrives settles
@@ -226,6 +226,11 @@ async function drainInvokeStream(
     new InvokeWithResponseStreamCommand({
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
+      // The function runs in PER_TENANT isolation: Lambda refuses an invoke
+      // without a tenant id and never shares an execution environment across
+      // two of them. A Convex account id fits the [a-zA-Z0-9._:/=+-@ ]{1,256}
+      // the API allows, so it rides as is.
+      TenantId: payload.accountId,
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
     { abortSignal: abortSignal },

@@ -197,7 +197,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The background path starts inside `harness-processing`: `POST /v1/runs` with `background: true` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one tool-runner Lambda invoke for a hosted server.
+The background path starts inside `harness-processing`: `POST /v1/runs` with `background: true` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one mcp-runner Lambda invoke for a hosted server.
 
 ```mermaid
 flowchart TD
@@ -426,4 +426,4 @@ Agents control model selection, channel credentials, optional skills, subagents,
 
 Every stage stores config domains and runtime state in Convex. S3 remains the byte store for workspace files, skills, and hook/MCP bundles.
 
-Built-in tool execution is inline in `harness-processing`. MCP server tools are request/response: an external server is one POST per `tools/call`, and a hosted server's bundle runs on the platform tool-runner Lambda, one invoke per batch (the parallel calls of one model step to the same server share an invoke; see [Tools](tools.md#connected-mcp-servers)). Inline code hooks run in the in-core V8 isolate (a Node child of the core). `async: true` only changes the lifecycle: built-in async stays in the current request or worker. Subagents are in-process child agent loops; they do not require child workers.
+Built-in tool execution is inline in `harness-processing`. MCP server tools are request/response: an external server is one POST per `tools/call`, and a hosted server's bundle runs on the platform mcp-runner Lambda, one invoke per batch (the parallel calls of one model step to the same server share an invoke; see [Tools](tools.md#connected-mcp-servers)). Inline code hooks run in the in-core V8 isolate (a Node child of the core). `async: true` only changes the lifecycle: built-in async stays in the current request or worker. Subagents are in-process child agent loops; they do not require child workers.

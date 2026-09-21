@@ -805,10 +805,12 @@ export default $config({
 
     // Hosted-MCP runner: runs uploaded MCP server bundles in a scrubbed child
     // process. No VPC gives internet egress; core invokes it via
-    // TOOL_RUNNER_FUNCTION_NAME. The "ToolRunner" logical id and the
-    // tool-runner physical name predate the MCP role. Renaming either
-    // replaces the deployed function, so they stay.
-    const toolRunnerFn = new sst.aws.Function("ToolRunner", {
+    // TOOL_RUNNER_FUNCTION_NAME with the account id as TenantId. PER_TENANT
+    // isolation keeps two accounts off one execution environment. The mode is
+    // immutable after create, so changing it means a new logical id and a new
+    // physical name, never an in-place edit. It rules out a function URL,
+    // provisioned concurrency and SnapStart; keep all three off.
+    const mcpRunnerFn = new sst.aws.Function("McpRunner", {
       handler: "../lambda/handler.handler",
       runtime: "nodejs22.x",
       architecture: "arm64",
@@ -825,7 +827,10 @@ export default $config({
         },
       ],
       transform: {
-        function: { name: resourceName("tool-runner", stage, region) },
+        function: {
+          name: resourceName("mcp-runner", stage, region),
+          tenancyConfig: { tenantIsolationMode: "PER_TENANT" },
+        },
       },
     });
 
@@ -834,7 +839,7 @@ export default $config({
     const harnessPermissions = [
       {
         actions: ["lambda:InvokeFunction"],
-        resources: [toolRunnerFn.arn],
+        resources: [mcpRunnerFn.arn],
       },
       {
         actions: ["sts:AssumeRole"],
@@ -1081,7 +1086,7 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
-      toolRunnerFunctionName: toolRunnerFn.name,
+      toolRunnerFunctionName: mcpRunnerFn.name,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
