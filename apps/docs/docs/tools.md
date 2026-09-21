@@ -51,7 +51,7 @@ Tool registry path:
 7. `needsApproval` is applied before tools are passed to `streamText()`.
 8. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
 
-Provider-defined tools are executed by the provider during the model call, not by core. MCP server tools are request/response: `tools/call` has no streaming analog, so each call is one POST to the external server, or one mcp-runner Lambda invoke for a hosted server (see [MCP Servers](#connected-mcp-servers)).
+Provider-defined tools are executed by the provider during the model call, not by core. MCP server tools are request/response: `tools/call` has no streaming analog, so each call is one POST to the external server, or for a hosted server one mcp-runner Lambda invoke per batch of requests (see [MCP Servers](#connected-mcp-servers)).
 
 The async coordination subsystem creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results into the same active agent loop. Detached completions settle through `POST /v1/sandbox-jobs/{resultId}/complete` (token-authenticated, `bash` background jobs).
 

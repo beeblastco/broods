@@ -197,7 +197,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The background path starts inside `harness-processing`: `POST /v1/runs` with `background: true` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST to an external server, or one mcp-runner Lambda invoke for a hosted server.
+The background path starts inside `harness-processing`: `POST /v1/runs` with `background: true` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. MCP server tools are synchronous request/response. One POST per call to an external server, or one mcp-runner Lambda invoke per batch of requests to a hosted server.
 
 ```mermaid
 flowchart TD
