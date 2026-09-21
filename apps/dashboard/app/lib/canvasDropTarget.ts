@@ -4,10 +4,12 @@
  *
  * Membership is derived, so a drop invents none of it. It writes only what the
  * derivation reads: an edge to each agent that owns the group, the `ungrouped`
- * flag the card was pulled out with, and the slot the chips sit in. A sandbox
- * group is ordered by its agents' `sandboxes`, the list the "1 · default" badge
- * counts, so where code owns that list the slot on offer is the one the rules
- * give rather than the one under the cursor.
+ * flag the card was pulled out with, and the slot the chips sit in. A group that
+ * orders itself keeps its own order, so the slot on offer there is the one the
+ * rules give rather than the one under the cursor: see `ordersItself`.
+ *
+ * A drop is refused for anything the layout write would refuse it for, so that a
+ * card never lands and then springs back when the save runs.
  *
  * Pure and exported on purpose, like `canvasConnections.ts`: the `/ui-gallery`
  * drag fixture drives this exact function, so a spec drags a real card across a
@@ -425,19 +427,6 @@ function offerOf(
 }
 
 /**
- * Whether the group's own order means more than looks, so a drop stores no slot
- * for it: a sandbox group is its agents' `sandboxes`, which the drop rewrites
- * instead, and a machine MCP group follows the computers its servers run on, so
- * that its runs-on edges never cross.
- */
-function ordersItself(group: Pick<CanvasDrop, "key" | "kind">): boolean {
-  return (
-    group.kind === "sandbox" ||
-    (group.kind === "mcp" && group.key === "machine")
-  );
-}
-
-/**
  * Nodes with the drop's order written where the derivation reads it: a sandbox
  * group rewrites its agents' `sandboxes`, and every group whose order is only
  * cosmetic writes each member's own slot. A group that orders itself stores
@@ -488,6 +477,19 @@ function orderedNodes(
 
     return { ...node, data: { ...node.data, sandboxOrder: sandboxOrder } };
   });
+}
+
+/**
+ * Whether the group's own order means more than looks, so a drop stores no slot
+ * for it: a sandbox group is its agents' `sandboxes`, which the drop rewrites
+ * instead, and a machine MCP group follows the computers its servers run on, so
+ * that its runs-on edges never cross.
+ */
+function ordersItself(group: Pick<CanvasDrop, "key" | "kind">): boolean {
+  return (
+    group.kind === "sandbox" ||
+    (group.kind === "mcp" && group.key === "machine")
+  );
 }
 
 /** Gap between two boxes, 0 where they overlap. */

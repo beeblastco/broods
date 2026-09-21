@@ -6,9 +6,11 @@
  * themselves inside it. Collapsed, it is one compact card that names its
  * members and sums up their state.
  *
- * While a card is being dropped on it the box grows by one row and marks the
- * slot that card will take. The growth and the chips sliding to their new slots
- * are the frame's own transitions, so nothing here animates by hand.
+ * While a card is being dropped on it, the box takes the colour a mount wears,
+ * grows by one row and marks the slot that card will take. Collapsed it only
+ * takes the colour: it draws no chips, so it has no gap to open. The growth and
+ * the chips sliding to their new slots are the frame's own transitions, so
+ * nothing here animates by hand.
  */
 import {
   useCanvasFrames,
