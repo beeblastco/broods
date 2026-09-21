@@ -19,7 +19,9 @@ import {
 } from "./schema";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-const CONVERSATION_EVENT_PAGE_SIZE = 512;
+// Rows are whole messages; a page of tool results at 512 rows crosses the
+// per-query read limit and the conversation stops loading.
+const CONVERSATION_EVENT_PAGE_SIZE = 64;
 const DAY_SECONDS = 24 * 60 * 60;
 
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge

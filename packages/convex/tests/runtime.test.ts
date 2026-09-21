@@ -86,13 +86,13 @@ describe("runtime persistence", () => {
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
     await t.run(async (ctx) => {
-      for (let index = 0; index < 513; index += 1) {
+      for (let index = 0; index < 65; index += 1) {
         await ctx.db.insert("runtimeConversationEvents", {
           accountId: accountId,
           conversationKey: conversationKey,
           cursor: String(index).padStart(4, "0"),
           event:
-            index === 512
+            index === 64
               ? { role: "system", content: "later compaction summary" }
               : { index: index },
         });
@@ -102,10 +102,10 @@ describe("runtime persistence", () => {
     const first = await t.query(internal.runtime.listConversationEvents, {
       conversationKey: conversationKey,
     });
-    expect(first.page).toHaveLength(512);
+    expect(first.page).toHaveLength(64);
     expect(first).toMatchObject({
       isDone: false,
-      continueCursor: "0511",
+      continueCursor: "0063",
     });
     const second = await t.query(internal.runtime.listConversationEvents, {
       conversationKey: conversationKey,
@@ -114,7 +114,7 @@ describe("runtime persistence", () => {
     expect(second).toEqual({
       page: [
         {
-          cursor: "0512",
+          cursor: "0064",
           event: { role: "system", content: "later compaction summary" },
         },
       ],
