@@ -68,8 +68,8 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import {
-  assertSafeTenantProviderUrl,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -886,7 +886,7 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   const options = isPlainObject(config.options) ? config.options : {};
   const customBaseUrl = configString(options.workdirUrl);
   if (customBaseUrl) {
-    assertSafeTenantProviderUrl(customBaseUrl, "config.options.workdirUrl");
+    assertPublicHttpsUrl(customBaseUrl, "config.options.workdirUrl");
   }
   const baseUrl = customBaseUrl ?? optionalEnv("WORKDIR_URL");
   if (!baseUrl) {

@@ -11,6 +11,8 @@ describe("isDeniedAddress", () => {
     expect(isDeniedAddress("192.168.1.10")).toBe(true);
     expect(isDeniedAddress("169.254.169.254")).toBe(true);
     expect(isDeniedAddress("100.64.0.1")).toBe(true);
+    expect(isDeniedAddress("198.18.0.1")).toBe(true);
+    expect(isDeniedAddress("224.0.0.1")).toBe(true);
     expect(isDeniedAddress("::ffff:169.254.169.254")).toBe(true);
   });
 

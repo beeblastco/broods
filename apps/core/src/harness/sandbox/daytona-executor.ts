@@ -48,8 +48,8 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import {
-  assertSafeTenantProviderUrl,
   configString,
   isNoRunnersError,
   isSandboxGoneError,
@@ -426,7 +426,7 @@ function daytonaClientOptions(
   const options = isPlainObject(config.options) ? config.options : {};
   const customApiUrl = configString(options.apiUrl);
   if (customApiUrl) {
-    assertSafeTenantProviderUrl(customApiUrl, "config.options.apiUrl");
+    assertPublicHttpsUrl(customApiUrl, "config.options.apiUrl");
   }
   const customApiKey = configString(options.apiKey);
   if (customApiUrl && !customApiKey) {

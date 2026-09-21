@@ -24,6 +24,10 @@ export const DENY_CIDRS = [
   "169.254.0.0/16",
   "127.0.0.0/8",
   "100.64.0.0/10",
+  "192.0.0.0/24",
+  "198.18.0.0/15",
+  "224.0.0.0/4",
+  "240.0.0.0/4",
 ];
 
 // Resolve -> validate all resolved IPs -> pick one -> connect to that pinned IP.
