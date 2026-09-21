@@ -226,8 +226,11 @@ async function drainInvokeStream(
     new InvokeWithResponseStreamCommand({
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
-      // PER_TENANT function: Lambda refuses an invoke without a tenant id.
-      TenantId: payload.accountId,
+      // A PER_TENANT function refuses an invoke without a tenant id, and any
+      // other function refuses one with it.
+      ...(process.env.MCP_TENANT_ISOLATION === "true"
+        ? { TenantId: payload.accountId }
+        : {}),
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
     { abortSignal: abortSignal },
