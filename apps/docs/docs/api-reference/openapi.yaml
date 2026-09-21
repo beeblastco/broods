@@ -184,7 +184,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Agent has not opted into public access (secure by default)
+          description: Agent has not opted into public access (secure by default), or a runtime key sent run overrides the agent does not allow
           content:
             application/json:
               schema:
@@ -197,6 +197,13 @@ paths:
                       type: permission_error
                       code: public_access_disabled
                       param: agentId
+                runOverridesDisabled:
+                  value:
+                    error:
+                      message: "Agent agent_... does not accept system messages or model overrides from a runtime key. Set allowRunOverrides: true and redeploy to allow them."
+                      type: permission_error
+                      code: run_overrides_disabled
+                      param: allowRunOverrides
         "404":
           description: Direct API disabled on this deployment (`ENABLE_DIRECT_API=false`)
           content:
@@ -1153,7 +1160,9 @@ paths:
         - Direct API
       summary: Run an agent through its public endpoint
       description: |
-        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and is loaded against the key's account. The agent must have `publicAccess: true`.
+        The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the stage runtime key rather than an account secret. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. The agent must have `publicAccess: true`.
+
+        A runtime key is safe to embed, so it carries three limits an account secret does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
 
         Do not confuse `{endpointId}` here with the `{agentId}` that `GET`, `PATCH` and `DELETE /v1/agents/{agentId}` take: they are different identifiers. Prefer `/v1/runs` unless the caller only holds a runtime key.
       security:
@@ -3056,8 +3065,10 @@ components:
             mode, always answering 202 with a run id. A live channel session
             answers in its channel. `conversationKey` may be the scoped
             `acct:...` key a Tracing row shows; it must name this agent, or the
-            request is a 404. Cannot be combined with `events`, `answers`, or
-            the `system` / `model` overrides.
+            request is a 404. A runtime key may only continue a conversation
+            the direct API opened; a channel session's key is a 404 for it.
+            Cannot be combined with `events`, `answers`, or the `system` /
+            `model` overrides.
         system:
           oneOf:
             - $ref: "#/components/schemas/SystemRunEvent"
@@ -3067,7 +3078,9 @@ components:
           description: >-
             One-turn Vercel AI SDK-style system message event(s), appended last
             with highest priority. Same lifetime as a direct `events` entry with
-            `persist: false`.
+            `persist: false`. From a runtime key, `system` (here or as a
+            system-role event) and `model` need `allowRunOverrides: true` on
+            the agent.
         model:
           $ref: "#/components/schemas/RunModelOverrides"
 
@@ -3822,6 +3835,9 @@ components:
         publicAccess:
           type: boolean
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default, so the endpoint stays closed until you set it. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
+        allowRunOverrides:
+          type: boolean
+          description: "Let a runtime-key caller send `system` messages and `model` overrides on a run. Off by default: the runtime key is embeddable, so without this a request carrying either is refused with HTTP 403 (code run_overrides_disabled). Account secrets are unaffected."
         sandboxes:
           type: array
           items: { type: string }

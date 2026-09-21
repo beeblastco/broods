@@ -638,6 +638,11 @@ export type AgentDefinitionConfig = EnvRefString<
    * internal endpoint or a channel webhook. See issue #65.
    */
   publicAccess?: boolean;
+  /**
+   * Let a runtime-key caller send `system` and `model` overrides on a run. Off
+   * by default: such a run is refused with `403 run_overrides_disabled`.
+   */
+  allowRunOverrides?: boolean;
 };
 
 export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {

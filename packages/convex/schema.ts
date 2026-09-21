@@ -76,7 +76,8 @@ export const agentConfigsFields = {
   ),
   /**
    * Broods AgentConfig branches that don't live as flat columns, the ones
-   * `NESTED_BRANCHES` lists in model/agentConfigCodec.ts plus `publicAccess`.
+   * `NESTED_BRANCHES` lists in model/agentConfigCodec.ts plus `publicAccess`
+   * and `allowRunOverrides`.
    * Stored verbatim so the Config tab can edit the full nested shape. Secrets
    * should be expressed as `${ENV_NAME}` placeholders resolved from encrypted
    * runtime secrets.

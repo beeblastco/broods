@@ -86,6 +86,9 @@ export interface AgentConfig {
   // request path is refused. Internal callers (account/admin secret, cron,
   // async worker) and channel webhooks are never gated by this.
   publicAccess?: boolean;
+  // Lets the embeddable runtime key send `system` and `model` overrides. Off by
+  // default; stage tickets and account secrets ignore it.
+  allowRunOverrides?: boolean;
   [key: string]: unknown;
 }
 
@@ -635,6 +638,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     scheduler,
     policies,
     publicAccess,
+    allowRunOverrides,
   } = config;
 
   return normalizeAgentConfig({
@@ -660,6 +664,9 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
     ...(policies !== undefined ? { policies: policies } : {}),
     ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
+    ...(allowRunOverrides !== undefined
+      ? { allowRunOverrides: allowRunOverrides }
+      : {}),
   }) as AgentConfig;
 }
 

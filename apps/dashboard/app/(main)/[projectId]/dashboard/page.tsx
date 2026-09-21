@@ -101,7 +101,8 @@ export default function DashboardPage(): React.JSX.Element {
     generated && generated.endpointId === activeDeployment?.endpointId
       ? generated.key
       : undefined;
-  const observabilityApiKey = generatedKey ?? stageSession;
+  // Ticket first: core refuses the permanent key a channel-session continue.
+  const observabilityApiKey = stageSession ?? generatedKey;
   const copyableKey = generatedKey ?? revealedKey;
   const currentKeyError =
     keyError && keyError.stageId === activeStageId ? keyError.msg : null;

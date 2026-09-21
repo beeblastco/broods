@@ -314,6 +314,8 @@ const result = await client.run(api.agents.myAgent, {
 
 Reserved keys (`provider`, `modelId`, `output`, `apiKey`) are rejected so a request cannot swap the model or credentials.
 
+The client authenticates with the stage runtime key, so `system` and `model` on a run need `allowRunOverrides: true` in the agent config. Without it the run is refused with `403` and code `run_overrides_disabled`.
+
 ## Cron jobs at runtime
 
 Create, list, update, and delete cron jobs programmatically:

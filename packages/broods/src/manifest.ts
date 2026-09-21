@@ -386,6 +386,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "scheduler",
   "policies",
   "publicAccess",
+  "allowRunOverrides",
 ]);
 
 /** Common typos mapped to the key the author almost certainly meant. */

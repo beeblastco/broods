@@ -100,6 +100,8 @@ export const myAgent = defineAgent({
 
 > `broods init` and `broods login` are also available as standalone commands if you prefer to run them separately.
 
+> `publicAccess: true` opens the agent to the stage runtime key, which `broods run` uses. That key cannot send `system` messages or `model` overrides unless the agent also sets `allowRunOverrides: true`.
+
 ## 4. Run your agent
 
 ```bash

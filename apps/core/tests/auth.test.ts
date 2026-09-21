@@ -132,6 +132,7 @@ describe("resolveBearerAuth", () => {
       projectSlug: "demo",
       stageSlug: "development",
     });
+    expect(auth).not.toHaveProperty("stageTicket");
   });
 
   it("resolves an fp_sts_ role session to role auth", async () => {
@@ -253,6 +254,7 @@ describe("stage session tickets", () => {
       endpointId: "stage-abcd1234",
       projectSlug: "shop",
       stageSlug: "development",
+      stageTicket: true,
     });
   });
 

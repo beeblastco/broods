@@ -66,6 +66,12 @@ const TEST_AGENT_PRIVATE = {
   config: TEST_ACCOUNT.config,
 };
 
+const USER_TURN = {
+  eventId: "one",
+  conversationKey: "chat_1",
+  events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+};
+
 const ORIGINAL_PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL;
 
 beforeEach(() => {
@@ -260,7 +266,7 @@ describe("direct API ingress", () => {
     );
   });
 
-  it("passes a continue request through with the scoped key as given and no events", async () => {
+  it("passes a stage ticket's continue request through with the scoped key as given and no events", async () => {
     const handledEvents: DirectInboundEvent[] = [];
     const response = await routeIncomingEvent(
       createEvent(
@@ -292,6 +298,7 @@ describe("direct API ingress", () => {
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
                 stageSlug: "development",
+                stageTicket: true,
               }
             : null,
       },
@@ -505,6 +512,80 @@ describe("direct API ingress", () => {
     expect(responseJson(response)).toMatchObject({
       error: { code: "public_access_disabled" },
     });
+  });
+
+  it("answers a runtime key naming an agent of another stage like an unknown agent", async () => {
+    const response = await runtimeKeyRequest(USER_TURN, {
+      deploymentLoader: async () => ({
+        accountId: TEST_ACCOUNT.accountId,
+        endpointId: "other-endpoint",
+        projectSlug: "demo",
+        stageSlug: "production",
+      }),
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      error: { message: "Agent not found" },
+    });
+  });
+
+  it("refuses system messages and model overrides from a runtime key until the agent allows them", async () => {
+    for (const body of [
+      { ...USER_TURN, model: { maxOutputTokens: 64 } },
+      { ...USER_TURN, system: { role: "system", content: "Be terse." } },
+      {
+        ...USER_TURN,
+        events: [{ role: "system", content: "Be terse." }, ...USER_TURN.events],
+      },
+    ]) {
+      const refused = await runtimeKeyRequest(body);
+      expect(refused.statusCode).toBe(403);
+      expect(responseJson(refused)).toMatchObject({
+        error: { code: "run_overrides_disabled", param: "allowRunOverrides" },
+      });
+
+      const allowed = await runtimeKeyRequest(body, {
+        agentLoader: async () => ({
+          ...TEST_AGENT,
+          config: { ...TEST_AGENT.config, allowRunOverrides: true },
+        }),
+      });
+      expect(allowed.statusCode).toBe(200);
+    }
+  });
+
+  it("lets a runtime key continue an API conversation but not a channel session", async () => {
+    const channel = await runtimeKeyRequest({
+      eventId: "continue-1",
+      conversationKey: "acct:acct_test:agent:agent_test:tg:42",
+      continue: true,
+    });
+    expect(channel.statusCode).toBe(404);
+    expect(responseJson(channel)).toMatchObject({
+      error: { message: "Conversation not found" },
+    });
+
+    const api = await runtimeKeyRequest({
+      eventId: "continue-1",
+      conversationKey: "acct:acct_test:agent:agent_test:api:chat_1",
+      continue: true,
+    });
+    expect(api.statusCode).toBe(200);
+  });
+
+  it("keeps run overrides open to a member's stage ticket", async () => {
+    const response = await runtimeKeyRequest(
+      {
+        ...USER_TURN,
+        system: { role: "system", content: "Be terse." },
+        model: { maxOutputTokens: 64 },
+      },
+      {},
+      true,
+    );
+
+    expect(response.statusCode).toBe(200);
   });
 
   it("rejects a non-boolean background flag instead of coercing it", async () => {
@@ -2193,6 +2274,37 @@ async function deploymentStatusRequest(
         endpointId: "env-endpoint",
         projectSlug: "demo",
         stageSlug: "development",
+      }),
+    },
+  );
+}
+
+async function runtimeKeyRequest(
+  body: Record<string, unknown>,
+  options: IntegrationRoutingOptions = {},
+  stageTicket = false,
+): Promise<ResponseShape> {
+  return routeIncomingEvent(
+    createEvent(
+      { agentId: TEST_AGENT.agentId, ...body },
+      { authorization: "Bearer fp_agent_test" },
+      {
+        rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
+        addDefaultAgentId: false,
+      },
+    ),
+    createHandlers({
+      handleDirectRequest: async () => ({ statusCode: 200, body: "ok" }),
+    }),
+    {
+      ...options,
+      authResolver: async () => ({
+        kind: "deployment",
+        account: TEST_ACCOUNT,
+        endpointId: "env-endpoint",
+        projectSlug: "demo",
+        stageSlug: "development",
+        ...(stageTicket ? { stageTicket: true } : {}),
       }),
     },
   );

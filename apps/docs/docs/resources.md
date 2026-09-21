@@ -87,6 +87,7 @@ export const myAgent = defineAgent({
     maxTurn: 10,
   },
   publicAccess: true, // enable public SSE/WebSocket endpoint,
+  allowRunOverrides: false, // true lets a runtime-key caller send system messages and model overrides
 });
 ```
 
