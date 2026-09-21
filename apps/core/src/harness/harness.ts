@@ -214,7 +214,9 @@ export interface AgentLoopOptions {
 // so a caller that drains the stream by hand can still settle the run.
 export type AgentLoopStream = ReturnType<typeof streamText> & {
   consumeStream(): Promise<void>;
-  ensureFinalized(): Promise<void>;
+  // `drained` false means the caller stopped reading with the model still
+  // running, so the run is aborted before it is settled.
+  ensureFinalized(drained: boolean): Promise<void>;
   didFail(): boolean;
   failureText(): string | null;
   approvalSummaries(): ToolApprovalSummary[];
@@ -223,6 +225,28 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   finalResponse(): JSONValue | undefined;
   traceId(): string;
 };
+
+// Every consumer reads through this so a run is finalized, and aborted when
+// the consumer stops early, no matter how the read loop exits.
+export async function* readAgentFullStream(
+  stream: AgentLoopStream,
+): AsyncIterable<unknown> {
+  const reader = stream.stream.getReader();
+  let drained = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        drained = true;
+        break;
+      }
+      yield value;
+    }
+  } finally {
+    await reader.cancel().catch((): void => {});
+    await stream.ensureFinalized(drained);
+  }
+}
 
 export async function runAgentLoop(
   session: Session,
@@ -727,6 +751,7 @@ export async function runAgentLoop(
   let usageFinalized = false;
   let finishObserved = false;
   let persistedResponseCount = 0;
+  const runAbort = new AbortController();
   let taskUsage: LanguageModelUsage | undefined;
   let taskStepCount = 0;
   let terminalError: Error | undefined;
@@ -1003,6 +1028,7 @@ export async function runAgentLoop(
       ...(maxTurn === AGENT_MAX_TURN_UNLIMITED ? [] : [isStepCount(maxTurn)]),
       (): boolean => questionSummaries.length > 0,
     ],
+    abortSignal: runAbort.signal,
     prepareStep: async ({ messages, responseMessages }) => {
       const renewal = await session.renewConversationLease();
       if (renewal === "stopped") {
@@ -1782,7 +1808,6 @@ export async function runAgentLoop(
   let harnessRuntime:
     | ReturnType<typeof createConfiguredHarnessAgent>
     | undefined;
-  let harnessLeaseAbort: AbortController | undefined;
   let stream: ReturnType<typeof streamText>;
   const usesAiSdkHarness = agentConfig.harness !== undefined;
   try {
@@ -1818,23 +1843,19 @@ export async function runAgentLoop(
         })
       : undefined;
     if (harnessRuntime) {
-      harnessLeaseAbort = new AbortController();
       activeHarnessSession = await openAiSdkHarnessSession({
-        abortSignal: harnessLeaseAbort.signal,
+        abortSignal: runAbort.signal,
         agent: harnessRuntime.agent,
         broodsSession: session,
         type: agentConfig.harness!.type,
       });
-      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
-        session,
-        harnessLeaseAbort,
-      );
+      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(session, runAbort);
     }
     stream = harnessRuntime
       ? await harnessRuntime.agent.stream({
           messages: harnessPromptMessages(turnContext.messages),
           session: activeHarnessSession!,
-          abortSignal: harnessLeaseAbort?.signal,
+          abortSignal: runAbort.signal,
         })
       : streamText(streamOptions);
   } catch (error) {
@@ -1865,8 +1886,8 @@ export async function runAgentLoop(
     }
     harnessStreamFinalized = true;
     stopHarnessLeaseMonitor?.();
-    const abortError = harnessLeaseAbort?.signal.aborted
-      ? harnessLeaseAbort.signal.reason
+    const abortError = runAbort.signal.aborted
+      ? runAbort.signal.reason
       : undefined;
     let finalizationError = streamError ?? abortError;
     try {
@@ -1907,7 +1928,11 @@ export async function runAgentLoop(
   // error on the first model call) and only onError fires, so a caller that
   // drains the stream directly would never finalize and the task span would
   // spin "running" forever. Idempotent via usageFinalized.
-  const ensureFinalized = async (): Promise<void> => {
+  const ensureFinalized = async (drained: boolean): Promise<void> => {
+    if (!drained && !finishObserved) {
+      terminalError ??= new Error("Caller stopped reading the stream");
+      runAbort.abort(terminalError);
+    }
     await finalizeHarnessStream();
     if (usageFinalized) return;
     if (!finishObserved) {
@@ -1942,14 +1967,14 @@ export async function runAgentLoop(
       terminalError ??= error instanceof Error ? error : new Error(errorText);
       throw error;
     } finally {
-      await ensureFinalized();
+      // consumeStream reads to the end or throws once the stream has errored;
+      // either way the model is done.
+      await ensureFinalized(true);
     }
   };
 
   return Object.assign(stream, {
     consumeStream: wrappedConsumeStream,
-    // Callers that drain the stream themselves must call this in a finally to
-    // guarantee finalization.
     ensureFinalized: ensureFinalized,
     didFail: (): boolean => didFail,
     failureText: (): string | null => failureText,

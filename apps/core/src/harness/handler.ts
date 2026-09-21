@@ -65,6 +65,7 @@ import {
   completionToParentMessage,
 } from "./async-tools.ts";
 import {
+  readAgentFullStream,
   runAgentLoop,
   type AgentLoopStream,
   type ToolApprovalSummary,
@@ -1256,7 +1257,10 @@ async function handleNatsWorkerRequest(
         asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
-        consumeStream: (stream) => pipeAgentNatsStream(stream, fencedPublisher),
+        consumeStream: (stream) =>
+          pipeAgentStream(stream, (chunk): Promise<void> =>
+            fencedPublisher.publish(chunk),
+          ),
         onLoopErrorText: async (error) => {
           fencedPublisher
             .publish({ type: "error", error: error })
@@ -2605,7 +2609,12 @@ function createDirectContinuationSseBody(
             initialTurnContext: initialTurnContext,
             agentConfig: event.agentConfig,
             consumeStream: (stream) =>
-              pipeAgentSseStream(stream, controller, session),
+              pipeAgentStream(stream, async (chunk): Promise<void> => {
+                await session.assertCurrentOwner();
+                controller.enqueue(
+                  textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+                );
+              }),
             onHeartbeat: async (pendingCount) => {
               await session.assertCurrentOwner();
               controller.enqueue(
@@ -2974,101 +2983,26 @@ async function waitAndDrainAsyncWork(
   return subagentCount + asyncToolCount;
 }
 
-async function pipeAgentSseStream(
+// The SSE body and the NATS worker share this pump; only `send` differs.
+async function pipeAgentStream(
   stream: AgentLoopStream,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  session: Session,
+  send: (chunk: Record<string, unknown>) => Promise<void>,
 ): Promise<void> {
   let emittedErrorChunk = false;
-  const reader = stream.stream.getReader();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
+  for await (const value of readAgentFullStream(stream)) {
     if (isErrorStreamChunk(value)) {
       emittedErrorChunk = true;
     }
-    await session.assertCurrentOwner();
-    controller.enqueue(
-      textEncoder.encode(`data: ${JSON.stringify(value)}\n\n`),
-    );
+    await send(value as Record<string, unknown>);
   }
 
   const failureText = stream.failureText();
   if (failureText && !emittedErrorChunk) {
-    await session.assertCurrentOwner();
-    controller.enqueue(
-      textEncoder.encode(
-        `data: ${JSON.stringify({
-          type: "error",
-          error: failureText,
-        })}\n\n`,
-      ),
-    );
+    await send({ type: "error", error: failureText });
   }
   const finalResponse = stream.finalResponse();
   if (stream.hasStructuredOutput() && finalResponse !== undefined) {
-    await session.assertCurrentOwner();
-    controller.enqueue(
-      textEncoder.encode(
-        `data: ${JSON.stringify({
-          type: "structured-output",
-          output: finalResponse,
-        })}\n\n`,
-      ),
-    );
-  }
-}
-
-async function pipeAgentNatsStream(
-  stream: AgentLoopStream,
-  publisher: NatsPublisher,
-): Promise<void> {
-  let emittedErrorChunk = false;
-  const reader = stream.stream.getReader();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    if (isErrorStreamChunk(value)) {
-      emittedErrorChunk = true;
-    }
-    publisher.publish(value as Record<string, unknown>).catch(() => {});
-  }
-  // Mirror the SSE path: surface a terminal failure as an in-stream error part so
-  // WebSocket clients receive the same AI SDK stream parts as SSE clients.
-  const failureText = stream.failureText();
-  if (failureText && !emittedErrorChunk) {
-    await publisher.publish({ type: "error", error: failureText });
-  }
-  const finalResponse = stream.finalResponse();
-  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
-    await publisher.publish({
-      type: "structured-output",
-      output: finalResponse,
-    });
-  }
-}
-
-// Native channel SDKs consume async iterables, while the AI SDK exposes a Web
-// ReadableStream. This adapter also finalizes tracing/usage when the channel
-// drains the stream directly instead of calling stream.consumeStream().
-async function* readAgentFullStream(
-  stream: AgentLoopStream,
-): AsyncIterable<unknown> {
-  const reader = stream.stream.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      yield value;
-    }
-  } finally {
-    await stream.ensureFinalized();
+    await send({ type: "structured-output", output: finalResponse });
   }
 }
 
