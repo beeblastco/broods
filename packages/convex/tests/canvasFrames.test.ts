@@ -72,8 +72,7 @@ describe("frameGroupOf", () => {
     });
   });
 
-  it("never frames a database or a skill", () => {
-    expect(frameGroupOf(node("d1", "database"), NO_SERVERS)).toBeNull();
+  it("never frames a skill", () => {
     expect(frameGroupOf(node("k1", "skill"), NO_SERVERS)).toBeNull();
   });
 });

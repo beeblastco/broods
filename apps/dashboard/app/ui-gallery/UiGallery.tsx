@@ -162,7 +162,6 @@ const FRAME_NODES: Node[] = applyTidyLayout(
     }),
     fixtureNode("coder", "agent"),
     fixtureNode("reviewer", "agent"),
-    fixtureNode("session", "database"),
     fixtureNode("internal-sandbox", "sandbox", {
       config: { provider: "sandbox" },
     }),

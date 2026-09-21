@@ -4,13 +4,7 @@ import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useState } from "react";
 
-export type NodeType =
-  | "agent"
-  | "database"
-  | "mcp"
-  | "workspace"
-  | "sandbox"
-  | "skill";
+export type NodeType = "agent" | "mcp" | "workspace" | "sandbox" | "skill";
 
 const DELETE_DESCRIPTIONS: Record<
   NodeType,
@@ -20,11 +14,6 @@ const DELETE_DESCRIPTIONS: Record<
     summary: "Permanently delete this agent and all its data.",
     detail:
       "All sessions, messages, tasks, deployments, and connections for this agent will be deleted forever.",
-  },
-  database: {
-    summary: "Delete the database configuration and all associated data.",
-    detail:
-      "The database connection config, all auto-populated sessions, and messages from this database will be deleted permanently.",
   },
   mcp: {
     summary: "Delete the MCP server registration.",
@@ -50,7 +39,6 @@ const DELETE_DESCRIPTIONS: Record<
 
 const NODE_TYPE_LABELS: Record<NodeType, string> = {
   agent: "agent",
-  database: "database",
   mcp: "MCP server",
   workspace: "workspace",
   sandbox: "sandbox",

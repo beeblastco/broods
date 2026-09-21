@@ -127,15 +127,6 @@ export function BaseNode({
     const config = agentStatusConfig[agentStatus];
     statusColor = config.color;
     statusText = config.text;
-  } else if (nodeType === "database") {
-    // Conversation persistence is always on once wired to an agent (the session store).
-    if (isConnectedToAgent) {
-      statusColor = "bg-success";
-      statusText = "Persistent";
-    } else {
-      statusColor = "bg-destructive";
-      statusText = "Unconnected";
-    }
   } else if (!isConnectedToAgent) {
     statusColor = "bg-destructive";
     statusText = "Unconnected";

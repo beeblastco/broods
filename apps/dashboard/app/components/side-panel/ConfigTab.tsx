@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * Single JSON editor for the full nested AgentConfig, with the `agent`, `model`
- * and `provider` branches merged into one object.
+ * Single JSON editor for the nested AgentConfig, with the branches in
+ * `CONFIG_TAB_BRANCHES` merged into one object. `session` holds context
+ * pruning and compaction.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
 import {
@@ -11,6 +12,14 @@ import {
 } from "@/app/lib/agentConfigCodec";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMemo } from "react";
+
+/** Branches the Config tab edits; saving replaces exactly these and keeps the rest. */
+export const CONFIG_TAB_BRANCHES = [
+  "agent",
+  "model",
+  "provider",
+  "session",
+] as const;
 
 export function ConfigTab({
   agentConfig,
@@ -26,11 +35,11 @@ export function ConfigTab({
     if (!agentConfig) return {};
     const n = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
 
-    return {
-      ...(n.agent !== undefined ? { agent: n.agent } : {}),
-      ...(n.model !== undefined ? { model: n.model } : {}),
-      ...(n.provider !== undefined ? { provider: n.provider } : {}),
-    };
+    return Object.fromEntries(
+      CONFIG_TAB_BRANCHES.filter((branch) => n[branch] !== undefined).map(
+        (branch) => [branch, n[branch]],
+      ),
+    );
   }, [agentConfig]);
 
   if (!agentConfig) {

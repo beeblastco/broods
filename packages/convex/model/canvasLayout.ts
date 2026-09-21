@@ -114,11 +114,10 @@ const SERVICE_COLUMN_ORDER: Record<
   Exclude<CanvasNode["type"], "agent">,
   number
 > = {
-  database: 0,
-  mcp: 1,
-  sandbox: 2,
-  workspace: 3,
-  skill: 4,
+  mcp: 0,
+  sandbox: 1,
+  workspace: 2,
+  skill: 3,
 };
 
 const COLUMN_RANKS: ReadonlyMap<string, number> = new Map(

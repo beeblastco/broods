@@ -25,7 +25,6 @@ import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { AgentNode } from "@/app/components/node/Agent";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
-import { DatabaseNode } from "@/app/components/node/Database";
 import { FrameNode } from "@/app/components/node/FrameNode";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
@@ -110,7 +109,6 @@ import { useMutation, useQuery } from "convex/react";
 import {
   Bot,
   Box,
-  Database,
   FolderOpen,
   Group,
   Plug,
@@ -168,7 +166,6 @@ export const CONNECTION_RADIUS = 100;
 /** Node and edge components by type; the UI gallery draws its canvas fixture with them too. */
 export const CANVAS_NODE_TYPES = {
   agent: AgentNode,
-  database: DatabaseNode,
   frame: FrameNode,
   sandbox: SandboxNode,
   workspace: WorkspaceNode,
@@ -185,7 +182,6 @@ export const CANVAS_EDGE_TYPES = {
 
 const NODE_TEMPLATES = [
   { type: "agent", label: "Agent", icon: Bot },
-  { type: "database", label: "Session", icon: Database },
   { type: "sandbox", label: "Sandbox", icon: Box },
   { type: "workspace", label: "Workspace", icon: FolderOpen },
   { type: "skill", label: "Skill", icon: Sparkles },
@@ -632,13 +628,7 @@ function CanvasInner({
         stageId: stageId,
         nodes: currentNodes.map((n) => ({
           id: n.id,
-          type: n.type as
-            | "agent"
-            | "database"
-            | "sandbox"
-            | "workspace"
-            | "mcp"
-            | "skill",
+          type: n.type as "agent" | "sandbox" | "workspace" | "mcp" | "skill",
           position: n.position,
           data: n.data as {
             label: string;
