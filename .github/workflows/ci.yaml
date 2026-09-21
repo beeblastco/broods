@@ -75,10 +75,7 @@ jobs:
         run: bun run build
 
   secrets-scan:
-    # gitleaks over the commits this event brings in: the pull request's range,
-    # or what a push added. Rules and allowlists: .gitleaks.toml. The pre-commit
-    # hook runs the same scan on staged files but skips when gitleaks is not
-    # installed, so this job is the gate.
+    # The hard gate: the pre-commit scan skips when gitleaks is not installed.
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -89,12 +86,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # The range scan walks history, and nothing in this job pushes.
+          # The range scan needs history.
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install gitleaks
-        # Pinned release, checked against its published sha256 before it runs.
         run: |
           curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check
@@ -113,8 +109,7 @@ jobs:
           elif git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
             range="$PUSH_BEFORE..$GITHUB_SHA"
           else
-            # New branch or force push: `before` is zeros or gone, so scan what
-            # dev does not have yet.
+            # New branch or force push: `before` is zeros or gone.
             range="origin/dev..$GITHUB_SHA"
           fi
           /tmp/gitleaks/gitleaks git --no-banner --redact --log-opts="$range" .

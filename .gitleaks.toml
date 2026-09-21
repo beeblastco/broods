@@ -1,7 +1,5 @@
-# gitleaks config for the pre-commit hook and the CI `secrets-scan` job.
-# Default rules plus the known false positives. Keep every entry as narrow as
-# it can be. An allowlist with no `targetRules` skips its paths outright, even
-# under `condition = "AND"`, so only the fixture-only entry goes without one.
+# An allowlist without `targetRules` skips its paths outright, even under
+# `condition = "AND"`. Only the fixture-only entry goes without one.
 
 [extend]
 useDefault = true
@@ -45,7 +43,7 @@ paths = ['''(^|/)apps/docs/docs/api-reference/openapi\.yaml$''']
 regexes = ['''fp_acct_xyz789''']
 
 [[allowlists]]
-description = "GitHub token committed once in 7664f775, token revoked, history not rewritten."
+description = "Revoked GitHub token in 7664f775, history not rewritten"
 targetRules = ["github-fine-grained-pat", "curl-auth-header"]
 condition = "AND"
 commits = ["7664f775376e56f04bf3931598fcc7beb1b81b0b"]
