@@ -71,9 +71,9 @@ reading an agent still tells you its ceiling.
 Provider, model and credentials stay on the agent and are never touched.
 
 A workspace is capability, not configuration: attaching one is what creates the
-sandbox file tools. So a record may only name a workspace the agent already
-attaches. It can mount that workspace under a channel-specific name, but core
-drops and logs a `workspaceId` the agent does not carry.
+sandbox file tools. So a record only selects among the workspaces the agent
+already attaches, by `workspaceId`. The agent's own mount name and sandbox
+apply. Core drops and logs a `workspaceId` the agent does not carry.
 
 `replyIn` decides where the answer appears. `thread` opens a thread
 on the message that tagged the agent, so the whole exchange stays out of the
@@ -166,7 +166,7 @@ await client.createChannel({
   config: {
     agentBindings: [{ agentId: "agent_nhi", isDefault: true }],
     instructions: "Escalate billing questions to #finance.",
-    // `agent_nhi` must already attach ws_incidents; this mounts it as "incidents" here.
+    // `agent_nhi` must already attach ws_incidents; it mounts under the agent's own name.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
     partition: { alias: "eng", by: "conversation" },
     replyIn: "thread",

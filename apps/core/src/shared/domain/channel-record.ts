@@ -42,7 +42,7 @@ export interface ChannelRecordConfig {
   /** Appended after the agent's own system prompt, never replacing it. */
   instructions?: string;
   agentBindings: ChannelAgentBinding[];
-  /** Narrowing only: entries the agent does not already attach are ignored. */
+  /** Selects among the agent's own refs by workspaceId. `name` is inert; an id the agent does not attach is ignored. */
   workspaces?: AgentWorkspaceRef[];
   /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: string[];
@@ -88,7 +88,7 @@ export function applyChannelRecord(
 ): AgentConfig {
   const channelConfig = record.config;
   const channelSettings = config.channels?.[channelName];
-  const workspaces = mergeWorkspaceRefs(
+  const workspaces = selectWorkspaceRefs(
     config.workspaces,
     channelConfig.workspaces,
   );
@@ -183,18 +183,16 @@ function appendSystemInstructions(
 }
 
 // A workspace is capability, not configuration: attaching one is what materialises
-// the sandbox file tools. So a record may only name a workspace the agent already
-// attaches. Anything else would hand out filesystem access the agent lacks.
-function mergeWorkspaceRefs(
+// the sandbox file tools. So a record only picks among the agent's own refs, name
+// and sandbox included; a ref under a new name would inherit the default sandbox
+// and turn a read-only mount writable.
+function selectWorkspaceRefs(
   agentRefs: AgentWorkspaceRef[] | undefined,
   channelRefs: AgentWorkspaceRef[] | undefined,
 ): AgentWorkspaceRef[] | undefined {
   if (!channelRefs?.length) return undefined;
-  const taken = new Set((agentRefs ?? []).map((ref) => ref.name));
   const attached = new Set((agentRefs ?? []).map((ref) => ref.workspaceId));
-  const allowed = channelRefs.filter(
-    (ref) => !taken.has(ref.name) && attached.has(ref.workspaceId),
-  );
+  const named = new Set(channelRefs.map((ref) => ref.workspaceId));
   for (const ref of channelRefs) {
     if (!attached.has(ref.workspaceId)) {
       logWarn("Channel record workspace ignored: agent does not attach it", {
@@ -204,7 +202,9 @@ function mergeWorkspaceRefs(
     }
   }
 
-  const merged = [...(agentRefs ?? []), ...allowed];
+  const selected = (agentRefs ?? []).filter((ref) =>
+    named.has(ref.workspaceId),
+  );
 
-  return merged.length > 0 ? merged : undefined;
+  return selected.length > 0 ? selected : undefined;
 }
