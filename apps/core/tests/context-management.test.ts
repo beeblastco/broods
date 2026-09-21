@@ -624,6 +624,63 @@ describe("stored item persistence", () => {
     });
   });
 
+  it("writes a two-message step in one fenced mutation", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    const mutate = mock(
+      async (_name: string, _args: Record<string, unknown>) => null,
+    );
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      const session = new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        accountId: "acct",
+        agentId: "agent",
+        agentConfig: {},
+        ownerGeneration: 3,
+      });
+      const cursors = await session.persistModelMessages([
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              input: { shell: "ls" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              output: { type: "text", value: "file.txt" },
+            },
+          ],
+        },
+      ]);
+
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate.mock.calls[0]?.[0]).toBe("appendFencedConversationEvent");
+      expect(mutate.mock.calls[0]?.[1]).toMatchObject({
+        ownerEventId: "event",
+        ownerGeneration: 3,
+        events: [
+          { cursor: cursors[0], event: { message: { role: "assistant" } } },
+          { cursor: cursors[1], event: { message: { role: "tool" } } },
+        ],
+      });
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("drops reasoning nobody sends back rather than storing dead weight", async () => {
     const { createStoredEventFromModelMessage } =
       await import("../src/harness/session.ts");

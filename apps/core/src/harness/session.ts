@@ -444,26 +444,39 @@ export class Session {
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
     if (!this.persist) return [];
-    const createdAtValues: string[] = [];
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),
     };
+    const events = messages.flatMap(
+      (message): { cursor: string; event: StoredConversationEvent }[] => {
+        const event = createStoredEventFromModelMessage(
+          message,
+          this.eventId,
+          producer,
+        );
 
-    for (const message of messages) {
-      const storedEvent = createStoredEventFromModelMessage(
-        message,
-        this.eventId,
-        producer,
-      );
-      if (!storedEvent) {
-        continue;
-      }
+        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
+      },
+    );
+    if (events.length === 0) return [];
 
-      createdAtValues.push(await this.persistStoredEvent(storedEvent));
+    // One mutation per call, so a step is stored whole or not at all.
+    if (this.ownerGeneration !== undefined) {
+      await runtime.mutate("appendFencedConversationEvent", {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+        events: events,
+      });
+    } else {
+      await runtime.mutate("appendConversationEvent", {
+        conversationKey: this.conversationKey,
+        events: events,
+      });
     }
 
-    return createdAtValues;
+    return events.map((entry): string => entry.cursor);
   }
 
   async loadHarnessSession(): Promise<StoredHarnessSession | null> {
@@ -1040,29 +1053,6 @@ export class Session {
     this.messageSequence += 1;
 
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
-  }
-
-  private async persistStoredEvent(
-    event: StoredConversationEvent,
-  ): Promise<string> {
-    const createdAt = this.nextCreatedAt();
-    if (this.ownerGeneration !== undefined) {
-      await runtime.mutate("appendFencedConversationEvent", {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: this.ownerGeneration,
-        cursor: createdAt,
-        event: event,
-      });
-    } else {
-      await runtime.mutate("appendConversationEvent", {
-        conversationKey: this.conversationKey,
-        cursor: createdAt,
-        event: event,
-      });
-    }
-
-    return createdAt;
   }
 }
 

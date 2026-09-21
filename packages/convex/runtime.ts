@@ -2,7 +2,7 @@
  * Transactional persistence for the core runtime.
  */
 
-import { type Infer, v } from "convex/values";
+import { type Infer, type ObjectType, v } from "convex/values";
 import {
   internalMutation,
   internalQuery,
@@ -37,6 +37,14 @@ const RUNTIME_DELETE_BATCH_SIZE = 100;
 // sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
 // without deleting the sandbox first strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
+
+// `events` is a whole step in one write. `cursor` + `event` is the single-event
+// shape core sent before it batched, kept until that core has rolled out.
+export const conversationEventArgs = {
+  cursor: v.optional(v.string()),
+  event: v.optional(v.any()),
+  events: v.optional(v.array(v.object({ cursor: v.string(), event: v.any() }))),
+};
 
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
@@ -131,18 +139,22 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * @returns null after the event is persisted
+ * @returns null after the events are persisted
  */
 export const appendConversationEvent = internalMutation({
-  args: { conversationKey: v.string(), cursor: v.string(), event: v.any() },
+  args: { conversationKey: v.string(), ...conversationEventArgs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
-    await ctx.db.insert("runtimeConversationEvents", {
-      accountId: accountId,
-      ...args,
-    });
+    for (const entry of conversationEventsFromArgs(args)) {
+      await ctx.db.insert("runtimeConversationEvents", {
+        accountId: accountId,
+        conversationKey: args.conversationKey,
+        cursor: entry.cursor,
+        event: entry.event,
+      });
+    }
 
     return null;
   },
@@ -1212,6 +1224,18 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
+
+/** The events either accepted arg shape carries, in the order given. */
+export function conversationEventsFromArgs(
+  args: ObjectType<typeof conversationEventArgs>,
+): { cursor: string; event: unknown }[] {
+  return [
+    ...(args.events ?? []),
+    ...(args.cursor !== undefined
+      ? [{ cursor: args.cursor, event: args.event }]
+      : []),
+  ];
+}
 
 /**
  * @param value account-scoped runtime key
