@@ -23,7 +23,11 @@ import {
   setUngrouped,
   type FlatGraph,
 } from "@/app/lib/canvasFrameEdits";
-import { deriveGroups, serversByNode } from "@/app/lib/canvasFrameNodes";
+import {
+  COLLAPSED_FRAME_HEIGHT,
+  deriveGroups,
+  serversByNode,
+} from "@/app/lib/canvasFrameNodes";
 import {
   agentOwners,
   agentSandboxOrder,
@@ -68,6 +72,8 @@ const KIND_SUBJECT: Record<FrameKind, string> = {
 export type CanvasDrop = {
   /** The frame it would join, or null while its group is still one loose card. */
   frameId: string | null;
+  /** What splits groups of this kind: where a sandbox runs, an MCP transport. */
+  key: string;
   /** Which of the three framed kinds the group holds. */
   kind: FrameKind;
   /** The group's name, as the preview box and the refusal say it. */
@@ -86,8 +92,8 @@ export type CanvasDrop = {
 
 /** A group a dragged card came near: a drawn frame, or a card that is a group on its own. */
 type DropCandidate = Omit<CanvasDrop, "nodeId" | "refusal" | "slot"> & {
-  /** What splits groups of this kind, so a cloud group refuses a machine sandbox. */
-  key: string;
+  /** Collapsed to one card, so it shows no slots to choose between. */
+  collapsed: boolean;
   /** The box on screen the card is measured against. */
   rect: LayoutRect;
 };
@@ -137,6 +143,8 @@ export function applyCanvasDrop(
  * other all the time and only a frame is aimed at.
  */
 export function canvasDropTarget(params: {
+  /** Frames drawn as one card, by id, which take a card but offer it no slot. */
+  collapsedFrames: ReadonlySet<string>;
   /** The chip drawn as a card, which moves the slots under it down. */
   expandedMemberId: string | null;
   graph: FlatGraph;
@@ -144,14 +152,14 @@ export function canvasDropTarget(params: {
   /** Where the card is now, mid-drag, not where it was stored. */
   position: LayoutPosition;
 }): CanvasDrop | null {
-  const { expandedMemberId, graph, nodeId, position } = params;
+  const { collapsedFrames, expandedMemberId, graph, nodeId, position } = params;
   const dragged = graph.nodes.find((node) => node.id === nodeId);
   const group = dragged
     ? frameGroupOf(dragged, serversByNode(graph.mcpServers ?? []))
     : null;
   if (!dragged || !group) return null;
   const box: LayoutRect = { ...position, ...CARD_SIZE };
-  const offers = candidatesFor(graph, nodeId, expandedMemberId)
+  const offers = candidatesFor(graph, nodeId, expandedMemberId, collapsedFrames)
     .map((candidate) => ({
       candidate: candidate,
       gap: rectGap(box, candidate.rect),
@@ -234,6 +242,7 @@ function candidatesFor(
   graph: FlatGraph,
   nodeId: string,
   expandedMemberId: string | null,
+  collapsedFrames: ReadonlySet<string>,
 ): DropCandidate[] {
   const servers = serversByNode(graph.mcpServers ?? []);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -261,8 +270,10 @@ function candidatesFor(
         const positions = frame.memberIds.flatMap(
           (id) => byId.get(id)?.position ?? [],
         );
+        const collapsed = collapsedFrames.has(frame.id);
 
         return {
+          collapsed: collapsed,
           frameId: frame.id,
           key: frame.key,
           kind: frame.kind,
@@ -271,7 +282,10 @@ function candidatesFor(
           ownerIds: [...frame.ownerIds],
           rect: {
             ...frameOriginOf(positions),
-            ...frameSize(frame, expandedMemberId ?? undefined),
+            // Measured by the box it draws, which while collapsed is one card.
+            ...(collapsed
+              ? { height: COLLAPSED_FRAME_HEIGHT, width: NODE_WIDTH }
+              : frameSize(frame, expandedMemberId ?? undefined)),
           },
         };
       }),
@@ -283,6 +297,7 @@ function candidatesFor(
 
       return [
         {
+          collapsed: false,
           frameId: null,
           key: group.key,
           kind: group.kind,
@@ -330,6 +345,7 @@ function offerOf(
   );
   const drop: CanvasDrop = {
     frameId: target.frameId,
+    key: target.key,
     kind: target.kind,
     label: target.label,
     memberIds: target.memberIds,
@@ -358,9 +374,14 @@ function offerOf(
 }
 
 /**
- * Nodes with the drop's order written where the derivation reads it: on each
- * owning agent's `sandboxes` for a sandbox group, on the members themselves for
- * every other kind. An agent code manages keeps the order its project gives it.
+ * Nodes with the drop's order written where the derivation reads it.
+ *
+ * Two groups already order themselves by something that means more than looks,
+ * so neither stores a slot: a sandbox group is its agents' `sandboxes`, which the
+ * drop rewrites instead, and a machine MCP group follows the computers its
+ * servers run on, so that its runs-on edges never cross. Every other group's
+ * order is cosmetic and each member keeps its own slot. An agent code manages
+ * keeps the order its project gives it.
  */
 function orderedNodes(
   nodes: readonly Node[],
@@ -368,6 +389,7 @@ function orderedNodes(
   drop: CanvasDrop,
   order: readonly string[],
 ): Node[] {
+  if (drop.kind === "mcp" && drop.key === "machine") return [...nodes];
   if (drop.kind !== "sandbox") {
     const slots = new Map(order.map((id, index) => [id, index]));
 
@@ -422,6 +444,8 @@ function slotFor(
 
     return centerY < (partner?.position.y ?? 0) + CARD_SIZE.height / 2 ? 0 : 1;
   }
+  // No chips on screen to aim between, so it joins at the end.
+  if (target.collapsed) return target.memberIds.length;
   const expanded = expandedMemberId ?? undefined;
   const positions = frameMemberPositions(
     target.rect,

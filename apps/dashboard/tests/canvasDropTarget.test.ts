@@ -29,6 +29,9 @@ const EDGES: Edge[] = [
 
 const CLOUD_FRAME = "frame:agent:sandbox:cloud";
 
+/** No frame in these graphs is collapsed. */
+const NONE: ReadonlySet<string> = new Set();
+
 /** Just right of the frame, close enough to be offered it, level with its first chip. */
 const BESIDE_FIRST_CHIP = { x: 460, y: 144 };
 
@@ -49,6 +52,21 @@ describe("canvasDropTarget", () => {
     expect(dropAt("lone", { x: 460, y: 200 })?.slot).toBe(2);
   });
 
+  test("a collapsed group takes the card last, having no slot to aim at", () => {
+    const drop = canvasDropTarget({
+      collapsedFrames: new Set([CLOUD_FRAME]),
+      expandedMemberId: null,
+      graph: { edges: EDGES, mcpServers: [], nodes: NODES },
+      nodeId: "lone",
+      // Nearer, since a collapsed frame is one card wide and one card tall.
+      position: { x: 450, y: 144 },
+    });
+
+    expect(drop?.frameId).toBe(CLOUD_FRAME);
+    expect(drop?.refusal).toBeNull();
+    expect(drop?.slot).toBe(2);
+  });
+
   test("a card too far from any group is offered none", () => {
     expect(dropAt("lone", { x: 560, y: 144 })).toBeNull();
   });
@@ -67,6 +85,7 @@ describe("canvasDropTarget", () => {
       node("shared", "sandbox", BESIDE_FIRST_CHIP),
     ];
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: {
         edges: [...EDGES, edge("other", "shared")],
@@ -90,6 +109,7 @@ describe("canvasDropTarget", () => {
       node("lone", "sandbox", BESIDE_FIRST_CHIP),
     ];
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: {
         edges: [edge("cli-agent", "alpha"), edge("cli-agent", "bravo")],
@@ -110,6 +130,7 @@ describe("canvasDropTarget", () => {
       node("lone", "sandbox", { x: 440, y: 172 }),
     ];
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: { edges: [edge("agent", "alpha")], mcpServers: [], nodes: nodes },
       nodeId: "lone",
@@ -131,6 +152,7 @@ describe("canvasDropTarget", () => {
 
     expect(
       canvasDropTarget({
+        collapsedFrames: NONE,
         expandedMemberId: null,
         graph: {
           edges: [edge("agent", "alpha")],
@@ -147,6 +169,7 @@ describe("canvasDropTarget", () => {
     const graph = codeManagedGraph();
     // The cursor is on the first chip, but a `broods/` project owns the order.
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: graph,
       nodeId: "extra",
@@ -208,6 +231,7 @@ describe("applyCanvasDrop", () => {
     ];
     const edges = [edge("agent", "docs"), edge("agent", "notes")];
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: { edges: edges, mcpServers: [], nodes: nodes },
       nodeId: "uploads",
@@ -224,9 +248,61 @@ describe("applyCanvasDrop", () => {
     expect(memberIdsOf(after, "uploads")).toEqual(["uploads", "docs", "notes"]);
   });
 
+  test("a machine MCP group keeps the order its computers give it", () => {
+    const nodes = [
+      node("agent", "agent", { x: 240, y: 0 }, { agentConfigId: "cfg" }),
+      node(
+        "mac",
+        "sandbox",
+        { x: 40, y: 172 },
+        { config: { provider: "machine" } },
+      ),
+      node("srv-one", "mcp", { x: 248, y: 172 }),
+      node("srv-two", "mcp", { x: 248, y: 224 }),
+      node("srv-three", "mcp", BESIDE_FIRST_CHIP, { ungrouped: true }),
+    ];
+    const edges = [
+      edge("agent", "mac"),
+      edge("agent", "srv-one"),
+      edge("agent", "srv-two"),
+      edge("agent", "srv-three"),
+    ];
+    const graph = {
+      edges: edges,
+      mcpServers: ["srv-one", "srv-two", "srv-three"].map((nodeId) => ({
+        disabled: false,
+        name: nodeId,
+        nodeId: nodeId,
+        sandbox: "mac",
+        transport: "machine" as const,
+      })),
+      nodes: nodes,
+    };
+    // Aimed at the first chip, which for this group is not the canvas's call.
+    const drop = canvasDropTarget({
+      collapsedFrames: NONE,
+      expandedMemberId: null,
+      graph: graph,
+      nodeId: "srv-three",
+      position: BESIDE_FIRST_CHIP,
+    });
+    const after = applyCanvasDrop(graph, drop!);
+
+    expect(drop?.refusal).toBeNull();
+    expect(dataOf(after.nodes, "srv-three").frameOrder).toBeUndefined();
+    expect(dataOf(after.nodes, "srv-one").frameOrder).toBeUndefined();
+    // Still the order the labels and the computer give it.
+    expect(
+      deriveGroups(after.nodes, after.edges, graph.mcpServers).find((group) =>
+        group.memberIds.includes("srv-three"),
+      )?.memberIds,
+    ).toEqual(["srv-one", "srv-three", "srv-two"]);
+  });
+
   test("a card put back in its group loses the flag that kept it out", () => {
     const graph = codeManagedGraph();
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: graph,
       nodeId: "extra",
@@ -241,6 +317,7 @@ describe("applyCanvasDrop", () => {
   test("an order code manages is left exactly as its project wrote it", () => {
     const graph = codeManagedGraph();
     const drop = canvasDropTarget({
+      collapsedFrames: NONE,
       expandedMemberId: null,
       graph: graph,
       nodeId: "extra",
@@ -288,6 +365,7 @@ function dataOf(nodes: readonly Node[], id: string): Record<string, unknown> {
 /** The fixture's answer for a card dragged to this spot. */
 function dropAt(nodeId: string, position: Node["position"]): CanvasDrop | null {
   return canvasDropTarget({
+    collapsedFrames: NONE,
     expandedMemberId: null,
     graph: { edges: EDGES, mcpServers: [], nodes: NODES },
     nodeId: nodeId,

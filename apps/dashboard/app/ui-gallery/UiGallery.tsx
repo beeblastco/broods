@@ -728,6 +728,7 @@ function CanvasDropFixture(): React.JSX.Element {
               const next =
                 dragged.length === 1 && grabbed.type !== "frame"
                   ? canvasDropTarget({
+                      collapsedFrames: EMPTY_COLLAPSED,
                       expandedMemberId: null,
                       graph: { edges: edges, mcpServers: [], nodes: nodes },
                       nodeId: grabbed.id,

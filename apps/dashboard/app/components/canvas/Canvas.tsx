@@ -532,7 +532,7 @@ function CanvasInner({
         collapsedFrames,
         expandedMemberId,
         framedGraphRef.current,
-        // Only a frame opens a slot, and only for a drop it will take.
+        // A frame marks the drop it will take; a refused one is outlined instead.
         drop && drop.refusal === null && drop.frameId !== null
           ? { frameId: drop.frameId, slot: drop.slot }
           : null,
@@ -1159,6 +1159,7 @@ function CanvasInner({
       const next =
         dragged.length === 1 && grabbed.type !== "frame"
           ? canvasDropTarget({
+              collapsedFrames: collapsedFrames,
               expandedMemberId: expandedMemberId,
               graph: {
                 edges: edgesRef.current,
@@ -1173,7 +1174,7 @@ function CanvasInner({
       dropRef.current = next;
       setDrop(next);
     },
-    [expandedMemberId, mcpServers],
+    [collapsedFrames, expandedMemberId, mcpServers],
   );
 
   /**

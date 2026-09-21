@@ -38,7 +38,7 @@ export function FrameNode({
   id,
   data,
 }: NodeProps<FrameNodeType>): React.JSX.Element {
-  const { collapsed, dropSlotY, frame, members } = data;
+  const { collapsed, drop, frame, members } = data;
   const frames = useCanvasFrames();
   const infraAnalysis = useInfraAnalysis();
   const now = useNow();
@@ -59,16 +59,16 @@ export function FrameNode({
             // drawing harder than the cards inside it.
             "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
         // The colour mounts and the drop slot share: this group is taking the card.
-        dropSlotY !== undefined && "border-canvas-mount",
+        drop !== undefined && "border-canvas-mount",
       )}
     >
-      {dropSlotY !== undefined && (
+      {drop?.slotY != null && (
         <div
           data-slot="frame-drop-slot"
           className="absolute top-(--drop-slot-y) left-(--drop-slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
           style={{
             "--drop-slot-x": `${FRAME_PADDING}px`,
-            "--drop-slot-y": `${dropSlotY}px`,
+            "--drop-slot-y": `${drop.slotY}px`,
           }}
         />
       )}

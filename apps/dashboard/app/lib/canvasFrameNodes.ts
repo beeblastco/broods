@@ -80,8 +80,12 @@ export type FramedGraph = {
 
 export type FrameNodeData = {
   collapsed: boolean;
-  /** Where a pending drop's slot opens inside the frame, when a card is over it. */
-  dropSlotY?: number;
+  /**
+   * Set while a card is being dropped on this frame. `slotY` is where the slot
+   * it would take opens inside the box, or null for a collapsed frame, which
+   * shows no chips and so leaves no gap.
+   */
+  drop?: { slotY: number | null };
   frame: CanvasFrame;
   /** Flat member nodes in slot order, for the collapsed card's names and summary. */
   members: Node[];
@@ -495,11 +499,9 @@ function framedNodes(
     const isCollapsed = collapsed.has(frame.id);
     // A collapsed frame hides its chips, so nothing in it is open.
     const expanded = isCollapsed ? undefined : (expandedMemberId ?? undefined);
-    // A collapsed frame is one card: it shows no slot, so it leaves none.
-    const pending =
-      pendingDrop?.frameId === frame.id && !isCollapsed
-        ? pendingDrop.slot
-        : null;
+    const taking = pendingDrop !== null && pendingDrop.frameId === frame.id;
+    // A collapsed frame is one card: it draws no chips, so it leaves no gap.
+    const pending = taking && !isCollapsed ? pendingDrop.slot : null;
     const shape =
       pending === null
         ? frame
@@ -520,7 +522,7 @@ function framedNodes(
         collapsed: isCollapsed,
         frame: frame,
         members: members,
-        ...(dropSlot ? { dropSlotY: dropSlot.y } : {}),
+        ...(taking ? { drop: { slotY: dropSlot?.y ?? null } } : {}),
       },
       height: size.height,
       id: frame.id,
