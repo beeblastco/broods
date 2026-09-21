@@ -58,7 +58,7 @@ Where a provider has no document endpoint at all, `send-files` posts the same se
 
 `send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead, as documents where the provider has them, as download links where it does not. Core logs the reason for the rejection and does not show it to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 
-Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/v1/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
+Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/v1/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it.
 
 ## Inbound attachments
 

@@ -83,7 +83,7 @@ flowchart TD
   AgentStore -->|config resolved before session<br/>passed into session for speed| Session
   Handler --> AsyncAgentResult["Convex: runtimeAsyncAgentResults"]
   AsyncTools --> AsyncToolResult["Convex: runtimeAsyncToolResults + groups"]
-  Crons -->|"cron dispatch POST /v1/cron-runs"| Gateway
+  Crons -->|"cron dispatch POST /v1/cron-runs<br/>in-cluster, not through the gateway"| Core
   Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
@@ -117,7 +117,7 @@ flowchart TD
   Account --> Namespace["prefix event/conversation keys<br/>acct:\{accountId\}:..."]
 ```
 
-A third auth path exists for trusted platform services: when `SERVICE_AUTH_SECRET` is configured, a request bearing that secret plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. It is used by the dashboard backend for server-side calls.
+A third auth path exists for trusted platform services: a request bearing `SERVICE_AUTH_SECRET` plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. Only Convex uses it, on core's in-cluster address, and it is refused on any request that came through the gateway. Tickets and media links have their own secrets (see [Operations](./operations.md#service-secrets)).
 
 Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId` and the channel name. They never name an agent: the credentials that verify the request pick the receiving agent, and a [channel record](channels/channel-records.md) binds each place to the agent that answers there.
 
@@ -215,14 +215,13 @@ Direct run access is controlled by `ENABLE_DIRECT_API`. Deploys inject it explic
 
 ## Cron jobs
 
-Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway). One transaction writes the account-scoped `crons` row and its schedule, so neither can orphan the other. A recurring job gets a Convex crons component registration, a one-time `at(...)` job gets a Convex scheduler run. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` through the gateway to the core harness, and the harness starts the configured agent asynchronously.
+Cron jobs are included in the default stack as a small scheduled-agent add-on, not a workflow DSL. The Convex config plane owns cron job create, update, delete, and list operations (`/v1/crons`, forwarded there by the gateway). One transaction writes the account-scoped `crons` row and its schedule, so neither can orphan the other. A recurring job gets a Convex crons component registration, a one-time `at(...)` job gets a Convex scheduler run. When a schedule fires, a Convex action POSTs `{ kind: "cron", accountId, cronId }` straight to the core harness on its in-cluster address (the gateway 404s that route), and the harness starts the configured agent asynchronously.
 
 ```mermaid
 flowchart TD
   Config["Convex config plane<br/>cron create/update/delete/list"] --> Jobs["Convex: crons"]
   Config --> Component["Convex crons component<br/>schedule lifecycle"]
-  Component -->|"dispatch action POST"| Gateway["gateway"]
-  Gateway --> Harness["core harness<br/>(POST /v1/cron-runs)"]
+  Component -->|"dispatch action POST<br/>in-cluster"| Harness["core harness<br/>(POST /v1/cron-runs)"]
   Harness --> Jobs
   Harness -->|"internal async worker event"| Harness
   Harness --> AsyncAgentResult["AsyncAgentResult"]
