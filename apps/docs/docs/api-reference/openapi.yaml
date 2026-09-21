@@ -4056,8 +4056,15 @@ components:
             type: object
             required: [name, workspaceId]
             properties:
-              name: { type: string }
+              name:
+                type: string
+                description: >-
+                  Ignored. The workspace keeps the name the agent attaches it
+                  under.
               workspaceId: { type: string }
+          description: >-
+            Picks among the workspaces the agent already attaches, by
+            workspaceId. An id the agent does not attach is dropped.
         policies:
           type: array
           items: { type: string }
