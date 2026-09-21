@@ -1,4 +1,4 @@
-/** A child never outranks the parent it runs under. */
+/** A child carries the policies and withheld tools of the parent it runs under. */
 
 import { describe, expect, it } from "bun:test";
 import { subagentConfig } from "../src/harness/tools/utils.ts";

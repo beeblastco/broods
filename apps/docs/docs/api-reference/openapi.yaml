@@ -2379,7 +2379,9 @@ paths:
       summary: Delete agent policy
       description: >-
         Refused with 409 while an agent or a channel record still lists the
-        policy in `policies`. Detach it first.
+        policy in `policies`. Detach it first. The check reads the agent's saved
+        config, so deleting a policy a deployed agent still lists makes that
+        agent refuse every action until it is redeployed.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
@@ -4078,7 +4080,8 @@ components:
               workspaceId: { type: string }
           description: >-
             Picks among the workspaces the agent already attaches, by
-            workspaceId. An id the agent does not attach is dropped.
+            workspaceId. An id the agent does not attach is dropped. A record
+            that names only such ids runs with no workspace.
         policies:
           type: array
           items: { type: string }

@@ -81,7 +81,8 @@ type RuntimeToolApproval = Extract<
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
 // any dotted path, so these are usable in rule conditions with no engine change.
-// userRoles is always present: a negated operator needs the attribute to match.
+// userRoles goes out even when empty, because a negated operator only matches an
+// attribute that is present. Only a channel turn, or a subagent under one, gets it.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
