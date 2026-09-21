@@ -542,12 +542,24 @@ async function continueAfterAsyncToolSettlement(
   if (events.length === 0) {
     return { kind: "skip" };
   }
+  const publicConversationKey = eventPublicConversationKey(
+    settled.conversationKey,
+    scope.accountId,
+    scope.agentId,
+  );
+  // A channel session resumes on its record-narrowed config, as a cron does.
+  const target = await resolveReentryTarget({
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    publicConversationKey: publicConversationKey,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+  });
 
   const continuationEvent: DirectInboundEvent = {
     accountId: scope.accountId,
     agentId: scope.agentId,
     runId: createRunId(),
-    agentConfig: toRuntimeAgentConfig(agent.config),
+    agentConfig: target.agentConfig,
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async"
       ? { asyncResultEventId: settled.parentEventId }
@@ -562,11 +574,7 @@ async function continueAfterAsyncToolSettlement(
       : {}),
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
-    publicConversationKey: eventPublicConversationKey(
-      settled.conversationKey,
-      scope.accountId,
-      scope.agentId,
-    ),
+    publicConversationKey: publicConversationKey,
     events: events,
     // An answer joins a live run at its next step boundary; a finished job
     // waits its turn behind the current one.
@@ -2428,7 +2436,8 @@ async function createCronDirectEvent(
 }
 
 /**
- * Where a re-entered conversation (cron, continue) runs and answers. A live
+ * Where a re-entered conversation (cron, continue, a settled background job)
+ * runs and answers. A live
  * channel session keeps its key, its record-narrowed config and its reply
  * target; anything else is the direct `api:` conversation on the given config.
  * The deployment scope is what puts the run's trace on the dashboard stream.
