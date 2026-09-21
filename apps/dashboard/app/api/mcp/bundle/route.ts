@@ -53,8 +53,8 @@ const importAllowlist: Plugin = {
 };
 
 export async function POST(request: Request): Promise<Response> {
-  const contentType = request.headers.get("content-type") ?? "";
-  if (contentType.split(";")[0]!.trim().toLowerCase() !== "application/json") {
+  const mediaType = request.headers.get("content-type")?.split(";")[0];
+  if (mediaType?.trim().toLowerCase() !== "application/json") {
     return Response.json(
       { error: "Content-Type must be application/json" },
       { status: 415 },
@@ -98,8 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       metafile: true,
       plugins: [importAllowlist],
     });
-    // esbuild expands a computed import path itself and never calls onResolve
-    // for it, so the real inputs of the bundle are checked after the build.
+    // esbuild expands a computed import path without calling onResolve.
     const foreign = foreignInputs(result.metafile);
     if (foreign.length > 0) {
       console.warn("mcp bundle refused, inputs outside the allowlist", foreign);
@@ -120,8 +119,7 @@ export async function POST(request: Request): Promise<Response> {
 
     return Response.json({ bundle: result.outputFiles[0]!.text });
   } catch (error) {
-    // Only messages located in the submitted source go back to the caller;
-    // any other message can carry a server path or file contents.
+    // Messages located outside the submitted source can carry server paths.
     const details = isBuildFailure(error)
       ? error.errors
           .flatMap((entry) =>
@@ -146,10 +144,8 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * Lists bundle inputs that are neither the submitted source nor a file under
- * node_modules, plus source imports that are a computed path or resolve
- * outside the allowed packages. Deps of allowed packages stay open because
- * only files inside node_modules import them.
+ * Inputs outside the source and node_modules, plus source imports that are
+ * computed paths or resolve outside the allowed packages.
  */
 function foreignInputs(metafile: Metafile): string[] {
   const foreign = Object.keys(metafile.inputs).filter(

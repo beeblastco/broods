@@ -1,7 +1,4 @@
-/**
- * The bundle route may only inline the submitted source and the allowed
- * packages. Runs from apps/dashboard, so package.json is a file next to it.
- */
+/** Runs from apps/dashboard, so its package.json is reachable by relative path. */
 import { describe, expect, test } from "bun:test";
 import { POST } from "../app/api/mcp/bundle/route";
 
