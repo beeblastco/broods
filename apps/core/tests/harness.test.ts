@@ -791,6 +791,48 @@ describe("runAgentLoop", () => {
     ).toEqual([0, 2, 1]);
   });
 
+  it("aborts and fails the run when the caller stops reading", async () => {
+    installHarnessEnv();
+    streamTextScenario = "real-two-step";
+    const { readAgentFullStream, runAgentLoop } =
+      await import("../src/harness/harness.ts");
+
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        persistModelMessages: async (): Promise<string[]> => [],
+        renewConversationLease: async () => "renewed",
+        applySteeringIngress: async () => null,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      { onFinalText: async () => {}, onErrorText: async () => {} },
+    );
+    for await (const chunk of readAgentFullStream(stream)) {
+      expect(chunk).toMatchObject({ type: "start" });
+      break;
+    }
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe("Caller stopped reading the stream");
+  });
+
   it("sends the error hook when the model finishes with empty text", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -1131,13 +1173,13 @@ describe("runAgentLoop", () => {
     expect(onErrorText).toHaveBeenCalledWith("provider failed");
     expect(usageWrites).toHaveLength(0);
 
-    await stream.ensureFinalized();
+    await stream.ensureFinalized(true);
 
     expect(stream.didFail()).toBe(true);
     expect(usageWrites[0]?.status).toBe("failed");
 
     // Idempotent: a second call (and any later consumeStream) writes nothing more.
-    await stream.ensureFinalized();
+    await stream.ensureFinalized(true);
     expect(usageWrites).toHaveLength(1);
   });
 
@@ -2627,6 +2669,8 @@ function twoStepModel(): MockLanguageModelV4 {
     ],
   });
   const step1 = actualAi.simulateReadableStream<LanguageModelV4StreamPart>({
+    // A reader that stops during step 0 must find the model still running.
+    initialDelayInMs: 20,
     chunks: [
       { type: "stream-start", warnings: [] },
       { type: "text-start", id: "t1" },
