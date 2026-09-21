@@ -9,20 +9,17 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "../harness/sandbox/s3-mount.ts";
+import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
-import type { SandboxConfigRecord } from "../shared/domain/sandbox-config.ts";
 import type { WorkspaceStorageConfig } from "../shared/domain/workspace-config.ts";
 import { optionalEnv, requireEnv } from "../shared/env.ts";
 import { attachmentStorePrefix } from "../shared/media-ticket.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
-import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { releaseExpiredSandboxes } from "../shared/sandbox-cleanup.ts";
 import { skillsBucketName } from "../shared/skills.ts";
 import { getStorage } from "../shared/storage.ts";
-import {
-  agentSandboxReservation,
-  workspaceNamespace,
-} from "../shared/workspaces.ts";
+import { workspaceNamespace } from "../shared/workspaces.ts";
 
 const ACCOUNT_RUNTIME_DELETE_MAX_BATCHES = 100;
 
@@ -67,17 +64,16 @@ export async function deleteAccountRuntimeData(
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
-  // Workspaces reserve on their namespace, agent-level sandboxes on a derived
-  // key; miss either list and machines leak at the provider.
-  const reservedSandboxesReleased = await releaseReservedSandboxes(
-    account.accountId,
-    [
-      ...workspaces.map((w) =>
-        workspaceNamespace(account.accountId, w.workspaceId),
-      ),
-      ...(await agentSandboxReservationKeys(account.accountId)),
-    ],
+  // The stored rows, not keys derived from current configs: an isolated
+  // namespace or a harness key would otherwise leak its machine at the provider.
+  // Before the cascade, which drops the rows and the configs the release needs.
+  const reservations = await runtime.query<ReservedSandbox[]>(
+    "listAccountSandboxReservations",
+    { accountId: account.accountId },
   );
+  const reservedSandboxesReleased = (
+    await releaseExpiredSandboxes(account.accountId, reservations)
+  ).length;
   const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),
     deleteWorkspaceFilesystems(account.accountId, workspaces),
@@ -109,45 +105,6 @@ export async function deleteWorkspaceFilesystem(
   );
 
   return deleteS3Prefix(target.bucket, target.prefix, target.access);
-}
-
-/**
- * The reservation keys this account's agents hold on their agent-level
- * sandboxes. Asks `agentSandboxReservation` so a pinned key releases the machine
- * actually reserved.
- */
-export async function agentSandboxReservationKeys(
-  accountId: string,
-): Promise<string[]> {
-  const storage = getStorage();
-  // Many agents share a few records, so one list beats a query per reference.
-  const [agents, records] = await Promise.all([
-    storage.agents.list(accountId),
-    storage.sandboxConfigs.list(accountId),
-  ]);
-  const recordsById = new Map(
-    records.map((record): [string, SandboxConfigRecord] => [
-      record.sandboxId,
-      record,
-    ]),
-  );
-
-  return agents.flatMap((agent): string[] =>
-    (agent.config.sandboxes ?? []).flatMap((sandboxId): string[] => {
-      const record = recordsById.get(sandboxId);
-      if (!record) {
-        return [];
-      }
-      const key = agentSandboxReservation(
-        record.config,
-        accountId,
-        agent.agentId,
-        record.sandboxId,
-      );
-
-      return key ? [key] : [];
-    }),
-  );
 }
 
 async function deleteConvexRuntimeRows(
