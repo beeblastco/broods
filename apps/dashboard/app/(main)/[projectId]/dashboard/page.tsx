@@ -101,7 +101,9 @@ export default function DashboardPage(): React.JSX.Element {
     generated && generated.endpointId === activeDeployment?.endpointId
       ? generated.key
       : undefined;
-  const observabilityApiKey = generatedKey ?? stageSession;
+  // The ticket first: core lets a member's ticket continue channel sessions,
+  // which the permanent key may not. The fresh key only covers the first mint.
+  const observabilityApiKey = stageSession ?? generatedKey;
   const copyableKey = generatedKey ?? revealedKey;
   const currentKeyError =
     keyError && keyError.stageId === activeStageId ? keyError.msg : null;
