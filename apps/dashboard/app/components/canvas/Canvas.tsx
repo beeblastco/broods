@@ -928,7 +928,7 @@ function CanvasInner({
     [],
   );
   const isValidConnection = useCallback(
-    (connection: Connection | Edge) =>
+    (connection: Connection | Edge): boolean =>
       connectionRefusal(getConnectionGraph(), connection) === null,
     [getConnectionGraph],
   );
@@ -973,7 +973,7 @@ function CanvasInner({
   }, [screenToFlowPosition]);
 
   const onContextMenu = useCallback(
-    (event: React.MouseEvent) => {
+    (event: React.MouseEvent): void => {
       lastRightClick.current = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
@@ -1176,7 +1176,7 @@ function CanvasInner({
   }, [scheduleSave]);
 
   /** Select a card and open its side panel; a click and the menu's Open both land here. */
-  const openNode = useCallback((nodeId: string) => {
+  const openNode = useCallback((nodeId: string): void => {
     // The flat node, so the panel and the re-centre read absolute positions.
     const node = nodesRef.current.find((item) => item.id === nodeId);
     if (!node) return;
@@ -1189,7 +1189,7 @@ function CanvasInner({
 
   /** The menu's Delete: the side panel owns the confirmation, as for the Delete key. */
   const requestNodeDelete = useCallback(
-    (nodeId: string) => {
+    (nodeId: string): void => {
       openNode(nodeId);
       setDeleteRequestToken((token) => token + 1);
     },
