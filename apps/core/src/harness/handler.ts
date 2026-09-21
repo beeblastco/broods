@@ -1398,6 +1398,7 @@ async function handleChannelRequest(
     delivery: {
       kind: "channel",
       channel: event.channelName,
+      ...(event.identity ? { identity: event.identity } : {}),
       source: event.source,
     },
     agentConfig: event.agentConfig ?? {},
@@ -1617,6 +1618,10 @@ async function handleChannelRequest(
         next.delivery.kind === "channel"
           ? (next.delivery.source ?? event.source)
           : event.source;
+      // The queued sender, never the first one: policy reads userId and roles
+      // from here, and the envelope is the only place the sender survived.
+      const identity =
+        next.delivery.kind === "channel" ? next.delivery.identity : undefined;
       activeConfig = next.agentConfig ?? event.agentConfig ?? {};
       session = new Session({
         eventId: next.eventId,
@@ -1627,7 +1632,7 @@ async function handleChannelRequest(
         delivery: {
           kind: "channel",
           channelName: event.channelName,
-          ...(event.identity ? { identity: event.identity } : {}),
+          ...(identity ? { identity: identity } : {}),
           source: source,
         },
         endpointId: event.endpointId,
