@@ -52,6 +52,7 @@ describe("ingress admission payloads", () => {
       delivery: {
         kind: "channel",
         channel: "telegram",
+        identity: { userId: "U2", userRoles: ["dev"] },
         source: { chatId: "chat-1" },
       },
     });
@@ -61,6 +62,13 @@ describe("ingress admission payloads", () => {
       channelName: "telegram",
       source: { chatId: "chat-1" },
     });
+    // The sender rides on the envelope so a queued turn is policed as its own
+    // author, not as whoever owned the run when it was queued.
+    expect(call?.delivery).toEqual(
+      expect.objectContaining({
+        identity: { userId: "U2", userRoles: ["dev"] },
+      }),
+    );
   });
 
   it("persists per-request execution context and covers it in the digest", async () => {
