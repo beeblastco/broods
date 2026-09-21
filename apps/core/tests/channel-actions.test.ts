@@ -358,10 +358,7 @@ describe("discord channel actions", () => {
 
   it("names an unnamed upload from its URL so it can still preview", async (): Promise<void> => {
     const fetchMock = installFetchMock();
-    fetchMock.responses.push(
-      new Response("png-bytes"),
-      jsonResponse({ id: "message-1" }),
-    );
+    fetchMock.responses.push(jsonResponse({ id: "message-1" }));
 
     const actions = createDiscordChannel(
       "bot-token",
@@ -377,17 +374,18 @@ describe("discord channel actions", () => {
       }),
     );
 
-    // The public push endpoint sends a bare URL with no name and no reader.
-    // Uploading that as "file" would arrive extensionless and refuse to preview,
-    // so the name comes off the URL and the bytes are fetched.
+    // An upload named "file" arrives extensionless and refuses to preview, so
+    // the name comes off the URL. The URL fetch itself is pinned and covered in
+    // channels.test.ts; a reader keeps this test off the network.
     await actions.sendImages?.([
-      { type: "image", url: "https://cdn.example.com/a/chart.png?v=2" },
+      {
+        type: "image",
+        url: "https://cdn.example.com/a/chart.png?v=2",
+        fetchData: async (): Promise<Buffer> => Buffer.from("png-bytes"),
+      },
     ]);
 
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
-      "https://cdn.example.com/a/chart.png?v=2",
-    );
-    const form = fetchMock.calls[1]!.init?.body as FormData;
+    const form = fetchMock.calls[0]!.init?.body as FormData;
     const upload = form.get("files[0]") as File;
     expect(upload.name).toBe("chart.png");
     expect(await upload.text()).toBe("png-bytes");

@@ -396,6 +396,10 @@ async function resolveImages(
       "Error: send-images needs either file_paths (workspace files) or urls (public image URLs)",
     );
   }
+  const rejected = urls.find((url) => !/^https?:\/\//i.test(url));
+  if (rejected !== undefined) {
+    return toolError(`Error: not a public http(s) URL: ${rejected}`);
+  }
 
   return urls.map((url): ChannelImage => {
     const name = channelAttachmentName({ type: "image", url: url });

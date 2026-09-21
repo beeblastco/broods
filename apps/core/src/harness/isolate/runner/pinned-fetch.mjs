@@ -1,7 +1,7 @@
 /**
  * SSRF-guarded pinned fetch: resolve the name, validate every address, then
- * connect to the address that was validated. Backs the isolate
- * fetch bridge and inbound attachment fetches in `channel-media.ts`.
+ * connect to the address that was validated. Backs the isolate fetch bridge
+ * and the attachment fetches in `channel-media.ts` and `shared/channels.ts`.
  *
  * Error messages are neutral. Every caller shows them to a different
  * audience, so the isolate bridge adds its own "ctx.fetch" label at its

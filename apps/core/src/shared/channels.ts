@@ -3,6 +3,8 @@
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { Attachment, StreamOptions } from "chat";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
+import { guardedFetch } from "../harness/isolate/runner/pinned-fetch.mjs";
 
 /** Reach every room or sender, instead of only the listed ids. */
 export const CHANNEL_REACH_WILDCARD = "*";
@@ -204,7 +206,9 @@ export interface ChannelAdapter {
  * Bytes for an attachment, for providers that upload rather than fetch. A
  * workspace file arrives with `fetchData` so the object is read straight from
  * storage and only when a provider asks; a picture named by public URL has no
- * such reader, so it is fetched the same way the provider would have.
+ * such reader. The model picks that URL, so it goes through the same pinned
+ * guard as an inbound attachment: no private or metadata address, no other
+ * scheme, no unbounded body.
  */
 export async function channelAttachmentBytes(
   attachment: ChannelFile | ChannelImage,
@@ -212,14 +216,17 @@ export async function channelAttachmentBytes(
   if (attachment.fetchData) {
     return await attachment.fetchData();
   }
-  const response = await fetch(attachment.url);
-  if (!response.ok) {
+  const response = await guardedFetch(attachment.url, undefined, {
+    binary: true,
+    bodyLimitBytes: MAX_ATTACHMENT_BYTES,
+  });
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(
       `Could not read ${attachment.name ?? attachment.url} to upload it (${response.status})`,
     );
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  return Buffer.from(response.bodyBytes);
 }
 
 /**

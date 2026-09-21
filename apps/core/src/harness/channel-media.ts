@@ -45,7 +45,10 @@ import {
   sealMediaTicket,
   type AttachmentMediaTicket,
 } from "../shared/media-ticket.ts";
-import { unreadableMediaNote } from "../shared/media-types.ts";
+import {
+  MAX_ATTACHMENT_BYTES,
+  unreadableMediaNote,
+} from "../shared/media-types.ts";
 import { writeS3Object } from "../shared/s3.ts";
 import type { ResolvedWorkspace } from "../shared/workspaces.ts";
 import {
@@ -74,10 +77,6 @@ export const MEDIA_REFERENCE_SCHEME = "broods-media:";
 // again for every turn that replays it. Small on purpose: core's pod has a
 // gigabyte for everything, and the cache is a courtesy, not the storage.
 const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
-
-// One ceiling for everything stored, matching the public media route: past it
-// the route answers 413 and the link the model was handed would be dead.
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 // Pictures are the one kind a model reads inline on nearly every provider, and
 // a 25 MB one costs far more in tokens than it carries in meaning.
