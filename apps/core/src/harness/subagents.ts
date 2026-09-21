@@ -506,6 +506,7 @@ export class SubagentCoordinator {
       stageSlug: this.parentSession.stageSlug,
       ownerGeneration: ownerGeneration,
       trigger: this.parentSession.trigger,
+      policyDelivery: this.parentSession.policyDelivery,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -957,6 +958,7 @@ export function createEphemeralChildSession(
     agentId: childSession.agentId,
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
+    policyDelivery: childSession.policyDelivery,
     // runAgentLoop reads the deployment scope off the session to stamp
     // project/stage/endpoint_id on the subtask span and to build the live NATS
     // subject. Omitting it left subagent spans carrying only account_id, so
