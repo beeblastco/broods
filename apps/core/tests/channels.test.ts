@@ -52,9 +52,11 @@ describe("channelAttachmentBytes", () => {
 
     await expect(
       channelAttachmentBytes(image("file:///etc/hosts")),
-    ).rejects.toThrow();
+    ).rejects.toThrow("only http(s) URLs are supported");
     await expect(
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
-    ).rejects.toThrow();
+    ).rejects.toThrow(
+      "blocked private or metadata address for 169.254.169.254",
+    );
   });
 });

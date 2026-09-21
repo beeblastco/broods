@@ -202,7 +202,7 @@ function selectWorkspaceRefs(
     }
   }
 
-  const selected = (agentRefs ?? []).filter((ref) =>
+  const selected = (agentRefs ?? []).filter((ref): boolean =>
     named.has(ref.workspaceId),
   );
 

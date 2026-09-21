@@ -3,8 +3,8 @@
  * to a chat provider, and inbound media seals one for the copy kept in the
  * attachment store; the media route opens it to learn which file to stream.
  * Providers store the URL and fetch it lazily, and Zalo re-fetches every time a
- * viewer opens the photo, so the ticket carries no expiry. Rotating the service
- * secret is what revokes every issued link.
+ * viewer opens the photo, so the ticket carries no expiry. Dropping a secret from
+ * `MEDIA_TICKET_SECRET` is what revokes every link sealed with it.
  */
 
 import {
@@ -54,13 +54,38 @@ export function attachmentStorePrefix(accountId: string): string {
 }
 
 /**
- * Decrypts and validates a ticket. Returns null (never throws) on any tamper or
+ * Tries every live secret. Returns null (never throws) on any tamper or
  * wrong-secret failure, so the route answers 404 rather than leaking the reason.
  */
 export function openMediaTicket(
   token: string,
-  secret: string,
+  secrets: string[],
 ): MediaTicket | null {
+  for (const secret of secrets) {
+    const ticket = openWithSecret(token, secret);
+    if (ticket) return ticket;
+  }
+
+  return null;
+}
+
+export function sealMediaTicket(ticket: MediaTicket, secret: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(ticket), "utf-8"),
+    cipher.final(),
+  ]);
+
+  return [
+    TICKET_VERSION,
+    iv.toString("base64url"),
+    cipher.getAuthTag().toString("base64url"),
+    ciphertext.toString("base64url"),
+  ].join(".");
+}
+
+function openWithSecret(token: string, secret: string): MediaTicket | null {
   const [version, iv, tag, ciphertext, extra] = token.split(".");
   if (
     version !== TICKET_VERSION ||
@@ -103,24 +128,7 @@ export function openMediaTicket(
   }
 }
 
-export function sealMediaTicket(ticket: MediaTicket, secret: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(ticket), "utf-8"),
-    cipher.final(),
-  ]);
-
-  return [
-    TICKET_VERSION,
-    iv.toString("base64url"),
-    cipher.getAuthTag().toString("base64url"),
-    ciphertext.toString("base64url"),
-  ].join(".");
-}
-
-// Derived, not the raw service secret, so a leaked media key can never stand in
-// for service-to-service auth.
+// The purpose label keeps this key distinct from every other ticket kind's.
 function ticketKey(secret: string): Buffer {
   return createHash("sha256").update(`workspace-media-link:${secret}`).digest();
 }

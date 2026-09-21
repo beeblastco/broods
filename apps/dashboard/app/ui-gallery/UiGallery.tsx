@@ -508,7 +508,7 @@ function CanvasConnectFixture(): React.JSX.Element {
   return (
     <InfraAnalysisProvider value={CONNECT_ANALYSIS}>
       <CanvasFramesProvider value={frames}>
-        <div className="h-96 w-[52rem] rounded-lg border border-border">
+        <div className="h-96 w-full max-w-[52rem] rounded-lg border border-border">
           <ReactFlow
             nodes={graph.nodes}
             edges={graph.edges}
