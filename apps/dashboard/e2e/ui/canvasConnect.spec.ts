@@ -62,6 +62,29 @@ test("a refused connection says why, while aimed and after the drop", async ({
   await expect(notice).toHaveCount(0);
 });
 
+/**
+ * The notice sized to its sentence alone, so on a canvas narrower than the
+ * sentence it ran past both edges and React Flow clipped it.
+ */
+test("the refusal notice stays inside a narrow canvas", async ({ page }) => {
+  await page.setViewportSize({ height: 800, width: 340 });
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-connect"]');
+  await fixture.scrollIntoViewIfNeeded();
+
+  await aimFromAgent(page, fixture, "alpha", "box-one");
+  const notice = await fixture
+    .locator('[data-slot="canvas-refusal"]')
+    .boundingBox();
+  const canvas = await fixture.locator(".react-flow").boundingBox();
+  await page.mouse.up();
+
+  expect(notice?.x ?? -1).toBeGreaterThanOrEqual(canvas?.x ?? 0);
+  expect((notice?.x ?? 0) + (notice?.width ?? Infinity)).toBeLessThanOrEqual(
+    (canvas?.x ?? 0) + (canvas?.width ?? 0),
+  );
+});
+
 /** Press the agent's bottom handle and release over the target's middle. */
 async function dragFromAgent(
   page: Page,

@@ -39,7 +39,7 @@ import type {
   SandboxConfig,
   SandboxProvider,
 } from "../shared/domain/sandbox-config.ts";
-import { requireEnv } from "../shared/env.ts";
+import { requireSecretsEnv } from "../shared/env.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -513,7 +513,7 @@ async function openSandboxTerminal(
   const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
   const token = sealTerminalTicket(
     { ...target, accountId: context.accountId, expiresAt: expiresAt },
-    requireEnv("SERVICE_AUTH_SECRET"),
+    requireSecretsEnv("TERMINAL_TICKET_SECRET")[0],
   );
   await context.audit("ok", { status: "running" });
 
