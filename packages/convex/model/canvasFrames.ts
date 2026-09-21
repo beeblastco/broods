@@ -89,6 +89,9 @@ export type FrameGroup = {
 
 export type FrameKind = "sandbox" | "workspace" | "mcp";
 
+/** The place a drop gave a member, and the group it was given in. */
+export type FrameSlot = { group: string; slot: number };
+
 /** What frame geometry reads from a group. */
 export type FrameShape = Pick<CanvasFrame, "kind" | "memberIds">;
 
@@ -605,10 +608,9 @@ export function workspaceSandboxIds(
  *
  * It names the group it was given in, because a group's id is its members' kind,
  * key and owning agents: re-wire a card to another agent and the slot it was
- * given somewhere else stops counting instead of following it there. Sandbox
- * groups are ordered by their agents' `sandboxes` instead, so nothing writes
- * this on a sandbox: the chip's place and the place its badge shows stay the
- * same number.
+ * given somewhere else stops counting instead of following it there. A group
+ * that orders itself carries none of these, so a sandbox chip's place and the
+ * place its badge shows stay the same number.
  */
 function handSlotOf(node: LayoutNode, frameId: string): number {
   const stored: unknown = node.data.frameSlot;

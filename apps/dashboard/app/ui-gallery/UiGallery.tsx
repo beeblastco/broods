@@ -9,6 +9,7 @@ import {
   CanvasControls,
   FIT_VIEW_OPTIONS,
 } from "@/app/components/canvas/CanvasControl";
+import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
 import {
   CanvasFramesProvider,
   type CanvasFramesValue,
@@ -40,7 +41,6 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
-import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
 import {
   applyCanvasDrop,
   canvasDropTarget,

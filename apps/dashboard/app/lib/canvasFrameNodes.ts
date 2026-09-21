@@ -54,15 +54,15 @@ import type { FunctionReturnType } from "convex/server";
 /** Id prefix of the one edge drawn from an agent to a frame. */
 export const BUNDLE_EDGE_PREFIX = "bundle:";
 
+/** A collapsed frame is one card: header, member names, summary, at a card's size. */
+export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
+
 /**
  * The id a pending drop's slot holds in a frame's member list. No node carries
  * it: it sits in the list only so the frame's own geometry leaves a gap for the
  * card about to land, and the chips under it slide down on their own transition.
  */
-const DROP_SLOT_ID = "canvas-drop-slot";
-
-/** A collapsed frame is one card: header, member names, summary, at a card's size. */
-export const COLLAPSED_FRAME_HEIGHT = NODE_HEIGHT;
+export const DROP_SLOT_ID = "canvas-drop-slot";
 
 const EDGE_CORNER_RADIUS = 8;
 
@@ -81,9 +81,9 @@ export type FramedGraph = {
 export type FrameNodeData = {
   collapsed: boolean;
   /**
-   * Set while a card is being dropped on this frame. `slotY` is where the slot
-   * it would take opens inside the box, or null for a collapsed frame, which
-   * shows no chips and so leaves no gap.
+   * Set while this frame is taking a card, which is a drop it will accept: a
+   * refused one is outlined instead. `slotY` is where the slot opens inside the
+   * box, and null for a collapsed frame, which draws no chips to open one.
    */
   drop?: { slotY: number | null };
   frame: CanvasFrame;
@@ -93,7 +93,7 @@ export type FrameNodeData = {
 
 export type FrameNodeType = Node<FrameNodeData, "frame">;
 
-/** The frame a dragged card is over, and the slot it would take in it. */
+/** The frame taking a dragged card, and the slot it would take in it. */
 export type PendingDrop = { frameId: string; slot: number };
 
 /**
@@ -534,7 +534,7 @@ function framedNodes(
       width: size.width,
     });
     for (const [id, slot] of slotPositions) {
-      slots.set(id, slot);
+      if (id !== DROP_SLOT_ID) slots.set(id, slot);
     }
   }
   const placed = new Set<string>();
@@ -853,8 +853,11 @@ function stepToward(
   };
 }
 
-/** A frame's member ids with the pending drop's placeholder at the slot it would take. */
-function withDropSlot(memberIds: readonly string[], slot: number): string[] {
+/** A frame's member ids, with {@link DROP_SLOT_ID} in the slot a drop would take. */
+export function withDropSlot(
+  memberIds: readonly string[],
+  slot: number,
+): string[] {
   const ids = [...memberIds];
   ids.splice(slot, 0, DROP_SLOT_ID);
 

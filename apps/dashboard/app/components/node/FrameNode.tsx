@@ -19,8 +19,8 @@ import {
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { useNow } from "@/app/hooks/useNow";
-import { FRAME_PADDING } from "@broods/convex/model/canvasFrames";
 import type { FrameNodeType } from "@/app/lib/canvasFrameNodes";
+import { FRAME_PADDING } from "@broods/convex/model/canvasFrames";
 import type { CanvasInfraAnalysis } from "@/app/lib/canvasRuntimeRefs";
 import { machineStateByName } from "@/app/lib/machineConnection";
 import {
@@ -60,14 +60,16 @@ export function FrameNode({
           : // Dashed and lighter than a card's, so a group reads as one box without
             // drawing harder than the cards inside it.
             "border-dashed border-muted-foreground/45 bg-transparent hover:border-muted-foreground/70",
-        // The colour mounts and the drop slot share: this group is taking the card.
+        // Mount teal, the colour the slot below wears too: this group is taking it.
         drop !== undefined && "border-canvas-mount",
       )}
     >
       {drop?.slotY != null && (
         <div
           data-slot="frame-drop-slot"
-          className="absolute top-(--drop-slot-y) left-(--drop-slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
+          // h-11 by w-44 is FRAME_CHIP_HEIGHT by FRAME_CHIP_WIDTH, the slot the
+          // geometry left. It takes no clicks: the chip it sits over keeps them.
+          className="pointer-events-none absolute top-(--drop-slot-y) left-(--drop-slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
           style={{
             "--drop-slot-x": `${FRAME_PADDING}px`,
             "--drop-slot-y": `${drop.slotY}px`,

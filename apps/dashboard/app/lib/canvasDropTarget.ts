@@ -12,8 +12,8 @@
  * card never lands and then springs back when the save runs.
  *
  * Pure and exported on purpose, like `canvasConnections.ts`: the `/ui-gallery`
- * drag fixture drives this exact function, so a spec drags a real card across a
- * real frame and gets the real answer.
+ * drag fixture drives these functions, so a spec exercises the rules themselves
+ * rather than a copy of them.
  */
 import {
   connectionEdge,
@@ -21,7 +21,9 @@ import {
 } from "@/app/components/canvas/edgeOwnership";
 import { connectionRefusal } from "@/app/lib/canvasConnections";
 import {
+  CARD_SIZE,
   cardLabel,
+  framedGroups,
   introducedRuntimeRefsProblem,
   setUngrouped,
   type FlatGraph,
@@ -39,24 +41,19 @@ import {
   frameGroupOf,
   frameMemberPositions,
   frameOriginOf,
-  framesOf,
   frameSize,
   memberSlotHeight,
   type CanvasFrame,
   type FrameKind,
 } from "@broods/convex/model/canvasFrames";
 import {
-  NODE_HEIGHT,
   NODE_WIDTH,
   type LayoutPosition,
   type LayoutRect,
 } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node } from "@xyflow/react";
 
-/** The box every card has, the one the dragged card is judged by. */
-const CARD_SIZE = { height: NODE_HEIGHT, width: NODE_WIDTH };
-
-/** How near a card's box comes to a group's, in flow pixels, before it is offered it. */
+/** How near a card's box must come to a group's, in flow pixels, to be offered it. */
 const DROP_RANGE = 40;
 
 /** How a refusal names the group a card is over. */
@@ -275,9 +272,7 @@ function candidatesFor(
 ): DropCandidate[] {
   const servers = serversByNode(graph.mcpServers ?? []);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
-  const frames = framesOf(
-    deriveGroups(graph.nodes, graph.edges, graph.mcpServers),
-  );
+  const frames = framedGroups(graph, graph.nodes);
   const framed = new Set(frames.flatMap((frame) => frame.memberIds));
   const drawn = new Set(frames.map((frame) => frame.id));
   // Groups as they would be with nothing pulled out, so a card holding the flag
@@ -347,7 +342,10 @@ function candidatesFor(
   ];
 }
 
-/** The group a node lands in once the drop is applied, or null when it lands in none. */
+/**
+ * The group a node lands in once the drop is applied. Re-derived rather than
+ * read off the drop, because working that group out is the point of the call.
+ */
 function groupOf(
   after: { edges: Edge[]; nodes: Node[] },
   mcpServers: FlatGraph["mcpServers"],
@@ -401,7 +399,7 @@ function offerOf(
     target.memberIds.every((id) => landed.memberIds.includes(id));
   // The layout write refuses a graph that breaks a runtime rule, so a drop that
   // would break one is refused here rather than saved and rolled back. Reordering
-  // an agent's sandboxes can: only its first backs a workspace.
+  // an agent's sandboxes can break one, since only its first backs a workspace.
   const problem =
     after !== null && joined
       ? introducedRuntimeRefsProblem(
@@ -545,7 +543,12 @@ function splitReason(
     return `${cardLabel(dragged)} does not join ${target.label}.`;
   }
 
-  return `${cardLabel(dragged)} answers to ${others.join(" and ")} as well, so it groups on its own.`;
+  const named =
+    others.length > 2
+      ? `${others.slice(0, 2).join(", ")} and ${others.length - 2} more`
+      : others.join(" and ");
+
+  return `${cardLabel(dragged)} answers to ${named} as well, so it groups on its own.`;
 }
 
 /** The agents a node already has an edge to, whichever end of it the node is. */

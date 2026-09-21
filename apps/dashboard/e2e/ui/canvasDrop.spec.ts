@@ -1,15 +1,20 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// How many steps a drag takes. The drop target is read off mousemove, so one
-// jump from start to finish never crosses the group it lands on.
+/** A spot on screen, which is where every drag in here is aimed. */
+type Point = { x: number; y: number };
+
+/**
+ * How many steps a drag takes. The drop target is read off mousemove, so one
+ * jump from start to finish never crosses the group it lands on.
+ */
 const DRAG_STEPS = 12;
+
+/** The gap between two slots, added to the frame along with the slot. */
+const SLOT_GAP = 8;
 
 /** A chip's slot, the height a pending slot adds to the frame. */
 const SLOT_HEIGHT = 44;
-
-/** The gap between two slots, added with the slot. */
-const SLOT_GAP = 8;
 
 /**
  * Nothing used to happen when a card was dragged onto a group: membership is
@@ -26,9 +31,10 @@ test("a card dragged onto a frame opens a slot and lands in it", async ({
   const slot = fixture.locator('[data-slot="frame-drop-slot"]');
   const closedHeight = (await frame.boundingBox())?.height ?? 0;
   // The gallery fits the graph to its box, so every length on screen carries
-  // that zoom. A chip is 44 flow pixels tall, which gives it.
+  // that zoom. A chip is SLOT_HEIGHT flow pixels tall, which recovers it.
   const chip = await nodeOf(fixture, "box-one").boundingBox();
-  const zoom = (chip?.height ?? SLOT_HEIGHT) / SLOT_HEIGHT;
+  if (!chip) throw new Error("box-one has no box");
+  const zoom = chip.height / SLOT_HEIGHT;
 
   await aim(page, fixture, "spare", await aboveMiddleOf(fixture, "box-one"));
   await expect(slot).toBeVisible();
@@ -136,10 +142,7 @@ test("two loose cards outline the group they would form", async ({ page }) => {
 });
 
 /** A point in a chip's top half, where a card's middle lands above that chip. */
-async function aboveMiddleOf(
-  fixture: Locator,
-  nodeId: string,
-): Promise<{ x: number; y: number }> {
+async function aboveMiddleOf(fixture: Locator, nodeId: string): Promise<Point> {
   const box = await nodeOf(fixture, nodeId).boundingBox();
   if (!box) throw new Error(`${nodeId} has no box`);
 
@@ -151,15 +154,14 @@ async function aim(
   page: Page,
   fixture: Locator,
   nodeId: string,
-  to: { x: number; y: number },
+  to: Point,
 ): Promise<void> {
   const from = await centreOf(nodeOf(fixture, nodeId));
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  // React Flow starts the drag on the first move PAST its 1px threshold and
-  // counts the card's travel from there, so a coarse first step would leave the
-  // card that far behind the cursor for the whole drag. Three pixels clears the
-  // threshold and costs three.
+  // React Flow counts the card's travel from the first move past its 1px
+  // threshold, so nudge 3px before the real steps: a coarse first one would
+  // leave the card that far behind the cursor for the whole drag.
   await page.mouse.move(from.x, from.y + 3);
   for (let step = 1; step <= DRAG_STEPS; step++) {
     await page.mouse.move(
@@ -170,17 +172,14 @@ async function aim(
 }
 
 /** A point in a chip's bottom half, where a card's middle lands below that chip. */
-async function belowMiddleOf(
-  fixture: Locator,
-  nodeId: string,
-): Promise<{ x: number; y: number }> {
+async function belowMiddleOf(fixture: Locator, nodeId: string): Promise<Point> {
   const box = await nodeOf(fixture, nodeId).boundingBox();
   if (!box) throw new Error(`${nodeId} has no box`);
 
   return { x: box.x + box.width / 2, y: box.y + box.height - 4 };
 }
 
-async function centreOf(locator: Locator): Promise<{ x: number; y: number }> {
+async function centreOf(locator: Locator): Promise<Point> {
   const box = await locator.boundingBox();
   if (!box) throw new Error("element has no box");
 

@@ -6,6 +6,7 @@ import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import type { WorkspaceSandboxState } from "@/app/lib/canvasRuntimeRefs";
 import type { MemberStatus } from "@/app/lib/memberStatus";
 import { cn } from "@/app/lib/utils";
+import type { FrameSlot } from "@broods/convex/model/canvasFrames";
 import {
   CARD_STATUS_ROW,
   NODE_HEIGHT,
@@ -26,11 +27,8 @@ export type BaseNodeData = {
   properties?: { color: string };
   /** Pulled out of its group by hand: it draws as a card, never as a chip. */
   ungrouped?: boolean;
-  /**
-   * The slot a drop gave it, 0 first, and the group it was given in. Unset, or
-   * set for another group, means the sort decides.
-   */
-  frameSlot?: { group: string; slot: number };
+  /** Where a drop put it, and in which group; unset means the sort decides. */
+  frameSlot?: FrameSlot;
   // CLI-resolved forced read-only state for a workspace node (e.g. a `sandbox: null`
   // ref with no other writer). The pure-canvas graph can't express it, so analysis
   // honors this flag over the topology-inferred "inherited" state.

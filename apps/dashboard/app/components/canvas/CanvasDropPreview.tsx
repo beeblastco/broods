@@ -12,6 +12,7 @@ import {
   RefusedOutline,
 } from "@/app/components/canvas/CanvasRefusal";
 import type { CanvasDrop } from "@/app/lib/canvasDropTarget";
+import { DROP_SLOT_ID, withDropSlot } from "@/app/lib/canvasFrameNodes";
 import {
   FRAME_HEADER_HEIGHT,
   FRAME_PADDING,
@@ -20,9 +21,6 @@ import {
   type FrameKind,
 } from "@broods/convex/model/canvasFrames";
 import { useInternalNode, ViewportPortal } from "@xyflow/react";
-
-/** The id the pending slot holds while the frame is only a preview. */
-const SLOT_ID = "canvas-drop-preview-slot";
 
 export function CanvasDropPreview({
   drop,
@@ -40,7 +38,8 @@ export function CanvasDropPreview({
       </>
     );
   }
-  // An existing frame answers for itself: it grows and marks the slot.
+  // An existing frame answers for itself: it grows and marks the slot. Anything
+  // else here would be a group of one, which is the only shape that forms.
   if (drop.frameId !== null || drop.memberIds.length !== 1) return null;
 
   return (
@@ -74,14 +73,13 @@ function FormingFrame({
 }): React.JSX.Element | null {
   const member = useInternalNode(memberId);
   if (!member) return null;
-  const shape = { kind: kind, memberIds: [memberId] };
-  shape.memberIds.splice(slot, 0, SLOT_ID);
+  const shape = { kind: kind, memberIds: withDropSlot([memberId], slot) };
   const size = frameSize(shape);
   const origin = {
     x: member.internals.positionAbsolute.x - FRAME_PADDING,
     y: member.internals.positionAbsolute.y - FRAME_HEADER_HEIGHT,
   };
-  const slotAt = frameMemberPositions(origin, shape).get(SLOT_ID);
+  const slotAt = frameMemberPositions(origin, shape).get(DROP_SLOT_ID);
 
   return (
     <ViewportPortal>
@@ -95,6 +93,7 @@ function FormingFrame({
           "--preview-y": `${origin.y}px`,
         }}
       >
+        {/* h-7 is FRAME_HEADER_HEIGHT, as the frame's own header is. */}
         <div className="flex h-7 items-center px-2.5 text-2xs text-canvas-mount">
           {label}
         </div>
@@ -102,6 +101,7 @@ function FormingFrame({
       {slotAt && (
         <div
           data-slot="canvas-drop-preview-slot"
+          // h-11 by w-44 is FRAME_CHIP_HEIGHT by FRAME_CHIP_WIDTH, a chip's slot.
           className="pointer-events-none absolute top-(--slot-y) left-(--slot-x) h-11 w-44 rounded-md border border-dashed border-canvas-mount bg-canvas-mount/10"
           style={{
             "--slot-x": `${slotAt.x}px`,

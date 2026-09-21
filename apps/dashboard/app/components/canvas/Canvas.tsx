@@ -1181,8 +1181,11 @@ function CanvasInner({
   );
 
   /**
-   * Settle a drop. ReactFlow snaps the grabbed card to the dot grid and moves
-   * the rest of the selection by the same offset, so nothing stops a card from
+   * Settle a drop. A card let go over a group it can join is handed to the
+   * group, which lays it out, and this stops there.
+   *
+   * Otherwise ReactFlow snaps the grabbed card to the dot grid and moves the
+   * rest of the selection by the same offset, so nothing stops a card from
    * landing on top of another. Every dragged card steps to the nearest clear
    * spot, grabbed card first. A dragged frame stays where it snapped and its
    * members already moved with it.

@@ -14,6 +14,17 @@ import { deriveGroups } from "../app/lib/canvasFrameNodes";
  * alpha, and a lone cloud sandbox nothing wires yet. The frame's box runs from
  * (240, 144) to (432, 276): two chips, a header and its padding.
  */
+/** Just right of the frame, close enough to be offered it, level with its first chip. */
+const BESIDE_FIRST_CHIP = { x: 460, y: 144 };
+
+const CLOUD_FRAME = "frame:agent:sandbox:cloud";
+
+const EDGES: Edge[] = [
+  edge("agent", "alpha"),
+  edge("agent", "bravo"),
+  edge("agent", "notes"),
+];
+
 const NODES: Node[] = [
   node("agent", "agent", { x: 240, y: 0 }, { agentConfigId: "cfg" }),
   node("alpha", "sandbox", { x: 248, y: 172 }),
@@ -22,19 +33,8 @@ const NODES: Node[] = [
   node("lone", "sandbox", { x: 960, y: 480 }),
 ];
 
-const EDGES: Edge[] = [
-  edge("agent", "alpha"),
-  edge("agent", "bravo"),
-  edge("agent", "notes"),
-];
-
-const CLOUD_FRAME = "frame:agent:sandbox:cloud";
-
 /** No frame in these graphs is collapsed. */
 const NONE: ReadonlySet<string> = new Set();
-
-/** Just right of the frame, close enough to be offered it, level with its first chip. */
-const BESIDE_FIRST_CHIP = { x: 460, y: 144 };
 
 describe("canvasDropTarget", () => {
   test("a card beside a frame it belongs in takes the slot under the cursor", () => {
@@ -504,11 +504,11 @@ function codeManagedGraph(): FlatGraph {
   };
 }
 
-function dataOf(nodes: readonly Node[], id: string): Record<string, unknown> {
+function dataOf(nodes: readonly Node[], id: string): Node["data"] {
   return nodes.find((item) => item.id === id)?.data ?? {};
 }
 
-/** The fixture's answer for a card dragged to this spot. */
+/** What the rules answer for a card dragged to this spot on the graph above. */
 function dropAt(nodeId: string, position: Node["position"]): CanvasDrop | null {
   return canvasDropTarget({
     collapsedFrames: NONE,
@@ -537,9 +537,9 @@ function memberIdsOf(
 
 function node(
   id: string,
-  type: string,
-  position: { x: number; y: number },
-  data: Record<string, unknown> = {},
+  type: Node["type"],
+  position: Node["position"],
+  data: Node["data"] = {},
 ): Node {
   return {
     data: { label: id, ...data },
