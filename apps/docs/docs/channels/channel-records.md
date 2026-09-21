@@ -73,7 +73,8 @@ Provider, model and credentials stay on the agent and are never touched.
 A workspace is capability, not configuration: attaching one is what creates the
 sandbox file tools. So a record only selects among the workspaces the agent
 already attaches, by `workspaceId`. The agent's own mount name and sandbox
-apply. Core drops and logs a `workspaceId` the agent does not carry.
+apply. Core drops and logs a `workspaceId` the agent does not carry. A record
+that names only such ids runs with no workspace, not with the agent's full list.
 
 `replyIn` decides where the answer appears. `thread` opens a thread
 on the message that tagged the agent, so the whole exchange stays out of the

@@ -187,4 +187,36 @@ describe("publicHostFetch", () => {
       "https://93.184.216.34/v1/models",
     ]);
   });
+
+  it("resolves again after the pinned address fails to connect", async () => {
+    const lookup = spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4, ttl: 30 }])
+      .mockResolvedValueOnce([
+        { address: "93.184.216.35", family: 4, ttl: 30 },
+      ]);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      if (urls.length === 1) {
+        throw new Error("connection refused");
+      }
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await expect(
+        publicHostFetch("https://api.example.com/v1/chat"),
+      ).rejects.toThrow("connection refused");
+      await publicHostFetch("https://api.example.com/v1/chat");
+
+      expect(lookup).toHaveBeenCalledTimes(2);
+    } finally {
+      lookup.mockRestore();
+    }
+
+    expect(urls).toEqual([
+      "https://93.184.216.34/v1/chat",
+      "https://93.184.216.35/v1/chat",
+    ]);
+  });
 });

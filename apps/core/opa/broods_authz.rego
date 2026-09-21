@@ -47,7 +47,7 @@ decision := {
   "allowed": true,
   "mode": mode,
   "reason": sprintf("Audited by policy rule %s: would deny, policy is not enforcing", [audited_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
   count(blocking_rules) == 0
@@ -59,14 +59,13 @@ decision := {
   "allow": true,
   "allowed": true,
   "mode": mode,
-  "reason": sprintf("Allowed by policy rule %s", [allow_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "reason": sprintf("Allowed by policy rule %s", [opening_rules[0].id]),
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [],
 } if {
   count(blocking_rules) == 0
   count(audited_rules) == 0
-  count(allow_rules) > 0
-  open
+  count(opening_rules) > 0
 }
 
 decision := {
@@ -88,6 +87,12 @@ decision := {
 open if count(enforcing_allow_rules) > 0
 
 open if not enforcing
+
+# The allow rules that opened the place. An audit policy's allow rule beside an
+# enforcing one opened nothing, so the verdict does not name it.
+opening_rules := enforcing_allow_rules if enforcing
+
+opening_rules := allow_rules if not enforcing
 
 # Only an enforcing policy's deny actually refuses.
 blocking_rules := [rule |

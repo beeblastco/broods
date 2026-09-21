@@ -194,6 +194,31 @@ const CASES: DecisionCase[] = [
     auditedRuleIds: [],
     allow: false,
   },
+  {
+    name: "audited allow beside the enforcing allow that opened is not named",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "audit",
+          rules: [
+            { id: "trial", effect: "allow", actions: ["tool.call"] },
+            { id: "watch", effect: "deny", actions: ["tool.call"] },
+          ],
+        },
+        {
+          mode: "enforce",
+          rules: [
+            { id: "allow-bash", effect: "allow", actions: ["tool.call"] },
+          ],
+        },
+      ],
+    },
+    matchedRuleIds: ["allow-bash"],
+    auditedRuleIds: ["watch"],
+    allow: true,
+  },
 ];
 
 async function main(): Promise<number> {
