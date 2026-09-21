@@ -2,7 +2,7 @@
  * Shared validation for MCP server registrations (#331). One normalizer
  * serves every write path (CLI sync, direct API, dashboard). A `url` makes an "http" row
  * core connects to over the stateless 2026-07-28 transport; a `bundle` makes
- * a "hosted" row served by the tool-runner Lambda, hashed here so sha256
+ * a "hosted" row served by the mcp-runner Lambda, hashed here so sha256
  * always travels with the bundle. Auth header values may carry ${NAME}
  * account env refs; they resolve into the encrypted agent config at sync
  * time, never on this row, and credential-bearing headers must use one

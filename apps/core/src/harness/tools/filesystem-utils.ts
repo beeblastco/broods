@@ -20,7 +20,7 @@ import {
   readS3Text,
   s3ObjectExists,
 } from "../../shared/s3.ts";
-import { getHarnessPublicUrl, requireEnv } from "../../shared/env.ts";
+import { getHarnessPublicUrl, requireSecretsEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
 import { logWarn } from "../../shared/log.ts";
 import {
@@ -578,7 +578,7 @@ export async function workspaceMediaUrl(
       namespace: ws.namespace,
       path: rel,
     },
-    requireEnv("SERVICE_AUTH_SECRET"),
+    requireSecretsEnv("MEDIA_TICKET_SECRET")[0],
   );
 
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;

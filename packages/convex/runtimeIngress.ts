@@ -111,6 +111,9 @@ const ownerRenewalResultValidator = v.union(
   v.literal("stale"),
 );
 
+// The part of a channel delivery that names who sent the message.
+type DeliverySender = { identity?: { userId?: string } } | null | undefined;
+
 type PublicDeploymentIngress = {
   accountId: string;
   endpointId: string;
@@ -352,8 +355,17 @@ export const applySteering = internalMutation({
       )
       .take(MAX_DRAIN_ENVELOPES);
     const active = rows.filter((row) => row.expiresAt > now);
-    const selected =
-      active[0]?.requestedMode === "steer" ? contiguousModePrefix(active) : [];
+    const steering = active[0]?.requestedMode === "steer";
+    // A steer joins the running turn, so it must come from that turn's sender.
+    const owner = steering
+      ? await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+          .unique()
+      : null;
+    const selected = steering
+      ? contiguousModePrefix(active, owner?.delivery)
+      : [];
     if (selected.length === 0) {
       if (
         queue.queuedCount !== coordinator.queuedCount ||
@@ -1014,14 +1026,23 @@ function ingressStatusResult(
   };
 }
 
-/** The leading run of rows that share the first row's requestedMode. */
+/**
+ * The leading run of rows that share the first row's requestedMode and the
+ * sender's userId, so one turn never runs two people's messages.
+ */
 function contiguousModePrefix(
   rows: Doc<"runtimeIngressEnvelopes">[],
+  sender: DeliverySender = rows[0]?.delivery,
 ): Doc<"runtimeIngressEnvelopes">[] {
   if (rows.length === 0) return [];
-  const end = rows.findIndex(
-    (row) => row.requestedMode !== rows[0]!.requestedMode,
-  );
+  const end = rows.findIndex((row): boolean => {
+    const delivery: DeliverySender = row.delivery;
+
+    return (
+      row.requestedMode !== rows[0]!.requestedMode ||
+      delivery?.identity?.userId !== sender?.identity?.userId
+    );
+  });
 
   return end === -1 ? rows : rows.slice(0, end);
 }
