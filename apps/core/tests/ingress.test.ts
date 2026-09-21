@@ -1,11 +1,18 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import {
+  drainInProcessWorkers,
+  handleChannelRequest,
+} from "../src/harness/handler.ts";
 import {
   acceptIngress,
   prepareSessionMessage,
+  type AppliedIngress,
   type ConversationDispatchTarget,
   type IngressCandidate,
 } from "../src/harness/ingress.ts";
+import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
+import { Session } from "../src/harness/session.ts";
 
 const originalMutate = runtime.mutate;
 const originalQuery = runtime.query;
@@ -116,6 +123,94 @@ describe("ingress admission payloads", () => {
     await acceptIngress(candidate());
     await acceptIngress(candidate());
     expect(calls[0]!.payloadDigest).toBe(calls[1]!.payloadDigest);
+  });
+});
+
+describe("channel senders", (): void => {
+  const bob = { userId: "U2", userRoles: ["dev"] };
+  const queued: AppliedIngress = {
+    eventId: "event-2",
+    events: [{ role: "user", content: "from bob" }],
+    delivery: {
+      kind: "channel",
+      channel: "slack",
+      identity: bob,
+      source: { channelId: "C1" },
+    },
+    requestedMode: "steer",
+    appliedMode: "followup",
+    appliedToEventId: "event-2",
+    contributingEventIds: ["event-2"],
+    ownerGeneration: 2,
+  };
+  const originalAppend = Session.prototype.appendIngressEvents;
+  let senders: unknown[];
+
+  beforeEach((): void => {
+    senders = [];
+    runtime.query = (async (name: string): Promise<[] | null> =>
+      name === "listPendingAsyncToolResults" ? [] : null) as never;
+    // Ends each turn before the model runs; only the session's sender matters.
+    Session.prototype.appendIngressEvents = async function (
+      this: Session,
+    ): Promise<never> {
+      senders.push(
+        this.delivery?.kind === "channel" ? this.delivery.identity : undefined,
+      );
+      throw new Error("stop before the model");
+    };
+  });
+
+  afterEach((): void => {
+    Session.prototype.appendIngressEvents = originalAppend;
+  });
+
+  function aliceMessage(): ChannelInboundEvent {
+    return {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      eventId: "event-1",
+      conversationKey: "acct:acct_1:agent:agent_1:slack:C1",
+      content: "from alice",
+      events: [{ role: "user", content: "from alice" }],
+      channelName: "slack",
+      identity: { userId: "U1", userRoles: ["admin"] },
+      source: { channelId: "C1" },
+      channel: {
+        sendText: async (): Promise<void> => {},
+        sendTyping: async (): Promise<void> => {},
+        reactToMessage: async (): Promise<void> => {},
+      },
+    };
+  }
+
+  it("drains a queued message as its own sender", async (): Promise<void> => {
+    let taken = false;
+    runtime.mutate = (async (name: string): Promise<unknown> => {
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+      if (name !== "takeNextIngress" || taken) return null;
+      taken = true;
+
+      return queued;
+    }) as never;
+
+    await handleChannelRequest(aliceMessage());
+
+    expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }, bob]);
+  });
+
+  it("keeps the sender on an envelope recovered for another worker", async (): Promise<void> => {
+    runtime.mutate = (async (name: string): Promise<unknown> =>
+      name === "acceptIngress"
+        ? { outcome: "queued", recovered: queued }
+        : null) as never;
+
+    await handleChannelRequest(aliceMessage());
+    await drainInProcessWorkers();
+
+    expect(senders).toEqual([bob]);
   });
 });
 
