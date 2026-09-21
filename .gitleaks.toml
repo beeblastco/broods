@@ -1,15 +1,18 @@
 # An allowlist without `targetRules` skips its paths outright, even under
-# `condition = "AND"`. Only the fixture-only entry goes without one.
+# `condition = "AND"`, so every entry names the rules it silences.
 
 [extend]
 useDefault = true
 
 [[allowlists]]
-description = "Fixture-only files: benchmark inputs and the test TLS pair"
-paths = [
-  '''(^|/)bench/cases/''',
-  '''(^|/)apps/core/tests/helpers/fixtures/[^/]+\.pem$''',
-]
+description = "Made-up keys the benchmark inputs feed to the config and log redaction cases"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)bench/cases/''']
+
+[[allowlists]]
+description = "Self-signed TLS key the attachment tests serve from localhost"
+targetRules = ["private-key"]
+paths = ['''(^|/)apps/core/tests/helpers/fixtures/[^/]+\.pem$''']
 
 [[allowlists]]
 description = "Throwaway RSA key the GitHub Actions OIDC test signs with"
