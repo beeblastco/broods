@@ -681,6 +681,44 @@ describe("stored item persistence", () => {
     }
   });
 
+  it("splits a history too big for one mutation into ordered writes", async () => {
+    const { Session } = await import("../src/harness/session.ts");
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalMutate = runtime.mutate;
+    const mutate = mock(
+      async (_name: string, _args: Record<string, unknown>) => null,
+    );
+    runtime.mutate = mutate as typeof runtime.mutate;
+    try {
+      const session = new Session({
+        eventId: "event",
+        conversationKey: "conversation",
+        accountId: "acct",
+        agentId: "agent",
+        agentConfig: {},
+        ownerGeneration: 3,
+      });
+      // The AI SDK harness path hands over a whole run at once.
+      const answer = "x".repeat(2 * 1_024 * 1_024);
+      const cursors = await session.persistModelMessages(
+        Array.from({ length: 6 }, () => ({
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: answer }],
+        })),
+      );
+
+      expect(mutate.mock.calls.length).toBeGreaterThan(1);
+      const written = mutate.mock.calls.flatMap((call): string[] =>
+        (call[1].events as { cursor: string }[]).map(
+          (entry): string => entry.cursor,
+        ),
+      );
+      expect(written).toEqual(cursors);
+    } finally {
+      runtime.mutate = originalMutate;
+    }
+  });
+
   it("drops reasoning nobody sends back rather than storing dead weight", async () => {
     const { createStoredEventFromModelMessage } =
       await import("../src/harness/session.ts");
