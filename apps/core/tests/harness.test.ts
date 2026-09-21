@@ -2581,6 +2581,154 @@ describe("runAgentLoop", () => {
   });
 });
 
+describe("subagent policy input", () => {
+  // A child replies to its parent and has no delivery of its own. Its policy
+  // input must still name the parent's place and person, or a deny scoped by
+  // role never matches and a guest gets the withheld action done through a child.
+  it("refuses a child tool call the parent's role-scoped policy denies", async () => {
+    installHarnessEnv();
+    setStorageForTests({
+      ...usageStorage([]),
+      agentPolicies: {
+        getById: async () => ({
+          accountId: "account_1",
+          policyId: "policy_guests",
+          name: "guests",
+          document: {
+            version: 1,
+            mode: "enforce",
+            rules: [
+              {
+                id: "deny-guest-read",
+                effect: "deny",
+                actions: ["workspace.read"],
+                conditions: [
+                  {
+                    attribute: "userRoles",
+                    operator: "contains",
+                    value: "guest",
+                  },
+                ],
+              },
+            ],
+          },
+          status: "active",
+          createdAt: "2026-07-02T00:00:00Z",
+          updatedAt: "2026-07-02T00:00:00Z",
+        }),
+      },
+    } as unknown as Storage);
+    const policyInputs: Array<{ userRoles?: string[] }> = [];
+    // Stands in for the rego on loopback, the way policy-enforce.test.ts does:
+    // the deny fires only when the input names a guest.
+    const opa = Bun.serve({
+      port: 0,
+      fetch: async function (request: Request): Promise<Response> {
+        const body = (await request.json()) as {
+          input: { userRoles?: string[] };
+        };
+        policyInputs.push(body.input);
+        const denied = (body.input.userRoles ?? []).includes("guest");
+
+        return Response.json({
+          result: {
+            allow: !denied,
+            allowed: !denied,
+            mode: "enforce",
+            reason: denied
+              ? "Denied by policy rule deny-guest-read"
+              : "Allowed",
+            matchedRuleIds: denied ? ["deny-guest-read"] : [],
+            auditedRuleIds: [],
+          },
+        });
+      },
+    });
+    process.env.OPA_BASE_URL = `http://127.0.0.1:${opa.port}`;
+    try {
+      const { Session } = await import("../src/harness/session.ts");
+      const { SubagentCoordinator } =
+        await import("../src/harness/subagents.ts");
+      const parent = new Session({
+        eventId: "event_parent",
+        conversationKey: "acct:account_1:agent:agent_parent:slack:C_OPS",
+        accountId: "account_1",
+        agentId: "agent_parent",
+        delivery: {
+          kind: "channel",
+          channelName: "slack",
+          identity: {
+            channelId: "C_OPS",
+            userId: "U_GUEST",
+            userRoles: ["guest"],
+          },
+          source: {},
+        },
+      });
+      const coordinator = new SubagentCoordinator(
+        parent,
+        { subagent: { enabled: true } },
+        Date.now() + 60_000,
+      );
+      const internals = coordinator as unknown as {
+        createChildTurnContext(): Promise<unknown>;
+        runTask(task: unknown): Promise<void>;
+      };
+      internals.createChildTurnContext = async () => ({
+        messages: [{ role: "user", content: "run it" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      });
+
+      // The mocked model says nothing, so the child task fails once the loop is built.
+      await expect(
+        internals.runTask({
+          taskId: "subagent_1",
+          eventId: "event_child",
+          agentId: "agent_child",
+          agentConfig: {
+            provider: { google: { apiKey: "google-key" } },
+            model: { provider: "google", modelId: "gemini-test" },
+            policies: ["policy_guests"],
+          },
+          publicConversationKey: "subagent-subagent_1",
+          conversationKey: "acct:account_1:agent:agent_child:api:subagent-1",
+          prompt: "run it",
+          inheritedContext: false,
+          parentMessages: [],
+          parentEphemeralSystem: [],
+          persistent: false,
+          resuming: false,
+        }),
+      ).rejects.toThrow("Model returned empty response");
+
+      const toolApproval = streamTextMock.mock.calls.at(-1)?.[0]
+        .toolApproval as (event: unknown) => Promise<{ type?: string }>;
+      const status = await toolApproval({
+        toolCall: {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "read",
+          input: { path: "secrets/key.pem" },
+        },
+        messages: [],
+      });
+
+      expect(status.type).toBe("denied");
+      expect(policyInputs.at(-1)).toMatchObject({
+        delivery: "channel",
+        channel: "slack",
+        channelId: "C_OPS",
+        userId: "U_GUEST",
+        userRoles: ["guest"],
+      });
+    } finally {
+      opa.stop(true);
+    }
+  });
+});
+
 function usageStorage(writes: TaskUsageInput[]): Storage {
   return {
     accounts: null as never,

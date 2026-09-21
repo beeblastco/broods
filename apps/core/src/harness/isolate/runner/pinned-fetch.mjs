@@ -263,34 +263,17 @@ function writeRequestBody(request, body) {
   throw new Error("init body must be a string or bytes");
 }
 
-function isIpv6LinkLocal(normalized) {
-  // fe80::/10 range: first 10 bits are 1111111010
-  // fe80 = 1111 1110 1000 0000 through febf = 1111 1110 1011 1111
-  const firstGroup = normalized.split(":")[0];
-  if (!firstGroup) return false;
-  const value = Number.parseInt(firstGroup, 16);
-  if (!Number.isFinite(value)) return false;
-
-  // fe80 (0xfe80 = 65152) through febf (0xfebf = 65215)
-  return value >= 0xfe80 && value <= 0xfebf;
-}
-
 export function isDeniedAddress(address) {
   if (address.includes(":")) {
     const normalized = address.toLowerCase();
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d) tunnels a v4 address past the v6 checks,
-    // so evaluate the embedded v4 against the CIDR denylist instead.
-    const mapped = normalized.match(
-      /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-    );
-    if (mapped) return isDeniedAddress(mapped[1]);
+    // A leading "::" parses to NaN: unspecified, loopback, IPv4-mapped and
+    // IPv4-compatible. fc00 and up is ULA, link-local, site-local, multicast.
+    const firstGroup = Number.parseInt(normalized, 16);
 
     return (
-      normalized === "::" ||
-      normalized === "::1" ||
-      isIpv6LinkLocal(normalized) ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd")
+      !(firstGroup > 0 && firstGroup < 0xfc00) ||
+      normalized.startsWith("64:ff9b:") ||
+      normalized.startsWith("2002:")
     );
   }
   const numeric = ipv4ToInt(address);

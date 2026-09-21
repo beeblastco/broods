@@ -507,6 +507,7 @@ export class SubagentCoordinator {
       ownerGeneration: ownerGeneration,
       trigger: this.parentSession.trigger,
       persist: task.persistent,
+      policyDelivery: this.parentSession.policyDelivery,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;

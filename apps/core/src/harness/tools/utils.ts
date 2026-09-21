@@ -146,7 +146,8 @@ export function prependTextToUserParts(
 }
 
 // A child carries the parent's effective policies and withheld tools (a channel
-// record's included), and never spawns subagents of its own.
+// record's included), and never spawns subagents of its own. Workspaces are the
+// exception: a predefined child keeps its own, whatever a record narrowed.
 export function subagentConfig(
   config: AgentConfig,
   parent: AgentConfig,
