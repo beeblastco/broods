@@ -584,6 +584,74 @@ describe("streamIsolatePayload cross-process abort", () => {
     expect(outputs).toEqual([{ aborted: true }]);
   });
 
+  it("hands the runner PATH and the ISOLATE_* keys, never core's other variables", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-env-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    await writeFile(
+      stubPath,
+      "process.stdout.write(JSON.stringify({ t: 'final', result: Object.keys(process.env) }) + '\\n');",
+      "utf8",
+    );
+    process.env.ISOLATE_POOL = "0";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+    process.env.BROODS_TEST_CORE_SECRET = "leak";
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const outputs: unknown[] = [];
+    try {
+      for await (const output of streamIsolatePayload("acct_env", {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      })) {
+        outputs.push(output);
+      }
+    } finally {
+      delete process.env.BROODS_TEST_CORE_SECRET;
+    }
+
+    // Not an exact list: macOS adds __CF_USER_TEXT_ENCODING to every child.
+    // HOME was set before the executor loaded, the secret after it.
+    expect(outputs[0]).toContain("PATH");
+    expect(outputs[0]).not.toContain("HOME");
+    expect(outputs[0]).not.toContain("BROODS_TEST_CORE_SECRET");
+  });
+
+  it("accepts a result over 1 MiB that stays under 1 MiB plus the request size", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-cap-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    const resultLength = 1024 * 1024 + 1024;
+    await writeFile(
+      stubPath,
+      `process.stdout.write(JSON.stringify({ t: 'final', result: 'x'.repeat(${resultLength}) }) + '\\n');`,
+      "utf8",
+    );
+    process.env.ISOLATE_POOL = "0";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const outputs: unknown[] = [];
+    for await (const output of streamIsolatePayload("acct_cap", {
+      bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+      expectedSha256: sha256("export default {};"),
+      toolName: "stub",
+      input: { text: "y".repeat(64 * 1024) },
+      config: {},
+    })) {
+      outputs.push(output);
+    }
+
+    expect(outputs.map((output): number => String(output).length)).toEqual([
+      resultLength,
+    ]);
+  });
+
   it("serves sequential calls from one worker instead of filling the pool", async () => {
     // What makes the pool safe to have on by default: core's pod budgets memory
     // for one process, not for ISOLATE_WORKER_POOL_SIZE resident Node runtimes.
