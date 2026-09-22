@@ -11,9 +11,8 @@ export function useCodeManagedEdge(
 ): boolean {
   // A boolean, so the selector stays referentially stable across store updates.
   return useStore((state): boolean =>
-    isCodeManagedEdge(
-      { id: id, source: source, target: target },
-      (nodeId): unknown => state.nodeLookup.get(nodeId)?.data.managedBy,
+    isCodeManagedEdge({ id: id, source: source, target: target }, (nodeId) =>
+      state.nodeLookup.get(nodeId),
     ),
   );
 }
