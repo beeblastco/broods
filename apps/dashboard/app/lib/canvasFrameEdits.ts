@@ -31,9 +31,11 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
-/** The card box, for the free-spot search. */
-/** The box every card has, whatever it holds. */
+/** The box every card has, whatever it holds, for the free-spot search. */
 export const CARD_SIZE: FrameSize = { height: NODE_HEIGHT, width: NODE_WIDTH };
+
+/** A frame waiting on a free spot, and the origin it would rather keep. */
+type DeferredFrame = { desired: XYPosition; frame: CanvasFrame };
 
 /** A flat graph as one edit sees it, with the server list its frames depend on. */
 export type FlatGraph = {
@@ -96,6 +98,23 @@ export function acceptsNewMember(frame: CanvasFrame): boolean {
   );
 
   return group !== null && group.key === frame.key;
+}
+
+/**
+ * The agents a card added from the canvas menu wires itself to, out of the
+ * ones on offer: a frame's owners, or the nearest agent. A `cli` or `api`
+ * agent reads its wiring from the manifest it was deployed from, never from
+ * the canvas, so an edge drawn to it here would show a link the agent does not
+ * have. The card lands unwired instead.
+ */
+export function autoWiredAgentIds(
+  nodes: readonly Node[],
+  agentIds: readonly string[],
+): string[] {
+  return agentIds.filter(
+    (id) =>
+      !isCodeManagedOwner(nodes.find((node) => node.id === id)?.data.managedBy),
+  );
 }
 
 /**
@@ -307,9 +326,11 @@ export function nodeLinkActions(
 /**
  * Flat nodes of `next` with positions settled after an edit that may change
  * frame membership. A frame that was already drawn keeps its origin whoever
- * joins or leaves it, and its members take its slots. A frame that grows out
- * of a lone card starts where that card stood, so the card's box becomes the
- * frame's; any other new frame starts where its members stand. Either steps
+ * joins or leaves it, and its members take its slots. One that gained a member
+ * steps clear when its taller box would cover a neighbour: a frame is drawn
+ * from its members, so nothing else moves out of its way. A frame that grows
+ * out of a lone card starts where that card stood, so the card's box becomes
+ * the frame's; any other new frame starts where its members stand. Either steps
  * clear of every other box. A frame that shrinks to one member hands its
  * origin to that member's card. Any other card that left all frames steps
  * clear of the frame it sat in. Frames whose members did not change, and
@@ -350,30 +371,40 @@ export function reconcileFramePositions(
     occupied.push({ ...origin, ...frameSize(frame) });
   };
 
+  // A frame that has to search for its spot is placed after every box that
+  // holds one: the frames nobody joined or left, then the cards in no frame on
+  // either side.
+  const grown: DeferredFrame[] = [];
+  const fresh: DeferredFrame[] = [];
   for (const frame of after) {
     const kept = beforeById.get(frame.id);
-    if (!kept) continue;
+    if (!kept) {
+      const [card] = groupBefore.get(frame.id)?.memberIds ?? [];
+      const cardPosition =
+        card === undefined ? undefined : previousPositions.get(card);
+      fresh.push({
+        desired: cardPosition ?? originOf(frame.memberIds, nextPositions),
+        frame: frame,
+      });
+      continue;
+    }
+    const origin = originOf(kept.memberIds, previousPositions);
+    // A taller box can cover a neighbour. One that shrank still fits where it
+    // stood, and searching would snap it to the grid off a spot nothing wants.
+    if (frameSize(frame).height > frameSize(kept).height) {
+      grown.push({ desired: origin, frame: frame });
+      continue;
+    }
     const unchanged = kept.memberIds.join("\n") === frame.memberIds.join("\n");
-    place(frame, originOf(kept.memberIds, previousPositions), !unchanged);
+    place(frame, origin, !unchanged);
   }
   for (const node of next.nodes) {
     if (framedBefore.has(node.id) || framedAfter.has(node.id)) continue;
     occupied.push({ ...node.position, ...CARD_SIZE });
   }
-  for (const frame of after) {
-    if (beforeById.has(frame.id)) continue;
-    const [card] = groupBefore.get(frame.id)?.memberIds ?? [];
-    const cardPosition =
-      card === undefined ? undefined : previousPositions.get(card);
-    place(
-      frame,
-      findFreeBox(
-        cardPosition ?? originOf(frame.memberIds, nextPositions),
-        frameSize(frame),
-        occupied,
-      ),
-      true,
-    );
+  // A frame that was already drawn has first claim on the space it wants.
+  for (const { desired, frame } of [...grown, ...fresh]) {
+    place(frame, findFreeBox(desired, frameSize(frame), occupied), true);
   }
   // A frame's last member first, so it keeps the frame's spot over a leaver.
   const leavers = next.nodes
