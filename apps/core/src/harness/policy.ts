@@ -65,20 +65,19 @@ type RuntimeToolApproval = Extract<
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
 // any dotted path, so these are usable in rule conditions with no engine change.
+// userRoles is always present: a negated operator needs the attribute to match.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
   PolicyDecisionInput,
   "channelId" | "threadId" | "userId" | "userName" | "userRoles"
 > {
-  if (!identity) return {};
-
   return {
-    ...(identity.channelId ? { channelId: identity.channelId } : {}),
-    ...(identity.threadId ? { threadId: identity.threadId } : {}),
-    ...(identity.userId ? { userId: identity.userId } : {}),
-    ...(identity.userName ? { userName: identity.userName } : {}),
-    ...(identity.userRoles?.length ? { userRoles: identity.userRoles } : {}),
+    ...(identity?.channelId ? { channelId: identity.channelId } : {}),
+    ...(identity?.threadId ? { threadId: identity.threadId } : {}),
+    ...(identity?.userId ? { userId: identity.userId } : {}),
+    ...(identity?.userName ? { userName: identity.userName } : {}),
+    userRoles: identity?.userRoles ?? [],
   };
 }
 

@@ -282,17 +282,19 @@ describe("agent policy enforce mode", () => {
     );
   });
 
-  it("omits channel identity fields that the provider did not supply", () => {
-    expect(channelPolicyIdentity(undefined)).toEqual({});
+  it("omits channel identity fields that the provider did not supply, except userRoles", () => {
+    expect(channelPolicyIdentity(undefined)).toEqual({ userRoles: [] });
     expect(channelPolicyIdentity({ channelId: "C1" })).toEqual({
       channelId: "C1",
+      userRoles: [],
     });
     expect(
       channelPolicyIdentity({ userId: "U1", userRoles: ["oncall"] }),
     ).toEqual({ userId: "U1", userRoles: ["oncall"] });
-    // An empty role list is noise on the policy input, not a value to match on.
+    // A user with no tag role still has to match a `userRoles notIn` rule.
     expect(channelPolicyIdentity({ userId: "U1", userRoles: [] })).toEqual({
       userId: "U1",
+      userRoles: [],
     });
   });
 });
