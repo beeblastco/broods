@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import type { NodeType } from "@/app/components/canvas/nodeTemplates";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import {
@@ -117,6 +118,13 @@ const McpToolsTab = dynamic(loadMcpToolsTab, {
     </div>
   ),
 });
+
+/** A tab this node shows; `warms` preloads a dynamic tab on hover. */
+interface PanelTab {
+  label: string;
+  value: string;
+  warms?: boolean;
+}
 
 type HeaderStatusBadge = {
   text: string;
@@ -679,6 +687,33 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     }
   }, [isAgent, isMcp]);
 
+  // One list drives the triggers and the number keys, so `3` always lands on
+  // the third tab this node actually has.
+  const visibleTabs = useMemo((): readonly PanelTab[] => {
+    const hasSkillFiles =
+      isSkill && (nodeData?.config?.skillSource ?? "") === "files";
+
+    return [
+      { label: "Details", value: "details" },
+      ...(isWorkspace || hasSkillFiles
+        ? [{ label: "Files", value: "files" }]
+        : []),
+      ...(isMcp ? [{ label: "Server", value: "server" }] : []),
+      ...(isAgent || isWorkspace || isSandbox || isSkill
+        ? [{ label: "Config", value: "config" }]
+        : []),
+      ...(isMcp ? [{ label: "Tools", value: "tools", warms: true }] : []),
+      ...(isAgent ? [{ label: "Test", value: "test", warms: true }] : []),
+      ...(canWrite ? [{ label: "Settings", value: "settings" }] : []),
+    ];
+  }, [canWrite, isAgent, isMcp, isSandbox, isSkill, isWorkspace, nodeData]);
+
+  useShortcut("panel.toggle", onClose);
+  useShortcut("panel.tab", (event) => {
+    const tab = visibleTabs[Number(event.key) - 1];
+    if (tab) setActiveTab(tab.value);
+  });
+
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between px-4 py-3">
@@ -726,37 +761,17 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           className="flex flex-1 flex-col overflow-hidden"
         >
           <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            {(isWorkspace ||
-              (isSkill &&
-                (nodeData?.config?.skillSource ?? "") === "files")) && (
-              <TabsTrigger value="files">Files</TabsTrigger>
-            )}
-            {isMcp && <TabsTrigger value="server">Server</TabsTrigger>}
-            {(isAgent || isWorkspace || isSandbox || isSkill) && (
-              <TabsTrigger value="config">Config</TabsTrigger>
-            )}
-            {isMcp && (
+            {visibleTabs.map((tab) => (
               <TabsTrigger
-                value="tools"
-                onMouseEnter={warmTestTab}
-                onFocus={warmTestTab}
-                onPointerDown={warmTestTab}
+                key={tab.value}
+                value={tab.value}
+                onMouseEnter={tab.warms ? warmTestTab : undefined}
+                onFocus={tab.warms ? warmTestTab : undefined}
+                onPointerDown={tab.warms ? warmTestTab : undefined}
               >
-                Tools
+                {tab.label}
               </TabsTrigger>
-            )}
-            {isAgent && (
-              <TabsTrigger
-                value="test"
-                onMouseEnter={warmTestTab}
-                onFocus={warmTestTab}
-                onPointerDown={warmTestTab}
-              >
-                Test
-              </TabsTrigger>
-            )}
-            {canWrite && <TabsTrigger value="settings">Settings</TabsTrigger>}
+            ))}
           </TabsList>
 
           {/* Details tab */}

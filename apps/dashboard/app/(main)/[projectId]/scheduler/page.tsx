@@ -6,6 +6,7 @@
  * agents this project owns.
  */
 
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { api } from "@broods/convex/_generated/api";
@@ -35,6 +36,13 @@ export default function CronsPage({
   const project = useQuery(api.project.getById, { projectId: typedProjectId });
 
   const [createOpen, setCreateOpen] = useState(false);
+  // A cron runs an agent, so with none in this project the dialog's picker
+  // would be empty and the form unsubmittable. Undefined means still loading,
+  // which is also not usable yet.
+  const canCreate =
+    canWrite && account?.status === "active" && Boolean(agents?.length);
+
+  useShortcut("table.create", () => canCreate && setCreateOpen(true));
 
   const loading =
     crons === undefined || agents === undefined || account === undefined;
@@ -56,12 +64,7 @@ export default function CronsPage({
           <Button
             size="sm"
             className="cursor-pointer disabled:cursor-not-allowed"
-            // A cron runs an agent, so with none in this project the
-            // dialog's picker would be empty and the form unsubmittable.
-            // Undefined means still loading, which is also not usable yet.
-            disabled={
-              !account || account.status !== "active" || !agents?.length
-            }
+            disabled={!canCreate}
             onClick={() => setCreateOpen(true)}
           >
             <Plus className="size-4 mr-1" />

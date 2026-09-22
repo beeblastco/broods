@@ -1,7 +1,11 @@
 "use client";
 
+import { CopilotDock } from "@/app/components/copilot/CopilotDock";
+import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
 import { Header } from "@/app/components/Header";
 import { PerfReporter } from "@/app/components/PerfReporter";
+import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
+import { ShortcutProvider } from "@/app/components/ShortcutProvider";
 import {
   clearOnboardingSecret,
   readOnboardingSecret,
@@ -12,7 +16,7 @@ import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 
 const SYNC_RETRY_MS = 5_000;
 
@@ -112,19 +116,31 @@ export default function MainLayout({
   return (
     <>
       <PerfReporter />
-      <div className="flex h-screen w-screen flex-col bg-background">
-        <Header />
-        {onboardingSecret && (
-          <OnboardingDialog
-            secret={onboardingSecret}
-            onDone={() => {
-              clearOnboardingSecret();
-              router.push("/projects");
-            }}
-          />
-        )}
-        <div className="flex-1 overflow-hidden">{children}</div>
-      </div>
+      <ShortcutProvider>
+        <Suspense>
+          <CopilotProvider>
+            <div className="flex h-screen w-screen flex-col bg-background">
+              <Header />
+              {onboardingSecret && (
+                <OnboardingDialog
+                  secret={onboardingSecret}
+                  onDone={() => {
+                    clearOnboardingSecret();
+                    router.push("/projects");
+                  }}
+                />
+              )}
+              {/* The dock is a column beside the page, not a sheet over it: what
+                  it is about to change has to stay on screen. */}
+              <div className="flex flex-1 overflow-hidden">
+                <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
+                <CopilotDock />
+              </div>
+              <ShortcutOverlay />
+            </div>
+          </CopilotProvider>
+        </Suspense>
+      </ShortcutProvider>
     </>
   );
 }

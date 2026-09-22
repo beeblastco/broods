@@ -50,6 +50,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useStage } from "@/app/hooks/useStage";
 import {
   acceptsNewMember,
@@ -135,6 +136,7 @@ import { useMutation, useQuery } from "convex/react";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import {
   Fragment,
   useCallback,
@@ -410,16 +412,6 @@ function layoutSignature(nodes: Node[], edges: Edge[]): string {
   });
 }
 
-/** Ignore global shortcuts while typing in editable controls. */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-
-  const tagName = target.tagName;
-
-  return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
-}
-
 /** Collapsed frame ids for one project and stage. Per browser, so a failed read is just "none". */
 function readCollapsedFrames(key: string): ReadonlySet<string> {
   try {
@@ -538,7 +530,9 @@ function CanvasInner({
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
     useState<FlowPosition | null>(null);
-  const { screenToFlowPosition, setCenter, getZoom, fitView } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom, fitView, zoomIn, zoomOut } =
+    useReactFlow();
+  const searchParams = useSearchParams();
   const { canWrite } = useOrgRole();
   const nextId = useRef(1);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
@@ -920,24 +914,6 @@ function CanvasInner({
     setNodes(settled);
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
-
-  // Route Delete key to the confirm dialog instead of immediate node deletion.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Delete") return;
-      if (!selectedNode) return;
-      if (isEditableTarget(event.target)) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      setDeleteNode(selectedNode);
-      setDeleteOpen(true);
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedNode]);
 
   // Re-center the focused node after the side panel finishes its width transition,
   // so it stays visually centered as the canvas shrinks or grows back.
@@ -1348,6 +1324,43 @@ function CanvasInner({
     setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
   }, [getFreeAddPosition]);
+  // Keyboard bindings for the canvas. Registered, not listened for: the palette
+  // lists whatever is registered and runs the same callbacks, so a row and its
+  // key are one code path.
+  useShortcut("canvas.addAgent", () => canWrite && onOpenSourcePicker());
+  useShortcut("canvas.addSkill", () => canWrite && setSkillPickerOpen(true));
+  useShortcut(
+    "canvas.addSandbox",
+    () => canWrite && addNode("sandbox", "Sandbox"),
+  );
+  useShortcut(
+    "canvas.addWorkspace",
+    () => canWrite && addNode("workspace", "Workspace"),
+  );
+  useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
+  useShortcut("canvas.rename", () => {
+    if (!canWrite || !selectedNode) return;
+    const label = selectedNode.data.label;
+    setRenameNode({
+      id: selectedNode.id,
+      label: typeof label === "string" ? label : "",
+    });
+  });
+  useShortcut("canvas.delete", () => {
+    if (canWrite && selectedNode) requestNodeDelete(selectedNode.id);
+  });
+  useShortcut("canvas.fitView", () => fitView(FIT_VIEW_OPTIONS));
+  useShortcut("canvas.tidy", () => canWrite && tidyLayout());
+  useShortcut("canvas.zoomIn", () => zoomIn());
+  useShortcut("canvas.zoomOut", () => zoomOut());
+
+  // `?node=` is how every other surface asks for a card: the palette, the
+  // copilot and a pasted link all land here.
+  const requestedNodeId = searchParams.get("node");
+  useEffect(() => {
+    if (requestedNodeId) openNode(requestedNodeId);
+  }, [openNode, requestedNodeId]);
+
   const onCreateAgentFromPicker = useCallback(() => {
     onOpenCreateConfig(agentCreatePosition ?? getFreeAddPosition());
   }, [agentCreatePosition, getFreeAddPosition, onOpenCreateConfig]);

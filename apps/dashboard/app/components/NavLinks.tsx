@@ -1,31 +1,45 @@
 "use client";
 
+import { useShortcut } from "@/app/components/ShortcutProvider";
+import {
+  activeNavItem,
+  NAV_ITEMS,
+  navHref,
+  stepNavItem,
+} from "@/app/lib/navigation";
 import { cn } from "@/app/lib/utils";
 import Link from "next/link";
-import { useParams, usePathname, useSearchParams } from "next/navigation";
+import {
+  useParams,
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import { Suspense } from "react";
-
-const NAV_ITEMS = [
-  { segment: "", label: "Architecture" },
-  { segment: "/dashboard", label: "Dashboard" },
-  { segment: "/scheduler", label: "Scheduler" },
-  { segment: "/sandbox", label: "Sandbox" },
-  { segment: "/settings", label: "Settings" },
-] as const;
 
 /** Inner nav links that read search params. */
 function NavLinksInner(): React.JSX.Element {
   const pathname = usePathname();
   const params = useParams<{ projectId?: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = params.projectId;
   const stageParam = searchParams.get("stage");
+
+  const step = (offset: number): void => {
+    if (!projectId) return;
+    const next = stepNavItem(activeNavItem(pathname, projectId), offset);
+    router.push(navHref(projectId, next.segment, stageParam));
+  };
+
+  useShortcut("nav.prev", () => step(-1));
+  useShortcut("nav.next", () => step(1));
 
   return (
     <nav className="flex items-center gap-1">
       {projectId &&
         NAV_ITEMS.map(({ segment, label }) => {
-          const href = `/${projectId}${segment}${stageParam ? `?stage=${stageParam}` : ""}`;
+          const href = navHref(projectId, segment, stageParam);
           const isActive =
             segment === ""
               ? pathname === `/${projectId}`
