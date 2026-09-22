@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { CliOnboardingContext } from "../src/sync";
@@ -51,9 +51,39 @@ test("checks the runtime key once a project is set", async () => {
   expect(paths.some((path) => path.endsWith("/runtime-key"))).toBe(true);
 });
 
+test("uses the login for the server .env.local names, not the latest one", async () => {
+  const dev = serveBackend();
+  const prod = serveBackend();
+  const home = await homeWithLogins([dev.baseUrl, prod.baseUrl]);
+  const cwd = await workdir([`BROODS_BASE_URL="${dev.baseUrl}"`]);
+
+  const result = await runWhoami(cwd, undefined, home);
+
+  expect(result.stdout).toContain(`Server:      ${dev.baseUrl}\n`);
+  expect(prod.paths).toEqual([]);
+});
+
+test("refuses another server's login when .env.local names one without a login", async () => {
+  const prod = serveBackend();
+  const home = await homeWithLogins([prod.baseUrl]);
+  const cwd = await workdir(['BROODS_BASE_URL="https://gateway.dev.example"']);
+
+  const result = await runWhoami(cwd, undefined, home);
+
+  expect(result.stdout).toContain(
+    "Not logged in to https://gateway.dev.example.",
+  );
+  expect(prod.paths).toEqual([]);
+});
+
+/**
+ * Runs `whoami` with a minimal env. With `baseUrl` it authenticates through
+ * BROODS_TOKEN; without it, through the login file under `home`.
+ */
 async function runWhoami(
   cwd: string,
-  baseUrl: string,
+  baseUrl?: string,
+  home?: string,
 ): Promise<{ exitCode: number; stdout: string }> {
   const proc = Bun.spawn({
     cmd: [process.execPath, CLI, "whoami"],
@@ -63,9 +93,8 @@ async function runWhoami(
     // Minimal env: the runner's own BROODS_* vars would shadow `.env.local`.
     env: {
       PATH: process.env.PATH ?? "",
-      HOME: process.env.HOME ?? "",
-      BROODS_TOKEN: "tok",
-      BROODS_BASE_URL: baseUrl,
+      HOME: home ?? process.env.HOME ?? "",
+      ...(baseUrl ? { BROODS_TOKEN: "tok", BROODS_BASE_URL: baseUrl } : {}),
     },
   });
   const [exitCode, stdout] = await Promise.all([
@@ -74,6 +103,26 @@ async function runWhoami(
   ]);
 
   return { exitCode: exitCode, stdout: stdout };
+}
+
+/** A HOME whose login file holds one login per server; the last is the most recent. */
+async function homeWithLogins(baseUrls: string[]): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), "broods-home-"));
+  workdirs.push(home);
+  await mkdir(join(home, ".broods"));
+  const logins = Object.fromEntries(
+    baseUrls.map((baseUrl) => [
+      baseUrl,
+      { baseUrl: baseUrl, token: "tok", createdAt: "2026-01-01T00:00:00Z" },
+    ]),
+  );
+  await writeFile(
+    join(home, ".broods", "config.json"),
+    JSON.stringify({ current: baseUrls.at(-1), logins: logins }),
+    "utf8",
+  );
+
+  return home;
 }
 
 /** A fake control plane that records every path `whoami` requests. */

@@ -2,7 +2,8 @@
  * Local project/auth configuration helpers for the CLI.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -46,36 +47,62 @@ export interface StoredAuthConfig {
   };
 }
 
-export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
+/**
+ * `~/.broods/config.json`: every CLI login on this machine, keyed by server
+ * base URL, so logging in to one environment never replaces another.
+ */
+interface StoredAuthFile {
+  /** Base URL of the most recent login, used when nothing names a server. */
+  current: string;
+  logins: Record<string, StoredAuthConfig>;
+}
+
+/**
+ * Resolves the login this invocation acts as. BROODS_TOKEN + BROODS_BASE_URL
+ * win outright. Otherwise it is the stored login for one server, named by
+ * `baseUrl`, then BROODS_BASE_URL, then the login whose dashboard is
+ * BROODS_DASHBOARD_URL, then the most recent login. Null when that server has
+ * no login, so a dev project never quietly runs on a prod token.
+ */
+export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
   const envToken = process.env.BROODS_TOKEN;
-  const envConvexUrl = process.env.BROODS_BASE_URL;
-  if (envToken && envConvexUrl) {
+  const envBaseUrl = baseUrl ?? process.env.BROODS_BASE_URL;
+  if (envToken && envBaseUrl) {
     return {
-      baseUrl: stripTrailingSlash(envConvexUrl),
+      baseUrl: stripTrailingSlash(envBaseUrl),
       token: envToken,
       createdAt: new Date().toISOString(),
     };
   }
 
-  try {
-    const stored = JSON.parse(
-      await readFile(USER_CONFIG_PATH, "utf8"),
-    ) as StoredAuthConfig;
-    // Auth stored before the Convex-direct control plane has no baseUrl;
-    // treat it as logged out so the user re-authenticates.
-    if (typeof stored.baseUrl !== "string" || !stored.baseUrl) return null;
+  const file = readStoredAuthFile();
+  if (!file) return null;
+  if (envBaseUrl) return file.logins[stripTrailingSlash(envBaseUrl)] ?? null;
+  const envDashboardUrl = process.env.BROODS_DASHBOARD_URL;
+  if (envDashboardUrl) {
+    const dashboardUrl = stripTrailingSlash(envDashboardUrl);
 
-    return stored;
-  } catch {
-    return null;
+    return (
+      Object.values(file.logins).find(
+        (login) => login.dashboardUrl === dashboardUrl,
+      ) ?? null
+    );
   }
+
+  return file.logins[file.current] ?? null;
 }
 
+/** Stores `config` as the login for its server and makes it the most recent one. */
 export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
+  const logins = readStoredAuthFile()?.logins ?? {};
+  const file: StoredAuthFile = {
+    current: config.baseUrl,
+    logins: { ...logins, [config.baseUrl]: config },
+  };
   await mkdir(dirname(USER_CONFIG_PATH), { recursive: true });
   await writeFile(
     USER_CONFIG_PATH,
-    `${JSON.stringify(config, null, 2)}\n`,
+    `${JSON.stringify(file, null, 2)}\n`,
     "utf8",
   );
 }
@@ -111,5 +138,22 @@ export function gatewayUrlForDashboard(
     return stripTrailingSlash(url.origin);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Reads the login file. A missing, malformed or single-login file from an
+ * older CLI reads as null, which means logged out.
+ */
+function readStoredAuthFile(): StoredAuthFile | null {
+  try {
+    const file = JSON.parse(
+      readFileSync(USER_CONFIG_PATH, "utf8"),
+    ) as Partial<StoredAuthFile>;
+    if (typeof file.current !== "string" || !file.logins) return null;
+
+    return { current: file.current, logins: file.logins };
+  } catch {
+    return null;
   }
 }

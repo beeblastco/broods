@@ -538,8 +538,8 @@ async function whoami(args: string[]): Promise<void> {
   let auth: StoredAuthConfig;
   try {
     auth = await requireAuth(optionValue(args, "--base-url"));
-  } catch {
-    printWarning("Not logged in. Run `broods login`.");
+  } catch (error) {
+    printWarning(error instanceof Error ? error.message : String(error));
 
     return;
   }
@@ -1351,7 +1351,9 @@ async function requireAuthOrLogin(
     return await requireAuth(baseUrl);
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
-    printWarning("No CLI login found. Starting browser login.");
+    printWarning(
+      `${error instanceof Error ? error.message : String(error)} Starting browser login.`,
+    );
 
     return await loginWithBrowser(dashboardUrl);
   }

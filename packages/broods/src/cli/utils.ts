@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
+  gatewayUrlForDashboard,
   readStoredAuth,
   stripTrailingSlash,
   writeStoredAuth,
@@ -139,17 +140,21 @@ export async function loginWithBrowser(
 
 export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
-  const auth = await readStoredAuth();
+  const auth = readStoredAuth(baseUrl);
   if (!auth) {
+    const dashboardUrl = process.env.BROODS_DASHBOARD_URL;
+    const server =
+      baseUrl ??
+      process.env.BROODS_BASE_URL ??
+      (dashboardUrl ? gatewayUrlForDashboard(dashboardUrl) : undefined);
     throw new Error(
-      "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
+      server
+        ? `Not logged in to ${stripTrailingSlash(server)}. Run \`broods login\`.`
+        : "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
     );
   }
 
-  return {
-    ...auth,
-    ...(baseUrl ? { baseUrl: stripTrailingSlash(baseUrl) } : {}),
-  };
+  return auth;
 }
 
 /**
