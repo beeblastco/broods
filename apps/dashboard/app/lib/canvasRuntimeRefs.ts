@@ -202,11 +202,16 @@ export function deriveAgentRuntimeRefs(
         .map((nodeId) => byId.get(nodeId))
         .filter((node): node is RuntimeNode => node?.type === "sandbox");
 
+      // No mount edge means inherit the agent's default sandbox. `readOnly` is
+      // the only way the graph can ask for `sandbox: null` instead, which reads
+      // the workspace straight from S3 and mounts it nowhere.
       if (linkedSandboxes.length === 0) {
-        workspaces.push({
-          name: uniqueWorkspaceName(baseName, usedNames),
-          workspaceId: workspaceId,
-        });
+        const name = uniqueWorkspaceName(baseName, usedNames);
+        workspaces.push(
+          workspaceNode.data.readOnly === true
+            ? { name: name, sandbox: null, workspaceId: workspaceId }
+            : { name: name, workspaceId: workspaceId },
+        );
         continue;
       }
 

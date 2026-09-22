@@ -55,12 +55,16 @@ import {
   acceptsNewMember,
   autoWiredAgentIds,
   boardRects,
+  cardLabel,
   frameGroupActions,
   introducedRuntimeRefsProblem,
   makeDefaultSandbox,
   nodeLinkActions,
   reconcileFramePositions,
   setUngrouped,
+  setWorkspaceMount,
+  workspaceMountTargets,
+  type WorkspaceMountTarget,
 } from "@/app/lib/canvasFrameEdits";
 import {
   applyCanvasDrop,
@@ -162,6 +166,11 @@ const CreateAgentConfigDialog = dynamic(() =>
 const NodeDeleteDialog = dynamic(() =>
   import("@/app/components/canvas/NodeDeleteDialog").then(
     (mod) => mod.NodeDeleteDialog,
+  ),
+);
+const RenameNodeDialog = dynamic(() =>
+  import("@/app/components/canvas/RenameNodeDialog").then(
+    (mod) => mod.RenameNodeDialog,
   ),
 );
 const SkillSourcePickerDialog = dynamic(() =>
@@ -503,6 +512,10 @@ function CanvasInner({
   // its name does not blank out mid fade-out.
   const [deleteNode, setDeleteNode] = useState<Node | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameNode, setRenameNode] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -1018,7 +1031,13 @@ function CanvasInner({
                 },
                 menuNode.id,
               ),
+              label: cardLabel(menuNode),
               links: nodeLinkActions(
+                nodesRef.current,
+                edgesRef.current,
+                menuNode.id,
+              ),
+              mounts: workspaceMountTargets(
                 nodesRef.current,
                 edgesRef.current,
                 menuNode.id,
@@ -1378,6 +1397,33 @@ function CanvasInner({
     [editGraph],
   );
 
+  /**
+   * The rows a workspace's mount menu lists. Read from the refs on the open,
+   * not memoized on the graph: a memo would rebuild them on every frame of a
+   * drag, and hand every card a new context on the way.
+   */
+  const mountTargetsOf = useCallback(
+    (workspaceId: string): WorkspaceMountTarget[] =>
+      canWrite
+        ? workspaceMountTargets(nodesRef.current, edgesRef.current, workspaceId)
+        : [],
+    [canWrite],
+  );
+
+  /** Mount a workspace where its menu says: from the edge's word or a card's menu. */
+  const setWorkspaceMountTarget = useCallback(
+    (workspaceId: string, target: WorkspaceMountTarget): void => {
+      editGraph((nodes, edges) =>
+        setWorkspaceMount(
+          { edges: edges, mcpServers: mcpServers, nodes: nodes },
+          workspaceId,
+          target,
+        ),
+      );
+    },
+    [editGraph, mcpServers],
+  );
+
   const isLoading = canvasLayout === undefined;
   const isEmpty = !isLoading && nodes.length === 0;
 
@@ -1414,17 +1460,23 @@ function CanvasInner({
   );
   const framesContext = useMemo(
     () => ({
+      canWrite: canWrite,
       expandedMemberId: expandedMemberId,
       machineConnections: machineConnections,
       mcpServers: mcpServersByNode,
+      mountTargetsOf: mountTargetsOf,
+      onSetWorkspaceMount: setWorkspaceMountTarget,
       onToggleFrame: toggleFrame,
       sandboxOrderNumbers: orderNumbers,
       workspaceOnlySandboxIds: workspaceOnly,
     }),
     [
+      canWrite,
       expandedMemberId,
       machineConnections,
       mcpServersByNode,
+      mountTargetsOf,
+      setWorkspaceMountTarget,
       toggleFrame,
       orderNumbers,
       workspaceOnly,
@@ -1648,6 +1700,10 @@ function CanvasInner({
                   onDelete={requestNodeDelete}
                   onMakeDefault={makeDefault}
                   onRemoveEdge={removeEdge}
+                  onRename={(id, label) =>
+                    setRenameNode({ id: id, label: label })
+                  }
+                  onSetMount={setWorkspaceMountTarget}
                   onSetUngrouped={setNodesUngrouped}
                 />
               </ContextMenuContent>
@@ -1739,6 +1795,18 @@ function CanvasInner({
             open={deleteOpen}
             onOpenChange={setDeleteOpen}
             onRemoved={removeNode}
+          />
+        )}
+
+        {renameNode && (
+          <RenameNodeDialog
+            key={renameNode.id}
+            label={renameNode.label}
+            nodeId={renameNode.id}
+            // Mounted only while a rename is asked for, so any close clears it.
+            open={true}
+            onOpenChange={() => setRenameNode(null)}
+            onRename={updateNodeLabel}
           />
         )}
 

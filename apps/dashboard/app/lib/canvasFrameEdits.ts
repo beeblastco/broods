@@ -3,8 +3,16 @@
  * an edit changes which frame they belong to and what a card's menu offers.
  * Pure, so each rule is unit-tested here.
  */
-import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
-import { deriveGroups, type StageMcpServer } from "@/app/lib/canvasFrameNodes";
+import {
+  connectionEdge,
+  isCodeManagedOwner,
+} from "@/app/components/canvas/edgeOwnership";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
+import {
+  deriveGroups,
+  facingHandles,
+  type StageMcpServer,
+} from "@/app/lib/canvasFrameNodes";
 import {
   defaultRuntimeNodeData,
   runtimeRefsProblems,
@@ -18,6 +26,7 @@ import {
   frameOriginOf,
   framesOf,
   frameSize,
+  workspaceSandboxIds,
   type CanvasFrame,
   type FrameSize,
 } from "@broods/convex/model/canvasFrames";
@@ -80,6 +89,17 @@ export type NodeLinkAction =
       /** The linked card's node type, which picks the row's icon. */
       otherType: Node["type"];
     };
+
+/**
+ * One row of a workspace's mount menu. `default` drops its mount edges so the
+ * agent's first sandbox applies, `sandbox` draws a mount edge, and `readonly`
+ * sets the flag that emits a `sandbox: null` ref: an absent mount edge already
+ * means inherit, so the graph has no other way to ask for no sandbox at all.
+ */
+export type WorkspaceMountTarget =
+  | { current: boolean; kind: "default" }
+  | { current: boolean; kind: "readonly" }
+  | { current: boolean; kind: "sandbox"; label: string; sandboxId: string };
 
 /**
  * Whether a service added to a frame would land in it. A fresh node carries
@@ -471,6 +491,105 @@ export function setUngrouped<T extends LayoutNode>(
 
     return { ...node, data: data };
   });
+}
+
+/**
+ * The graph with a workspace mounted where `target` says: its own mount edges
+ * dropped, one drawn again for a sandbox, and `readOnly` tracking the
+ * no-sandbox row. Mount edges other workspaces hold are left alone.
+ */
+export function setWorkspaceMount(
+  graph: FlatGraph,
+  workspaceId: string,
+  target: WorkspaceMountTarget,
+): { edges: Edge[]; nodes: Node[] } {
+  const kept = graph.edges.filter(
+    (edge) =>
+      edgeKind(edge) !== "mount" ||
+      (edge.source !== workspaceId && edge.target !== workspaceId),
+  );
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const sandbox =
+    target.kind === "sandbox" ? byId.get(target.sandboxId) : undefined;
+
+  return {
+    edges:
+      sandbox === undefined
+        ? kept
+        : [
+            ...kept,
+            connectionEdge(
+              {
+                source: workspaceId,
+                target: sandbox.id,
+                ...facingHandles(byId.get(workspaceId), sandbox),
+              },
+              false,
+            ),
+          ],
+    nodes: graph.nodes.map((node) =>
+      node.id === workspaceId
+        ? {
+            ...node,
+            data: { ...node.data, readOnly: target.kind === "readonly" },
+          }
+        : node,
+    ),
+  };
+}
+
+/**
+ * The rows a workspace's mount menu lists, with the one it is on now marked:
+ * the agent default where an agent wires it, every sandbox it could mount on,
+ * and no sandbox at all. Empty for anything but a workspace the canvas owns,
+ * since a code-managed ref is re-synced from the project it was deployed from.
+ * Machine sandboxes are left out, because the config API refuses a workspace
+ * mounted on one.
+ */
+export function workspaceMountTargets(
+  nodes: readonly Node[],
+  edges: readonly Edge[],
+  workspaceId: string,
+): WorkspaceMountTarget[] {
+  const workspace = nodes.find((node) => node.id === workspaceId);
+  if (
+    workspace?.type !== "workspace" ||
+    isCodeManagedOwner(workspace.data.managedBy)
+  ) {
+    return [];
+  }
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const state = workspaceSandboxIds(nodes, edges).get(workspaceId);
+  const mounted = new Set(
+    state?.kind === "override" ? state.sandboxIds : undefined,
+  );
+  const wiresAgent = edges.some((edge) => {
+    const otherId =
+      edge.source === workspaceId
+        ? edge.target
+        : edge.target === workspaceId
+          ? edge.source
+          : null;
+
+    return otherId !== null && byId.get(otherId)?.type === "agent";
+  });
+  const targets: WorkspaceMountTarget[] = [];
+  if (wiresAgent) {
+    targets.push({ current: state?.kind === "inherited", kind: "default" });
+  }
+  for (const node of nodes) {
+    const config = (node.data as BaseNodeData).config;
+    if (node.type !== "sandbox" || config?.provider === "machine") continue;
+    targets.push({
+      current: mounted.has(node.id),
+      kind: "sandbox",
+      label: cardLabel(node),
+      sandboxId: node.id,
+    });
+  }
+  targets.push({ current: state?.kind === "readonly", kind: "readonly" });
+
+  return targets;
 }
 
 /**

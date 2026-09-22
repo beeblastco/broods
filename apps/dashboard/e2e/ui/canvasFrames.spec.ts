@@ -571,18 +571,19 @@ test("a collapsed frame's dot follows its members", async ({ page }) => {
   }
 });
 
-test("hovering any edge's line shows a lock or a trash: trash only where it can be deleted", async ({
+test("every edge's line shows one control: a mount word, a trash, or a lock that says why", async ({
   page,
 }) => {
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-frames"]');
   await fixture.getByRole("button", { name: "Expand MCP · url" }).click();
 
-  // Stored and user-owned edges delete; code-managed and drawn ones lock and say why.
+  // A workspace's mount carries its state as a word, drawn or stored alike.
+  // Other stored edges delete; the ones code owns or the canvas draws lock.
   expect(await hoverEveryEdge(fixture)).toEqual(
     expect.objectContaining({
-      "inherits:repos-internal-sandbox": "locked",
-      "mount:internal-sandbox-right-notes-left": "delete",
+      "inherits:repos-internal-sandbox": "mount",
+      "mount:internal-sandbox-right-notes-left": "mount",
       "runs-on:blender-kien-mac": "locked",
       "subagent:coder-right-reviewer-left": "delete",
       "subagent:tracy-right-coder-left": "locked",
@@ -590,7 +591,6 @@ test("hovering any edge's line shows a lock or a trash: trash only where it can 
     }),
   );
   for (const [id, reason] of [
-    ["inherits:repos-internal-sandbox", /Inherited from the agent's default/],
     ["runs-on:blender-kien-mac", /runs on this computer/],
     ["subagent:tracy-right-coder-left", /Managed by broods\/ code/],
   ] as const) {
@@ -599,6 +599,26 @@ test("hovering any edge's line shows a lock or a trash: trash only where it can 
       id,
     ).toHaveAttribute("title", reason);
   }
+
+  // The word says which: a drawn mount follows its agent, a stored one is drawn.
+  for (const [id, word] of [
+    ["inherits:repos-internal-sandbox", "inherited"],
+    ["mount:internal-sandbox-right-notes-left", "mounted"],
+  ] as const) {
+    await expect(
+      fixture.locator(`[data-edge-id="${id}"][data-edge-control="mount"]`),
+      id,
+    ).toHaveText(word);
+  }
+
+  // Clicking it offers the places that workspace can mount, read-only included.
+  await fixture
+    .locator('[data-edge-id="inherits:repos-internal-sandbox"] button')
+    .click();
+  const menu = page.locator('[data-slot="dropdown-menu-content"]');
+  await expect(menu.getByText("Agent default")).toBeVisible();
+  await expect(menu.getByText("No sandbox")).toBeVisible();
+  await page.keyboard.press("Escape");
 
   // Collapsed, the mount re-points to the frame: drawn, so locked.
   const frame = fixture.locator(

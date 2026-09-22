@@ -169,6 +169,53 @@ describe("deriveAgentRuntimeRefs", () => {
 
     expect(refs.sandboxes).toEqual([]);
   });
+
+  test("a workspace with no mount edge inherits, and says so by naming no sandbox", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("sb", "sandbox", { resourceId: "sb_1" }),
+      node("ws", "workspace", { resourceId: "ws_1" }),
+    ];
+    const edges = [edge("agent", "sb"), edge("agent", "ws")];
+
+    const [refs] = deriveAgentRuntimeRefs(nodes, edges);
+
+    expect(refs.workspaces).toEqual([{ name: "ws", workspaceId: "ws_1" }]);
+  });
+
+  test("the readOnly flag derives `sandbox: null`, which reads straight from S3", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("sb", "sandbox", { resourceId: "sb_1" }),
+      node("ws", "workspace", { readOnly: true, resourceId: "ws_1" }),
+    ];
+    const edges = [edge("agent", "sb"), edge("agent", "ws")];
+
+    const [refs] = deriveAgentRuntimeRefs(nodes, edges);
+
+    expect(refs.workspaces).toEqual([
+      { name: "ws", sandbox: null, workspaceId: "ws_1" },
+    ]);
+  });
+
+  test("a mount edge outranks the flag: the mount is what the ref names", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("sb", "sandbox", { resourceId: "sb_1" }),
+      node("ws", "workspace", { readOnly: true, resourceId: "ws_1" }),
+    ];
+    const edges = [
+      edge("agent", "sb"),
+      edge("agent", "ws"),
+      edge("ws", "sb", "mount"),
+    ];
+
+    const [refs] = deriveAgentRuntimeRefs(nodes, edges);
+
+    expect(refs.workspaces).toEqual([
+      { name: "ws", sandbox: "sb_1", workspaceId: "ws_1" },
+    ]);
+  });
 });
 
 describe("deriveSubagentRefs", () => {

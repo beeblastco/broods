@@ -52,6 +52,8 @@ import {
   frameGroupActions,
   nodeLinkActions,
   reconcileFramePositions,
+  setWorkspaceMount,
+  workspaceMountTargets,
 } from "@/app/lib/canvasFrameEdits";
 import {
   applyFramedNodeChanges,
@@ -536,9 +538,21 @@ function CanvasConnectFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [],
       mcpServers: serversByNode([]),
+      mountTargetsOf: (workspaceId) =>
+        workspaceMountTargets(CONNECT_NODES, edges, workspaceId),
+      onSetWorkspaceMount: (workspaceId, target) =>
+        setEdges(
+          (current) =>
+            setWorkspaceMount(
+              { edges: current, mcpServers: [], nodes: CONNECT_NODES },
+              workspaceId,
+              target,
+            ).edges,
+        ),
       onToggleFrame: () => undefined,
       sandboxOrderNumbers: agreedSandboxOrderNumbers(CONNECT_NODES, edges),
       workspaceOnlySandboxIds: workspaceOnlySandboxIds(CONNECT_NODES, edges),
@@ -634,6 +648,7 @@ function CanvasNodeMenuFixture({
       <ContextMenuContent className="w-60">
         <CanvasNodeMenu
           nodeId={nodeId}
+          label={nodeId}
           links={nodeLinkActions(FRAME_NODES, FRAME_EDGES, nodeId)}
           groups={frameGroupActions(
             {
@@ -643,11 +658,14 @@ function CanvasNodeMenuFixture({
             },
             nodeId,
           )}
+          mounts={workspaceMountTargets(FRAME_NODES, FRAME_EDGES, nodeId)}
           deleteLocked={nodeId === "coder"}
           onOpen={() => setLast("open")}
           onDelete={() => setLast("delete")}
           onMakeDefault={() => setLast("make-default")}
           onRemoveEdge={(edgeId) => setLast(`unlink ${edgeId}`)}
+          onRename={(_id, label) => setLast(`rename ${label}`)}
+          onSetMount={(_id, target) => setLast(`mount ${target.kind}`)}
           onSetUngrouped={(nodeIds) => setLast(`group ${nodeIds.join(",")}`)}
         />
       </ContextMenuContent>
@@ -682,9 +700,12 @@ function CanvasDropFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      canWrite: true,
       expandedMemberId: null,
       machineConnections: [],
       mcpServers: serversByNode([]),
+      mountTargetsOf: () => [],
+      onSetWorkspaceMount: () => undefined,
       onToggleFrame: () => undefined,
       sandboxOrderNumbers: agreedSandboxOrderNumbers(nodes, edges),
       workspaceOnlySandboxIds: workspaceOnlySandboxIds(nodes, edges),
@@ -801,12 +822,16 @@ function CanvasFramesFixture(): React.JSX.Element {
   );
   const frames = useMemo(
     (): CanvasFramesValue => ({
+      canWrite: true,
       expandedMemberId: expandedMemberId,
       machineConnections: [
         fixtureConnection("kien-mac", Date.now(), undefined),
         fixtureConnection("phicks-mac", Date.now() - 3_600_000, Date.now()),
       ],
       mcpServers: serversByNode(FRAME_MCP_SERVERS),
+      mountTargetsOf: (workspaceId) =>
+        workspaceMountTargets(FRAME_NODES, FRAME_EDGES, workspaceId),
+      onSetWorkspaceMount: () => undefined,
       onToggleFrame: (frameId) =>
         setCollapsed((current) => {
           const next = new Set(current);
