@@ -145,6 +145,7 @@ async function seedFullStage(t: T): Promise<{
       ciphertext: "ct",
       iv: "iv",
       tag: "tag",
+      valueDigest: "digest",
       updatedAt: now,
     });
     await ctx.db.insert("environmentVariableReveals", {

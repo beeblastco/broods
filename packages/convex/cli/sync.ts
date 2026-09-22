@@ -404,14 +404,14 @@ export const listEnvBySecretHash = internalQuery({
     v.object({
       name: v.string(),
       updatedAt: v.number(),
-      valueDigest: v.optional(v.string()),
+      valueDigest: v.string(),
     }),
   ),
   handler: async (
     ctx,
     args,
   ): Promise<
-    Array<{ name: string; updatedAt: number; valueDigest?: string }>
+    Array<{ name: string; updatedAt: number; valueDigest: string }>
   > => {
     const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
@@ -432,7 +432,7 @@ export const listEnvBySecretHash = internalQuery({
       .map((variable) => ({
         name: variable.name,
         updatedAt: variable.updatedAt,
-        ...(variable.valueDigest ? { valueDigest: variable.valueDigest } : {}),
+        valueDigest: variable.valueDigest,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   },

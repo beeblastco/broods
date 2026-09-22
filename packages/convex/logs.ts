@@ -169,11 +169,8 @@ export const fetchUsageStats = query({
 });
 
 /**
- * Rollup rows for one endpoint at one grain since `startMs`. At the "5m"
- * grain this also merges legacy rows that predate the `grain` field (they are
- * 5-minute buckets by convention until `migrations.backfillUsageRollupGrains`
- * stamps them). Exported for `fetchUsageStats` and its test; not a registered
- * Convex function.
+ * Rollup rows for one endpoint at one grain since `startMs`. Exported for
+ * `fetchUsageStats` and its test; not a registered Convex function.
  */
 export async function collectUsageRollups(
   ctx: QueryCtx,
@@ -181,7 +178,7 @@ export async function collectUsageRollups(
   grain: UsageGrain,
   startMs: number,
 ): Promise<Doc<"usageRollups">[]> {
-  const rows = await ctx.db
+  return await ctx.db
     .query("usageRollups")
     .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
       q
@@ -190,19 +187,6 @@ export async function collectUsageRollups(
         .gte("bucketStart", startMs),
     )
     .collect();
-  if (grain !== "5m") {
-    return rows;
-  }
-
-  // Pre-backfill legacy rows have no grain and live only under the old index.
-  const legacy = await ctx.db
-    .query("usageRollups")
-    .withIndex("by_endpointId_and_bucketStart", (q) =>
-      q.eq("endpointId", endpointId).gte("bucketStart", startMs),
-    )
-    .collect();
-
-  return [...rows, ...legacy.filter((row) => row.grain === undefined)];
 }
 
 /**

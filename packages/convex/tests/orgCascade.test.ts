@@ -40,27 +40,6 @@ test("org deletion drains account contents in scheduled batches", async () => {
         role: "owner",
         createdAt: now,
       });
-      // More rows than one deletion batch holds, so the drain must reschedule
-      // itself at least once to finish.
-      for (let index = 0; index < 150; index += 1) {
-        await ctx.db.insert("skills", {
-          accountId: accountId,
-          name: `skill-${index}`,
-          s3Key: `skills/${index}`,
-          createdAt: now,
-          updatedAt: now,
-        });
-      }
-
-      // Account-scoped rows no project purge reaches.
-      await ctx.db.insert("accountEnvVars", {
-        accountId: accountId,
-        name: "OPENAI_API_KEY",
-        ciphertext: "ct",
-        iv: "iv",
-        tag: "tag",
-        updatedAt: now,
-      });
       await ctx.db.insert("accountRoles", {
         accountId: accountId,
         roleId: "fp_role_test",
@@ -70,6 +49,18 @@ test("org deletion drains account contents in scheduled batches", async () => {
         createdAt: now,
         updatedAt: now,
       });
+      // Account-scoped rows no project purge reaches, more than one deletion
+      // batch holds, so the drain must reschedule itself at least once.
+      for (let index = 0; index < 150; index += 1) {
+        await ctx.db.insert("accountEnvVars", {
+          accountId: accountId,
+          name: `VAR_${index}`,
+          ciphertext: "ct",
+          iv: "iv",
+          tag: "tag",
+          updatedAt: now,
+        });
+      }
 
       return { orgId: orgId, accountId: accountId, memberId: memberId };
     });
@@ -90,12 +81,11 @@ test("org deletion drains account contents in scheduled batches", async () => {
 
     await t.run(async (ctx) => {
       expect(await ctx.db.get(accountId)).toBeNull();
-      const skills = await ctx.db
-        .query("skills")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      const envVars = await ctx.db
+        .query("accountEnvVars")
+        .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
         .collect();
-      expect(skills).toHaveLength(0);
-      expect(await ctx.db.query("accountEnvVars").collect()).toEqual([]);
+      expect(envVars).toHaveLength(0);
       expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
     });
   } finally {
