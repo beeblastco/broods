@@ -219,6 +219,8 @@ async function runIsolateJob(
   }
 
   const context = await isolate.createContext();
+  const timers = new Set();
+  let closed = false;
   try {
     await context.global.set("globalThis", context.global.derefInto());
     // Besides ctx/input, inject the minimal runtime surface tool bundles
@@ -361,17 +363,22 @@ async function runIsolateJob(
         new ivm.Callback((url, init) => bridgeFetchSync(url, init), {
           sync: true,
         }),
-        // unref: stray timers must not keep the runner alive after the final
-        // frame; a fire on a disposed/released context rejects and is swallowed.
+        // Tracked so the finally clears them: release() drops only this handle,
+        // and a timer holding fireTimer would keep firing under the next call.
+        // `closed` stops an interval that was mid-fire at the finally from re-arming.
         new ivm.Callback(
           (id, ms) => {
+            if (closed) return;
             const timer = setTimeout(
               () => {
+                timers.delete(timer);
+                // A fire on a released context rejects; nothing is left to tell.
                 fireTimer?.apply(undefined, [id]).catch(() => {});
               },
               Math.min(ms, 60_000),
             );
             timer.unref?.();
+            timers.add(timer);
           },
           { ignored: true },
         ),
@@ -507,6 +514,8 @@ async function runIsolateJob(
       },
     );
   } finally {
+    closed = true;
+    for (const timer of timers) clearTimeout(timer);
     // Free the context but keep the isolate warm for the next same-tenant call.
     try {
       context.release();

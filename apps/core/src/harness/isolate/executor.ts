@@ -17,6 +17,20 @@ import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
 import { FrameQueue } from "../frames.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
+const RUNNER_ENV_KEYS = [
+  "PATH",
+  "ISOLATE_MEMORY_LIMIT_MB",
+  "ISOLATE_RUNNER_TIMEOUT_SECONDS",
+  "ISOLATE_TENANT_CACHE_PER_WORKER",
+];
+// The runner hosts tenant code, so it gets only what it reads, never core's secrets.
+const RUNNER_ENV = Object.fromEntries(
+  Object.entries(process.env).filter(([key]): boolean =>
+    RUNNER_ENV_KEYS.includes(key),
+  ),
+);
+// On top of the request size: a hook may hand back its whole input plus the
+// result budget, so a flat cap would kill a legitimate rewrite.
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 
 /**
@@ -91,11 +105,13 @@ async function* streamViaOneShot(
   try {
     child = spawn(isolateRunnerNode(), [isolateRunnerPath()], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: RUNNER_ENV,
     });
     detachAbort = forwardAbortSignal(child, abortSignal);
 
     const queue = new FrameQueue();
+    const request = JSON.stringify(runPayload) + "\n";
+    const outputLimit = RUNNER_OUTPUT_LIMIT_BYTES + Buffer.byteLength(request);
     let stderr = "";
     let stdoutBytes = 0;
     let sawFrame = false;
@@ -124,7 +140,7 @@ async function* streamViaOneShot(
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdoutBytes += Buffer.byteLength(chunk);
-      if (stdoutBytes > RUNNER_OUTPUT_LIMIT_BYTES) {
+      if (stdoutBytes > outputLimit) {
         queue.push(
           JSON.stringify({
             t: "error",
@@ -159,7 +175,7 @@ async function* streamViaOneShot(
         queue.close();
       });
 
-    child.stdin.end(JSON.stringify(runPayload) + "\n");
+    child.stdin.end(request);
 
     for await (const frame of queue.frames()) {
       // A log frame is not a result. Counting it as one turns a runner that
@@ -301,6 +317,7 @@ class IsolateWorker {
 
   #buffer = "";
   #stdoutBytes = 0;
+  #stdoutLimit = RUNNER_OUTPUT_LIMIT_BYTES;
   #sink: {
     push: (frame: IsolateFrame) => void;
     fail: (error: Error) => void;
@@ -313,7 +330,7 @@ class IsolateWorker {
     });
     this.child = spawn(isolateRunnerNode(), [isolateRunnerPath(), "--pool"], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: RUNNER_ENV,
     });
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.#onData(chunk));
@@ -335,7 +352,7 @@ class IsolateWorker {
 
   #onData(chunk: string): void {
     this.#stdoutBytes += Buffer.byteLength(chunk);
-    if (this.#stdoutBytes > RUNNER_OUTPUT_LIMIT_BYTES) {
+    if (this.#stdoutBytes > this.#stdoutLimit) {
       this.kill();
       this.#sink?.fail(new Error("isolate output exceeded limit"));
 
@@ -364,7 +381,9 @@ class IsolateWorker {
   async *runCall(
     request: Record<string, unknown>,
   ): AsyncGenerator<IsolateFrame, void, void> {
+    const body = JSON.stringify(request) + "\n";
     this.#stdoutBytes = 0;
+    this.#stdoutLimit = RUNNER_OUTPUT_LIMIT_BYTES + Buffer.byteLength(body);
     const frames: IsolateFrame[] = [];
     let done = false;
     let failure: Error | null = null;
@@ -385,7 +404,7 @@ class IsolateWorker {
       },
     };
     try {
-      this.child.stdin.write(JSON.stringify(request) + "\n");
+      this.child.stdin.write(body);
       while (true) {
         if (frames.length) {
           yield frames.shift()!;
