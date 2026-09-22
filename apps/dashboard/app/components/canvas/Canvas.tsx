@@ -158,6 +158,11 @@ const CreateAgentConfigDialog = dynamic(() =>
     (mod) => mod.CreateAgentConfigDialog,
   ),
 );
+const NodeDeleteDialog = dynamic(() =>
+  import("@/app/components/canvas/NodeDeleteDialog").then(
+    (mod) => mod.NodeDeleteDialog,
+  ),
+);
 const SkillSourcePickerDialog = dynamic(() =>
   import("@/app/components/SkillSourcePickerDialog").then(
     (mod) => mod.SkillSourcePickerDialog,
@@ -498,7 +503,10 @@ function CanvasInner({
   const [saveError, setSaveError] = useState<string | null>(null);
   // Bumped to make the DB-sync effect run again when no new layout arrived.
   const [resyncToken, setResyncToken] = useState(0);
-  const [deleteRequestToken, setDeleteRequestToken] = useState(0);
+  // The card the delete dialog is confirming. Kept after the dialog closes so
+  // its name does not blank out mid fade-out.
+  const [deleteNode, setDeleteNode] = useState<Node | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
@@ -887,7 +895,7 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Route Delete key to the side-panel confirmation flow instead of immediate node deletion.
+  // Route Delete key to the confirm dialog instead of immediate node deletion.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Delete") return;
@@ -896,7 +904,8 @@ function CanvasInner({
 
       event.preventDefault();
       event.stopPropagation();
-      setDeleteRequestToken((token) => token + 1);
+      setDeleteNode(selectedNode);
+      setDeleteOpen(true);
     }
 
     window.addEventListener("keydown", onKeyDown);
@@ -1253,14 +1262,13 @@ function CanvasInner({
     setSelectedNode(node);
   }, []);
 
-  /** The menu's Delete: the side panel owns the confirmation, as for the Delete key. */
-  const requestNodeDelete = useCallback(
-    (nodeId: string): void => {
-      openNode(nodeId);
-      setDeleteRequestToken((token) => token + 1);
-    },
-    [openNode],
-  );
+  /** Delete, from the card menu or the panel's Danger Zone: confirm over the canvas. */
+  const requestNodeDelete = useCallback((nodeId: string): void => {
+    const node = nodesRef.current.find((item) => item.id === nodeId);
+    if (!node) return;
+    setDeleteNode(node);
+    setDeleteOpen(true);
+  }, []);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
@@ -1707,14 +1715,25 @@ function CanvasInner({
             <NodeSidePanel
               node={selectedNode}
               selectedAt={selectedAt}
-              deleteRequestToken={deleteRequestToken}
               onClose={onPaneClick}
-              onRemoveNode={removeNode}
+              onRequestDelete={requestNodeDelete}
               onUpdateNodeLabel={updateNodeLabel}
               onUpdateNodeData={updateNodeData}
             />
           )}
         </div>
+
+        {deleteNode && (
+          // Keyed on the card so the typed confirmation does not carry over
+          // from the last card a delete was asked for.
+          <NodeDeleteDialog
+            key={deleteNode.id}
+            node={deleteNode}
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            onRemoved={removeNode}
+          />
+        )}
 
         {sourcePickerWanted && (
           <AgentSourcePickerDialog

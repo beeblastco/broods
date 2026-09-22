@@ -1,6 +1,7 @@
 "use client";
 
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
+import type { NodeType } from "@/app/components/canvas/nodeTemplates";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import {
   agentStatusConfig,
@@ -19,10 +20,7 @@ import {
   SandboxResourceDetailsTab,
   WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
-import {
-  SettingsTab,
-  type NodeType,
-} from "@/app/components/side-panel/SettingsTab";
+import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
@@ -45,6 +43,7 @@ import {
   type AgentHealthStatus,
 } from "@/app/hooks/useAgentHealth";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
+import { useNodeOwnership } from "@/app/hooks/useNodeOwnership";
 import { useStage } from "@/app/hooks/useStage";
 import { useStageSession } from "@/app/hooks/useStageSession";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -66,7 +65,7 @@ import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Node } from "@xyflow/react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
@@ -136,18 +135,17 @@ const PANEL_TITLES: Record<NodeType, string> = {
 export const NodeSidePanel = memo(function NodeSidePanel({
   node,
   selectedAt,
-  deleteRequestToken,
   onClose,
-  onRemoveNode,
+  onRequestDelete,
   onUpdateNodeLabel,
   onUpdateNodeData,
 }: {
   node: Node | null;
   /** `performance.now()` of the click that selected this node, for the open-latency mark. */
   selectedAt: number;
-  deleteRequestToken: number;
   onClose: () => void;
-  onRemoveNode: (nodeId: string) => void;
+  /** Hands the delete to the canvas, which confirms it without this panel. */
+  onRequestDelete: (nodeId: string) => void;
   onUpdateNodeLabel: (nodeId: string, label: string) => void;
   onUpdateNodeData: (nodeId: string, patch: Partial<BaseNodeData>) => void;
 }): React.JSX.Element {
@@ -165,6 +163,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     | Id<"agentConfigs">
     | undefined;
   const nodeId = node?.id;
+  const resourceId = nodeData?.resourceId;
   const canQueryMcpStatus = isMcp && !!projectId && !!stageId && !!nodeId;
 
   // Time from the canvas click to this panel being on screen, mostly its own
@@ -196,14 +195,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     !nodeId ||
     (infraAnalysis.connectedToAgent[nodeId] ?? false);
 
-  const agentConfig = useQuery(
-    api.agent.config.getById,
-    isAgent && agentConfigId ? { configId: agentConfigId } : "skip",
-  );
+  const { agentConfig, codeOwner, isCodeManaged, isOwnershipLoading } =
+    useNodeOwnership(node);
   const updateConfig = useMutation(
     api.agent.config.update,
   ).withOptimisticUpdate(applyAgentConfigUpdate);
-  const removeConfig = useMutation(api.agent.config.remove);
   const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
   const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
@@ -232,7 +228,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         }
       : "skip",
   );
-  const removeMcpForNode = useAction(api.mcp.removeForNode);
   const { canWrite } = useOrgRole();
 
   const [editName, setEditName] = useState("");
@@ -262,15 +257,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     }
   }
 
-  // Delete-confirm dialog, rendered by SettingsTab but owned here so a
-  // Delete-key request can open it before the lazily mounted tab ever renders.
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-
   const [tabSyncedNodeId, setTabSyncedNodeId] = useState(node?.id);
   if (node?.id !== tabSyncedNodeId) {
     setTabSyncedNodeId(node?.id);
     setActiveTab("details");
-    setDeleteDialogOpen(false);
   }
 
   // Clear a freshly generated key when the active deployment changes. The
@@ -284,23 +274,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }
   const resolvedDeploymentApiKey =
     deploymentApiKey ?? stageSession ?? undefined;
-
-  // Jump to the settings tab and open the confirm dialog when the parent bumps
-  // the delete-request token. The dialog state lives here, not in SettingsTab.
-  // The tab panel mounts lazily, so the request usually lands before the tab
-  // has ever rendered and child-local state would miss it. Render-time
-  // adjustment, not an effect; the locked gate below closes it when delete is
-  // blocked (ownership pending or code-owned). Starts at 0, not at the current
-  // token: the card menu's Delete is what mounts this panel the first time, and
-  // that request has to open the dialog too.
-  const [prevDeleteToken, setPrevDeleteToken] = useState(0);
-  if (deleteRequestToken !== prevDeleteToken) {
-    setPrevDeleteToken(deleteRequestToken);
-    if (deleteRequestToken > 0) {
-      setActiveTab("settings");
-      setDeleteDialogOpen(true);
-    }
-  }
 
   const nameChanged = isAgent
     ? agentConfig && editName.trim() !== agentConfig.name
@@ -511,38 +484,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }
 
-  // Resource owned by a broods/ project. Agents read the authoritative
-  // `managedBy` from their config row; workspaces/sandboxes read it from the live
-  // `resourceOwnership` query keyed by the row `_id` (the node's `resourceId`),
-  // not the cached `managedBy` on canvas node data which can be stale or missing.
-  // Falls back to the cached value while the query loads. Code-managed resources
-  // cannot be deleted here, and a sandbox's config reads as read-only: the
-  // canvas save leaves those rows untouched, so an edit would never persist.
-  const resourceId = nodeData?.resourceId as string | undefined;
-  const resourceOwnership = useQuery(
-    api.canvas.resourceOwnership,
-    (isWorkspace || isSandbox) && projectId && stageId
-      ? { projectId: projectId, stageId: stageId }
-      : "skip",
-  );
-  const codeOwner = isAgent
-    ? agentConfig?.managedBy
-    : resourceId && resourceOwnership
-      ? resourceOwnership[resourceId]
-      : (nodeData as { managedBy?: string } | undefined)?.managedBy;
-  const isCodeManaged = codeOwner === "cli" || codeOwner === "api";
-  const isOwnershipLoading =
-    (isAgent && !!agentConfigId && agentConfig === undefined) ||
-    ((isWorkspace || isSandbox) &&
-      !!resourceId &&
-      resourceOwnership === undefined);
-
-  // Deletion is blocked while ownership is pending or code owns the resource;
-  // never show the confirm dialog in that window.
-  if (deleteDialogOpen && (isCodeManaged || isOwnershipLoading)) {
-    setDeleteDialogOpen(false);
-  }
-
   // Warn when a dashboard-owned node is named the same as a code-managed resource
   // of the same kind: the next `broods deploy` resolves by (stage,
   // name) and would adopt + overwrite this resource with the code definition.
@@ -563,25 +504,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     cliManagedNames[nodeType as "agent" | "workspace" | "sandbox"].includes(
       currentResourceName,
     );
-
-  /** Deletes the node (and its agent config); no-op while code owns it. */
-  async function handleDelete(): Promise<void> {
-    if (isCodeManaged || isOwnershipLoading) return;
-    if (isAgent && agentConfigId) {
-      await removeConfig({ configId: agentConfigId });
-    }
-    if (isMcp && projectId && stageId && node) {
-      await removeMcpForNode({
-        projectId: projectId,
-        stageId: stageId,
-        nodeId: node.id,
-      });
-    }
-    if (node) {
-      onRemoveNode(node.id);
-    }
-    onClose();
-  }
 
   const handleUpdateOutputFormat = useCallback(
     (outputFormat: Record<string, unknown> | null) => {
@@ -742,10 +664,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, updateConfig],
   );
 
-  /** Resolved name for the SettingsTab delete confirmation. */
-  const resolvedName = isAgent
-    ? (agentConfig?.name ?? "")
-    : (nodeData?.label ?? "");
   // Warmed from the tab trigger only. Preloading on open cost every panel view
   // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
   // was ever used; intent to open it lands early enough to hide the fetch.
@@ -1041,12 +959,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             >
               <SettingsTab
                 nodeType={nodeType}
-                nodeName={resolvedName}
-                deleteOpen={deleteDialogOpen}
-                onDeleteOpenChange={setDeleteDialogOpen}
-                onDelete={handleDelete}
+                onDelete={() => node && onRequestDelete(node.id)}
                 managedByCode={isCodeManaged}
-                codeOwner={codeOwner === "api" ? "api" : "cli"}
+                codeOwner={codeOwner}
                 deleteLocked={isCodeManaged || isOwnershipLoading}
               />
             </TabsContent>
