@@ -15,7 +15,7 @@ fi
 
 lintable=$(echo "$staged" | grep -E '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' || true)
 if [ -n "$lintable" ]; then
-  echo "$lintable" | xargs bunx oxlint
+  echo "$lintable" | xargs bunx oxlint --no-error-on-unmatched-pattern
 fi
 
 formattable=$(echo "$staged" | grep -E '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|jsonc|md|yml|yaml)$' || true)

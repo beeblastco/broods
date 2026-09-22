@@ -33,6 +33,11 @@ import {
   type CliResource,
 } from "./cliSync";
 import { isPlainObject, stableJson } from "./objects";
+import {
+  assertPolicyUnreferenced,
+  loadPolicyReferenceRows,
+  type PolicyReferenceRows,
+} from "./policyReferences";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
 
 /** Deletes a CLI-managed agent, and its `agents` row when `accountId` owns it. */
@@ -152,8 +157,15 @@ export async function prunePolicyResources(
     .query("agentPolicies")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
+  // One read per account for the whole prune, not one per pruned policy.
+  const rowsByAccount = new Map<Id<"accounts">, PolicyReferenceRows>();
   for (const policy of existing) {
     if (policy.managedBy === "cli" && !declared.has(policy.name)) {
+      const rows =
+        rowsByAccount.get(policy.accountId) ??
+        (await loadPolicyReferenceRows(ctx, policy.accountId));
+      rowsByAccount.set(policy.accountId, rows);
+      await assertPolicyUnreferenced(ctx, policy, rows);
       await ctx.db.patch(policy._id, {
         status: "deleted",
         deletedAt: Date.now(),
