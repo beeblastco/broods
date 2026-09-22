@@ -26,7 +26,7 @@ import {
   type ChannelParseResult,
 } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
-import { logWarn } from "./log.ts";
+import { logDebug, logWarn } from "./log.ts";
 import {
   MATRIX_ACCESS_TOKEN_HEADER,
   MATRIX_BOT_MARKER,
@@ -371,13 +371,17 @@ function droppedReason(
   if (!TEXT_MSGTYPES.has(msgtype) && !MEDIA_MSGTYPES[msgtype]) {
     return `unsupported_msgtype:${msgtype}`;
   }
+  // Debug, unlike the other channels' allow-list misses. A bot is invited to
+  // the rooms it serves, so an event from elsewhere means a misconfiguration
+  // worth a warning. This account is a person's: it sits in every room they are
+  // in and sees every sender there, so a miss here is the steady state, not news.
   if (!isAllowedId(options.allowedChannelIds, roomId)) {
-    logWarn("Matrix room not in allow list", { roomId: roomId });
+    logDebug("Matrix room not in allow list", { roomId: roomId });
 
     return "channel_not_allowed";
   }
   if (!isAllowedId(options.allowedUserIds, event.sender)) {
-    logWarn("Matrix sender not in allow list", { userId: event.sender });
+    logDebug("Matrix sender not in allow list", { userId: event.sender });
 
     return "user_not_allowed";
   }
