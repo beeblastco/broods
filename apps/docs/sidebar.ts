@@ -267,6 +267,11 @@ const sidebars: SidebarsConfig = {
           id: "operations",
           label: "Operations",
         },
+        {
+          type: "doc",
+          id: "design/jev-judge",
+          label: "Judge (Proposal)",
+        },
       ],
     },
   ],
