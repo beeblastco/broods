@@ -60,6 +60,9 @@ type ConfigRoute =
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
+  // Only a role is scoped below the account, so every other caller already
+  // reads the resources a policy refusal would name.
+  let readsPolicyReferences = true;
   try {
     const pathname = new URL(req.url).pathname;
 
@@ -96,8 +99,12 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
     }
 
     if (accountAuth.kind === "role") {
+      const principal = rolePrincipal(accountAuth.role);
+      readsPolicyReferences =
+        roleDenial(principal, "GET", { type: "agents" }) === null &&
+        roleDenial(principal, "GET", { type: "channels" }) === null;
       const denial = roleDenial(
-        rolePrincipal(accountAuth.role),
+        principal,
         req.method,
         apiResourceForRoute(route),
       );
@@ -110,7 +117,15 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
       err instanceof Error &&
       err.message.startsWith(POLICY_STILL_REFERENCED)
     ) {
-      return jsonError(409, err.message);
+      // The refusal names the agents and channel records that still list the
+      // policy. A role holding only policies:write may not read either, so it
+      // gets the refusal without the names.
+      return jsonError(
+        409,
+        readsPolicyReferences
+          ? err.message
+          : `${POLICY_STILL_REFERENCED} an agent or a channel record still lists this policy. Detach it before deleting it.`,
+      );
     }
     if (isClientInputError(err)) {
       return jsonError(clientErrorStatus(err), err.message);

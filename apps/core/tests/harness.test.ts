@@ -2723,6 +2723,7 @@ describe("subagent policy input", () => {
         });
       },
     });
+    const priorOpaBaseUrl = process.env.OPA_BASE_URL;
     process.env.OPA_BASE_URL = `http://127.0.0.1:${opa.port}`;
     try {
       const { Session } = await import("../src/harness/session.ts");
@@ -2804,6 +2805,8 @@ describe("subagent policy input", () => {
       });
     } finally {
       opa.stop(true);
+      if (priorOpaBaseUrl === undefined) delete process.env.OPA_BASE_URL;
+      else process.env.OPA_BASE_URL = priorOpaBaseUrl;
     }
   });
 });
