@@ -13,6 +13,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
+import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
 import {
   appliedIngressModeValidator,
   ingressModeValidator,
@@ -308,25 +309,26 @@ export const acquireClear = internalMutation({
   },
 });
 
-/** Appends one history event only for the current fenced owner. */
+/** Appends history events only for the current fenced owner, all or none. */
 export const appendConversationEvent = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
-    cursor: v.string(),
-    event: v.any(),
+    ...conversationEventArgs,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
     await requireActiveAccount(ctx, coordinator.accountId);
-    await ctx.db.insert("runtimeConversationEvents", {
-      accountId: coordinator.accountId,
-      conversationKey: args.conversationKey,
-      cursor: args.cursor,
-      event: args.event,
-    });
+    for (const entry of conversationEventsFromArgs(args)) {
+      await ctx.db.insert("runtimeConversationEvents", {
+        accountId: coordinator.accountId,
+        conversationKey: args.conversationKey,
+        cursor: entry.cursor,
+        event: entry.event,
+      });
+    }
 
     return null;
   },

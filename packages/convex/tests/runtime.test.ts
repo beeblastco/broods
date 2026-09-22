@@ -81,6 +81,16 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("refuses an append that carries no event", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await expect(
+      t.mutation(internal.runtime.appendConversationEvent, {
+        conversationKey: conversationKeyFor(accountId),
+      }),
+    ).rejects.toThrow("No conversation events given");
+  });
+
   test("pages across the conversation boundary without dropping later events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
