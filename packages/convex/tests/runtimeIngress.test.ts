@@ -938,6 +938,54 @@ describe("runtime ingress", () => {
     ).rejects.toThrow("Stale conversation owner generation");
   });
 
+  test("stores a batch of events whole for the owner and refuses all of it from a stale one", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const fence = {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+    };
+    await t.mutation(internal.runtimeIngress.appendConversationEvent, {
+      ...fence,
+      events: [
+        { cursor: "002", event: { role: "assistant", content: "call" } },
+        { cursor: "003", event: { role: "tool", content: "result" } },
+      ],
+    });
+    // Core from before the batch cutover still sends one cursor + event.
+    await t.mutation(internal.runtimeIngress.appendConversationEvent, {
+      ...fence,
+      cursor: "001",
+      event: { role: "user", content: "hello" },
+    });
+    await expect(
+      t.mutation(internal.runtimeIngress.appendConversationEvent, {
+        ...fence,
+        ownerGeneration: fence.ownerGeneration + 1,
+        events: [
+          { cursor: "004", event: { role: "assistant", content: "stale" } },
+          { cursor: "005", event: { role: "tool", content: "stale" } },
+        ],
+      }),
+    ).rejects.toThrow();
+
+    const stored = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(stored.page.map((row) => row.cursor)).toEqual(["001", "002", "003"]);
+  });
+
   test("returns capacity without silently dropping accepted FIFO rows", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

@@ -137,7 +137,9 @@ results, never the file or the commands in it. `allowedTools` and
 ## Limits
 
 - No workspaces. The file tools need the S3 workspace mount, which a computer
-  does not have. Use `bash` to read and write files.
+  does not have, so a run is refused when a workspace would inherit a machine.
+  Give the workspace its own sandbox or set `sandbox: null`. Use `bash` to read
+  and write files.
 - No background jobs, snapshots, suspend or resume.
 - The dashboard lists a connected computer in Sandboxes > Instances with its
   connection state, when it connected and when it was last seen, plus the

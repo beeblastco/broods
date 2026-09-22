@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpsServer, type Server } from "node:https";
-import type { ModelMessage, SystemModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import * as actualAi from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import * as actualOpenAICompatible from "@ai-sdk/openai-compatible";
+import type { AgentLoopStream } from "../src/harness/harness.ts";
 import type { SystemContextSnapshot } from "../src/harness/session.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import {
@@ -16,6 +19,8 @@ import type {
   ResolvedWorkspace,
 } from "../src/shared/workspaces.ts";
 
+// mock.module("ai") below patches the namespace binding, so hold the real one.
+const realStreamText = actualAi.streamText;
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
@@ -73,11 +78,31 @@ let streamTextScenario:
   | "structured-output"
   | "tool-run"
   | "delivery-tool-then-empty"
-  | "multi-step-text" = "empty";
+  | "multi-step-text"
+  | "real-two-step" = "empty";
+// The model the last "real-two-step" run was given, so a test can read its calls.
+let twoStepModelInUse: MockLanguageModelV4 | undefined;
+
+const weatherTool = actualAi.tool({
+  inputSchema: actualAi.jsonSchema<{ city: string }>({
+    type: "object",
+    properties: { city: { type: "string" } },
+    required: ["city"],
+  }),
+  execute: async ({ city }): Promise<{ city: string; tempC: number }> => ({
+    city: city,
+    tempC: 31,
+  }),
+});
 
 const streamTextMock = mock(
   (options: {
-    prepareStep?: (args: { messages: unknown[] }) => Promise<{
+    messages: ModelMessage[];
+    model: LanguageModel;
+    prepareStep?: (args: {
+      messages: unknown[];
+      responseMessages: unknown[];
+    }) => Promise<{
       instructions?: unknown;
       messages?: unknown[];
     }>;
@@ -102,13 +127,8 @@ const streamTextMock = mock(
     onChunk?: unknown;
     onError(args: { error: unknown }): Promise<void>;
     onEnd(args: {
-      response: {
-        messages: unknown[];
-        id?: string;
-        modelId?: string;
-        timestamp?: Date;
-        headers?: Record<string, string>;
-      };
+      response?: { id: string; modelId: string; timestamp: Date };
+      responseMessages: unknown[];
       text: string;
       finishReason: string;
       usage: {
@@ -160,6 +180,16 @@ const streamTextMock = mock(
     tools?: unknown;
     toolApproval?: unknown;
   }) => {
+    if (streamTextScenario === "real-two-step") {
+      twoStepModelInUse = twoStepModel();
+
+      return realStreamText({
+        ...(options as Parameters<typeof realStreamText>[0]),
+        model: twoStepModelInUse,
+        tools: { weather: weatherTool },
+      });
+    }
+
     let consumed = false;
     const stream = new ReadableStream({
       start: async function (controller) {
@@ -203,20 +233,18 @@ const streamTextMock = mock(
             },
           };
           await options.onEnd({
-            response: {
-              messages: [
-                {
-                  role: "assistant",
-                  content: [
-                    {
-                      type: "tool-approval-request",
-                      approvalId: "approval-1",
-                      toolCallId: "tool-call-1",
-                    },
-                  ],
-                },
-              ],
-            },
+            responseMessages: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-approval-request",
+                    approvalId: "approval-1",
+                    toolCallId: "tool-call-1",
+                  },
+                ],
+              },
+            ],
             text: "   ",
             finishReason: "tool-calls",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
@@ -249,26 +277,24 @@ const streamTextMock = mock(
             },
           };
           await options.onEnd({
-            response: {
-              messages: [
-                {
-                  role: "assistant",
-                  content: [
-                    {
-                      type: "tool-call",
-                      toolCallId: "tool-call-1",
-                      toolName: "bash",
-                      input: { shell: "ls" },
-                    },
-                    {
-                      type: "tool-approval-request",
-                      approvalId: "approval-auto-1",
-                      toolCallId: "tool-call-1",
-                    },
-                  ],
-                },
-              ],
-            },
+            responseMessages: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "tool-call-1",
+                    toolName: "bash",
+                    input: { shell: "ls" },
+                  },
+                  {
+                    type: "tool-approval-request",
+                    approvalId: "approval-auto-1",
+                    toolCallId: "tool-call-1",
+                  },
+                ],
+              },
+            ],
             text: "listed the files",
             finishReason: "stop",
             usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
@@ -314,16 +340,15 @@ const streamTextMock = mock(
             metadata: { run: "test" },
           });
           await options.onEnd({
+            // Structured output parsing reads the response metadata.
             response: {
-              messages: [{ role: "assistant", content: '{"answer":"done"}' }],
               id: "response-1",
               modelId: "gemini-custom",
               timestamp: new Date("2024-01-02T03:04:05.000Z"),
-              headers: {
-                "x-request-id": "request-1",
-                authorization: "redacted",
-              },
             },
+            responseMessages: [
+              { role: "assistant", content: '{"answer":"done"}' },
+            ],
             text: '{"answer":"done"}',
             finishReason: "stop",
             rawFinishReason: "STOP",
@@ -392,12 +417,7 @@ const streamTextMock = mock(
             metadata: { run: "test" },
           });
           await options.onEnd({
-            response: {
-              messages: [{ role: "assistant", content: "done" }],
-              id: "response-1",
-              modelId: "gemini-custom",
-              timestamp: new Date("2024-01-02T03:04:05.000Z"),
-            },
+            responseMessages: [{ role: "assistant", content: "done" }],
             text: "done",
             finishReason: "stop",
             rawFinishReason: "STOP",
@@ -433,12 +453,7 @@ const streamTextMock = mock(
             },
           });
           await options.onEnd({
-            response: {
-              messages: [],
-              id: "response-1",
-              modelId: "gemini-custom",
-              timestamp: new Date("2024-01-02T03:04:05.000Z"),
-            },
+            responseMessages: [],
             text: "",
             finishReason: "stop",
             rawFinishReason: "STOP",
@@ -491,17 +506,12 @@ const streamTextMock = mock(
             text: "Final answer only.",
           });
           await options.onEnd({
-            response: {
-              messages: [
-                {
-                  role: "assistant",
-                  content: "Let me try again:\n\nFinal answer only.",
-                },
-              ],
-              id: "response-2",
-              modelId: "gemini-custom",
-              timestamp: new Date("2024-01-02T03:04:06.000Z"),
-            },
+            responseMessages: [
+              {
+                role: "assistant",
+                content: "Let me try again:\n\nFinal answer only.",
+              },
+            ],
             text: "Let me try again:\n\nFinal answer only.",
             finishReason: "stop",
             rawFinishReason: "STOP",
@@ -517,7 +527,7 @@ const streamTextMock = mock(
         }
 
         await options.onEnd({
-          response: { messages: [] },
+          responseMessages: [],
           text: "   ",
           finishReason: "stop",
           usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
@@ -656,6 +666,7 @@ describe("runAgentLoop", () => {
     const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
     expect(prepareStep).toBeFunction();
     const prepared = await prepareStep!({
+      responseMessages: [],
       messages: [
         {
           role: "assistant",
@@ -725,9 +736,145 @@ describe("runAgentLoop", () => {
 
     const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
     await expect(
-      prepareStep!({ messages: [{ role: "user", content: "original" }] }),
+      prepareStep!({
+        responseMessages: [],
+        messages: [{ role: "user", content: "original" }],
+      }),
     ).rejects.toThrow("Stopped by user at the model boundary");
     expect(applySteeringIngress).not.toHaveBeenCalled();
+  });
+
+  it("stores every step of a tool turn", async () => {
+    installHarnessEnv();
+    streamTextScenario = "real-two-step";
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const persisted: ModelMessage[] = [];
+    const persistModelMessages = mock(
+      async (messages: ModelMessage[]): Promise<string[]> => {
+        persisted.push(...messages);
+
+        return [];
+      },
+    );
+
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        sandboxes: () => [],
+        persistModelMessages: persistModelMessages,
+        renewConversationLease: async () => "renewed",
+        applySteeringIngress: async () => null,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "weather in Hanoi?" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      { onFinalText: async () => {}, onErrorText: async () => {} },
+    );
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(persisted.map((message): string => message.role)).toEqual([
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    const first = persisted[0]?.content;
+    expect(
+      Array.isArray(first) && first.some((part) => part.type === "tool-call"),
+    ).toBe(true);
+    // prepareStep stored the first step before the second model call; onEnd
+    // stored only what was left.
+    expect(
+      persistModelMessages.mock.calls.map((call) => call[0].length),
+    ).toEqual([0, 2, 1]);
+  });
+
+  it("aborts and fails the run when the caller stops reading", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // Leave while step 0's provider call is still streaming.
+    for await (const chunk of readAgentFullStream(stream)) {
+      if ((chunk as { type?: string }).type === "text-delta") break;
+    }
+
+    expect(stream.didFail()).toBe(true);
+    expect(stream.failureText()).toBe("Caller stopped reading the stream");
+    // The abort reached the provider call, and the second step never started.
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(1);
+    expect(twoStepModelInUse?.doStreamCalls[0]?.abortSignal?.aborted).toBe(
+      true,
+    );
+  });
+
+  it("keeps the run alive when a reader that drains on its own leaves early", async () => {
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // A channel adapter that cannot post the stream: it stops on the first
+    // delta and hands the reply back, then the caller drains what is left.
+    for await (const chunk of readAgentFullStream(stream, false)) {
+      if ((chunk as { type?: string }).type === "text-delta") break;
+    }
+    await stream.consumeStream();
+
+    expect(stream.didFail()).toBe(false);
+    expect(twoStepModelInUse?.doStreamCalls).toHaveLength(2);
+  });
+
+  it("keeps a finished run completed when the reader leaves during onEnd", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    // A slow store keeps onEnd running after the last chunk is out.
+    const stream = await startTwoStepTurn(async (): Promise<string[]> => {
+      await Bun.sleep(30);
+
+      return [];
+    });
+    for await (const chunk of readAgentFullStream(stream)) {
+      if ((chunk as { type?: string }).type === "finish") break;
+    }
+
+    expect(stream.didFail()).toBe(false);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ status: "completed", stepCount: 2 });
+  });
+
+  it("meters the steps an aborted run finished", async () => {
+    const writes: TaskUsageInput[] = [];
+    setStorageForTests(usageStorage(writes));
+    const { readAgentFullStream } = await import("../src/harness/harness.ts");
+    const stream = await startTwoStepTurn();
+    // Leave when step 1 opens: step 0 has ended, step 1's answer is 20 ms away.
+    let stepsStarted = 0;
+    for await (const chunk of readAgentFullStream(stream)) {
+      if ((chunk as { type?: string }).type !== "start-step") continue;
+      stepsStarted += 1;
+      if (stepsStarted === 2) break;
+    }
+
+    expect(stream.didFail()).toBe(true);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      status: "failed",
+      stepCount: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
   });
 
   it("sends the error hook when the model finishes with empty text", async () => {
@@ -1070,13 +1217,13 @@ describe("runAgentLoop", () => {
     expect(onErrorText).toHaveBeenCalledWith("provider failed");
     expect(usageWrites).toHaveLength(0);
 
-    await stream.ensureFinalized();
+    await stream.ensureFinalized(true);
 
     expect(stream.didFail()).toBe(true);
     expect(usageWrites[0]?.status).toBe("failed");
 
     // Idempotent: a second call (and any later consumeStream) writes nothing more.
-    await stream.ensureFinalized();
+    await stream.ensureFinalized(true);
     expect(usageWrites).toHaveLength(1);
   });
 
@@ -2686,6 +2833,89 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
 function installHarnessEnv(): void {
   process.env.MAX_AGENT_ITERATIONS = "3";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
+}
+
+// Starts the "real-two-step" weather turn on the real SDK loop.
+async function startTwoStepTurn(
+  persistModelMessages: () => Promise<string[]> = async () => [],
+): Promise<AgentLoopStream> {
+  installHarnessEnv();
+  streamTextScenario = "real-two-step";
+  const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+  return runAgentLoop(
+    {
+      conversationKey: "direct:conversation",
+      eventId: "direct-event",
+      filesystemNamespace: () => "fs-test",
+      resolvedWorkspaces: () => [],
+      sandboxes: () => [],
+      persistModelMessages: persistModelMessages,
+      renewConversationLease: async () => "renewed",
+      applySteeringIngress: async () => null,
+      loadRefreshedSystemPromptParts: async () => ({
+        systemContextSnapshot: { cursor: null, messages: [] },
+        system: [],
+      }),
+    } as never,
+    {
+      messages: [{ role: "user", content: "weather in Hanoi?" }],
+      system: [],
+      ephemeralSystem: [],
+      systemContextSnapshot: { cursor: null, messages: [] },
+    },
+    {
+      provider: { google: { apiKey: "google-key" } },
+      model: { provider: "google", modelId: "gemini-test" },
+    },
+    { onFinalText: async () => {}, onErrorText: async () => {} },
+  );
+}
+
+// Step 0 answers with text and a weather tool call, step 1 with text only.
+function twoStepModel(): MockLanguageModelV4 {
+  const usage = {
+    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 5, text: 5, reasoning: 0 },
+  };
+  const step0 = actualAi.simulateReadableStream<LanguageModelV4StreamPart>({
+    chunks: [
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "t0" },
+      { type: "text-delta", id: "t0", delta: "checking" },
+      { type: "text-end", id: "t0" },
+      {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "weather",
+        input: JSON.stringify({ city: "Hanoi" }),
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        usage: usage,
+      },
+    ],
+  });
+  const step1 = actualAi.simulateReadableStream<LanguageModelV4StreamPart>({
+    // A reader that stops during step 0 must find the model still running.
+    initialDelayInMs: 20,
+    chunks: [
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "31C in Hanoi" },
+      { type: "text-end", id: "t1" },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: usage,
+      },
+    ],
+  });
+
+  return new MockLanguageModelV4({
+    doStream: [{ stream: step0 }, { stream: step1 }],
+  });
 }
 
 describe("system prompt trace attributes", () => {

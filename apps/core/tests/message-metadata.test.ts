@@ -150,6 +150,52 @@ describe("createStoredEventFromModelMessage", () => {
       { type: "text", text: "[attachment not retained]" },
     ]);
   });
+
+  it("stores a screenshot tool result without its bytes and caps an oversized one", () => {
+    const stored = createStoredEventFromModelMessage(
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "computer",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Screenshot" },
+                {
+                  type: "image-data",
+                  data: "iVBORw0KGgo=",
+                  mediaType: "image/png",
+                },
+                { type: "image-url", url: "https://core.example/shot.png" },
+              ],
+            },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-2",
+            toolName: "mcp_dump",
+            output: { type: "text", value: "x".repeat(2 * 1024 * 1024) },
+          },
+        ],
+      },
+      "evt-6",
+    );
+
+    expect(stored?.message.content[0]).toMatchObject({
+      output: {
+        type: "content",
+        value: [
+          { type: "text", text: "Screenshot" },
+          { type: "image-url", url: "https://core.example/shot.png" },
+        ],
+      },
+    });
+    expect(JSON.stringify(stored).length).toBeLessThan(1024 * 1024);
+    expect(JSON.stringify(stored)).toContain("[output truncated]");
+  });
 });
 
 describe("stripEnvelopeFieldsFromMessages", () => {

@@ -15,6 +15,8 @@ export const runtimeQueries = {
   getHarnessSession: internal.runtime.getHarnessSession,
   getSandboxReservation: internal.runtime.getSandboxReservation,
   getSandboxReservationRecord: internal.runtime.getSandboxReservationRecord,
+  listAccountSandboxReservations:
+    internal.runtime.listAccountSandboxReservations,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
   listExpiredSandboxReservations:

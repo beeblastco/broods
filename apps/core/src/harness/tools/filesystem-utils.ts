@@ -416,8 +416,7 @@ export function computerSandboxTarget(
 /**
  * The computers this agent can drive, in config order. Only a machine has a
  * screen, so this is both what registers the `computer` tool and the list a call
- * picks from. The default machine stays even when a workspace mounts it: a
- * workspace is a way onto its files, never onto its screen.
+ * picks from.
  */
 export function machineSandboxes(
   sandboxes: ResolvedAgentSandbox[] = [],
