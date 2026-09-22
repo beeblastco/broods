@@ -23,8 +23,9 @@ flowchart LR
    request to `https://<endpoint>/exec` with `X-aws-proxy-auth` + `X-aws-proxy-port: 8080`
    (the proxy maps external `443` → the image's `8080`). The exec request/response JSON is the
    same contract the image has always used. Only the transport changed, from Invoke to HTTP.
-3. The image answers request-level errors with HTTP 200 + an `ok:false` body; `502/503/504`
+3. The image answers request-level errors with HTTP 200 + an `ok:false` body; `502/503`
    from the proxy mean "VM still restoring its snapshot" (1-10 s), so the first exec retries.
+   A `504` fails the call: the guest may already be running the command.
 
 ### Lifecycle hooks
 

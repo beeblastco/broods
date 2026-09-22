@@ -22,6 +22,8 @@ import type {
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
 export const MACHINE_RUNTIME_KEY = "runtime-key";
+/** A role session whose policy reads sandboxes and nothing more. */
+export const MACHINE_READ_ONLY_ROLE_TOKEN = "fp_sts_read-only";
 export const MACHINE_SANDBOX_ID = "sbx_machine";
 export const OTHER_MACHINE_SANDBOX_ID = "sbx_machine_other";
 
@@ -119,8 +121,27 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
   const runtimeKeyHash = new Bun.CryptoHasher("sha256")
     .update(MACHINE_RUNTIME_KEY)
     .digest("hex");
+  const readOnlyRoleHash = new Bun.CryptoHasher("sha256")
+    .update(MACHINE_READ_ONLY_ROLE_TOKEN)
+    .digest("hex");
 
   return {
+    roleSessions: {
+      resolveByTokenHash: async (hash: string) =>
+        hash === readOnlyRoleHash
+          ? {
+              accountId: MACHINE_ACCOUNT_ID,
+              roleId: "role_read",
+              policy: {
+                version: 1,
+                mode: "enforce",
+                rules: [
+                  { id: "read", effect: "allow", actions: ["sandboxes:read"] },
+                ],
+              },
+            }
+          : null,
+    },
     accounts: {
       getById: async (accountId: string) =>
         accountId === MACHINE_ACCOUNT_ID ? account : null,

@@ -69,7 +69,7 @@ export const pruneExpiredTaskUsage = internalMutation({
 /**
  * Record one finished agent task: insert a `taskUsage` row and fold its
  * token/compute counts into the 5-minute, hour, and day `usageRollups`
- * buckets. Deduplicated by `(accountId, taskId)` so a Lambda retry never
+ * buckets. Deduplicated by `(accountId, taskId)` so a retried write never
  * double-counts without allowing one tenant's task identifier to suppress
  * another tenant's usage.
  */
@@ -107,10 +107,8 @@ export const recordTaskUsage = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    // Idempotency across Lambda retries: the harness `usageFinalized` flag only
-    // guards within one process, so a retried invocation (same taskId, new
-    // process) would otherwise insert a duplicate row and double-fold the
-    // rollups. Skip if this task was already recorded.
+    // The harness `usageFinalized` flag guards one run in memory; a mutation the
+    // client retried after a lost reply would otherwise double-fold the rollups.
     const already = await ctx.db
       .query("taskUsage")
       .withIndex("by_accountId_and_taskId", (q) =>

@@ -52,7 +52,8 @@ needs the flag. The exception is a daemon killed while its network was down:
 core notices the dead socket after a short timeout, and a restart before that
 needs `--force`. It exits with core's reason on an invalid key, on a name with
 no `machine` record, when refused, or when another daemon takes the record
-over.
+over. A [role session](../../roles.md) needs `sandboxes:write` on the sandbox
+to run `broods machine`; without it core answers as if the name had no record.
 
 ## Computer use
 
@@ -136,7 +137,9 @@ results, never the file or the commands in it. `allowedTools` and
 ## Limits
 
 - No workspaces. The file tools need the S3 workspace mount, which a computer
-  does not have. Use `bash` to read and write files.
+  does not have, so a run is refused when a workspace would inherit a machine.
+  Give the workspace its own sandbox or set `sandbox: null`. Use `bash` to read
+  and write files.
 - No background jobs, snapshots, suspend or resume.
 - The dashboard lists a connected computer in Sandboxes > Instances with its
   connection state, when it connected and when it was last seen, plus the

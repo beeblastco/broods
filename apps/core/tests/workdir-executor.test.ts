@@ -358,11 +358,33 @@ describe("WorkdirSandboxExecutor.run", () => {
       fetchCalls.find((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
     ).toBeTruthy();
     expect(execCalls()[0]!.body).toMatchObject({
-      cmd: "echo hi && ls",
+      cmd: "timeout -k 5 30 bash -c 'echo hi && ls'",
       cwd: `/mnt/workspaces/${NS}`,
     });
     // Ephemeral sandboxes are torn down after the call.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+  });
+
+  it("reports the wrapper's exit 124 and its follow-up kill as a timeout", async (): Promise<void> => {
+    for (const exitCode of [124, 137]) {
+      execResult = { exit_code: exitCode, stdout: "", stderr: "" };
+      const executor = await newExecutor({
+        provider: "sandbox",
+        options: { workdirUrl: BASE },
+      });
+
+      const result = await executor.run({
+        code: "sleep 60",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        exitCode: exitCode,
+        timedOut: true,
+      });
+    }
   });
 
   it("returns an ephemeral result without waiting for the sandbox delete", async (): Promise<void> => {
@@ -460,7 +482,9 @@ describe("WorkdirSandboxExecutor.run", () => {
       outputLimitBytes: 4096,
     });
 
-    expect(execCalls()[0]!.body).toMatchObject({ cmd: "echo ok" });
+    expect(execCalls()[0]!.body).toMatchObject({
+      cmd: "timeout -k 5 30 bash -c 'echo ok'",
+    });
     expect(execCalls()[0]!.body).not.toHaveProperty("cwd");
   });
 
@@ -917,7 +941,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     const commands = execCommands();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toContain("mount-s3");
-    expect(commands[1]).toBe("ls");
+    expect(commands[1]).toBe("timeout -k 5 30 bash -c 'ls'");
   });
 
   it("checks a reserved sandbox's live mount without minting credentials", async (): Promise<void> => {
@@ -942,7 +966,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     const commands = execCommands();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toContain(`mountpoint -q '/mnt/workspaces/${NS}'`);
-    expect(commands[1]).toBe("ls");
+    expect(commands[1]).toBe("timeout -k 5 30 bash -c 'ls'");
   });
 
   it("mints credentials and remounts when a reserved sandbox's mount is missing or stale", async (): Promise<void> => {
@@ -968,7 +992,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     const commands = execCommands();
     expect(commands).toHaveLength(3);
     expect(commands[1]).toContain("mount-s3");
-    expect(commands[2]).toBe("ls");
+    expect(commands[2]).toBe("timeout -k 5 30 bash -c 'ls'");
   });
 
   it("reserves a persistent sandbox, reconnects by stored id, and never deletes it", async () => {

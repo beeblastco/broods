@@ -1,9 +1,6 @@
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
-import {
-  agentSandboxReservationKeys,
-  deleteAccountRuntimeData,
-} from "../src/accounts/cleanup.ts";
+import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
   resetConvexClientForTests,
@@ -14,12 +11,13 @@ import {
   setStorageForTests,
 } from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
-import { agentSandboxReservationKey } from "../src/shared/workspaces.ts";
 
 const originalRuntimeMutate = runtime.mutate;
+const originalRuntimeQuery = runtime.query;
 
 afterEach(() => {
   runtime.mutate = originalRuntimeMutate;
+  runtime.query = originalRuntimeQuery;
   resetConvexClientForTests();
   resetStorageForTests();
 });
@@ -55,12 +53,6 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
         return 0;
       },
     },
-    // Cleanup lists agents to release their derived sandbox reservations too.
-    agents: {
-      list: async function () {
-        return [];
-      },
-    },
     sandboxConfigs: {
       list: async function () {
         return [];
@@ -70,6 +62,11 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
       },
     },
   } as never);
+  runtime.query = (async () => ({
+    page: [],
+    cursor: null,
+    isDone: true,
+  })) as never;
   let attempts = 0;
   runtime.mutate = (async () => {
     attempts += 1;
@@ -121,48 +118,81 @@ it("registers agent/crons.remove as an internal mutation", () => {
   );
 });
 
-// A reserved agent-level sandbox is a machine per agent and record, so cleanup has
-// to release every id the agent attaches, not only the first. One list serves
-// every agent; a record nobody references, or an id no record answers, is skipped.
-it("collects reservation keys from an agent's default and extra sandboxes", async () => {
-  let listed = 0;
+// Delete disables the account first, so Convex refuses every row take. A live
+// reservation goes down the unconditional release, never the sweeper's
+// expiry-gated one, and before the cascade drops its row. sandbox-sweeper.test.ts
+// mocks sandbox-cleanup.ts for the whole process, so only the mutation boundary
+// is visible from here; the teardown itself is in sandbox-cleanup.test.ts.
+it("releases a live reservation without the expiry condition before the cascade", async () => {
+  const order: string[] = [];
+  const takes: Record<string, unknown>[] = [];
   setStorageForTests({
-    agents: {
+    workspaceConfigs: {
       list: async function () {
-        return [
-          {
-            agentId: "ag_1",
-            config: {
-              sandboxes: ["sb_default", "sb_browser", "sb_missing"],
-            },
-          },
-          { agentId: "ag_2", config: { sandboxes: ["sb_default"] } },
-        ];
+        return [];
+      },
+      removeAllForAccount: async function () {
+        return 0;
       },
     },
     sandboxConfigs: {
       list: async function () {
-        listed += 1;
-
-        return ["sb_default", "sb_browser", "sb_unused"].map((sandboxId) => ({
-          sandboxId: sandboxId,
-          name: sandboxId,
-          config: { provider: "lambda", persistent: true },
-        }));
+        return [];
+      },
+      removeAllForAccount: async function () {
+        return 0;
       },
     },
   } as never);
+  runtime.query = (async (name: string, args: Record<string, unknown>) => {
+    order.push(name);
+    expect(args.accountId).toBe("acct_test");
 
-  const keys = await agentSandboxReservationKeys("acct_test");
+    return {
+      page: [
+        {
+          accountId: "acct_test",
+          provider: "sandbox",
+          reservationKey: "fs-abc/alias/telegram:1",
+          externalId: "sbx_live",
+        },
+      ],
+      cursor: null,
+      isDone: true,
+    };
+  }) as never;
+  runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
+    if (name === "deleteSandboxReservation") {
+      takes.push(args);
+      throw new Error("Account is not active: acct_test");
+    }
+    order.push(name);
 
-  expect(keys.sort()).toEqual(
-    [
-      agentSandboxReservationKey("acct_test", "ag_1", "sb_browser"),
-      agentSandboxReservationKey("acct_test", "ag_1", "sb_default"),
-      agentSandboxReservationKey("acct_test", "ag_2", "sb_default"),
-    ].sort(),
-  );
-  expect(listed).toBe(1);
+    return {
+      conversationsDeleted: 0,
+      processedEventsDeleted: 0,
+      asyncAgentResultDeleted: 0,
+      asyncToolResultDeleted: 0,
+      asyncToolGroupDeleted: 0,
+      sandboxReservationDeleted: 0,
+      totalDeleted: 0,
+    };
+  }) as never;
+
+  await deleteAccountRuntimeData({
+    accountId: "acct_test",
+    username: "test",
+    secretHash: "hash",
+    status: "disabled",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+  });
+
+  expect(order).toEqual([
+    "listAccountSandboxReservations",
+    "deleteAccountRuntimeData",
+  ]);
+  expect(takes.some((args): boolean => args.onlyExpired === true)).toBe(false);
 });
 
 // The adapter reaches this reference through an any-typed require, so nothing

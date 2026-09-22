@@ -81,6 +81,16 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("refuses an append that carries no event", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await expect(
+      t.mutation(internal.runtime.appendConversationEvent, {
+        conversationKey: conversationKeyFor(accountId),
+      }),
+    ).rejects.toThrow("No conversation events given");
+  });
+
   test("pages across the conversation boundary without dropping later events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -99,6 +109,7 @@ describe("runtime persistence", () => {
       }
     });
 
+    // Small rows fill a page to the row cap in one trip.
     const first = await t.query(internal.runtime.listConversationEvents, {
       conversationKey: conversationKey,
     });
@@ -121,6 +132,40 @@ describe("runtime persistence", () => {
       isDone: true,
       continueCursor: null,
     });
+  });
+
+  test("splits fat rows by bytes without skipping or repeating one", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const cursors = ["001", "002", "003", "004", "005", "006", "007"];
+    await t.run(async (ctx) => {
+      for (const cursor of cursors) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: accountId,
+          conversationKey: conversationKey,
+          cursor: cursor,
+          event: { output: "x".repeat(900 * 1_024) },
+        });
+      }
+    });
+
+    // Five 900 KiB rows pass the 4 MiB budget; the row cap is nowhere near.
+    const first = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
+    expect(first.page.map((row): string => row.cursor)).toEqual(
+      cursors.slice(0, 5),
+    );
+    expect(first).toMatchObject({ isDone: false, continueCursor: "005" });
+    const second = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      afterCursor: first.continueCursor ?? undefined,
+    });
+    expect(second.page.map((row): string => row.cursor)).toEqual(
+      cursors.slice(5),
+    );
+    expect(second).toMatchObject({ isDone: true, continueCursor: null });
   });
 
   test("persists one resumable harness session per conversation", async () => {

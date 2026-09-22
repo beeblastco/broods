@@ -234,29 +234,10 @@ function isPrivateHostname(hostname: string): boolean {
     return true;
   }
 
-  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
-  }
-
-  if (host.includes(":")) {
-    return (
-      host === "::" ||
-      host === "::1" ||
-      host.startsWith("::ffff:") ||
-      /^f[cd]/.test(host) ||
-      /^fe[89ab]/.test(host)
-    );
+  // The URL parser rewrites `::ffff:10.0.0.1` to hex groups, a spelling
+  // `isDeniedAddress` does not read, so every mapped literal is refused here.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) {
+    return host.startsWith("::ffff:") || isDeniedAddress(host);
   }
 
   return false;

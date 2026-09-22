@@ -30,6 +30,7 @@ import {
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import {
+  readAgentFullStream,
   runAgentLoop,
   USER_STOP_MESSAGE,
   type AgentLoopStream,
@@ -57,8 +58,8 @@ import type {
 import {
   modelValueToUserParts,
   prependTextToUserParts,
+  subagentConfig,
   VIRTUAL_AGENT_PREFIX,
-  withoutNestedSubagents,
 } from "./tools/utils.ts";
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
@@ -320,7 +321,7 @@ export class SubagentCoordinator {
         runId: runId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
-        agentConfig: withoutNestedSubagents(agent.config),
+        agentConfig: subagentConfig(agent.config, this.parentAgentConfig),
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey: publicConversationKey,
         conversationKey: scopedDirectConversationKey(
@@ -344,7 +345,10 @@ export class SubagentCoordinator {
       runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      agentConfig: withoutNestedSubagents(this.parentAgentConfig),
+      agentConfig: subagentConfig(
+        this.parentAgentConfig,
+        this.parentAgentConfig,
+      ),
       publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
@@ -453,9 +457,9 @@ export class SubagentCoordinator {
   }
 
   /**
-   * Ephemeral child turns use an in-memory session wrapper. Persistent child
-   * turns write the task prompt and generated child messages to the child
-   * conversation while keeping inherited parent context ephemeral.
+   * Ephemeral child turns run on a `persist: false` Session and store nothing.
+   * Persistent child turns write the task prompt and generated child messages
+   * to the child conversation while keeping inherited parent context ephemeral.
    */
   private async runTask(
     task: ResolvedSubagentTask,
@@ -503,6 +507,8 @@ export class SubagentCoordinator {
       stageSlug: this.parentSession.stageSlug,
       ownerGeneration: ownerGeneration,
       trigger: this.parentSession.trigger,
+      persist: task.persistent,
+      policyDelivery: this.parentSession.policyDelivery,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -514,11 +520,8 @@ export class SubagentCoordinator {
         task,
         incoming,
       );
-      const session = task.persistent
-        ? childSession
-        : createEphemeralChildSession(childSession, turnContext.system);
       const stream = await runAgentLoop(
-        session,
+        childSession,
         turnContext,
         task.agentConfig,
         {
@@ -945,69 +948,12 @@ export class SubagentCoordinator {
   }
 }
 
-export function createEphemeralChildSession(
-  childSession: Session,
-  system: SystemModelMessage[],
-): Session {
-  return {
-    accountId: childSession.accountId,
-    agentId: childSession.agentId,
-    conversationKey: childSession.conversationKey,
-    eventId: childSession.eventId,
-    // runAgentLoop reads the deployment scope off the session to stamp
-    // project/stage/endpoint_id on the subtask span and to build the live NATS
-    // subject. Omitting it left subagent spans carrying only account_id, so
-    // publishSpan early-returned and the dashboard's project+stage-scoped Tempo
-    // backfill never matched them: subagents were invisible in tracing.
-    endpointId: childSession.endpointId,
-    projectSlug: childSession.projectSlug,
-    stageSlug: childSession.stageSlug,
-    filesystemNamespace: () => childSession.filesystemNamespace(),
-    resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
-    sandboxes: () => childSession.sandboxes(),
-    persistModelMessages: async () => [],
-    loadSkillPrompt: (
-      allowedSkillPaths: string[],
-      skillPath: string,
-      resourcePaths?: string[],
-    ) =>
-      childSession.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
-    loadRefreshedSystemPromptParts: async (options: {
-      systemContextSnapshot: {
-        cursor: string | null;
-        messages: SystemModelMessage[];
-      };
-      ephemeralSystem?: SystemModelMessage[];
-    }) => {
-      const refreshed = await childSession.createEphemeralTurnContext(
-        [],
-        options.ephemeralSystem ?? [],
-      );
-
-      return {
-        systemContextSnapshot: options.systemContextSnapshot,
-        system: refreshed.system.length > 0 ? refreshed.system : system,
-      };
-    },
-  } as unknown as Session;
-}
-
 export async function pipeSubagentNatsStream(
   stream: AgentLoopStream,
   publisher: NatsPublisher,
 ): Promise<void> {
-  const reader = stream.stream.getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      await publisher.publish(value as Record<string, unknown>);
-    }
-  } finally {
-    await stream.ensureFinalized();
+  for await (const value of readAgentFullStream(stream)) {
+    await publisher.publish(value as Record<string, unknown>);
   }
 
   const finalResponse = stream.finalResponse();

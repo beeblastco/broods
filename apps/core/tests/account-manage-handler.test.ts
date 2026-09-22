@@ -14,6 +14,7 @@ const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
 const originalSkillsBucketName = process.env.SKILLS_BUCKET_NAME;
 const originalToolBundlesBucketName = process.env.TOOL_BUNDLES_BUCKET_NAME;
 const originalRuntimeMutate = runtime.mutate;
+const originalRuntimeQuery = runtime.query;
 const originalS3Send = S3Client.prototype.send;
 
 afterEach(() => {
@@ -34,6 +35,7 @@ afterEach(() => {
     delete process.env.TOOL_BUNDLES_BUCKET_NAME;
   else process.env.TOOL_BUNDLES_BUCKET_NAME = originalToolBundlesBucketName;
   runtime.mutate = originalRuntimeMutate;
+  runtime.query = originalRuntimeQuery;
   S3Client.prototype.send = originalS3Send;
   setStorageForTests(null);
   resetStorageForTests();
@@ -614,6 +616,11 @@ function stubAccountDeletionDependencies(): void {
     Contents: [],
     IsTruncated: false,
   })) as never;
+  runtime.query = mock(async (name) => {
+    expect(name).toBe("listAccountSandboxReservations");
+
+    return { page: [], cursor: null, isDone: true };
+  }) as never;
   runtime.mutate = mock(async (name) => {
     expect(name).toBe("deleteAccountRuntimeData");
 

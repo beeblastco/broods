@@ -10,6 +10,7 @@ import {
   shadow,
   type PolicyClient,
 } from "@ai-sdk/policy-opa";
+import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
 import type {
   ToolApprovalConfiguration,
   ToolApprovalStatus,
@@ -39,6 +40,7 @@ import {
   machineSandboxes,
   resolveWorkspace,
   targetsAgentSandbox,
+  toWorkspaceRelative,
 } from "./tools/filesystem-utils.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
@@ -58,6 +60,20 @@ const POLICY_REDACTED_VALUE = "[redacted]";
 const SENSITIVE_INPUT_KEY =
   /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
 
+// A policy only ever refuses, so a reference that resolves to nothing must not
+// read as "no policy": it refuses everything until the reference is fixed.
+const UNRESOLVED_POLICY: PolicyDocument = {
+  version: 1,
+  mode: "enforce",
+  rules: [
+    {
+      id: "unresolved-policy",
+      effect: "deny",
+      actions: [...AGENT_POLICY_ACTIONS],
+    },
+  ],
+};
+
 type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
   (...args: never[]) => unknown
@@ -65,20 +81,25 @@ type RuntimeToolApproval = Extract<
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
 // any dotted path, so these are usable in rule conditions with no engine change.
+// userRoles goes out even when empty, because a negated operator only matches an
+// attribute that is present. Only a channel turn, or a subagent under one, gets it.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
   PolicyDecisionInput,
   "channelId" | "threadId" | "userId" | "userName" | "userRoles"
 > {
-  if (!identity) return {};
-
   return {
-    ...(identity.channelId ? { channelId: identity.channelId } : {}),
-    ...(identity.threadId ? { threadId: identity.threadId } : {}),
-    ...(identity.userId ? { userId: identity.userId } : {}),
-    ...(identity.userName ? { userName: identity.userName } : {}),
-    ...(identity.userRoles?.length ? { userRoles: identity.userRoles } : {}),
+    ...(identity?.channelId ? { channelId: identity.channelId } : {}),
+    ...(identity?.threadId ? { threadId: identity.threadId } : {}),
+    ...(identity?.userId ? { userId: identity.userId } : {}),
+    ...(identity?.userName ? { userName: identity.userName } : {}),
+    // A user with no tag role holds no roles, so send `[]` and let a
+    // `userRoles notIn` rule match them. A request that carries no identity
+    // at all is a different thing: nobody knows what roles it holds, and
+    // sending `[]` there would let a negated operator on an allow rule
+    // authorize it.
+    ...(identity ? { userRoles: identity.userRoles ?? [] } : {}),
   };
 }
 
@@ -271,26 +292,13 @@ export async function evaluateChannelInvoke(
   input: Omit<PolicyDecisionInput, "action">,
 ): Promise<PolicyDecision | undefined> {
   if (!isPolicyEnabled(agentConfig) || !input.accountId) return undefined;
+  let mode: PolicyMode | undefined;
   try {
-    // Loading the documents sits inside the try on purpose: a control-plane
-    // blip must fail closed like an unreachable OPA, not throw past the caller.
     const policies = await loadPolicyDocuments(
       input.accountId,
       agentConfig.policies ?? [],
     );
-    const mode = enforcingMode(policies);
-    // Policy is configured but nothing resolved: refuse like the tool gate
-    // does, rather than letting a broken reference read as "no policy".
-    if (policies.length === 0) {
-      return {
-        allowed: false,
-        mode: "enforce",
-        reason: "No allow policy rule matched",
-        matchedRuleIds: [],
-        auditedRuleIds: [],
-      };
-    }
-
+    mode = enforcingMode(policies);
     const decision = await policyClient().evaluate<
       PolicyDecisionInput & { policies: PolicyDocument[] },
       {
@@ -306,7 +314,9 @@ export async function evaluateChannelInvoke(
     });
 
     return {
-      allowed: decision?.allowed !== false,
+      // No decision means OPA does not carry the package: only a place where
+      // nothing enforces stays open.
+      allowed: decision ? decision.allowed === true : mode === "audit",
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
       matchedRuleIds: decision?.matchedRuleIds ?? [],
@@ -320,11 +330,11 @@ export async function evaluateChannelInvoke(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fail closed: the modes live in the documents this call could not read, so
-    // there is no way to tell an auditing place from an enforcing one here.
+    // `mode` is unset when the document load threw: an auditing place cannot
+    // be told from an enforcing one, so refuse. An OPA outage alone keeps it.
     return {
-      allowed: false,
-      mode: "enforce",
+      allowed: mode === "audit",
+      mode: mode ?? "enforce",
       reason: "Policy evaluation failed",
       matchedRuleIds: [],
       auditedRuleIds: [],
@@ -410,11 +420,15 @@ export function policyInputForTool(
           (entry): boolean => entry.name === sandboxTarget,
         )
     : undefined;
+  // grep and glob search from `path`; the regex is not a file.
+  const searches = toolName === "grep" || toolName === "glob";
+  const rawPath = searches ? record.path : record.file_path;
+  // A search with no `path` runs from the workspace root, so it still gets a path.
   const filePath =
-    typeof record.file_path === "string"
-      ? record.file_path
-      : typeof record.pattern === "string"
-        ? record.pattern
+    typeof rawPath === "string"
+      ? policyFilePath(rawPath, searches)
+      : searches
+        ? ""
         : undefined;
   const base = {
     toolName: toolName,
@@ -432,7 +446,8 @@ export function policyInputForTool(
     ...(picked?.sandbox.permissionMode
       ? { sandboxPermissionMode: picked.sandbox.permissionMode }
       : {}),
-    ...(filePath ? { filePath: filePath } : {}),
+    ...(filePath !== undefined ? { filePath: filePath } : {}),
+    ...(searches ? { searchRoot: true } : {}),
   };
 
   if (toolName === "read" || toolName === "glob" || toolName === "grep")
@@ -523,8 +538,6 @@ async function loadPolicyDocuments(
       getStorage().agentPolicies.getById(accountId, policyId),
     ),
   );
-  // A reference that resolves to nothing is a misconfiguration, not an empty
-  // policy: say so, or the rule silently stops applying.
   const missing = requested.filter((_, index) => !records[index]);
   if (missing.length > 0) {
     logWarn("Policy references did not resolve", {
@@ -533,9 +546,7 @@ async function loadPolicyDocuments(
     });
   }
 
-  return records
-    .filter((record): record is NonNullable<typeof record> => Boolean(record))
-    .map((record) => record.document);
+  return records.map((record) => record?.document ?? UNRESOLVED_POLICY);
 }
 
 function policyClient(): PolicyClient {
@@ -548,6 +559,20 @@ function policyClient(): PolicyClient {
     }),
     OPA_EVALUATE_TIMEOUT_MS,
   );
+}
+
+// The form the tools resolve. A search root ends in `/` so `secrets/` matches it,
+// and the workspace root is "", the ancestor of every prefix. A traversal stays
+// raw: the SDK calls toInput outside its try, so no throw.
+function policyFilePath(rawPath: string, searchRoot: boolean): string {
+  try {
+    const path = toWorkspaceRelative(rawPath);
+    if (!searchRoot) return path;
+
+    return path === "." ? "" : `${path}/`;
+  } catch {
+    return rawPath;
+  }
 }
 
 function resolveWorkspaceForPolicy(

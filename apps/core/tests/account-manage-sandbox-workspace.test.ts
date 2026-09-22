@@ -402,7 +402,7 @@ describe("account-manage sandbox endpoints", () => {
       fetchCalls.find((call) => call.path === "/v1/sandboxes/sbx_handler/exec")
         ?.body,
     ).toMatchObject({
-      cmd: "exit 7",
+      cmd: "timeout -k 5 30 bash -c 'exit 7'",
     });
   });
 
