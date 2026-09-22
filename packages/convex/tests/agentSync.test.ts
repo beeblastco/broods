@@ -3,6 +3,10 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
+import {
+  encryptAgentConfigBlob,
+  type NestedAgentConfig,
+} from "../model/agentConfigCodec";
 import { ensureAgentsRowForConfig } from "../model/agentSync";
 import schema from "../schema";
 
@@ -75,6 +79,41 @@ const createAgent = (tt: T, accountId: Id<"accounts">, name: string) =>
     accountId: accountId,
     name: name,
   });
+
+/**
+ * Writes an agent config the way `PATCH /v1/agents/{id}` does: the resolved
+ * blob, plus the `${NAME}` source blob when given, through `agents.update`.
+ */
+async function seedConfig(
+  tt: T,
+  args: {
+    agentId: Id<"agents">;
+    config: NestedAgentConfig;
+    source?: NestedAgentConfig;
+  },
+): Promise<null> {
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET!;
+  const resolved = await encryptAgentConfigBlob(args.config, secret);
+  const source = args.source
+    ? await encryptAgentConfigBlob(args.source, secret)
+    : null;
+  const agent = await tt.run(async (ctx) => ctx.db.get(args.agentId));
+
+  return await tt.mutation(internal.agent.agents.update, {
+    accountId: agent!.accountId,
+    agentId: args.agentId,
+    encryptedConfig: resolved.ciphertext,
+    encryptionIv: resolved.iv,
+    encryptionTag: resolved.tag,
+    ...(source
+      ? {
+          encryptedSourceConfig: source.ciphertext,
+          sourceEncryptionIv: source.iv,
+          sourceEncryptionTag: source.tag,
+        }
+      : {}),
+  });
+}
 
 const configFor = (tt: T, agentId: Id<"agents">) =>
   tt.run(async (ctx) =>
@@ -269,13 +308,6 @@ describe("syncApiAgentCanvasWiring", () => {
         createdAt: now,
         updatedAt: now,
       });
-      await ctx.db.insert("skills", {
-        accountId: accountId,
-        name: "crm-sync",
-        s3Key: "skills/crm-sync.zip",
-        createdAt: now,
-        updatedAt: now,
-      });
 
       return { workspaceId: workspaceId, sandboxId: sandboxId };
     });
@@ -303,7 +335,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
-    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+    await seedConfig(tt, {
       agentId: agentId,
       config: {
         model: { provider: "custom", modelId: "Qwen3.6-27B" },
@@ -373,7 +405,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
     /** Writes an encrypted config onto the agent the way an API PATCH does. */
     const seed = (config: Record<string, unknown>) =>
-      tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+      seedConfig(tt, {
         agentId: agentId,
         config: config,
       });
@@ -421,7 +453,7 @@ describe("syncApiAgentCanvasWiring", () => {
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
     const seed = (config: Record<string, unknown>) =>
-      tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+      seedConfig(tt, {
         agentId: agentId,
         config: config,
       });
@@ -460,7 +492,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const first = await createAgent(tt, accountId, "beeblast-agent-cust1");
-    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+    await seedConfig(tt, {
       agentId: first,
       config: {
         sandboxes: [sandboxId],
@@ -478,7 +510,7 @@ describe("syncApiAgentCanvasWiring", () => {
       });
     });
     const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
-    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
+    await seedConfig(tt, {
       agentId: second,
       config: { sandboxes: [sandboxId] },
     });
@@ -499,6 +531,79 @@ describe("syncApiAgentCanvasWiring", () => {
         source: firstNode.id,
         target: workspaceNode.id,
       }),
+    );
+  });
+
+  test("an unchanged API update leaves the canvas layout untouched", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast",
+      email: "owner@example.com",
+    });
+    const { sandboxId } = await seedWiringFixtures(tt, accountId);
+    const agentId = await createAgent(tt, accountId, "planner");
+    const config = { sandboxes: [sandboxId] };
+    await seedConfig(tt, { agentId: agentId, config: config });
+    const agentConfig = await configFor(tt, agentId);
+    const before = await layoutFor(tt, agentConfig!);
+
+    await seedConfig(tt, { agentId: agentId, config: config });
+
+    expect(await layoutFor(tt, agentConfig!)).toEqual(before);
+  });
+});
+
+describe("mirrorAgentRowOntoConfig", () => {
+  test("mirrors the ${NAME} source, never the resolved secret", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast",
+      email: "owner@example.com",
+    });
+    const agentId = await createAgent(tt, accountId, "planner");
+    const withKey = (apiKey: string): NestedAgentConfig => ({
+      model: { provider: "openai", modelId: "gpt-5" },
+      provider: { openai: { apiKey: apiKey } },
+    });
+
+    await seedConfig(tt, {
+      agentId: agentId,
+      config: withKey("sk-live-resolved"),
+      source: withKey("${OPENAI_API_KEY}"),
+    });
+
+    const mirrored = JSON.stringify(await configFor(tt, agentId));
+    expect(mirrored).not.toContain("sk-live-resolved");
+    expect(mirrored).toContain("${OPENAI_API_KEY}");
+  });
+
+  test("masks secrets when the row has no source blob", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast",
+      email: "owner@example.com",
+    });
+    const agentId = await createAgent(tt, accountId, "planner");
+
+    await seedConfig(tt, {
+      agentId: agentId,
+      config: {
+        model: { provider: "openai", modelId: "gpt-5" },
+        provider: { openai: { apiKey: "sk-live-resolved" } },
+      },
+    });
+
+    expect(JSON.stringify(await configFor(tt, agentId))).not.toContain(
+      "sk-live-resolved",
     );
   });
 });

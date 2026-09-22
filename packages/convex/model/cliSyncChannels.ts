@@ -188,13 +188,12 @@ async function assertChannelRecordPlaceIsFree(
       q
         .eq("accountId", options.accountId)
         .eq("platform", options.platform)
-        .eq("externalId", options.externalId),
+        .eq("externalId", options.externalId)
+        .eq("status", "active"),
     )
-    .collect();
+    .take(2);
   const conflict = rows.find(
-    (row) =>
-      row.status === "active" &&
-      !(row.stageId === options.stageId && row.name === options.name),
+    (row) => !(row.stageId === options.stageId && row.name === options.name),
   );
   if (!conflict) return;
 

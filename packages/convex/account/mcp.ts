@@ -137,7 +137,7 @@ export const listForStage = internalQuery({
   handler: async (ctx, args): Promise<Doc<"mcp">[]> => {
     return await ctx.db
       .query("mcp")
-      .withIndex("by_stageId_and_status", (q) =>
+      .withIndex("by_stageId_and_status_and_name", (q) =>
         q.eq("stageId", args.stageId).eq("status", "active"),
       )
       .collect();
@@ -153,7 +153,7 @@ export const listForStagePage = internalQuery({
   handler: async (ctx, args): Promise<PaginationResult<Doc<"mcp">>> => {
     return await ctx.db
       .query("mcp")
-      .withIndex("by_stageId_and_status", (q) =>
+      .withIndex("by_stageId_and_status_and_name", (q) =>
         q.eq("stageId", args.stageId).eq("status", "active"),
       )
       .paginate(args.paginationOpts);
@@ -273,11 +273,11 @@ async function requireNameFree(
 ): Promise<void> {
   const existing = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_name", (q) =>
-      q.eq("stageId", stageId).eq("name", name),
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId).eq("status", "active").eq("name", name),
     )
-    .collect();
-  if (existing.some((doc) => doc.status === "active")) {
+    .first();
+  if (existing) {
     throw new Error(`name must be unique per stage: ${name}`);
   }
 }

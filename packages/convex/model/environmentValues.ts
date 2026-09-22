@@ -5,7 +5,87 @@
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { decryptAgentConfigBlob } from "./agentConfigCodec";
+import { sha256Hex } from "./accountSecrets";
+import {
+  decryptAgentConfigBlob,
+  encryptAgentConfigBlob,
+} from "./agentConfigCodec";
+import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
+import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
+
+interface EnvironmentVariableWrite {
+  id: Id<"environmentVariables">;
+  change: "created" | "updated" | "unchanged";
+}
+
+/**
+ * Stores a stage variable and re-resolves every agent and sandbox that reads
+ * it. The dashboard and the CLI both write through here. A value whose digest
+ * already matches writes nothing, so re-running `env set` does not rewrite
+ * every config in the stage.
+ */
+export async function upsertEnvironmentVariable(
+  ctx: MutationCtx,
+  args: {
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    name: string;
+    value: string;
+  },
+): Promise<EnvironmentVariableWrite> {
+  const existing = await ctx.db
+    .query("environmentVariables")
+    .withIndex("by_stageId_and_name", (q) =>
+      q.eq("stageId", args.stageId).eq("name", args.name),
+    )
+    .unique();
+  const valueDigest = await hashEnvironmentValue(args.value);
+  if (existing?.valueDigest === valueDigest) {
+    return { id: existing._id, change: "unchanged" };
+  }
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
+    );
+  }
+  const encrypted = await encryptAgentConfigBlob({ value: args.value }, secret);
+  const fields = {
+    ciphertext: encrypted.ciphertext,
+    iv: encrypted.iv,
+    tag: encrypted.tag,
+    valueDigest: valueDigest,
+    updatedAt: Date.now(),
+  };
+  let id: Id<"environmentVariables">;
+  if (existing) {
+    await ctx.db.patch(existing._id, fields);
+    id = existing._id;
+  } else {
+    id = await ctx.db.insert("environmentVariables", {
+      projectId: args.projectId,
+      stageId: args.stageId,
+      name: args.name,
+      ...fields,
+    });
+  }
+  await refreshAgentConfigsForEnvironmentVariable(
+    ctx,
+    args.projectId,
+    args.stageId,
+    args.name,
+    args.value,
+  );
+  await refreshSandboxConfigsForEnvironmentVariable(
+    ctx,
+    args.projectId,
+    args.stageId,
+    args.name,
+    args.value,
+  );
+
+  return { id: id, change: existing ? "updated" : "created" };
+}
 
 /**
  * Refuses to remove a variable that a synced resource still reads through
@@ -52,14 +132,7 @@ export async function assertEnvironmentVariableUnreferenced(
 
 /** SHA-256 hex of a plaintext value; the CLI hashes `.env.local` the same way to spot drift. */
 export async function hashEnvironmentValue(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return await sha256Hex(value);
 }
 
 /**

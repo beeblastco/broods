@@ -13,7 +13,7 @@ import { CronDialog } from "./CronDialog";
 
 interface Props {
   crons: Array<Doc<"crons">>;
-  agents: Array<Doc<"agents">>;
+  agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
 }
 
 export function CronsTable({ crons, agents }: Props): React.JSX.Element {

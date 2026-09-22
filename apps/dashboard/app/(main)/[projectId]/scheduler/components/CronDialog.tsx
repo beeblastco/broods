@@ -49,7 +49,7 @@ interface Props {
   mode: Mode;
   /** Required when mode is "edit". */
   cron?: Doc<"crons">;
-  agents: Array<Doc<"agents">>;
+  agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   onClose: () => void;
 }
 

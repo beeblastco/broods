@@ -6,10 +6,13 @@ import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+
+type DeployKey = FunctionReturnType<typeof api.deployKeys.list>[number];
 
 interface Props {
   projectId: Id<"projects">;
@@ -24,7 +27,7 @@ export function DeployKeysPanel({
   const deployKeys = useQuery(
     api.deployKeys.list,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
-  ) as Doc<"deployKeys">[] | undefined;
+  );
   const createKey = useMutation(api.deployKeys.create);
   const removeKey = useMutation(api.deployKeys.remove);
 
@@ -35,9 +38,7 @@ export function DeployKeysPanel({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const [deletingKey, setDeletingKey] = useState<Doc<"deployKeys"> | null>(
-    null,
-  );
+  const [deletingKey, setDeletingKey] = useState<DeployKey | null>(null);
   const [isDeletingKey, setIsDeletingKey] = useState(false);
 
   async function handleCreate(): Promise<void> {

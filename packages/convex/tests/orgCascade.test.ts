@@ -52,6 +52,25 @@ test("org deletion drains account contents in scheduled batches", async () => {
         });
       }
 
+      // Account-scoped rows no project purge reaches.
+      await ctx.db.insert("accountEnvVars", {
+        accountId: accountId,
+        name: "OPENAI_API_KEY",
+        ciphertext: "ct",
+        iv: "iv",
+        tag: "tag",
+        updatedAt: now,
+      });
+      await ctx.db.insert("accountRoles", {
+        accountId: accountId,
+        roleId: "fp_role_test",
+        name: "reader",
+        status: "active",
+        policy: { version: 1, rules: [] },
+        createdAt: now,
+        updatedAt: now,
+      });
+
       return { orgId: orgId, accountId: accountId, memberId: memberId };
     });
 
@@ -76,6 +95,8 @@ test("org deletion drains account contents in scheduled batches", async () => {
         .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
         .collect();
       expect(skills).toHaveLength(0);
+      expect(await ctx.db.query("accountEnvVars").collect()).toEqual([]);
+      expect(await ctx.db.query("accountRoles").collect()).toEqual([]);
     });
   } finally {
     vi.useRealTimers();

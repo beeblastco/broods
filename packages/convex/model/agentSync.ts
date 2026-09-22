@@ -30,8 +30,9 @@ import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
 import { accountIdForProject } from "./auditEvents";
 import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
+import { redactConfigSecrets } from "./configValues";
 import { loadMcpServersByNode } from "./mcp";
-import { getActiveOrgForUser } from "./ownership/org";
+import { stableJson } from "./objects";
 
 /**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
@@ -88,13 +89,8 @@ export async function backSyncCanvasFromAgentRow(
     user.authId,
   );
 
-  // Decrypt the API-supplied config blob (if any) so canvas fields mirror
-  // what the API caller configured (provider, modelId, system
-  // prompt, workspace, tools, …). Secrets in the blob are already resolved
-  // and go into extraConfig.provider/tools verbatim, which the Config
-  // tab shows but Variables does not (we'd need the original ${KEY}
-  // placeholders + variables to populate runtimeVariables, and those are
-  // not transmitted on the API path).
+  // Mirror what the API caller configured (provider, model, prompt, tools)
+  // onto the canvas fields, without resolved secrets.
   const flat = await decryptAgentFlatPatch(agent);
 
   const now = Date.now();
@@ -328,6 +324,20 @@ export async function pushEncryptedConfigToAgentRow(
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
   const resolved = substituteEnvPlaceholders(nested, variables);
+  // Every `broods dev` save re-pushes every agent. A fresh IV would rewrite an
+  // unchanged row and then rebuild the account's whole channel projection.
+  const current =
+    agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+      ? await decryptAgentConfigBlob(
+          {
+            ciphertext: agent.encryptedConfig,
+            iv: agent.encryptionIv,
+            tag: agent.encryptionTag,
+          },
+          secret,
+        )
+      : null;
+  if (current && stableJson(current) === stableJson(resolved)) return;
   const encrypted = await encryptAgentConfigBlob(resolved, secret);
 
   await ctx.db.patch(normalized, {
@@ -391,31 +401,6 @@ export async function refreshAgentConfigsForEnvironmentVariable(
 }
 
 /**
- * Returns the broods account that owns the caller's active org, or
- * null if the user has no active org or the org is not yet provisioned.
- */
-export async function resolveActiveAccountForAuthId(
-  ctx: MutationCtx,
-  authId: string,
-): Promise<Doc<"accounts"> | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-  if (!org) return null;
-
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-    .unique();
-
-  return account ?? null;
-}
-
-/**
  * Mirrors name/description edits from `agentConfigs` onto the linked
  * `agents` row when one exists. Silently no-ops if the row is missing or not
  * owned by `accountId`. The next `ensureAgentsRowForConfig` call provisions it.
@@ -433,6 +418,12 @@ export async function syncAgentRowFields(
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);
   if (agent?.accountId !== accountId) return;
+  if (
+    (patch.name === undefined || patch.name === agent.name) &&
+    (patch.description === undefined || patch.description === agent.description)
+  ) {
+    return;
+  }
 
   await ctx.db.patch(normalized, {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -448,23 +439,43 @@ export async function syncAgentRowFields(
  * mirror. Null when the secret or blob is missing, or the blob cannot be
  * decrypted.
  */
+// The flat columns are plaintext that any org member can read. Mirror the
+// source blob, which keeps `${NAME}` placeholders. A row with no source only
+// has the resolved blob, and its secret-shaped values are masked first.
 async function decryptAgentFlatPatch(
   agent: Doc<"agents">,
 ): Promise<FlatPatch | null> {
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  const decrypted =
-    secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          secret,
-        )
-      : null;
+  if (!secret) return null;
+  if (
+    agent.encryptedSourceConfig &&
+    agent.sourceEncryptionIv &&
+    agent.sourceEncryptionTag
+  ) {
+    const source = await decryptAgentConfigBlob(
+      {
+        ciphertext: agent.encryptedSourceConfig,
+        iv: agent.sourceEncryptionIv,
+        tag: agent.sourceEncryptionTag,
+      },
+      secret,
+    );
 
-  return decrypted ? fromNestedAgentConfig(decrypted) : null;
+    return source ? fromNestedAgentConfig(source) : null;
+  }
+  if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
+    return null;
+  }
+  const resolved = await decryptAgentConfigBlob(
+    {
+      ciphertext: agent.encryptedConfig,
+      iv: agent.encryptionIv,
+      tag: agent.encryptionTag,
+    },
+    secret,
+  );
+
+  return resolved ? fromNestedAgentConfig(redactConfigSecrets(resolved)) : null;
 }
 
 /**

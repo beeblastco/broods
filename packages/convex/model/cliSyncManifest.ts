@@ -73,7 +73,9 @@ export async function idsForStage(
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")
@@ -161,7 +163,9 @@ export async function resourcesForStage(
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")

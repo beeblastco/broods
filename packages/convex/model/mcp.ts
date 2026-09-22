@@ -160,7 +160,7 @@ export async function loadMcpServersByNode(
 ): Promise<Map<string, McpPlacement>> {
   const servers = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .collect();

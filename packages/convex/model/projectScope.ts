@@ -67,18 +67,21 @@ export async function cronsInProject(
   projectId: Id<"projects">,
   accountId: Id<"accounts">,
 ): Promise<Doc<"crons">[]> {
-  const agentIds = new Set(
-    (await agentsInProject(ctx, projectId, accountId)).map(
-      (agent) => agent._id,
+  // One range per agent, so a cron run elsewhere in the account does not
+  // re-run the dashboard's always-mounted `listForProject` subscription.
+  const agents = await agentsInProject(ctx, projectId, accountId);
+  const crons = await Promise.all(
+    agents.map((agent) =>
+      ctx.db
+        .query("crons")
+        .withIndex("by_accountId_and_agentId", (q) =>
+          q.eq("accountId", accountId).eq("agentId", agent._id),
+        )
+        .collect(),
     ),
   );
 
-  const crons = await ctx.db
-    .query("crons")
-    .withIndex("by_accountId_and_agentId", (q) => q.eq("accountId", accountId))
-    .collect();
-
-  return crons.filter((cron) => agentIds.has(cron.agentId));
+  return crons.flat();
 }
 
 // Resolve-only: an unknown name yields null rather than creating a project,

@@ -235,7 +235,7 @@ export async function handleResourceDeleteRoute(
 ): Promise<Response> {
   if (req.method !== "DELETE") return methodNotAllowed(["DELETE"]);
   if (route.resourceKind === "cron") {
-    await deleteCronByName(ctx, auth.accountId, route.name);
+    await deleteCronByName(ctx, auth, route);
   } else {
     await ctx.runMutation(internal.cli.sync.deleteResourceBySecretHash, {
       secretHash: auth.secretHash,
@@ -347,18 +347,27 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new Error("Cron job status must be active or paused");
 }
 
+// Matches only this stage's crons: a deploy key pinned to dev must not delete
+// production's job of the same name.
 async function deleteCronByName(
   ctx: ActionCtx,
-  accountId: Id<"accounts">,
-  name: string,
+  auth: CliAuth,
+  route: Extract<RouteParts, { kind: "resource" }>,
 ): Promise<void> {
-  const existing = await ctx.runQuery(internal.agent.crons.list, {
-    accountId: accountId,
-  });
-  const cron = existing.find((job) => job.name === name);
+  const [stage, existing] = await Promise.all([
+    ctx.runQuery(internal.cli.sync.getManifestBySecretHash, {
+      secretHash: auth.secretHash,
+      project: route.project,
+      stage: route.stage,
+    }),
+    ctx.runQuery(internal.agent.crons.list, { accountId: auth.accountId }),
+  ]);
+  if (!stage) return;
+  const stageAgentIds = new Set<string>(Object.values(stage.ids.agents ?? {}));
+  const cron = stageCronByName(existing, stageAgentIds, route.name);
   if (!cron) return;
   await ctx.runMutation(internal.agent.crons.remove, {
-    accountId: accountId,
+    accountId: auth.accountId,
     cronId: cron._id,
   });
 }

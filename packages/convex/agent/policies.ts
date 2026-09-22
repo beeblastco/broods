@@ -12,9 +12,9 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { accountIdForProject } from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
-import { resolveActiveAccountForAuthId } from "../model/agentSync";
 import { isPlainObject } from "../model/objects";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
@@ -66,8 +66,10 @@ export const create = mutation({
     const stage = await getOwnedStage(ctx, user.id, args.stageId);
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
-    const account = await resolveActiveAccountForAuthId(ctx, user.id);
-    if (!account) throw new Error("Broods account not provisioned.");
+    // The project's org owns the policy, not whichever org the caller has
+    // switched to in another tab.
+    const accountId = await accountIdForProject(ctx, args.projectId);
+    if (!accountId) throw new Error("Broods account not provisioned.");
 
     // CLI sync adopts policies by exact (stageId, name), so a
     // duplicate dashboard name could be claimed non-deterministically by an
@@ -90,7 +92,7 @@ export const create = mutation({
     const now = Date.now();
 
     return await ctx.db.insert("agentPolicies", {
-      accountId: account._id,
+      accountId: accountId,
       projectId: args.projectId,
       stageId: args.stageId,
       name: args.name.trim(),

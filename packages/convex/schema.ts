@@ -893,21 +893,16 @@ export const runtimeClaimsFields = {
   kind: v.literal("event"),
   expiresAt: v.number(),
 };
-/** Public concurrency policy selected for one ingress request. */
+/**
+ * Concurrency policy for one ingress request: the mode a caller asks for, and
+ * the mode the coordinator applies once it reaches a runnable boundary.
+ */
 export const ingressModeValidator = v.union(
   v.literal("reject"),
   v.literal("followup"),
   v.literal("collect"),
   v.literal("steer"),
 );
-/** Mode actually applied after the coordinator reaches a runnable boundary. */
-export const appliedIngressModeValidator = v.union(
-  v.literal("reject"),
-  v.literal("followup"),
-  v.literal("collect"),
-  v.literal("steer"),
-);
-/** Durable lifecycle for accepted ingress. */
 /**
  * The cursor half of Convex's `PaginationResult`, so a paginated internal
  * query declares its `returns` as `v.object({ page: v.array(doc),
@@ -928,6 +923,7 @@ export const paginationCursorFields = {
   ),
 };
 
+/** Durable lifecycle for accepted ingress. */
 export const ingressStatusValidator = v.union(
   v.literal("accepted"),
   v.literal("queued"),
@@ -984,7 +980,7 @@ export const runtimeIngressEnvelopesFields = {
   // resolved config and one-turn system, never the previous owner's.
   agentConfig: v.optional(v.any()),
   ephemeralSystem: v.optional(v.array(v.any())),
-  appliedMode: v.optional(appliedIngressModeValidator),
+  appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   applicationId: v.optional(v.string()),
   ownerGeneration: v.optional(v.number()),
@@ -1005,7 +1001,7 @@ export const runtimeIngressApplicationsFields = {
   accountId: v.string(),
   conversationKey: v.string(),
   applicationId: v.string(),
-  appliedMode: appliedIngressModeValidator,
+  appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
@@ -1242,7 +1238,6 @@ export default defineSchema({
   ]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
-    .index("by_authId", ["authId"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),
   agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index(
@@ -1301,12 +1296,10 @@ export default defineSchema({
   ),
   mcp: defineTable(mcpFields)
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_stageId_and_status", ["stageId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"])
+    .index("by_stageId_and_status_and_name", ["stageId", "status", "name"])
     .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"])
     .index("by_stageId_and_status_and_name", ["stageId", "status", "name"]),
   accountRoles: defineTable(accountRolesFields)
     .index("by_accountId", ["accountId"])
@@ -1367,9 +1360,10 @@ export default defineSchema({
     .index("by_stageId", ["stageId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-  configAuditEvents: defineTable(configAuditEventsFields).index("by_account", [
-    "accountId",
-  ]),
+  configAuditEvents: defineTable(configAuditEventsFields).index(
+    "by_accountId",
+    ["accountId"],
+  ),
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),
@@ -1402,7 +1396,6 @@ export default defineSchema({
   runtimeIngressEnvelopes: defineTable(runtimeIngressEnvelopesFields)
     .index("by_identity", ["identity"])
     .index("by_eventId", ["eventId"])
-    .index("by_conversationKey_and_sequence", ["conversationKey", "sequence"])
     .index("by_conversationKey_and_status_and_sequence", [
       "conversationKey",
       "status",
@@ -1413,7 +1406,6 @@ export default defineSchema({
       "appliedToEventId",
       "sequence",
     ])
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_runId", ["accountId", "runId"])
     // Status leads so maintenance scans only nonterminal rows: terminal rows
     // keep their stale expiresAt for the whole status retention window, and a
@@ -1433,7 +1425,6 @@ export default defineSchema({
     .index("by_resultId", ["resultId"])
     .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
-    .index("by_conversationKey", ["conversationKey"])
     .index("by_conversationKey_and_toolName_and_status", [
       "conversationKey",
       "toolName",
@@ -1456,9 +1447,10 @@ export default defineSchema({
     "by_accountId_and_cronId_and_startedAt",
     ["accountId", "cronId", "startedAt"],
   ),
-  taskUsage: defineTable(taskUsageFields)
-    .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
-    .index("by_accountId_and_taskId", ["accountId", "taskId"]),
+  taskUsage: defineTable(taskUsageFields).index("by_accountId_and_taskId", [
+    "accountId",
+    "taskId",
+  ]),
   usageRollups: defineTable(usageRollupsFields)
     .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
     .index("by_endpointId_and_grain_and_bucketStart", [

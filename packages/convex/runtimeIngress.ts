@@ -14,11 +14,7 @@ import {
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
 import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
-import {
-  appliedIngressModeValidator,
-  ingressModeValidator,
-  ingressStatusValidator,
-} from "./schema";
+import { ingressModeValidator, ingressStatusValidator } from "./schema";
 
 const CLEAR_BATCH_SIZE = 100;
 
@@ -26,18 +22,27 @@ const CLEAR_BATCH_SIZE = 100;
 // expired) are excluded at the index, not filtered after the read: they retain
 // their stale expiresAt for the whole status retention window, and scanning
 // them every sweep re-reads every retained payload.
-const EXPIRABLE_STATUSES = [
-  "accepted",
-  "queued",
-  "applied",
-  "processing",
-] as const;
+// `accepted` and `applied` exist only in the public status type; no envelope
+// row is ever written with them.
+const EXPIRABLE_STATUSES = ["queued", "processing"] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
+
+// `renewOwner` skips the write while more than this fraction of the TTL remains.
+const RENEW_AFTER_TTL_FRACTION = 0.9;
 
 // Statuses whose rows only await retention deletion; scanned by their own
 // index so the sweep never touches a row it is not about to delete.
 const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
+
+// Spread into every terminal patch. Nothing reads a settled row's payload
+// (duplicate replay compares `payloadDigest`), so it should not sit in the
+// table for the whole status retention window.
+const RELEASED_PAYLOAD = {
+  events: [],
+  agentConfig: undefined,
+  ephemeralSystem: undefined,
+};
 
 // appliedEnvelopeValidator stays ahead of admissionResultValidator, which embeds it.
 const appliedEnvelopeValidator = v.object({
@@ -45,7 +50,7 @@ const appliedEnvelopeValidator = v.object({
   events: v.array(v.any()),
   delivery: v.any(),
   requestedMode: ingressModeValidator,
-  appliedMode: appliedIngressModeValidator,
+  appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
@@ -87,7 +92,7 @@ const ingressStatusResultValidator = v.object({
   agentId: v.string(),
   conversationKey: v.string(),
   requestedMode: ingressModeValidator,
-  appliedMode: v.optional(appliedIngressModeValidator),
+  appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   status: ingressStatusValidator,
   createdAt: v.number(),
@@ -593,11 +598,16 @@ export const maintain = internalMutation({
       if (
         row.status === "processing" &&
         coordinator?.leaseExpiresAt &&
-        coordinator.leaseExpiresAt > now
+        coordinator.leaseExpiresAt > now &&
+        row.ownerGeneration === coordinator.ownerGeneration
       ) {
+        // The owner is alive. Move the row off the head of the due range, or
+        // 100 long runs would fill every batch and starve real expiries.
+        await ctx.db.patch(row._id, { expiresAt: coordinator.leaseExpiresAt });
         continue;
       }
       await ctx.db.patch(row._id, {
+        ...RELEASED_PAYLOAD,
         status: "expired",
         error:
           row.status === "queued"
@@ -712,6 +722,13 @@ export const renewOwner = internalMutation({
     if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
       return "stopped" as const;
     }
+    // Core polls this every second for stop requests. Extending the lease only
+    // once a tenth of the TTL has passed keeps most polls read-only, so they do
+    // not rewrite the coordinator or invalidate `isCurrentOwner` readers.
+    const remainingMs = (coordinator.leaseExpiresAt ?? 0) - now;
+    if (remainingMs > args.leaseTtlMs * RENEW_AFTER_TTL_FRACTION) {
+      return "renewed" as const;
+    }
     await ctx.db.patch(coordinator._id, {
       leaseExpiresAt: now + args.leaseTtlMs,
       updatedAt: now,
@@ -770,6 +787,7 @@ export const settle = internalMutation({
       if (!row || ["completed", "failed", "expired"].includes(row.status))
         continue;
       await ctx.db.patch(id, {
+        ...RELEASED_PAYLOAD,
         status: args.status,
         updatedAt: now,
         ...(stoppedByUser ? { stoppedByUser: true } : {}),
@@ -1094,6 +1112,7 @@ async function expireQueuedEnvelopes(
     expiredCount += 1;
     expiredBytes += row.sizeBytes;
     await ctx.db.patch(row._id, {
+      ...RELEASED_PAYLOAD,
       status: "expired",
       error: "Ingress expired before it reached a runnable boundary",
       updatedAt: now,
@@ -1124,6 +1143,7 @@ async function expireStaleOwner(
     !["completed", "failed", "expired"].includes(envelope.status)
   ) {
     await ctx.db.patch(envelope._id, {
+      ...RELEASED_PAYLOAD,
       status: "expired",
       error: "Conversation owner lease expired before completion",
       updatedAt: now,

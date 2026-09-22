@@ -176,7 +176,6 @@ export const setStatus = internalMutation({
       // untouched for a day still read as seconds old.
       ...(status === "running" && !observed ? { lastUsedAt: now } : {}),
       ...(status === "suspended" ? { suspendedAt: now } : {}),
-      ...(status === "terminating" ? { terminatedAt: now } : {}),
     });
 
     return instance.status !== status;

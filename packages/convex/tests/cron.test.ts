@@ -4,6 +4,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { sha256Hex } from "../model/accountSecrets";
 import { translateScheduleExpression } from "../model/cronRules";
 import { cronSchedules } from "../model/cronSchedules";
 import schema from "../schema";
@@ -258,6 +259,95 @@ describe("create/update/remove", () => {
 });
 
 /** One account whose two agents own one cron job each. */
+describe("CLI cron delete", () => {
+  test("deletes only the route stage's job of that name", async () => {
+    const tt = t();
+    const secret = "fp_secret_cron_delete";
+    const { devCronId, prodCronId } = await tt.run(async (ctx) => {
+      const now = Date.now();
+      const orgId = await ctx.db.insert("orgs", {
+        name: "beeblast",
+        slug: "beeblast",
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: now,
+      });
+      const accountId = await ctx.db.insert("accounts", {
+        orgId: orgId,
+        username: "beeblast",
+        secretHash: await sha256Hex(secret),
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: orgId,
+        name: "demo-app",
+        slug: "demo-app",
+        updatedAt: now,
+      });
+      const cronIds: Id<"crons">[] = [];
+      // Production first, so an account-wide first-match would pick its job.
+      for (const [stageName, kind] of [
+        ["Production", "production"],
+        ["Development", "development"],
+      ] as const) {
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: stageName,
+          kind: kind,
+          isDefault: kind === "development",
+          updatedAt: now,
+        });
+        const agentId = await ctx.db.insert("agents", {
+          accountId: accountId,
+          name: `${kind}-agent`,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.insert("agentConfigs", {
+          authId: "auth_owner",
+          name: "planner",
+          agentId: agentId,
+          projectId: projectId,
+          stageId: stageId,
+          managedBy: "cli",
+          updatedAt: now,
+        });
+        cronIds.push(
+          await ctx.db.insert("crons", {
+            accountId: accountId,
+            name: "nightly",
+            agentId: agentId,
+            events: [],
+            scheduleExpression: "rate(1 day)",
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+      }
+
+      return { prodCronId: cronIds[0]!, devCronId: cronIds[1]! };
+    });
+
+    const response = await tt.fetch(
+      "/v1/account/projects/demo-app/stages/development/resources/cron/nightly",
+      { method: "DELETE", headers: { Authorization: `Bearer ${secret}` } },
+    );
+
+    expect(response.status).toBeLessThan(300);
+    const remaining = await tt.run(async (ctx) => ({
+      dev: await ctx.db.get(devCronId),
+      prod: await ctx.db.get(prodCronId),
+    }));
+    expect(remaining.dev).toBeNull();
+    expect(remaining.prod).not.toBeNull();
+  });
+});
+
 async function seed(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; agentId: Id<"agents"> }> {

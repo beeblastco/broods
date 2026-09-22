@@ -342,7 +342,9 @@ export async function deleteStageContents(
   // bundle is left to the account-level sweep; nothing else references it.
   const mcpRows = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   for (const server of mcpRows) await ctx.db.delete(server._id);
 
@@ -382,7 +384,9 @@ export async function deleteStageContents(
   // stageId, so anything left behind is unreachable once the stage is gone.
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   for (const policy of policies) await ctx.db.delete(policy._id);
 
@@ -436,7 +440,7 @@ export async function duplicateStageContents(
   // row id, so the clones need the new ids before step 2 remaps them.
   const sourceMcpServers = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", sourceStageId).eq("status", "active"),
     )
     .collect();
@@ -670,7 +674,7 @@ async function hasStageContents(
   // treating it as occupied silently skips the clone into production.
   const server = await ctx.db
     .query("mcp")
-    .withIndex("by_stageId_and_status", (q) =>
+    .withIndex("by_stageId_and_status_and_name", (q) =>
       q.eq("stageId", stageId).eq("status", "active"),
     )
     .first();

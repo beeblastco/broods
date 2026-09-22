@@ -18,7 +18,7 @@ import {
   type CliResource,
 } from "./cliSync";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject } from "./objects";
+import { isPlainObject, stableJson } from "./objects";
 import { sandboxDisplayConfig } from "./sandboxDisplayConfig";
 
 type CanvasCliResource = CliResource & {
@@ -90,7 +90,7 @@ export async function syncCanvasLayoutForManifest(
     (
       await ctx.db
         .query("mcp")
-        .withIndex("by_stageId_and_status", (q) =>
+        .withIndex("by_stageId_and_status_and_name", (q) =>
           q.eq("stageId", stageId).eq("status", "active"),
         )
         .collect()
@@ -668,6 +668,13 @@ async function persistCanvasLayout(
     await loadMcpServersByNode(ctx, options.stageId),
   );
   if (options.layout) {
+    // Every open canvas subscribes to this doc; skip a deploy that moved nothing.
+    if (
+      stableJson(options.layout.nodes) === stableJson(nextNodes) &&
+      stableJson(options.layout.edges) === stableJson(options.nextEdges)
+    ) {
+      return;
+    }
     await ctx.db.patch(options.layout._id, {
       nodes: nextNodes,
       edges: options.nextEdges,

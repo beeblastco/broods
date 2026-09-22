@@ -36,17 +36,16 @@ export const create = internalMutation({
       throw new Error(`Account not found: ${args.accountId}`);
     }
     // One active record per place, so the webhook lookup stays unambiguous.
-    const existing = (
-      await ctx.db
-        .query("channelRecords")
-        .withIndex("by_accountId_platform_external", (q) =>
-          q
-            .eq("accountId", args.accountId)
-            .eq("platform", args.platform)
-            .eq("externalId", args.externalId),
-        )
-        .collect()
-    ).find((doc) => doc.status === "active");
+    const existing = await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_platform_external", (q) =>
+        q
+          .eq("accountId", args.accountId)
+          .eq("platform", args.platform)
+          .eq("externalId", args.externalId)
+          .eq("status", "active"),
+      )
+      .first();
     if (existing) {
       throw new Error(
         `A channel record already exists for ${args.platform}:${args.externalId}`,
@@ -224,10 +223,11 @@ export const update = internalMutation({
             q
               .eq("accountId", accountId)
               .eq("platform", doc.platform)
-              .eq("externalId", doc.externalId),
+              .eq("externalId", doc.externalId)
+              .eq("status", "active"),
           )
-          .collect()
-      ).find((row) => row.status === "active" && row._id !== doc._id);
+          .take(2)
+      ).find((row) => row._id !== doc._id);
       if (active) {
         throw new Error(
           `A channel record already exists for ${doc.platform}:${doc.externalId}`,
