@@ -8,9 +8,11 @@
  * from its members. A group with one member is no frame: that node stays a
  * card, and becomes a chip once a second member joins its group.
  *
- * The one thing about a group that is stored is the exception: a node whose
- * `data.ungrouped` is set joins no group at all and stays a card, which is
- * how the canvas pulls a member out of a frame.
+ * Two things about a group are stored, both on its member nodes. A node whose
+ * `data.ungrouped` is set joins no group at all and stays a card, which is how
+ * the canvas pulls a member out of a frame. A node's `data.frameSlot` is the
+ * place a drop gave it in one named group, which is how a card dropped into a
+ * frame lands where it was dropped rather than where the sort would put it.
  *
  * Also the relations frames and layout both read off the flat graph: which
  * agents reference a resource, which sandbox a workspace resolves to, and
@@ -86,6 +88,9 @@ export type FrameGroup = {
 };
 
 export type FrameKind = "sandbox" | "workspace" | "mcp";
+
+/** The place a drop gave a member, and the group it was given in. */
+export type FrameSlot = { group: string; slot: number };
 
 /** What frame geometry reads from a group. */
 export type FrameShape = Pick<CanvasFrame, "kind" | "memberIds">;
@@ -307,6 +312,7 @@ export function deriveCanvasGroups(
     frame.memberIds = (members.get(frame.id) ?? [])
       .sort(
         (a, b) =>
+          handSlotOf(a, frame.id) - handSlotOf(b, frame.id) ||
           orderNumberOf(numbers, a.id) - orderNumberOf(numbers, b.id) ||
           compareByLabel(a, b) ||
           a.id.localeCompare(b.id),
@@ -442,6 +448,14 @@ export function isCliEdgeId(id: string): boolean {
     id.startsWith("subagent:cli-") ||
     id.startsWith("xy-edge__cli-")
   );
+}
+
+/** The slot a member fills: a chip's, or a card's while it is the open one. */
+export function memberSlotHeight(
+  id: string,
+  expandedId: string | undefined,
+): number {
+  return id === expandedId ? FRAME_MEMBER_CARD_HEIGHT : FRAME_CHIP_HEIGHT;
 }
 
 /**
@@ -587,6 +601,30 @@ export function workspaceSandboxIds(
   );
 }
 
+/**
+ * The place a drop gave this member in this group, or last when it has none. A
+ * drop writes it on every member of the group at once, so a group is either
+ * ordered by hand or ordered by the rules, never half of each.
+ *
+ * It names the group it was given in, because a group's id is its members' kind,
+ * key and owning agents: re-wire a card to another agent and the slot it was
+ * given somewhere else stops counting instead of following it there. A group
+ * that orders itself carries none of these, so a sandbox chip's place and the
+ * place its badge shows stay the same number.
+ */
+function handSlotOf(node: LayoutNode, frameId: string): number {
+  const stored: unknown = node.data.frameSlot;
+  if (typeof stored !== "object" || stored === null) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const slot = "slot" in stored ? stored.slot : undefined;
+  const group = "group" in stored ? stored.group : undefined;
+
+  return group === frameId && typeof slot === "number"
+    ? slot
+    : Number.MAX_SAFE_INTEGER;
+}
+
 function labelOf(node: LayoutNode): string {
   return typeof node.data.label === "string" ? node.data.label : node.id;
 }
@@ -596,11 +634,6 @@ function lowestOrderNumber(
   frame: CanvasFrame,
 ): number {
   return Math.min(...frame.memberIds.map((id) => orderNumberOf(numbers, id)));
-}
-
-/** The slot a member fills: a chip's, or a card's while it is the open one. */
-function memberSlotHeight(id: string, expandedId: string | undefined): number {
-  return id === expandedId ? FRAME_MEMBER_CARD_HEIGHT : FRAME_CHIP_HEIGHT;
 }
 
 /** Order number for sorting; nodes without one sort after every numbered node. */
