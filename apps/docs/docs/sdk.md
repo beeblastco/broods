@@ -124,6 +124,8 @@ curl -X POST "https://gateway.broods.app" \
 
 The SSE stream emits Vercel AI SDK `TextStreamPart` events: `text-delta`, `tool-call`, `tool-result`, `finish`, `error`, etc.
 
+Closing the SSE connection aborts the run and marks it failed; steps that already finished stay in the conversation. Use `background: true` when the caller may not stay connected.
+
 ### Async run (long-running tasks)
 
 ```ts
