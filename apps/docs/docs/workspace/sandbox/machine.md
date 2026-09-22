@@ -52,7 +52,8 @@ needs the flag. The exception is a daemon killed while its network was down:
 core notices the dead socket after a short timeout, and a restart before that
 needs `--force`. It exits with core's reason on an invalid key, on a name with
 no `machine` record, when refused, or when another daemon takes the record
-over.
+over. A [role session](../../roles.md) needs `sandboxes:write` on the sandbox
+to run `broods machine`; without it core answers as if the name had no record.
 
 ## Computer use
 
