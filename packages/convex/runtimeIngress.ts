@@ -14,11 +14,7 @@ import {
 } from "./_generated/server";
 import { isPlainObject } from "./model/objects";
 import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
-import {
-  appliedIngressModeValidator,
-  ingressModeValidator,
-  ingressStatusValidator,
-} from "./schema";
+import { ingressModeValidator, ingressStatusValidator } from "./schema";
 
 const CLEAR_BATCH_SIZE = 100;
 
@@ -54,7 +50,7 @@ const appliedEnvelopeValidator = v.object({
   events: v.array(v.any()),
   delivery: v.any(),
   requestedMode: ingressModeValidator,
-  appliedMode: appliedIngressModeValidator,
+  appliedMode: ingressModeValidator,
   appliedToEventId: v.string(),
   contributingEventIds: v.array(v.string()),
   ownerGeneration: v.number(),
@@ -96,7 +92,7 @@ const ingressStatusResultValidator = v.object({
   agentId: v.string(),
   conversationKey: v.string(),
   requestedMode: ingressModeValidator,
-  appliedMode: v.optional(appliedIngressModeValidator),
+  appliedMode: v.optional(ingressModeValidator),
   appliedToEventId: v.optional(v.string()),
   status: ingressStatusValidator,
   createdAt: v.number(),

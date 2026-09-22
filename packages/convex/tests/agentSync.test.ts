@@ -308,13 +308,6 @@ describe("syncApiAgentCanvasWiring", () => {
         createdAt: now,
         updatedAt: now,
       });
-      await ctx.db.insert("skills", {
-        accountId: accountId,
-        name: "crm-sync",
-        s3Key: "skills/crm-sync.zip",
-        createdAt: now,
-        updatedAt: now,
-      });
 
       return { workspaceId: workspaceId, sandboxId: sandboxId };
     });

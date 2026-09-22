@@ -8,7 +8,9 @@
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { cronSchedules, registerSchedule } from "./model/cronSchedules";
+import { hashEnvironmentValue } from "./model/environmentValues";
 import { USAGE_GRAIN_MS, foldRollupBucket } from "./usage";
 
 /**
@@ -180,5 +182,98 @@ export const stripSessionNodes = internalMutation({
     }
 
     return { patched: patched, isDone: page.isDone };
+  },
+});
+
+/**
+ * Stamp `valueDigest` on environment variables written before the field
+ * existed, so the schema can require it. Rows that carry one are skipped.
+ * @returns rows patched in this batch and whether the walk finished
+ */
+export const backfillEnvironmentValueDigests = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({ patched: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
+    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+    if (!secret) throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is not set");
+    const page = await ctx.db
+      .query("environmentVariables")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let patched = 0;
+    for (const row of page.page) {
+      if (row.valueDigest !== undefined) continue;
+      const decrypted = await decryptAgentConfigBlob(
+        { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
+        secret,
+      );
+      const value = typeof decrypted?.value === "string" ? decrypted.value : "";
+      await ctx.db.patch(row._id, {
+        valueDigest: await hashEnvironmentValue(value),
+      });
+      patched += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.backfillEnvironmentValueDigests,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { patched: patched, isDone: page.isDone };
+  },
+});
+
+/**
+ * Unset `sandboxInstances.terminatedAt`, which nothing ever read, so the
+ * schema can drop it.
+ * @returns rows patched in this batch and whether the walk finished
+ */
+export const unsetSandboxTerminatedAt = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({ patched: v.number(), isDone: v.boolean() }),
+  handler: async (ctx, args): Promise<{ patched: number; isDone: boolean }> => {
+    const page = await ctx.db
+      .query("sandboxInstances")
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
+
+    let patched = 0;
+    for (const row of page.page) {
+      if (row.terminatedAt === undefined) continue;
+      await ctx.db.patch(row._id, { terminatedAt: undefined });
+      patched += 1;
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.migrations.unsetSandboxTerminatedAt,
+        { cursor: page.continueCursor },
+      );
+    }
+
+    return { patched: patched, isDone: page.isDone };
+  },
+});
+
+/**
+ * Delete every `skills` row. Skills moved to S3 in #347 and nothing has
+ * written the table since, so the schema can drop it. S3 objects are kept.
+ * @returns rows deleted in this batch and whether the table is empty
+ */
+export const deleteSkillRows = internalMutation({
+  args: {},
+  returns: v.object({ deleted: v.number(), isDone: v.boolean() }),
+  handler: async (ctx): Promise<{ deleted: number; isDone: boolean }> => {
+    const rows = await ctx.db.query("skills").take(100);
+    for (const row of rows) await ctx.db.delete(row._id);
+    const isDone = rows.length < 100;
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.migrations.deleteSkillRows, {});
+    }
+
+    return { deleted: rows.length, isDone: isDone };
   },
 });

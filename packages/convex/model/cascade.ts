@@ -188,7 +188,7 @@ export async function deleteAccountContentsBatch(
 
   const auditEvents = await ctx.db
     .query("configAuditEvents")
-    .withIndex("by_account", (q) => q.eq("accountId", accountId))
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (auditEvents.length > 0) {
     for (const event of auditEvents) await ctx.db.delete(event._id);
