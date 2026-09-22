@@ -30,6 +30,7 @@ import {
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import {
+  readAgentFullStream,
   runAgentLoop,
   USER_STOP_MESSAGE,
   type AgentLoopStream,
@@ -951,18 +952,8 @@ export async function pipeSubagentNatsStream(
   stream: AgentLoopStream,
   publisher: NatsPublisher,
 ): Promise<void> {
-  const reader = stream.stream.getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      await publisher.publish(value as Record<string, unknown>);
-    }
-  } finally {
-    await stream.ensureFinalized();
+  for await (const value of readAgentFullStream(stream)) {
+    await publisher.publish(value as Record<string, unknown>);
   }
 
   const finalResponse = stream.finalResponse();

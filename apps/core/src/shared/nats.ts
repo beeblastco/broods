@@ -173,14 +173,13 @@ export class LiveNatsPublisher implements NatsPublisher {
     );
   }
 
+  // A failed connect stays memoized: a publisher lives for one run, and
+  // reconnecting per chunk would make every awaited publish wait out a timeout.
   private async getConnection(): Promise<NatsConnection> {
     if (!this.connectionPromise) {
       this.connectionPromise = connectNats({
         servers: this.url,
         token: this.token,
-      }).catch((err) => {
-        this.connectionPromise = null;
-        throw err;
       });
     }
 
