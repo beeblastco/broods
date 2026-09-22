@@ -41,6 +41,7 @@ describe("assertPublicHttpsUrl", () => {
       "https://192.168.1.1/hook",
       "https://169.254.169.254/latest/meta-data",
       "https://100.64.0.1/hook",
+      "https://198.18.0.1/hook",
       "https://0.0.0.0/hook",
       "https://[::1]/hook",
       "https://[fc00::1]/hook",

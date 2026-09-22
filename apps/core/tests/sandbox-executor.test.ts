@@ -1566,7 +1566,7 @@ describe("createSandboxExecutor", () => {
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
       }),
-    ).rejects.toThrow("config.options.apiUrl must not target");
+    ).rejects.toThrow("config.options.apiUrl must not point to a private");
     expect(daytonaCreateMock).not.toHaveBeenCalled();
   });
 
