@@ -33,39 +33,39 @@ decision := {
   "mode": mode,
   "reason": "No allow policy rule matched",
   "matchedRuleIds": [],
-  "auditedRuleIds": [],
+  "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
   count(blocking_rules) == 0
-  count(deny_rules) == 0
-  count(allow_rules) == 0
-  enforcing
+  not open
 }
 
 # A deny from a policy still in audit is reported and then let through, so the
-# rollout can be watched on live traffic without refusing anyone.
+# rollout can be watched on live traffic without refusing anyone. It never opens
+# a place on its own: an enforcing allow-list beside it still has to match.
 decision := {
   "allow": true,
   "allowed": true,
   "mode": mode,
   "reason": sprintf("Audited by policy rule %s: would deny, policy is not enforcing", [audited_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
   count(blocking_rules) == 0
   count(audited_rules) > 0
+  open
 }
 
 decision := {
   "allow": true,
   "allowed": true,
   "mode": mode,
-  "reason": sprintf("Allowed by policy rule %s", [allow_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "reason": sprintf("Allowed by policy rule %s", [opening_rules[0].id]),
+  "matchedRuleIds": [rule.id | rule := opening_rules[_]],
   "auditedRuleIds": [],
 } if {
   count(blocking_rules) == 0
   count(audited_rules) == 0
-  count(allow_rules) > 0
+  count(opening_rules) > 0
 }
 
 decision := {
@@ -81,6 +81,18 @@ decision := {
   count(allow_rules) == 0
   not enforcing
 }
+
+# Default-deny only bites once something enforces, and only an enforcing
+# policy's allow rule lifts it.
+open if count(enforcing_allow_rules) > 0
+
+open if not enforcing
+
+# The allow rules that opened the place. An audit policy's allow rule beside an
+# enforcing one opened nothing, so the verdict does not name it.
+opening_rules := enforcing_allow_rules if enforcing
+
+opening_rules := allow_rules if not enforcing
 
 # Only an enforcing policy's deny actually refuses.
 blocking_rules := [rule |
@@ -101,6 +113,11 @@ deny_rules := [rule |
 allow_rules := [rule |
   rule := matching_rules[_]
   rule.effect == "allow"
+]
+
+enforcing_allow_rules := [rule |
+  rule := allow_rules[_]
+  rule.mode == "enforce"
 ]
 
 # Each matched rule carries the mode of the policy that owns it, so the verdict
