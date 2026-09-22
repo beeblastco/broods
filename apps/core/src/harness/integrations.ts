@@ -206,7 +206,12 @@ export interface DirectInboundEvent {
   // Set on a continuation that should also push its final text to a chat
   // channel (a background job launched from Telegram/Slack/etc.). The worker
   // rebuilds the sender from the agent config via sendChannelReply.
-  replyTarget?: { channelName: string; source: Record<string, unknown> };
+  // `identity` is who wrote the message, so policy sees the real sender.
+  replyTarget?: {
+    channelName: string;
+    identity?: ChannelIdentity;
+    source: Record<string, unknown>;
+  };
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because its scheduled run is already spent.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
