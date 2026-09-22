@@ -4,6 +4,7 @@
  */
 
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import {
@@ -90,7 +91,13 @@ export type IngressDelivery =
       statusUrl?: string;
       publicDeploymentIngress?: PublicDeploymentIngress;
     }
-  | { kind: "channel"; channel: string; source?: Record<string, unknown> };
+  | {
+      kind: "channel";
+      channel: string;
+      /** Who sent this message, so a queued turn runs as its own sender. */
+      identity?: ChannelIdentity;
+      source?: Record<string, unknown>;
+    };
 
 export interface IngressCandidate {
   activeOwnerOnly?: boolean;
