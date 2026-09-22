@@ -85,6 +85,12 @@ const sandboxReservationSummary = v.object({
   accountId: v.string(),
 });
 
+interface SandboxReservationPage {
+  page: Infer<typeof sandboxReservationSummary>[];
+  cursor: string | null;
+  isDone: boolean;
+}
+
 /**
  * Atomically claims a dedupe key until its expiry.
  * @returns whether this invocation acquired the claim
@@ -794,27 +800,36 @@ export const listExpiredSandboxReservations = internalQuery({
 
 /**
  * Every reservation an account holds, whatever key shape reserved it, so a
- * deletion sweep releases each machine before the cascade drops the rows.
- * @returns the account's reservations
+ * deletion sweep releases each machine before the cascade drops the rows. Paged
+ * because one account can hold more rows than a single query may read.
+ * @returns one page of the account's reservations, and the cursor for the next
  */
 export const listAccountSandboxReservations = internalQuery({
-  args: { accountId: v.id("accounts") },
-  returns: v.array(sandboxReservationSummary),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
-    const rows = await ctx.db
+  args: {
+    accountId: v.id("accounts"),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.object({
+    page: v.array(sandboxReservationSummary),
+    cursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<SandboxReservationPage> => {
+    const result = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-      .collect();
+      .paginate({ cursor: args.cursor ?? null, numItems: 1_000 });
 
-    return rows.map((row) => ({
-      accountId: row.accountId,
-      provider: row.provider,
-      reservationKey: row.reservationKey,
-      externalId: row.externalId,
-    }));
+    return {
+      page: result.page.map((row) => ({
+        accountId: row.accountId,
+        provider: row.provider,
+        reservationKey: row.reservationKey,
+        externalId: row.externalId,
+      })),
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
   },
 });
 

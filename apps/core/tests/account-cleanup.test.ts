@@ -62,7 +62,11 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
       },
     },
   } as never);
-  runtime.query = (async () => []) as never;
+  runtime.query = (async () => ({
+    page: [],
+    cursor: null,
+    isDone: true,
+  })) as never;
   let attempts = 0;
   runtime.mutate = (async () => {
     attempts += 1;
@@ -144,14 +148,18 @@ it("releases a live reservation without the expiry condition before the cascade"
     order.push(name);
     expect(args.accountId).toBe("acct_test");
 
-    return [
-      {
-        accountId: "acct_test",
-        provider: "sandbox",
-        reservationKey: "fs-abc/alias/telegram:1",
-        externalId: "sbx_live",
-      },
-    ];
+    return {
+      page: [
+        {
+          accountId: "acct_test",
+          provider: "sandbox",
+          reservationKey: "fs-abc/alias/telegram:1",
+          externalId: "sbx_live",
+        },
+      ],
+      cursor: null,
+      isDone: true,
+    };
   }) as never;
   runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
     if (name === "deleteSandboxReservation") {

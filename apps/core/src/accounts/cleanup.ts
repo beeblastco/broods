@@ -34,6 +34,12 @@ export interface AccountCleanupSummary {
   reservedSandboxesReleased: number;
 }
 
+interface SandboxReservationPage {
+  page: ReservedSandbox[];
+  cursor: string | null;
+  isDone: boolean;
+}
+
 // Inbound chat media kept for the account's conversations, outside every
 // workspace mount. The conversations go with the Convex cascade; this is the bytes.
 export async function deleteAccountAttachments(
@@ -65,14 +71,21 @@ export async function deleteAccountRuntimeData(
     account.accountId,
   );
   // Read the stored rows before the cascade drops them: a key derived from
-  // today's configs misses an isolated namespace or a harness key.
-  const reservations = await runtime.query<ReservedSandbox[]>(
-    "listAccountSandboxReservations",
-    { accountId: account.accountId },
-  );
+  // today's configs misses an isolated namespace or a harness key. The query
+  // pages because one account can hold more rows than a query may read.
+  const reservationKeys = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const page: SandboxReservationPage = await runtime.query(
+      "listAccountSandboxReservations",
+      { accountId: account.accountId, cursor: cursor },
+    );
+    for (const row of page.page) reservationKeys.add(row.reservationKey);
+    cursor = page.isDone ? null : page.cursor;
+  } while (cursor !== null);
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
-    [...new Set(reservations.map((row): string => row.reservationKey))],
+    [...reservationKeys],
   );
   const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),

@@ -619,7 +619,7 @@ function stubAccountDeletionDependencies(): void {
   runtime.query = mock(async (name) => {
     expect(name).toBe("listAccountSandboxReservations");
 
-    return [];
+    return { page: [], cursor: null, isDone: true };
   }) as never;
   runtime.mutate = mock(async (name) => {
     expect(name).toBe("deleteAccountRuntimeData");

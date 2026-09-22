@@ -81,6 +81,9 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 // Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
 // the fence fields and for the encoding the client adds around each event.
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
+// Convex also caps one mutation at 16,000 written documents, which many small
+// events reach long before the byte cap does.
+const APPEND_EVENT_COUNT = 8_000;
 const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Convex refuses a document over 1 MiB. One tool message shares this budget
 // across its results, which leaves room for the rest of the row.
@@ -475,7 +478,11 @@ export class Session {
     let batchBytes = 0;
     for (const entry of events) {
       const entryBytes = Buffer.byteLength(JSON.stringify(entry));
-      if (batch.length > 0 && batchBytes + entryBytes > APPEND_EVENT_BYTES) {
+      if (
+        batch.length > 0 &&
+        (batchBytes + entryBytes > APPEND_EVENT_BYTES ||
+          batch.length >= APPEND_EVENT_COUNT)
+      ) {
         await this.appendConversationEvents(batch);
         batch = [];
         batchBytes = 0;

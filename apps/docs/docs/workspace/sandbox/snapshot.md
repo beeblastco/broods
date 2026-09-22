@@ -72,7 +72,7 @@ node needs two things baked in, or every file tool fails with `mount-s3: not fou
   **without** FUSE; build the kernel from the FC `microvm-kernel-ci` config with FUSE
   enabled and point `kernel_image` in the node's `config.toml` at it.
 
-`bash` also needs `bash` and GNU coreutils `timeout` in the rootfs: every command runs as
+The rootfs also needs `bash` and GNU coreutils `timeout`: every command runs as
 `timeout -k 5 <seconds> bash -c ...`, since the workdir API has no exec timeout of its own.
 :::
 
