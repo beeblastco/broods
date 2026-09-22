@@ -6,6 +6,7 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/app/components/ui/context-menu";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { FIXED_MOUNT_ROWS } from "@/app/components/canvas/MountStateLabel";
 import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
 import type {
@@ -77,6 +78,7 @@ export function CanvasNodeMenu({
         >
           <PanelRight />
           Open
+          <ShortcutKeys id="canvas.open" className="ml-auto" />
         </ContextMenuItem>
         <ContextMenuItem
           className="cursor-pointer"
@@ -84,6 +86,7 @@ export function CanvasNodeMenu({
         >
           <Pencil />
           Rename
+          <ShortcutKeys id="canvas.rename" className="ml-auto" />
         </ContextMenuItem>
       </ContextMenuGroup>
       {links.length > 0 && (
@@ -111,6 +114,9 @@ export function CanvasNodeMenu({
                       </span>
                     )}
                   </span>
+                  {!link.disabledReason && (
+                    <ShortcutKeys id="canvas.makeDefault" className="ml-auto" />
+                  )}
                 </LockableItem>
               ) : (
                 <LockableItem
@@ -169,7 +175,7 @@ export function CanvasNodeMenu({
             <ContextMenuLabel variant="muted" className="text-xs">
               Group · {groups[0].frameLabel}
             </ContextMenuLabel>
-            {groups.map((action) => (
+            {groups.map((action, index) => (
               <ContextMenuItem
                 key={action.kind}
                 className="cursor-pointer"
@@ -179,6 +185,10 @@ export function CanvasNodeMenu({
               >
                 {action.kind === "rejoin" ? <Group /> : <Ungroup />}
                 {groupActionLabel(action)}
+                {/* The key runs the first row, so only it claims the hint. */}
+                {index === 0 && (
+                  <ShortcutKeys id="canvas.group" className="ml-auto" />
+                )}
               </ContextMenuItem>
             ))}
           </ContextMenuGroup>
@@ -193,6 +203,9 @@ export function CanvasNodeMenu({
         >
           <Trash2 />
           Delete
+          {!deleteLocked && (
+            <ShortcutKeys id="canvas.delete" className="ml-auto" />
+          )}
         </LockableItem>
       </ContextMenuGroup>
     </>

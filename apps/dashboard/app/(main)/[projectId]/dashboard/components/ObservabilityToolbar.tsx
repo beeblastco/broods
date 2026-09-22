@@ -1,6 +1,7 @@
 "use client";
 
 /** Shared by the logs and tracing panels, so a filter added here shows up on both. */
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import {
@@ -13,6 +14,7 @@ import {
 import type { ObservabilityHistoryStatus } from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
 import { RefreshCw, Search, X } from "lucide-react";
+import { useRef } from "react";
 
 export interface ToolbarFilterOption {
   value: string;
@@ -78,11 +80,17 @@ export function ObservabilityToolbar({
   refreshTitle,
   isError,
 }: Props): React.JSX.Element {
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  useShortcut("table.filter", () => searchInput.current?.focus());
+  useShortcut("table.refresh", () => !refreshDisabled && onRefresh());
+
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 select-none">
       <div className="relative min-w-50 flex-1">
         <Search className="absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
+          ref={searchInput}
           type="text"
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}

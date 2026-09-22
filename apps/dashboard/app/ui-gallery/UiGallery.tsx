@@ -93,6 +93,7 @@ import {
 } from "react";
 import { ObservabilityToolbar } from "../(main)/[projectId]/dashboard/components/ObservabilityToolbar";
 import { ObservabilityPageStandIn } from "./ObservabilityPageStandIn";
+import { ShortcutsStandIn } from "./ShortcutsStandIn";
 
 const LEVEL_OPTIONS = [
   { value: "all", label: "All levels" },
@@ -296,6 +297,12 @@ export function UiGallery(): React.JSX.Element {
   // answers the same parameter the dashboard page does.
   if (dashboardTab === "monitoring" || dashboardTab === "tracing") {
     return <ObservabilityPageStandIn tab={dashboardTab} />;
+  }
+
+  // The keyboard surfaces own the whole viewport (the dock is a column beside
+  // the page), so they get their own stand-in rather than a section here.
+  if (dashboardTab === "shortcuts") {
+    return <ShortcutsStandIn />;
   }
 
   return (

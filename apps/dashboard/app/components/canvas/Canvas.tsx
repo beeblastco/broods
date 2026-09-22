@@ -31,7 +31,10 @@ import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
-import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
+import {
+  NODE_TEMPLATES,
+  NODE_TYPE_SHORTCUTS,
+} from "@/app/components/canvas/nodeTemplates";
 import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { AgentNode } from "@/app/components/node/Agent";
@@ -50,6 +53,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useStage } from "@/app/hooks/useStage";
 import {
   acceptsNewMember,
@@ -135,6 +140,7 @@ import { useMutation, useQuery } from "convex/react";
 import { Group } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import {
   Fragment,
   useCallback,
@@ -410,16 +416,6 @@ function layoutSignature(nodes: Node[], edges: Edge[]): string {
   });
 }
 
-/** Ignore global shortcuts while typing in editable controls. */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-
-  const tagName = target.tagName;
-
-  return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
-}
-
 /** Collapsed frame ids for one project and stage. Per browser, so a failed read is just "none". */
 function readCollapsedFrames(key: string): ReadonlySet<string> {
   try {
@@ -538,7 +534,9 @@ function CanvasInner({
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [agentCreatePosition, setAgentCreatePosition] =
     useState<FlowPosition | null>(null);
-  const { screenToFlowPosition, setCenter, getZoom, fitView } = useReactFlow();
+  const { screenToFlowPosition, setCenter, getZoom, fitView, zoomIn, zoomOut } =
+    useReactFlow();
+  const searchParams = useSearchParams();
   const { canWrite } = useOrgRole();
   const nextId = useRef(1);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
@@ -921,24 +919,6 @@ function CanvasInner({
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 
-  // Route Delete key to the confirm dialog instead of immediate node deletion.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Delete") return;
-      if (!selectedNode) return;
-      if (isEditableTarget(event.target)) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      setDeleteNode(selectedNode);
-      setDeleteOpen(true);
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedNode]);
-
   // Re-center the focused node after the side panel finishes its width transition,
   // so it stays visually centered as the canvas shrinks or grows back.
   const lastFocusedNode = useRef<Node | null>(null);
@@ -1020,6 +1000,40 @@ function CanvasInner({
     return screenToFlowPosition({ x: clientX, y: clientY });
   }, [screenToFlowPosition]);
 
+  /**
+   * The rows one card's menu offers. Built on demand rather than memoized on
+   * the graph: a memo would rebuild the groups on every frame of a later drag.
+   * The keyboard reads the same rows, so a key and a right-click cannot offer
+   * different things.
+   */
+  const buildNodeMenu = useCallback(
+    (nodeId: string): CanvasNodeMenuEntries | null => {
+      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
+      if (!menuNode) return null;
+
+      return {
+        deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
+        groups: frameGroupActions(
+          {
+            edges: edgesRef.current,
+            mcpServers: mcpServers,
+            nodes: nodesRef.current,
+          },
+          menuNode.id,
+        ),
+        label: cardLabel(menuNode),
+        links: nodeLinkActions(nodesRef.current, edgesRef.current, menuNode.id),
+        mounts: workspaceMountTargets(
+          nodesRef.current,
+          edgesRef.current,
+          menuNode.id,
+        ),
+        nodeId: menuNode.id,
+      };
+    },
+    [mcpServers],
+  );
+
   const onContextMenu = useCallback(
     (event: React.MouseEvent): void => {
       clearRefusal();
@@ -1033,38 +1047,9 @@ function CanvasInner({
           : null;
       const nodeId = nodeElement?.dataset.id ?? null;
       setMenuNodeId(nodeId);
-      // Built once per right-click, not memoized on the graph: a memo would
-      // rebuild the groups on every frame of a later drag.
-      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
-      setNodeMenu(
-        menuNode
-          ? {
-              deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
-              groups: frameGroupActions(
-                {
-                  edges: edgesRef.current,
-                  mcpServers: mcpServers,
-                  nodes: nodesRef.current,
-                },
-                menuNode.id,
-              ),
-              label: cardLabel(menuNode),
-              links: nodeLinkActions(
-                nodesRef.current,
-                edgesRef.current,
-                menuNode.id,
-              ),
-              mounts: workspaceMountTargets(
-                nodesRef.current,
-                edgesRef.current,
-                menuNode.id,
-              ),
-              nodeId: menuNode.id,
-            }
-          : null,
-      );
+      setNodeMenu(nodeId === null ? null : buildNodeMenu(nodeId));
     },
-    [clearRefusal, screenToFlowPosition, mcpServers],
+    [buildNodeMenu, clearRefusal, screenToFlowPosition],
   );
 
   /**
@@ -1348,6 +1333,65 @@ function CanvasInner({
     setAgentCreatePosition(getFreeAddPosition());
     setSourcePickerOpen(true);
   }, [getFreeAddPosition]);
+  // Keyboard bindings for the canvas. Registered, not listened for: the palette
+  // lists whatever is registered and runs the same callbacks, so a row and its
+  // key are one code path.
+  useShortcut("canvas.addAgent", () => canWrite && onOpenSourcePicker());
+  useShortcut("canvas.addSkill", () => canWrite && setSkillPickerOpen(true));
+  useShortcut(
+    "canvas.addSandbox",
+    () => canWrite && addNode("sandbox", "Sandbox"),
+  );
+  useShortcut(
+    "canvas.addWorkspace",
+    () => canWrite && addNode("workspace", "Workspace"),
+  );
+  useShortcut("canvas.addMcp", () => canWrite && addNode("mcp", "MCP"));
+  useShortcut("canvas.rename", () => {
+    if (!canWrite || !selectedNode) return;
+    const label = selectedNode.data.label;
+    setRenameNode({
+      id: selectedNode.id,
+      label: typeof label === "string" ? label : "",
+    });
+  });
+  useShortcut("canvas.delete", () => {
+    if (canWrite && selectedNode) requestNodeDelete(selectedNode.id);
+  });
+  // The card menu's own rows, on a key. Each one reads the menu the right-click
+  // would have built, so a row that is not offered cannot be triggered either.
+  useShortcut("canvas.open", () => {
+    if (selectedNode) openNode(selectedNode.id);
+  });
+  useShortcut("canvas.group", () => {
+    if (!canWrite || !selectedNode) return;
+    const action = buildNodeMenu(selectedNode.id)?.groups[0];
+    if (action) setNodesUngrouped(action.nodeIds, action.kind !== "rejoin");
+  });
+  useShortcut("canvas.makeDefault", () => {
+    if (!canWrite || !selectedNode) return;
+    const link = buildNodeMenu(selectedNode.id)?.links.find(
+      (entry) => entry.kind === "make-default" && !entry.disabledReason,
+    );
+    if (link?.kind === "make-default")
+      makeDefault(link.agentId, selectedNode.id);
+  });
+  useShortcut("canvas.fitView", () => fitView(FIT_VIEW_OPTIONS));
+  useShortcut("canvas.tidy", () => canWrite && tidyLayout());
+  useShortcut("canvas.zoomIn", () => zoomIn());
+  useShortcut("canvas.zoomOut", () => zoomOut());
+
+  // `?node=` is how every other surface asks for a card: the palette, the
+  // copilot and a pasted link all land here.
+  const requestedNodeId = searchParams.get("node");
+  // On a cold load the layout has not arrived yet, so the card the URL asks for
+  // does not exist to open. Waiting on its arrival is what makes a pasted link
+  // work as well as one followed from inside the app.
+  const hasRequestedNode = nodes.some((node) => node.id === requestedNodeId);
+  useEffect(() => {
+    if (requestedNodeId && hasRequestedNode) openNode(requestedNodeId);
+  }, [hasRequestedNode, openNode, requestedNodeId]);
+
   const onCreateAgentFromPicker = useCallback(() => {
     onOpenCreateConfig(agentCreatePosition ?? getFreeAddPosition());
   }, [agentCreatePosition, getFreeAddPosition, onOpenCreateConfig]);
@@ -1771,6 +1815,10 @@ function CanvasInner({
                     >
                       <Icon />
                       {label}
+                      <ShortcutKeys
+                        id={NODE_TYPE_SHORTCUTS[type]}
+                        className="ml-auto"
+                      />
                     </ContextMenuItem>
                   </Fragment>
                 ))}

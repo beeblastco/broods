@@ -13,6 +13,7 @@ import {
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { QuestionCard } from "@/app/components/side-panel/QuestionCard";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
 import type { UIMessage } from "ai";
 import {
@@ -253,11 +254,17 @@ function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, awaitingAnswer]);
 
-  function handleSubmit(e: React.FormEvent): void {
-    e.preventDefault();
+  useShortcut("panel.send", send);
+
+  function send(): void {
     if (!input.trim() || composerLocked) return;
     sendMessage(input);
     setInput("");
+  }
+
+  function handleSubmit(e: React.FormEvent): void {
+    e.preventDefault();
+    send();
   }
 
   return (
