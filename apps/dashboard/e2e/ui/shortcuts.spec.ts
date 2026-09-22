@@ -272,6 +272,18 @@ test("the palette hands an unmatched query to the dock instead of guessing", asy
   await expect(ran(page)).toHaveCount(0);
 });
 
+test("the corner launcher opens the dock, then steps out of its way", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+  const launcher = page.locator("[data-copilot-launcher]");
+  await expect(launcher).toBeVisible();
+
+  await launcher.click();
+  await expect(page.getByRole("complementary")).toBeVisible();
+  await expect(launcher).toHaveCount(0);
+});
+
 test("the dock keeps its thread while the page underneath carries on", async ({
   page,
 }) => {

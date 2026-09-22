@@ -12,6 +12,7 @@ import {
 } from "@/app/components/ui/dropdown-menu";
 import type { WorkspaceMountTarget } from "@/app/lib/canvasFrameEdits";
 import { WORKSPACE_STATE_LABEL } from "@/app/lib/memberStatus";
+import { cn } from "@/app/lib/utils";
 import { Box, CornerDownRight, Eye } from "lucide-react";
 import { useState } from "react";
 
@@ -40,6 +41,9 @@ export const FIXED_MOUNT_ROWS = {
  * mount or refuse. The word shows without a hover, so a glance over the board
  * says which mounts are drawn and which follow an agent. Render inside
  * EdgeLabelRenderer.
+ *
+ * `opacity` is the edge's own, so focus mode fades the word with the line it
+ * labels instead of leaving it lit over a dimmed board.
  */
 export function MountStateLabel({
   edgeId,
@@ -47,6 +51,7 @@ export function MountStateLabel({
   labelX,
   labelY,
   onHoverChange,
+  opacity,
   workspaceId,
 }: {
   edgeId: string;
@@ -54,6 +59,7 @@ export function MountStateLabel({
   labelX: number;
   labelY: number;
   onHoverChange?: (hovered: boolean) => void;
+  opacity: number | string | undefined;
   workspaceId: string;
 }): React.JSX.Element {
   const { mountTargetsOf, onSetWorkspaceMount } = useCanvasFrames();
@@ -69,8 +75,17 @@ export function MountStateLabel({
     <div
       data-edge-control="mount"
       data-edge-id={edgeId}
-      className="nodrag nopan pointer-events-auto absolute top-(--label-y) left-(--label-x) z-1 flex h-8 -translate-1/2 items-center"
-      style={{ "--label-x": `${labelX}px`, "--label-y": `${labelY}px` }}
+      className={cn(
+        "nodrag nopan absolute top-(--label-y) left-(--label-x) z-1 flex h-8 -translate-1/2 items-center opacity-(--edge-opacity)",
+        // A faded word is background, not a target: the menu would open over
+        // the card the focus is on.
+        opacity === undefined ? "pointer-events-auto" : "pointer-events-none",
+      )}
+      style={{
+        "--edge-opacity": opacity,
+        "--label-x": `${labelX}px`,
+        "--label-y": `${labelY}px`,
+      }}
       onMouseEnter={() => onHoverChange?.(true)}
       onMouseLeave={() => onHoverChange?.(false)}
     >

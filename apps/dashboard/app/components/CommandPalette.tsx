@@ -26,7 +26,7 @@ import {
 } from "@/app/lib/paletteSearch";
 import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
-import { Search, Sparkles } from "lucide-react";
+import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export function CommandPalette({
@@ -146,7 +146,6 @@ export function CommandPalette({
           {query.trim() && !only && (
             <CommandGroup heading="Ask">
               <CommandItem value="ask-broods" onSelect={handOff}>
-                <Sparkles className="text-canvas-agent" />
                 <span className="truncate">Ask Broods: {query.trim()}</span>
               </CommandItem>
             </CommandGroup>

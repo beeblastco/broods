@@ -92,6 +92,7 @@ import {
 } from "@/app/lib/canvasConnections";
 import { toErrorMessage } from "@/app/lib/errors";
 import { reportPerf } from "@/app/lib/perfReport";
+import { focusedNodeIds } from "@/app/lib/canvasFocus";
 import {
   analyzeCanvasInfra,
   defaultRuntimeNodeData,
@@ -1569,12 +1570,8 @@ function CanvasInner({
     // Keyed on the structural signature: a drag must not produce a sample.
   }, [infraKey]);
 
-  // C. Focus mode: selecting any node dims everything it does not connect TO. We follow edges
-  // "outward" only. Default/subagent edges go by direction (source→target), so a resource never
-  // lights up the agent wired INTO it; mount edges (workspace↔sandbox) flow both ways. Traversal
-  // stops at any agent other than the selected one, so a subagent callee is highlighted but its
-  // own resources (which belong to the callee) are not. A node wired to nothing highlights alone.
-  // A focused frame starts from all of its members at once.
+  // C. Focus mode: selecting any node dims everything `focusedNodeIds` does not
+  // reach from it. A focused frame starts from all of its members at once.
   const focusedFrameMembers = useMemo(
     () =>
       framedGraph.frames.find((frame) => frame.id === focusedFrameId)
@@ -1589,42 +1586,10 @@ function CanvasInner({
       : focusedFrameKey
         ? focusedFrameKey.split("\n")
         : [];
-    if (seeds.length === 0) return null;
 
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-
-    // Directed adjacency of "connects to": source→target for every edge, plus the reverse for
-    // bidirectional mounts so selecting either a workspace or its sandbox reveals the other.
-    const out = new Map<string, string[]>();
-    const link = (a: string, b: string): void => {
-      const list = out.get(a);
-      if (list) list.push(b);
-      else out.set(a, [b]);
-    };
-    for (const e of edges) {
-      link(e.source, e.target);
-      if (e.type === "mount") link(e.target, e.source);
-    }
-
-    const reachable = new Set<string>(seeds);
-    const queue = [...seeds];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      // Don't expand out of a foreign agent (callee): its resources are its own, not the
-      // selected node's. The selected node itself always expands.
-      if (!seeds.includes(current) && byId.get(current)?.type === "agent") {
-        continue;
-      }
-      for (const next of out.get(current) ?? []) {
-        if (reachable.has(next)) continue;
-        reachable.add(next);
-        queue.push(next);
-      }
-    }
-
-    return reachable;
-    // BFS reads only node ids/types and edge endpoints, all captured by infraKey, so skip
-    // the per-drag-frame recompute that `nodes` position churn would otherwise cause.
+    // The walk reads only node ids/types and edge endpoints, all captured by
+    // infraKey, so skip the per-drag-frame recompute `nodes` churn would cause.
+    return seeds.length === 0 ? null : focusedNodeIds(nodes, edges, seeds);
   }, [selectedNode, focusedFrameKey, infraKey]);
 
   // Focus runs on flat ids; a frame is lit when any member is.
