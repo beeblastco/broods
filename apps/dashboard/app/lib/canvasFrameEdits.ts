@@ -32,7 +32,8 @@ import {
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
 /** The card box, for the free-spot search. */
-const CARD_SIZE: FrameSize = { height: NODE_HEIGHT, width: NODE_WIDTH };
+/** The box every card has, whatever it holds. */
+export const CARD_SIZE: FrameSize = { height: NODE_HEIGHT, width: NODE_WIDTH };
 
 /** A flat graph as one edit sees it, with the server list its frames depend on. */
 export type FlatGraph = {
@@ -173,6 +174,17 @@ export function frameGroupActions(
       nodeIds: alone ? [nodeId] : home.memberIds.filter((id) => pulled.has(id)),
     },
   ];
+}
+
+/**
+ * The frames `nodes` draw with this graph's edges and server list, for the
+ * group entries: the same derivation the canvas draws from.
+ */
+export function framedGroups(
+  graph: FlatGraph,
+  nodes: readonly Node[],
+): CanvasFrame[] {
+  return framesOf(deriveGroups(nodes, graph.edges, graph.mcpServers));
 }
 
 /**
@@ -453,14 +465,6 @@ function findFreeBox(
       y: box.y - extraHeight,
     })),
   );
-}
-
-/**
- * The frames `nodes` draw with this graph's edges and server list, for the
- * group entries: the same derivation the canvas draws from.
- */
-function framedGroups(graph: FlatGraph, nodes: readonly Node[]): CanvasFrame[] {
-  return framesOf(deriveGroups(nodes, graph.edges, graph.mcpServers));
 }
 
 /** A frame's origin read from its members' positions in `positions`. */

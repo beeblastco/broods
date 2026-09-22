@@ -9,6 +9,7 @@ import {
   CanvasControls,
   FIT_VIEW_OPTIONS,
 } from "@/app/components/canvas/CanvasControl";
+import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
 import {
   CanvasFramesProvider,
   type CanvasFramesValue,
@@ -40,8 +41,20 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
-import { frameGroupActions, nodeLinkActions } from "@/app/lib/canvasFrameEdits";
 import {
+  applyCanvasDrop,
+  canvasDropTarget,
+  pendingDropOf,
+  sameCanvasDrop,
+  type CanvasDrop,
+} from "@/app/lib/canvasDropTarget";
+import {
+  frameGroupActions,
+  nodeLinkActions,
+  reconcileFramePositions,
+} from "@/app/lib/canvasFrameEdits";
+import {
+  applyFramedNodeChanges,
   buildFramedGraph,
   serversByNode,
   type StageMcpServer,
@@ -226,6 +239,34 @@ const CONNECT_NODES: Node[] = applyTidyLayout(
 
 const CONNECT_ANALYSIS = analyzeCanvasInfra(CONNECT_NODES, CONNECT_EDGES);
 
+/**
+ * The drag-to-group fixture: `tracy` owns a two-chip cloud frame, `notes` is a
+ * workspace of its own, `other` owns the single sandbox `solo`, and `spare` is a
+ * cloud sandbox nobody wired. Dragging `spare` onto the frame joins it at the
+ * slot it is dropped on, and onto `solo` forms a new group from the two cards.
+ * Dragging `notes` onto the frame is refused: no group holds both kinds.
+ */
+const DROP_EDGES: Edge[] = [
+  fixtureEdge("tracy", "box-one"),
+  fixtureEdge("tracy", "box-two"),
+  fixtureEdge("tracy", "notes"),
+  fixtureEdge("other", "solo"),
+];
+
+const DROP_NODES: Node[] = applyTidyLayout(
+  [
+    fixtureNode("tracy", "agent", { sandboxOrder: ["box-one", "box-two"] }),
+    fixtureNode("box-one", "sandbox"),
+    fixtureNode("box-two", "sandbox"),
+    fixtureNode("notes", "workspace"),
+    fixtureNode("other", "agent"),
+    fixtureNode("solo", "sandbox"),
+    fixtureNode("spare", "sandbox"),
+  ],
+  DROP_EDGES,
+  serversByNode([]),
+);
+
 /** The url MCP frame starts collapsed, so the fixture shows both frame states. */
 const COLLAPSED_FIXTURE_FRAME = "frame:tracy:mcp:http";
 
@@ -339,6 +380,11 @@ export function UiGallery(): React.JSX.Element {
       <section data-fixture="canvas-connect" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas connections</h2>
         <CanvasConnectFixture />
+      </section>
+
+      <section data-fixture="canvas-drop" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Canvas drag into a group</h2>
+        <CanvasDropFixture />
       </section>
 
       <section data-fixture="canvas-node-menu" className="flex flex-col gap-2">
@@ -606,6 +652,131 @@ function CanvasNodeMenuFixture({
         />
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+/**
+ * The real drop rules under a real drag: `canvasDropTarget` while the card moves,
+ * `applyCanvasDrop` when it lands, and the frame growing a slot in between. The
+ * log names the group it joined and the slot it took, so a spec can read both.
+ */
+function CanvasDropFixture(): React.JSX.Element {
+  const [nodes, setNodes] = useState<Node[]>(DROP_NODES);
+  const [edges, setEdges] = useState<Edge[]>(DROP_EDGES);
+  const [drop, setDrop] = useState<CanvasDrop | null>(null);
+  const [last, setLast] = useState("");
+  // Read on release, when the state the preview renders from is a render behind.
+  const dropRef = useRef<CanvasDrop | null>(null);
+  const graph = useMemo(
+    () =>
+      buildFramedGraph(
+        nodes,
+        edges,
+        [],
+        EMPTY_COLLAPSED,
+        null,
+        null,
+        pendingDropOf(drop),
+      ),
+    [drop, edges, nodes],
+  );
+  const frames = useMemo(
+    (): CanvasFramesValue => ({
+      expandedMemberId: null,
+      machineConnections: [],
+      mcpServers: serversByNode([]),
+      onToggleFrame: () => undefined,
+      sandboxOrderNumbers: agreedSandboxOrderNumbers(nodes, edges),
+      workspaceOnlySandboxIds: workspaceOnlySandboxIds(nodes, edges),
+    }),
+    [edges, nodes],
+  );
+  const analysis = useMemo(
+    () => analyzeCanvasInfra(nodes, edges),
+    [edges, nodes],
+  );
+
+  return (
+    <InfraAnalysisProvider value={analysis}>
+      <CanvasFramesProvider value={frames}>
+        <div className="h-96 w-full max-w-[52rem] rounded-lg border border-border">
+          <ReactFlow
+            nodes={graph.nodes}
+            edges={graph.edges}
+            nodeTypes={CANVAS_NODE_TYPES}
+            edgeTypes={CANVAS_EDGE_TYPES}
+            colorMode="dark"
+            connectionMode={ConnectionMode.Loose}
+            fitViewOptions={FIT_VIEW_OPTIONS}
+            maxZoom={FIT_VIEW_OPTIONS.maxZoom}
+            // Fit once the nodes are measured, as the connect fixture does.
+            onInit={(instance) => {
+              void instance.fitView(FIT_VIEW_OPTIONS);
+            }}
+            onNodesChange={(changes) =>
+              setNodes((current) =>
+                applyFramedNodeChanges(
+                  changes,
+                  current,
+                  edges,
+                  [],
+                  EMPTY_COLLAPSED,
+                ),
+              )
+            }
+            onNodeDrag={(_event, grabbed, dragged) => {
+              const next =
+                dragged.length === 1 && grabbed.type !== "frame"
+                  ? canvasDropTarget({
+                      collapsedFrames: EMPTY_COLLAPSED,
+                      expandedMemberId: null,
+                      graph: { edges: edges, mcpServers: [], nodes: nodes },
+                      nodeId: grabbed.id,
+                      position: grabbed.position,
+                    })
+                  : null;
+              if (sameCanvasDrop(dropRef.current, next)) return;
+              dropRef.current = next;
+              setDrop(next);
+            }}
+            onNodeDragStop={(_event, grabbed) => {
+              const pending = dropRef.current;
+              dropRef.current = null;
+              setDrop(null);
+              if (pending?.refusal !== null || pending.nodeId !== grabbed.id) {
+                return;
+              }
+              const before = { edges: edges, mcpServers: [], nodes: nodes };
+              const after = applyCanvasDrop(before, pending);
+              setEdges(after.edges);
+              setNodes(
+                reconcileFramePositions(before, {
+                  edges: after.edges,
+                  mcpServers: [],
+                  nodes: after.nodes,
+                }),
+              );
+              setLast(`joined ${pending.label} at ${pending.slot}`);
+            }}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background
+              bgColor="#000"
+              color="rgba(255,255,255,0.3)"
+              gap={GRID}
+              size={2}
+            />
+            <CanvasDropPreview drop={drop} />
+          </ReactFlow>
+        </div>
+        <output
+          data-testid="drop-log"
+          className="text-2xs text-muted-foreground"
+        >
+          {last}
+        </output>
+      </CanvasFramesProvider>
+    </InfraAnalysisProvider>
   );
 }
 
