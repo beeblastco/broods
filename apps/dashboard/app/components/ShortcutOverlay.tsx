@@ -15,17 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
-import {
-  formatCombo,
-  scopeTitle,
-  SHORTCUT_SCOPES,
-  SHORTCUTS,
-} from "@/app/lib/shortcuts";
+import { scopeTitle, SHORTCUT_SCOPES, SHORTCUTS } from "@/app/lib/shortcuts";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { cn } from "@/app/lib/utils";
 import { useState } from "react";
 
 export function ShortcutOverlay(): React.JSX.Element {
-  const { activeIds, isMac } = useShortcutRegistry();
+  const { activeIds } = useShortcutRegistry();
   const [open, setOpen] = useState(false);
 
   useShortcut("help.open", () => setOpen(!open));
@@ -50,21 +46,18 @@ export function ShortcutOverlay(): React.JSX.Element {
                   return (
                     <div
                       key={shortcut.id}
+                      data-shortcut-row={shortcut.id}
+                      data-live={isLive}
                       className={cn(
                         "flex items-center gap-3 text-xs",
                         isLive ? "text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      <span className="flex w-20 shrink-0 items-center gap-0.5">
-                        {formatCombo(shortcut.combos[0], isMac).map((token) => (
-                          <kbd
-                            key={token}
-                            className="rounded-sm border border-border px-1 text-3xs"
-                          >
-                            {token}
-                          </kbd>
-                        ))}
-                      </span>
+                      <ShortcutKeys
+                        id={shortcut.id}
+                        bordered
+                        className="w-20 shrink-0"
+                      />
                       <span className="min-w-0 truncate">{shortcut.label}</span>
                     </div>
                   );

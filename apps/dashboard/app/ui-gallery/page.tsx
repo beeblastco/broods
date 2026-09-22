@@ -5,6 +5,7 @@
  * their real layout. Dev only: the proxy lets it through unauthenticated
  * there, and here it is a 404 everywhere else.
  */
+import { ShortcutProvider } from "@/app/components/ShortcutProvider";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { UiGallery } from "./UiGallery";
@@ -13,9 +14,13 @@ export default function UiGalleryPage(): React.JSX.Element {
   if (process.env.NODE_ENV !== "development") notFound();
 
   // UiGallery reads ?tab=, and a search-param read needs its own boundary.
+  // The provider stands where the signed-in layout puts it, so a fixture
+  // component that claims a binding finds the same registry the app gives it.
   return (
-    <Suspense>
-      <UiGallery />
-    </Suspense>
+    <ShortcutProvider>
+      <Suspense>
+        <UiGallery />
+      </Suspense>
+    </ShortcutProvider>
   );
 }

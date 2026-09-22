@@ -132,13 +132,16 @@ export function ShortcutProvider({
 
 /** Claim a binding while this component is mounted. */
 export function useShortcut(id: ShortcutId, handler: ShortcutHandler): void {
-  const registry = useShortcutRegistry();
+  // `register` and nothing else. The context value changes on every
+  // registration, so depending on the whole registry would unregister and
+  // re-register this binding each time any other one appeared, forever.
+  const { register } = useShortcutRegistry();
   const latest = useRef(handler);
   latest.current = handler;
 
   useEffect(
-    () => registry.register(id, (event) => latest.current(event)),
-    [id, registry],
+    () => register(id, (event) => latest.current(event)),
+    [id, register],
   );
 }
 

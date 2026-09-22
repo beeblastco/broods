@@ -6,10 +6,8 @@
  */
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
-import {
-  useShortcut,
-  useShortcutRegistry,
-} from "@/app/components/ShortcutProvider";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { Button } from "@/app/components/ui/button";
 import {
   InputGroup,
@@ -17,7 +15,6 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
-import { formatCombo } from "@/app/lib/shortcuts";
 import { ArrowUp, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -29,7 +26,7 @@ const EXAMPLES = [
 
 export function CopilotDock(): React.JSX.Element | null {
   const { ask, completed, isOpen, messages, runStep, setOpen } = useCopilot();
-  const { isMac } = useShortcutRegistry();
+
   const [input, setInput] = useState("");
   const composer = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
@@ -58,14 +55,7 @@ export function CopilotDock(): React.JSX.Element | null {
         <Sparkles className="size-3.5 text-canvas-agent" />
         <span className="text-xs font-medium">Broods</span>
         <span className="ml-auto flex items-center gap-1">
-          {formatCombo("mod+j", isMac).map((token) => (
-            <kbd
-              key={token}
-              className="rounded-sm border border-border px-1 text-3xs text-muted-foreground"
-            >
-              {token}
-            </kbd>
-          ))}
+          <ShortcutKeys id="copilot.open" bordered />
           <Button
             size="icon-xs"
             variant="ghost"

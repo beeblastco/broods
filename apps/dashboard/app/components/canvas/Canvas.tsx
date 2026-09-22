@@ -31,7 +31,10 @@ import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
-import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
+import {
+  NODE_TEMPLATES,
+  NODE_TYPE_SHORTCUTS,
+} from "@/app/components/canvas/nodeTemplates";
 import { RunsOnEdge } from "@/app/components/canvas/RunsOnEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
 import { AgentNode } from "@/app/components/node/Agent";
@@ -50,6 +53,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
+import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { useStage } from "@/app/hooks/useStage";
 import {
@@ -996,6 +1000,40 @@ function CanvasInner({
     return screenToFlowPosition({ x: clientX, y: clientY });
   }, [screenToFlowPosition]);
 
+  /**
+   * The rows one card's menu offers. Built on demand rather than memoized on
+   * the graph: a memo would rebuild the groups on every frame of a later drag.
+   * The keyboard reads the same rows, so a key and a right-click cannot offer
+   * different things.
+   */
+  const buildNodeMenu = useCallback(
+    (nodeId: string): CanvasNodeMenuEntries | null => {
+      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
+      if (!menuNode) return null;
+
+      return {
+        deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
+        groups: frameGroupActions(
+          {
+            edges: edgesRef.current,
+            mcpServers: mcpServers,
+            nodes: nodesRef.current,
+          },
+          menuNode.id,
+        ),
+        label: cardLabel(menuNode),
+        links: nodeLinkActions(nodesRef.current, edgesRef.current, menuNode.id),
+        mounts: workspaceMountTargets(
+          nodesRef.current,
+          edgesRef.current,
+          menuNode.id,
+        ),
+        nodeId: menuNode.id,
+      };
+    },
+    [mcpServers],
+  );
+
   const onContextMenu = useCallback(
     (event: React.MouseEvent): void => {
       clearRefusal();
@@ -1009,38 +1047,9 @@ function CanvasInner({
           : null;
       const nodeId = nodeElement?.dataset.id ?? null;
       setMenuNodeId(nodeId);
-      // Built once per right-click, not memoized on the graph: a memo would
-      // rebuild the groups on every frame of a later drag.
-      const menuNode = nodesRef.current.find((node) => node.id === nodeId);
-      setNodeMenu(
-        menuNode
-          ? {
-              deleteLocked: isCodeManagedOwner(menuNode.data.managedBy),
-              groups: frameGroupActions(
-                {
-                  edges: edgesRef.current,
-                  mcpServers: mcpServers,
-                  nodes: nodesRef.current,
-                },
-                menuNode.id,
-              ),
-              label: cardLabel(menuNode),
-              links: nodeLinkActions(
-                nodesRef.current,
-                edgesRef.current,
-                menuNode.id,
-              ),
-              mounts: workspaceMountTargets(
-                nodesRef.current,
-                edgesRef.current,
-                menuNode.id,
-              ),
-              nodeId: menuNode.id,
-            }
-          : null,
-      );
+      setNodeMenu(nodeId === null ? null : buildNodeMenu(nodeId));
     },
-    [clearRefusal, screenToFlowPosition, mcpServers],
+    [buildNodeMenu, clearRefusal, screenToFlowPosition],
   );
 
   /**
@@ -1348,6 +1357,24 @@ function CanvasInner({
   });
   useShortcut("canvas.delete", () => {
     if (canWrite && selectedNode) requestNodeDelete(selectedNode.id);
+  });
+  // The card menu's own rows, on a key. Each one reads the menu the right-click
+  // would have built, so a row that is not offered cannot be triggered either.
+  useShortcut("canvas.open", () => {
+    if (selectedNode) openNode(selectedNode.id);
+  });
+  useShortcut("canvas.group", () => {
+    if (!canWrite || !selectedNode) return;
+    const action = buildNodeMenu(selectedNode.id)?.groups[0];
+    if (action) setNodesUngrouped(action.nodeIds, action.kind !== "rejoin");
+  });
+  useShortcut("canvas.makeDefault", () => {
+    if (!canWrite || !selectedNode) return;
+    const link = buildNodeMenu(selectedNode.id)?.links.find(
+      (entry) => entry.kind === "make-default" && !entry.disabledReason,
+    );
+    if (link?.kind === "make-default")
+      makeDefault(link.agentId, selectedNode.id);
   });
   useShortcut("canvas.fitView", () => fitView(FIT_VIEW_OPTIONS));
   useShortcut("canvas.tidy", () => canWrite && tidyLayout());
@@ -1784,6 +1811,10 @@ function CanvasInner({
                     >
                       <Icon />
                       {label}
+                      <ShortcutKeys
+                        id={NODE_TYPE_SHORTCUTS[type]}
+                        className="ml-auto"
+                      />
                     </ContextMenuItem>
                   </Fragment>
                 ))}

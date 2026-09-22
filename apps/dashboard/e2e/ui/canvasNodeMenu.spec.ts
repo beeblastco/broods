@@ -52,6 +52,39 @@ test("a workspace's menu renames the card and lists where it can mount", async (
   await expect(handbook).toContainText("mount readonly");
 
   await handbook.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Rename" }).click();
+  await menu.getByRole("menuitem", { name: /^Rename/ }).click();
   await expect(handbook).toContainText("rename handbook");
+});
+
+/**
+ * Every row the keyboard can also reach prints its key, so the menu is where
+ * the shortcut is learned. A locked row has none, because pressing it would do
+ * nothing.
+ */
+test("the card menu prints the key beside every row that has one", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-node-menu"]');
+  await fixture.scrollIntoViewIfNeeded();
+
+  await fixture.getByTestId("menu-target-handbook").click({ button: "right" });
+  const menu = page.getByRole("menu");
+
+  await expect(menu.getByRole("menuitem", { name: /^Open/ })).toContainText(
+    "O",
+  );
+  await expect(menu.getByRole("menuitem", { name: /^Rename/ })).toContainText(
+    "↵",
+  );
+  await expect(menu.getByRole("menuitem", { name: /^Delete/ })).toContainText(
+    "⌫",
+  );
+
+  // Code owns this card's delete, so that row is locked and carries no key.
+  await page.keyboard.press("Escape");
+  await fixture.getByTestId("menu-target-coder").click({ button: "right" });
+  const locked = menu.getByRole("menuitem", { name: /Delete/ });
+  await expect(locked).toBeDisabled();
+  await expect(locked).not.toContainText("⌫");
 });

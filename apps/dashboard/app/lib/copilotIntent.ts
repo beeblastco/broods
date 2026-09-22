@@ -6,6 +6,10 @@
  * Anything it cannot place returns null and goes to the transport. Pure, so the
  * rules are tested rather than guessed at.
  */
+import {
+  NODE_TEMPLATES,
+  NODE_TYPE_SHORTCUTS,
+} from "@/app/components/canvas/nodeTemplates";
 import type { CopilotAction, CopilotPlan } from "@/app/lib/copilotActions";
 import { rankItems, type SearchItem } from "@/app/lib/paletteSearch";
 import type { ShortcutId } from "@/app/lib/shortcuts";
@@ -17,14 +21,6 @@ const NAVIGATION_VERBS =
 /** Asks the copilot refuses to plan at all, with the word that triggered the refusal. */
 const BLOCKED_VERBS =
   /\b(deploy|promote|delete|destroy|drop|rotate|revoke|uninstall)\b/i;
-
-const ADD_NODE_COMMANDS: Record<string, ShortcutId> = {
-  agent: "canvas.addAgent",
-  mcp: "canvas.addMcp",
-  sandbox: "canvas.addSandbox",
-  skill: "canvas.addSkill",
-  workspace: "canvas.addWorkspace",
-};
 
 const CANVAS_VERB_COMMANDS: Record<string, ShortcutId> = {
   fit: "canvas.fitView",
@@ -109,8 +105,13 @@ function planCommand(
 ): CopilotPlan | null {
   const added =
     /\badd\s+(?:an?\s+)?(agent|sandbox|workspace|skill|mcp)\b/i.exec(query);
-  const commandId = added
-    ? ADD_NODE_COMMANDS[added[1].toLowerCase()]
+  // Looked up rather than cast: `find` is what narrows the matched word to a
+  // card type the canvas actually has.
+  const addedType = NODE_TEMPLATES.find(
+    (template) => template.type === added?.[1].toLowerCase(),
+  )?.type;
+  const commandId = addedType
+    ? NODE_TYPE_SHORTCUTS[addedType]
     : CANVAS_VERB_COMMANDS[
         /\b(tidy|fit)\b/i.exec(query)?.[1].toLowerCase() ?? ""
       ];

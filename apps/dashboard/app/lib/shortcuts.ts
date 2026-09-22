@@ -70,9 +70,27 @@ export const SHORTCUTS = [
     scope: "canvas",
   },
   {
+    combos: ["o"],
+    id: "canvas.open",
+    label: "Open selection",
+    scope: "canvas",
+  },
+  {
     combos: ["enter"],
     id: "canvas.rename",
     label: "Rename selection",
+    scope: "canvas",
+  },
+  {
+    combos: ["g"],
+    id: "canvas.group",
+    label: "Group or pull out of group",
+    scope: "canvas",
+  },
+  {
+    combos: ["d"],
+    id: "canvas.makeDefault",
+    label: "Make default for its agent",
     scope: "canvas",
   },
   {
@@ -168,11 +186,14 @@ export function eventCombo(event: KeyboardEvent, isMac: boolean): string {
 
 /** A combo split into the tokens a `<kbd>` renders, one per key. */
 export function formatCombo(combo: string, isMac: boolean): string[] {
-  // "+" is both the separator and a key, so it survives the split as an
-  // empty token rather than being dropped.
-  return combo.split("+").map((token) => {
+  // "+" is both the separator and a key, so `"+"` splits into two empty
+  // halves and `"mod++"` into one. Drop the empties and put a single `+` back.
+  const parts = combo.split("+");
+  const tokens = parts.filter((part) => part !== "");
+  if (parts.at(-1) === "") tokens.push("+");
+
+  return tokens.map((token) => {
     if (token === "mod") return isMac ? "⌘" : "Ctrl";
-    if (token === "") return "+";
 
     return (
       TOKEN_GLYPHS[token] ?? (token.length === 1 ? token.toUpperCase() : token)

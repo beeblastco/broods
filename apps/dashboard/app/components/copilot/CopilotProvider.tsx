@@ -39,7 +39,7 @@ export interface CopilotMessage {
   text: string;
 }
 
-interface CopilotState {
+export interface CopilotState {
   ask: (query: string) => void;
   /** Keys of plan steps already run, as `${messageId}:${index}`. */
   completed: ReadonlySet<string>;
@@ -191,6 +191,20 @@ export function CopilotProvider({
     [ask, completed, isOpen, messages, run, runStep],
   );
 
+  return <CopilotStateProvider value={value}>{children}</CopilotStateProvider>;
+}
+
+/**
+ * The context on its own, for a tree that builds the state itself. The
+ * `/ui-gallery` fixture uses it to drive the dock with no Convex or router.
+ */
+export function CopilotStateProvider({
+  children,
+  value,
+}: {
+  children: React.ReactNode;
+  value: CopilotState;
+}): React.JSX.Element {
   return (
     <CopilotContext.Provider value={value}>{children}</CopilotContext.Provider>
   );

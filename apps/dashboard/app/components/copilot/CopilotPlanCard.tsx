@@ -41,13 +41,19 @@ export function CopilotPlanCard({
           >
             <div className="flex items-start gap-2">
               <StepIcon isDone={isDone} tier={tier} />
-              <span className="min-w-0 flex-1 text-xs text-foreground">
+              <span
+                data-plan-step
+                className="min-w-0 flex-1 text-xs text-foreground"
+              >
                 {action.label}
               </span>
             </div>
 
             {change && (
-              <div className="ml-5 flex items-center gap-1.5 font-mono text-2xs">
+              <div
+                data-plan-change
+                className="ml-5 flex items-center gap-1.5 font-mono text-2xs"
+              >
                 <span className="text-muted-foreground">{change.field}</span>
                 <span className="text-destructive line-through">
                   {change.before}
