@@ -40,6 +40,7 @@ import {
   machineSandboxes,
   resolveWorkspace,
   targetsAgentSandbox,
+  toWorkspaceRelative,
 } from "./tools/filesystem-utils.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
@@ -414,11 +415,15 @@ export function policyInputForTool(
           (entry): boolean => entry.name === sandboxTarget,
         )
     : undefined;
+  // grep and glob search from `path`; the regex is not a file.
+  const searches = toolName === "grep" || toolName === "glob";
+  const rawPath = searches ? record.path : record.file_path;
+  // A search with no `path` runs from the workspace root, so it still gets a path.
   const filePath =
-    typeof record.file_path === "string"
-      ? record.file_path
-      : typeof record.pattern === "string"
-        ? record.pattern
+    typeof rawPath === "string"
+      ? policyFilePath(rawPath, searches)
+      : searches
+        ? ""
         : undefined;
   const base = {
     toolName: toolName,
@@ -436,7 +441,8 @@ export function policyInputForTool(
     ...(picked?.sandbox.permissionMode
       ? { sandboxPermissionMode: picked.sandbox.permissionMode }
       : {}),
-    ...(filePath ? { filePath: filePath } : {}),
+    ...(filePath !== undefined ? { filePath: filePath } : {}),
+    ...(searches ? { searchRoot: true } : {}),
   };
 
   if (toolName === "read" || toolName === "glob" || toolName === "grep")
@@ -548,6 +554,20 @@ function policyClient(): PolicyClient {
     }),
     OPA_EVALUATE_TIMEOUT_MS,
   );
+}
+
+// The form the tools resolve. A search root ends in `/` so `secrets/` matches it,
+// and the workspace root is "", the ancestor of every prefix. A traversal stays
+// raw: the SDK calls toInput outside its try, so no throw.
+function policyFilePath(rawPath: string, searchRoot: boolean): string {
+  try {
+    const path = toWorkspaceRelative(rawPath);
+    if (!searchRoot) return path;
+
+    return path === "." ? "" : `${path}/`;
+  } catch {
+    return rawPath;
+  }
 }
 
 function resolveWorkspaceForPolicy(

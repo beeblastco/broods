@@ -143,8 +143,21 @@ resources_match(rule) if {
   selector_missing_or_matches(object.get(resources, "workspaceIds", null), object.get(input, "workspaceId", null), false)
   selector_missing_or_matches(object.get(resources, "workspaceNames", null), object.get(input, "workspaceName", null), false)
   selector_missing_or_matches(object.get(resources, "subagentIds", null), object.get(input, "subagentId", null), false)
-  selector_missing_or_matches(object.get(resources, "filePaths", null), object.get(input, "filePath", null), true)
+  file_paths_match(rule, object.get(resources, "filePaths", null))
   selector_missing_or_matches(object.get(resources, "skillPaths", null), object.get(input, "skillPath", null), true)
+}
+
+file_paths_match(_, prefixes) if {
+  selector_missing_or_matches(prefixes, object.get(input, "filePath", null), true)
+}
+
+# grep and glob read everything under their root, so a deny on `secrets/` also
+# covers a search rooted above it. Deny only: a root search is broader than an
+# allowed prefix, so it must not pass as one.
+file_paths_match(rule, prefixes) if {
+  rule.effect == "deny"
+  object.get(input, "searchRoot", false) == true
+  startswith(prefixes[_], input.filePath)
 }
 
 selector_missing_or_matches(values, _, _) if values == null
