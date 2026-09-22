@@ -333,6 +333,7 @@ async function downloadMedia(
     `${trimSlash(connection.apiUrl)}/_matrix/client/v1/media/download/${encodeURIComponent(serverName!)}/${encodeURIComponent(mediaId!)}`,
     {
       headers: { Authorization: `Bearer ${connection.accessToken}` },
+      redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
   );
@@ -854,8 +855,6 @@ async function uploadMedia(
       },
       method: "POST",
       // The account's token rides this request and an upload never redirects.
-      // `downloadMedia` keeps fetch's default because authenticated media is
-      // allowed to redirect to a CDN.
       redirect: "error",
       signal: AbortSignal.timeout(MATRIX_REQUEST_TIMEOUT_MS),
     },
