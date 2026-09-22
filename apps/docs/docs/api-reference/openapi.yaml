@@ -3998,7 +3998,16 @@ components:
         mcpIds: { type: array, items: { type: string } }
         workspaceIds: { type: array, items: { type: string } }
         workspaceNames: { type: array, items: { type: string } }
-        filePaths: { type: array, items: { type: string } }
+        filePaths:
+          type: array
+          items: { type: string }
+          description: >-
+            Workspace-relative path prefixes, e.g. `secrets/`. Matched against the
+            path a read, write, edit, glob or grep call resolves; bash carries no
+            path. On a deny rule, a grep or glob whose root contains a denied
+            prefix is refused too, the workspace root included, so search a
+            subdirectory. An allow rule never opens a search rooted above its
+            prefix.
         subagentIds: { type: array, items: { type: string } }
         skillPaths: { type: array, items: { type: string } }
         resourceIds:
@@ -4017,10 +4026,11 @@ components:
           description: >-
             Trusted runtime attribute or dotted path. Examples include accountId,
             project, stage, agentId, channel, channelId, threadId, userId,
-            userName, userRoles, toolName, mcpId, filePath, workspaceName,
-            sandboxPermissionMode, tool.input.command, tool.input.file_path, and
-            tool.inputKeys. On an array attribute such as userRoles, `contains`
-            means membership and `in`/`notIn` test overlap.
+            userName, userRoles, toolName, mcpId, filePath, searchRoot,
+            workspaceName, sandboxPermissionMode, tool.input.command,
+            tool.input.file_path, and tool.inputKeys. On an array attribute such
+            as userRoles, `contains` means membership and `in`/`notIn` test
+            overlap.
         operator:
           type: string
           enum: [equals, notEquals, in, notIn, prefix, contains]
