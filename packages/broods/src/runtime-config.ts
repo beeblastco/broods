@@ -53,7 +53,8 @@ export function loadBroodsRuntimeConfig(
   return {
     dashboardUrl: process.env.BROODS_DASHBOARD_URL ?? stored?.dashboardUrl,
     baseUrl: process.env.BROODS_BASE_URL ?? stored?.baseUrl,
-    token: process.env.BROODS_TOKEN ?? stored?.token,
+    // From the resolved login only, so it always belongs to the same server.
+    token: stored?.token,
     project: process.env.BROODS_PROJECT,
     stage: stageFromEnv(),
   };

@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
+  gatewayUrlForDashboard,
   readStoredAuth,
   stripTrailingSlash,
   writeStoredAuth,
@@ -141,7 +142,11 @@ export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
   const auth = readStoredAuth(baseUrl);
   if (!auth) {
-    const server = baseUrl ?? process.env.BROODS_BASE_URL;
+    const dashboardUrl = process.env.BROODS_DASHBOARD_URL;
+    const server =
+      baseUrl ??
+      process.env.BROODS_BASE_URL ??
+      (dashboardUrl ? gatewayUrlForDashboard(dashboardUrl) : undefined);
     throw new Error(
       server
         ? `Not logged in to ${stripTrailingSlash(server)}. Run \`broods login\`.`
