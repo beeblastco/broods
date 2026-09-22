@@ -70,6 +70,7 @@ import type {
   SandboxReservationRef,
   SandboxRunRequest,
   SandboxRunResult,
+  SandboxRuntime,
 } from "./types.ts";
 import {
   configString,
@@ -99,6 +100,9 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 // warm VM answers in well under this; anything slower is a restore the authoritative
 // path handles with the full budget, or a VM that is gone.
 const CACHED_WARMUP_BUDGET_MS = 1_200;
+// Past the guest's own timeout: it answers timed_out itself, the signal only
+// covers a proxy that never answers.
+const EXEC_GRACE_MS = 15_000;
 // The control plane's refusals of a RunMicrovm that mean "no room right now".
 const CAPACITY_EXCEPTIONS: ReadonlySet<string> = new Set([
   "InsufficientCapacityException",
@@ -156,6 +160,17 @@ const reservedEndpoints = new Map<
 // credential without cutting normal interactive use short.
 export const MICROVM_SHELL_AUTH_HEADER = "X-aws-proxy-auth";
 const SHELL_TOKEN_TTL_MINUTES = 30;
+
+// The JSON contract the lambda-sandbox image takes on /exec (snake_case).
+interface ExecPayload {
+  runtime: SandboxRuntime;
+  code: string;
+  namespace?: string;
+  workspace_root?: string;
+  timeout_ms: number;
+  args?: string[];
+  env: Record<string, string>;
+}
 
 // The JSON contract the lambda-sandbox image returns (snake_case), unchanged from
 // the Invoke era.
@@ -731,7 +746,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
   // The resume is deliberately not polled to RUNNING: the endpoint survives suspend
-  // and #exec already retries the proxy's 502/503/504 while the snapshot restores, so
+  // and #exec already retries the proxy's 502/503 while the snapshot restores, so
   // waiting here only added a fixed delay to every warm call. A record with no
   // endpoint is the one case with nothing to POST to, so that alone still waits.
   async #reconnect(
@@ -776,7 +791,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #execReserved(
     target: { microvmId: string; endpoint: string },
     request: SandboxRunRequest,
-    payload: object,
+    payload: ExecPayload,
   ): Promise<SandboxResponse | null> {
     // The reservation's own record has a 30-day TTL, so skipping its refresh costs
     // nothing, but the dashboard row carries lastUsedAt and the trace link, so it
@@ -994,8 +1009,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { ...ingress, egressNetworkConnectors: [egress] };
   }
 
-  // The exec request body, wire-compatible with the image's existing JSON contract.
-  #execPayload(request: SandboxRunRequest): Record<string, unknown> {
+  #execPayload(request: SandboxRunRequest): ExecPayload {
     return {
       runtime: request.runtime ?? "bash",
       code: request.code,
@@ -1022,7 +1036,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #exec(
     microvmId: string,
     endpoint: string,
-    payload: object,
+    payload: ExecPayload,
     budgetMs = WARMUP_BUDGET_MS,
   ): Promise<SandboxResponse> {
     const token = await this.#authToken(microvmId);
@@ -1045,7 +1059,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #postExec(
     url: string,
     token: string,
-    payload: object,
+    payload: ExecPayload,
   ): Promise<
     | { retry: true; status: number | string }
     | { retry: false; response: SandboxResponse }
@@ -1060,17 +1074,21 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
         },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(payload.timeout_ms + EXEC_GRACE_MS),
       });
     } catch (err) {
+      // A timeout means the command ran past its budget; a retry would run it twice.
+      if (err instanceof DOMException && err.name === "TimeoutError") throw err;
       // Connection refused/reset while the VM is still restoring its snapshot.
       return {
         retry: true,
         status: err instanceof Error ? err.message : "fetch error",
       };
     }
-    // 502/503/504 from the proxy mean "warming"; the image itself answers request-
-    // level errors with HTTP 200 + an ok:false body, so any other non-2xx is fatal.
-    if (res.status === 502 || res.status === 503 || res.status === 504) {
+    // 502/503 from the proxy mean "warming". A 504 means the proxy gave up on a
+    // guest that may be running the command, so it is fatal like any other non-2xx;
+    // the image itself answers request-level errors with HTTP 200 + an ok:false body.
+    if (res.status === 502 || res.status === 503) {
       return { retry: true, status: res.status };
     }
     const text = await res.text();
