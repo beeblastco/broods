@@ -198,9 +198,7 @@ export async function deleteAccountContentsBatch(
 
   const taskUsage = await ctx.db
     .query("taskUsage")
-    .withIndex("by_accountId_and_finishedAt", (q) =>
-      q.eq("accountId", accountId),
-    )
+    .withIndex("by_accountId_and_taskId", (q) => q.eq("accountId", accountId))
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (taskUsage.length > 0) {
     for (const task of taskUsage) await ctx.db.delete(task._id);

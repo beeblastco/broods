@@ -5,8 +5,8 @@
  * SHA-256 hash is stored.
  */
 
-import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import { type Infer, v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { sha256Hex } from "./model/accountSecrets";
@@ -16,8 +16,10 @@ import { deployKeysFields } from "./schema";
 
 const DEPLOY_KEY_PREFIX = "fp_deploy_";
 
-const deployKeyDoc = v.object({
-  ...deployKeysFields,
+// What `list` sends to the browser: the row minus `keyHash`.
+const { keyHash: _keyHash, ...deployKeyListFields } = deployKeysFields;
+const deployKeyListItem = v.object({
+  ...deployKeyListFields,
   _id: v.id("deployKeys"),
   _creationTime: v.number(),
 });
@@ -84,11 +86,11 @@ export const create = mutation({
 
 export const list = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.array(deployKeyDoc),
+  returns: v.array(deployKeyListItem),
   handler: async (
     ctx,
     { projectId, stageId },
-  ): Promise<Doc<"deployKeys">[]> => {
+  ): Promise<Infer<typeof deployKeyListItem>[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -102,12 +104,14 @@ export const list = query({
       return [];
     }
 
-    return ctx.db
+    const keys = await ctx.db
       .query("deployKeys")
       .withIndex("by_projectId_and_stageId", (q) =>
         q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
+
+    return keys.map(({ keyHash: _hash, ...key }) => key);
   },
 });
 

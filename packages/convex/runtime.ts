@@ -1087,7 +1087,7 @@ export const deleteAgentRuntimeData = internalMutation({
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const ingressRows = await ctx.db
       .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_sequence", (q) =>
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
@@ -1111,7 +1111,7 @@ export const deleteAgentRuntimeData = internalMutation({
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const asyncToolRows = await ctx.db
       .query("runtimeAsyncToolResults")
-      .withIndex("by_conversationKey", (q) =>
+      .withIndex("by_conversationKey_and_toolName_and_status", (q) =>
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
@@ -1197,7 +1197,9 @@ export const deleteAccountRuntimeData = internalMutation({
       .take(100);
     const ingressRows = await ctx.db
       .query("runtimeIngressEnvelopes")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_accountId_and_runId", (q) =>
+        q.eq("accountId", args.accountId),
+      )
       .take(100);
     const applicationRows = await ctx.db
       .query("runtimeIngressApplications")

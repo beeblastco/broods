@@ -251,8 +251,12 @@ export const listForEndpoint = internalQuery({
  */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
-  returns: v.array(agentDoc),
-  handler: async (ctx, args): Promise<Doc<"agents">[]> => {
+  // Names only: the full row carries the encrypted config blobs.
+  returns: v.array(v.object({ _id: v.id("agents"), name: v.string() })),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Pick<Doc<"agents">, "_id" | "name">[]> => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -267,7 +271,9 @@ export const listForProject = query({
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) return [];
 
-    return await agentsInProject(ctx, args.projectId, accountId);
+    const agents = await agentsInProject(ctx, args.projectId, accountId);
+
+    return agents.map((agent) => ({ _id: agent._id, name: agent.name }));
   },
 });
 

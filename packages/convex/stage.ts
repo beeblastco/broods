@@ -382,7 +382,9 @@ export async function deleteStageContents(
   // stageId, so anything left behind is unreachable once the stage is gone.
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   for (const policy of policies) await ctx.db.delete(policy._id);
 

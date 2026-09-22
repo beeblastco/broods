@@ -1242,7 +1242,6 @@ export default defineSchema({
   ]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
-    .index("by_authId", ["authId"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),
   agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index(
@@ -1306,7 +1305,6 @@ export default defineSchema({
     .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"])
     .index("by_stageId_and_status_and_name", ["stageId", "status", "name"]),
   accountRoles: defineTable(accountRolesFields)
     .index("by_accountId", ["accountId"])
@@ -1402,7 +1400,6 @@ export default defineSchema({
   runtimeIngressEnvelopes: defineTable(runtimeIngressEnvelopesFields)
     .index("by_identity", ["identity"])
     .index("by_eventId", ["eventId"])
-    .index("by_conversationKey_and_sequence", ["conversationKey", "sequence"])
     .index("by_conversationKey_and_status_and_sequence", [
       "conversationKey",
       "status",
@@ -1413,7 +1410,6 @@ export default defineSchema({
       "appliedToEventId",
       "sequence",
     ])
-    .index("by_accountId", ["accountId"])
     .index("by_accountId_and_runId", ["accountId", "runId"])
     // Status leads so maintenance scans only nonterminal rows: terminal rows
     // keep their stale expiresAt for the whole status retention window, and a
@@ -1433,7 +1429,6 @@ export default defineSchema({
     .index("by_resultId", ["resultId"])
     .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
-    .index("by_conversationKey", ["conversationKey"])
     .index("by_conversationKey_and_toolName_and_status", [
       "conversationKey",
       "toolName",
@@ -1456,9 +1451,10 @@ export default defineSchema({
     "by_accountId_and_cronId_and_startedAt",
     ["accountId", "cronId", "startedAt"],
   ),
-  taskUsage: defineTable(taskUsageFields)
-    .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
-    .index("by_accountId_and_taskId", ["accountId", "taskId"]),
+  taskUsage: defineTable(taskUsageFields).index("by_accountId_and_taskId", [
+    "accountId",
+    "taskId",
+  ]),
   usageRollups: defineTable(usageRollupsFields)
     .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
     .index("by_endpointId_and_grain_and_bucketStart", [

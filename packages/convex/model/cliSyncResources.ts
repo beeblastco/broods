@@ -155,7 +155,9 @@ export async function prunePolicyResources(
   );
   const existing = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   // One read per account for the whole prune, not one per pruned policy.
   const rowsByAccount = new Map<Id<"accounts">, PolicyReferenceRows>();
@@ -400,7 +402,9 @@ export async function syncPolicyResources(
 
   const existing = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .withIndex("by_stageId_and_status_and_name", (q) =>
+      q.eq("stageId", stageId),
+    )
     .collect();
   const desiredNames = new Set(
     policies.map((entry) => resourceName(entry.name)),
