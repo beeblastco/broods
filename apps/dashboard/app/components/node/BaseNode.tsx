@@ -21,6 +21,8 @@ export type BaseNodeData = {
   status?: "running" | "idle" | "error";
   agentConfigId?: string;
   resourceId?: string;
+  /** Owner cached by the last canvas save; `useNodeOwnership` prefers the live row. */
+  managedBy?: string;
   mountName?: string;
   description?: string;
   config?: Record<string, unknown>;

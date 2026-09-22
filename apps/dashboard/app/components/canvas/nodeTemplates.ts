@@ -11,3 +11,6 @@ export const NODE_TEMPLATES = [
   { type: "skill", label: "Skill", icon: Sparkles },
   { type: "mcp", label: "MCP", icon: Plug },
 ] as const;
+
+/** The card types the canvas knows, as `NODE_TEMPLATES` lists them. */
+export type NodeType = (typeof NODE_TEMPLATES)[number]["type"];
