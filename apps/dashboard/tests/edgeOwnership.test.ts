@@ -1,16 +1,22 @@
 import { describe, expect, test } from "bun:test";
+import type { LayoutNode } from "@broods/convex/model/canvasLayout";
 import {
   connectionEdge,
   isCodeManagedEdge,
 } from "../app/components/canvas/edgeOwnership";
 
-/** Tracy's CLI nodes, plus a sandbox and an agent made on the dashboard. */
-const MANAGED_BY: Record<string, string> = {
-  "agent-dash": "dashboard",
-  "cli-agent-tracy": "cli",
-  "cli-sandbox-mac": "cli",
-  "cli-workspace-notes": "cli",
-  "sandbox-dash": "dashboard",
+/**
+ * Tracy's CLI nodes, an agent the account REST API owns, and resources made on
+ * the dashboard.
+ */
+const NODES: Record<string, LayoutNode> = {
+  "agent-dash": node("agent-dash", "agent", "dashboard"),
+  "api-agent-ops": node("api-agent-ops", "agent", "api"),
+  "cli-agent-tracy": node("cli-agent-tracy", "agent", "cli"),
+  "cli-sandbox-mac": node("cli-sandbox-mac", "sandbox", "cli"),
+  "cli-workspace-notes": node("cli-workspace-notes", "workspace", "cli"),
+  "sandbox-dash": node("sandbox-dash", "sandbox", "dashboard"),
+  "workspace-dash": node("workspace-dash", "workspace", "dashboard"),
 };
 
 describe("isCodeManagedEdge", () => {
@@ -33,6 +39,44 @@ describe("isCodeManagedEdge", () => {
     expect(owned("agent-dash", null, "cli-sandbox-mac", "top", true)).toBe(
       false,
     );
+  });
+
+  test("owns an API agent's edge, which carries no `cli-` in its id to go by", () => {
+    expect(owned("api-agent-ops", null, "sandbox-dash", "top", true)).toBe(
+      true,
+    );
+    expect(
+      owned("api-agent-ops", "right", "agent-dash", "left", true),
+      "subagent link",
+    ).toBe(true);
+  });
+
+  test("falls back to the id prefix when the owning end has left the graph", () => {
+    expect(
+      isCodeManagedEdge(
+        {
+          id: "xy-edge__cli-agent-tracy-cli-sandbox-mac",
+          source: "cli-agent-tracy",
+          target: "cli-sandbox-mac",
+        },
+        () => undefined,
+      ),
+    ).toBe(true);
+  });
+
+  test("reads a mount off its workspace, so dragging it either way says the same", () => {
+    expect(
+      owned("cli-workspace-notes", "left", "sandbox-dash", "right", false),
+      "workspace dragged onto sandbox",
+    ).toBe(true);
+    expect(
+      owned("sandbox-dash", "right", "cli-workspace-notes", "left", false),
+      "sandbox dragged onto workspace",
+    ).toBe(true);
+    // The sandbox end does not decide it: this workspace is editable here.
+    expect(
+      owned("cli-sandbox-mac", "right", "workspace-dash", "left", false),
+    ).toBe(false);
   });
 });
 
@@ -83,6 +127,10 @@ function owned(
       },
       sourceIsAgent,
     ),
-    (nodeId): unknown => MANAGED_BY[nodeId],
+    (nodeId) => NODES[nodeId],
   );
+}
+
+function node(id: string, type: string, managedBy: string): LayoutNode {
+  return { data: { managedBy: managedBy }, id: id, type: type };
 }

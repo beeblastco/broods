@@ -68,12 +68,12 @@ export function connectionRefusal(
   if (
     isCodeManagedEdge(
       connectionEdge(connection, srcNode.type === "agent"),
-      (nodeId): unknown =>
-        (nodeId === srcNode.id ? srcNode : tgtNode).data.managedBy,
+      (nodeId) => (nodeId === srcNode.id ? srcNode : tgtNode),
     )
   ) {
-    // Names only the ends code owns. A `cli-` edge id alone locks the edge, so
-    // the other end can be a card made here.
+    // Names the ends code owns, which covers the one that owns the link. The
+    // id fallback can lock an edge with neither end owned, so name the source
+    // when nothing else is there to name.
     const owned = [srcNode, tgtNode]
       .filter((node) => isCodeManagedOwner(node.data.managedBy))
       .map(cardLabel);

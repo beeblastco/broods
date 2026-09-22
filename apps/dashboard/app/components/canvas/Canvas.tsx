@@ -302,12 +302,7 @@ function hydrateSubagentEdge(edge: Edge): Edge {
 
 /** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
 function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
-  if (
-    !isCodeManagedEdge(
-      edge,
-      (nodeId): unknown => nodesById.get(nodeId)?.data.managedBy,
-    )
-  ) {
+  if (!isCodeManagedEdge(edge, (nodeId) => nodesById.get(nodeId))) {
     return edge;
   }
 
@@ -1083,11 +1078,20 @@ function CanvasInner({
         nodesRef.current,
         agentIds ?? (nearest ? [nearest.id] : []),
       );
-      const newEdges: Edge[] = sources.map((source) => ({
-        id: `e${source}-${id}`,
-        source: source,
-        target: id,
-      }));
+      // Through `connectionEdge`, so the id carries the `xy-edge__` scheme the
+      // drag path and both syncs mint. Its own format matched none of them,
+      // which left the edge invisible to every check that reads an id prefix.
+      const newEdges: Edge[] = sources.map((source) =>
+        connectionEdge(
+          {
+            source: source,
+            sourceHandle: null,
+            target: id,
+            targetHandle: null,
+          },
+          true,
+        ),
+      );
       // A card that joins a frame takes its next slot (see editGraph).
       editGraph((nodes, edges) => ({
         edges: [...edges, ...newEdges],
