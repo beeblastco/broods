@@ -12,10 +12,15 @@ export function pruneSessionMessages(
   agentConfig: AgentConfig,
 ): ModelMessage[] {
   const approvalResume = hasPendingToolApprovalResponse(messages);
+  const retainsReasoning = retainsReasoningParts(agentConfig);
   const modelMessages =
-    approvalResume || retainsReasoningParts(agentConfig)
+    approvalResume || retainsReasoning
       ? messages
       : stripReasoningFromMessages(messages);
+  // An approval resume keeps the assistant tool call its approvalId points at.
+  const prunedToolCalls = approvalResume
+    ? "before-last-2-messages"
+    : "before-last-message";
 
   if (agentConfig.session?.pruning?.enabled === false) {
     return modelMessages;
@@ -27,11 +32,8 @@ export function pruneSessionMessages(
     // messages referencing stored items whose reasoning is gone, which is the
     // same rejection this retention exists to avoid, only deferred a turn.
     reasoning: "none",
-    // A final approval response needs the preceding assistant tool-call preserved
-    // so the AI SDK can match approvalId -> toolCallId on the next model run.
-    toolCalls: approvalResume
-      ? "before-last-2-messages"
-      : "before-last-message",
+    // A pruned tool call orphans its reasoning item on a stored-item provider.
+    toolCalls: retainsReasoning ? "none" : prunedToolCalls,
     emptyMessages: "remove",
   });
 }

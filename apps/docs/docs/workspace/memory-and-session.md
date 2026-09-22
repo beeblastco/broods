@@ -206,7 +206,8 @@ should keep read-only `read`/`glob` access through S3 but must not mount or muta
 
 Core manages session history before each model turn:
 
-- Pruning is enabled by default unless `session.pruning.enabled` is false. It removes older reasoning/tool-call clutter from the model-visible context without changing persisted history.
-- Compaction is disabled by default unless `session.compaction.enabled` is true. When enabled, it uses the selected agent model to summarize older history once the serialized context exceeds `session.compaction.maxContextLength`.
+- Pruning is enabled by default unless `session.pruning.enabled` is false. It removes reasoning and older tool calls with their results from the model-visible context without changing persisted history. OpenAI and Azure are the exception. They replay a message by reference to a stored reasoning item, and that item is refused without the tool call it produced, so both stay in context there until compaction.
+- A tool call with no result in history, such as an approval the user never answered, is left out of the model-visible context on every provider.
+- Compaction is disabled by default unless `session.compaction.enabled` is true. When enabled, it uses the selected agent model to summarize older history once the serialized pruned context exceeds `session.compaction.maxContextLength`. The summary itself reads the full stored history.
 - Compaction persists a system summary, keeps the latest user message active, and includes prior compaction summaries when compacting again.
 - On command-capable channels, `/compact [instructions]` compacts on demand between turns, regardless of the `session.compaction` config or context size. The optional instructions steer what the summary preserves.

@@ -12,6 +12,7 @@ import {
   type ModelMessage,
   type SystemModelMessage,
   type ToolModelMessage,
+  type ToolResultPart,
   type UserContent,
   type UserModelMessage,
 } from "ai";
@@ -68,6 +69,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import { truncateText } from "./sandbox/utils.ts";
 import {
   listConfiguredSkillMetadata,
   loadConfiguredHarnessSkills,
@@ -75,6 +77,14 @@ import {
   type SkillMetadata,
 } from "./skills.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
+
+// Convex caps one mutation's arguments at 16 MiB. Half of that leaves room for
+// the fence fields and for the encoding the client adds around each event.
+const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
+const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
+// Convex refuses a document over 1 MiB. One tool message shares this budget
+// across its results, which leaves room for the rest of the row.
+const STORED_TOOL_MESSAGE_BYTES = 768 * 1024;
 
 // What started a run when it was not a person asking: so far only the scheduler
 // firing a cron. It names the root trace span and withholds every schedule tool.
@@ -442,26 +452,40 @@ export class Session {
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
     if (!this.persist) return [];
-    const createdAtValues: string[] = [];
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
       retainsReasoning: retainsReasoningParts(this.agentConfig),
     };
+    const events = messages.flatMap(
+      (message): { cursor: string; event: StoredConversationEvent }[] => {
+        const event = createStoredEventFromModelMessage(
+          message,
+          this.eventId,
+          producer,
+        );
 
-    for (const message of messages) {
-      const storedEvent = createStoredEventFromModelMessage(
-        message,
-        this.eventId,
-        producer,
-      );
-      if (!storedEvent) {
-        continue;
+        return event ? [{ cursor: this.nextCreatedAt(), event: event }] : [];
+      },
+    );
+    if (events.length === 0) return [];
+
+    // A step fits one mutation, but a harness run hands over its whole history
+    // at once and that can pass what Convex accepts in a single call.
+    let batch: typeof events = [];
+    let batchBytes = 0;
+    for (const entry of events) {
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry));
+      if (batch.length > 0 && batchBytes + entryBytes > APPEND_EVENT_BYTES) {
+        await this.appendConversationEvents(batch);
+        batch = [];
+        batchBytes = 0;
       }
-
-      createdAtValues.push(await this.persistStoredEvent(storedEvent));
+      batch.push(entry);
+      batchBytes += entryBytes;
     }
+    await this.appendConversationEvents(batch);
 
-    return createdAtValues;
+    return events.map((entry): string => entry.cursor);
   }
 
   async loadHarnessSession(): Promise<StoredHarnessSession | null> {
@@ -720,6 +744,26 @@ export class Session {
   /** Resolved workspaces for this turn (first is the default). Empty when none. */
   resolvedWorkspaces(): ResolvedWorkspace[] {
     return this.resolvedRuntime?.workspaces ?? [];
+  }
+
+  /** One append mutation, fenced against the owner generation when there is one. */
+  private async appendConversationEvents(
+    events: { cursor: string; event: StoredConversationEvent }[],
+  ): Promise<void> {
+    if (this.ownerGeneration !== undefined) {
+      await runtime.mutate("appendFencedConversationEvent", {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+        events: events,
+      });
+
+      return;
+    }
+    await runtime.mutate("appendConversationEvent", {
+      conversationKey: this.conversationKey,
+      events: events,
+    });
   }
 
   private async buildSystemPromptParts(
@@ -1040,29 +1084,6 @@ export class Session {
     this.messageSequence += 1;
 
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
-  }
-
-  private async persistStoredEvent(
-    event: StoredConversationEvent,
-  ): Promise<string> {
-    const createdAt = this.nextCreatedAt();
-    if (this.ownerGeneration !== undefined) {
-      await runtime.mutate("appendFencedConversationEvent", {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: this.ownerGeneration,
-        cursor: createdAt,
-        event: event,
-      });
-    } else {
-      await runtime.mutate("appendConversationEvent", {
-        conversationKey: this.conversationKey,
-        cursor: createdAt,
-        event: event,
-      });
-    }
-
-    return createdAt;
   }
 }
 
@@ -1546,7 +1567,7 @@ function projectEntriesToMessages(
   entries: StoredConversationEntry[],
   model: string | undefined,
 ): ModelMessage[] {
-  return entries.flatMap(({ createdAt, event }): ModelMessage[] => {
+  const messages = entries.flatMap(({ createdAt, event }): ModelMessage[] => {
     switch (event.message.role) {
       case "system":
         return [];
@@ -1572,6 +1593,8 @@ function projectEntriesToMessages(
         return [event.message];
     }
   });
+
+  return withoutUnresolvedToolCalls(messages);
 }
 
 function projectSystemContextMessages(
@@ -1614,7 +1637,18 @@ function sanitizeAssistantMessage(
 function sanitizeToolMessage(
   message: ToolModelMessage,
 ): ToolModelMessage | null {
-  const content = message.content.filter(isPersistedToolContentPart);
+  const parts = message.content.filter(isPersistedToolContentPart);
+  const resultCount = parts.filter(
+    (part): boolean => part.type === "tool-result",
+  ).length;
+  const limit = Math.floor(
+    STORED_TOOL_MESSAGE_BYTES / Math.max(resultCount, 1),
+  );
+  const content = parts.map((part): ToolModelMessage["content"][number] =>
+    part.type === "tool-result"
+      ? { ...part, output: storableToolResultOutput(part.output, limit) }
+      : part,
+  );
 
   return content.length > 0 ? { ...message, content: content } : null;
 }
@@ -1652,9 +1686,67 @@ function sanitizeUserMessage(
   return message.content.length > 0
     ? {
         ...message,
-        content: [{ type: "text", text: "[attachment not retained]" }],
+        content: [{ type: "text", text: ATTACHMENT_NOT_RETAINED }],
       }
     : null;
+}
+
+/**
+ * A tool result as a stored row can hold it. Media follows the rule in
+ * `sanitizeUserMessage`: bytes are dropped, a URL stays. Whatever is still over
+ * `limit` is stored as truncated text, so one oversized result can not fail the
+ * write and end the run.
+ */
+function storableToolResultOutput(
+  output: ToolResultPart["output"],
+  limit: number,
+): ToolResultPart["output"] {
+  if (output.type === "execution-denied") {
+    return output;
+  }
+  let stored = output;
+  if (output.type === "content") {
+    const value = output.value.filter((part): boolean => {
+      switch (part.type) {
+        case "file-data":
+        case "image-data":
+          return false;
+        case "file":
+          return part.data.type === "url"
+            ? isStorableMediaReference(part.data)
+            : part.data.type !== "data";
+        case "file-url":
+        case "image-url":
+          return isStorableMediaReference(part.url);
+        default:
+          return true;
+      }
+    });
+    stored = {
+      ...output,
+      value:
+        value.length > 0
+          ? value
+          : [{ type: "text", text: ATTACHMENT_NOT_RETAINED }],
+    };
+  }
+  const text = truncateText(
+    typeof stored.value === "string"
+      ? stored.value
+      : JSON.stringify(stored.value),
+    limit,
+  );
+  if (!text.truncated) {
+    return stored;
+  }
+
+  return {
+    type:
+      output.type === "error-text" || output.type === "error-json"
+        ? "error-text"
+        : "text",
+    value: text.value,
+  };
 }
 
 async function timePhase<T>(
@@ -1709,4 +1801,53 @@ function withoutStoredItems(
       .filter((part) => part.type !== "reasoning")
       .map(withoutStoredItemId),
   };
+}
+
+/**
+ * Drops a tool call the history never answers: an abandoned approval, or a step
+ * cut short. The AI SDK refuses such a history on every later turn. The call's
+ * message loses its stored-item state too, because the provider refuses a
+ * reasoning item without the call it produced. The approval the last message
+ * answers is still pending, so its call stays.
+ */
+function withoutUnresolvedToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  const pendingApprovalIds = new Set(
+    isToolApprovalResponseMessage(lastMessage)
+      ? lastMessage.content.flatMap((part): string[] =>
+          part.type === "tool-approval-response" ? [part.approvalId] : [],
+        )
+      : [],
+  );
+  const resolvedToolCallIds = new Set(
+    messages.flatMap((message): string[] =>
+      typeof message.content === "string"
+        ? []
+        : message.content.flatMap((part): string[] =>
+            part.type === "tool-result" ||
+            (part.type === "tool-approval-request" &&
+              pendingApprovalIds.has(part.approvalId))
+              ? [part.toolCallId]
+              : [],
+          ),
+    ),
+  );
+
+  return messages.flatMap((message): ModelMessage[] => {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      return [message];
+    }
+    const content = message.content.filter(
+      (part): boolean =>
+        (part.type !== "tool-call" && part.type !== "tool-approval-request") ||
+        (part.type === "tool-call" && part.providerExecuted === true) ||
+        resolvedToolCallIds.has(part.toolCallId),
+    );
+    if (content.length === message.content.length) {
+      return [message];
+    }
+    const repaired = withoutStoredItems({ ...message, content: content });
+
+    return repaired.content.length > 0 ? [repaired] : [];
+  });
 }
