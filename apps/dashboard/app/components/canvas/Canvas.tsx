@@ -144,19 +144,17 @@ import {
   useState,
 } from "react";
 
-/**
- * `next/dynamic` gives a chunk its own Suspense boundary only when it is
- * handed a `loading` element. Without one the first open of a dialog suspends
- * all the way up to the route's `loading.tsx`, so the whole canvas blinks to
- * "Loading canvas…" and back while the chunk downloads. A dialog has nothing
- * to show before it opens, so its boundary renders nothing.
- */
-const DIALOG_CHUNK = { loading: (): null => null };
-
 // Interaction-only components, loaded the first time they are wanted. They
 // must not render before that: a lazy child that is still loading holds the
 // transition that mounts the canvas, and the stage landing in the URL is
 // such a transition, so the first paint waited for dialog code nobody opened.
+//
+// Every one of them passes `loading`, because that is what buys a chunk its
+// own Suspense boundary. Without one the first open suspends all the way up
+// to the route's `loading.tsx` and the whole canvas blinks to "Loading
+// canvas…" while the chunk downloads. A dialog shows nothing before it opens,
+// so its fallback is null. The option object is spelled out at each call:
+// Turbopack reads it statically and rejects a shared constant.
 const NodeSidePanel = dynamic(
   () =>
     import("@/app/components/NodeSidePanel").then((mod) => mod.NodeSidePanel),
@@ -167,35 +165,35 @@ const AgentSourcePickerDialog = dynamic(
     import("@/app/components/AgentSourcePickerDialog").then(
       (mod) => mod.AgentSourcePickerDialog,
     ),
-  DIALOG_CHUNK,
+  { loading: (): null => null },
 );
 const CreateAgentConfigDialog = dynamic(
   () =>
     import("@/app/components/CreateAgentConfigDialog").then(
       (mod) => mod.CreateAgentConfigDialog,
     ),
-  DIALOG_CHUNK,
+  { loading: (): null => null },
 );
 const NodeDeleteDialog = dynamic(
   () =>
     import("@/app/components/canvas/NodeDeleteDialog").then(
       (mod) => mod.NodeDeleteDialog,
     ),
-  DIALOG_CHUNK,
+  { loading: (): null => null },
 );
 const RenameNodeDialog = dynamic(
   () =>
     import("@/app/components/canvas/RenameNodeDialog").then(
       (mod) => mod.RenameNodeDialog,
     ),
-  DIALOG_CHUNK,
+  { loading: (): null => null },
 );
 const SkillSourcePickerDialog = dynamic(
   () =>
     import("@/app/components/SkillSourcePickerDialog").then(
       (mod) => mod.SkillSourcePickerDialog,
     ),
-  DIALOG_CHUNK,
+  { loading: (): null => null },
 );
 
 /**
