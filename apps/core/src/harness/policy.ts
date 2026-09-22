@@ -10,6 +10,7 @@ import {
   shadow,
   type PolicyClient,
 } from "@ai-sdk/policy-opa";
+import { AGENT_POLICY_ACTIONS } from "@broods/convex/model/policyRules";
 import type {
   ToolApprovalConfiguration,
   ToolApprovalStatus,
@@ -57,6 +58,20 @@ const POLICY_INPUT_PREVIEW_MAX = 160;
 const POLICY_REDACTED_VALUE = "[redacted]";
 const SENSITIVE_INPUT_KEY =
   /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
+
+// A policy only ever refuses, so a reference that resolves to nothing must not
+// read as "no policy": it refuses everything until the reference is fixed.
+const UNRESOLVED_POLICY: PolicyDocument = {
+  version: 1,
+  mode: "enforce",
+  rules: [
+    {
+      id: "unresolved-policy",
+      effect: "deny",
+      actions: [...AGENT_POLICY_ACTIONS],
+    },
+  ],
+};
 
 type RuntimeToolApproval = Extract<
   ToolApprovalConfiguration<ToolSet, unknown>,
@@ -270,26 +285,13 @@ export async function evaluateChannelInvoke(
   input: Omit<PolicyDecisionInput, "action">,
 ): Promise<PolicyDecision | undefined> {
   if (!isPolicyEnabled(agentConfig) || !input.accountId) return undefined;
+  let mode: PolicyMode | undefined;
   try {
-    // Loading the documents sits inside the try on purpose: a control-plane
-    // blip must fail closed like an unreachable OPA, not throw past the caller.
     const policies = await loadPolicyDocuments(
       input.accountId,
       agentConfig.policies ?? [],
     );
-    const mode = enforcingMode(policies);
-    // Policy is configured but nothing resolved: refuse like the tool gate
-    // does, rather than letting a broken reference read as "no policy".
-    if (policies.length === 0) {
-      return {
-        allowed: false,
-        mode: "enforce",
-        reason: "No allow policy rule matched",
-        matchedRuleIds: [],
-        auditedRuleIds: [],
-      };
-    }
-
+    mode = enforcingMode(policies);
     const decision = await policyClient().evaluate<
       PolicyDecisionInput & { policies: PolicyDocument[] },
       {
@@ -305,7 +307,9 @@ export async function evaluateChannelInvoke(
     });
 
     return {
-      allowed: decision?.allowed !== false,
+      // No decision means OPA does not carry the package: only a place where
+      // nothing enforces stays open.
+      allowed: decision ? decision.allowed === true : mode === "audit",
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
       matchedRuleIds: decision?.matchedRuleIds ?? [],
@@ -319,11 +323,11 @@ export async function evaluateChannelInvoke(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fail closed: the modes live in the documents this call could not read, so
-    // there is no way to tell an auditing place from an enforcing one here.
+    // `mode` is unset when the document load threw: an auditing place cannot
+    // be told from an enforcing one, so refuse. An OPA outage alone keeps it.
     return {
-      allowed: false,
-      mode: "enforce",
+      allowed: mode === "audit",
+      mode: mode ?? "enforce",
       reason: "Policy evaluation failed",
       matchedRuleIds: [],
       auditedRuleIds: [],
@@ -522,8 +526,6 @@ async function loadPolicyDocuments(
       getStorage().agentPolicies.getById(accountId, policyId),
     ),
   );
-  // A reference that resolves to nothing is a misconfiguration, not an empty
-  // policy: say so, or the rule silently stops applying.
   const missing = requested.filter((_, index) => !records[index]);
   if (missing.length > 0) {
     logWarn("Policy references did not resolve", {
@@ -532,9 +534,7 @@ async function loadPolicyDocuments(
     });
   }
 
-  return records
-    .filter((record): record is NonNullable<typeof record> => Boolean(record))
-    .map((record) => record.document);
+  return records.map((record) => record?.document ?? UNRESOLVED_POLICY);
 }
 
 function policyClient(): PolicyClient {

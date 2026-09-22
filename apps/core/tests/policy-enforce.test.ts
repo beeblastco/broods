@@ -49,7 +49,7 @@ const ENFORCED_DENIAL = {
 };
 
 // Stands in for what the rego returns once it has applied the policy's mode.
-let opaResult: Record<string, unknown> = ENFORCED_DENIAL;
+let opaResult: Record<string, unknown> | undefined = ENFORCED_DENIAL;
 
 const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];
@@ -355,10 +355,9 @@ describe("agent.invoke gate", () => {
     ).toBeUndefined();
   });
 
-  it("refuses when a configured policy resolves to no documents", async (): Promise<void> => {
-    // A policy id that no longer resolves used to read as "no policy" here and
-    // as "nothing allowed" at the tool gate: the agent answered while every
-    // tool call was refused. Both gates refuse now.
+  it("sends a deny-all document for a policy that resolves to nothing", async (): Promise<void> => {
+    // A deleted policy used to vanish from the set. If it was the only
+    // enforcing one, both gates dropped to audit and let everything through.
     setStorageForTests({
       agentPolicies: { getById: async (): Promise<null> => null },
     } as unknown as Storage);
@@ -369,13 +368,19 @@ describe("agent.invoke gate", () => {
         channel: "zalo",
       });
 
-      expect(decision).toEqual({
-        allowed: false,
-        mode: "enforce",
-        reason: "No allow policy rule matched",
-        matchedRuleIds: [],
-        auditedRuleIds: [],
-      });
+      expect(decision?.allowed).toBe(false);
+      expect(decision?.mode).toBe("enforce");
+      expect(seenPolicyInputs.at(-1)).toEqual(
+        expect.objectContaining({
+          action: "agent.invoke",
+          policies: [
+            expect.objectContaining({
+              mode: "enforce",
+              rules: [expect.objectContaining({ id: "unresolved-policy" })],
+            }),
+          ],
+        }),
+      );
     } finally {
       setStorageForTests({
         agentPolicies: { getById: async () => policyRecord() },
@@ -420,6 +425,47 @@ describe("agent.invoke gate", () => {
       expect(decision?.reason).toBe("Policy evaluation failed");
     } finally {
       process.env.OPA_BASE_URL = previous;
+    }
+  });
+
+  it("stays open through an OPA outage when nothing enforces", async (): Promise<void> => {
+    policyMode = "audit";
+    try {
+      await withUnreachableOpa(async (): Promise<void> => {
+        const decision = await evaluateChannelInvoke(agentConfig(), {
+          accountId: "acct_1",
+          agentId: "agent_1",
+        });
+
+        expect(decision?.allowed).toBe(true);
+        expect(decision?.mode).toBe("audit");
+        expect(decision?.reason).toBe("Policy evaluation failed");
+      });
+    } finally {
+      policyMode = "enforce";
+    }
+  });
+
+  it("opens on an absent decision only when nothing enforces", async (): Promise<void> => {
+    opaResult = undefined;
+    try {
+      const enforced = await evaluateChannelInvoke(agentConfig(), {
+        accountId: "acct_1",
+        agentId: "agent_1",
+      });
+      policyMode = "audit";
+      const audited = await evaluateChannelInvoke(agentConfig(), {
+        accountId: "acct_1",
+        agentId: "agent_1",
+      });
+
+      expect(enforced?.allowed).toBe(false);
+      expect(enforced?.mode).toBe("enforce");
+      expect(audited?.allowed).toBe(true);
+      expect(audited?.mode).toBe("audit");
+    } finally {
+      policyMode = "enforce";
+      opaResult = ENFORCED_DENIAL;
     }
   });
 });
