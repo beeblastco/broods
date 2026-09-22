@@ -32,6 +32,7 @@ import {
   runMachineMcpCall,
   runMachineMcpList,
 } from "../sandbox/machine-executor.ts";
+import { publicHostFetch } from "../../shared/http.ts";
 import { HOSTED_MCP_URL, hostedMcpFetch } from "./hosted.ts";
 import {
   clearMcpOauthTokens,
@@ -287,9 +288,11 @@ async function connectClient(
       new URL(hosted ? HOSTED_MCP_URL : connection.record.url!),
       {
         requestInit: { headers: headers },
-        ...(hosted
-          ? { fetch: hostedMcpFetch(connection.record, onCpuUsec) }
-          : {}),
+        // A tenant url is dialed from inside the cluster, so it gets the same
+        // resolve, refuse-private and pin treatment as a model endpoint.
+        fetch: hosted
+          ? hostedMcpFetch(connection.record, onCpuUsec)
+          : publicHostFetch,
       },
     );
     const client = new Client(CLIENT_INFO, {

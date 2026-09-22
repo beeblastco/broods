@@ -1,6 +1,10 @@
 import { dns } from "bun";
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { assertPublicHttpsUrl, publicHostFetch } from "../src/shared/http.ts";
+import {
+  assertPublicHttpsUrl,
+  publicHostFetch,
+  resetPublicHostsForTests,
+} from "../src/shared/http.ts";
 
 describe("assertPublicHttpsUrl", () => {
   it("accepts public https URLs", () => {
@@ -68,6 +72,7 @@ describe("publicHostFetch", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetPublicHostsForTests();
   });
 
   it("refuses private hostnames and literal private addresses before connecting", async () => {
@@ -155,5 +160,62 @@ describe("publicHostFetch", () => {
     expect(new Headers(init.headers).get("host")).toBe("api.example.com:8443");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer k");
     expect(init.tls?.serverName).toBe("api.example.com");
+  });
+
+  it("reuses a validated address without a second lookup", async () => {
+    const lookup = spyOn(dns, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4, ttl: 30 },
+    ]);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await publicHostFetch("https://api.example.com/v1/chat");
+      await publicHostFetch("https://api.example.com/v1/models");
+
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
+
+    expect(urls).toEqual([
+      "https://93.184.216.34/v1/chat",
+      "https://93.184.216.34/v1/models",
+    ]);
+  });
+
+  it("resolves again after the pinned address fails to connect", async () => {
+    const lookup = spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4, ttl: 30 }])
+      .mockResolvedValueOnce([
+        { address: "93.184.216.35", family: 4, ttl: 30 },
+      ]);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      if (urls.length === 1) {
+        throw new Error("connection refused");
+      }
+
+      return new Response("ok");
+    }) as typeof fetch;
+    try {
+      await expect(
+        publicHostFetch("https://api.example.com/v1/chat"),
+      ).rejects.toThrow("connection refused");
+      await publicHostFetch("https://api.example.com/v1/chat");
+
+      expect(lookup).toHaveBeenCalledTimes(2);
+    } finally {
+      lookup.mockRestore();
+    }
+
+    expect(urls).toEqual([
+      "https://93.184.216.34/v1/chat",
+      "https://93.184.216.35/v1/chat",
+    ]);
   });
 });

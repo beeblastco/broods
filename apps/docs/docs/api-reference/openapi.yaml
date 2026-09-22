@@ -4507,7 +4507,10 @@ components:
           type: string
           description: >-
             External server's MCP endpoint (`transport: http`). http(s) only,
-            no embedded credentials. Exactly one of url, bundle or sandbox is
+            no embedded credentials. The host must resolve to a public address:
+            core refuses a private, loopback, link-local or metadata address,
+            and refuses a redirect. A server on your own machine goes through
+            `transport: machine`. Exactly one of url, bundle or sandbox is
             required.
         sandbox:
           type: string
@@ -4572,7 +4575,10 @@ components:
           description: Must be a `${NAME}` account env ref.
         tokenUrl:
           type: string
-          description: Token endpoint, https only; defaults to https://oauth2.googleapis.com/token.
+          description: >-
+            Token endpoint, https only; defaults to
+            https://oauth2.googleapis.com/token. Like `url`, the host must
+            resolve to a public address and a redirect is refused.
 
     McpUpdate:
       type: object
@@ -4583,6 +4589,10 @@ components:
           type: string
         url:
           type: string
+          description: >-
+            As on create: http(s) only, no embedded credentials, and the host
+            must resolve to a public address. Core refuses a private, loopback,
+            link-local or metadata address, and refuses a redirect.
         headers:
           type: object
           additionalProperties:
