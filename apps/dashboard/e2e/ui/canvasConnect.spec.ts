@@ -42,7 +42,7 @@ test("a refused connection says why, while aimed and after the drop", async ({
   await openGallery(page);
   const fixture = page.locator('[data-fixture="canvas-connect"]');
   await fixture.scrollIntoViewIfNeeded();
-  const notice = fixture.locator('[data-slot="canvas-refusal"]');
+  const notice = fixture.locator('[data-slot="canvas-notice"]');
   const outline = fixture.locator('[data-slot="canvas-refused-outline"]');
 
   await aimFromAgent(page, fixture, "alpha", "box-one");
@@ -74,7 +74,7 @@ test("the refusal notice stays inside a narrow canvas", async ({ page }) => {
 
   await aimFromAgent(page, fixture, "alpha", "box-one");
   const notice = await fixture
-    .locator('[data-slot="canvas-refusal"]')
+    .locator('[data-slot="canvas-notice"]')
     .boundingBox();
   const canvas = await fixture.locator(".react-flow").boundingBox();
   await page.mouse.up();

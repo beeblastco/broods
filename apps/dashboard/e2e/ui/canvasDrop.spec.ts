@@ -92,7 +92,7 @@ test("a workspace over a sandbox group is refused and opens no slot", async ({
   await expect(log).toHaveText("joined Cloud sandbox at 2");
 
   await aim(page, fixture, "notes", await aboveMiddleOf(fixture, "box-one"));
-  await expect(fixture.locator('[data-slot="canvas-refusal"]')).toContainText(
+  await expect(fixture.locator('[data-slot="canvas-notice"]')).toContainText(
     "A workspace joins no sandbox group.",
   );
   await expect(fixture.locator('[data-slot="frame-drop-slot"]')).toHaveCount(0);
