@@ -140,6 +140,85 @@ const CASES: DecisionCase[] = [
     auditedRuleIds: ["watch"],
     allow: false,
   },
+  {
+    name: "audited deny beside an enforcing allow-list still default-denies",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "enforce",
+          rules: [
+            {
+              id: "allow-read",
+              effect: "allow",
+              actions: ["tool.call"],
+              resources: { toolNames: ["read"] },
+            },
+          ],
+        },
+        {
+          mode: "audit",
+          rules: [{ id: "watch", effect: "deny", actions: ["tool.call"] }],
+        },
+      ],
+    },
+    matchedRuleIds: [],
+    auditedRuleIds: ["watch"],
+    allow: false,
+  },
+  {
+    name: "audited allow beside an enforcing allow-list still default-denies",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "enforce",
+          rules: [
+            {
+              id: "allow-read",
+              effect: "allow",
+              actions: ["tool.call"],
+              resources: { toolNames: ["read"] },
+            },
+          ],
+        },
+        {
+          mode: "audit",
+          rules: [{ id: "trial", effect: "allow", actions: ["tool.call"] }],
+        },
+      ],
+    },
+    matchedRuleIds: [],
+    auditedRuleIds: [],
+    allow: false,
+  },
+  {
+    name: "audited allow beside the enforcing allow that opened is not named",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "audit",
+          rules: [
+            { id: "trial", effect: "allow", actions: ["tool.call"] },
+            { id: "watch", effect: "deny", actions: ["tool.call"] },
+          ],
+        },
+        {
+          mode: "enforce",
+          rules: [
+            { id: "allow-bash", effect: "allow", actions: ["tool.call"] },
+          ],
+        },
+      ],
+    },
+    matchedRuleIds: ["allow-bash"],
+    auditedRuleIds: ["watch"],
+    allow: true,
+  },
 ];
 
 async function main(): Promise<number> {
