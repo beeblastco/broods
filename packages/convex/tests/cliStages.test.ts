@@ -60,6 +60,7 @@ async function seedProject(
         ciphertext: `ct-${name}`,
         iv: `iv-${name}`,
         tag: `tag-${name}`,
+        valueDigest: `digest-${name}`,
         updatedAt: Date.now(),
       });
     }

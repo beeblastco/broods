@@ -15,6 +15,7 @@ import {
 import { isPlainObject } from "./model/objects";
 import { conversationEventArgs, conversationEventsFromArgs } from "./runtime";
 import { ingressModeValidator, ingressStatusValidator } from "./schema";
+import { accountIdFromKey, requireActiveAccount } from "./model/activeAccount";
 
 const CLEAR_BATCH_SIZE = 100;
 
@@ -88,7 +89,7 @@ const channelTargetValidator = v.object({
 
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
-  runId: v.optional(v.string()),
+  runId: v.string(),
   agentId: v.string(),
   conversationKey: v.string(),
   requestedMode: ingressModeValidator,
@@ -474,7 +475,7 @@ export const clearConversation = internalMutation({
 /** Returns the durable channel destination for one existing agent session. */
 export const getConversationTarget = internalQuery({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
   },
@@ -874,13 +875,6 @@ export const takeNext = internalMutation({
   },
 });
 
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
-
 /** Verifies that server-derived account and agent scope match the conversation key. */
 function assertConversationScope(
   accountId: string,
@@ -996,7 +990,7 @@ async function checkDuplicateAdmission(
     return {
       outcome: "duplicate" as const,
       eventId: existing.eventId,
-      ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+      runId: existing.runId,
       status: existing.status,
       ...(existing.ownerGeneration !== undefined
         ? { ownerGeneration: existing.ownerGeneration }
@@ -1025,7 +1019,7 @@ function ingressStatusResult(
 
   return {
     eventId: row.eventId,
-    ...(row.runId !== undefined ? { runId: row.runId } : {}),
+    runId: row.runId,
     agentId: row.agentId,
     conversationKey: row.conversationKey,
     requestedMode: row.requestedMode,
@@ -1071,7 +1065,7 @@ function contiguousModePrefix(
 async function createCoordinator(
   ctx: MutationCtx,
   options: {
-    accountId: string;
+    accountId: Id<"accounts">;
     agentId: string;
     conversationKey: string;
     now: number;
@@ -1388,16 +1382,6 @@ function publicDeploymentIngressFromDelivery(
 }
 
 /** Requires the account to exist and remain active in the write transaction. */
-async function requireActiveAccount(
-  ctx: MutationCtx,
-  accountId: string,
-): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
-}
 
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(

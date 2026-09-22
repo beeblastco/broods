@@ -1310,6 +1310,7 @@ describe("runtime ingress", () => {
           conversationKey: conversationKey,
           sequence: index + 1,
           eventId: `terminal-${index}`,
+          runId: `run_terminal-${index}`,
           identity: `identity-terminal-${index}`,
           idempotencyKey: `terminal-${index}`,
           payloadDigest: "digest",

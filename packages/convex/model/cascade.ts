@@ -109,11 +109,6 @@ const accountScopedReads: ReadonlyArray<
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
-      .query("skills")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .take(ACCOUNT_DELETE_BATCH_SIZE),
-  (ctx, accountId) =>
-    ctx.db
       .query("channelEndpoints")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
@@ -248,7 +243,7 @@ export async function deleteAccountContentsBatch(
   const usageRollups = await ctx.db
     .query("usageRollups")
     .withIndex(
-      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
+      "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
       (q) => q.eq("accountId", accountId),
     )
     .take(ACCOUNT_DELETE_BATCH_SIZE);

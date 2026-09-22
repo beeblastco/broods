@@ -24,7 +24,7 @@ export const USAGE_GRAIN_MS: Record<UsageGrain, number> = {
   day: 24 * 60 * 60 * 1000,
 };
 
-/** Rollup grain. Stored rows missing `grain` are legacy "5m" rows. */
+/** Rollup grain. */
 export type UsageGrain = "5m" | "hour" | "day";
 
 /** Counter fields folded into a rollup bucket, summed identically per grain. */
@@ -191,9 +191,7 @@ export const recordTaskUsage = internalMutation({
 /**
  * Upsert one usage rollup bucket: add `counters` onto the row keyed by
  * (account, endpoint, grain, bucketStart, provider, model), inserting it when
- * absent. The composite index predates `grain`, so grains sharing an aligned
- * bucketStart are narrowed in JS; a legacy row with no grain counts as "5m"
- * and gets stamped on first touch. Shared with the backfill in migrations.ts.
+ * absent.
  */
 export async function foldRollupBucket(
   ctx: MutationCtx,
@@ -207,26 +205,23 @@ export async function foldRollupBucket(
     counters: RollupCounters;
   },
 ): Promise<void> {
-  const candidates = await ctx.db
+  const existing = await ctx.db
     .query("usageRollups")
     .withIndex(
-      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
+      "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
       (q) =>
         q
           .eq("accountId", target.accountId)
           .eq("endpointId", target.endpointId)
+          .eq("grain", target.grain)
           .eq("bucketStart", target.bucketStart)
           .eq("modelProvider", target.modelProvider)
           .eq("modelId", target.modelId),
     )
-    .collect();
-  const existing = candidates.find(
-    (row) => (row.grain ?? "5m") === target.grain,
-  );
+    .unique();
 
   if (existing) {
     await ctx.db.patch(existing._id, {
-      grain: target.grain,
       inputTokens: existing.inputTokens + target.counters.inputTokens,
       outputTokens: existing.outputTokens + target.counters.outputTokens,
       reasoningTokens:

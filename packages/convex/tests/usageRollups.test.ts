@@ -113,7 +113,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
   ]);
 });
 
-test("long ranges read day-grain rows; 5m still merges legacy rows", async () => {
+test("each range reads only its own grain", async () => {
   const tt = t();
   const accountId = await seedAccount(tt);
 
@@ -151,11 +151,6 @@ test("long ranges read day-grain rows; 5m still merges legacy rows", async () =>
       grain: "5m" as const,
       bucketStart: Date.UTC(2026, 0, 15, 13, 5),
     });
-    // Legacy pre-backfill row: no grain, implicitly 5m.
-    await ctx.db.insert("usageRollups", {
-      ...base,
-      bucketStart: Date.UTC(2026, 0, 15, 13, 10),
-    });
   });
 
   // The 30d range displays 24h bins, so it must select the day grain.
@@ -171,8 +166,5 @@ test("long ranges read day-grain rows; 5m still merges legacy rows", async () =>
   const fiveMinuteRows = await tt.run(
     async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, "5m", startMs),
   );
-  expect(fiveMinuteRows.map((row) => row.grain ?? "legacy").sort()).toEqual([
-    "5m",
-    "legacy",
-  ]);
+  expect(fiveMinuteRows.map((row) => row.grain)).toEqual(["5m"]);
 });

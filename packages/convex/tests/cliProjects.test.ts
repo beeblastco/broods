@@ -100,6 +100,7 @@ async function seedProject(
       ciphertext: "ct",
       iv: "iv",
       tag: "tag",
+      valueDigest: "digest",
       updatedAt: Date.now(),
     });
 

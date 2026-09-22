@@ -74,8 +74,9 @@ export function assertEnvRefsResolved(
 }
 
 /**
- * Fail loudly when an old account-scoped runtime resource would shadow the new
- * stage-scoped row. Operators must migrate or delete that row explicitly.
+ * Refuse a stage-scoped workspace or sandbox whose name an account-scoped row
+ * (created through the REST API, no stage) already holds, rather than silently
+ * creating a second row with the same name and a different runtime id.
  */
 export async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
@@ -95,8 +96,8 @@ export async function assertNoAccountScopedResourceConflict(
   if (!accountScoped) return;
 
   throw new Error(
-    `${options.table} "${options.name}" is account-scoped legacy data. ` +
-      "Migrate it to a project/stage or delete it before syncing code-managed resources.",
+    `${options.table} "${options.name}" already exists account-wide. ` +
+      "Move it to a project/stage or delete it first.",
   );
 }
 

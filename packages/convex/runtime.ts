@@ -23,6 +23,11 @@ import {
   runtimeAsyncToolResultsFields,
   sandboxProviderValidator,
 } from "./schema";
+import {
+  accountIdFromKey,
+  requireActiveAccount,
+  requireActiveKeyAccount,
+} from "./model/activeAccount";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
 // Bytes and not rows bound a page: the per-query read limit counts bytes, and
@@ -71,7 +76,7 @@ const asyncToolDoc = v.object({
 });
 
 const toolGroupDoc = v.object({
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   parentEventId: v.string(),
   resultIds: v.array(v.string()),
   sealed: v.boolean(),
@@ -82,7 +87,7 @@ const toolGroupDoc = v.object({
 
 const sandboxReservationSummary = v.object({
   ...reservedSandboxValidator.fields,
-  accountId: v.string(),
+  accountId: v.id("accounts"),
 });
 
 interface SandboxReservationPage {
@@ -178,8 +183,7 @@ export const appendConversationEvent = internalMutation({
   args: { conversationKey: v.string(), ...conversationEventArgs },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     for (const entry of conversationEventsFromArgs(args)) {
       await ctx.db.insert("runtimeConversationEvents", {
         accountId: accountId,
@@ -293,8 +297,7 @@ export const saveHarnessSession = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const serializedResumeState = JSON.stringify(args.resumeState);
     if (serializedResumeState === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
@@ -345,7 +348,7 @@ export const clearConversation = internalMutation({
     ctx,
     args,
   ): Promise<{ deleted: number; hasMore: boolean }> => {
-    await requireActiveAccount(ctx, accountIdFromKey(args.conversationKey));
+    await requireActiveKeyAccount(ctx, args.conversationKey);
     const rows = await ctx.db
       .query("runtimeConversationEvents")
       .withIndex("by_conversationKey_and_cursor", (q) =>
@@ -377,8 +380,7 @@ export const createAsyncAgentResult = internalMutation({
   args: { eventId: v.string(), conversationKey: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const existing = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -467,8 +469,7 @@ export const createAsyncToolResult = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
     const existing = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
@@ -886,7 +887,7 @@ export const claimSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -925,7 +926,7 @@ export const saveSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -963,7 +964,7 @@ export const saveSandboxReservation = internalMutation({
  */
 export const deferSandboxReservations = internalMutation({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     reservations: v.array(
       v.object({
         provider: sandboxProviderValidator,
@@ -1009,7 +1010,7 @@ export const deleteSandboxReservation = internalMutation({
     reservationKey: v.string(),
     expectedExternalId: v.optional(v.string()),
     onlyExpired: v.optional(v.boolean()),
-    accountId: v.string(),
+    accountId: v.id("accounts"),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -1055,7 +1056,7 @@ export const deleteSandboxReservation = internalMutation({
  */
 export const deleteAgentRuntimeData = internalMutation({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     agentId: v.string(),
   },
   returns: v.object({
@@ -1171,7 +1172,7 @@ export const deleteAgentRuntimeData = internalMutation({
  * @returns per-table deletion counts and their total
  */
 export const deleteAccountRuntimeData = internalMutation({
-  args: { accountId: v.string() },
+  args: { accountId: v.id("accounts") },
   returns: v.object({
     conversationsDeleted: v.number(),
     processedEventsDeleted: v.number(),
@@ -1309,18 +1310,6 @@ export const pruneExpired = internalMutation({
 });
 
 /**
- * @param value account-scoped runtime key
- * @returns embedded account ID
- * @throws when the key has no valid account prefix
- */
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
-
-/**
  * @param accountId owning account ID
  * @param key scoped or integration-provided claim key
  * @returns account-scoped claim key
@@ -1362,17 +1351,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
  * @param accountId account ID embedded in the runtime row or key
  * @throws when the account is missing, disabled, or malformed
  */
-async function requireActiveAccount(
-  ctx: MutationCtx,
-  accountId: string,
-): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
-}
-
 async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,

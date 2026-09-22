@@ -449,9 +449,8 @@ export const agentsFields = {
 export const sandboxConfigsFields = {
   accountId: v.id("accounts"),
   /**
-   * Stage scope. Optional for backward compatibility: legacy rows and
-   * rows created through the account-management REST API are account-scoped
-   * (stage unset) and shared, while CLI- and dashboard-managed rows are scoped
+   * Stage scope. Rows created through the account-management REST API are
+   * account-scoped (stage unset) and shared, while CLI- and dashboard-managed rows are scoped
    * to one `(projectId, stageId)` so the same name can repeat across stages
    * and stay isolated. The runtime resolves sandboxes by `_id`, so a
    * per-stage row already yields a per-stage resource.
@@ -508,7 +507,7 @@ export const sandboxProviderValidator = v.union(
  */
 export const sandboxInstancesFields = {
   accountId: v.id("accounts"),
-  /** Stage scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
+  /** Stage scope; unset for account-scoped sandboxes, like `sandboxConfigsFields`. */
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
   provider: sandboxProviderValidator,
@@ -563,7 +562,6 @@ export const sandboxInstancesFields = {
   workspaceName: v.optional(v.string()),
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
-  terminatedAt: v.optional(v.number()),
   /**
    * Provider-side guest log stream, when the provider has one. MicroVM (`lambda`):
    * the CloudWatch stream `<accountId>/<project>/<stage>/<uuid>` core named at
@@ -676,8 +674,8 @@ export const sandboxAuditEventsFields = {
 export const workspaceConfigsFields = {
   accountId: v.id("accounts"),
   /**
-   * Stage scope. Optional for backward compatibility (see
-   * `sandboxConfigsFields`). A per-stage row gives the workspace its own
+   * Stage scope, unset for account-scoped rows (see `sandboxConfigsFields`).
+   * A per-stage row gives the workspace its own
    * `_id`, and the runtime filesystem namespace keys off that `_id`
    * (`accountId:workspaceId`), so two stages never share files.
    */
@@ -702,8 +700,8 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /** SHA-256 hex of the plaintext value; absent on rows written before this field. */
-  valueDigest: v.optional(v.string()),
+  /** SHA-256 hex of the plaintext value. */
+  valueDigest: v.string(),
   updatedAt: v.number(),
 };
 
@@ -803,17 +801,6 @@ export const configHttpAuthFailuresFields = {
   updatedAt: v.number(),
 };
 
-/** Skill metadata; binary content lives in S3 under accountId-prefixed keys. */
-export const skillsFields = {
-  accountId: v.id("accounts"),
-  name: v.string(),
-  description: v.optional(v.string()),
-  s3Key: v.string(),
-  sizeBytes: v.optional(v.number()),
-  createdAt: v.number(),
-  updatedAt: v.number(),
-};
-
 /**
  * File/folder entries stored inside a workspace canvas node.
  * Binary content lives in Convex storage; this table tracks metadata and the tree.
@@ -866,14 +853,14 @@ export const workspaceDownloadTokensFields = {
 
 /** Ordered AI SDK events for one runtime conversation. */
 export const runtimeConversationEventsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   conversationKey: v.string(),
   cursor: v.string(),
   event: v.any(),
 };
 /** Resumable checkpoint for one AI SDK Harness conversation. */
 export const runtimeHarnessSessionsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   conversationKey: v.string(),
   harnessType: v.union(
     v.literal("claude-code"),
@@ -888,7 +875,7 @@ export const runtimeHarnessSessionsFields = {
 };
 /** Context-only webhook event dedupe claims. */
 export const runtimeClaimsFields = {
-  accountId: v.optional(v.string()),
+  accountId: v.id("accounts"),
   key: v.string(),
   kind: v.literal("event"),
   expiresAt: v.number(),
@@ -935,7 +922,7 @@ export const ingressStatusValidator = v.union(
 );
 /** Fenced ownership and FIFO counters for one runtime conversation. */
 export const runtimeConversationCoordinatorsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   agentId: v.string(),
   conversationKey: v.string(),
   channelTarget: v.optional(
@@ -957,7 +944,7 @@ export const runtimeConversationCoordinatorsFields = {
 };
 /** One accepted transport-neutral ingress item in the conversation FIFO. */
 export const runtimeIngressEnvelopesFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   agentId: v.string(),
   conversationKey: v.string(),
   sequence: v.number(),
@@ -966,9 +953,8 @@ export const runtimeIngressEnvelopesFields = {
    * Public, account-unique id for this run: what `GET /v1/runs/{runId}`
    * resolves on. `eventId` cannot serve that purpose because it embeds the
    * agent, and the caller-supplied part of it is only unique per agent.
-   * Absent on rows admitted before run ids existed.
    */
-  runId: v.optional(v.string()),
+  runId: v.string(),
   identity: v.string(),
   idempotencyKey: v.string(),
   payloadDigest: v.string(),
@@ -998,7 +984,7 @@ export const runtimeIngressEnvelopesFields = {
 };
 /** Provenance for one steering, follow-up, or collected application. */
 export const runtimeIngressApplicationsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   conversationKey: v.string(),
   applicationId: v.string(),
   appliedMode: ingressModeValidator,
@@ -1010,7 +996,7 @@ export const runtimeIngressApplicationsFields = {
 };
 /** Public async-agent polling and approval state. */
 export const runtimeAsyncAgentResultsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   eventId: v.string(),
   conversationKey: v.string(),
   status: v.union(
@@ -1037,7 +1023,7 @@ export const reservedSandboxValidator = v.object({
 });
 /** Detached async tool state, including delivery and hashed callback authorization. */
 export const runtimeAsyncToolResultsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   resultId: v.string(),
   parentEventId: v.string(),
   conversationKey: v.string(),
@@ -1063,7 +1049,7 @@ export const runtimeAsyncToolResultsFields = {
 };
 /** Transactional fan-in group for detached tool siblings. */
 export const runtimeAsyncToolGroupsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   parentEventId: v.string(),
   resultIds: v.array(v.string()),
   sealed: v.boolean(),
@@ -1071,7 +1057,7 @@ export const runtimeAsyncToolGroupsFields = {
 };
 /** Authoritative persistent-sandbox reservation mapping. */
 export const sandboxReservationsFields = {
-  accountId: v.string(),
+  accountId: v.id("accounts"),
   provider: sandboxProviderValidator,
   reservationKey: v.string(),
   externalId: v.string(),
@@ -1096,9 +1082,6 @@ export const cronsFields = {
   timezone: v.optional(v.string()),
   status: v.union(v.literal("active"), v.literal("paused")),
   scheduledRunId: v.optional(v.id("_scheduled_functions")),
-  // Dead EventBridge Scheduler identifiers; the crons migration unsets them.
-  schedulerName: v.optional(v.string()),
-  schedulerGroupName: v.optional(v.string()),
   lastInvokedAt: v.optional(v.number()),
   lastStatus: v.optional(
     v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
@@ -1195,14 +1178,7 @@ export const usageRollupsFields = {
   endpointId: v.string(),
   /** Epoch ms floored (UTC) to the grain's bucket width. */
   bucketStart: v.number(),
-  /**
-   * Rollup grain. Optional because rows written before the field existed lack
-   * it; a missing grain means "5m" until `migrations.backfillUsageRollupGrains`
-   * stamps them. New rows always carry it.
-   */
-  grain: v.optional(
-    v.union(v.literal("5m"), v.literal("hour"), v.literal("day")),
-  ),
+  grain: v.union(v.literal("5m"), v.literal("hour"), v.literal("day")),
   modelProvider: v.string(),
   modelId: v.string(),
   inputTokens: v.number(),
@@ -1367,7 +1343,6 @@ export default defineSchema({
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),
-  skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
     .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
     .index("by_storageId", ["storageId"]),
@@ -1452,15 +1427,15 @@ export default defineSchema({
     "taskId",
   ]),
   usageRollups: defineTable(usageRollupsFields)
-    .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
     .index("by_endpointId_and_grain_and_bucketStart", [
       "endpointId",
       "grain",
       "bucketStart",
     ])
-    .index("by_accountId_endpointId_bucketStart_modelProvider_modelId", [
+    .index("by_accountId_endpointId_grain_bucketStart_modelProvider_modelId", [
       "accountId",
       "endpointId",
+      "grain",
       "bucketStart",
       "modelProvider",
       "modelId",
