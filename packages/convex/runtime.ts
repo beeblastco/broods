@@ -793,6 +793,32 @@ export const listExpiredSandboxReservations = internalQuery({
 });
 
 /**
+ * Every reservation an account holds, whatever key shape reserved it, so a
+ * deletion sweep releases each machine before the cascade drops the rows.
+ * @returns the account's reservations
+ */
+export const listAccountSandboxReservations = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(sandboxReservationSummary),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
+    const rows = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .collect();
+
+    return rows.map((row) => ({
+      accountId: row.accountId,
+      provider: row.provider,
+      reservationKey: row.reservationKey,
+      externalId: row.externalId,
+    }));
+  },
+});
+
+/**
  * Mirror rows no reservation names any more (a teardown that failed, or the old
  * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
  * reservation TTL so a live sandbox is never mistaken for one, and `ephemeral` rows are
