@@ -6,17 +6,26 @@ land in.
 
 ## Where a command acts
 
-Three separate things decide what a command touches:
+Four separate things decide what a command touches:
 
-| Setting      | Stored in                        | Changed by                       |
-| ------------ | -------------------------------- | -------------------------------- |
-| Organization | the CLI login token, server-side | `broods org use`                 |
-| Project      | `BROODS_PROJECT` in `.env.local` | `broods dev` prompt, `--project` |
-| Stage        | `BROODS_STAGE` in `.env.local`   | `broods stage use`, `--stage`    |
+| Setting      | Stored in                         | Changed by                       |
+| ------------ | --------------------------------- | -------------------------------- |
+| Server       | `BROODS_BASE_URL` in `.env.local` | `broods login`, `--base-url`     |
+| Organization | the CLI login token, server-side  | `broods org use`                 |
+| Project      | `BROODS_PROJECT` in `.env.local`  | `broods dev` prompt, `--project` |
+| Stage        | `BROODS_STAGE` in `.env.local`    | `broods stage use`, `--stage`    |
 
 The organization lives on the token, not in `.env.local`, so it is shared by
 every project directory on the machine. Run `broods whoami` before a sync when
 you are unsure.
+
+`~/.broods/config.json` keeps one login per server, so logging in to
+`dashboard.dev.broods.app` does not replace a `dashboard.broods.app` login. A
+command uses the login for the server `BROODS_BASE_URL` names (or
+`BROODS_DASHBOARD_URL` when only that is set), and falls back to the most recent
+login when `.env.local` names neither. With no login for that server it stops
+with `Not logged in to <server>` instead of using another server's token. Run
+`broods login` in that project directory to add one.
 
 `deploy` is the exception to the stage row: it always targets `production` and
 ignores `BROODS_STAGE`, so `broods stage use staging` followed by `broods deploy`

@@ -9,11 +9,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  USER_CONFIG_PATH,
-  stageFromEnv,
-  stripTrailingSlash,
-} from "./config.ts";
+import { readStoredAuth, stageFromEnv } from "./config.ts";
 
 export interface BroodsRuntimeConfig {
   /** Dashboard UI base URL; only used for browser login and deep links. */
@@ -52,7 +48,7 @@ export function loadBroodsRuntimeConfig(
   cwd = process.cwd(),
 ): BroodsRuntimeConfig {
   loadEnvFiles(cwd);
-  const stored = readStoredAuthSync();
+  const stored = readStoredAuth();
 
   return {
     dashboardUrl: process.env.BROODS_DASHBOARD_URL ?? stored?.dashboardUrl,
@@ -160,35 +156,4 @@ function unquoteEnvValue(value: string): string {
   const commentIndex = value.indexOf(" #");
 
   return commentIndex >= 0 ? value.slice(0, commentIndex).trimEnd() : value;
-}
-
-/**
- * Reads the CLI-stored auth (Convex URL + token) synchronously so the client
- * constructor can use it without awaiting. Returns null when the file is
- * absent, malformed, or predates the Convex-direct control plane.
- */
-function readStoredAuthSync(): {
-  baseUrl: string;
-  dashboardUrl?: string;
-  token: string;
-} | null {
-  try {
-    const value = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf8")) as {
-      baseUrl?: unknown;
-      dashboardUrl?: unknown;
-      token?: unknown;
-    };
-    if (typeof value.baseUrl !== "string" || typeof value.token !== "string")
-      return null;
-
-    return {
-      baseUrl: stripTrailingSlash(value.baseUrl),
-      ...(typeof value.dashboardUrl === "string"
-        ? { dashboardUrl: stripTrailingSlash(value.dashboardUrl) }
-        : {}),
-      token: value.token,
-    };
-  } catch {
-    return null;
-  }
 }

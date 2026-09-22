@@ -139,17 +139,17 @@ export async function loginWithBrowser(
 
 export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
-  const auth = await readStoredAuth();
+  const auth = readStoredAuth(baseUrl);
   if (!auth) {
+    const server = baseUrl ?? process.env.BROODS_BASE_URL;
     throw new Error(
-      "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
+      server
+        ? `Not logged in to ${stripTrailingSlash(server)}. Run \`broods login\`.`
+        : "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
     );
   }
 
-  return {
-    ...auth,
-    ...(baseUrl ? { baseUrl: stripTrailingSlash(baseUrl) } : {}),
-  };
+  return auth;
 }
 
 /**
