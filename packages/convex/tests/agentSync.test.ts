@@ -540,6 +540,27 @@ describe("syncApiAgentCanvasWiring", () => {
       }),
     );
   });
+
+  test("an unchanged API update leaves the canvas layout untouched", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast",
+      email: "owner@example.com",
+    });
+    const { sandboxId } = await seedWiringFixtures(tt, accountId);
+    const agentId = await createAgent(tt, accountId, "planner");
+    const config = { sandboxes: [sandboxId] };
+    await seedConfig(tt, { agentId: agentId, config: config });
+    const agentConfig = await configFor(tt, agentId);
+    const before = await layoutFor(tt, agentConfig!);
+
+    await seedConfig(tt, { agentId: agentId, config: config });
+
+    expect(await layoutFor(tt, agentConfig!)).toEqual(before);
+  });
 });
 
 describe("mirrorAgentRowOntoConfig", () => {

@@ -32,6 +32,7 @@ import { applyTidyLayout } from "./canvasLayout";
 import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { redactConfigSecrets } from "./configValues";
 import { loadMcpServersByNode } from "./mcp";
+import { stableJson } from "./objects";
 
 /**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
@@ -323,6 +324,20 @@ export async function pushEncryptedConfigToAgentRow(
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
   const resolved = substituteEnvPlaceholders(nested, variables);
+  // Every `broods dev` save re-pushes every agent. A fresh IV would rewrite an
+  // unchanged row and then rebuild the account's whole channel projection.
+  const current =
+    agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+      ? await decryptAgentConfigBlob(
+          {
+            ciphertext: agent.encryptedConfig,
+            iv: agent.encryptionIv,
+            tag: agent.encryptionTag,
+          },
+          secret,
+        )
+      : null;
+  if (current && stableJson(current) === stableJson(resolved)) return;
   const encrypted = await encryptAgentConfigBlob(resolved, secret);
 
   await ctx.db.patch(normalized, {
@@ -403,6 +418,12 @@ export async function syncAgentRowFields(
   if (!normalized) return;
   const agent = await ctx.db.get(normalized);
   if (agent?.accountId !== accountId) return;
+  if (
+    (patch.name === undefined || patch.name === agent.name) &&
+    (patch.description === undefined || patch.description === agent.description)
+  ) {
+    return;
+  }
 
   await ctx.db.patch(normalized, {
     ...(patch.name !== undefined ? { name: patch.name } : {}),

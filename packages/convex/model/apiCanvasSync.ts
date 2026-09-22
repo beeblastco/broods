@@ -24,7 +24,7 @@ import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
 import { applyTidyLayout } from "./canvasLayout";
 import { loadMcpServersByNode } from "./mcp";
-import { isPlainObject } from "./objects";
+import { isPlainObject, stableJson } from "./objects";
 
 /** The stored layout normalized and indexed by id and back-references. */
 type ExistingApiCanvas = {
@@ -119,13 +119,21 @@ export async function syncApiAgentCanvasWiring(
 
   stampWorkspaceReadOnly(sync);
   const reconciled = reconcileApiWiring(sync);
+  const nodes = applyTidyLayout(
+    reconciled.nextNodes,
+    reconciled.nextEdges,
+    await loadMcpServersByNode(ctx, stageId),
+  );
+  // Runs on every API agent write; most of them do not change the wiring.
+  if (
+    stableJson(layout.nodes) === stableJson(nodes) &&
+    stableJson(layout.edges) === stableJson(reconciled.nextEdges)
+  ) {
+    return;
+  }
 
   await ctx.db.patch(layout._id, {
-    nodes: applyTidyLayout(
-      reconciled.nextNodes,
-      reconciled.nextEdges,
-      await loadMcpServersByNode(ctx, stageId),
-    ),
+    nodes: nodes,
     edges: reconciled.nextEdges,
     updatedAt: Date.now(),
   });

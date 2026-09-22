@@ -251,6 +251,41 @@ describe("the value digest env list returns", () => {
   });
 });
 
+describe("an unchanged re-sync", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // Every write here re-runs the dashboard subscriptions that read the row, and
+  // `broods dev` syncs on every file save.
+  test("rewrites no row, not even a fresh IV", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+    await syncResources(tt, [agentResource, sandboxResource]);
+    const before = await syncedRows(tt);
+
+    await setEnv(tt, "sk-live-1");
+    await syncResources(tt, [agentResource, sandboxResource]);
+
+    expect(await syncedRows(tt)).toEqual(before);
+  });
+});
+
+const syncedRows = (tt: T): Promise<unknown> =>
+  tt.run(async (ctx) => ({
+    projects: await ctx.db.query("projects").collect(),
+    agentConfigs: await ctx.db.query("agentConfigs").collect(),
+    agents: await ctx.db.query("agents").collect(),
+    agentRuntimeSecrets: await ctx.db.query("agentRuntimeSecrets").collect(),
+    sandboxConfigs: await ctx.db.query("sandboxConfigs").collect(),
+    canvasLayouts: await ctx.db.query("canvasLayouts").collect(),
+    environmentVariables: await ctx.db.query("environmentVariables").collect(),
+  }));
+
 const listedDigest = async (tt: T): Promise<string | undefined> => {
   const variables = await tt.query(internal.cli.sync.listEnvBySecretHash, {
     secretHash: SECRET_HASH,

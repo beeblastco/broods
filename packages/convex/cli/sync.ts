@@ -9,13 +9,14 @@
 
 import { v } from "convex/values";
 import type { GeneratedIds } from "./types";
-import type { Id } from "../_generated/dataModel";
-import { internalMutation, internalQuery } from "../_generated/server";
-import { ensureStageDeployment } from "../agent/deployments";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
-  decryptAgentConfigBlob,
-  encryptAgentConfigBlob,
-} from "../model/agentConfigCodec";
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "../_generated/server";
+import { ensureStageDeployment } from "../agent/deployments";
+import { decryptAgentConfigBlob } from "../model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
@@ -63,11 +64,14 @@ import {
 } from "../model/cliSyncResources";
 import {
   assertEnvironmentVariableUnreferenced,
-  hashEnvironmentValue,
   loadEnvironmentVariableValues,
+  upsertEnvironmentVariable,
 } from "../model/environmentValues";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
+
+// `touchProject` bumps `updatedAt` at most this often.
+const PROJECT_TOUCH_INTERVAL_MS = 60_000;
 
 const resourceValidator = v.object({
   kind: v.union(
@@ -156,7 +160,7 @@ export const deleteResourceBySecretHash = internalMutation({
       await deleteSandboxResource(ctx, resolved.stageDoc._id, normalizedName);
     }
 
-    await ctx.db.patch(resolved.projectDoc._id, { updatedAt: Date.now() });
+    await touchProject(ctx, resolved.projectDoc);
 
     return null;
   },
@@ -740,57 +744,12 @@ export const setEnvBySecretHash = internalMutation({
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
-    const normalizedName = envName(name);
-    const existing = await ctx.db
-      .query("environmentVariables")
-      .withIndex("by_stageId_and_name", (q) =>
-        q.eq("stageId", stageDoc._id).eq("name", normalizedName),
-      )
-      .unique();
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-      throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-      );
-    }
-    const encrypted = await encryptAgentConfigBlob({ value: value }, secret);
-    const valueDigest = await hashEnvironmentValue(value);
-    const now = Date.now();
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.insert("environmentVariables", {
-        projectId: projectDoc._id,
-        stageId: stageDoc._id,
-        name: normalizedName,
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-    }
-    await refreshAgentConfigsForEnvironmentVariable(
-      ctx,
-      projectDoc._id,
-      stageDoc._id,
-      normalizedName,
-      value,
-    );
-    await refreshSandboxConfigsForEnvironmentVariable(
-      ctx,
-      projectDoc._id,
-      stageDoc._id,
-      normalizedName,
-      value,
-    );
+    await upsertEnvironmentVariable(ctx, {
+      projectId: projectDoc._id,
+      stageId: stageDoc._id,
+      name: envName(name),
+      value: value,
+    });
 
     return null;
   },
@@ -894,7 +853,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
     });
 
-    await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
+    await touchProject(ctx, projectDoc);
     const ids: GeneratedIds = {
       agents: agentIds,
       workspaces: workspaceIds,
@@ -927,3 +886,14 @@ export const syncManifestBySecretHash = internalMutation({
     };
   },
 });
+
+// Nearly every dashboard subscription reads the project doc, and `broods dev`
+// syncs on every file save. The gallery only needs "recently deployed".
+async function touchProject(
+  ctx: MutationCtx,
+  project: Doc<"projects">,
+): Promise<void> {
+  const now = Date.now();
+  if (now - project.updatedAt < PROJECT_TOUCH_INTERVAL_MS) return;
+  await ctx.db.patch(project._id, { updatedAt: now });
+}

@@ -9,6 +9,7 @@ import {
   encryptAgentConfigBlob,
   type EncryptedAgentConfig,
 } from "./agentConfigCodec";
+import { stableJson } from "./objects";
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
@@ -72,6 +73,10 @@ export async function saveAgentRuntimeSecrets(
     return [];
   }
 
+  // A fresh IV would rewrite the row on every deploy even when nothing changed.
+  if (stored && stableJson(previous) === stableJson(variables)) {
+    return publicRuntimeVariables(next);
+  }
   const encrypted = await encryptAgentConfigBlob(variables, runtimeSecret());
   const now = Date.now();
   if (stored) {

@@ -9,6 +9,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { normalizePolicyDocument } from "../agent/policies";
 import {
+  decryptAgentConfigBlob,
   encryptAgentConfigBlob,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
@@ -314,7 +315,7 @@ export async function syncAgentResources(
         target._id,
         runtimeVariables,
       );
-      await ctx.db.patch(target._id, {
+      const fields = {
         name: name,
         description: resource.description,
         provider: flat.provider,
@@ -329,9 +330,16 @@ export async function syncAgentResources(
         searchToolConfig: flat.searchToolConfig,
         runtimeVariables: publicRuntimeVariables,
         extraConfig: flat.extraConfig,
-        managedBy: "cli",
-        updatedAt: Date.now(),
-      });
+        managedBy: "cli" as const,
+      };
+      // Each Agent node subscribes to its config; leave an unchanged one alone.
+      const changed = Object.entries(fields).some(
+        ([key, value]) =>
+          stableJson(value) !== stableJson(target[key as keyof typeof fields]),
+      );
+      if (changed) {
+        await ctx.db.patch(target._id, { ...fields, updatedAt: Date.now() });
+      }
       await ensureAgentsRowForConfig(
         ctx,
         target._id,
@@ -524,8 +532,6 @@ export async function syncSandboxResources(
       key: key,
       value: "",
     }));
-    const encrypted = await encryptAgentConfigBlob(resolvedConfig, secret);
-    const encryptedSource = await encryptAgentConfigBlob(sourceConfig, secret);
     const current = existing.find((entry) => entry.name === name);
     const target =
       current ??
@@ -544,6 +550,24 @@ export async function syncSandboxResources(
               renameComparableResource(resource.description, resolvedConfig),
             ),
       );
+    if (
+      target &&
+      (await sandboxUnchanged(target, secret, {
+        projectId: projectId,
+        name: name,
+        description: resource.description,
+        runtimeVariables: runtimeVariables,
+        resolvedConfig: existingConfigs.get(target._id),
+        nextResolvedConfig: resolvedConfig,
+        nextSourceConfig: sourceConfig,
+      }))
+    ) {
+      claimed.add(target._id);
+      ids[name] = target._id;
+      continue;
+    }
+    const encrypted = await encryptAgentConfigBlob(resolvedConfig, secret);
+    const encryptedSource = await encryptAgentConfigBlob(sourceConfig, secret);
     if (target) {
       claimed.add(target._id);
       await ctx.db.patch(target._id, {
@@ -705,4 +729,44 @@ async function resolveSubagentReferences(
     });
     await pushEncryptedConfigToAgentRow(ctx, configId, accountId);
   }
+}
+
+// A fresh IV rewrites the row on every deploy, so compare plaintext first.
+async function sandboxUnchanged(
+  sandbox: Doc<"sandboxConfigs">,
+  secret: string,
+  next: {
+    projectId: Id<"projects">;
+    name: string;
+    description: string | undefined;
+    runtimeVariables: Array<{ key: string; value: string }>;
+    resolvedConfig: Record<string, unknown> | undefined;
+    nextResolvedConfig: Record<string, unknown>;
+    nextSourceConfig: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  if (
+    sandbox.managedBy !== "cli" ||
+    sandbox.projectId !== next.projectId ||
+    sandbox.name !== next.name ||
+    sandbox.description !== next.description ||
+    stableJson(sandbox.runtimeVariables) !==
+      stableJson(next.runtimeVariables) ||
+    stableJson(next.resolvedConfig) !== stableJson(next.nextResolvedConfig) ||
+    !sandbox.encryptedSourceConfig ||
+    !sandbox.sourceEncryptionIv ||
+    !sandbox.sourceEncryptionTag
+  ) {
+    return false;
+  }
+  const source = await decryptAgentConfigBlob(
+    {
+      ciphertext: sandbox.encryptedSourceConfig,
+      iv: sandbox.sourceEncryptionIv,
+      tag: sandbox.sourceEncryptionTag,
+    },
+    secret,
+  );
+
+  return stableJson(source) === stableJson(next.nextSourceConfig);
 }
