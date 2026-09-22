@@ -52,34 +52,6 @@ export class SandboxCapacityError extends Error {}
  */
 export class SandboxGoneError extends Error {}
 
-export function assertSafeTenantProviderUrl(value: string, name: string): void {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${name} must be a valid URL`);
-  }
-  if (url.protocol !== "https:") {
-    throw new Error(`${name} must use https`);
-  }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host === "::1" ||
-    host === "0.0.0.0" ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("169.254.") ||
-    isPrivate172(host)
-  ) {
-    throw new Error(
-      `${name} must not target localhost, private, or link-local addresses`,
-    );
-  }
-}
-
 export function configString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -237,12 +209,4 @@ export function workspacePath(
   }
 
   return request.namespace ? `${root}/${request.namespace}` : root;
-}
-
-function isPrivate172(host: string): boolean {
-  const match = /^172\.(\d{1,3})\./.exec(host);
-  if (!match) return false;
-  const octet = Number(match[1]);
-
-  return Number.isInteger(octet) && octet >= 16 && octet <= 31;
 }
