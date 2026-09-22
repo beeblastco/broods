@@ -13,10 +13,7 @@ import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
 import type { CronRecord } from "../src/shared/domain/cron.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
-import type {
-  ResolvedWorkspace,
-  WorkspaceSandboxConfig,
-} from "../src/shared/workspaces.ts";
+import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 interface ChannelTestTool {
   execute: ToolExecuteFunction<
@@ -67,38 +64,6 @@ describe("createTools", () => {
       },
       {},
     );
-
-    expect(Object.keys(tools)).toContain("computer");
-  });
-
-  it("keeps computer registered when a workspace inherits the agent's own machine", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-    const mac: WorkspaceSandboxConfig = {
-      provider: "machine",
-      controlPlane: {
-        accountId: "acct_test",
-        sandboxConfigId: "sb_mac",
-        name: "my-mac",
-        specs: { vcpu: 2, memoryMb: 2048, storageGb: 10 },
-      },
-    };
-    const context: Omit<ToolContext, "config"> = {
-      ...createToolContext(),
-      sandboxes: [
-        { name: "my-mac", sandbox: { ...mac, permissionMode: "bypass" } },
-      ],
-      // A mount is a way onto the machine's files; its screen stays reachable.
-      workspaces: [
-        {
-          name: "notes",
-          workspaceId: "ws_a",
-          namespace: "fs-notes",
-          config: { storage: { provider: "s3" } },
-          sandbox: mac,
-        },
-      ],
-    };
-    const tools = await createTools(context, {});
 
     expect(Object.keys(tools)).toContain("computer");
   });

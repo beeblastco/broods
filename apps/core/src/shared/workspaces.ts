@@ -282,6 +282,13 @@ export async function resolveAgentRuntime(
       } else {
         effectiveSandbox = sandbox;
       }
+      // The file tools need an S3 mount, and a machine has none: they would act
+      // on the daemon's own disk instead.
+      if (effectiveSandbox?.provider === "machine") {
+        throw new Error(
+          `Workspace "${ref.name}" cannot run on a machine sandbox; give it its own sandbox or set sandbox: null`,
+        );
+      }
       // Read-only workspace (no effective sandbox): default to reading through a
       // service-managed read-only Lambda mount (network denied, cheapest mount slot)
       // so reads reflect committed writes immediately. The existing `sandbox: null`
