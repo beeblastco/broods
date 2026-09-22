@@ -1080,6 +1080,50 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "expired" });
   });
 
+  test("maintenance moves a live owner's overdue row forward and expires an orphaned generation", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const overdue = async (ownerGeneration: number): Promise<void> => {
+      await t.run(async (ctx) => {
+        const row = await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_eventId", (q) => q.eq("eventId", "owner"))
+          .unique();
+        await ctx.db.patch(row!._id, {
+          expiresAt: Date.now() - 1,
+          ownerGeneration: ownerGeneration,
+        });
+      });
+    };
+
+    await overdue(1);
+    expect(
+      await t.mutation(internal.runtimeIngress.maintain, {}),
+    ).toMatchObject({ expired: 0 });
+    const moved = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_eventId", (q) => q.eq("eventId", "owner"))
+        .unique();
+    });
+    expect(moved!.expiresAt).toBeGreaterThan(Date.now());
+
+    await overdue(0);
+    expect(
+      await t.mutation(internal.runtimeIngress.maintain, {}),
+    ).toMatchObject({ expired: 1 });
+  });
+
   test("recovers an expired owner by promoting the oldest queued event before a new arrival", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
