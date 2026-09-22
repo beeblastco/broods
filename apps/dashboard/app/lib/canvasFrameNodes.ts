@@ -250,6 +250,22 @@ export function expandBundleEdgeRemoval(
  * Everything the display added goes with them, so a drag saves the same node
  * shape the database sent.
  */
+/** The side handles two boxes face each other with, by where they stand. */
+export function facingHandles(
+  source: Node | undefined,
+  target: Node | undefined,
+): Pick<Edge, "sourceHandle" | "targetHandle"> {
+  const sourceOnRight =
+    source !== undefined &&
+    target !== undefined &&
+    source.position.x >= target.position.x;
+
+  return {
+    sourceHandle: sourceOnRight ? "left" : "right",
+    targetHandle: sourceOnRight ? "right" : "left",
+  };
+}
+
 export function flattenFramedNodes(displayNodes: readonly Node[]): Node[] {
   const frames = new Map(
     displayNodes
@@ -387,21 +403,6 @@ function displayBoxes(
 }
 
 /** The side handles two nodes face each other with: left and right by where they stand. */
-function facingHandles(
-  source: Node | undefined,
-  target: Node | undefined,
-): Pick<Edge, "sourceHandle" | "targetHandle"> {
-  const sourceOnRight =
-    source !== undefined &&
-    target !== undefined &&
-    source.position.x >= target.position.x;
-
-  return {
-    sourceHandle: sourceOnRight ? "left" : "right",
-    targetHandle: sourceOnRight ? "right" : "left",
-  };
-}
-
 /**
  * Agent→member edges collapse into one bundle edge per agent and frame. Mount
  * and runs-on edges touching a collapsed frame's member re-point to the frame

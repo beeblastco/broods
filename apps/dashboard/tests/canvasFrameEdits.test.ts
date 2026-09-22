@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { frameOriginOf, frameSize } from "@broods/convex/model/canvasFrames";
+import {
+  edgeKind,
+  frameOriginOf,
+  frameSize,
+} from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
+import type { BaseNodeData } from "../app/components/node/BaseNode";
 import {
   acceptsNewMember,
   autoWiredAgentIds,
@@ -10,6 +15,8 @@ import {
   makeDefaultSandbox,
   reconcileFramePositions,
   setUngrouped,
+  setWorkspaceMount,
+  workspaceMountTargets,
 } from "../app/lib/canvasFrameEdits";
 import type { StageMcpServer } from "../app/lib/canvasFrameNodes";
 
@@ -412,6 +419,145 @@ describe("runtime ref guards", () => {
     ).toBeNull();
   });
 });
+
+describe("workspaceMountTargets", () => {
+  test("lists the agent default, every cloud sandbox and no sandbox at all", () => {
+    expect(workspaceMountTargets(NODES, EDGES, "notes")).toEqual([
+      { current: false, kind: "default" },
+      { current: true, kind: "sandbox", label: "alpha", sandboxId: "alpha" },
+      { current: false, kind: "sandbox", label: "bravo", sandboxId: "bravo" },
+      { current: false, kind: "sandbox", label: "lone", sandboxId: "lone" },
+      { current: false, kind: "readonly" },
+    ]);
+  });
+
+  test("the default row is current once the mount edge is gone", () => {
+    const edges = EDGES.filter((item) => edgeKind(item) !== "mount");
+
+    expect(workspaceMountTargets(NODES, edges, "notes")).toContainEqual({
+      current: true,
+      kind: "default",
+    });
+  });
+
+  test("the read-only row is current for a workspace carrying the flag", () => {
+    const edges = EDGES.filter((item) => edgeKind(item) !== "mount");
+    const nodes = NODES.map((item) =>
+      item.id === "notes"
+        ? { ...item, data: { ...item.data, readOnly: true } }
+        : item,
+    );
+
+    expect(workspaceMountTargets(nodes, edges, "notes")).toContainEqual({
+      current: true,
+      kind: "readonly",
+    });
+  });
+
+  test("a machine sandbox is no place to mount, and offers no row", () => {
+    const nodes = [
+      ...NODES,
+      node(
+        "laptop",
+        "sandbox",
+        { x: 0, y: 600 },
+        {
+          config: { provider: "machine" },
+        },
+      ),
+    ];
+
+    expect(workspaceMountTargets(nodes, EDGES, "notes")).not.toContainEqual(
+      expect.objectContaining({ sandboxId: "laptop" }),
+    );
+  });
+
+  test("nothing to offer on a sandbox, or on a workspace code owns", () => {
+    const managed = NODES.map((item) =>
+      item.id === "notes"
+        ? { ...item, data: { ...item.data, managedBy: "cli" } }
+        : item,
+    );
+
+    expect(workspaceMountTargets(NODES, EDGES, "alpha")).toEqual([]);
+    expect(workspaceMountTargets(managed, EDGES, "notes")).toEqual([]);
+  });
+});
+
+describe("setWorkspaceMount", () => {
+  test("a sandbox row swaps the mount edge for one to that sandbox", () => {
+    const next = setWorkspaceMount(
+      { edges: EDGES, mcpServers: [], nodes: NODES },
+      "notes",
+      {
+        current: false,
+        kind: "sandbox",
+        label: "bravo",
+        sandboxId: "bravo",
+      },
+    );
+    const mounts = next.edges.filter((item) => edgeKind(item) === "mount");
+
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0]?.source).toBe("notes");
+    expect(mounts[0]?.target).toBe("bravo");
+    expect(dataOf(next.nodes, "notes").readOnly).toBe(false);
+  });
+
+  test("the default row drops the mount edge and leaves the flag clear", () => {
+    const next = setWorkspaceMount(
+      { edges: EDGES, mcpServers: [], nodes: NODES },
+      "notes",
+      {
+        current: false,
+        kind: "default",
+      },
+    );
+
+    expect(next.edges.filter((item) => edgeKind(item) === "mount")).toEqual([]);
+    expect(dataOf(next.nodes, "notes").readOnly).toBe(false);
+  });
+
+  test("the read-only row drops the mount edge and sets the flag", () => {
+    const next = setWorkspaceMount(
+      { edges: EDGES, mcpServers: [], nodes: NODES },
+      "notes",
+      {
+        current: false,
+        kind: "readonly",
+      },
+    );
+
+    expect(next.edges.filter((item) => edgeKind(item) === "mount")).toEqual([]);
+    expect(dataOf(next.nodes, "notes").readOnly).toBe(true);
+  });
+
+  test("another workspace's mount edge is left where it is", () => {
+    const nodes = [...NODES, node("docs", "workspace", { x: 720, y: 172 })];
+    const mount: Edge = {
+      id: "mount:bravo-right-docs-left",
+      source: "bravo",
+      sourceHandle: "right",
+      target: "docs",
+      targetHandle: "left",
+      type: "mount",
+    };
+    const next = setWorkspaceMount(
+      { edges: [...EDGES, mount], mcpServers: [], nodes: nodes },
+      "notes",
+      {
+        current: false,
+        kind: "readonly",
+      },
+    );
+
+    expect(next.edges).toContainEqual(mount);
+  });
+});
+
+function dataOf(nodes: readonly Node[], id: string): BaseNodeData {
+  return (nodes.find((item) => item.id === id)?.data ?? {}) as BaseNodeData;
+}
 
 function edge(source: string, target: string): Edge {
   return { id: `xy-edge__${source}-${target}`, source: source, target: target };

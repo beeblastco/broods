@@ -32,3 +32,26 @@ test("a card's menu lists its links, locks the code-managed ones, and offers its
   await menu.getByRole("menuitem", { name: "Pull out of group" }).click();
   await expect(handbook).toContainText("group handbook");
 });
+
+/**
+ * A read-only workspace mounts nowhere, so it has no edge to carry its mount
+ * word. Its menu is the only way back off read-only, and it renames cards too.
+ */
+test("a workspace's menu renames the card and lists where it can mount", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="canvas-node-menu"]');
+  await fixture.scrollIntoViewIfNeeded();
+
+  const handbook = fixture.getByTestId("menu-target-handbook");
+  await handbook.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  await expect(menu.getByText("Mounts on")).toBeVisible();
+  await menu.getByRole("menuitem", { name: "No sandbox, read-only" }).click();
+  await expect(handbook).toContainText("mount readonly");
+
+  await handbook.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Rename" }).click();
+  await expect(handbook).toContainText("rename handbook");
+});

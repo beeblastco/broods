@@ -6,15 +6,19 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/app/components/ui/context-menu";
+import { FIXED_MOUNT_ROWS } from "@/app/components/canvas/MountStateLabel";
 import { NODE_TEMPLATES } from "@/app/components/canvas/nodeTemplates";
 import type {
   FrameGroupAction,
   NodeLinkAction,
+  WorkspaceMountTarget,
 } from "@/app/lib/canvasFrameEdits";
 import {
+  Box,
   Group,
   Lock,
   PanelRight,
+  Pencil,
   Star,
   Trash2,
   Ungroup,
@@ -26,32 +30,42 @@ const CODE_MANAGED = "managed through code";
 /** What one card's menu lists; the canvas builds it on the right-click. */
 export type CanvasNodeMenuEntries = {
   nodeId: string;
+  label: string;
   links: readonly NodeLinkAction[];
   groups: readonly FrameGroupAction[];
+  /** Where this card can mount; only a workspace the canvas owns has any. */
+  mounts: readonly WorkspaceMountTarget[];
   deleteLocked: boolean;
 };
 
 /**
- * What a right-click on a card offers: open its panel, one row per link, the
- * group it is in or was pulled out of, then delete. Links and delete that code
- * owns stay listed with a lock, the mark a locked edge wears, and say why on hover.
- * Grouping is canvas layout, not wiring, so it works on a code-managed card too.
+ * What a right-click on a card offers: open its panel, rename it, one row per
+ * link, where a workspace mounts, the group it is in or was pulled out of, then
+ * delete. Links and delete that code owns stay listed with a lock, the mark a
+ * locked edge wears, and say why on hover. Grouping is canvas layout, not
+ * wiring, so it works on a code-managed card too.
  */
 export function CanvasNodeMenu({
   nodeId,
+  label,
   links,
   groups,
+  mounts,
   deleteLocked,
   onOpen,
   onDelete,
   onMakeDefault,
   onRemoveEdge,
+  onRename,
+  onSetMount,
   onSetUngrouped,
 }: CanvasNodeMenuEntries & {
   onOpen: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onMakeDefault: (agentId: string, sandboxId: string) => void;
   onRemoveEdge: (edgeId: string) => void;
+  onRename: (nodeId: string, label: string) => void;
+  onSetMount: (workspaceId: string, target: WorkspaceMountTarget) => void;
   onSetUngrouped: (nodeIds: readonly string[], ungrouped: boolean) => void;
 }): React.JSX.Element {
   return (
@@ -63,6 +77,13 @@ export function CanvasNodeMenu({
         >
           <PanelRight />
           Open
+        </ContextMenuItem>
+        <ContextMenuItem
+          className="cursor-pointer"
+          onClick={() => onRename(nodeId, label)}
+        >
+          <Pencil />
+          Rename
         </ContextMenuItem>
       </ContextMenuGroup>
       {links.length > 0 && (
@@ -107,6 +128,37 @@ export function CanvasNodeMenu({
                 </LockableItem>
               ),
             )}
+          </ContextMenuGroup>
+        </>
+      )}
+      {mounts.length > 0 && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuLabel variant="muted" className="text-xs">
+              Mounts on
+            </ContextMenuLabel>
+            {mounts.map((target) => {
+              const row =
+                target.kind === "sandbox"
+                  ? { icon: Box, label: target.label }
+                  : FIXED_MOUNT_ROWS[target.kind];
+              const Icon = row.icon;
+
+              return (
+                <ContextMenuItem
+                  key={
+                    target.kind === "sandbox" ? target.sandboxId : target.kind
+                  }
+                  data-active={target.current}
+                  className="cursor-pointer"
+                  onClick={() => onSetMount(nodeId, target)}
+                >
+                  <Icon />
+                  <span className="min-w-0 truncate">{row.label}</span>
+                </ContextMenuItem>
+              );
+            })}
           </ContextMenuGroup>
         </>
       )}
