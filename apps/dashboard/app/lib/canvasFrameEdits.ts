@@ -99,6 +99,26 @@ export function acceptsNewMember(frame: CanvasFrame): boolean {
 }
 
 /**
+ * The agents a card added from the canvas menu wires itself to, out of the
+ * ones on offer: a frame's owners, or the nearest agent. Code owns a `cli` or
+ * `api` agent's wiring, so it would ignore the edge and the next deploy would
+ * drop it. `connectionRefusal` turns the same link down when it is drawn by
+ * hand; here the card lands unwired instead.
+ */
+export function autoWiredAgentIds(
+  nodes: readonly Node[],
+  agentIds: readonly string[],
+): string[] {
+  const codeManaged = new Set(
+    nodes
+      .filter((node) => isCodeManagedOwner(node.data.managedBy))
+      .map((node) => node.id),
+  );
+
+  return agentIds.filter((id) => !codeManaged.has(id));
+}
+
+/**
  * The boxes top-level display nodes cover, for the free-spot search. A frame
  * counts at its expanded size even while collapsed, so nothing lands where it
  * opens.
@@ -307,9 +327,11 @@ export function nodeLinkActions(
 /**
  * Flat nodes of `next` with positions settled after an edit that may change
  * frame membership. A frame that was already drawn keeps its origin whoever
- * joins or leaves it, and its members take its slots. A frame that grows out
- * of a lone card starts where that card stood, so the card's box becomes the
- * frame's; any other new frame starts where its members stand. Either steps
+ * joins or leaves it, and its members take its slots. One that gained a member
+ * steps clear when its taller box would cover a neighbour: a frame is drawn
+ * from its members, so nothing else moves out of its way. A frame that grows
+ * out of a lone card starts where that card stood, so the card's box becomes
+ * the frame's; any other new frame starts where its members stand. Either steps
  * clear of every other box. A frame that shrinks to one member hands its
  * origin to that member's card. Any other card that left all frames steps
  * clear of the frame it sat in. Frames whose members did not change, and
@@ -350,15 +372,27 @@ export function reconcileFramePositions(
     occupied.push({ ...origin, ...frameSize(frame) });
   };
 
+  // A frame that gained a member is taller than it was, so it is placed after
+  // every box that holds its spot: the frames nobody joined or left, then the
+  // cards in no frame on either side.
+  const grown: { frame: CanvasFrame; origin: XYPosition }[] = [];
   for (const frame of after) {
     const kept = beforeById.get(frame.id);
     if (!kept) continue;
+    const origin = originOf(kept.memberIds, previousPositions);
+    if (frame.memberIds.length > kept.memberIds.length) {
+      grown.push({ frame: frame, origin: origin });
+      continue;
+    }
     const unchanged = kept.memberIds.join("\n") === frame.memberIds.join("\n");
-    place(frame, originOf(kept.memberIds, previousPositions), !unchanged);
+    place(frame, origin, !unchanged);
   }
   for (const node of next.nodes) {
     if (framedBefore.has(node.id) || framedAfter.has(node.id)) continue;
     occupied.push({ ...node.position, ...CARD_SIZE });
+  }
+  for (const { frame, origin } of grown) {
+    place(frame, findFreeBox(origin, frameSize(frame), occupied), true);
   }
   for (const frame of after) {
     if (beforeById.has(frame.id)) continue;

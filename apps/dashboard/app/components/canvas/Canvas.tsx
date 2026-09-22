@@ -53,6 +53,7 @@ import {
 import { useStage } from "@/app/hooks/useStage";
 import {
   acceptsNewMember,
+  autoWiredAgentIds,
   boardRects,
   frameGroupActions,
   introducedRuntimeRefsProblem,
@@ -1078,8 +1079,10 @@ function CanvasInner({
 
       // A sandbox any of them gets lands last in that agent's order.
       const nearest = findNearestAgentNode(nodesRef.current, position);
-      const sources =
-        agentIds ?? (nearest ? [nearest.id] : ([] as readonly string[]));
+      const sources = autoWiredAgentIds(
+        nodesRef.current,
+        agentIds ?? (nearest ? [nearest.id] : []),
+      );
       const newEdges: Edge[] = sources.map((source) => ({
         id: `e${source}-${id}`,
         source: source,

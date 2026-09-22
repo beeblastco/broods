@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Edge, Node } from "@xyflow/react";
 import {
   acceptsNewMember,
+  autoWiredAgentIds,
   frameGroupActions,
   nodeLinkActions,
   introducedRuntimeRefsProblem,
@@ -149,6 +150,27 @@ describe("reconcileFramePositions", () => {
     ).toBe(true);
   });
 
+  test("a frame that gains a member steps clear of the card under it", () => {
+    // `blocker` clears the frame's two-member box by the node margin and no
+    // more, so only the row `lone` adds reaches it.
+    const nodes = [...NODES, node("blocker", "workspace", { x: 240, y: 312 })];
+    const edges = [...EDGES, edge("agent", "lone")];
+    const settled = reconcileFramePositions(
+      { edges: EDGES, mcpServers: [], nodes: nodes },
+      { edges: edges, mcpServers: [], nodes: nodes },
+    );
+
+    const alpha = positionOf(settled, "alpha");
+    const origin = { x: alpha.x - 8, y: alpha.y - 28 };
+    expect(positionOf(settled, "blocker")).toEqual({ x: 240, y: 312 });
+    // The three-member box is 192 wide and 184 tall, read back off slot 0.
+    expect(clearOf({ x: 240, y: 312 }, origin, 192, 184)).toBe(true);
+    expect(positionOf(settled, "lone")).toEqual({
+      x: alpha.x,
+      y: alpha.y + 104,
+    });
+  });
+
   test("moves nothing when no frame changes, even members off their slots", () => {
     const legacy = NODES.map((item) =>
       item.id === "bravo" ? { ...item, position: { x: 300, y: 330 } } : item,
@@ -165,6 +187,22 @@ describe("reconcileFramePositions", () => {
         { edges: EDGES, mcpServers: [], nodes: renamed },
       ),
     ).toBe(renamed);
+  });
+});
+
+describe("autoWiredAgentIds", () => {
+  test("a card added from the menu skips the agents code manages", () => {
+    const nodes = [
+      ...NODES,
+      node("coded", "agent", { x: 720, y: 0 }, { managedBy: "cli" }),
+      node("rest", "agent", { x: 960, y: 0 }, { managedBy: "api" }),
+    ];
+
+    expect(autoWiredAgentIds(nodes, ["agent", "coded", "rest"])).toEqual([
+      "agent",
+    ]);
+    // The nearest agent being code-managed leaves the card unwired.
+    expect(autoWiredAgentIds(nodes, ["coded"])).toEqual([]);
   });
 });
 
