@@ -139,6 +139,19 @@ const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
 );
 const WORKER_SLOT_GRACE_MS = 5_000;
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
+// Chunks arrive faster than a Convex round trip, so a streamed chunk checks
+// ownership on this clock. A frame the client acts on checks exactly: a stale
+// run must not land one in a stream the next owner is writing to. `waiting` is
+// the heartbeat: it fires on a timer, not per token, so exact costs nothing.
+const OWNER_CHECK_INTERVAL_MS = 2_000;
+const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
+  "done",
+  "error",
+  "question-request",
+  "structured-output",
+  "tool-approval-request",
+  "waiting",
+]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
 const pendingWorkerPayloads: [
@@ -269,6 +282,28 @@ export async function handler(
   // scope so concurrent tenants in the shared container process cannot clobber
   // each other's log redaction secrets or NATS routing tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
+}
+
+/**
+ * One per stream. The returned check runs before each frame goes out: exact
+ * for `OWNER_CHECK_EXACT_FRAME_TYPES`, at most once per interval for the rest.
+ */
+export function ownerCheckForStream(
+  session: Pick<Session, "assertCurrentOwner">,
+): (frame: Record<string, unknown>) => Promise<void> {
+  // performance.now() cannot step backwards the way Date.now() can.
+  let checkedAt = Number.NEGATIVE_INFINITY;
+
+  return async (frame): Promise<void> => {
+    const exact =
+      typeof frame.type === "string" &&
+      OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
+    if (!exact && performance.now() - checkedAt < OWNER_CHECK_INTERVAL_MS) {
+      return;
+    }
+    await session.assertCurrentOwner();
+    checkedAt = performance.now();
+  };
 }
 
 /**
@@ -1221,9 +1256,10 @@ async function handleNatsWorkerRequest(
 
     ({ session } = turn);
     const { turnContext } = turn;
+    const checkOwner = ownerCheckForStream(session);
     const fencedPublisher: NatsPublisher = {
       publish: async (data) => {
-        await session!.assertCurrentOwner();
+        await checkOwner(data);
         await publisher.publish(data);
       },
       close: () => publisher.close(),
@@ -2603,6 +2639,7 @@ function createDirectContinuationSseBody(
         );
         let transferred = false;
         let terminalFailureDrained = false;
+        const checkOwner = ownerCheckForStream(session);
         // Once the client is gone the enqueue below throws about its closed
         // controller, which says nothing about the run. The run's own reason is
         // the one worth storing and logging.
@@ -2618,7 +2655,7 @@ function createDirectContinuationSseBody(
             consumeStream: async (stream): Promise<void> => {
               try {
                 await pipeAgentStream(stream, async (chunk): Promise<void> => {
-                  await session.assertCurrentOwner();
+                  await checkOwner(chunk);
                   controller.enqueue(
                     textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
                   );

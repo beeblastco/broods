@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import type { Session } from "../src/harness/session.ts";
 
 type TerminalSession = Pick<
@@ -6,7 +6,7 @@ type TerminalSession = Pick<
   "releaseConversationLease" | "settleIngress"
 >;
 
-const { settleFailedIngressAndDrain } =
+const { ownerCheckForStream, settleFailedIngressAndDrain } =
   await import("../src/harness/handler.ts");
 
 describe("terminal ingress draining", () => {
@@ -91,6 +91,42 @@ describe("terminal ingress draining", () => {
 
     expect(transferred).toBe(true);
     expect(actions).toEqual(["settle:threw", "dispatch"]);
+  });
+});
+
+describe("stream ownership check", () => {
+  it("checks the first chunk, exact frames, and deltas once the window passes", async () => {
+    const assertCurrentOwner = mock(async (): Promise<void> => {});
+    const now = spyOn(performance, "now").mockReturnValue(500);
+    try {
+      const checkOwner = ownerCheckForStream({
+        assertCurrentOwner: assertCurrentOwner,
+      });
+
+      // First chunk, even this early in the process's life.
+      await checkOwner({ type: "text-delta" });
+      expect(assertCurrentOwner).toHaveBeenCalledTimes(1);
+
+      now.mockReturnValue(1_500);
+      await checkOwner({ type: "text-delta" });
+      expect(assertCurrentOwner).toHaveBeenCalledTimes(1);
+
+      // Exact frames ignore the window, the timer heartbeat included.
+      await checkOwner({ type: "done" });
+      await checkOwner({ type: "waiting" });
+      expect(assertCurrentOwner).toHaveBeenCalledTimes(3);
+
+      // Still inside the window the `waiting` check restarted at 1500.
+      now.mockReturnValue(3_400);
+      await checkOwner({ type: "text-delta" });
+      expect(assertCurrentOwner).toHaveBeenCalledTimes(3);
+
+      now.mockReturnValue(3_500);
+      await checkOwner({ type: "text-delta" });
+      expect(assertCurrentOwner).toHaveBeenCalledTimes(4);
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 
