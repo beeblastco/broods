@@ -17,11 +17,15 @@ import { useEffect, useRef, useState } from "react";
 const SYNC_RETRY_MS = 5_000;
 
 // Shown once, on the first login of an account's life. It has no business
-// riding along in the layout chunk every other session loads.
-const OnboardingDialog = dynamic(() =>
-  import("@/app/components/OnboardingDialog").then(
-    (mod) => mod.OnboardingDialog,
-  ),
+// riding along in the layout chunk every other session loads. `loading` is
+// what buys it a Suspense boundary of its own; without one its download
+// suspends the whole signed-in tree, header included.
+const OnboardingDialog = dynamic(
+  () =>
+    import("@/app/components/OnboardingDialog").then(
+      (mod) => mod.OnboardingDialog,
+    ),
+  { loading: (): null => null },
 );
 
 export default function MainLayout({
