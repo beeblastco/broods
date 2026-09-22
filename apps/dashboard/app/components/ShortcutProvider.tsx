@@ -7,6 +7,7 @@
  * page knowing the dialog exists.
  */
 import {
+  activatesFocusedControl,
   isEditableTarget,
   matchShortcut,
   type ShortcutId,
@@ -83,10 +84,15 @@ export function ShortcutProvider({
       const shortcut = matchShortcut(event, isMac);
       if (!shortcut) return;
 
-      // A bare key is a command only outside text fields, and only outside an
-      // open dialog, where the page underneath is not what you are driving.
-      const isChord = shortcut.combos[0].includes("+");
+      // A bare key is a command only outside text fields, only outside an open
+      // dialog, where the page underneath is not what you are driving, and only
+      // when it is not the press that activates whatever has focus.
+      //
+      // The modifiers say whether this is a chord. The combo text cannot: `+`
+      // is both the separator and the key `canvas.zoomIn` binds.
+      const isChord = event.metaKey || event.ctrlKey || event.altKey;
       if (!isChord && isEditableTarget(event.target)) return;
+      if (!isChord && activatesFocusedControl(event)) return;
       if (
         shortcut.scope !== "global" &&
         event.target instanceof HTMLElement &&

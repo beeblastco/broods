@@ -1384,9 +1384,13 @@ function CanvasInner({
   // `?node=` is how every other surface asks for a card: the palette, the
   // copilot and a pasted link all land here.
   const requestedNodeId = searchParams.get("node");
+  // On a cold load the layout has not arrived yet, so the card the URL asks for
+  // does not exist to open. Waiting on its arrival is what makes a pasted link
+  // work as well as one followed from inside the app.
+  const hasRequestedNode = nodes.some((node) => node.id === requestedNodeId);
   useEffect(() => {
-    if (requestedNodeId) openNode(requestedNodeId);
-  }, [openNode, requestedNodeId]);
+    if (requestedNodeId && hasRequestedNode) openNode(requestedNodeId);
+  }, [hasRequestedNode, openNode, requestedNodeId]);
 
   const onCreateAgentFromPicker = useCallback(() => {
     onOpenCreateConfig(agentCreatePosition ?? getFreeAddPosition());

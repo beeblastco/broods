@@ -72,6 +72,19 @@ describe("copilot intent", () => {
     });
   });
 
+  test("a canvas command is named the way the palette names it", () => {
+    const live = { liveCommands: new Set(["canvas.fitView", "canvas.tidy"]) };
+
+    expect(planFromQuery("fit the canvas", context(live))?.actions[0]).toEqual({
+      commandId: "canvas.fitView",
+      label: "Fit view",
+      type: "command",
+    });
+    expect(planFromQuery("tidy the canvas", context(live))?.summary).toBe(
+      "Tidy up",
+    );
+  });
+
   test("a navigation verb resolves through the same ranking the palette uses", () => {
     expect(
       planFromQuery("go to scheduler", context())?.actions[0],

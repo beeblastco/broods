@@ -12,7 +12,7 @@ import {
 } from "@/app/components/canvas/nodeTemplates";
 import type { CopilotAction, CopilotPlan } from "@/app/lib/copilotActions";
 import { rankItems, type SearchItem } from "@/app/lib/paletteSearch";
-import type { ShortcutId } from "@/app/lib/shortcuts";
+import { SHORTCUTS, type ShortcutId } from "@/app/lib/shortcuts";
 
 /** Verbs that only ever mean "take me there", stripped before the name lookup. */
 const NAVIGATION_VERBS =
@@ -118,13 +118,14 @@ function planCommand(
 
   if (!commandId || !context.liveCommands.has(commandId)) return null;
 
-  const label = added
-    ? `Add a ${added[1].toLowerCase()} to the canvas`
-    : "Tidy the canvas";
+  // The name the overlay and the palette already print for this binding, so a
+  // plan step reads the same as the row that runs it.
+  const command = SHORTCUTS.find((shortcut) => shortcut.id === commandId);
+  if (!command) return null;
 
   return {
-    actions: [{ commandId: commandId, label: label, type: "command" }],
-    summary: label,
+    actions: [{ commandId: commandId, label: command.label, type: "command" }],
+    summary: command.label,
   };
 }
 

@@ -166,6 +166,20 @@ const TOKEN_GLYPHS: Record<string, string> = {
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
 
 /**
+ * True when the press would have activated the focused control. Enter and Space
+ * are how a keyboard clicks a button or follows a link, so a bare binding must
+ * not cancel them out from under one.
+ */
+export function activatesFocusedControl(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" && event.key !== " ") return false;
+
+  return (
+    event.target instanceof HTMLElement &&
+    event.target.closest("a[href],button,[role=button],summary") !== null
+  );
+}
+
+/**
  * The combo string a key event matches, in the same shape `SHORTCUTS` uses:
  * modifiers in a fixed order, then the key. `mod` is Command on a Mac and
  * Control everywhere else, so one entry covers both.

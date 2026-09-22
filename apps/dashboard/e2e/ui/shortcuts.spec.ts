@@ -133,6 +133,39 @@ test("a bare key is a command outside a text field and typing inside one", async
   await expect(ran(page)).toHaveCount(1);
 });
 
+test("+ types in a field instead of zooming the canvas behind it", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+
+  // Bare `+` is a canvas binding, and `+` is also the separator in a combo
+  // string, so reading the combo text called this a chord and skipped the
+  // guard that keeps a bare key out of a text field.
+  const field = page.locator('[data-fixture="editable"] input');
+  await field.click();
+  await page.keyboard.type("a+b");
+
+  await expect(field).toHaveValue("a+b");
+  await expect(ran(page)).toHaveCount(0);
+});
+
+test("Enter activates a focused button rather than the binding behind it", async ({
+  page,
+}) => {
+  await openSurfaces(page);
+  await page.locator("[data-drop-canvas]").focus();
+  await page.keyboard.press("Enter");
+
+  // The canvas binds bare `enter` to rename. Cancelling the press would take
+  // Enter away from every button and link on the page.
+  await expect(ran(page)).toHaveCount(0);
+
+  // The button did what it is for, so the press reached it.
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.keyboard.type("tidy");
+  await expect(rows(page).filter({ hasText: "Tidy up" })).toHaveCount(0);
+});
+
 test("the ? overlay lists every binding and dims what no one has claimed", async ({
   page,
 }) => {

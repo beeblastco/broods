@@ -128,6 +128,10 @@ function CanvasBindings({ onRun }: { onRun: (entry: string) => void }): null {
   useShortcut("canvas.addAgent", () => onRun("command canvas.addAgent"));
   useShortcut("canvas.tidy", () => onRun("command canvas.tidy"));
   useShortcut("canvas.fitView", () => onRun("command canvas.fitView"));
+  // Bare `enter` and bare `+`: the two that collide with typing and with the
+  // press that activates a focused control.
+  useShortcut("canvas.rename", () => onRun("command canvas.rename"));
+  useShortcut("canvas.zoomIn", () => onRun("command canvas.zoomIn"));
 
   return null;
 }
