@@ -145,6 +145,31 @@ export function prependTextToUserParts(
     : [{ type: "text", text: prefix }, ...parts];
 }
 
+// A child carries the parent's effective policies and withheld tools (a channel
+// record's included), and never spawns subagents of its own. Workspaces are the
+// exception: a predefined child keeps its own, whatever a record narrowed.
+export function subagentConfig(
+  config: AgentConfig,
+  parent: AgentConfig,
+): AgentConfig {
+  const policies = [
+    ...new Set([...(parent.policies ?? []), ...(config.policies ?? [])]),
+  ];
+  const denyTools = [
+    ...new Set([...(parent.denyTools ?? []), ...(config.denyTools ?? [])]),
+  ];
+
+  return {
+    ...config,
+    ...(policies.length > 0 ? { policies: policies } : {}),
+    ...(denyTools.length > 0 ? { denyTools: denyTools } : {}),
+    subagent: {
+      ...config.subagent,
+      enabled: false,
+    },
+  };
+}
+
 export function subagentNotFound(taskId: string): string {
   return `Error: no subagent task found for ${taskId}`;
 }
@@ -158,17 +183,6 @@ export const toolError = (value: string): never => {
 
 /** Return native text from execute so the AI SDK selects ToolResultOutput.text. */
 export const toolText = (value: string): string => value;
-
-/** Child agents never spawn their own subagents, whatever the base config says. */
-export function withoutNestedSubagents(config: AgentConfig): AgentConfig {
-  return {
-    ...config,
-    subagent: {
-      ...config.subagent,
-      enabled: false,
-    },
-  };
-}
 
 function formatJSONValue(value: JSONValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);

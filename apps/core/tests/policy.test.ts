@@ -55,6 +55,50 @@ describe("agent policy input", () => {
       workspaceName: "repo",
     });
 
+    // A `filePaths` prefix rule must see the path the tool resolves, not the
+    // spelling the model chose; grep and glob search from `path`, not the regex.
+    expect(
+      policyInputForTool(
+        "write",
+        { workspace: "repo", file_path: "./secrets/key" },
+        workspaces,
+      ).filePath,
+    ).toBe("secrets/key");
+    // `..` inside a name is a name the tool accepts, so the rule sees it resolved.
+    expect(
+      policyInputForTool(
+        "write",
+        { workspace: "repo", file_path: "./secrets/a..b" },
+        workspaces,
+      ).filePath,
+    ).toBe("secrets/a..b");
+    expect(
+      policyInputForTool(
+        "read",
+        { workspace: "repo", file_path: "../etc/passwd" },
+        workspaces,
+      ).filePath,
+    ).toBe("../etc/passwd");
+    // A search root ends in `/`, so a `secrets/` prefix covers the directory
+    // itself and leaves `secrets-public` alone. The workspace root is "", named
+    // or not, so a deny on any prefix below it can refuse the search.
+    for (const [toolName, path, filePath] of [
+      ["grep", "secrets", "secrets/"],
+      ["grep", "/secrets", "secrets/"],
+      ["glob", "secrets/", "secrets/"],
+      ["glob", "secrets-public", "secrets-public/"],
+      ["grep", ".", ""],
+      ["glob", undefined, ""],
+    ] as const) {
+      expect(
+        policyInputForTool(
+          toolName,
+          { workspace: "repo", pattern: "API_KEY", path: path },
+          workspaces,
+        ),
+      ).toMatchObject({ filePath: filePath, searchRoot: true });
+    }
+
     // memory_save derives its target path from the title, so the policy input
     // carries the same workspace.write + filePath surface as write/edit.
     expect(

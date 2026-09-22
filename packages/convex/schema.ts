@@ -1141,7 +1141,7 @@ export const taskUsageFields = {
   endpointId: v.string(),
   agentId: v.string(),
   conversationKey: v.string(),
-  /** Unique task id (= session.eventId) for idempotency. */
+  /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: v.string(),
   modelProvider: v.string(),
   modelId: v.string(),

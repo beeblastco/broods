@@ -8,6 +8,7 @@
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -49,7 +50,6 @@ import type {
   SandboxRunResult,
 } from "./types.ts";
 import {
-  assertSafeTenantProviderUrl,
   configString,
   isNoRunnersError,
   isSandboxGoneError,
@@ -426,7 +426,7 @@ function daytonaClientOptions(
   const options = isPlainObject(config.options) ? config.options : {};
   const customApiUrl = configString(options.apiUrl);
   if (customApiUrl) {
-    assertSafeTenantProviderUrl(customApiUrl, "config.options.apiUrl");
+    assertPublicHttpsUrl(customApiUrl, "config.options.apiUrl");
   }
   const customApiKey = configString(options.apiKey);
   if (customApiUrl && !customApiKey) {

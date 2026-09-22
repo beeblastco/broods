@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage } from "ai";
+import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
@@ -193,6 +194,64 @@ describe("handleScheduledCron", () => {
       "A scheduled run has no scheduling tools at all",
     );
     expect(event?.content).toContain("Post the standup summary.");
+  });
+});
+
+describe("background job continuation", () => {
+  it("resumes a channel session on its record-narrowed config", async () => {
+    const job: AsyncToolResultRecord = {
+      resultId: "job_1",
+      parentEventId: "acct:acct_1:agent:agent_1:evt_1",
+      conversationKey: "acct:acct_1:agent:agent_1:slack:T1:C1",
+      toolName: "bash",
+      toolCallId: "call_1",
+      input: {},
+      status: "processing",
+      createdAt: "2026-08-14T09:00:00.000Z",
+      updatedAt: "2026-08-14T09:00:00.000Z",
+      delivery: {
+        kind: "channel",
+        channelName: "slack",
+        source: CHANNEL_TARGET.source,
+      },
+      expiresAt: 0,
+    };
+    const narrowed = { ...CHANNEL_TARGET.agentConfig, denyTools: ["bash"] };
+    const answers: Record<string, unknown> = {
+      getAsyncToolResult: job,
+      getAsyncToolToken: true,
+      getAsyncToolGroup: {
+        parentEventId: job.parentEventId,
+        resultIds: [job.resultId],
+        sealed: true,
+      },
+      getConversationTarget: { ...CHANNEL_TARGET, agentConfig: narrowed },
+    };
+    runtime.query = async function (name: string) {
+      return answers[name] ?? null;
+    } as never;
+    runtime.mutate = async function (name: string, args: unknown) {
+      if (name === "updateAsyncToolResult") {
+        return { ...job, status: "completed", response: "done" };
+      }
+      admitted.push(args as Record<string, unknown>);
+
+      return { outcome: "queued" };
+    } as never;
+
+    const response = await handler({
+      method: "POST",
+      path: "/v1/sandbox-jobs/job_1/complete",
+      search: "",
+      query: new URLSearchParams(),
+      headers: { "x-job-token": "token" },
+      body: JSON.stringify({ status: "completed", response: "done" }),
+      cookies: [],
+      clientIp: "127.0.0.1",
+    });
+
+    expect(response.status).toBe(202);
+    expect(admitted[0]?.agentConfig).toEqual(narrowed);
   });
 });
 

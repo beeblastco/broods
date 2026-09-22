@@ -591,13 +591,13 @@ export async function runAgentLoop(
       endpointId: session.endpointId,
       agentId: session.agentId,
       conversationKey: session.conversationKey,
-      delivery: session.delivery?.kind ?? "direct",
+      delivery: session.policyDelivery?.kind ?? "direct",
       channel:
-        session.delivery?.kind === "channel"
-          ? session.delivery.channelName
+        session.policyDelivery?.kind === "channel"
+          ? session.policyDelivery.channelName
           : undefined,
-      ...(session.delivery?.kind === "channel"
-        ? channelPolicyIdentity(session.delivery.identity)
+      ...(session.policyDelivery?.kind === "channel"
+        ? channelPolicyIdentity(session.policyDelivery.identity)
         : {}),
     },
     resolvedWorkspaces,
@@ -870,7 +870,8 @@ export async function runAgentLoop(
         endpointId: session.endpointId,
         agentId: session.agentId ?? "unknown",
         conversationKey: session.conversationKey,
-        taskId: session.eventId,
+        // One row per model pass: a continuation pass shares the eventId.
+        taskId: `${session.eventId}#${traceId}`,
         modelProvider: configuredModel.providerName ?? "unknown",
         modelId: agentConfig.model?.modelId ?? "unknown",
         finishedAt: endTimeMs,

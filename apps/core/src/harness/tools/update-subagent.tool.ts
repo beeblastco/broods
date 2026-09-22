@@ -25,10 +25,10 @@ import type { Session } from "../session.ts";
 import {
   getOwnedSubagent,
   SUBAGENT_TOOL_PROPERTIES,
+  subagentConfig,
   subagentNotFound,
   toolError,
   VIRTUAL_AGENT_PREFIX,
-  withoutNestedSubagents,
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
@@ -170,7 +170,7 @@ async function resolveSubagentAgentConfig(
   input: UpdateSubagentInput,
 ): Promise<AgentConfig | null> {
   if (input.agentId === `${VIRTUAL_AGENT_PREFIX}${input.taskId}`) {
-    return withoutNestedSubagents(context.agentConfig);
+    return subagentConfig(context.agentConfig, context.agentConfig);
   }
 
   const agent = await getStorage().agents.getById(
@@ -178,7 +178,7 @@ async function resolveSubagentAgentConfig(
     input.agentId,
   );
 
-  return agent ? withoutNestedSubagents(agent.config) : null;
+  return agent ? subagentConfig(agent.config, context.agentConfig) : null;
 }
 
 function subagentDispatchScope(

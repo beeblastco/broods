@@ -41,7 +41,7 @@ export interface TaskUsageInput {
   endpointId?: string;
   agentId: string;
   conversationKey: string;
-  /** Equals session.eventId, unique per finished task. */
+  /** `${eventId}#${traceId}`: one row per model pass. */
   taskId: string;
   modelProvider: string;
   modelId: string;

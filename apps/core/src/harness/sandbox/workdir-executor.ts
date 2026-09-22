@@ -18,6 +18,7 @@ import {
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
+import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { waitUntil } from "../../shared/in-flight.ts";
 import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
@@ -69,7 +70,6 @@ import type {
   SandboxSnapshotResult,
 } from "./types.ts";
 import {
-  assertSafeTenantProviderUrl,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -886,7 +886,7 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   const options = isPlainObject(config.options) ? config.options : {};
   const customBaseUrl = configString(options.workdirUrl);
   if (customBaseUrl) {
-    assertSafeTenantProviderUrl(customBaseUrl, "config.options.workdirUrl");
+    assertPublicHttpsUrl(customBaseUrl, "config.options.workdirUrl");
   }
   const baseUrl = customBaseUrl ?? optionalEnv("WORKDIR_URL");
   if (!baseUrl) {

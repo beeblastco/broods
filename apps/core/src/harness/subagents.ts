@@ -57,8 +57,8 @@ import type {
 import {
   modelValueToUserParts,
   prependTextToUserParts,
+  subagentConfig,
   VIRTUAL_AGENT_PREFIX,
-  withoutNestedSubagents,
 } from "./tools/utils.ts";
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
@@ -320,7 +320,7 @@ export class SubagentCoordinator {
         runId: runId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
-        agentConfig: withoutNestedSubagents(agent.config),
+        agentConfig: subagentConfig(agent.config, this.parentAgentConfig),
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey: publicConversationKey,
         conversationKey: scopedDirectConversationKey(
@@ -344,7 +344,10 @@ export class SubagentCoordinator {
       runId: runId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
-      agentConfig: withoutNestedSubagents(this.parentAgentConfig),
+      agentConfig: subagentConfig(
+        this.parentAgentConfig,
+        this.parentAgentConfig,
+      ),
       publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
@@ -503,6 +506,7 @@ export class SubagentCoordinator {
       stageSlug: this.parentSession.stageSlug,
       ownerGeneration: ownerGeneration,
       trigger: this.parentSession.trigger,
+      policyDelivery: this.parentSession.policyDelivery,
     });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -954,6 +958,7 @@ export function createEphemeralChildSession(
     agentId: childSession.agentId,
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
+    policyDelivery: childSession.policyDelivery,
     // runAgentLoop reads the deployment scope off the session to stamp
     // project/stage/endpoint_id on the subtask span and to build the live NATS
     // subject. Omitting it left subagent spans carrying only account_id, so

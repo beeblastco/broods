@@ -536,12 +536,24 @@ async function continueAfterAsyncToolSettlement(
   if (events.length === 0) {
     return { kind: "skip" };
   }
+  const publicConversationKey = eventPublicConversationKey(
+    settled.conversationKey,
+    scope.accountId,
+    scope.agentId,
+  );
+  // A channel session resumes on its record-narrowed config, as a cron does.
+  const target = await resolveReentryTarget({
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    publicConversationKey: publicConversationKey,
+    agentConfig: toRuntimeAgentConfig(agent.config),
+  });
 
   const continuationEvent: DirectInboundEvent = {
     accountId: scope.accountId,
     agentId: scope.agentId,
     runId: createRunId(),
-    agentConfig: toRuntimeAgentConfig(agent.config),
+    agentConfig: target.agentConfig,
     eventId: asyncToolContinuationEventId(settled.parentEventId),
     ...(settled.delivery?.kind === "async"
       ? { asyncResultEventId: settled.parentEventId }
@@ -550,17 +562,16 @@ async function continueAfterAsyncToolSettlement(
       ? {
           replyTarget: {
             channelName: settled.delivery.channelName,
+            ...(settled.delivery.identity
+              ? { identity: settled.delivery.identity }
+              : {}),
             source: settled.delivery.source,
           },
         }
       : {}),
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
-    publicConversationKey: eventPublicConversationKey(
-      settled.conversationKey,
-      scope.accountId,
-      scope.agentId,
-    ),
+    publicConversationKey: publicConversationKey,
     events: events,
     // An answer joins a live run at its next step boundary; a finished job
     // waits its turn behind the current one.
@@ -1331,7 +1342,7 @@ async function handleNatsWorkerRequest(
 }
 
 /** Run a channel webhook request and reply through that channel's ChannelActions. */
-async function handleChannelRequest(
+export async function handleChannelRequest(
   event: ChannelInboundEvent,
   context?: RequestContext,
 ): Promise<void> {
@@ -1398,6 +1409,7 @@ async function handleChannelRequest(
     delivery: {
       kind: "channel",
       channel: event.channelName,
+      ...(event.identity ? { identity: event.identity } : {}),
       source: event.source,
     },
     agentConfig: event.agentConfig ?? {},
@@ -1617,6 +1629,10 @@ async function handleChannelRequest(
         next.delivery.kind === "channel"
           ? (next.delivery.source ?? event.source)
           : event.source;
+      // The queued sender, never the first one: policy reads userId and roles
+      // from here, and the envelope is the only place the sender survived.
+      const identity =
+        next.delivery.kind === "channel" ? next.delivery.identity : undefined;
       activeConfig = next.agentConfig ?? event.agentConfig ?? {};
       session = new Session({
         eventId: next.eventId,
@@ -1627,7 +1643,7 @@ async function handleChannelRequest(
         delivery: {
           kind: "channel",
           channelName: event.channelName,
-          ...(event.identity ? { identity: event.identity } : {}),
+          ...(identity ? { identity: identity } : {}),
           source: source,
         },
         endpointId: event.endpointId,
@@ -1807,6 +1823,9 @@ async function prepareDirectTurn(
       ? {
           kind: "channel",
           channelName: event.replyTarget.channelName,
+          ...(event.replyTarget.identity
+            ? { identity: event.replyTarget.identity }
+            : {}),
           source: event.replyTarget.source,
         }
       : undefined;
@@ -2064,6 +2083,7 @@ async function dispatchAppliedIngress(
       ? {
           replyTarget: {
             channelName: delivery.channel,
+            ...(delivery.identity ? { identity: delivery.identity } : {}),
             source: delivery.source ?? {},
           },
         }
@@ -2254,6 +2274,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     return {
       kind: "channel",
       channel: event.replyTarget.channelName,
+      ...(event.replyTarget.identity
+        ? { identity: event.replyTarget.identity }
+        : {}),
       source: event.replyTarget.source,
     };
   }
@@ -2417,7 +2440,8 @@ async function createCronDirectEvent(
 }
 
 /**
- * Where a re-entered conversation (cron, continue) runs and answers. A live
+ * Where a re-entered conversation (cron, continue, a settled background job)
+ * runs and answers. A live
  * channel session keeps its key, its record-narrowed config and its reply
  * target; anything else is the direct `api:` conversation on the given config.
  * The deployment scope is what puts the run's trace on the dashboard stream.

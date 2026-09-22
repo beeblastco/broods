@@ -140,6 +140,117 @@ const CASES: DecisionCase[] = [
     auditedRuleIds: ["watch"],
     allow: false,
   },
+  {
+    name: "audited deny beside an enforcing allow-list still default-denies",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "enforce",
+          rules: [
+            {
+              id: "allow-read",
+              effect: "allow",
+              actions: ["tool.call"],
+              resources: { toolNames: ["read"] },
+            },
+          ],
+        },
+        {
+          mode: "audit",
+          rules: [{ id: "watch", effect: "deny", actions: ["tool.call"] }],
+        },
+      ],
+    },
+    matchedRuleIds: [],
+    auditedRuleIds: ["watch"],
+    allow: false,
+  },
+  {
+    name: "audited allow beside an enforcing allow-list still default-denies",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "enforce",
+          rules: [
+            {
+              id: "allow-read",
+              effect: "allow",
+              actions: ["tool.call"],
+              resources: { toolNames: ["read"] },
+            },
+          ],
+        },
+        {
+          mode: "audit",
+          rules: [{ id: "trial", effect: "allow", actions: ["tool.call"] }],
+        },
+      ],
+    },
+    matchedRuleIds: [],
+    auditedRuleIds: [],
+    allow: false,
+  },
+  {
+    name: "audited allow beside the enforcing allow that opened is not named",
+    input: {
+      action: "tool.call",
+      toolName: "bash",
+      policies: [
+        {
+          mode: "audit",
+          rules: [
+            { id: "trial", effect: "allow", actions: ["tool.call"] },
+            { id: "watch", effect: "deny", actions: ["tool.call"] },
+          ],
+        },
+        {
+          mode: "enforce",
+          rules: [
+            { id: "allow-bash", effect: "allow", actions: ["tool.call"] },
+          ],
+        },
+      ],
+    },
+    matchedRuleIds: ["allow-bash"],
+    auditedRuleIds: ["watch"],
+    allow: true,
+  },
+  // grep and glob read everything under their root, so a deny on a prefix covers
+  // a search rooted above it. An allowed prefix never opens a wider search.
+  {
+    name: "deny on secrets/, grep from the workspace root",
+    input: searchInput("deny", ["secrets/"], ""),
+    matchedRuleIds: ["paths"],
+    allow: false,
+  },
+  {
+    name: "deny on secrets/, grep in src/",
+    input: searchInput("deny", ["secrets/"], "src/"),
+    matchedRuleIds: ["read-any"],
+    allow: true,
+  },
+  {
+    name: "deny on secrets/, grep in secrets/",
+    input: searchInput("deny", ["secrets/"], "secrets/"),
+    matchedRuleIds: ["paths"],
+    allow: false,
+  },
+  {
+    name: "deny on secrets/, grep in secrets-public/",
+    input: searchInput("deny", ["secrets/"], "secrets-public/"),
+    matchedRuleIds: ["read-any"],
+    allow: true,
+  },
+  {
+    name: "allow-list on docs/ does not open a root grep",
+    input: searchInput("allow", ["docs/"], ""),
+    matchedRuleIds: [],
+    allow: false,
+  },
 ];
 
 async function main(): Promise<number> {
@@ -363,6 +474,39 @@ function rolesInput(
     { actorRoles: actorRoles },
     policyMode,
   );
+}
+
+// A grep as core sends it. The deny sits beside an allow for every read, so a
+// search the deny leaves alone is allowed; the allow-list stands alone.
+function searchInput(
+  effect: "allow" | "deny",
+  filePaths: string[],
+  filePath: string,
+): Record<string, unknown> {
+  const paths = {
+    id: "paths",
+    effect: effect,
+    actions: ["workspace.read"],
+    resources: { filePaths: filePaths },
+  };
+  const readAny = {
+    id: "read-any",
+    effect: "allow",
+    actions: ["workspace.read"],
+  };
+
+  return {
+    action: "workspace.read",
+    toolName: "grep",
+    filePath: filePath,
+    searchRoot: true,
+    policies: [
+      {
+        mode: "enforce",
+        rules: effect === "deny" ? [readAny, paths] : [paths],
+      },
+    ],
+  };
 }
 
 process.exit(await main());
