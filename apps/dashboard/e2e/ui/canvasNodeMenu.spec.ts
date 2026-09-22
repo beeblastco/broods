@@ -74,17 +74,21 @@ test("the card menu prints the key beside every row that has one", async ({
   await expect(menu.getByRole("menuitem", { name: /^Open/ })).toContainText(
     "O",
   );
-  await expect(menu.getByRole("menuitem", { name: /^Rename/ })).toContainText(
-    "↵",
-  );
-  await expect(menu.getByRole("menuitem", { name: /^Delete/ })).toContainText(
-    "⌫",
-  );
+  await expect(
+    menu
+      .getByRole("menuitem", { name: /^Rename/ })
+      .locator('kbd[aria-label="Return"]'),
+  ).toBeVisible();
+  await expect(
+    menu
+      .getByRole("menuitem", { name: /^Delete/ })
+      .locator('kbd[aria-label="Backspace"]'),
+  ).toBeVisible();
 
   // Code owns this card's delete, so that row is locked and carries no key.
   await page.keyboard.press("Escape");
   await fixture.getByTestId("menu-target-coder").click({ button: "right" });
   const locked = menu.getByRole("menuitem", { name: /Delete/ });
   await expect(locked).toBeDisabled();
-  await expect(locked).not.toContainText("⌫");
+  await expect(locked.locator("kbd")).toHaveCount(0);
 });
