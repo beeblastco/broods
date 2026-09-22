@@ -9,6 +9,7 @@ import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
 import { stableJson } from "./model/objects";
+import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -323,33 +324,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-/**
- * Reject old account-scoped runtime resources instead of silently creating a new
- * stage-scoped row with the same name and a different runtime id.
- */
-async function assertNoAccountScopedResourceConflict(
-  ctx: MutationCtx,
-  options: {
-    table: "workspaceConfigs" | "sandboxConfigs";
-    accountId: Id<"accounts">;
-    name: string;
-  },
-): Promise<void> {
-  const rows = await ctx.db
-    .query(options.table)
-    .withIndex("by_accountId_and_name", (q) =>
-      q.eq("accountId", options.accountId).eq("name", options.name),
-    )
-    .collect();
-  const accountScoped = rows.find((row) => row.stageId === undefined);
-  if (!accountScoped) return;
-
-  throw new Error(
-    `${options.table} "${options.name}" is account-scoped legacy data. ` +
-      "Migrate it to a project/stage or delete it before saving the canvas.",
-  );
 }
 
 /**
