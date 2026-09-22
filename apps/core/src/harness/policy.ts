@@ -94,7 +94,12 @@ export function channelPolicyIdentity(
     ...(identity?.threadId ? { threadId: identity.threadId } : {}),
     ...(identity?.userId ? { userId: identity.userId } : {}),
     ...(identity?.userName ? { userName: identity.userName } : {}),
-    userRoles: identity?.userRoles ?? [],
+    // A user with no tag role holds no roles, so send `[]` and let a
+    // `userRoles notIn` rule match them. A request that carries no identity
+    // at all is a different thing: nobody knows what roles it holds, and
+    // sending `[]` there would let a negated operator on an allow rule
+    // authorize it.
+    ...(identity ? { userRoles: identity.userRoles ?? [] } : {}),
   };
 }
 

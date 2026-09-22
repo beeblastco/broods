@@ -282,8 +282,10 @@ describe("agent policy enforce mode", () => {
     );
   });
 
-  it("omits channel identity fields that the provider did not supply, except userRoles", () => {
-    expect(channelPolicyIdentity(undefined)).toEqual({ userRoles: [] });
+  it("omits channel identity fields that the provider did not supply", () => {
+    // No identity means nobody knows the roles, so the attribute stays absent
+    // and a negated operator cannot match on it.
+    expect(channelPolicyIdentity(undefined)).toEqual({});
     expect(channelPolicyIdentity({ channelId: "C1" })).toEqual({
       channelId: "C1",
       userRoles: [],

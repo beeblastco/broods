@@ -64,6 +64,22 @@ const CASES: DecisionCase[] = [
     matchedRuleIds: ["r1"],
     allow: true,
   },
+  // A run that carries no identity holds unknown roles, not no roles. An empty
+  // list would satisfy notIn and let an allow rule authorize an anonymous run.
+  {
+    name: "notIn allow, request carries no roles attribute",
+    input: policyInput("allow", "userRoles", "notIn", ["banned"], {}),
+    matchedRuleIds: [],
+    allow: false,
+  },
+  {
+    name: "notIn allow, actor holds an empty role list",
+    input: policyInput("allow", "userRoles", "notIn", ["banned"], {
+      userRoles: [],
+    }),
+    matchedRuleIds: ["r1"],
+    allow: true,
+  },
   {
     name: "scalar attribute, array value, member",
     input: channelInput(["C_OPS", "C_ENG"], "C_OPS"),
