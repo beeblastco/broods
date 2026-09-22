@@ -154,6 +154,7 @@ export function MountEdge({
             labelX={labelX}
             labelY={labelY}
             onHoverChange={setHovered}
+            opacity={style?.opacity}
             workspaceId={control.workspaceId}
           />
         ) : (

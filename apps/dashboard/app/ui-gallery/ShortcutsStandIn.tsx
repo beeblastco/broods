@@ -10,6 +10,7 @@
  */
 import { CommandPalette } from "@/app/components/CommandPalette";
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
+import { CopilotLauncher } from "@/app/components/copilot/CopilotLauncher";
 import {
   CopilotStateProvider,
   type CopilotMessage,
@@ -205,7 +206,7 @@ function Surfaces(): React.JSX.Element {
   return (
     <CopilotStateProvider value={copilot}>
       {liveCanvas && <CanvasBindings onRun={record} />}
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-8">
           <section data-fixture="palette" className="flex items-center gap-3">
             <CommandPalette
@@ -240,6 +241,7 @@ function Surfaces(): React.JSX.Element {
           </ol>
         </div>
 
+        <CopilotLauncher />
         <CopilotDock />
       </div>
       <ShortcutOverlay />

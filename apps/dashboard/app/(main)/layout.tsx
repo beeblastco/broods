@@ -1,6 +1,7 @@
 "use client";
 
 import { CopilotDock } from "@/app/components/copilot/CopilotDock";
+import { CopilotLauncher } from "@/app/components/copilot/CopilotLauncher";
 import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
 import { Header } from "@/app/components/Header";
 import { PerfReporter } from "@/app/components/PerfReporter";
@@ -132,8 +133,9 @@ export default function MainLayout({
               )}
               {/* The dock is a column beside the page, not a sheet over it: what
                   it is about to change has to stay on screen. */}
-              <div className="flex flex-1 overflow-hidden">
+              <div className="relative flex flex-1 overflow-hidden">
                 <div className="min-w-0 flex-1 overflow-hidden">{children}</div>
+                <CopilotLauncher />
                 <CopilotDock />
               </div>
               <ShortcutOverlay />

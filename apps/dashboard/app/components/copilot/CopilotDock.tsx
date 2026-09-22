@@ -15,7 +15,7 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
-import { ArrowUp, Sparkles, X } from "lucide-react";
+import { ArrowUp, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const EXAMPLES = [
@@ -52,7 +52,6 @@ export function CopilotDock(): React.JSX.Element | null {
   return (
     <aside className="flex w-80 shrink-0 flex-col border-l border-border">
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <Sparkles className="size-3.5 text-canvas-agent" />
         <span className="text-xs font-medium">Broods</span>
         <span className="ml-auto flex items-center gap-1">
           <ShortcutKeys id="copilot.open" bordered />
