@@ -37,6 +37,35 @@ const accountScopedReads: ReadonlyArray<
       .query("agentPolicies")
       .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
+  // Account-scoped rows with no stage outlive every project purge, so the
+  // account drain is the only place they are removed.
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountEnvVars")
+      .withIndex("by_accountId_and_name", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("accountRoles")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("mcp")
+      .withIndex("by_accountId_and_status", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("uploadGrants")
+      .withIndex("by_accountId_and_expiresAt", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
     ctx.db
       .query("sandboxConfigs")
@@ -91,6 +120,16 @@ const accountScopedReads: ReadonlyArray<
   (ctx, accountId) =>
     ctx.db
       .query("runtimeConversationEvents")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeConversationCoordinators")
+      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+      .take(ACCOUNT_DELETE_BATCH_SIZE),
+  (ctx, accountId) =>
+    ctx.db
+      .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
       .take(ACCOUNT_DELETE_BATCH_SIZE),
   (ctx, accountId) =>
