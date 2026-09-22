@@ -35,6 +35,7 @@ import type { ResolvedAgentSandbox } from "../src/shared/workspaces.ts";
 import {
   closeOf,
   MACHINE_ACCOUNT_ID,
+  MACHINE_READ_ONLY_ROLE_TOKEN,
   MACHINE_RUNTIME_KEY,
   MACHINE_SANDBOX_ID,
   machineExecutorConfig,
@@ -165,6 +166,20 @@ test("another daemon is refused naming the holder, even on the same host, and --
   });
 
   expect((await holderClosed).code).toBe(MACHINE_CLOSE.replaced.code);
+});
+
+test("a role session without sandboxes:write cannot claim a machine", async () => {
+  const server = core();
+  const readOnly = openSocket(server, MACHINE_READ_ONLY_ROLE_TOKEN);
+  readOnly.onopen = (): void =>
+    readOnly.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
+
+  expect((await closeOf(readOnly)).code).toBe(
+    MACHINE_CLOSE.unknownSandbox.code,
+  );
+  // The runtime key the daemon is documented to use still claims it.
+  const daemon = await connectDaemon(server, "my-mac", () => {});
+  expect(daemon.ready.sandboxId).toBe(MACHINE_SANDBOX_ID);
 });
 
 test("the refusal reason fits a close frame however long the holder's host is", () => {

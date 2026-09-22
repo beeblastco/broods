@@ -5,6 +5,11 @@
  * Convex for the dashboard.
  */
 
+import {
+  authorize,
+  rolePrincipal,
+  type RolePrincipal,
+} from "@broods/convex/model/apiAuthorization";
 import { resolveBearerAuth } from "../../shared/auth.ts";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
 import { toErrorMessage } from "../../shared/errors.ts";
@@ -77,6 +82,8 @@ export interface MachineSocketData {
   accountId?: string;
   claimed?: boolean;
   key?: string;
+  /** Set for a role session, whose policy decides what it may claim. */
+  role?: RolePrincipal;
 }
 
 interface PendingReply {
@@ -287,7 +294,12 @@ export async function upgradeMachineSocket(
     authorization: request.headers.get("authorization") ?? "",
   });
   const data: MachineSocketData =
-    auth && auth.kind !== "admin" ? { accountId: auth.account.accountId } : {};
+    auth && auth.kind !== "admin"
+      ? {
+          accountId: auth.account.accountId,
+          ...(auth.kind === "role" ? { role: auth.role } : {}),
+        }
+      : {};
 
   return server.upgrade(request, { data: data })
     ? undefined
@@ -304,7 +316,24 @@ async function claimSandbox(
     (entry) =>
       entry.name === hello.sandbox && entry.config.provider === "machine",
   );
-  if (!record) {
+  // Claiming a machine is a write on that sandbox, so a role session needs
+  // sandboxes:write for it. The name only arrives in the hello, hence here.
+  const denied =
+    record !== undefined &&
+    socket.data.role !== undefined &&
+    !authorize(rolePrincipal(socket.data.role), "sandboxes:write", {
+      type: "sandboxes",
+      id: record.sandboxId,
+    }).allow;
+  if (denied) {
+    logWarn("Machine sandbox claim refused", {
+      accountId: accountId,
+      sandbox: record.name,
+      roleId: socket.data.role?.roleId,
+      host: hello.hostname,
+    });
+  }
+  if (!record || denied) {
     socket.close(
       MACHINE_CLOSE.unknownSandbox.code,
       MACHINE_CLOSE.unknownSandbox.reason,
