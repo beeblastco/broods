@@ -31,9 +31,11 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 
-/** The card box, for the free-spot search. */
-/** The box every card has, whatever it holds. */
+/** The box every card has, whatever it holds, for the free-spot search. */
 export const CARD_SIZE: FrameSize = { height: NODE_HEIGHT, width: NODE_WIDTH };
+
+/** A frame waiting on a free spot, and the origin it would rather keep. */
+type DeferredFrame = { desired: XYPosition; frame: CanvasFrame };
 
 /** A flat graph as one edit sees it, with the server list its frames depend on. */
 export type FlatGraph = {
@@ -100,22 +102,19 @@ export function acceptsNewMember(frame: CanvasFrame): boolean {
 
 /**
  * The agents a card added from the canvas menu wires itself to, out of the
- * ones on offer: a frame's owners, or the nearest agent. Code owns a `cli` or
- * `api` agent's wiring, so it would ignore the edge and the next deploy would
- * drop it. `connectionRefusal` turns the same link down when it is drawn by
- * hand; here the card lands unwired instead.
+ * ones on offer: a frame's owners, or the nearest agent. A `cli` or `api`
+ * agent reads its wiring from the manifest it was deployed from, never from
+ * the canvas, so an edge drawn to it here would show a link the agent does not
+ * have. The card lands unwired instead.
  */
 export function autoWiredAgentIds(
   nodes: readonly Node[],
   agentIds: readonly string[],
 ): string[] {
-  const codeManaged = new Set(
-    nodes
-      .filter((node) => isCodeManagedOwner(node.data.managedBy))
-      .map((node) => node.id),
+  return agentIds.filter(
+    (id) =>
+      !isCodeManagedOwner(nodes.find((node) => node.id === id)?.data.managedBy),
   );
-
-  return agentIds.filter((id) => !codeManaged.has(id));
 }
 
 /**
@@ -372,16 +371,28 @@ export function reconcileFramePositions(
     occupied.push({ ...origin, ...frameSize(frame) });
   };
 
-  // A frame that gained a member is taller than it was, so it is placed after
-  // every box that holds its spot: the frames nobody joined or left, then the
-  // cards in no frame on either side.
-  const grown: { frame: CanvasFrame; origin: XYPosition }[] = [];
+  // A frame that has to search for its spot is placed after every box that
+  // holds one: the frames nobody joined or left, then the cards in no frame on
+  // either side.
+  const grown: DeferredFrame[] = [];
+  const fresh: DeferredFrame[] = [];
   for (const frame of after) {
     const kept = beforeById.get(frame.id);
-    if (!kept) continue;
+    if (!kept) {
+      const [card] = groupBefore.get(frame.id)?.memberIds ?? [];
+      const cardPosition =
+        card === undefined ? undefined : previousPositions.get(card);
+      fresh.push({
+        desired: cardPosition ?? originOf(frame.memberIds, nextPositions),
+        frame: frame,
+      });
+      continue;
+    }
     const origin = originOf(kept.memberIds, previousPositions);
-    if (frame.memberIds.length > kept.memberIds.length) {
-      grown.push({ frame: frame, origin: origin });
+    // A taller box can cover a neighbour. One that shrank still fits where it
+    // stood, and searching would snap it to the grid off a spot nothing wants.
+    if (frameSize(frame).height > frameSize(kept).height) {
+      grown.push({ desired: origin, frame: frame });
       continue;
     }
     const unchanged = kept.memberIds.join("\n") === frame.memberIds.join("\n");
@@ -391,23 +402,9 @@ export function reconcileFramePositions(
     if (framedBefore.has(node.id) || framedAfter.has(node.id)) continue;
     occupied.push({ ...node.position, ...CARD_SIZE });
   }
-  for (const { frame, origin } of grown) {
-    place(frame, findFreeBox(origin, frameSize(frame), occupied), true);
-  }
-  for (const frame of after) {
-    if (beforeById.has(frame.id)) continue;
-    const [card] = groupBefore.get(frame.id)?.memberIds ?? [];
-    const cardPosition =
-      card === undefined ? undefined : previousPositions.get(card);
-    place(
-      frame,
-      findFreeBox(
-        cardPosition ?? originOf(frame.memberIds, nextPositions),
-        frameSize(frame),
-        occupied,
-      ),
-      true,
-    );
+  // A frame that was already drawn has first claim on the space it wants.
+  for (const { desired, frame } of [...grown, ...fresh]) {
+    place(frame, findFreeBox(desired, frameSize(frame), occupied), true);
   }
   // A frame's last member first, so it keeps the frame's spot over a leaver.
   const leavers = next.nodes

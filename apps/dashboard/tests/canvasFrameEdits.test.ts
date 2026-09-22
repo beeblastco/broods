@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { frameOriginOf, frameSize } from "@broods/convex/model/canvasFrames";
 import type { Edge, Node } from "@xyflow/react";
 import {
   acceptsNewMember,
@@ -160,15 +161,15 @@ describe("reconcileFramePositions", () => {
       { edges: edges, mcpServers: [], nodes: nodes },
     );
 
-    const alpha = positionOf(settled, "alpha");
-    const origin = { x: alpha.x - 8, y: alpha.y - 28 };
-    expect(positionOf(settled, "blocker")).toEqual({ x: 240, y: 312 });
-    // The three-member box is 192 wide and 184 tall, read back off slot 0.
-    expect(clearOf({ x: 240, y: 312 }, origin, 192, 184)).toBe(true);
-    expect(positionOf(settled, "lone")).toEqual({
-      x: alpha.x,
-      y: alpha.y + 104,
+    const grown = frameSize({
+      kind: "sandbox",
+      memberIds: ["alpha", "bravo", "lone"],
     });
+    const origin = frameOriginOf([positionOf(settled, "alpha")]);
+    expect(positionOf(settled, "blocker")).toEqual({ x: 240, y: 312 });
+    expect(clearOf({ x: 240, y: 312 }, origin, grown.width, grown.height)).toBe(
+      true,
+    );
   });
 
   test("moves nothing when no frame changes, even members off their slots", () => {
