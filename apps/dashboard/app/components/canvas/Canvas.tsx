@@ -14,6 +14,7 @@ import {
   type CanvasNodeMenuEntries,
 } from "@/app/components/canvas/CanvasNodeMenu";
 import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
+import { CanvasNoticeStrip } from "@/app/components/canvas/CanvasNotice";
 import {
   CanvasRefusal,
   type CanvasRefusalHandle,
@@ -1713,17 +1714,17 @@ function CanvasInner({
         <Panel position="top-left">
           <CanvasControls onTidy={tidyLayout} />
         </Panel>
-        <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
-        <CanvasDropPreview drop={drop} />
-        {/* Save status lives away from the controls so it never crowds or
-            reflows them; it clears itself once a save lands. */}
-        <Panel position="bottom-left">
+        {/* One strip at the top centre for everything the canvas raises: a
+            refused connection, a refused drop, a save that failed. */}
+        <CanvasNoticeStrip>
+          <CanvasRefusal ref={refusalRef} getGraph={getConnectionGraph} />
+          <CanvasDropPreview drop={drop} />
           <CanvasSaveStatus
             state={saveState}
             message={saveError}
             onRetry={scheduleSave}
           />
-        </Panel>
+        </CanvasNoticeStrip>
       </ReactFlow>
     </>
   );

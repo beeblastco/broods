@@ -10,6 +10,7 @@ import {
   FIT_VIEW_OPTIONS,
 } from "@/app/components/canvas/CanvasControl";
 import { CanvasDropPreview } from "@/app/components/canvas/CanvasDropPreview";
+import { CanvasNoticeStrip } from "@/app/components/canvas/CanvasNotice";
 import {
   CanvasFramesProvider,
   type CanvasFramesValue,
@@ -340,13 +341,16 @@ export function UiGallery(): React.JSX.Element {
 
       <section data-fixture="canvas-controls" className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Canvas controls</h2>
-        <div className="relative h-40 w-80 rounded-lg border border-border">
+        {/* Wide enough for a notice to centre without reaching the controls,
+            as the real canvas is. */}
+        <div className="relative h-40 w-full max-w-md rounded-lg border border-border">
           <ReactFlowProvider>
             <div className="absolute top-2 left-2">
               <CanvasControls onTidy={() => {}} />
             </div>
           </ReactFlowProvider>
-          <div className="absolute bottom-2 left-2">
+          {/* The canvas's notice strip: top centre, clear of the controls. */}
+          <div className="pointer-events-none absolute top-2 right-0 left-0 flex justify-center">
             <CanvasSaveStatus state={saveState} onRetry={() => {}} />
           </div>
         </div>
@@ -621,7 +625,9 @@ function CanvasConnectFixture(): React.JSX.Element {
               gap={GRID}
               size={2}
             />
-            <CanvasRefusal ref={refusalRef} getGraph={getGraph} />
+            <CanvasNoticeStrip>
+              <CanvasRefusal ref={refusalRef} getGraph={getGraph} />
+            </CanvasNoticeStrip>
           </ReactFlow>
         </div>
         <output
@@ -794,7 +800,9 @@ function CanvasDropFixture(): React.JSX.Element {
               gap={GRID}
               size={2}
             />
-            <CanvasDropPreview drop={drop} />
+            <CanvasNoticeStrip>
+              <CanvasDropPreview drop={drop} />
+            </CanvasNoticeStrip>
           </ReactFlow>
         </div>
         <output

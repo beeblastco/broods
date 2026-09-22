@@ -9,8 +9,8 @@
 import {
   CanvasNotice,
   CanvasNoticeHint,
-  RefusedOutline,
-} from "@/app/components/canvas/CanvasRefusal";
+} from "@/app/components/canvas/CanvasNotice";
+import { RefusedOutline } from "@/app/components/canvas/CanvasRefusal";
 import type { CanvasDrop } from "@/app/lib/canvasDropTarget";
 import { DROP_SLOT_ID, withDropSlot } from "@/app/lib/canvasFrameNodes";
 import {

@@ -611,10 +611,20 @@ test("every edge's line shows one control: a mount word, a trash, or a lock that
     ).toHaveText(word);
   }
 
+  // The word sits on something opaque: the edge's dashed line runs under it,
+  // and the hover tint alone would let the dashes read straight through.
+  const word = fixture.locator(
+    '[data-edge-id="inherits:repos-internal-sandbox"] button',
+  );
+  await word.hover();
+  // An opaque colour carries no alpha channel: no `rgba(…, 0)`, no `… / 0.1`.
+  await expect(
+    word.locator("xpath=.."),
+    "the backing behind the mount word",
+  ).not.toHaveCSS("background-color", /rgba|\//);
+
   // Clicking it offers the places that workspace can mount, read-only included.
-  await fixture
-    .locator('[data-edge-id="inherits:repos-internal-sandbox"] button')
-    .click();
+  await word.click();
   const menu = page.locator('[data-slot="dropdown-menu-content"]');
   await expect(menu.getByText("Agent default")).toBeVisible();
   await expect(menu.getByText("No sandbox")).toBeVisible();

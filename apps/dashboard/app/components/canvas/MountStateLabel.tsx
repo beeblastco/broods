@@ -79,50 +79,58 @@ export function MountStateLabel({
           if (open) setTargets(mountTargetsOf(workspaceId));
         }}
       >
-        <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label="Change where this workspace mounts"
-              className="text-canvas-mount border-canvas-mount/40 bg-background hover:border-canvas-mount hover:bg-canvas-mount/10 cursor-pointer rounded-sm border px-1.5 py-0.5 text-3xs shadow-sm"
-            />
-          }
-        >
-          {WORKSPACE_STATE_LABEL[kind]}
-        </DropdownMenuTrigger>
+        {/* The edge's dashed line runs under this word, so the hover tint needs
+            something opaque behind it or the dashes read straight through. */}
+        <span className="bg-background rounded-sm">
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Change where this workspace mounts"
+                className="text-canvas-mount border-canvas-mount/40 hover:border-canvas-mount hover:bg-canvas-mount/10 block cursor-pointer rounded-sm border px-1.5 py-0.5 text-3xs shadow-sm"
+              />
+            }
+          >
+            {WORKSPACE_STATE_LABEL[kind]}
+          </DropdownMenuTrigger>
+        </span>
 
         <DropdownMenuContent align="center" className="w-60">
           <DropdownMenuGroup>
             <DropdownMenuLabel variant="muted">Mounts on</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {targets.map((target) => {
-              const row =
-                target.kind === "sandbox"
-                  ? { detail: null, icon: Box, label: target.label }
-                  : FIXED_MOUNT_ROWS[target.kind];
-              const Icon = row.icon;
+            {/* A stage with many sandboxes would otherwise run this list off
+                the screen; the rows scroll under the heading instead. */}
+            <div className="max-h-48 overflow-y-auto">
+              {targets.map((target) => {
+                const row =
+                  target.kind === "sandbox"
+                    ? { detail: null, icon: Box, label: target.label }
+                    : FIXED_MOUNT_ROWS[target.kind];
+                const Icon = row.icon;
 
-              return (
-                <DropdownMenuItem
-                  key={
-                    target.kind === "sandbox" ? target.sandboxId : target.kind
-                  }
-                  data-active={target.current}
-                  className="cursor-pointer"
-                  onClick={() => onSetWorkspaceMount(workspaceId, target)}
-                >
-                  <Icon />
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{row.label}</span>
-                    {row.detail && (
-                      <span className="text-muted-foreground text-2xs">
-                        {row.detail}
-                      </span>
-                    )}
-                  </span>
-                </DropdownMenuItem>
-              );
-            })}
+                return (
+                  <DropdownMenuItem
+                    key={
+                      target.kind === "sandbox" ? target.sandboxId : target.kind
+                    }
+                    data-active={target.current}
+                    className="cursor-pointer"
+                    onClick={() => onSetWorkspaceMount(workspaceId, target)}
+                  >
+                    <Icon />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{row.label}</span>
+                      {row.detail && (
+                        <span className="text-muted-foreground text-2xs">
+                          {row.detail}
+                        </span>
+                      )}
+                    </span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </div>
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>

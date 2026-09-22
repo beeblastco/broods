@@ -28,6 +28,11 @@ import {
 
 const CODE_MANAGED = "managed through code";
 
+// A card wired to a dozen things, or a workspace facing a dozen sandboxes, used
+// to run the menu off the bottom of the screen. Only the rows that grow scroll,
+// so Open, Rename and Delete stay where they always are.
+const SCROLLING_GROUP = "max-h-48 overflow-y-auto";
+
 /** What one card's menu lists; the canvas builds it on the right-click. */
 export type CanvasNodeMenuEntries = {
   nodeId: string;
@@ -96,44 +101,49 @@ export function CanvasNodeMenu({
             <ContextMenuLabel variant="muted" className="text-xs">
               Links
             </ContextMenuLabel>
-            {links.map((link) =>
-              link.kind === "make-default" ? (
-                <LockableItem
-                  key={`default:${link.agentId}`}
-                  lockedReason={link.disabledReason}
-                  onClick={() => onMakeDefault(link.agentId, nodeId)}
-                >
-                  <Star />
-                  <span className="flex flex-col">
-                    {link.agentLabel
-                      ? `Make default for ${link.agentLabel}`
-                      : "Make default"}
-                    {link.disabledReason && (
-                      <span className="text-2xs text-muted-foreground">
-                        {link.disabledReason}
+            <div className={SCROLLING_GROUP}>
+              {links.map((link) =>
+                link.kind === "make-default" ? (
+                  <LockableItem
+                    key={`default:${link.agentId}`}
+                    lockedReason={link.disabledReason}
+                    onClick={() => onMakeDefault(link.agentId, nodeId)}
+                  >
+                    <Star />
+                    <span className="flex flex-col">
+                      {link.agentLabel
+                        ? `Make default for ${link.agentLabel}`
+                        : "Make default"}
+                      {link.disabledReason && (
+                        <span className="text-2xs text-muted-foreground">
+                          {link.disabledReason}
+                        </span>
+                      )}
+                    </span>
+                    {!link.disabledReason && (
+                      <ShortcutKeys
+                        id="canvas.makeDefault"
+                        className="ml-auto"
+                      />
+                    )}
+                  </LockableItem>
+                ) : (
+                  <LockableItem
+                    key={`unlink:${link.edgeId}`}
+                    lockedReason={link.locked ? CODE_MANAGED : null}
+                    onClick={() => onRemoveEdge(link.edgeId)}
+                  >
+                    <LinkIcon otherType={link.otherType} />
+                    <span className="min-w-0 truncate">{link.label}</span>
+                    {!link.locked && (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {link.mount ? "Unmount" : "Unlink"}
                       </span>
                     )}
-                  </span>
-                  {!link.disabledReason && (
-                    <ShortcutKeys id="canvas.makeDefault" className="ml-auto" />
-                  )}
-                </LockableItem>
-              ) : (
-                <LockableItem
-                  key={`unlink:${link.edgeId}`}
-                  lockedReason={link.locked ? CODE_MANAGED : null}
-                  onClick={() => onRemoveEdge(link.edgeId)}
-                >
-                  <LinkIcon otherType={link.otherType} />
-                  <span className="min-w-0 truncate">{link.label}</span>
-                  {!link.locked && (
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {link.mount ? "Unmount" : "Unlink"}
-                    </span>
-                  )}
-                </LockableItem>
-              ),
-            )}
+                  </LockableItem>
+                ),
+              )}
+            </div>
           </ContextMenuGroup>
         </>
       )}
@@ -144,27 +154,29 @@ export function CanvasNodeMenu({
             <ContextMenuLabel variant="muted" className="text-xs">
               Mounts on
             </ContextMenuLabel>
-            {mounts.map((target) => {
-              const row =
-                target.kind === "sandbox"
-                  ? { icon: Box, label: target.label }
-                  : FIXED_MOUNT_ROWS[target.kind];
-              const Icon = row.icon;
+            <div className={SCROLLING_GROUP}>
+              {mounts.map((target) => {
+                const row =
+                  target.kind === "sandbox"
+                    ? { icon: Box, label: target.label }
+                    : FIXED_MOUNT_ROWS[target.kind];
+                const Icon = row.icon;
 
-              return (
-                <ContextMenuItem
-                  key={
-                    target.kind === "sandbox" ? target.sandboxId : target.kind
-                  }
-                  data-active={target.current}
-                  className="cursor-pointer"
-                  onClick={() => onSetMount(nodeId, target)}
-                >
-                  <Icon />
-                  <span className="min-w-0 truncate">{row.label}</span>
-                </ContextMenuItem>
-              );
-            })}
+                return (
+                  <ContextMenuItem
+                    key={
+                      target.kind === "sandbox" ? target.sandboxId : target.kind
+                    }
+                    data-active={target.current}
+                    className="cursor-pointer"
+                    onClick={() => onSetMount(nodeId, target)}
+                  >
+                    <Icon />
+                    <span className="min-w-0 truncate">{row.label}</span>
+                  </ContextMenuItem>
+                );
+              })}
+            </div>
           </ContextMenuGroup>
         </>
       )}
