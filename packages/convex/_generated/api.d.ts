@@ -95,6 +95,7 @@ import type * as model_objects from "../model/objects.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
 import type * as model_ownership_stage from "../model/ownership/stage.js";
+import type * as model_policyReferences from "../model/policyReferences.js";
 import type * as model_policyRules from "../model/policyRules.js";
 import type * as model_projectScope from "../model/projectScope.js";
 import type * as model_responses from "../model/responses.js";
@@ -230,6 +231,7 @@ declare const fullApi: ApiFromModules<{
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
   "model/ownership/stage": typeof model_ownership_stage;
+  "model/policyReferences": typeof model_policyReferences;
   "model/policyRules": typeof model_policyRules;
   "model/projectScope": typeof model_projectScope;
   "model/responses": typeof model_responses;

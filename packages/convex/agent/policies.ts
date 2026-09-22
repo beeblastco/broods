@@ -16,6 +16,7 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { resolveActiveAccountForAuthId } from "../model/agentSync";
 import { isPlainObject } from "../model/objects";
+import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
 import { agentPoliciesFields, paginationCursorFields } from "../schema";
 
@@ -253,6 +254,7 @@ export const remove = mutation({
         "This policy is managed by code. Remove it from your project and run `broods deploy --prune`.",
       );
     }
+    await assertPolicyUnreferenced(ctx, policy);
     await ctx.db.patch(args.policyId, {
       status: "deleted",
       deletedAt: Date.now(),
@@ -275,6 +277,7 @@ export const removeInternal = internalMutation({
     if (!policy || policy.accountId !== args.accountId) {
       throw new Error("Policy does not belong to the supplied accountId");
     }
+    await assertPolicyUnreferenced(ctx, policy);
     await ctx.db.patch(normalized, {
       status: "deleted",
       deletedAt: Date.now(),

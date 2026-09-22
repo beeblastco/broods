@@ -234,8 +234,10 @@ with the browser hand-off, so only the CLI that started the login can exchange
 the code. A deploy key is bound to one project and stage; it cannot replace a
 skill or hook another stage of the same account manages, `--prune` leaves
 those rows alone, and it cannot read environment values back (`broods env
-get` needs a login token or the org secret). Cron jobs belong to the stage of
-the agent they target, so every stage may declare its own.
+get` needs a login token or the org secret). `--prune` fails when an agent or a
+channel record still lists a policy it would remove, and the error names them.
+Cron jobs belong to the stage of the agent they target, so every stage may
+declare its own.
 
 ## update
 
