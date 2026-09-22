@@ -252,6 +252,8 @@ export interface SessionOptions {
   channelActions?: ChannelActions;
   // Absent for the ordinary channel/API paths, where a person is waiting.
   trigger?: RunTrigger;
+  // false keeps an ephemeral subagent's messages out of Convex.
+  persist?: boolean;
 }
 
 /**
@@ -279,6 +281,7 @@ export class Session {
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
   private readonly agentConfig: AgentConfig;
+  private readonly persist: boolean;
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
@@ -312,6 +315,7 @@ export class Session {
     this.ownerGeneration = options.ownerGeneration;
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
+    this.persist = options.persist ?? true;
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */
@@ -437,6 +441,7 @@ export class Session {
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
+    if (!this.persist) return [];
     const createdAtValues: string[] = [];
     const producer: MessageProducer = {
       model: modelIdentityFromModelConfig(this.agentConfig),
@@ -466,6 +471,7 @@ export class Session {
   }
 
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    if (!this.persist) return;
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
@@ -874,6 +880,7 @@ export class Session {
       afterCreatedAt?: string | null;
     } = {},
   ): Promise<StoredConversationEntry[]> {
+    if (!this.persist) return [];
     const entries: StoredConversationEntry[] = [];
     let afterCursor = options.afterCreatedAt ?? undefined;
     for (;;) {
