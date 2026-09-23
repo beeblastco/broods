@@ -8,10 +8,6 @@ import type { PlanTier } from "@/app/lib/pricing";
 import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import {
-  BUDGET_WARNING_RATIO,
-  PLAN_LIMITS,
-} from "@broods/convex/model/planLimits";
 import { useAction, useQuery } from "convex/react";
 import { ArrowUpRight, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
@@ -27,7 +23,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
-  const budget = useQuery(api.account.budget.getForActiveOrg);
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
@@ -73,25 +68,20 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
     }
   }
 
-  // Metered platform cost for the active org's account. The limit follows the
-  // org's plan, and a self-hosted install enforces none, so it shows no ceiling.
-  const RATE_LIMITS: Array<{ label: string; value: string }> = [
-    {
-      label: "Compute this month",
-      value: !budget
-        ? "…"
-        : budget.enforced
-          ? `${formatEuros(budget.usedEur)} / ${formatEuros(budget.limitEur)}`
-          : formatEuros(budget.usedEur),
-    },
-    {
-      label: "Runs per minute",
-      value: `${(budget?.runsPerMinute ?? PLAN_LIMITS[userPlan].runsPerMinute).toLocaleString()} rpm`,
-    },
-  ];
-  const budgetWarning =
-    budget?.enforced === true &&
-    budget.usedEur >= budget.limitEur * BUDGET_WARNING_RATIO;
+  // Ceilings only. Live consumption is not tracked here yet, and rendering a
+  // meter against a hardcoded 0 read as real telemetry on a billing surface.
+  const RATE_LIMITS: Array<{ label: string; limit: number; unit: string }> =
+    userPlan === "pro"
+      ? [
+          { label: "Requests per minute", limit: 500, unit: "rpm" },
+          { label: "Tokens per minute", limit: 200000, unit: "tpm" },
+          { label: "Concurrent agents", limit: 100, unit: "agents" },
+        ]
+      : [
+          { label: "Requests per minute", limit: 60, unit: "rpm" },
+          { label: "Tokens per minute", limit: 40000, unit: "tpm" },
+          { label: "Concurrent agents", limit: 5, unit: "agents" },
+        ];
 
   return (
     <div className="grid gap-8">
@@ -169,11 +159,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
 
       <Section
         title="Plan limits"
-        description={
-          budgetWarning
-            ? "Over 80% of this month's compute is used. Runs stop at 100%."
-            : "Sandboxes, hosted MCP, storage and egress. Model tokens use your own keys."
-        }
+        description="Resource limits for your current plan tier."
       >
         <div className="grid gap-3">
           {RATE_LIMITS.map((limit) => (
@@ -183,7 +169,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
             >
               <span className="text-sm text-foreground">{limit.label}</span>
               <span className="font-mono text-sm text-muted-foreground">
-                {limit.value}
+                {limit.limit.toLocaleString()} {limit.unit}
               </span>
             </div>
           ))}
@@ -198,8 +184,9 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           <div className="rounded-lg border border-border bg-card p-4">
             <div className="grid gap-2 mb-4">
               {[
-                `${formatEuros(PLAN_LIMITS.pro.monthlyBudgetEur)} of compute a month (vs ${formatEuros(PLAN_LIMITS.free.monthlyBudgetEur)} on Hobby)`,
-                `${PLAN_LIMITS.pro.runsPerMinute.toLocaleString()} runs per minute`,
+                "500 rpm (vs 60 rpm on Hobby)",
+                "200k tokens per minute",
+                "Up to 100 concurrent agents",
                 "Priority support",
               ].map((feature) => (
                 <div key={feature} className="flex items-center gap-2">
@@ -240,10 +227,6 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
       )}
     </div>
   );
-}
-
-function formatEuros(amount: number): string {
-  return `€${amount.toFixed(2)}`;
 }
 
 function formatPeriodEnd(epochSeconds: number): string {
