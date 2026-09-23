@@ -250,7 +250,7 @@ async function runCoreStream(
   let startTimedOut = false;
   const active: ActiveRun = {
     abort: abort,
-    startTimeout: setTimeout(() => {
+    startTimeout: setTimeout((): void => {
       startTimedOut = true;
       abort.abort();
     }, limits.runStartTimeoutMs),
@@ -341,7 +341,7 @@ async function runCoreStream(
       startSequence: snapshot.lastSequence + 1,
       initialConsumedSequence: snapshot.lastSequence,
       // The snapshot predates the run, so nothing it emits is a replay.
-      isReplay: () => false,
+      isReplay: (): boolean => false,
       statusRequestId: payload.eventId,
       ...(payload.runId ? { runId: payload.runId } : {}),
       ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),

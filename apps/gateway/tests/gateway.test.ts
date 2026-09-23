@@ -140,7 +140,7 @@ test("sends question answers instead of events on an execute message", () => {
   ).toBeNull();
 });
 
-test("refuses an agent id that is not one NATS subject token", () => {
+test("refuses an agent id that is not one NATS subject token", (): void => {
   for (const agentId of ["*", ">", "agent.*", "other.agent", "agent one"]) {
     expect(
       parseGatewayMessage(
@@ -1142,15 +1142,18 @@ test("rejects a second active agent run on the same websocket", () => {
   }
 });
 
-test("a cancelled run's cleanup leaves the next run on the socket alone", async () => {
+test("a cancelled run's cleanup leaves the next run on the socket alone", async (): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
   const signals: AbortSignal[] = [];
-  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
-    new Promise<Response>((_resolve, reject) => {
+  globalThis.fetch = ((
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    new Promise<Response>((_resolve, reject): void => {
       signals.push(init!.signal!);
-      init?.signal?.addEventListener("abort", () =>
+      init?.signal?.addEventListener("abort", (): void =>
         reject(new Error("aborted")),
       );
     })) as typeof fetch;
@@ -1164,16 +1167,16 @@ test("a cancelled run's cleanup leaves the next run on the socket alone", async 
         input: "hi",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "10000" }),
-      async () =>
+      async (): Promise<never> =>
         zeroBufferConnection(async () => ({
-          [Symbol.asyncIterator]: async function* () {},
-          close: async () => {},
+          [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+          close: async (): Promise<void> => {},
         })) as never,
     );
 
   try {
     execute("first");
-    await waitForCondition(() => signals.length === 1);
+    await waitForCondition((): boolean => signals.length === 1);
     handleAgentMessage(
       socket,
       JSON.stringify({ type: "cancel" }),
@@ -1181,7 +1184,7 @@ test("a cancelled run's cleanup leaves the next run on the socket alone", async 
       idleNats,
     );
     execute("second");
-    await waitForCondition(() => signals.length === 2);
+    await waitForCondition((): boolean => signals.length === 2);
     // The first run's rejected fetch has settled and its cleanup has run.
     await Bun.sleep(10);
 
@@ -1198,7 +1201,7 @@ test("a cancelled run's cleanup leaves the next run on the socket alone", async 
   }
 });
 
-test("a started turn streams from its own start and polls core in-cluster", async () => {
+test("a started turn streams from its own start and polls core in-cluster", async (): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -1206,14 +1209,17 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
   let consumerOptions: { opt_start_seq?: number } | undefined;
   const connection = zeroBufferConnection(
     async () => ({
-      [Symbol.asyncIterator]: async function* () {},
-      close: async () => {},
+      [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+      close: async (): Promise<void> => {},
     }),
-    (options) => {
+    (options): void => {
       consumerOptions = options;
     },
   );
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
     if (init?.method === "POST") {
       return Response.json(
         {
@@ -1247,10 +1253,13 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
         input: "go",
       }),
       gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
-      async () => connection as never,
+      async (): Promise<never> => connection as never,
     );
 
-    await waitForGatewayMessage(sent, (message) => message.type === "done");
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "done",
+    );
     // The snapshot was taken before the POST, whose last sequence is 20.
     expect(consumerOptions?.opt_start_seq).toBe(21);
     expect(polled[0]).toBe(
@@ -1501,23 +1510,29 @@ test("routes a runtime key to the matching core upstream", async () => {
   });
 });
 
-test("a core that cannot answer is an outage, not a bad token", async () => {
+test("a core that cannot answer is an outage, not a bad token", async (): Promise<void> => {
   const resolve = (
     answer: () => Promise<Response>,
   ): ReturnType<typeof resolveSocketScope> =>
     resolveSocketScope("runtime-key", ["https://core.example"], answer);
 
   expect(
-    await resolve(async () => new Response("no", { status: 401 })),
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 401 }),
+    ),
   ).toEqual({ kind: "invalid" });
   expect(
-    await resolve(async () => new Response("no", { status: 403 })),
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 403 }),
+    ),
   ).toEqual({ kind: "invalid" });
   expect(
-    await resolve(async () => new Response("down", { status: 503 })),
+    await resolve(
+      async (): Promise<Response> => new Response("down", { status: 503 }),
+    ),
   ).toEqual({ kind: "unavailable" });
   expect(
-    await resolve(async () => {
+    await resolve(async (): Promise<Response> => {
       throw new Error("timed out");
     }),
   ).toEqual({ kind: "unavailable" });
@@ -3153,10 +3168,10 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   );
 });
 
-test("proxyHttp never replays a POST to the next upstream after a network error", async () => {
+test("proxyHttp never replays a POST to the next upstream after a network error", async (): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     calls.push(String(input));
     throw new Error("connection reset");
   }) as unknown as typeof fetch;

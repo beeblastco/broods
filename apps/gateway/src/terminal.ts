@@ -2,12 +2,12 @@ import {
   openTerminalTicket,
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
+import { MACHINE_MAX_FRAME_BYTES } from "../../core/src/shared/machine-socket.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
-// Two of core's largest machine frames (4 MiB), so one still in flight never
-// trips it.
-const MAX_UPSTREAM_BUFFERED_BYTES = 8 * 1024 * 1024;
+// Two of the largest machine frames, so one still in flight never trips it.
+const MAX_UPSTREAM_BUFFERED_BYTES = 2 * MACHINE_MAX_FRAME_BYTES;
 
 export type TerminalGatewayData = {
   kind: "terminal";

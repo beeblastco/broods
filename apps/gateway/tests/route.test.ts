@@ -145,8 +145,8 @@ test("an unresolvable token is refused and spends auth-failure budget", async ()
   expect(authFailureLimiter.blocked("10.0.0.1")).toBe(true);
 });
 
-test("a core outage during the token check is a 502 that spends no auth-failure budget", async () => {
-  globalThis.fetch = (async () =>
+test("a core outage during the token check is a 502 that spends no auth-failure budget", async (): Promise<void> => {
+  globalThis.fetch = (async (): Promise<Response> =>
     new Response("down", { status: 503 })) as unknown as typeof fetch;
   const authFailureLimiter = new RateLimiter(1, 60_000);
   const gateway = createGateway(
@@ -162,7 +162,7 @@ test("a core outage during the token check is a 502 that spends no auth-failure 
   expect(authFailureLimiter.blocked("10.0.0.1")).toBe(false);
 });
 
-test("a malformed escape in a socket path is a 400, not a 500", async () => {
+test("a malformed escape in a socket path is a 400, not a 500", async (): Promise<void> => {
   const gateway = createGateway(gatewayConfig());
 
   const response = await gateway.fetch(
