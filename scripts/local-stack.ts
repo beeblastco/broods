@@ -7,6 +7,9 @@
  * A warm `up` is idempotent: the container restarts in place and the script
  * skips `convex deploy` while packages/convex is unchanged.
  *
+ * `verify` drives the cases in scripts/local-verify/cases through the gateway.
+ * Under GitHub Actions each command also writes its timings to the job summary.
+ *
  * Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]
  */
 
@@ -22,44 +25,30 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { verifyCases } from "./local-verify/cases/index.ts";
+import {
+  VerifyFailure,
+  assertStep,
+  httpJson,
+  lastJsonLine,
+  pollUntil,
+  probeHttp,
+  smokeModel,
+  type VerifyContext,
+} from "./local-verify/harness.ts";
+
+// Pinned so CI and every laptop run the same backend. To bump, pull
+// convex-backend:latest and copy its RepoDigests entry here.
 const CONVEX_IMAGE =
   process.env.BROODS_LOCAL_CONVEX_IMAGE ??
-  "ghcr.io/get-convex/convex-backend:latest";
+  "ghcr.io/get-convex/convex-backend@sha256:b756b06641d15a55b5ec0692897ce5ad3715ddccfd02e1e213621e9e764255c8";
 const HEALTH_TIMEOUT_MS = 60_000;
 const PORT_BLOCK_BASE = 4300;
 const PORT_BLOCK_SIZE = 10;
-// A warm turn's context prepare. Convex is on localhost here, so this catches
-// prepare work that grows or goes serial, not network latency.
-const PREPARE_BUDGET_MS = 100;
-const RUN_POLL_TIMEOUT_MS = 120_000;
-const MACHINE_CONNECT_TIMEOUT_MS = 15_000;
 const STATE_ROOT = join(homedir(), ".broods-local");
-const ANTHROPIC_SMOKE_MODEL = "claude-haiku-4-5-20251001";
-const MODEL_KEY_HINT =
-  "set ANTHROPIC_API_KEY or OPENAI_API_KEY for the full run";
-// Without a key the smoke agent still exercises the run path; the model call fails.
-const NO_KEY_MODEL: SmokeModel = {
-  model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
-  provider: { anthropic: { apiKey: "sk-ant-local-smoke-no-key" } },
-};
-
-// The "Context prepared" line core logs once per run (apps/core harness.ts).
-interface ContextPreparedLog {
-  durationMs: number;
-  eventId: string;
-  eventType: string;
-  historyMs: number;
-  historyRows: number;
-  mediaMs: number;
-  memoryMs: number;
-  runtimeMs: number;
-  skillsMs: number;
-  subagentsMs: number;
-}
-
 interface InstancePorts {
   convexApi: number;
   convexSite: number;
@@ -90,6 +79,8 @@ interface InstanceState {
 interface PerfRecord {
   at: string;
   command: string;
+  /** The step that failed; absent on a pass. */
+  failed?: string;
   steps: PerfStep[];
   totalMs: number;
 }
@@ -97,15 +88,6 @@ interface PerfRecord {
 interface PerfStep {
   ms: number;
   step: string;
-}
-
-interface SmokeModel {
-  model: {
-    provider: string;
-    modelId: string;
-    providerOptions?: Record<string, Record<string, unknown>>;
-  };
-  provider: Record<string, { apiKey: string }>;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -289,10 +271,10 @@ async function up(fresh: boolean): Promise<void> {
 }
 
 /**
- * End-to-end smoke: mint an account with the admin secret, create an agent,
- * fire an async run through the gateway, poll its status. Without a model key
- * the run fails at the provider call. Reaching that failure still proves
- * routing, auth, config encrypt/decrypt, and Convex round-trips.
+ * End-to-end check: mint an account with the admin secret, then run every
+ * case in scripts/local-verify/cases against it through the gateway. Without
+ * DEEPSEEK_API_KEY runs fail at the provider call; reaching that failure still
+ * proves routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
 async function verify(): Promise<void> {
   const state = loadState(currentInstanceId());
@@ -304,249 +286,52 @@ async function verify(): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
-  const runId = Date.now().toString(36);
-  const smoke = smokeModel();
-
-  await measureStep(perf, "gateway healthz", async () => {
-    const health = await probeHttp(`${gatewayUrl}/healthz`);
-    assertStep("gateway healthz", health === 200, `status ${health}`);
-  });
-
-  const accountSecret = await measureStep(perf, "create account", async () => {
-    const response = await httpJson(`${gatewayUrl}/v1/accounts`, {
-      method: "POST",
-      token: state.secrets.adminAccount,
-      body: { username: `smoke-${runId}` },
+  const measure = <T>(step: string, fn: () => Promise<T>): Promise<T> =>
+    measureStep(perf, step, fn);
+  let failed: VerifyFailure | undefined;
+  try {
+    await measure("gateway healthz", async () => {
+      const health = await probeHttp(`${gatewayUrl}/healthz`);
+      assertStep("gateway healthz", health === 200, `status ${health}`);
     });
-    const secret = (response.body as { secret?: string }).secret;
-    assertStep(
-      "create account (core, admin bearer)",
-      response.status === 201 && typeof secret === "string",
-      `status ${response.status}: ${JSON.stringify(response.body)}`,
-    );
-
-    return secret;
-  });
-
-  const agentId = await measureStep(perf, "create agent", async () => {
-    const response = await httpJson(`${gatewayUrl}/v1/agents`, {
-      method: "POST",
-      token: accountSecret,
-      body: {
-        name: `smoke-${runId}`,
-        config: {
-          ...(smoke ?? NO_KEY_MODEL),
-          instructions: "Reply with the single word OK.",
-        },
-      },
-    });
-    const created = (response.body as { agentId?: string }).agentId;
-    assertStep(
-      "create agent (config plane via gateway)",
-      response.status === 201 && typeof created === "string",
-      `status ${response.status}: ${JSON.stringify(response.body)}`,
-    );
-
-    return created;
-  });
-
-  // The 202 names the run by a server-issued id; polling follows its statusUrl.
-  const startRun = async (
-    eventId: string,
-    text: string,
-    runAgentId: string = agentId,
-  ): Promise<string> => {
-    const response = await httpJson(`${gatewayUrl}/v1/runs`, {
-      method: "POST",
-      token: accountSecret,
-      body: {
-        agentId: runAgentId,
-        eventId: eventId,
-        conversationKey: `smoke-${runId}`,
-        background: true,
-        events: [{ role: "user", content: [{ type: "text", text: text }] }],
-      },
-    });
-    const statusUrl = (response.body as { statusUrl?: string }).statusUrl;
-    assertStep(
-      `start run ${eventId} (core via gateway)`,
-      response.status === 202 && typeof statusUrl === "string",
-      `status ${response.status}: ${JSON.stringify(response.body)}`,
-    );
-
-    return statusUrl.startsWith("/") ? `${gatewayUrl}${statusUrl}` : statusUrl;
-  };
-
-  const eventId = `smoke-${runId}`;
-  const statusUrl = await measureStep(perf, "start async run", () =>
-    startRun(eventId, "Say OK."),
-  );
-
-  await measureStep(perf, "run to terminal state", async () => {
-    const finalStatus = await pollRunStatus(statusUrl, accountSecret);
-    const expected = smoke
-      ? finalStatus.status === "completed"
-      : finalStatus.status === "completed" || finalStatus.status === "failed";
-    const label = smoke
-      ? `run completed with a real model key (${smoke.model.modelId})`
-      : `run reached a terminal state (no model key; ${MODEL_KEY_HINT})`;
-    assertStep(label, expected, JSON.stringify(finalStatus));
-  });
-
-  // A second turn on the same conversation takes the path a live chat does:
-  // core is warm and the history already has rows.
-  const warmEventId = `${eventId}-warm`;
-  await measureStep(perf, "warm run to terminal state", async () => {
-    const warmStatusUrl = await startRun(warmEventId, "Say OK again.");
-    const finalStatus = await pollRunStatus(warmStatusUrl, accountSecret);
-    assertStep(
-      "warm run reached a terminal state",
-      finalStatus.status === "completed" || finalStatus.status === "failed",
-      JSON.stringify(finalStatus),
-    );
-  });
-
-  await measureStep(perf, "warm context prepare", async () => {
-    const prepared = contextPreparedLog(state.instanceId, warmEventId);
-    assertStep(
-      `warm context prepare under ${PREPARE_BUDGET_MS}ms`,
-      prepared !== null && prepared.durationMs < PREPARE_BUDGET_MS,
-      prepared === null
-        ? "no Context prepared line for the warm run in the core log"
-        : JSON.stringify(prepared),
-    );
-    console.log(
-      `prepare   ${prepared.durationMs}ms: history ${prepared.historyMs}ms over ${prepared.historyRows} rows, runtime ${prepared.runtimeMs}ms, memory ${prepared.memoryMs}ms, skills ${prepared.skillsMs}ms, subagents ${prepared.subagentsMs}ms, media ${prepared.mediaMs}ms`,
-    );
-  });
-
-  // With a model key, the agent's bash runs here and its reply names this host.
-  await measureStep(perf, "machine sandbox", async () => {
-    const sandboxName = `machine-${runId}`;
-    const created = await httpJson(`${gatewayUrl}/v1/sandboxes`, {
-      method: "POST",
-      token: accountSecret,
-      body: {
-        name: sandboxName,
-        config: {
-          provider: "machine",
-          permissionMode: "bypass",
-          network: { mode: "allow-all" },
-        },
-      },
-    });
-    const sandboxId = (created.body as { sandboxId?: string }).sandboxId;
-    assertStep(
-      "create machine sandbox (config plane via gateway)",
-      created.status === 201 && typeof sandboxId === "string",
-      `status ${created.status}: ${JSON.stringify(created.body)}`,
-    );
-
-    // Opt-in: only a person can grant this terminal Screen Recording and Accessibility.
-    const computer = process.env.BROODS_VERIFY_COMPUTER === "1";
-    let daemonOutput = "";
-    const daemon = spawn(
-      "bun",
-      [
-        "packages/broods/src/cli/index.ts",
-        "machine",
-        sandboxName,
-        ...(computer ? ["--computer"] : []),
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          BROODS_API_KEY: accountSecret,
-          BROODS_BASE_URL: gatewayUrl,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    const collect = (chunk: Buffer): void => {
-      daemonOutput += chunk.toString("utf8");
-    };
-    daemon.stdout.on("data", collect);
-    daemon.stderr.on("data", collect);
-    // assertStep calls process.exit, which skips `finally`.
-    const stopDaemon = (): void => {
-      daemon.kill("SIGINT");
-    };
-    process.once("exit", stopDaemon);
-    try {
-      const connected = await pollUntil(
-        {
-          initialIntervalMs: 100,
-          maxIntervalMs: 500,
-          timeoutMs: MACHINE_CONNECT_TIMEOUT_MS,
-        },
-        async () =>
-          daemonOutput.includes(`connected as ${sandboxName}`) ? true : null,
-      );
-      assertStep(
-        "broods machine connected through the gateway",
-        connected === true,
-        daemonOutput,
-      );
-      if (!smoke) {
-        console.log(`  skip agent bash on this machine (${MODEL_KEY_HINT})`);
-
-        return;
-      }
-
-      const agent = await httpJson(`${gatewayUrl}/v1/agents`, {
+    const runId = Date.now().toString(36);
+    const accountSecret = await measure("create account", async () => {
+      const response = await httpJson(`${gatewayUrl}/v1/accounts`, {
         method: "POST",
-        token: accountSecret,
-        body: {
-          name: sandboxName,
-          config: {
-            ...smoke,
-            instructions: computer
-              ? "Use the computer tool to take one screenshot, then reply with exactly the frontmost app it reported and nothing else."
-              : "Use the bash tool to run `hostname`, then reply with exactly its output and nothing else.",
-            sandboxes: [sandboxId],
-          },
-        },
+        token: state.secrets.adminAccount,
+        body: { username: `smoke-${runId}` },
       });
-      const machineAgentId = (agent.body as { agentId?: string }).agentId;
+      const secret = (response.body as { secret?: string }).secret;
       assertStep(
-        "create agent on the machine sandbox",
-        agent.status === 201 && typeof machineAgentId === "string",
-        `status ${agent.status}: ${JSON.stringify(agent.body)}`,
+        "create account (core, admin bearer)",
+        response.status === 201 && typeof secret === "string",
+        `status ${response.status}: ${JSON.stringify(response.body)}`,
       );
-      const statusUrl = await startRun(
-        `${eventId}-machine`,
-        computer ? "What app is in front?" : "Run hostname.",
-        machineAgentId,
-      );
-      const finalStatus = await pollRunStatus(statusUrl, accountSecret);
-      if (computer) {
-        assertStep(
-          "agent screenshot ran on this machine and the reply names an app",
-          finalStatus.status === "completed" &&
-            daemonOutput.includes("  screenshot") &&
-            JSON.stringify(finalStatus.response ?? "").length > 2,
-          `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
-        );
 
-        return;
-      }
-      assertStep(
-        "agent bash ran on this machine and the reply names this host",
-        finalStatus.status === "completed" &&
-          JSON.stringify(finalStatus.response ?? "").includes(hostname()) &&
-          daemonOutput.includes("$ "),
-        `${JSON.stringify(finalStatus)}\n${daemonOutput}`,
-      );
-    } finally {
-      process.off("exit", stopDaemon);
-      stopDaemon();
+      return secret;
+    });
+    const context: VerifyContext = {
+      ...smokeModel(),
+      accountSecret: accountSecret,
+      coreLogPath: join(instanceDir(state.instanceId), "logs", "core.log"),
+      gatewayUrl: gatewayUrl,
+      measure: measure,
+      runId: runId,
+    };
+    for (const verifyCase of verifyCases) {
+      console.log(`\n${verifyCase.name}`);
+      await verifyCase.run(context);
     }
-  });
+  } catch (error) {
+    if (!(error instanceof VerifyFailure)) throw error;
+    failed = error;
+    console.error(`  FAIL ${error.step}\n       ${error.detail}`);
+  }
 
   const totalMs = Date.now() - startedAt;
-  recordPerf(state.instanceId, "verify", perf, totalMs);
+  recordPerf(state.instanceId, "verify", perf, totalMs, failed?.step);
   printPerfBreakdown(perf, totalMs);
+  if (failed) process.exit(1);
   console.log(`\nverify passed in ${(totalMs / 1000).toFixed(1)}s`);
 }
 
@@ -621,6 +406,10 @@ function ensureConvexContainer(state: InstanceState): void {
     `${state.ports.convexSite}:3211`,
     "-v",
     `${dataVolumeName(state.instanceId)}:/convex/data`,
+    // Convex calls core on the host. Docker Desktop resolves this name on its
+    // own, Linux (CI) only with this mapping.
+    "--add-host",
+    "host.docker.internal:host-gateway",
     "-e",
     `INSTANCE_NAME=${state.instanceId}`,
     "-e",
@@ -660,6 +449,9 @@ function runConvexCli(state: InstanceState, args: string[]): void {
     env: {
       ...process.env,
       CONVEX_DEPLOY_KEY: undefined,
+      // Empty, not unset: the CLI loads packages/convex/.env.local, and a
+      // `convex dev` login leaves a cloud CONVEX_DEPLOYMENT there.
+      CONVEX_DEPLOYMENT: "",
       CONVEX_SELF_HOSTED_ADMIN_KEY: state.adminKey,
       CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${state.ports.convexApi}`,
     },
@@ -840,131 +632,7 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
-// --- model --------------------------------------------------------------
-
-/** Anthropic when its key is set, then OpenAI; null without either. */
-function smokeModel(): SmokeModel | null {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    return {
-      model: { provider: "anthropic", modelId: ANTHROPIC_SMOKE_MODEL },
-      provider: { anthropic: { apiKey: anthropicKey } },
-    };
-  }
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
-    return {
-      model: {
-        provider: "openai",
-        modelId: "gpt-5.6-luna",
-        providerOptions: { openai: { reasoningEffort: "max" } },
-      },
-      provider: { openai: { apiKey: openaiKey } },
-    };
-  }
-
-  return null;
-}
-
 // --- http ---------------------------------------------------------------
-
-function assertStep(step: string, ok: boolean, detail: string): asserts ok {
-  if (ok) {
-    console.log(`  ok  ${step}`);
-
-    return;
-  }
-  console.error(`  FAIL ${step}\n       ${detail}`);
-  process.exit(1);
-}
-
-async function httpJson(
-  url: string,
-  options: { body?: unknown; method: string; token: string },
-): Promise<{ body: unknown; status: number }> {
-  const response = await fetch(url, {
-    method: options.method,
-    signal: AbortSignal.timeout(15_000),
-    headers: {
-      Authorization: `Bearer ${options.token}`,
-      "Content-Type": "application/json",
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  const text = await response.text();
-  let body: unknown = text;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    // not JSON, keep the raw text
-  }
-
-  return { body: body, status: response.status };
-}
-
-async function pollRunStatus(
-  statusUrl: string,
-  token: string,
-): Promise<{ status?: string; response?: unknown }> {
-  const doc = await pollUntil(
-    {
-      initialIntervalMs: 200,
-      maxIntervalMs: 1_500,
-      timeoutMs: RUN_POLL_TIMEOUT_MS,
-    },
-    async () => {
-      try {
-        const response = await httpJson(statusUrl, {
-          method: "GET",
-          token: token,
-        });
-        const body = response.body as { status?: string; response?: unknown };
-
-        return body.status === "completed" || body.status === "failed"
-          ? body
-          : null;
-      } catch {
-        return null; // transient poll failure, retry until the deadline
-      }
-    },
-  );
-
-  return doc ?? { status: "poll-timeout" };
-}
-
-// Repeats attempt() with doubling backoff until it returns non-null or
-// timeoutMs passes. Returns null on timeout.
-async function pollUntil<T>(
-  options: {
-    initialIntervalMs: number;
-    maxIntervalMs: number;
-    timeoutMs: number;
-  },
-  attempt: () => Promise<T | null>,
-): Promise<T | null> {
-  const deadline = Date.now() + options.timeoutMs;
-  let interval = options.initialIntervalMs;
-  while (Date.now() < deadline) {
-    const result = await attempt();
-    if (result !== null) return result;
-    await Bun.sleep(Math.min(interval, Math.max(deadline - Date.now(), 0)));
-    interval = Math.min(interval * 2, options.maxIntervalMs);
-  }
-
-  return null;
-}
-
-async function probeHttp(url: string): Promise<number | null> {
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(3_000),
-    });
-
-    return response.status;
-  } catch {
-    return null;
-  }
-}
 
 async function waitForHttp(
   url: string,
@@ -995,43 +663,6 @@ async function waitForHttp(
 
 // --- perf recording -----------------------------------------------------
 
-// The prepare timings core logged for one run. Core scopes the event id under
-// the account and agent, so the public id is matched as a suffix. The last
-// match wins, since a retried run prepares again.
-function contextPreparedLog(
-  instanceId: string,
-  eventId: string,
-): ContextPreparedLog | null {
-  return lastJsonLine<ContextPreparedLog>(
-    join(instanceDir(instanceId), "logs", "core.log"),
-    (record) =>
-      record.eventType === "session.context.prepared" &&
-      record.eventId.endsWith(`:${eventId}`),
-  );
-}
-
-// The logs are append-only, one JSON object per line, so walk from the end and
-// stop at the first match instead of parsing the whole file.
-function lastJsonLine<T>(
-  path: string,
-  matches: (record: T) => boolean,
-): T | null {
-  if (!existsSync(path)) return null;
-  const lines = readFileSync(path, "utf8").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index] as string;
-    if (!line) continue;
-    try {
-      const record = JSON.parse(line) as T;
-      if (matches(record)) return record;
-    } catch {
-      // A partial line from a log that is still being written.
-    }
-  }
-
-  return null;
-}
-
 function lastPerfSummaries(instanceId: string): string[] {
   const path = perfLogPath(instanceId);
 
@@ -1055,10 +686,12 @@ async function measureStep<T>(
   fn: () => T | Promise<T>,
 ): Promise<T> {
   const start = Date.now();
-  const result = await fn();
-  perf.push({ ms: Date.now() - start, step: step });
-
-  return result;
+  // finally, so a failed step still shows what it cost.
+  try {
+    return await fn();
+  } finally {
+    perf.push({ ms: Date.now() - start, step: step });
+  }
 }
 
 function perfLogPath(instanceId: string): string {
@@ -1096,15 +729,19 @@ function processRssMb(pids: (number | undefined)[]): Map<number, number> {
   return rss;
 }
 
+// Appends to perf.jsonl, and under GitHub Actions adds a timing table to the
+// job summary so a pull request shows what each step cost.
 function recordPerf(
   instanceId: string,
   command: string,
   steps: PerfStep[],
   totalMs: number,
+  failed?: string,
 ): void {
   const record: PerfRecord = {
     at: new Date().toISOString(),
     command: command,
+    failed: failed,
     steps: steps,
     totalMs: totalMs,
   };
@@ -1112,6 +749,25 @@ function recordPerf(
   writeFileSync(perfLogPath(instanceId), `${JSON.stringify(record)}\n`, {
     flag: "a",
   });
+
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) return;
+  const rows = steps.map(
+    (entry) => `| ${entry.step} | ${(entry.ms / 1000).toFixed(2)}s |`,
+  );
+  const verdict = failed ? `failed at ${failed}` : "passed";
+  writeFileSync(
+    summaryPath,
+    [
+      `### local-stack ${command}: ${verdict} in ${(totalMs / 1000).toFixed(1)}s`,
+      "",
+      "| step | time |",
+      "| --- | --- |",
+      ...rows,
+      "",
+    ].join("\n"),
+    { flag: "a" },
+  );
 }
 
 // --- instance state -----------------------------------------------------
