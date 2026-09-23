@@ -8,9 +8,37 @@ title: CLI
 
 ```bash
 bun add -g broods      # or: npm install -g broods
-broods                 # list commands
+broods                 # where you are pointed, what to run next, every command
 broods <command> -h    # one command's flags
 ```
+
+## Help and output
+
+`broods` on its own reads `.env.local`, your shell and the stored login, with no network call, and shows where the next command acts:
+
+```text
+broods v0.26.0
+
+  org      beeblast
+  project  my-app
+  stage    development
+  server   gateway.broods.app
+
+Next
+  broods dev          sync on save, tail logs
+  broods run <agent>  chat with an agent
+
+Commands
+  Develop   dev  diff  run  logs  stream
+  Ship      deploy  env  stage
+  Inspect   agent  whoami
+  Account   login  org  project
+  Tools     init  machine  mcp  update
+```
+
+Pages of commands that act on a stage start with the target, so `broods deploy -h` after `broods stage use staging` shows `now  my-app → production  (ignores stage staging)`. `org`, `stage`, `env`, `agent`, `project` and `machine` print their page when run without a subcommand.
+
+Output lines are marked the same way everywhere: `✔` for a completed change, `!` for a warning, `✖` for an error. Errors go to stderr and exit with code 1.
 
 ## Where a command acts
 

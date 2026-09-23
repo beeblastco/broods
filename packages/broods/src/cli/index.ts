@@ -27,6 +27,7 @@ import {
   gatewayUrlForDashboard,
   readStoredAuth,
   stageFromEnv,
+  stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
   type StoredAuthConfig,
@@ -72,11 +73,17 @@ import {
 } from "./utils.ts";
 import {
   formatChoiceRow,
+  formatContext,
+  formatNext,
+  formatTarget,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
+  printError,
   printReadyLine,
+  printSuccess,
   printWarning,
+  type HelpContext,
 } from "./output.ts";
 import {
   isNewerVersion,
@@ -109,40 +116,27 @@ const GLOBAL_OPTIONS = `Global options:
   --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
   -h, --help            Show this help`;
 
-const HELP = `broods v${VERSION}
+// One line per group: each command's own page carries its description.
+const COMMAND_GROUPS = `Commands
+  Develop   dev  diff  run  logs  stream
+  Ship      deploy  env  stage
+  Inspect   agent  whoami
+  Account   login  org  project
+  Tools     init  machine  mcp  update`;
 
-Usage: broods <command> [subcommand] [options]
-
-Project:
-  init                 Create a broods/ project shell
-  project              List the org's projects, or delete one
-  dev                  Watch + sync the current stage and live-tail agent logs
-  diff                 Show local desired state vs remote state
-  deploy               Sync Production once and write BROODS_API_KEY to .env.local
-
-Account:
-  login                Authenticate through the dashboard
-  whoami               Show the login, server, org, plan, project and stage in use
-  org                  List, switch or create organizations
-  stage                List, switch or create stages
-  env                  Store, reveal, list, remove or sync encrypted environment variables
-
-Runtime:
-  agent                Inspect the agents declared in the current scope
-  run <agent> [prompt] Chat with an agent in a terminal UI
-  logs                 Backfill recent logs then live-tail
-  stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
-  machine <sandbox>    Make this computer the sandbox behind a "machine" record
-
-CLI:
-  mcp                  Serve the account config plane to an agent over MCP (stdio)
-  update               Install the newest broods release over this one
-
-Options:
-  -h, --help           Show help for a command (e.g. \`broods org --help\`)
-  -v, --version        Print the CLI version
-
-Run \`broods <command> --help\` to see a command's subcommands and flags.`;
+// Commands that act on one project and stage, so their page leads with it.
+const STAGE_SCOPED_COMMANDS = new Set([
+  "agent",
+  "deploy",
+  "dev",
+  "diff",
+  "env",
+  "logs",
+  "machine",
+  "run",
+  "stage",
+  "stream",
+]);
 
 // One page per command, printed by `broods <command> --help` and by the
 // grouped commands when they are invoked with no subcommand at all.
@@ -347,7 +341,7 @@ async function main(): Promise<void> {
     case undefined:
     case "--help":
     case "-h":
-      console.log(HELP);
+      console.log(renderHelp(args));
 
       return;
     case "--version":
@@ -361,7 +355,7 @@ async function main(): Promise<void> {
 
   const help = COMMAND_HELP[command];
   if (help && (hasFlag(args, "--help") || hasFlag(args, "-h"))) {
-    console.log(help);
+    console.log(renderCommandHelp(command, args));
 
     return;
   }
@@ -436,14 +430,94 @@ async function main(): Promise<void> {
 
       return;
     default:
-      throw new Error(`Unknown command: ${command}\n\n${HELP}`);
+      throw new Error(`Unknown command: ${command}\n\n${renderHelp(args)}`);
   }
 }
 
 // Falls back to the top-level page so a mistyped key still prints something
 // useful instead of "undefined" inside an error message.
 function commandHelp(command: string): string {
-  return COMMAND_HELP[command] ?? HELP;
+  return COMMAND_HELP[command] ?? renderHelp([]);
+}
+
+/**
+ * Where the next command acts, from local state only: help runs offline, so a
+ * shell export wins over `.env.local` here exactly as it does for commands.
+ */
+function helpContext(args: string[]): HelpContext {
+  const runtime = loadBroodsRuntimeConfig();
+  const baseUrl = optionValue(args, "--base-url") ?? runtime.baseUrl;
+  const auth = readStoredAuth(baseUrl);
+  const server = stripTrailingSlash(
+    baseUrl ?? auth?.baseUrl ?? DEFAULT_CORE_BASE_URL,
+  );
+
+  return {
+    loggedIn: auth !== null,
+    org: auth?.org?.name,
+    project: optionValue(args, "--project") ?? runtime.project,
+    projectGuess: inferProjectName(process.cwd()),
+    server: server.replace(/^https?:\/\//, ""),
+    stage: optionValue(args, "--stage") ?? runtime.stage ?? "development",
+  };
+}
+
+// The one or two commands that move this directory forward from where it is.
+function nextCommands(context: HelpContext): [string, string][] {
+  if (!context.loggedIn) {
+    return [["broods login", "sign in through the dashboard"]];
+  }
+  if (!context.project) {
+    return [["broods dev", "create a project and sync on save"]];
+  }
+
+  return [
+    ["broods dev", "sync on save, tail logs"],
+    ["broods run <agent>", "chat with an agent"],
+  ];
+}
+
+// A command page, led by what it would act on when the command is stage-scoped.
+function renderCommandHelp(command: string, args: string[]): string {
+  const page = commandHelp(command);
+  if (!STAGE_SCOPED_COMMANDS.has(command)) return page;
+  const context = helpContext(args);
+  const project = context.project ?? context.projectGuess;
+  const color = { stream: "stdout" as const };
+  // deploy ignores BROODS_STAGE, so its target is production unless --stage says otherwise.
+  const target =
+    command === "deploy" && optionValue(args, "--stage") === undefined
+      ? formatTarget(
+          project,
+          "production",
+          context.stage === "production"
+            ? undefined
+            : `ignores stage ${context.stage}`,
+          color,
+        )
+      : formatTarget(project, context.stage, undefined, color);
+
+  return `${target}\n\n${page}`;
+}
+
+/** Bare `broods`: where you are pointed, what to run next, then every command. */
+function renderHelp(args: string[]): string {
+  const context = helpContext(args);
+  const color = { stream: "stdout" as const };
+
+  return [
+    `broods v${VERSION}`,
+    "",
+    ...formatContext(context, color),
+    "",
+    "Next",
+    ...formatNext(nextCommands(context), color),
+    "",
+    COMMAND_GROUPS,
+    "",
+    "Usage: broods <command> [options]    -h, --help    -v, --version",
+    "Run `broods <command> --help` for a command's flags.",
+  ].join("\n");
 }
 
 async function init(args: string[]): Promise<void> {
@@ -468,7 +542,7 @@ async function init(args: string[]): Promise<void> {
     force: force,
   });
   await ensureModuleType();
-  console.log(`Created ${PROJECT_DIR}/`);
+  printSuccess(`Created ${PROJECT_DIR}/`);
 }
 
 async function login(args: string[]): Promise<void> {
@@ -491,7 +565,7 @@ async function login(args: string[]): Promise<void> {
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
   const org = auth.org ? `${auth.org.name} (${auth.org.slug})` : undefined;
   const account = auth.account?.username;
-  console.log(`Logged in to ${auth.dashboardUrl}`);
+  printSuccess(`Logged in to ${auth.dashboardUrl}`);
   if (user) console.log(`User: ${user}`);
   if (org) console.log(`Org: ${org}`);
   if (account) console.log(`Account: ${account}`);
@@ -518,7 +592,7 @@ async function writeRuntimeKeyForLogin(
     const key = await client.getRuntimeKey(project, stage);
     if (key?.apiKey) {
       await writeEnvValue("BROODS_API_KEY", key.apiKey);
-      console.log(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
+      printSuccess(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
     }
   } catch {
     // Login must not fail because the key fetch did.
@@ -608,7 +682,7 @@ async function printRuntimeKeyStatus(
   }
   if (keyError) {
     console.log("Runtime key: unavailable");
-    printWarning(`⚠ Could not read the runtime key: ${keyError}`);
+    printWarning(`Could not read the runtime key: ${keyError}`);
   } else if (!remoteKey?.apiKey) {
     console.log("Runtime key: none for this scope");
     printWarning(
@@ -624,7 +698,7 @@ async function printRuntimeKeyStatus(
   } else {
     console.log(`Runtime key: ${remoteKey.keyHint} expected`);
     printWarning(
-      `⚠ BROODS_API_KEY from ${keySource} belongs to a different org or stage. Run \`broods stage use ` +
+      `BROODS_API_KEY from ${keySource} belongs to a different org or stage. Run \`broods stage use ` +
         `${scope.stage}\` to repoint it.`,
     );
   }
@@ -804,7 +878,9 @@ async function projectCommand(args: string[]): Promise<void> {
   // re-resolves could purge a different project than the one just confirmed.
   const deleted = await client.deleteProject(target.id);
   if (!deleted) throw new Error(`Project ${target.name} was not found.`);
-  console.log(`Deleted project ${deleted.name} (${describeContents(deleted)})`);
+  printSuccess(
+    `Deleted project ${deleted.name} (${describeContents(deleted)})`,
+  );
   if (deleted.name === scope.project || deleted.slug === scope.project) {
     console.log(
       "That was the project this directory points at. Update BROODS_PROJECT in .env.local.",
@@ -891,7 +967,7 @@ async function stageCommand(args: string[]): Promise<void> {
   if (!name.trim()) throw new Error("Stage name is required.");
   const from = optionValue(args, "--from");
   const created = await client.createStage(scope.project, name, from);
-  console.log(
+  printSuccess(
     `Created stage ${created.stage.name} in ${scope.project}${created.clonedFrom ? ` from ${created.clonedFrom}` : ""}`,
   );
   if (created.clonedFrom) {
@@ -969,7 +1045,7 @@ async function deploy(args: string[]): Promise<void> {
   );
   await ensureGitIgnore();
   await ensureModuleType();
-  console.log(
+  printSuccess(
     `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.stage}`,
   );
   await applyDeploymentKey(result.deployment);
@@ -986,7 +1062,7 @@ async function applyDeploymentKey(
   if (!deployment) return;
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
-    console.log(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
+    printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
 
     return;
   }
@@ -997,7 +1073,7 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   const missingPolicies = result.warnings?.missingPolicies ?? [];
   if (missingPolicies.length > 0) {
     printWarning(
-      `⚠ ${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
+      `${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
         `in this deploy. One that is not an existing policy id refuses every action ` +
         `at runtime: ${missingPolicies.join(", ")}`,
     );
@@ -1216,7 +1292,7 @@ async function ensureAgentSkill(force: boolean): Promise<void> {
   const onboardPath = resolve(root, "scripts", "onboard.sh");
   await writeFile(onboardPath, agentSkillOnboardText);
   await chmod(onboardPath, 0o755);
-  console.log(`Installed the broods agent skill at ${AGENT_SKILL_DIR}/`);
+  printSuccess(`Installed the broods agent skill at ${AGENT_SKILL_DIR}/`);
 }
 
 /** True when any existing component of relPath under cwd is a symlink. */
@@ -1262,7 +1338,7 @@ async function ensureProjectShell(): Promise<void> {
     "_generated\n.cache\n",
     false,
   );
-  console.log(`Created starter ${PROJECT_DIR}/`);
+  printSuccess(`Created starter ${PROJECT_DIR}/`);
 }
 
 async function ensureLocalDevDefaults(args: string[]): Promise<void> {
@@ -1436,7 +1512,7 @@ async function syncRuntimeKeyForScope(
     key = await client.getRuntimeKey(scope.project, scope.stage);
   } catch (error) {
     printWarning(
-      `⚠ Could not read the runtime key for ${scope.project}/${scope.stage} ` +
+      `Could not read the runtime key for ${scope.project}/${scope.stage} ` +
         `(${error instanceof Error ? error.message : String(error)}). ` +
         "BROODS_API_KEY still points at the previous scope. Run `broods whoami` to check it.",
     );
@@ -1445,7 +1521,7 @@ async function syncRuntimeKeyForScope(
   }
   if (!key?.apiKey) {
     printWarning(
-      `⚠ ${scope.project}/${scope.stage} is not synced here yet, so BROODS_API_KEY still points at the previous scope. Run \`broods dev\`.`,
+      `${scope.project}/${scope.stage} is not synced here yet, so BROODS_API_KEY still points at the previous scope. Run \`broods dev\`.`,
     );
 
     return;
@@ -1457,7 +1533,7 @@ async function syncRuntimeKeyForScope(
   if (!shadowed && process.env.BROODS_API_KEY === key.apiKey) return;
 
   await writeEnvValue("BROODS_API_KEY", key.apiKey);
-  console.log(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
+  printSuccess(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
   warnShellShadowedEnv("BROODS_API_KEY", shadowed);
 }
 
@@ -1469,7 +1545,7 @@ async function syncRuntimeKeyForScope(
 function warnShellShadowedEnv(name: string, shadowed: boolean): void {
   if (!shadowed) return;
   printWarning(
-    `⚠ ${name} is exported in your shell, which wins over .env.local. ` +
+    `${name} is exported in your shell, which wins over .env.local. ` +
       `Run \`unset ${name}\` or the next broods command keeps the old value.`,
   );
 }
@@ -1710,7 +1786,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   );
   let pruned = false;
   if (undecided.length > 0) {
-    printWarning("⚠ These remote resources are no longer declared locally:");
+    printWarning("These remote resources are no longer declared locally:");
     printDiffEntries(undecided);
     if (
       await promptConfirm(
@@ -1743,7 +1819,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
       .map((entry) => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
-      `⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+      `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
     );
   }
 
@@ -1872,13 +1948,13 @@ function printEnvDriftWarning(refs: EnvRef[], target: string): void {
   const unverified = namesInState(refs, "unverified");
   if (drifted.length > 0) {
     printWarning(
-      `⚠ .env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")}. ` +
+      `.env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")}. ` +
         "Run `broods env sync` to push the local values.",
     );
   }
   if (unverified.length > 0) {
     printWarning(
-      `⚠ ${target} stored ${unverified.length} variable(s) before value digests, so nothing can compare ` +
+      `${target} stored ${unverified.length} variable(s) before value digests, so nothing can compare ` +
         `them: ${unverified.join(", ")}. Run \`broods env sync\` to bring them in step.`,
     );
   }
@@ -2030,14 +2106,14 @@ async function envCommand(args: string[]): Promise<void> {
 
   if (isRemove) {
     await client.removeEnv(manifest.project, manifest.stage, name!);
-    console.log(`Removed ${name} from ${target}`);
+    printSuccess(`Removed ${name} from ${target}`);
 
     return;
   }
 
   const value = await promptSecret(name!);
   await client.setEnv(manifest.project, manifest.stage, name!, value);
-  console.log(`Stored ${name} for ${target}`);
+  printSuccess(`Stored ${name} for ${target}`);
 }
 
 /**
@@ -2080,7 +2156,7 @@ async function syncEnvFromLocal(
   const unresolved = namesInState(refs, "unresolved");
   if (unresolved.length > 0) {
     printWarning(
-      `⚠ ${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
+      `${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
         `${unresolved.join(", ")}. Put them in .env.local, or run \`broods env set <NAME>\`.`,
     );
   }
@@ -2198,7 +2274,7 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
 }
 
 // `broods stream` live-tails the whole project/stage log stream until Ctrl-C,
-// with no backfill. Flags are documented in HELP.
+// with no backfill. Flags are documented in COMMAND_HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const session = await openStageSession(args);
   const { project, stage } = session;
@@ -2307,7 +2383,7 @@ async function machineDoctor(request: boolean): Promise<void> {
 }
 
 // `broods logs` backfills recent lines (Loki) then switches to a live tail
-// until Ctrl-C. Flags are documented in HELP.
+// until Ctrl-C. Flags are documented in COMMAND_HELP.
 async function logs(args: string[]): Promise<void> {
   const session = await openStageSession(args);
   const { project, stage } = session;
@@ -2580,7 +2656,7 @@ async function run(args: string[]): Promise<void> {
   // server is still the source of truth, so we also surface its 403 below.
   if ((agent.config as Record<string, unknown>).publicAccess !== true) {
     printWarning(
-      `⚠ Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
+      `Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
         "if the deployed agent has not enabled it, this run will be refused.",
     );
   }
@@ -2926,6 +3002,6 @@ async function mcp(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  printError(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

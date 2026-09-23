@@ -18,12 +18,30 @@ const LABEL_BG_YELLOW = "\x1b[43m\x1b[30m\x1b[1m";
 export interface FormatOptions {
   color?: boolean;
   now?: Date;
+  /** Stream the text is written to, which decides whether it is a terminal. */
+  stream?: "stdout" | "stderr";
 }
 
 export interface DeploymentTarget {
   project: string;
   stage: string;
   dashboardUrl: string;
+}
+
+/**
+ * Where the next command acts, read from `.env.local`, the shell and the stored
+ * login only. Help prints it, so it must never cost a network call.
+ */
+export interface HelpContext {
+  loggedIn: boolean;
+  /** Org name stored with the login; unknown for a BROODS_TOKEN login. */
+  org?: string;
+  /** Unset until `broods dev` or `--project` picks one. */
+  project?: string;
+  /** Folder name `broods dev` would suggest when no project is set. */
+  projectGuess: string;
+  server: string;
+  stage: string;
 }
 
 /**
@@ -38,6 +56,28 @@ export function formatChoiceRow(
   const row = `${current ? "*" : " "} ${text}`;
 
   return current ? paint(row, `${BOLD}${CYAN}`, shouldUseColor(options)) : row;
+}
+
+/** The `org / project / stage / server` block at the top of bare `broods`. */
+export function formatContext(
+  context: HelpContext,
+  options: FormatOptions = {},
+): string[] {
+  const color = shouldUseColor(options);
+  const label = (name: string): string => paint(name.padEnd(9), DIM, color);
+  const org = !context.loggedIn
+    ? paint("not logged in", YELLOW, color)
+    : (context.org ?? paint("unknown, run broods whoami", DIM, color));
+  const project =
+    context.project ??
+    `none ${paint(`(${context.projectGuess} from folder name)`, DIM, color)}`;
+
+  return [
+    `  ${label("org")}${org}`,
+    `  ${label("project")}${project}`,
+    `  ${label("stage")}${paintStage(context.stage, color)}`,
+    `  ${label("server")}${context.server}`,
+  ];
 }
 
 export function formatDeploymentTarget(
@@ -98,6 +138,28 @@ export function formatEnvSync(
   return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
 }
 
+/** `✖ message`, red mark on the first line only so a trailing help page stays plain. */
+export function formatError(
+  message: string,
+  options: FormatOptions = {},
+): string {
+  return `${paint("✖", RED, shouldUseColor(options))} ${message}`;
+}
+
+/** Suggested commands, name then a dimmed reason, aligned in one column. */
+export function formatNext(
+  entries: readonly (readonly [string, string])[],
+  options: FormatOptions = {},
+): string[] {
+  const color = shouldUseColor(options);
+  const width = Math.max(...entries.map(([command]) => command.length)) + 2;
+
+  return entries.map(
+    ([command, reason]) =>
+      `  ${command.padEnd(width)}${paint(reason, DIM, color)}`,
+  );
+}
+
 export function formatReadyLine(
   durationMs: number,
   options: FormatOptions = {},
@@ -107,11 +169,34 @@ export function formatReadyLine(
   return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
 }
 
+export function formatSuccess(
+  message: string,
+  options: FormatOptions = {},
+): string {
+  return `${paint("✔", GREEN, shouldUseColor(options))} ${message}`;
+}
+
+/**
+ * What a command page acts on right now, e.g. `now  my-app → production`.
+ * `note` explains a target that differs from the current stage.
+ */
+export function formatTarget(
+  project: string,
+  stage: string,
+  note: string | undefined,
+  options: FormatOptions = {},
+): string {
+  const color = shouldUseColor(options);
+  const suffix = note ? `  ${paint(`(${note})`, DIM, color)}` : "";
+
+  return `  ${paint("now", DIM, color)}  ${project} → ${paintStage(stage, color)}${suffix}`;
+}
+
 export function formatWarning(
   message: string,
   options: FormatOptions = {},
 ): string {
-  return paint(message, YELLOW, shouldUseColor(options));
+  return paint(`! ${message}`, YELLOW, shouldUseColor(options));
 }
 
 export function printDeploymentTarget(target: DeploymentTarget): void {
@@ -126,12 +211,20 @@ export function printEnvSync(names: string[]): void {
   console.error(formatEnvSync(names));
 }
 
+export function printError(message: string): void {
+  console.error(formatError(message, { stream: "stderr" }));
+}
+
 export function printReadyLine(durationMs: number): void {
   console.error(formatReadyLine(durationMs));
 }
 
+export function printSuccess(message: string): void {
+  console.log(formatSuccess(message, { stream: "stdout" }));
+}
+
 export function printWarning(message: string): void {
-  console.log(formatWarning(message));
+  console.log(formatWarning(message, { stream: "stdout" }));
 }
 
 function formatDiffMarker(
@@ -155,12 +248,21 @@ function paint(value: string, style: string, color: boolean): string {
   return color ? `${style}${value}${RESET}` : value;
 }
 
+// Green for development, yellow for anything else, matching the dev banner.
+function paintStage(stage: string, color: boolean): string {
+  const development = stageDisplayName(stage) === "Development";
+
+  return paint(stage, development ? GREEN : YELLOW, color);
+}
+
 function shouldUseColor(options: FormatOptions): boolean {
   if (options.color !== undefined) return options.color;
   if (Object.hasOwn(process.env, "NO_COLOR")) return false;
   if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
 
-  return process.stderr.isTTY && process.env.TERM !== "dumb";
+  const stream = options.stream === "stdout" ? process.stdout : process.stderr;
+
+  return stream.isTTY && process.env.TERM !== "dumb";
 }
 
 /**

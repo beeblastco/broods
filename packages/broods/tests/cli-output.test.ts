@@ -3,10 +3,14 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  formatContext,
   formatDeploymentTarget,
   formatDiffEntries,
   formatEnvSync,
+  formatError,
   formatReadyLine,
+  formatSuccess,
+  formatTarget,
   formatWarning,
 } from "../src/cli/output.ts";
 import { positionalArgs } from "../src/cli/utils.ts";
@@ -186,10 +190,46 @@ test("formatEnvSync lists the synced env var names", () => {
 });
 
 test("formatWarning renders yellow warning output", () => {
-  expect(formatWarning("⚠ Heads up", { color: false })).toBe("⚠ Heads up");
-  expect(formatWarning("⚠ Heads up", { color: true })).toBe(
-    "\x1b[33m⚠ Heads up\x1b[0m",
+  expect(formatWarning("Heads up", { color: false })).toBe("! Heads up");
+  expect(formatWarning("Heads up", { color: true })).toBe(
+    "\x1b[33m! Heads up\x1b[0m",
   );
+});
+
+test("success and error lines carry their mark", () => {
+  expect(formatSuccess("Synced 2 resources", { color: false })).toBe(
+    "✔ Synced 2 resources",
+  );
+  expect(formatError("Unknown command: x\n\nUsage", { color: false })).toBe(
+    "✖ Unknown command: x\n\nUsage",
+  );
+});
+
+test("formatContext names a missing login and a guessed project", () => {
+  const lines = formatContext(
+    {
+      loggedIn: false,
+      projectGuess: "my-app",
+      server: "gateway.broods.app",
+      stage: "development",
+    },
+    { color: false },
+  );
+
+  expect(lines).toEqual([
+    "  org      not logged in",
+    "  project  none (my-app from folder name)",
+    "  stage    development",
+    "  server   gateway.broods.app",
+  ]);
+});
+
+test("formatTarget explains a target that differs from the stage", () => {
+  expect(
+    formatTarget("my-app", "production", "ignores stage staging", {
+      color: false,
+    }),
+  ).toBe("  now  my-app → production  (ignores stage staging)");
 });
 
 test("positionalArgs drops option values so they cannot become a run prompt", () => {
