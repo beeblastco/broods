@@ -9,6 +9,7 @@ import type { MutationCtx } from "../_generated/server";
 import { normalizeChannelRecordConfig } from "./channelRules";
 import { resourceName, type CliResource } from "./cliSync";
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 /**
  * Inverse of `resolveChannelRecordRefs`: ids back to resource names, and the
@@ -197,15 +198,16 @@ async function assertChannelRecordPlaceIsFree(
   );
   if (!conflict) return;
 
-  throw new Error(
+  throw new ClientError(
     `channelRecord "${options.name}" claims ${options.platform}:${options.externalId}, ` +
       `which record "${conflict.name}" already owns. One place binds to one record.`,
+    "conflict",
   );
 }
 
 function requireChannelRecordString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`channelRecord ${field} must be a non-empty string`);
+    throw new ClientError(`channelRecord ${field} must be a non-empty string`);
   }
 
   return value;
@@ -226,7 +228,7 @@ function resolveChannelRecordRefs(
   config: unknown;
 } {
   if (!isPlainObject(raw)) {
-    throw new Error("channelRecord config must be an object");
+    throw new ClientError("channelRecord config must be an object");
   }
   const {
     platform,

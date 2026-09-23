@@ -24,6 +24,7 @@ import {
   requireSelfAccount,
   writeAudit,
 } from "./shared";
+import { ClientError } from "../../model/clientError";
 
 type AccountHttpRoute =
   | { kind: "self" }
@@ -166,9 +167,10 @@ export function parseAccountRoute(pathname: string): AccountHttpRoute | null {
  * @returns normalized account update input
  */
 function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   if ("config" in value)
-    throw new Error(
+    throw new ClientError(
       "Agent config must be updated through /v1/agents/{agentId}",
     );
   const normalized: AccountUpdateInput = {
@@ -185,7 +187,7 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
       : {}),
   };
   if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include username or description");
+    throw new ClientError("Request body must include username or description");
   }
 
   return normalized;
@@ -199,7 +201,8 @@ function normalizeAccountUpdateInput(value: unknown): AccountUpdateInput {
  */
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -212,7 +215,7 @@ function optionalString(value: unknown, name: string): string | undefined {
  */
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

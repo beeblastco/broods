@@ -25,6 +25,7 @@ import {
   workspaceStorageOwnAuth,
   type WorkspaceStorageConfig,
 } from "./workspaceRules";
+import { ClientError } from "./clientError";
 
 /**
  * One listed workspace file or synthesized folder entry.
@@ -177,7 +178,7 @@ export async function renameWorkspacePath(
   const path = normalizeFilePath(rawPath);
   const newPath = normalizeFilePath(rawNewPath);
   if (newPath === path || newPath.startsWith(`${path}/`))
-    throw new Error("Invalid destination path");
+    throw new ClientError("Invalid destination path");
   const target = await resolveTarget(ref);
   const sourceKey = `${target.prefix}${path}`;
   const destinationKey = `${target.prefix}${newPath}`;
@@ -188,7 +189,7 @@ export async function renameWorkspacePath(
     target.access,
   );
   if (!exact && descendants.length === 0)
-    throw new Error("Workspace path not found");
+    throw new ClientError("Workspace path not found");
 
   if (exact) {
     await ensureS3DirectoryMarkers(
@@ -240,10 +241,10 @@ export async function uploadWorkspaceFile(
 ): Promise<WorkspaceFileEntry> {
   const path = normalizeFilePath(input.path);
   if (typeof input.contentBase64 !== "string")
-    throw new Error("contentBase64 is required");
+    throw new ClientError("contentBase64 is required");
   const content = Buffer.from(input.contentBase64, "base64");
   if (content.byteLength > MAX_WORKSPACE_FILE_BYTES)
-    throw new Error("Workspace uploads must not exceed 512 KiB");
+    throw new ClientError("Workspace uploads must not exceed 512 KiB");
   const target = await resolveTarget(ref);
   const key = `${target.prefix}${path}`;
   await ensureS3DirectoryMarkers(target.bucket, key, target.access);
@@ -280,7 +281,7 @@ export async function workspaceFileDownloadUrl(
   const target = await resolveTarget(ref);
   const key = `${target.prefix}${path}`;
   if (!(await s3ObjectExists(target.bucket, key, target.access)))
-    throw new Error("Workspace file not found");
+    throw new ClientError("Workspace file not found");
 
   return await getS3ObjectUrl(target.bucket, key, {}, target.access);
 }

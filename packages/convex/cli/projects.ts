@@ -25,6 +25,7 @@ import { sha256Hex } from "../model/accountSecrets";
 import { purgeProject } from "../model/cascade";
 import { getProjectForRole } from "../model/ownership/project";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { clientErrorResponse } from "../model/clientError";
 
 // Counts stop at this many rows per table so an org full of large projects
 // cannot push `listByAccount` past Convex's per-transaction read limits. A
@@ -96,16 +97,14 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
 
     return methodNotAllowed(["GET", "DELETE"]);
   } catch (error) {
-    console.error("CLI project request failed", error);
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     if (error instanceof SyntaxError || error instanceof URIError) {
       return jsonError(400, "Request body or path is invalid");
     }
-    const detail = error instanceof Error ? error.message : "";
+    console.error("CLI project request failed", error);
 
-    return jsonError(
-      500,
-      detail ? `Project request failed: ${detail}` : "Project request failed",
-    );
+    return jsonError(500, "Project request failed");
   }
 });
 

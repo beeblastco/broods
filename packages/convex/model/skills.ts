@@ -21,6 +21,7 @@ import {
   readS3Text,
   writeS3Object,
 } from "./s3";
+import { ClientError } from "./clientError";
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
@@ -178,7 +179,7 @@ export async function fetchGitHubSkillFiles(
     declaredBytes > MAX_SKILL_ARCHIVE_BYTES
   ) {
     await response.body.cancel();
-    throw new Error(
+    throw new ClientError(
       `GitHub archive exceeds the ${MAX_SKILL_ARCHIVE_BYTES} byte limit`,
     );
   }
@@ -207,7 +208,7 @@ export async function fetchGitHubSkillFiles(
     });
   }
   if (files.length === 0) {
-    throw new Error("GitHub archive has no files at that path");
+    throw new ClientError("GitHub archive has no files at that path");
   }
 
   return files;
@@ -277,7 +278,9 @@ export async function readCapped(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        throw new Error(`GitHub archive exceeds the ${maxBytes} byte limit`);
+        throw new ClientError(
+          `GitHub archive exceeds the ${maxBytes} byte limit`,
+        );
       }
       chunks.push(value);
     }
@@ -340,24 +343,26 @@ export function validateSkillBundle(
   let totalBytes = 0;
   for (const file of files) {
     if (seen.has(file.path)) {
-      throw new Error(`Duplicate skill file path: ${file.path}`);
+      throw new ClientError(`Duplicate skill file path: ${file.path}`);
     }
     seen.add(file.path);
     totalBytes += file.bytes.byteLength;
     if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new Error(`Skill file is too large: ${file.path}`);
+      throw new ClientError(`Skill file is too large: ${file.path}`);
     }
     if (!isSupportedTextFile(file.path, file.bytes)) {
-      throw new Error(`Skill file must be a supported text file: ${file.path}`);
+      throw new ClientError(
+        `Skill file must be a supported text file: ${file.path}`,
+      );
     }
   }
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new Error("Skill bundle exceeds 30 MB");
+    throw new ClientError("Skill bundle exceeds 30 MB");
   }
 
   const skillFile = files.find((file) => file.path === SKILL_FILE);
   if (!skillFile) {
-    throw new Error("Skill bundle must include SKILL.md at the root");
+    throw new ClientError("Skill bundle must include SKILL.md at the root");
   }
 
   return {

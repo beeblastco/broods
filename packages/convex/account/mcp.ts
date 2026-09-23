@@ -13,6 +13,7 @@ import type { MutationCtx } from "../_generated/server";
 import { assertMcpRow, type McpOauth, type McpTransport } from "../model/mcp";
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 /** Full mcp row validator, shared with the dashboard-facing mcp service. */
 export const mcpDoc = v.object({
@@ -62,10 +63,12 @@ export const create = internalMutation({
     await requireNameFree(ctx, args.stageId, args.name);
     const transport = args.transport ?? "http";
     if (transport === "http" && !args.url) {
-      throw new Error("url must be provided for an http MCP server");
+      throw new ClientError("url must be provided for an http MCP server");
     }
     if (transport === "hosted" && (!args.bundleStorageKey || !args.sha256)) {
-      throw new Error("hosted MCP servers need bundleStorageKey and sha256");
+      throw new ClientError(
+        "hosted MCP servers need bundleStorageKey and sha256",
+      );
     }
     assertMcpRow({
       transport: transport,
@@ -169,11 +172,15 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
-      throw new Error("MCP server does not belong to the supplied accountId");
+      throw new ClientError(
+        "MCP server does not belong to the supplied accountId",
+      );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) {
-      throw new Error("MCP server does not belong to the supplied accountId");
+      throw new ClientError(
+        "MCP server does not belong to the supplied accountId",
+      );
     }
 
     // Release the canvas node: a tombstone that keeps `nodeId` shadows the row
@@ -246,11 +253,15 @@ export const update = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
-      throw new Error("MCP server does not belong to the supplied accountId");
+      throw new ClientError(
+        "MCP server does not belong to the supplied accountId",
+      );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId || doc.status !== "active") {
-      throw new Error("MCP server does not belong to the supplied accountId");
+      throw new ClientError(
+        "MCP server does not belong to the supplied accountId",
+      );
     }
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
@@ -278,7 +289,7 @@ async function requireNameFree(
     )
     .first();
   if (existing) {
-    throw new Error(`name must be unique per stage: ${name}`);
+    throw new ClientError(`name must be unique per stage: ${name}`, "conflict");
   }
 }
 

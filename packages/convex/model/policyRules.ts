@@ -5,6 +5,7 @@
  */
 
 import { isPlainObject } from "./objects";
+import { ClientError } from "./clientError";
 
 export const AGENT_POLICY_ACTIONS = [
   // Gates the turn itself, before any tool runs: "may this person address the
@@ -124,7 +125,8 @@ export function normalizeCreatePolicyInput(value: unknown): {
   description?: string;
   document: PolicyDocument;
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
   const document = normalizePolicyDocument(value.document);
@@ -145,12 +147,12 @@ export function normalizePolicyDocument(
   allowedActions: readonly PolicyAction[] = AGENT_POLICY_ACTIONS,
 ): PolicyDocument {
   if (!isPlainObject(value))
-    throw new Error("policy document must be an object");
+    throw new ClientError("policy document must be an object");
   const document = value;
   if (document.version !== 1)
-    throw new Error("policy document version must be 1");
+    throw new ClientError("policy document version must be 1");
   if (!Array.isArray(document.rules))
-    throw new Error("policy document rules must be an array");
+    throw new ClientError("policy document rules must be an array");
   assertOptionalEnum(document.mode, "policy document mode", [
     "enforce",
     "audit",
@@ -178,7 +180,8 @@ export function normalizeUpdatePolicyInput(value: unknown): {
   document?: PolicyDocument;
   status?: "active" | "deleted";
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const patch: {
     name?: string;
     description?: string | null;
@@ -195,7 +198,7 @@ export function normalizeUpdatePolicyInput(value: unknown): {
     patch.document = normalizePolicyDocument(value.document);
   if (value.status !== undefined) {
     if (value.status !== "active" && value.status !== "deleted") {
-      throw new Error("status must be one of: active, deleted");
+      throw new ClientError("status must be one of: active, deleted");
     }
     patch.status = value.status;
   }
@@ -209,7 +212,7 @@ function assertOptionalEnum<T extends readonly string[]>(
   values: T,
 ): void {
   if (value !== undefined && !values.includes(value as T[number])) {
-    throw new Error(`${name} must be one of: ${values.join(", ")}`);
+    throw new ClientError(`${name} must be one of: ${values.join(", ")}`);
   }
 }
 
@@ -221,7 +224,7 @@ function assertOptionalStringArray(value: unknown, name: string): void {
         (entry) => typeof entry === "string" && entry.trim().length > 0,
       ))
   ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+    throw new ClientError(`${name} must be an array of non-empty strings`);
   }
 }
 
@@ -247,11 +250,11 @@ function isConditionValue(value: unknown): value is PolicyCondition["value"] {
 
 function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   if (!Array.isArray(value))
-    throw new Error(`policy rules[${index}].conditions must be an array`);
+    throw new ClientError(`policy rules[${index}].conditions must be an array`);
 
   return value.map((condition, conditionIndex) => {
     if (!isPlainObject(condition)) {
-      throw new Error(
+      throw new ClientError(
         `policy rules[${index}].conditions[${conditionIndex}] must be an object`,
       );
     }
@@ -266,12 +269,12 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
       ["equals", "notEquals", "in", "notIn", "prefix", "contains"],
     );
     if (record.operator === undefined) {
-      throw new Error(
+      throw new ClientError(
         `policy rules[${index}].conditions[${conditionIndex}].operator is required`,
       );
     }
     if (!isConditionValue(record.value)) {
-      throw new Error(
+      throw new ClientError(
         `policy rules[${index}].conditions[${conditionIndex}].value is invalid`,
       );
     }
@@ -281,7 +284,7 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
       (record.operator === "in" || record.operator === "notIn") &&
       !Array.isArray(record.value)
     ) {
-      throw new Error(
+      throw new ClientError(
         `policy rules[${index}].conditions[${conditionIndex}].value must be an array when operator is ${record.operator}; use ${record.operator === "in" ? "equals" : "notEquals"} to compare one value`,
       );
     }
@@ -300,7 +303,7 @@ function normalizePolicyRule(
   allowedActions: readonly PolicyAction[],
 ): PolicyRule {
   if (!isPlainObject(value))
-    throw new Error(`policy rules[${index}] must be an object`);
+    throw new ClientError(`policy rules[${index}] must be an object`);
   const rule = value;
   const id =
     optionalString(rule.id, `policy rules[${index}].id`) ?? `rule-${index + 1}`;
@@ -309,9 +312,11 @@ function normalizePolicyRule(
     "deny",
   ]);
   if (rule.effect === undefined)
-    throw new Error(`policy rules[${index}].effect is required`);
+    throw new ClientError(`policy rules[${index}].effect is required`);
   if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
-    throw new Error(`policy rules[${index}].actions must be a non-empty array`);
+    throw new ClientError(
+      `policy rules[${index}].actions must be a non-empty array`,
+    );
   }
   for (const action of rule.actions) {
     assertOptionalEnum(
@@ -339,7 +344,7 @@ function normalizeResourceSelector(
   index: number,
 ): PolicyResourceSelector {
   if (!isPlainObject(value))
-    throw new Error(`policy rules[${index}].resources must be an object`);
+    throw new ClientError(`policy rules[${index}].resources must be an object`);
   const selector = value;
   for (const key of Object.keys(selector)) {
     if (
@@ -347,7 +352,7 @@ function normalizeResourceSelector(
         key as (typeof RESOURCE_SELECTOR_KEYS)[number],
       )
     ) {
-      throw new Error(
+      throw new ClientError(
         `policy rules[${index}].resources.${key} is not supported`,
       );
     }
@@ -364,7 +369,8 @@ function normalizeResourceSelector(
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -372,7 +378,7 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0)
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
 
   return value.trim();
 }

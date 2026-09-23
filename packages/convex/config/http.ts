@@ -16,6 +16,7 @@ import {
   type ApiResource,
 } from "../model/apiAuthorization";
 import type { ConfigAuditActor } from "../model/auditEvents";
+import { CLIENT_ERROR_STATUS, clientErrorData } from "../model/clientError";
 import { POLICY_STILL_REFERENCED } from "../model/policyReferences";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
@@ -113,23 +114,20 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
 
     return await dispatchResourceRoute(ctx, req, account._id, actor, route);
   } catch (err) {
-    if (
-      err instanceof Error &&
-      err.message.startsWith(POLICY_STILL_REFERENCED)
-    ) {
-      // The refusal names the agents and channel records that still list the
-      // policy. A role holding only policies:write may not read either, so it
-      // gets the refusal without the names.
-      return jsonError(
-        409,
-        readsPolicyReferences
-          ? err.message
-          : `${POLICY_STILL_REFERENCED} an agent or a channel record still lists this policy. Detach it before deleting it.`,
-      );
+    const clientError = clientErrorData(err);
+    if (clientError) {
+      // The policy refusal names the agents and channel records that still
+      // list the policy. A role holding only policies:write may not read
+      // either, so it gets the refusal without the names.
+      const message =
+        !readsPolicyReferences &&
+        clientError.message.startsWith(POLICY_STILL_REFERENCED)
+          ? `${POLICY_STILL_REFERENCED} an agent or a channel record still lists this policy. Detach it before deleting it.`
+          : clientError.message;
+
+      return jsonError(CLIENT_ERROR_STATUS[clientError.code], message);
     }
-    if (isClientInputError(err)) {
-      return jsonError(clientErrorStatus(err), err.message);
-    }
+    if (err instanceof SyntaxError) return jsonError(400, err.message);
     console.error("config HTTP request failed", err);
 
     return jsonError(500, "Internal server error");
@@ -179,28 +177,6 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
     case "env":
       return apiResource("env", route.name);
   }
-}
-
-/**
- * Map a client-input error to its HTTP status. Core returned 401 for
- * foreign-account skill paths and 404 for dangling agent references
- * (errorResponseForError); everything else is a plain 400.
- * @param error the recognized client-input error
- * @returns the HTTP status core used for this message
- */
-function clientErrorStatus(error: Error): number {
-  if (error.message.startsWith("Skill path belongs to another account:"))
-    return 401;
-  if (error.message.startsWith("Agent name already exists:")) return 409;
-  if (
-    error.message.startsWith("Skill not found:") ||
-    error.message.startsWith("Subagent not found:") ||
-    error.message.startsWith("Agent policy not found:")
-  ) {
-    return 404;
-  }
-
-  return 400;
 }
 
 async function dispatchResourceRoute(
@@ -307,79 +283,6 @@ async function dispatchResourceRoute(
         route.name,
       );
   }
-}
-
-function isClientInputError(error: unknown): error is Error {
-  if (!(error instanceof Error)) return false;
-  if (error instanceof SyntaxError) return true;
-
-  return [
-    "Request body",
-    "source must",
-    "files must",
-    "Each file",
-    "JSON skills",
-    "Skill ",
-    "Duplicate skill ",
-    "Invalid skill ",
-    "Invalid request JSON:",
-    "Invalid skill path:",
-    "Skill path belongs",
-    "Skill not found:",
-    "Subagent not found:",
-    "Agent policy not found:",
-    "Agent name already exists:",
-    "SKILL.md ",
-    "GitHub skill URL ",
-    "GitHub archive ",
-    "url must ",
-    "path ",
-    "path and ",
-    "contentBase64 ",
-    "config must",
-    "config.",
-    "e2b ",
-    "Invalid workspace path",
-    "Invalid workspace file path",
-    "Invalid destination path",
-    "Workspace uploads ",
-    "Workspace file not found",
-    "Workspace path not found",
-    "name must",
-    "username must",
-    "url must",
-    "headers must",
-    "headers names",
-    "headers values",
-    "allowedTools",
-    "disabled must",
-    "MCP server",
-    "agentId must",
-    "Agent config ",
-    "description must",
-    "conversationKey must",
-    "scheduleExpression must",
-    "timezone ",
-    "status must",
-    "policy ",
-    "Policy document",
-    "Policy rule",
-    "Policy does not belong",
-    "roleId must",
-    "ttlSeconds must",
-    "projectId and stageId",
-    "projectId must",
-    "stageId must",
-    "Sandbox config does not belong",
-    "Workspace config does not belong",
-    "events must",
-    "Provide exactly one of",
-    "limit must",
-    "Cron job agentId ",
-    "unknown env vars:",
-    "env name must",
-    "env value must",
-  ].some((prefix) => error.message.startsWith(prefix));
 }
 
 /** Match `/v1/agents/{id}/channels/{type}/directory` and `/v1/agents[/{id}]`. */

@@ -6,6 +6,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { ClientError } from "./clientError";
 
 /** Opens the guard's refusal, so the HTTP layer can answer 409 on it. */
 export const POLICY_STILL_REFERENCED = "Policy still referenced:";
@@ -38,9 +39,10 @@ export async function assertPolicyUnreferenced(
   ].sort();
   if (referencing.length === 0) return;
 
-  throw new Error(
+  throw new ClientError(
     `${POLICY_STILL_REFERENCED} ${referencing.join(", ")} list "${policy.name}". ` +
       "Detach it from those resources before deleting it.",
+    "conflict",
   );
 }
 
