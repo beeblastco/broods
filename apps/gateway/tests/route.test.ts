@@ -145,6 +145,34 @@ test("an unresolvable token is refused and spends auth-failure budget", async ()
   expect(authFailureLimiter.blocked("10.0.0.1")).toBe(true);
 });
 
+test("a core outage during the token check is a 502 that spends no auth-failure budget", async () => {
+  globalThis.fetch = (async () =>
+    new Response("down", { status: 503 })) as unknown as typeof fetch;
+  const authFailureLimiter = new RateLimiter(1, 60_000);
+  const gateway = createGateway(
+    gatewayConfig({ authFailureLimiter: authFailureLimiter }),
+  );
+
+  const response = await gateway.fetch(
+    upgradeRequest("/v1/agents/endpoint-1/ws", { token: "good" }),
+    fakeServer().server,
+  );
+
+  expect(response!.status).toBe(502);
+  expect(authFailureLimiter.blocked("10.0.0.1")).toBe(false);
+});
+
+test("a malformed escape in a socket path is a 400, not a 500", async () => {
+  const gateway = createGateway(gatewayConfig());
+
+  const response = await gateway.fetch(
+    upgradeRequest("/v1/agents/%E0%A4%A/ws", { token: "good" }),
+    fakeServer().server,
+  );
+
+  expect(response!.status).toBe(400);
+});
+
 test("a token scoped to another endpoint cannot attach", async () => {
   globalThis.fetch = scopeFetch();
   const gateway = createGateway(gatewayConfig());
@@ -418,6 +446,7 @@ function limits(overrides: Partial<GatewayLimits> = {}): GatewayLimits {
     backpressureBytes: 1024,
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 1_000,
+    maxRequestBodyBytes: 1024,
     ...overrides,
   };
 }

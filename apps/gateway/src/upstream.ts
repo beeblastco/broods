@@ -2,10 +2,31 @@ import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge
 import type { ObservabilityScope } from "./observability.ts";
 import { jsonError } from "./utils.ts";
 
-type ResolvedObservabilityScope = {
-  scope: ObservabilityScope;
-  coreBaseUrl: string;
-};
+// Headers that describe the client's hop, not the request, so never forwarded.
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
+// Safe to resend to the next core after a network error. A POST may already
+// have run on the first one, so it is never replayed.
+const RETRYABLE_METHODS = new Set(["DELETE", "GET", "HEAD", "OPTIONS", "PUT"]);
+
+/**
+ * A socket credential checked against core. `invalid` means every core refused
+ * the token; `unavailable` means one could not answer, which is an outage and
+ * not the caller's fault.
+ */
+export type SocketScope =
+  | { kind: "resolved"; scope: ObservabilityScope; coreBaseUrl: string }
+  | { kind: "invalid" }
+  | { kind: "unavailable" };
 
 type FetchLike = (
   input: RequestInfo | URL,
@@ -19,6 +40,11 @@ export type ProxyOptions = {
   forwardAccountId?: boolean;
 };
 
+/**
+ * Forwards one request to the first core that accepts it. The client's
+ * `Accept-Encoding` goes along and the body comes back undecoded, so a
+ * compressed answer reaches the client as core sent it.
+ */
 export async function proxyHttp(
   request: Request,
   coreBaseUrls: string[],
@@ -34,9 +60,7 @@ export async function proxyHttp(
   let unreachable = false;
 
   if (options.requestId) headers.set("x-request-id", options.requestId);
-  headers.delete("host");
-  headers.delete("connection");
-  headers.delete("upgrade");
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
   if (options.forwardAccountId !== true) headers.delete("x-account-id");
   // `set`, not `append`: a client copy must never survive.
   headers.set(VIA_GATEWAY_HEADER, "1");
@@ -48,26 +72,31 @@ export async function proxyHttp(
         headers: headers,
         body: body,
         redirect: "manual",
+        signal: request.signal,
+        decompress: false,
       });
     } catch {
       unreachable = true;
+      if (!RETRYABLE_METHODS.has(request.method)) break;
       continue;
     }
 
-    if (response.status !== 401) return responseWithoutEncoding(response);
+    if (response.status !== 401) return response;
   }
 
-  if (response) return responseWithoutEncoding(response);
+  if (response) return response;
   if (unreachable) return jsonError(502, "Upstream is unreachable");
 
   return jsonError(503, "No core upstream is configured");
 }
 
-export async function resolveObservabilityScope(
+/** Resolves the scope a socket token grants, from the first core that knows it. */
+export async function resolveSocketScope(
   token: string,
   coreBaseUrls: string[],
   fetchImpl: FetchLike = fetch,
-): Promise<ResolvedObservabilityScope | null> {
+): Promise<SocketScope> {
+  let unavailable = false;
   for (const coreBaseUrl of coreBaseUrls) {
     try {
       const response = await fetchImpl(
@@ -82,31 +111,19 @@ export async function resolveObservabilityScope(
           signal: AbortSignal.timeout(5_000),
         },
       );
-      if (!response.ok) continue;
-
-      return {
-        scope: (await response.json()) as ObservabilityScope,
-        coreBaseUrl: coreBaseUrl,
-      };
+      if (response.ok) {
+        return {
+          kind: "resolved",
+          scope: (await response.json()) as ObservabilityScope,
+          coreBaseUrl: coreBaseUrl,
+        };
+      }
+      if (response.status !== 401 && response.status !== 403)
+        unavailable = true;
     } catch {
-      continue;
+      unavailable = true;
     }
   }
 
-  return null;
-}
-
-function responseWithoutEncoding(response: Response): Response {
-  if (!response.headers.has("content-encoding")) return response;
-
-  const headers = new Headers(response.headers);
-  headers.delete("content-encoding");
-  headers.delete("content-length");
-  headers.delete("transfer-encoding");
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: headers,
-  });
+  return unavailable ? { kind: "unavailable" } : { kind: "invalid" };
 }

@@ -17,7 +17,7 @@ import {
   isCoreHttpRoute,
   matchAgentWebSocketPath,
 } from "../src/routes.ts";
-import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
+import { proxyHttp, resolveSocketScope } from "../src/upstream.ts";
 import {
   cleanupObservabilitySocket,
   fetchTempoBackfill,
@@ -1269,6 +1269,7 @@ test("uses conservative gateway limit defaults", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 255,
     runStartTimeoutMs: 15_000,
+    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1280,6 +1281,7 @@ test("ignores invalid gateway limit overrides", () => {
       GATEWAY_BACKPRESSURE_BYTES: "-1",
       GATEWAY_IDLE_TIMEOUT_SECONDS: "60",
       GATEWAY_RUN_START_TIMEOUT_MS: "2500",
+      GATEWAY_MAX_REQUEST_BODY_BYTES: "0",
     }),
   ).toEqual({
     maxConnections: 500,
@@ -1287,6 +1289,7 @@ test("ignores invalid gateway limit overrides", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 2500,
+    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1473,7 +1476,7 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
 
 test("routes a runtime key to the matching core upstream", async () => {
   const calls: string[] = [];
-  const resolved = await resolveObservabilityScope(
+  const resolved = await resolveSocketScope(
     "runtime-key",
     ["https://dev.example", "https://prod.example"],
     async (input) => {
@@ -1492,9 +1495,32 @@ test("routes a runtime key to the matching core upstream", async () => {
 
   expect(calls).toHaveLength(2);
   expect(resolved).toMatchObject({
+    kind: "resolved",
     coreBaseUrl: "https://prod.example",
     scope: { stageSlug: "production" },
   });
+});
+
+test("a core that cannot answer is an outage, not a bad token", async () => {
+  const resolve = (
+    answer: () => Promise<Response>,
+  ): ReturnType<typeof resolveSocketScope> =>
+    resolveSocketScope("runtime-key", ["https://core.example"], answer);
+
+  expect(
+    await resolve(async () => new Response("no", { status: 401 })),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(async () => new Response("no", { status: 403 })),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(async () => new Response("down", { status: 503 })),
+  ).toEqual({ kind: "unavailable" });
+  expect(
+    await resolve(async () => {
+      throw new Error("timed out");
+    }),
+  ).toEqual({ kind: "unavailable" });
 });
 
 test("proxyHttp strips hop-by-hop headers and preserves method query and body", async () => {
@@ -1690,9 +1716,6 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: {
         accountId: "acct-1",
         projectSlug: "shop",
@@ -3130,6 +3153,30 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   );
 });
 
+test("proxyHttp never replays a POST to the next upstream after a network error", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    throw new Error("connection reset");
+  }) as unknown as typeof fetch;
+
+  try {
+    const response = await proxyHttp(
+      new Request("https://gateway.example/v1/runs", {
+        method: "POST",
+        body: "{}",
+      }),
+      ["https://dev.example", "https://prod.example"],
+    );
+
+    expect(response.status).toBe(502);
+    expect(calls).toEqual(["https://dev.example/v1/runs"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("proxyHttp returns 502 when every upstream is unreachable", async () => {
   const response = await proxyHttp(
     new Request("https://gateway.example.com/v1/agents"),
@@ -3334,9 +3381,6 @@ function observabilitySocket(): {
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: TEST_SCOPE,
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
