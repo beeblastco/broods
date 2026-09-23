@@ -323,9 +323,15 @@ async function verify(): Promise<void> {
       await verifyCase.run(context);
     }
   } catch (error) {
-    if (!(error instanceof VerifyFailure)) throw error;
-    failed = error;
-    console.error(`  FAIL ${error.step}\n       ${error.detail}`);
+    // A thrown SDK or fetch error fails the run the same way a check does.
+    failed =
+      error instanceof VerifyFailure
+        ? error
+        : new VerifyFailure(
+            "unexpected error",
+            error instanceof Error ? error.message : String(error),
+          );
+    console.error(`  FAIL ${failed.step}\n       ${failed.detail}`);
   }
 
   const totalMs = Date.now() - startedAt;
