@@ -11,6 +11,7 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
+import { timingSafeStringEqual } from "./auth.ts";
 import { isAllowedId } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
@@ -209,7 +210,10 @@ export function createDiscordChannel(
 
     authenticate: function (req) {
       if ("x-discord-gateway-token" in req.headers) {
-        return req.headers["x-discord-gateway-token"] === botToken;
+        return timingSafeStringEqual(
+          req.headers["x-discord-gateway-token"],
+          botToken,
+        );
       }
 
       return discord.verifyRequestSignature(
