@@ -29,6 +29,9 @@ import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { shellQuote, stringRecord } from "./utils.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
+// Raw bytes per readFile exec. Base64 grows them to 171 KB, under the 256 KB of
+// stdout one MicroVM exec returns.
+const READ_CHUNK_BYTES = 128 * 1024;
 
 export interface MicrovmHarnessDriverOptions {
   /** Existing core reservation identity, already scoped to its account/agent. */
@@ -257,16 +260,22 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
   async readFile(
     options: BroodsSandboxFileOptions,
   ): Promise<Uint8Array | null> {
-    options.abortSignal?.throwIfAborted();
     const path = shellQuote(options.path);
-    const result = await this.#shell.exec(
-      `if [ -f ${path} ]; then base64 < ${path} | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
-      options.abortSignal ? { abortSignal: options.abortSignal } : undefined,
-    );
-    if (result.exitCode === 44) return null;
-    if (result.exitCode !== 0) throw microvmError("read file", result);
+    const chunks: Buffer[] = [];
+    for (let offset = 0; ; offset += READ_CHUNK_BYTES) {
+      options.abortSignal?.throwIfAborted();
+      const result = await this.#shell.exec(
+        `if [ -f ${path} ]; then tail -c +${offset + 1} ${path} | head -c ${READ_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
+        options.abortSignal ? { abortSignal: options.abortSignal } : undefined,
+      );
+      if (result.exitCode === 44) return null;
+      if (result.exitCode !== 0) throw microvmError("read file", result);
+      const chunk = Buffer.from(result.stdout.trim(), "base64");
+      chunks.push(chunk);
+      if (chunk.byteLength < READ_CHUNK_BYTES) break;
+    }
 
-    return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
+    return new Uint8Array(Buffer.concat(chunks));
   }
 
   async writeFile(options: BroodsSandboxWriteFileOptions): Promise<void> {

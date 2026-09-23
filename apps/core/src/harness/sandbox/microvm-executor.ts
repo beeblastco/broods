@@ -311,6 +311,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       env: this.#sandboxEnvVars(request.env),
     });
     request.abortSignal?.throwIfAborted();
+    // Cut output ends in the server's truncation marker, which harness callers
+    // would parse or decode as data.
+    if (response.truncated === true) {
+      throw new Error("MicroVM harness command output passed the exec cap");
+    }
 
     return {
       stdout: response.stdout,

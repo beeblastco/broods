@@ -54,6 +54,15 @@ describe("MicrovmHarnessDriver", () => {
     expect(
       await created.session.readFile({ path: "/workspace/missing" }),
     ).toBeNull();
+    // Past one exec's 256 KB stdout cap, so it must come back in chunks.
+    const large = new Uint8Array(300_000).map((_, index) => index % 251);
+    await created.session.writeFile({
+      path: "/workspace/large.bin",
+      content: large,
+    });
+    expect(
+      await created.session.readFile({ path: "/workspace/large.bin" }),
+    ).toEqual(large);
 
     const portUrl = await created.session.getPortUrl!({
       port: 4_321,
@@ -225,12 +234,19 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
 
           return result();
         }
-        const read = request.code.match(/if \[ -f '([^']+)' \]/);
+        const read = request.code.match(
+          /if \[ -f '([^']+)' \]; then tail -c \+(\d+) .* head -c (\d+)/,
+        );
         if (read) {
           const content = files.get(read[1]!);
+          const start = Number(read[2]) - 1;
 
           return content
-            ? result(Buffer.from(content).toString("base64"))
+            ? result(
+                Buffer.from(
+                  content.slice(start, start + Number(read[3])),
+                ).toString("base64"),
+              )
             : result("", "", 44);
         }
 
