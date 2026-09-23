@@ -35,8 +35,6 @@ export class RoomCrypto {
   private readonly machine: OlmMachine;
   /** OlmMachine wants one key claim and one outgoing-request flush at a time. */
   private queue: Promise<unknown> = Promise.resolve();
-  /** Room id to its joined members, dropped when a sync reports device changes. */
-  private readonly roomMembers = new Map<string, string[]>();
 
   private constructor(client: MatrixClient, machine: OlmMachine) {
     this.client = client;
@@ -90,12 +88,15 @@ export class RoomCrypto {
     type: string,
     content: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    // Fetched outside the lock: a member list is the homeserver's, not the
-    // machine's, so holding the store for it stalls every other room.
-    const joined = await this.members(roomId);
+    // Fetched on every send, never cached: the sync filter drops membership
+    // events, so a cached list would keep sharing keys with someone who left.
+    // Outside the lock, because holding the store for it stalls every room.
+    const joined = await this.client.joinedMembers(roomId);
 
     return this.exclusive(async (): Promise<Record<string, unknown>> => {
-      const members = joined.map((userId): UserId => new UserId(userId));
+      const members = [...joined.keys()].map(
+        (userId): UserId => new UserId(userId),
+      );
       const room = new RoomId(roomId);
       await this.machine.updateTrackedUsers(members);
       await this.flushOutgoing();
@@ -141,16 +142,6 @@ export class RoomCrypto {
         response.device_one_time_keys_count ?? {},
         response.device_unused_fallback_key_types ?? [],
       );
-      // A user who joins an encrypted room arrives in `changed` and one who
-      // leaves arrives in `left`, so either list means a cached member list is
-      // stale. `left` matters most: `encrypt` hands that list to
-      // `shareRoomKey`, which would give a departed user the next room key.
-      if (
-        response.device_lists?.changed?.length ||
-        response.device_lists?.left?.length
-      ) {
-        this.roomMembers.clear();
-      }
       try {
         await this.flushOutgoing();
       } catch (error) {
@@ -173,16 +164,6 @@ export class RoomCrypto {
     for (const request of await this.machine.outgoingRequests()) {
       await this.send(request);
     }
-  }
-
-  /** Joined user ids, cached so a reply does not cost a round trip to list them. */
-  private async members(roomId: string): Promise<string[]> {
-    const cached = this.roomMembers.get(roomId);
-    if (cached) return cached;
-    const joined = [...(await this.client.joinedMembers(roomId)).keys()];
-    this.roomMembers.set(roomId, joined);
-
-    return joined;
   }
 
   private async send(request: OutgoingRequest): Promise<void> {
