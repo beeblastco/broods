@@ -3,7 +3,6 @@ import {
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
-import { parseJson } from "./utils.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 // Two of core's largest machine frames (4 MiB), so one still in flight never
@@ -61,13 +60,20 @@ export function openTerminalTicketWithSecrets(
 
 export function isSessionInitFrame(frame: string): boolean {
   if (!frame.startsWith("{")) return false;
-  const parsed = parseJson(frame);
 
-  return (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    (parsed as { type?: unknown }).type === "session_init"
-  );
+  // Parsed here, not with utils.ts `parseJson`: core's machine relay test
+  // compiles this file under core's tsconfig, which utils.ts does not pass.
+  try {
+    const parsed: unknown = JSON.parse(frame);
+
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { type?: unknown }).type === "session_init"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function openTerminalUpstream(
