@@ -162,7 +162,6 @@ BROODS_STAGE by design. Pass --stage to deploy anywhere else.
 Options:
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime API key and write it to .env.local
-  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -175,6 +174,7 @@ Options:
   --once                Sync a single time and exit (no watch, no log stream)
   --level <lvl>         Minimum level for the log tail DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Tail INFO and up (DEBUG is dashboard-only)
+  --region <region>     Service region for a new project (default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
@@ -246,7 +246,8 @@ With --mcp <file>, the stdio MCP servers in that file run here for MCP rows
 whose sandbox is this record. The file has the .mcp.json shape Claude Code and
 Cursor read, and it never leaves this computer.
 
-Authenticates with BROODS_API_KEY from .env.local, like \`broods logs\`.
+Authenticates with your \`broods login\`, like \`broods logs\`, and needs a
+deployed stage. The stage runtime key cannot open the machine socket.
 
 Options:
   --cwd <dir>           Working directory for commands (default: current directory)
@@ -2241,7 +2242,6 @@ async function machine(args: string[]): Promise<void> {
   const sandbox = positionalArgs(args)[0];
   if (!sandbox) {
     console.log(COMMAND_HELP.machine);
-    process.exitCode = 1;
 
     return;
   }
@@ -2541,7 +2541,7 @@ async function run(args: string[]): Promise<void> {
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (!interactive && !prompt) {
     throw new Error(
-      "Usage: broods run <agent> <prompt>. Omit the prompt for an interactive session, which requires a TTY.",
+      "A prompt is required when output is redirected: broods run <agent> <prompt>. Run it in a terminal to chat without one.",
     );
   }
   const { manifest, config } = await compileProject({
