@@ -94,9 +94,9 @@ export class ThreadDirectory {
       THREAD_CHANNEL_TYPES.has(channel.type) && channel.parent_id
         ? { id: channel.id, parent_id: channel.parent_id }
         : null;
-    const oldest = this.cache.keys().next().value;
-    if (this.cache.size >= MAX_CACHED_CHANNELS && oldest !== undefined) {
-      this.cache.delete(oldest);
+    if (this.cache.size >= MAX_CACHED_CHANNELS) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
     }
     this.cache.set(channelId, thread);
 

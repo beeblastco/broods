@@ -42,10 +42,10 @@ export interface ForwardAuth {
 }
 
 /**
- * Delivers one body to every target at once. Never throws: a webhook that
- * still rejects or times out on its last attempt is logged and skipped, so one dead agent cannot stall
- * the socket or sync loop waiting on it. `fields` adds channel detail to those
- * two log lines.
+ * Delivers one body to every target at once. Never throws: a webhook that still
+ * rejects or times out on its last attempt is logged and skipped, so one dead
+ * agent cannot stall the socket or sync loop waiting on it. `fields` adds
+ * channel detail to those two log lines.
  */
 export async function fanOut(
   targets: readonly ForwardTarget[],

@@ -55,41 +55,10 @@ function captureFetch(status = 200): Capture[] {
   return calls;
 }
 
-afterEach(() => {
+afterEach((): void => {
   jest.useRealTimers();
   globalThis.fetch = realFetch;
 });
-
-/** Answers each POST with the next status, or throws for "reset". */
-function scriptFetch(statuses: readonly (number | "reset")[]): {
-  calls: number;
-} {
-  const seen = { calls: 0 };
-  globalThis.fetch = (async (): Promise<Response> => {
-    const status = statuses[seen.calls] ?? 200;
-    seen.calls += 1;
-    if (status === "reset") throw new Error("connection reset");
-
-    return new Response("", { status: status });
-  }) as unknown as typeof fetch;
-
-  return seen;
-}
-
-/** Runs `work` to completion with the retry backoff fast-forwarded. */
-async function withoutWaiting(work: Promise<void>): Promise<void> {
-  jest.useFakeTimers();
-  let done = false;
-  void work.finally((): void => {
-    done = true;
-  });
-  while (!done) {
-    jest.advanceTimersByTime(5_000);
-    await Promise.resolve();
-  }
-
-  await work;
-}
 
 describe("forwarding a gateway message", () => {
   it("posts the payload verbatim under the shape core accepts", async () => {
@@ -139,7 +108,7 @@ describe("forwarding a gateway message", () => {
     );
   });
 
-  it("survives a webhook rejecting the delivery", async () => {
+  it("survives a webhook rejecting the delivery", async (): Promise<void> => {
     captureFetch(500);
 
     await expect(
@@ -147,7 +116,7 @@ describe("forwarding a gateway message", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("retries a 5xx and a network error until core answers", async () => {
+  it("retries a 5xx and a network error until core answers", async (): Promise<void> => {
     const seen = scriptFetch([503, "reset", 200]);
     await withoutWaiting(
       forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
@@ -156,7 +125,7 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(3);
   });
 
-  it("stops after three attempts", async () => {
+  it("stops after three attempts", async (): Promise<void> => {
     const seen = scriptFetch([500, 500, 500, 500]);
     await withoutWaiting(
       forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
@@ -165,7 +134,7 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(3);
   });
 
-  it("does not retry a 4xx", async () => {
+  it("does not retry a 4xx", async (): Promise<void> => {
     const seen = scriptFetch([401]);
     await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
@@ -173,7 +142,7 @@ describe("forwarding a gateway message", () => {
   });
 
   // Matrix awaits each delivery in its sync loop, so it does not opt in.
-  it("tries once for a caller that does not ask for more", async () => {
+  it("tries once for a caller that does not ask for more", async (): Promise<void> => {
     const seen = scriptFetch([503]);
     await fanOut([TARGETS[0]!], "{}", {
       header: "x-token",
@@ -184,3 +153,34 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(1);
   });
 });
+
+/** Answers each POST with the next status, or throws for "reset". */
+function scriptFetch(statuses: readonly (number | "reset")[]): {
+  calls: number;
+} {
+  const seen = { calls: 0 };
+  globalThis.fetch = (async (): Promise<Response> => {
+    const status = statuses[seen.calls] ?? 200;
+    seen.calls += 1;
+    if (status === "reset") throw new Error("connection reset");
+
+    return new Response("", { status: status });
+  }) as unknown as typeof fetch;
+
+  return seen;
+}
+
+/** Runs `work` to completion with the retry backoff fast-forwarded. */
+async function withoutWaiting(work: Promise<void>): Promise<void> {
+  jest.useFakeTimers();
+  let done = false;
+  void work.finally((): void => {
+    done = true;
+  });
+  while (!done) {
+    jest.advanceTimersByTime(5_000);
+    await Promise.resolve();
+  }
+
+  await work;
+}

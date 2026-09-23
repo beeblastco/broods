@@ -54,7 +54,7 @@ describe("thread directory", () => {
 
   // Forwarding without `thread` would key a threaded message to the wrong
   // conversation, so a lookup that still fails rejects and the message drops.
-  it("retries a rate limit once after Retry-After, then rejects", async () => {
+  it("retries a rate limit once after Retry-After, then rejects", async (): Promise<void> => {
     const stub = stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");
 
@@ -62,7 +62,7 @@ describe("thread directory", () => {
     expect(stub.requests).toHaveLength(2);
   });
 
-  it("does not retry any other failure", async () => {
+  it("does not retry any other failure", async (): Promise<void> => {
     const stub = stubChannel(null, 403);
     const directory = new ThreadDirectory("token-a");
 
@@ -70,7 +70,7 @@ describe("thread directory", () => {
     expect(stub.requests).toHaveLength(1);
   });
 
-  it("does not cache a failed lookup, so a rate limit self-heals", async () => {
+  it("does not cache a failed lookup, so a rate limit self-heals", async (): Promise<void> => {
     stubChannel(null, 429);
     const directory = new ThreadDirectory("token-a");
     await directory.resolve("channel-1").catch((): void => {});
