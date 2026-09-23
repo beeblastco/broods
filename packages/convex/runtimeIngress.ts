@@ -81,6 +81,13 @@ const admissionResultValidator = v.object({
   recovered: v.optional(appliedEnvelopeValidator),
 });
 
+const recoveredIngressValidator = v.object({
+  accountId: v.id("accounts"),
+  agentId: v.string(),
+  conversationKey: v.string(),
+  applied: appliedEnvelopeValidator,
+});
+
 const channelTargetValidator = v.object({
   agentConfig: v.any(),
   channelName: v.string(),
@@ -669,6 +676,61 @@ export const maintain = internalMutation({
     }
 
     return { expired: expired, deleted: deleted };
+  },
+});
+
+/**
+ * Promotes the oldest queued group of each conversation that has queued work
+ * but no live owner. Admission already recovers a conversation when its next
+ * message arrives; this is for the ones nobody writes to again, such as the
+ * queue behind a run that core handed back at shutdown. Core calls it on boot
+ * and on a timer, then dispatches every returned application, whose lease it
+ * now holds.
+ */
+export const recoverQueued = internalMutation({
+  args: { leaseTtlMs: v.number() },
+  returns: v.array(recoveredIngressValidator),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof recoveredIngressValidator>[]> => {
+    const now = Date.now();
+    // Bounded like maintain. A page full of queues behind live owners delays
+    // the rest to a later sweep, which the next message would also unblock.
+    const rows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_status_and_expiresAt", (q) =>
+        q.eq("status", "queued").gt("expiresAt", now),
+      )
+      .take(MAX_DRAIN_ENVELOPES);
+    const recovered: Infer<typeof recoveredIngressValidator>[] = [];
+    const visited = new Set<string>();
+    for (const row of rows) {
+      if (visited.has(row.conversationKey)) continue;
+      visited.add(row.conversationKey);
+      const coordinator = await getCoordinator(ctx, row.conversationKey);
+      if (!coordinator || hasActiveOwner(coordinator, now)) continue;
+      const account = await ctx.db.get(coordinator.accountId);
+      if (account?.status !== "active") continue;
+      await expireStaleOwner(ctx, coordinator, now);
+      const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+      const applied = await promoteQueuedGroup(ctx, {
+        coordinator: coordinator,
+        queue: queue,
+        now: now,
+        leaseTtlMs: args.leaseTtlMs,
+        ownerGeneration: coordinator.ownerGeneration + 1,
+      });
+      if (!applied) continue;
+      recovered.push({
+        accountId: coordinator.accountId,
+        agentId: coordinator.agentId,
+        conversationKey: coordinator.conversationKey,
+        applied: applied,
+      });
+    }
+
+    return recovered;
   },
 });
 

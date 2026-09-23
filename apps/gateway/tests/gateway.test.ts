@@ -10,7 +10,6 @@ import {
   handleAgentMessage,
   parseGatewayMessage,
   stopActiveRun,
-  websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
 import {
@@ -18,7 +17,7 @@ import {
   isCoreHttpRoute,
   matchAgentWebSocketPath,
 } from "../src/routes.ts";
-import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
+import { proxyHttp, resolveSocketScope } from "../src/upstream.ts";
 import {
   cleanupObservabilitySocket,
   fetchTempoBackfill,
@@ -141,30 +140,26 @@ test("sends question answers instead of events on an execute message", () => {
   ).toBeNull();
 });
 
-test("forwards typed NATS stream payloads directly", () => {
-  expect(
-    websocketMessageForNatsData({
-      type: "text-delta",
-      id: "text-1",
-      text: "hello",
-    }),
-  ).toEqual({
-    type: "text-delta",
-    id: "text-1",
-    text: "hello",
-  });
-  expect(websocketMessageForNatsData({ type: "waiting" })).toEqual({
-    type: "waiting",
-  });
-});
-
-test("forwards stream errors directly", () => {
-  expect(
-    websocketMessageForNatsData({ type: "error", error: "bad key" }),
-  ).toEqual({
-    type: "error",
-    error: "bad key",
-  });
+test("refuses an agent id that is not one NATS subject token", (): void => {
+  for (const agentId of ["*", ">", "agent.*", "other.agent", "agent one"]) {
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({
+          type: "attach",
+          requestId: "attach-1",
+          agentId: agentId,
+          conversationKey: "conversation-1",
+          eventId: "event-1",
+          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseGatewayMessage(
+        JSON.stringify({ type: "execute", agentId: agentId, input: "hi" }),
+      ),
+    ).toBeNull();
+  }
 });
 
 test("reuses attach and stream contracts for subagent task identities", () => {
@@ -187,17 +182,6 @@ test("reuses attach and stream contracts for subagent task identities", () => {
     eventId: "subagent_task_123",
     runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   });
-  expect(
-    [
-      { type: "reasoning-delta", text: "thinking" },
-      { type: "text-delta", text: "answer" },
-      { type: "tool-call", toolName: "search" },
-    ].map(websocketMessageForNatsData),
-  ).toEqual([
-    { type: "reasoning-delta", text: "thinking" },
-    { type: "text-delta", text: "answer" },
-    { type: "tool-call", toolName: "search" },
-  ]);
 });
 
 test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
@@ -809,9 +793,10 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
+    // Status is only polled once the stream has been quiet for a while.
     await waitForCondition(
       () => consumerClosed,
-      700,
+      1600,
       () => "consumer close",
     );
     expect(
@@ -827,7 +812,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
   }
-});
+}, 10_000);
 
 test("closes a zero-frame queued execute consumer after durable completion", async () => {
   const originalFetch = globalThis.fetch;
@@ -1157,6 +1142,135 @@ test("rejects a second active agent run on the same websocket", () => {
   }
 });
 
+test("a cancelled run's cleanup leaves the next run on the socket alone", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const signals: AbortSignal[] = [];
+  globalThis.fetch = ((
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    new Promise<Response>((_resolve, reject): void => {
+      signals.push(init!.signal!);
+      init?.signal?.addEventListener("abort", (): void =>
+        reject(new Error("aborted")),
+      );
+    })) as typeof fetch;
+  const execute = (eventId: string): void =>
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_1",
+        eventId: eventId,
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "10000" }),
+      async (): Promise<never> =>
+        zeroBufferConnection(async () => ({
+          [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+          close: async (): Promise<void> => {},
+        })) as never,
+    );
+
+  try {
+    execute("first");
+    await waitForCondition((): boolean => signals.length === 1);
+    handleAgentMessage(
+      socket,
+      JSON.stringify({ type: "cancel" }),
+      gatewayLimitsFromEnv({}),
+      idleNats,
+    );
+    execute("second");
+    await waitForCondition((): boolean => signals.length === 2);
+    // The first run's rejected fetch has settled and its cleanup has run.
+    await Bun.sleep(10);
+
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    execute("third");
+    expect(sent).toContainEqual({
+      type: "error",
+      error: "A run is already active on this WebSocket",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a started turn streams from its own start and polls core in-cluster", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const polled: string[] = [];
+  let consumerOptions: { opt_start_seq?: number } | undefined;
+  const connection = zeroBufferConnection(
+    async () => ({
+      [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+      close: async (): Promise<void> => {},
+    }),
+    (options): void => {
+      consumerOptions = options;
+    },
+  );
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    if (init?.method === "POST") {
+      return Response.json(
+        {
+          eventId: "direct-task",
+          conversationKey: "direct-conversation",
+          status: "processing",
+          statusUrl:
+            "https://gateway.broods.app/v1/runs/run_5555555555555555555555555555eeee",
+          nats: {
+            accountId: "acct_test",
+            agentId: "agent_child",
+            conversationKey: "direct-conversation",
+          },
+        },
+        { status: 202 },
+      );
+    }
+    polled.push(String(input));
+
+    return Response.json({ eventId: "direct-task", status: "completed" });
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "direct-conversation",
+        eventId: "direct-task",
+        input: "go",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "done",
+    );
+    // The snapshot was taken before the POST, whose last sequence is 20.
+    expect(consumerOptions?.opt_start_seq).toBe(21);
+    expect(polled[0]).toBe(
+      "https://core.example/v1/runs/run_5555555555555555555555555555eeee",
+    );
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("uses conservative gateway limit defaults", () => {
   expect(gatewayLimitsFromEnv({})).toEqual({
     maxConnections: 10_000,
@@ -1164,6 +1278,7 @@ test("uses conservative gateway limit defaults", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 255,
     runStartTimeoutMs: 15_000,
+    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1175,6 +1290,7 @@ test("ignores invalid gateway limit overrides", () => {
       GATEWAY_BACKPRESSURE_BYTES: "-1",
       GATEWAY_IDLE_TIMEOUT_SECONDS: "60",
       GATEWAY_RUN_START_TIMEOUT_MS: "2500",
+      GATEWAY_MAX_REQUEST_BODY_BYTES: "0",
     }),
   ).toEqual({
     maxConnections: 500,
@@ -1182,6 +1298,7 @@ test("ignores invalid gateway limit overrides", () => {
     backpressureBytes: 1024 * 1024,
     idleTimeoutSeconds: 60,
     runStartTimeoutMs: 2500,
+    maxRequestBodyBytes: 20 * 1024 * 1024,
   });
 });
 
@@ -1368,7 +1485,7 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
 
 test("routes a runtime key to the matching core upstream", async () => {
   const calls: string[] = [];
-  const resolved = await resolveObservabilityScope(
+  const resolved = await resolveSocketScope(
     "runtime-key",
     ["https://dev.example", "https://prod.example"],
     async (input) => {
@@ -1387,9 +1504,38 @@ test("routes a runtime key to the matching core upstream", async () => {
 
   expect(calls).toHaveLength(2);
   expect(resolved).toMatchObject({
+    kind: "resolved",
     coreBaseUrl: "https://prod.example",
     scope: { stageSlug: "production" },
   });
+});
+
+test("a core that cannot answer is an outage, not a bad token", async (): Promise<void> => {
+  const resolve = (
+    answer: () => Promise<Response>,
+  ): ReturnType<typeof resolveSocketScope> =>
+    resolveSocketScope("runtime-key", ["https://core.example"], answer);
+
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 401 }),
+    ),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("no", { status: 403 }),
+    ),
+  ).toEqual({ kind: "invalid" });
+  expect(
+    await resolve(
+      async (): Promise<Response> => new Response("down", { status: 503 }),
+    ),
+  ).toEqual({ kind: "unavailable" });
+  expect(
+    await resolve(async (): Promise<Response> => {
+      throw new Error("timed out");
+    }),
+  ).toEqual({ kind: "unavailable" });
 });
 
 test("proxyHttp strips hop-by-hop headers and preserves method query and body", async () => {
@@ -1585,9 +1731,6 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: {
         accountId: "acct-1",
         projectSlug: "shop",
@@ -3025,6 +3168,30 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   );
 });
 
+test("proxyHttp never replays a POST to the next upstream after a network error", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    calls.push(String(input));
+    throw new Error("connection reset");
+  }) as unknown as typeof fetch;
+
+  try {
+    const response = await proxyHttp(
+      new Request("https://gateway.example/v1/runs", {
+        method: "POST",
+        body: "{}",
+      }),
+      ["https://dev.example", "https://prod.example"],
+    );
+
+    expect(response.status).toBe(502);
+    expect(calls).toEqual(["https://dev.example/v1/runs"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("proxyHttp returns 502 when every upstream is unreachable", async () => {
   const response = await proxyHttp(
     new Request("https://gateway.example.com/v1/agents"),
@@ -3229,9 +3396,6 @@ function observabilitySocket(): {
       sent.push(JSON.parse(value) as Record<string, unknown>),
     data: {
       kind: "observability",
-      project: "shop",
-      stage: "dev",
-      token: "runtime-key",
       scope: TEST_SCOPE,
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;

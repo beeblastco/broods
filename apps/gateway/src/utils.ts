@@ -15,13 +15,14 @@ export type GatewayLimits = {
   backpressureBytes: number;
   idleTimeoutSeconds: number;
   runStartTimeoutMs: number;
+  maxRequestBodyBytes: number;
 };
 
 export const decoder = new TextDecoder();
 /** Subprotocol the gateway selects so a token-bearing handshake completes. */
-export const WEBSOCKET_SUBPROTOCOL = "broods.v1";
+const WEBSOCKET_SUBPROTOCOL = "broods.v1";
 /** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
-export const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
+const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
 const maxBunIdleTimeoutSeconds = 255;
 
 /** The message from either shape core puts in `error`: envelope or plain text. */
@@ -74,12 +75,6 @@ export function normalizedCoreBaseUrls(values: string[]): string[] {
   if (urls.length === 0) throw new Error("Gateway requires BROODS_CORE_URLS");
 
   return urls;
-}
-
-export function bearerToken(value: string | null): string | null {
-  const match = value?.match(/^Bearer\s+(.+)$/i);
-
-  return match?.[1]?.trim() || null;
 }
 
 /**
@@ -139,7 +134,8 @@ export function corsHeaders(
 
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods":
+      "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": forwardAccountId
       ? "authorization, content-type, x-request-id, x-account-id"
       : "authorization, content-type, x-request-id",
@@ -239,6 +235,12 @@ export function gatewayLimitsFromEnv(
       maxBunIdleTimeoutSeconds,
     ),
     runStartTimeoutMs: positiveInt(env.GATEWAY_RUN_START_TIMEOUT_MS, 15_000),
+    // Every proxied body is buffered here, so it is capped. The default is the
+    // Convex HTTP action limit, the largest either upstream accepts.
+    maxRequestBodyBytes: positiveInt(
+      env.GATEWAY_MAX_REQUEST_BODY_BYTES,
+      20 * 1024 * 1024,
+    ),
   };
 }
 
@@ -272,6 +274,12 @@ export async function mapWithConcurrency<T, R>(
   );
 
   return results;
+}
+
+function bearerToken(value: string | null): string | null {
+  const match = value?.match(/^Bearer\s+(.+)$/i);
+
+  return match?.[1]?.trim() || null;
 }
 
 function offeredSubprotocols(request: Request): string[] {

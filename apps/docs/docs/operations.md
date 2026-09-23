@@ -104,7 +104,7 @@ Use `apps/core/.env` for local SST inputs only:
 - `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL` - Required by `sst.config.ts`; no in-source defaults.
 - `ENABLE_DIRECT_API` - Deploys as `false` unless set to `true`; enables direct sync and async POST access to `harness-processing`.
 - `ENABLE_WEBSOCKET` - Set to `true` to enable WebSocket gateway worker invocations.
-- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed core container when WebSocket is disabled. The transport is chosen by scheme: `wss://`/`ws://` (WebSocket, e.g. `wss://nats.beeblast.co` from an out-of-cluster caller) or `nats://`/`tls://` (core TCP, for in-cluster callers).
+- `NATS_URL` - Required when `ENABLE_WEBSOCKET=true`; ignored by the deployed core container when WebSocket is disabled. Use `nats://` on the cluster service: NATS is in-cluster only, with no external ingress. The scheme picks the client (`nats://`/`tls://` core TCP, `wss://`/`ws://` WebSocket).
 - `NATS_TOKEN` - Token-auth credential for the NATS server; optional (omit for an unauthenticated server).
 - `OPA_BASE_URL` - Optional OPA REST endpoint for runtime policy decisions. The core container needs a reachable OPA endpoint; hosted stages use the exposed `https://opa.beeblast.co` endpoint, while `http://127.0.0.1:8181` only works against a locally running OPA.
 - `OPA_API_TOKEN` - Bearer token for the OPA REST API. Required when the endpoint enforces token authentication (the hosted `opa.beeblast.co` does); sent as an `Authorization: Bearer` header.
@@ -187,6 +187,8 @@ Runtime notes:
   - the gateway answers 404 for `/v1/cron-runs` and `/v1/mcp-service/rpc`. `GATEWAY_DENY_INTERNAL_PATHS=false` turns that off.
 
   If Convex cannot reach core directly, fix that first: `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if needed. The two flags do not restore the old path.
+
+- The gateway buffers each proxied request body, so it refuses one over 20 MiB (`GATEWAY_MAX_REQUEST_BODY_BYTES`). A WebSocket upgrade whose token core cannot check (5xx or timeout) gets a 502 and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`. On SIGTERM the gateway stops listening and closes open sockets with 1012 so clients reconnect to another pod.
 
 ### Service secrets
 

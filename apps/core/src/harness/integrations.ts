@@ -78,6 +78,7 @@ import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
   mintTraceId,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
@@ -133,6 +134,9 @@ import {
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
+// How long a channel webhook waits for admission before it acks anyway. Under
+// Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+const CHANNEL_ACK_BUDGET_MS = 2_000;
 // Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // The single runtime entry point; sync or background is a body field.
@@ -334,6 +338,7 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentRecord | null>;
+  /** The production-stage agents the bare webhook URL routes to. */
   agentLister?: (accountId: string) => Promise<AgentRecord[]>;
   stageAgentLister?: (
     accountId: string,
@@ -399,7 +404,8 @@ interface HttpRoutingContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-// `endpointId` absent means the bare production URL, which scans the account.
+// `endpointId` absent means the bare production URL, which scans the account's
+// production stages.
 interface WebhookRoute {
   accountId: string;
   channelName: string;
@@ -442,7 +448,7 @@ export function createIncomingEventRouter(
   const agentLister =
     options.agentLister ??
     ((accountId: string): Promise<AgentRecord[]> =>
-      getStorage().agents.list(accountId));
+      getStorage().agents.listForProduction(accountId));
   const stageAgentLister =
     options.stageAgentLister ??
     ((accountId: string, endpointId: string): Promise<AgentRecord[]> =>
@@ -550,11 +556,12 @@ async function handleHttpRequest(
     }
   }
 
+  // A provider console may GET a webhook URL to check it is live. Any other GET
+  // is a path core does not serve; `/healthz` is answered in server.ts.
   if (method === "GET") {
-    return jsonResponse(200, {
-      status: "ok",
-      method: "POST",
-    });
+    return matchWebhookPath(request.path)
+      ? jsonResponse(200, { status: "ok", method: "POST" })
+      : notFoundResponse();
   }
 
   if (method !== "POST") {
@@ -887,8 +894,9 @@ async function findChannelCredentialHolder(
 ): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
-    // A stage-scoped URL narrows the scan to that stage, so a sibling stage
-    // holding the same provider credentials is never a candidate.
+    // Each URL scans only its own stage: the stage URL that stage's agents, the
+    // bare URL the production stages' agents. A sibling stage holding the same
+    // provider credentials is never a candidate.
     listed = endpointId
       ? await context.stageAgentLister(accountId, endpointId)
       : await context.agentLister(accountId);
@@ -917,7 +925,6 @@ async function findChannelCredentialHolder(
   for (const candidate of [...listed].sort((left, right) =>
     left.agentId.localeCompare(right.agentId),
   )) {
-    if (candidate.status !== "active") continue;
     // Cheap key check before building any adapter: an unauthenticated caller
     // should not make us instantiate SDK clients for every agent in the account.
     if (!candidate.config.channels?.[channelName]) continue;
@@ -1026,8 +1033,8 @@ async function resolveChannelTarget(
   }
 
   const bound = await context.agentLoader(account.accountId, boundAgentId);
-  if (!bound || bound.status !== "active") {
-    logWarn("Channel record binds an agent that is missing or inactive", {
+  if (!bound) {
+    logWarn("Channel record binds an agent that is missing", {
       accountId: account.accountId,
       channel: channelName,
       channelRecordId: record.channelRecordId,
@@ -1337,9 +1344,6 @@ async function handleChannelWebhook(
       return toResponse(response);
     }
 
-    // The promise is deferred by one microtask so this request's scoped context
-    // is restored in finally before background channel processing establishes
-    // its own context.
     const { message, ack } = parsed;
     const response = ack ?? { statusCode: 200 };
     const target = await resolveChannelTarget(
@@ -1381,7 +1385,7 @@ async function handleChannelWebhook(
             account.accountId,
             target.agent.agentId,
           );
-    logInfo("Channel webhook accepted for async processing", {
+    logInfo("Channel webhook accepted", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: target.agent.agentId,
@@ -1419,8 +1423,11 @@ async function handleChannelWebhook(
       return toResponse(response);
     }
 
-    waitUntil(
-      Promise.resolve().then(() =>
+    // Admission runs before the ack, so a delivery the provider saw acked is
+    // durably queued; the agent run goes to the worker pool. Its own scope,
+    // because it can outlive this request, whose finally restores the context.
+    const admitted = runWithObservabilityScope(
+      (): Promise<void> =>
         processChannelMessage(
           {
             eventId: accountAgentScopedKey(
@@ -1460,8 +1467,17 @@ async function handleChannelWebhook(
           },
           handlers,
         ),
-      ),
+      getObservabilityContext(),
     );
+    waitUntil(admitted);
+    let ackTimer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      admitted,
+      new Promise<void>((resolve): void => {
+        ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
+      }),
+    ]);
+    clearTimeout(ackTimer);
 
     return toResponse(response);
   } catch (err) {
@@ -1568,6 +1584,11 @@ export function attachMetadataToLatestUserIngress(
   return events;
 }
 
+/**
+ * Run the inbound hook and acknowledgements, then admit the message. Resolves
+ * after admission, with the agent run already on a worker slot. Never
+ * rejects: a failure is answered in the channel.
+ */
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -1661,7 +1682,7 @@ async function processChannelMessage(
         : (resolveCommandToken(content, event.source, event.channelName) ??
           undefined),
     });
-    logInfo("Channel message processing completed", {
+    logInfo("Channel message admitted", {
       channel: event.channelName,
       accountId: event.accountId,
       agentId: event.agentId,
@@ -1999,7 +2020,7 @@ async function parseDirectPayload(
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
   const agent = await context.agentLoader(account.accountId, agentId);
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     throw new DirectNotFoundError("Agent not found");
   }
   const embeddableKey = await admitStageCredential(

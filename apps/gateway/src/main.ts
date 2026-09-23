@@ -3,6 +3,7 @@ import {
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
 import {
+  MACHINE_MAX_FRAME_BYTES,
   MACHINE_WEBSOCKET_PATH,
   machineSocketUrl,
 } from "../../core/src/shared/machine-socket.ts";
@@ -38,7 +39,7 @@ import {
 import { RateLimiter } from "./rate-limiter.ts";
 import {
   proxyHttp,
-  resolveObservabilityScope,
+  resolveSocketScope,
   type ProxyOptions,
 } from "./upstream.ts";
 import {
@@ -85,6 +86,8 @@ export interface GatewayConfig {
 
 /** The two halves `Bun.serve` needs, built over one resolved config. */
 export interface GatewayRuntime {
+  /** Closes every open socket, for a shutdown. */
+  closeSockets: (code: number, reason: string) => void;
   fetch: (
     request: Request,
     server: Bun.Server<GatewayData>,
@@ -97,12 +100,13 @@ export interface GatewayRuntime {
  *
  * The security ordering lives here rather than inside the `import.meta.main`
  * block so tests can drive it without binding a port: origin allowlist, upgrade
- * rate limit, auth-failure rate limit, then the per-path token and scope checks.
- * The open socket count is per gateway, so two of them in one test process do
- * not share a capacity ceiling.
+ * rate limit, auth-failure rate limit, capacity, then the per-path token and
+ * scope checks. The open sockets are per gateway, so two of them in one test
+ * process do not share a capacity ceiling.
  */
 export function createGateway(config: GatewayConfig): GatewayRuntime {
-  let activeSocketCount = 0;
+  const sockets = new Set<Bun.ServerWebSocket<GatewayData>>();
+  let pendingUpgrades = 0;
 
   async function route(
     request: Request,
@@ -118,7 +122,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       return json(
         {
           status: "ok",
-          activeWebSockets: activeSocketCount,
+          activeWebSockets: sockets.size,
           maxWebSockets: config.limits.maxConnections,
         },
         { headers: { "Access-Control-Allow-Origin": "*" } },
@@ -168,155 +172,101 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           ),
         );
       }
-
-      if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
-        if (activeSocketCount >= config.limits.maxConnections) {
-          return jsonError(503, "Gateway is at capacity");
-        }
-
-        const token = websocketToken(request, url);
-        const ticket = openTerminalTicketWithSecrets(
-          token,
-          config.terminalTicketSecrets,
-        );
-        // A bad ticket still upgrades: the open handler closes it with a code
-        // and reason the browser can show, where a 401 here would be a mute 1006.
-        if (!ticket) config.authFailureLimiter.allow(ip);
-
-        const upgraded = server.upgrade(request, {
-          headers: websocketUpgradeHeaders(request),
-          data: {
-            kind: "terminal",
-            ticket: ticket,
-          } satisfies TerminalGatewayData,
-        });
-
-        return upgraded
-          ? undefined
-          : jsonError(400, "WebSocket upgrade failed");
+      // Upgrades still resolving a token count too, or a burst would all pass
+      // the check before any of them opened.
+      if (sockets.size + pendingUpgrades >= config.limits.maxConnections) {
+        return jsonError(503, "Gateway is at capacity");
       }
 
-      // Core checks the daemon's bearer and refuses with a close code.
-      if (url.pathname === MACHINE_WEBSOCKET_PATH) {
-        if (activeSocketCount >= config.limits.maxConnections) {
-          return jsonError(503, "Gateway is at capacity");
-        }
-        const token = websocketToken(request, url);
-        if (!token) return jsonError(401, "Missing WebSocket token");
-
-        const data: MachineGatewayData = {
-          kind: "machine",
-          ticket: {
-            url: machineSocketUrl(config.coreBaseUrls[0]!),
-            authorization: `Bearer ${token}`,
-          },
-        };
-        const upgraded = server.upgrade(request, {
-          headers: websocketUpgradeHeaders(request),
-          data: data,
-        });
-
-        return upgraded
-          ? undefined
-          : jsonError(400, "WebSocket upgrade failed");
-      }
-
-      const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
-      if (observabilityPath) {
-        if (activeSocketCount >= config.limits.maxConnections) {
-          return jsonError(503, "Gateway is at capacity");
-        }
-
-        warnDeprecatedQueryToken(request, url);
-        const token = websocketToken(request, url);
-        if (!token) return jsonError(401, "Missing WebSocket token");
-
-        const resolved = await resolveObservabilityScope(
-          token,
-          config.coreBaseUrls,
-        );
-        if (!resolved) {
-          config.authFailureLimiter.allow(ip);
-
-          return jsonError(401, "Invalid WebSocket token");
-        }
-        if (
-          resolved.scope.projectSlug !==
-            decodeURIComponent(observabilityPath[1]) ||
-          resolved.scope.stageSlug !== decodeURIComponent(observabilityPath[2])
-        ) {
-          return jsonError(
-            403,
-            "WebSocket scope does not match the requested project/stage",
-            { code: "scope_mismatch" },
+      pendingUpgrades += 1;
+      try {
+        let data: GatewayData | undefined;
+        const observabilityPath = matchObservabilityWebSocketPath(url.pathname);
+        const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
+        if (url.pathname === TERMINAL_WEBSOCKET_PATH) {
+          const ticket = openTerminalTicketWithSecrets(
+            websocketToken(request, url),
+            config.terminalTicketSecrets,
           );
+          // A bad ticket still upgrades: the open handler closes it with a code
+          // and reason the browser can show, where a 401 here would be a mute 1006.
+          if (!ticket) config.authFailureLimiter.allow(ip);
+          data = { kind: "terminal", ticket: ticket };
+        } else if (url.pathname === MACHINE_WEBSOCKET_PATH) {
+          // Core checks the daemon's bearer and refuses with a close code.
+          const token = websocketToken(request, url);
+          if (!token) return jsonError(401, "Missing WebSocket token");
+
+          data = {
+            kind: "machine",
+            ticket: {
+              url: machineSocketUrl(config.coreBaseUrls[0]!),
+              authorization: `Bearer ${token}`,
+            },
+          };
+        } else if (observabilityPath || agentWebSocketPath) {
+          warnDeprecatedQueryToken(request, url);
+          const token = websocketToken(request, url);
+          if (!token) return jsonError(401, "Missing WebSocket token");
+
+          const resolved = await resolveSocketScope(token, config.coreBaseUrls);
+          if (resolved.kind === "unavailable")
+            return jsonError(502, "Could not verify the WebSocket token");
+          if (resolved.kind === "invalid") {
+            config.authFailureLimiter.allow(ip);
+
+            return jsonError(401, "Invalid WebSocket token");
+          }
+          const { scope } = resolved;
+          if (observabilityPath) {
+            if (
+              scope.projectSlug !== decodeURIComponent(observabilityPath[1]) ||
+              scope.stageSlug !== decodeURIComponent(observabilityPath[2])
+            ) {
+              return jsonError(
+                403,
+                "WebSocket scope does not match the requested project/stage",
+                { code: "scope_mismatch" },
+              );
+            }
+            data = { kind: "observability", scope: scope };
+          } else if (agentWebSocketPath) {
+            // Bind the socket to the key's own endpoint scope: attach never posts
+            // through the core run path, so the door check must happen here.
+            if (
+              !scope.endpointIds.includes(agentWebSocketPath.endpointId) ||
+              (agentWebSocketPath.projectSlug !== undefined &&
+                scope.projectSlug !== agentWebSocketPath.projectSlug) ||
+              (agentWebSocketPath.stageSlug !== undefined &&
+                scope.stageSlug !== agentWebSocketPath.stageSlug)
+            ) {
+              return jsonError(
+                403,
+                "WebSocket scope does not match the requested endpoint",
+                { code: "scope_mismatch" },
+              );
+            }
+            data = {
+              kind: "agent-test",
+              corePath: url.pathname.slice(0, -"/ws".length),
+              token: token,
+              coreBaseUrl: resolved.coreBaseUrl,
+              accountId: scope.accountId,
+            };
+          }
         }
+        if (data) {
+          const upgraded = server.upgrade(request, {
+            headers: websocketUpgradeHeaders(request),
+            data: data,
+          });
 
-        const upgraded = server.upgrade(request, {
-          headers: websocketUpgradeHeaders(request),
-          data: {
-            kind: "observability",
-            project: observabilityPath[1],
-            stage: observabilityPath[2],
-            token: token,
-            scope: resolved.scope,
-          } satisfies ObservabilityGatewayData,
-        });
-
-        return upgraded
-          ? undefined
-          : jsonError(400, "WebSocket upgrade failed");
-      }
-
-      const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
-      if (agentWebSocketPath) {
-        if (activeSocketCount >= config.limits.maxConnections) {
-          return jsonError(503, "Gateway is at capacity");
+          return upgraded
+            ? undefined
+            : jsonError(400, "WebSocket upgrade failed");
         }
-
-        warnDeprecatedQueryToken(request, url);
-        const token = websocketToken(request, url);
-        if (!token) return jsonError(401, "Missing WebSocket token");
-
-        const resolved = await resolveObservabilityScope(
-          token,
-          config.coreBaseUrls,
-        );
-        if (!resolved) {
-          config.authFailureLimiter.allow(ip);
-
-          return jsonError(401, "Invalid WebSocket token");
-        }
-        // Bind the socket to the key's own endpoint scope: attach never posts
-        // through the core run path, so the door check must happen here.
-        if (
-          !resolved.scope.endpointIds.includes(agentWebSocketPath.endpointId) ||
-          (agentWebSocketPath.projectSlug !== undefined &&
-            resolved.scope.projectSlug !== agentWebSocketPath.projectSlug) ||
-          (agentWebSocketPath.stageSlug !== undefined &&
-            resolved.scope.stageSlug !== agentWebSocketPath.stageSlug)
-        ) {
-          return jsonError(
-            403,
-            "WebSocket scope does not match the requested endpoint",
-            { code: "scope_mismatch" },
-          );
-        }
-
-        const upgraded = server.upgrade(request, {
-          headers: websocketUpgradeHeaders(request),
-          data: {
-            kind: "agent-test",
-            corePath: url.pathname.slice(0, -"/ws".length),
-            token: token,
-            coreBaseUrl: resolved.coreBaseUrl,
-            accountId: resolved.scope.accountId,
-          } satisfies AgentTestGatewayData,
-        });
-
-        return upgraded
-          ? undefined
-          : jsonError(400, "WebSocket upgrade failed");
+      } finally {
+        pendingUpgrades -= 1;
       }
     }
 
@@ -383,6 +333,9 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         requestId,
       );
     } catch (error) {
+      // A malformed %-escape in a path segment is the caller's mistake.
+      if (error instanceof URIError)
+        return withRequestId(jsonError(400, "Malformed URL path"), requestId);
       console.error("gateway request failed:", {
         requestId: requestId,
         error: error,
@@ -393,12 +346,17 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   }
 
   const websocket: Bun.WebSocketHandler<GatewayData> = {
-    maxPayloadLength: config.limits.maxPayloadBytes,
+    // Bun takes one frame cap per server, so it is sized for the machine
+    // socket and every other socket enforces the configured one in `message`.
+    maxPayloadLength: Math.max(
+      config.limits.maxPayloadBytes,
+      MACHINE_MAX_FRAME_BYTES,
+    ),
     backpressureLimit: config.limits.backpressureBytes,
     closeOnBackpressureLimit: true,
     idleTimeout: config.limits.idleTimeoutSeconds,
     open: function (socket): void {
-      activeSocketCount += 1;
+      sockets.add(socket);
       if (socket.data.kind === "observability")
         openObservabilitySocket(
           socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
@@ -407,6 +365,14 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
     },
     message: async function (socket, rawMessage): Promise<void> {
+      if (
+        socket.data.kind !== "machine" &&
+        Buffer.byteLength(rawMessage) > config.limits.maxPayloadBytes
+      ) {
+        socket.close(1009, "message too big");
+
+        return;
+      }
       if (socket.data.kind === "terminal" || socket.data.kind === "machine") {
         relayTerminalInput(
           socket as Bun.ServerWebSocket<RelayGatewayData>,
@@ -434,7 +400,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       );
     },
     close: function (socket): void {
-      activeSocketCount = Math.max(0, activeSocketCount - 1);
+      sockets.delete(socket);
       if (socket.data.kind === "terminal" || socket.data.kind === "machine") {
         cleanupTerminalSocket(socket as Bun.ServerWebSocket<RelayGatewayData>);
 
@@ -453,6 +419,9 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   };
 
   return {
+    closeSockets: function (code: number, reason: string): void {
+      for (const socket of sockets) socket.close(code, reason);
+    },
     fetch: handleRequest,
     websocket: websocket,
   };
@@ -504,8 +473,17 @@ if (import.meta.main) {
     port: Number(process.env.PORT ?? "3000"),
     hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: config.limits.idleTimeoutSeconds,
+    maxRequestBodySize: config.limits.maxRequestBodyBytes,
     fetch: gateway.fetch,
     websocket: gateway.websocket,
+  });
+
+  // A rollout sends SIGTERM: stop listening, then close every socket with
+  // 1012 (service restart) so clients reconnect to another pod.
+  process.once("SIGTERM", (): void => {
+    const stopped = server.stop();
+    gateway.closeSockets(1012, "gateway restarting");
+    void stopped.finally((): never => process.exit(0));
   });
 
   process.stdout.write(

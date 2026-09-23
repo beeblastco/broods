@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-  forwardedEvent,
-  forwardRoomEvent,
-  type ForwardTarget,
-} from "../src/forward.ts";
+import type { ForwardTarget } from "../../discord-forwarder/src/forward.ts";
+import { forwardedEvent, forwardRoomEvent } from "../src/forward.ts";
 
 const TARGETS: ForwardTarget[] = [
   {

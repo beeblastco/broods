@@ -15,7 +15,7 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
-import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
+import type { NatsPublisher } from "../shared/nats.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {
   createRunId,
@@ -42,6 +42,7 @@ import {
 } from "./hook-dispatcher.ts";
 import { acceptIngress } from "./ingress.ts";
 import type { IngressDispatchScope } from "./integrations.ts";
+import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -374,7 +375,7 @@ export class SubagentCoordinator {
     }
 
     const agent = await getStorage().agents.getById(accountId, agentId);
-    if (!agent || agent.status !== "active") {
+    if (!agent) {
       throw new Error(`Subagent not found: ${agentId}`);
     }
 
@@ -1030,22 +1031,17 @@ function createSubagentPublisher(
   parentSession: Session,
   task: ResolvedSubagentTask,
 ): NatsPublisher | undefined {
-  const natsUrl = process.env.NATS_URL?.trim();
-  if (!natsUrl) {
+  if (!process.env.NATS_URL?.trim()) {
     return undefined;
   }
 
-  return new LiveNatsPublisher(
-    natsUrl,
-    {
-      accountId: requireParentAccountId(parentSession),
-      agentId: task.agentId,
-      conversationKey: task.publicConversationKey,
-      eventId: task.taskId,
-      connectionId: task.taskId,
-    },
-    process.env.NATS_TOKEN?.trim() || undefined,
-  );
+  return new LiveNatsPublisher({
+    accountId: requireParentAccountId(parentSession),
+    agentId: task.agentId,
+    conversationKey: task.publicConversationKey,
+    eventId: task.taskId,
+    connectionId: task.taskId,
+  });
 }
 
 function requireParentAccountId(session: Session): string {

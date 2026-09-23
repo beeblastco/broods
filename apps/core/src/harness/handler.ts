@@ -32,8 +32,11 @@ import {
   type RequestContext,
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo } from "../shared/log.ts";
-import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
-import { runWithObservabilityScope } from "../shared/otel.ts";
+import type { NatsPublisher } from "../shared/nats.ts";
+import {
+  getObservabilityContext,
+  runWithObservabilityScope,
+} from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
   createRunId,
@@ -78,6 +81,7 @@ import {
 import {
   acceptIngress,
   getConversationDispatchTarget,
+  getIngressStatusByEventId,
   prepareSessionMessage,
   type AppliedIngress,
   type IngressAdmission,
@@ -98,6 +102,7 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
+import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   ingestChannelAttachments,
   Session,
@@ -129,7 +134,9 @@ const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
+// What a subagent or async-tool wait leaves of the request budget, so the parent
+// still has time for the turn that reads the results before the deadline.
+const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
@@ -138,7 +145,9 @@ const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
   10 * 60 * 1000,
 );
 const WORKER_SLOT_GRACE_MS = 5_000;
-const MAX_PENDING_WORKER_PAYLOADS = 1000;
+// Well under the server's 255s idleTimeout and the gateway's own idle limit.
+const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
+const MAX_PENDING_WORKER_RUNS = 1000;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on this clock. A frame the client acts on checks exactly: a stale
 // run must not land one in a stream the next owner is writing to. `waiting` is
@@ -154,10 +163,7 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerPayloads: [
-  AsyncWorkerInvocation | NatsWorkerInvocation,
-  InProcessWorkerRun,
-][] = [];
+const pendingWorkerRuns: [kind: string, run: InProcessWorkerRun][] = [];
 
 let activeInProcessWorkers = 0;
 
@@ -165,10 +171,7 @@ type ContinuationOutcome =
   | { kind: "pending"; pendingCount: number }
   | { kind: "ready"; invoked: boolean; publicEventId: string }
   | { kind: "skip" };
-type InProcessWorkerRun = (
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  context: RequestContext,
-) => Promise<unknown>;
+type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
@@ -203,23 +206,29 @@ interface ParentContinuationResult {
   questions: PendingQuestionSummary[];
 }
 
+/**
+ * Runs one agent turn on the pod's worker pool, or queues it FIFO while every
+ * slot is busy. Every background run goes through here, channel turns
+ * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once.
+ * @param kind a label for logs
+ */
 export function dispatchInProcessWorker(
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  run: InProcessWorkerRun = handler,
+  kind: string,
+  run: InProcessWorkerRun,
 ): void {
   if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
-    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
-      // Load-shed like a failed Lambda Event invoke: the awaiting caller
-      // surfaces the error instead of the queue growing without bound.
+    if (pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
+      // Load-shed: the awaiting caller surfaces the error instead of the queue
+      // growing without bound.
       throw new Error("In-process worker queue is full");
     }
-    pendingWorkerPayloads.push([payload, run]);
+    pendingWorkerRuns.push([kind, run]);
 
     return;
   }
 
   activeInProcessWorkers += 1;
-  const execution = run(payload, {
+  const execution = run({
     requestId: crypto.randomUUID(),
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
@@ -229,12 +238,12 @@ export function dispatchInProcessWorker(
     () => undefined,
     (err) => {
       logError("In-process worker failed", {
-        kind: payload.kind,
+        kind: kind,
         error: err instanceof Error ? err.message : String(err),
       });
     },
   );
-  // Nothing here kills a hung model stream or tool the way Lambda does, so a few
+  // Nothing here kills a hung model stream or tool, so a few
   // stuck workers would otherwise pin every slot for every tenant on the pod. An
   // overrun frees the slot but leaves the underlying work running.
   let slotTimer: ReturnType<typeof setTimeout> | undefined;
@@ -243,7 +252,7 @@ export function dispatchInProcessWorker(
     new Promise<void>((resolve) => {
       slotTimer = setTimeout(() => {
         logError("In-process worker exceeded deadline; reclaiming slot", {
-          kind: payload.kind,
+          kind: kind,
           budgetMs: WORKER_TIMEOUT_BUDGET_MS,
         });
         resolve();
@@ -255,7 +264,7 @@ export function dispatchInProcessWorker(
     if (slotTimer) clearTimeout(slotTimer);
     activeInProcessWorkers -= 1;
     inProcessWorkers.delete(worker);
-    const next = pendingWorkerPayloads.shift();
+    const next = pendingWorkerRuns.shift();
     if (next) {
       dispatchInProcessWorker(next[0], next[1]);
     }
@@ -391,8 +400,7 @@ async function handleRequest(
       handleAsyncRequest: handleAsyncRequest,
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
-      handleChannelRequest: (channelEvent) =>
-        handleChannelRequest(channelEvent, context),
+      handleChannelRequest: handleChannelRequest,
       handleChannelContext: handleChannelContext,
     },
     {
@@ -562,7 +570,7 @@ async function continueAfterAsyncToolSettlement(
     scope.accountId,
     scope.agentId,
   );
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     return { kind: "skip" };
   }
 
@@ -675,6 +683,9 @@ function natsStartResponse(
 ): Response {
   return jsonResponse(202, {
     eventId: publicEventId,
+    // Always sent, so the gateway can poll status in-cluster even when no
+    // public statusUrl exists (PUBLIC_BASE_URL unset).
+    runId: event.runId,
     conversationKey: event.publicConversationKey,
     status: "processing",
     requestedMode: event.requestedMode,
@@ -1224,23 +1235,17 @@ async function handleNatsWorkerRequest(
   if (!connectionId) {
     throw new Error("NATS worker event must include connectionId");
   }
-  const natsUrl = process.env.NATS_URL?.trim();
-  if (!natsUrl) {
+  if (!process.env.NATS_URL?.trim()) {
     throw new Error("NATS worker requires NATS_URL");
   }
-  const natsToken = process.env.NATS_TOKEN?.trim() || undefined;
 
-  const publisher = new LiveNatsPublisher(
-    natsUrl,
-    {
-      accountId: event.accountId,
-      agentId: event.agentId,
-      conversationKey: event.publicConversationKey,
-      eventId: event.publicEventId,
-      connectionId: connectionId,
-    },
-    natsToken,
-  );
+  const publisher = new LiveNatsPublisher({
+    accountId: event.accountId,
+    agentId: event.agentId,
+    conversationKey: event.publicConversationKey,
+    eventId: event.publicEventId,
+    connectionId: connectionId,
+  });
 
   let session: Session | undefined;
   let transferred = false;
@@ -1381,13 +1386,31 @@ async function handleNatsWorkerRequest(
   }
 }
 
-/** Run a channel webhook request and reply through that channel's ChannelActions. */
+/**
+ * Admit one channel message and hand its turn to the worker pool. Resolves once
+ * the message is durably admitted (or answered as a command, an answer, or a
+ * refusal), so the webhook can ack after it; the agent run itself happens on a
+ * worker slot and replies through the channel's ChannelActions.
+ */
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
-  context?: RequestContext,
 ): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
+    // A forwarder retry redelivers the same event, and a second `/clear` would
+    // drop what was said between the two deliveries.
+    if (
+      event.accountId &&
+      !(await claimSession(
+        new Session({
+          eventId: event.eventId,
+          conversationKey: event.conversationKey,
+          accountId: event.accountId,
+        }),
+      ))
+    ) {
+      return;
+    }
     logInfo("Channel command executing", {
       channel: event.channelName,
       accountId: event.accountId,
@@ -1422,6 +1445,24 @@ export async function handleChannelRequest(
   if (await settleChannelQuestion(event)) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
+  // A provider redelivery of an admitted message must not store its files a
+  // second time. Only a message with files pays for this read.
+  if (
+    event.attachments?.length &&
+    (await getIngressStatusByEventId({
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+    }))
+  ) {
+    logInfo("Channel redelivery of an admitted message ignored", {
+      channel: event.channelName,
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+    });
+
+    return;
+  }
   // Before admission, so a turn that lands in the queue still carries its
   // media: the queued record holds only these events, and the drain loop
   // replays exactly what was queued.
@@ -1454,23 +1495,21 @@ export async function handleChannelRequest(
     },
     agentConfig: event.agentConfig ?? {},
   });
-  await dispatchRecoveredIngress(
-    {
-      accountId: event.accountId,
-      agentId: event.agentId,
-      agentConfig: event.agentConfig ?? {},
-      conversationKey: event.conversationKey,
-      publicConversationKey: eventPublicConversationKey(
-        event.conversationKey,
-        event.accountId,
-        event.agentId,
-      ),
-      endpointId: event.endpointId,
-      projectSlug: event.projectSlug,
-      stageSlug: event.stageSlug,
-    },
-    admission,
-  );
+  const scope: IngressDispatchScope = {
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig ?? {},
+    conversationKey: event.conversationKey,
+    publicConversationKey: eventPublicConversationKey(
+      event.conversationKey,
+      event.accountId,
+      event.agentId,
+    ),
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+  };
+  await dispatchRecoveredIngress(scope, admission);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
 
@@ -1505,7 +1544,7 @@ export async function handleChannelRequest(
     throw new Error("Channel admission did not return an owner generation");
   }
 
-  let session = new Session({
+  const session = new Session({
     eventId: event.eventId,
     conversationKey: event.conversationKey,
     accountId: event.accountId,
@@ -1523,9 +1562,52 @@ export async function handleChannelRequest(
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
   });
-  // The live turn gets the transient byte-backed parts on top of what
-  // admission saw; a follow-up taken off the queue brings its own.
-  let incoming: ConversationIngressEvent[] = ingested.turnEvents;
+  // A queued worker starts later, from whichever run frees its slot, so it
+  // takes this message's observability context rather than inheriting that one.
+  // The webhook acked long ago, so a failure outside a turn is said here.
+  const observability = getObservabilityContext();
+  try {
+    dispatchInProcessWorker("channel-worker", (context): Promise<void> =>
+      runWithObservabilityScope(
+        (): Promise<void> =>
+          runChannelTurns(event, session, ingested.turnEvents, context).catch(
+            async (err: unknown): Promise<never> => {
+              await event.channel
+                .sendText(
+                  formatChannelErrorText(
+                    err instanceof Error ? err.message : String(err),
+                  ),
+                )
+                .catch((): void => {});
+              throw err;
+            },
+          ),
+        observability,
+      ),
+    );
+  } catch (err) {
+    await settleFailedIngressAndDrain(
+      session,
+      err instanceof Error ? err.message : "Failed to start channel turn",
+      (): Promise<boolean> => dispatchNextIngress(session, scope),
+    );
+    throw err;
+  }
+}
+
+/**
+ * The owned channel turn, then every queued follow-up after it, on one worker
+ * slot. Each turn settles its envelope before the queue drains on.
+ * @param incoming the live turn's events, with the transient byte-backed parts
+ *   admission never saw; a follow-up taken off the queue brings its own
+ */
+async function runChannelTurns(
+  event: ChannelInboundEvent,
+  owned: Session,
+  incoming: ConversationIngressEvent[],
+  context: RequestContext,
+): Promise<void> {
+  let session = owned;
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
@@ -2088,7 +2170,7 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
  * persisted agentConfig/ephemeralSystem win over the base event's so a queued
  * request never inherits a previous request's overrides.
  */
-async function dispatchAppliedIngress(
+export async function dispatchAppliedIngress(
   base: IngressDispatchScope,
   next: AppliedIngress,
 ): Promise<void> {
@@ -2334,11 +2416,13 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   };
 }
 
-/** Fire-and-forget background work; the fan-out runs in-process, not via a Lambda self-invoke. */
+/** Fire-and-forget background work on the in-process worker pool. */
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
-  dispatchInProcessWorker(payload);
+  dispatchInProcessWorker(payload.kind, (context): Promise<Response> =>
+    handler(payload, context),
+  );
 }
 
 function asyncToolContinuationEventId(parentEventId: string): string {
@@ -2455,7 +2539,7 @@ async function createCronDirectEvent(
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
   const agent = await getStorage().agents.getById(job.accountId, job.agentId);
-  if (!agent || agent.status !== "active") {
+  if (!agent) {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
   const target = await resolveReentryTarget({
@@ -2640,6 +2724,16 @@ function createDirectContinuationSseBody(
         let transferred = false;
         let terminalFailureDrained = false;
         const checkOwner = ownerCheckForStream(session);
+        // Bun closes a response that writes nothing for its idleTimeout, and one
+        // bash call can run silent for longer. A comment line is ignored by
+        // every SSE parser.
+        const keepalive = setInterval((): void => {
+          try {
+            controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+          } catch {
+            clearInterval(keepalive);
+          }
+        }, SSE_KEEPALIVE_INTERVAL_MS);
         // Once the client is gone the enqueue below throws about its closed
         // controller, which says nothing about the run. The run's own reason is
         // the one worth storing and logging.
@@ -2725,6 +2819,7 @@ function createDirectContinuationSseBody(
           );
           terminalFailureDrained = true;
         } finally {
+          clearInterval(keepalive);
           if (!terminalFailureDrained && !transferred) {
             await session.releaseConversationLease().catch(() => {});
           }
@@ -3059,7 +3154,7 @@ async function pipeAgentStream(
 
 function waitUntilMs(context: RequestContext | undefined): number {
   if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
-    return Math.max(Date.now(), context.deadlineMs - LAMBDA_TIMEOUT_SAFETY_MS);
+    return Math.max(Date.now(), context.deadlineMs - WAIT_DEADLINE_MARGIN_MS);
   }
 
   return Date.now() + DEFAULT_PARENT_WAIT_MS;
