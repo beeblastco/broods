@@ -5,6 +5,7 @@
 import type { CliManifest, GeneratedIds } from "./contracts.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import { StageSessionRefusedError } from "./observability-client.ts";
 
 export interface SyncClientOptions {
   /**
@@ -72,6 +73,14 @@ export interface CliOnboardingContext {
   /** The API account backing the current org; absent on older backends. */
   account?: CliOnboardingAccount | null;
   user?: CliOnboardingUser;
+}
+
+/** A 15-minute stage ticket and the slugs the gateway paths use. */
+export interface CliStageSession {
+  token: string;
+  expiresAt: number;
+  projectSlug: string;
+  stageSlug: string;
 }
 
 /** One stage of a project, as listed by `broods stage list`. */
@@ -414,6 +423,38 @@ export class BroodsSyncClient {
       stage: CliStage;
       clonedFrom: string | null;
     };
+  }
+
+  /** Trade the login token for a stage ticket (logs, stream, machine). */
+  async mintStageSession(
+    project: string,
+    stage: string,
+  ): Promise<CliStageSession> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/stage-session`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ project: project, stage: stage }),
+      },
+    );
+    assertRouteMounted(response, "/v1/account/stage-session", "broods logs");
+    try {
+      await assertOk(response, "Open stage session failed");
+    } catch (error) {
+      // No login or no deployment: a retry gets the same answer.
+      if (response.status === 401 || response.status === 404) {
+        throw new StageSessionRefusedError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      throw error;
+    }
+
+    return (await response.json()) as CliStageSession;
   }
 
   /** Every project in the logged-in account's org, empty ones sorted last. */

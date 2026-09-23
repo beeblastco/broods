@@ -25,6 +25,11 @@ import { sha256Hex } from "../model/accountSecrets";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import {
+  mintStageSessionTicket,
+  stageSessionValidator,
+  type StageSession,
+} from "../agent/deployments";
 
 const CANONICAL_NAMES = {
   development: "Development",
@@ -203,6 +208,89 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
     );
   }
 });
+
+/**
+ * Mint a stage session ticket for the logged-in user's project stage. Null
+ * when the project, the stage or its first deploy is missing.
+ */
+export const mintSessionByAccount = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    stage: v.string(),
+  },
+  returns: v.union(v.null(), stageSessionValidator),
+  handler: async (ctx, args): Promise<StageSession | null> => {
+    const projectDoc = await projectForAccount(
+      ctx,
+      args.accountId,
+      args.project,
+    );
+    if (!projectDoc) return null;
+    const stages = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+      .collect();
+    const stage = stages.find((entry) =>
+      stageNameEquals(entry.name, args.stage),
+    );
+    if (!stage) return null;
+
+    return await mintStageSessionTicket(ctx, projectDoc._id, stage._id);
+  },
+});
+
+/**
+ * HTTP endpoint for the CLI's logs, stream and machine commands. They trade
+ * the `broods login` token for a 15-minute stage ticket instead of using the
+ * stage runtime key, which is meant to sit in a frontend.
+ */
+export const sessionHttpHandle = httpAction(
+  async (ctx, req): Promise<Response> => {
+    try {
+      const auth = await bearerAuth(req);
+      if (!auth) {
+        return jsonError(401, "Authorization Bearer token is required");
+      }
+      const resolved = await ctx.runMutation(
+        internal.cli.auth.resolveCliToken,
+        { tokenHash: auth.secretHash },
+      );
+      if (!resolved) {
+        return jsonError(401, "Stage sessions require a `broods login` token");
+      }
+      const body = (await req.json()) as { project?: unknown; stage?: unknown };
+      if (typeof body.project !== "string" || !body.project.trim()) {
+        return jsonError(400, "Request body must include a project");
+      }
+      if (typeof body.stage !== "string" || !body.stage.trim()) {
+        return jsonError(400, "Request body must include a stage");
+      }
+      const session = await ctx.runMutation(
+        internal.cli.stages.mintSessionByAccount,
+        {
+          accountId: resolved.accountId,
+          project: body.project,
+          stage: body.stage,
+        },
+      );
+
+      return session
+        ? json(session)
+        : jsonError(
+            404,
+            `${body.project}/${body.stage} has no deployment. Run \`broods dev\` or \`broods deploy\` first.`,
+          );
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return jsonError(400, "Request body must be valid JSON");
+      }
+      console.error("CLI stage session request failed", error);
+
+      return jsonError(500, "Stage session request failed");
+    }
+  },
+);
 
 export const listByAccount = internalQuery({
   args: {

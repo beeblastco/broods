@@ -43,13 +43,25 @@ describe("sandbox config", () => {
     ).toThrow("config.snapshot must be a string");
   });
 
-  it("rejects account-controlled lambda function-name overrides", () => {
+  it("rejects lambda options that name platform resources", () => {
     expect(() =>
       normalizeSandboxConfig({
         provider: "lambda",
         options: { functionNames: { noMountNet: "other-function" } },
       }),
     ).toThrow("config.options.functionNames is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        options: { executionRoleArn: "arn:aws:iam::1:role/build" },
+      }),
+    ).toThrow("config.options.executionRoleArn is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "lambda",
+        options: { logGroup: "/aws/lambda-microvms/other" },
+      }),
+    ).toThrow("config.options.logGroup is not supported");
   });
 
   it("validates Vercel image selection", () => {

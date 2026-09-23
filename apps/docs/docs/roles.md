@@ -5,7 +5,7 @@ Every account credential used to be all-or-nothing: whoever holds the account se
 ## The model
 
 - **Role** (`fp_role_...`): created with the account secret under `/v1/roles`. Carries a version-1 policy document whose rule actions use the API namespace: one `<resource>:read` / `<resource>:write` pair per config-plane resource: `agents`, `channels`, `crons`, `env`, `hooks`, `policies`, `sandboxes`, `skills`, `tools`, `workspaces`, and `account`. Optional `projectId`/`stageId` pin the role to one stage.
-- **Session** (`fp_sts_...`): minted by `POST /v1/account/assume-role` with `{ roleId, ttlSeconds? }`. Default TTL is 1 hour, maximum 12. Only the hash is stored; the token is shown once. A session authenticates the same `/v1/*` routes as the account secret but every request must match the role's policy. No matching allow rule means 403. Running `broods machine <name>` on a session needs `sandboxes:write` on that sandbox.
+- **Session** (`fp_sts_...`): minted by `POST /v1/account/assume-role` with `{ roleId, ttlSeconds? }`. Default TTL is 1 hour, maximum 12. Only the hash is stored; the token is shown once. A session authenticates the same `/v1/*` routes as the account secret but every request must match the role's policy. No matching allow rule means 403. Opening the machine socket (`/v1/machine/ws`) for a sandbox on a session needs `sandboxes:write` on that sandbox.
 
 Three credentials may call assume-role:
 

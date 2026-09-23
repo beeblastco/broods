@@ -21,7 +21,12 @@ import {
   type MachineMcpToolsFrame,
   type MachineResultFrame,
 } from "../../../../apps/core/src/shared/machine-socket.ts";
-import { reconnectDelay, resolveWebSocket } from "../observability-client.ts";
+import {
+  reconnectDelay,
+  resolveWebSocket,
+  StageSessionRefusedError,
+} from "../observability-client.ts";
+import { agentEnv } from "../runtime-config.ts";
 import { webSocketSubprotocols } from "../websocket.ts";
 import type { DesktopDriver } from "./desktop.ts";
 import type { McpHost } from "./mcp-host.ts";
@@ -38,10 +43,11 @@ const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_MIN_MS = 1_000;
 
 export interface MachineDaemonOptions {
-  apiKey: string;
   baseUrl: string;
   /** Serve the computer tool through the desktop helper. */
   computer?: boolean;
+  /** Called per connection, so a reconnect can carry a fresh stage ticket. */
+  credential: () => Promise<string>;
   /** Working directory for an exec that names none. */
   cwd: string;
   /** Take the record over from another daemon. */
@@ -86,7 +92,7 @@ export function runExec(
     // Its own process group, so a kill reaches every process the command started.
     const child = spawn("bash", ["-lc", frame.code], {
       cwd: frame.cwd ?? defaultCwd,
-      env: { ...process.env, ...frame.env },
+      env: { ...agentEnv(), ...frame.env },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -133,8 +139,22 @@ export async function runMachineDaemon(
   try {
     while (!options.signal.aborted) {
       const startedAt = Date.now();
+      let token: string;
+      try {
+        token = await options.credential();
+      } catch (error) {
+        // A refused login is final; an unreachable backend is a reconnect.
+        if (error instanceof StageSessionRefusedError) throw error;
+        options.log(
+          `stage session unavailable (${error instanceof Error ? error.message : String(error)}), retrying in ${Math.round(delayMs / 1000)}s`,
+        );
+        await reconnectDelay(delayMs, options.signal);
+        delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+        continue;
+      }
       const closed = await serveOnce(
         options,
+        token,
         instance,
         WebSocketImpl,
         desktop,
@@ -272,6 +292,7 @@ async function serveMcp(
 /** One connection, from hello until close. */
 function serveOnce(
   options: MachineDaemonOptions,
+  token: string,
   instance: string,
   WebSocketImpl: ReturnType<typeof resolveWebSocket>,
   desktop: DesktopDriver | null,
@@ -280,7 +301,7 @@ function serveOnce(
   return new Promise((resolve): void => {
     const socket = new WebSocketImpl(
       machineSocketUrl(options.baseUrl),
-      webSocketSubprotocols(options.apiKey),
+      webSocketSubprotocols(token),
     );
     // Aborts on close: a result that can no longer be sent is not worth waiting for.
     const lifetime = new AbortController();

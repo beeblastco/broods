@@ -12,7 +12,7 @@ info:
 
     Every response carries `X-Request-Id`. Every non-2xx body is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and the gateway and config-plane 429s also carry the IETF `RateLimit-*` fields.
 
-    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws` and `/v1/sandboxes/terminal/ws`; the credential rides the `broods.token.<key>` subprotocol.
+    WebSocket endpoints are not expressible here. The gateway terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws` and `/v1/sandboxes/terminal/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`fp_dts_...`, see `POST /v1/account/stage-session`), never the stage runtime key, because logs and traces carry every end user's chats and tool payloads.
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
@@ -872,6 +872,69 @@ paths:
         "403":
           description: Role disabled, or not scoped to the caller's stage
         "404": { description: Role not found }
+
+  /v1/account/stage-session:
+    post:
+      tags:
+        - Accounts
+      summary: Mint a stage session ticket
+      description: >-
+        Exchange a CLI login token (`fp_cli_...`) for a fifteen-minute stage
+        session ticket (`fp_dts_...`) on one deployed project stage. `broods
+        logs`, `broods stream`, `broods dev` live logs and `broods machine` use
+        it for the observability and machine WebSockets, which refuse the
+        stage runtime key. Mint a new ticket before `expiresAt` to reconnect.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, stage]
+              properties:
+                project:
+                  type: string
+                  description: Project name or slug
+                stage:
+                  type: string
+                  description: Stage name, e.g. `development`
+            examples:
+              development:
+                value:
+                  project: demo-app
+                  stage: development
+      responses:
+        "200":
+          description: Ticket minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: integer
+                    description: Expiry in epoch milliseconds
+                  projectSlug:
+                    type: string
+                  stageSlug:
+                    type: string
+              examples:
+                minted:
+                  value:
+                    token: fp_dts_abc...
+                    expiresAt: 1777597200000
+                    projectSlug: demo-app
+                    stageSlug: development
+        "400":
+          description: Body is not JSON, or `project` or `stage` is missing
+        "401":
+          description: Missing token, or the token is not a `broods login` token
+        "404":
+          description: The project or stage does not exist, or has no deployment yet
 
   /v1/env:
     get:

@@ -293,8 +293,14 @@ export async function upgradeMachineSocket(
   const auth = await resolveBearerAuth({
     authorization: request.headers.get("authorization") ?? "",
   });
+  // The embeddable runtime key is refused: it sits in frontends, and a claim
+  // receives every exec frame, env secrets included, for the sandbox.
+  const allowed =
+    auth?.kind === "account" ||
+    auth?.kind === "role" ||
+    (auth?.kind === "deployment" && auth.stageTicket === true);
   const data: MachineSocketData =
-    auth && auth.kind !== "admin"
+    auth && allowed
       ? {
           accountId: auth.account.accountId,
           ...(auth.kind === "role" ? { role: auth.role } : {}),

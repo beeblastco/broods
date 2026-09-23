@@ -172,7 +172,7 @@ Tracing tab via path 1; there is no Logs tab source for workdir until then.
 - The NATS sink skips any task without a deployment-scoped context (channel/cron paths),
   so it never publishes to a malformed subject; stdout + OTLP still capture those lines.
 - A sandbox tail is scoped like every other observability socket: the gateway builds the
-  Loki selector from the key's server-derived `account_id`/`project`/`stage`, and the
+  Loki selector from the ticket's server-derived `account_id`/`project`/`stage`, and the
   `sandboxId` a client sends only narrows inside that. It must be the UUID shape core
   mints; anything else is rejected at the wire before it reaches LogQL.
 

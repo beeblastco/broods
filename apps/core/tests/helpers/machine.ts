@@ -11,7 +11,10 @@ import {
   type MachineSocketData,
 } from "../../src/harness/sandbox/machine-executor.ts";
 import type { SandboxExecutorConfig } from "../../src/harness/sandbox/types.ts";
-import type { AccountRecord } from "../../src/shared/domain/accounts.ts";
+import {
+  hashAccountSecret,
+  type AccountRecord,
+} from "../../src/shared/domain/accounts.ts";
 import type { McpRecord } from "../../src/shared/domain/mcp.ts";
 import type { SandboxConfigRecord } from "../../src/shared/domain/sandbox-config.ts";
 import type {
@@ -21,7 +24,10 @@ import type {
 } from "../../src/shared/storage.ts";
 
 export const MACHINE_ACCOUNT_ID = "acct_machine";
-export const MACHINE_RUNTIME_KEY = "runtime-key";
+/** The account secret the daemon connects with in these tests. */
+export const MACHINE_ACCOUNT_SECRET = "account-secret";
+/** The stage runtime key, which sits in frontends and must be refused. */
+export const MACHINE_EMBEDDABLE_KEY = "fp_agent_runtime-key";
 /** A role session whose policy reads sandboxes and nothing more. */
 export const MACHINE_READ_ONLY_ROLE_TOKEN = "fp_sts_read-only";
 export const MACHINE_SANDBOX_ID = "sbx_machine";
@@ -119,7 +125,7 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
     },
   ];
   const runtimeKeyHash = new Bun.CryptoHasher("sha256")
-    .update(MACHINE_RUNTIME_KEY)
+    .update(MACHINE_EMBEDDABLE_KEY)
     .digest("hex");
   const readOnlyRoleHash = new Bun.CryptoHasher("sha256")
     .update(MACHINE_READ_ONLY_ROLE_TOKEN)
@@ -145,7 +151,8 @@ export function machineStorage(writes: MachineConnectionWrite[] = []): Storage {
     accounts: {
       getById: async (accountId: string) =>
         accountId === MACHINE_ACCOUNT_ID ? account : null,
-      getBySecretHash: async () => null,
+      getBySecretHash: async (hash: string): Promise<AccountRecord | null> =>
+        hash === hashAccountSecret(MACHINE_ACCOUNT_SECRET) ? account : null,
     },
     agentDeployments: {
       getByApiKeyHash: async (hash: string) =>

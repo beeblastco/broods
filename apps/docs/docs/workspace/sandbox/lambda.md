@@ -188,7 +188,7 @@ MICROVM_HARNESS_TEST=1 bun test tests/sandbox-microvm-harness.integration.test.t
 }
 ```
 
-Image identifier, roles, and sizes are service-managed; account sandbox config cannot override them.
+Image identifier, roles, log group, and sizes are service-managed; account sandbox config cannot override them. Validation rejects `options.functionNames`, `options.executionRoleArn` and `options.logGroup`: core reads the role and log group only from its own `MICROVM_EXECUTION_ROLE_ARN` and `MICROVM_LOG_GROUP_NAME`.
 
 ## Environment variables
 

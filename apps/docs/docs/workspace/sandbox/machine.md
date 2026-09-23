@@ -31,12 +31,22 @@ your computer without asking.
 Validation rejects `persistent`, `size`, `snapshot`, `memoryLimit`, and any
 `network.mode` other than `allow-all`.
 
+The daemon drops every `BROODS_*` variable from the environment of agent
+commands and `--mcp` servers, so an agent shell cannot read `BROODS_API_KEY` or
+`BROODS_TOKEN`.
+
 ## Run the daemon
 
 ```bash
-broods machine my-mac            # uses BROODS_API_KEY from .env.local, like `broods logs`
+broods machine my-mac            # needs `broods login` and a deployed stage, like `broods logs`
 broods machine my-mac --cwd ~/Projects/app
 ```
+
+The daemon trades your `broods login` token for a fifteen-minute stage ticket
+and mints a fresh one before each reconnect. The machine socket
+(`/v1/machine/ws`) also accepts an account secret or a
+[role session](../../roles.md), never the stage runtime key, which is meant to
+sit in a frontend.
 
 The daemon prints each command with its exit code and reconnects after a
 network drop, reclaiming its record as it does. Any other daemon, on any
@@ -50,10 +60,11 @@ broods machine my-mac --force    # take the record over from another daemon
 A record is released the moment its daemon exits, so a normal restart never
 needs the flag. The exception is a daemon killed while its network was down:
 core notices the dead socket after a short timeout, and a restart before that
-needs `--force`. It exits with core's reason on an invalid key, on a name with
-no `machine` record, when refused, or when another daemon takes the record
-over. A [role session](../../roles.md) needs `sandboxes:write` on the sandbox
-to run `broods machine`; without it core answers as if the name had no record.
+needs `--force`. It exits with core's reason on an invalid credential, on a
+name with no `machine` record, when refused, or when another daemon takes the
+record over. A [role session](../../roles.md) needs `sandboxes:write` on the
+sandbox to open the machine socket; without it core answers as if the name had
+no record.
 
 ## Computer use
 

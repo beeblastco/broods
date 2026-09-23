@@ -62,7 +62,7 @@ macOnly(
 
     await expect(
       runMachineDaemon({
-        apiKey: "key",
+        credential: async (): Promise<string> => "key",
         baseUrl: core.url,
         computer: true,
         cwd: process.cwd(),

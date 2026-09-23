@@ -42,7 +42,7 @@ The agent answers in the rooms you declared and nowhere else. To answer in every
 - `channels` (optional): `["*"]` to answer in every room instead of only the declared ones.
 - `allowedUserIds` (optional): Slack user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Slack emoji name to add to accepted messages, defaults to `eyes`.
-- `apiUrl` (optional): Slack Web API base URL, for example for GovSlack or a test proxy. This maps to `SlackAdapterConfig["apiUrl"]`.
+- `apiUrl` (optional): Slack Web API base URL, for example for GovSlack or a test proxy. This maps to `SlackAdapterConfig["apiUrl"]`. It must be a public `https` URL, checked when the channel is saved, because core sends the bot token to it.
 
 Slack replies stream through Chat SDK's native Slack streaming API when the source event has thread and user context. Otherwise the agent sends one final reply through Chat SDK Slack primitives. Chat SDK does the Markdown and response-url text formatting.
 

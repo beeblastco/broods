@@ -15,7 +15,10 @@ import {
   httpHandle as cliProjectsHttp,
   httpOnboarding as cliOnboardingHttp,
 } from "./cli/projects";
-import { httpHandle as cliStagesHttp } from "./cli/stages";
+import {
+  httpHandle as cliStagesHttp,
+  sessionHttpHandle as cliStageSessionHttp,
+} from "./cli/stages";
 import { handle as configHttp } from "./config/http";
 
 const http = httpRouter();
@@ -76,6 +79,12 @@ http.route({
   path: "/v1/account/stages",
   method: "POST",
   handler: cliStagesHttp,
+});
+
+http.route({
+  path: "/v1/account/stage-session",
+  method: "POST",
+  handler: cliStageSessionHttp,
 });
 
 http.route({

@@ -66,6 +66,8 @@ The stage stores a SHA-256 digest beside each encrypted value, so the CLI can co
 
 The terminal tails warnings and errors by default. The full INFO and DEBUG history lives in the dashboard monitoring panel, which can page and filter it.
 
+These commands need a `broods login` token and a deployed stage. The CLI trades the token for a fifteen-minute stage session ticket at `POST /v1/account/stage-session` and mints a fresh one before each reconnect. The stage runtime key in `BROODS_API_KEY` does not open logs.
+
 ```bash
 broods stream            # live-tail warnings and errors
 broods logs --limit 100  # backfill + live-tail
@@ -301,7 +303,7 @@ When `publicAccess` is not set, a public-key request for that agent is refused w
 
 The runtime key is the one credential meant to sit in a frontend, so core limits it further. It reaches only agents of its own stage: an `agentId` from another stage answers `404`. It cannot send `system` messages or `model` overrides unless the agent sets `allowRunOverrides: true`; without it the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, not a channel session. An account secret has none of these limits.
 
-The stage runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `broods deploy`, or `broods login` once a project is set, writes it to `BROODS_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
+The stage runtime key is encrypted at rest and recoverable by the owning user. `broods deploy`, or `broods login` once a project is set, writes it to `BROODS_API_KEY` in `.env.local`, and CLI sessions reuse the stored key without rotating it. Logs and traces carry every end user's chats and tool payloads, so the observability socket refuses the runtime key. Monitoring and Tracing in the dashboard, and `broods logs`, `broods stream` and `broods dev` in the terminal, connect with a fifteen-minute stage session ticket (`fp_dts_…`) instead.
 
 Logs and traces are published once to NATS and captured by a durable `OBSERVABILITY` JetStream stream (bound to the `*.logs.>` / `*.traces.>` subjects). See [Observability](observability.md) for the full pipeline, including how sandbox (MicroVM + workdir) logs route into the same per-tenant view. On (re)connect the gateway replays the recent window from that stream and then tails live, so the dashboard shows full-fidelity recent activity even for a run that happened while no tab was open. That is JetStream replay, not the slower and lossier core subscribe it replaced. Loki (logs) and Tempo (traces) remain the long-term store for history older than the replay window; the refresh control reloads from them. Because Tempo truncates large attributes on ingest, the dashboard prefers the richer/terminal copy of a span when the same span arrives from both sources, so a reload never downgrades a payload.
 
