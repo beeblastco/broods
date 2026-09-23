@@ -34,6 +34,12 @@ export class IdentifyBudget {
     const live = this.live(token, now);
     const allowed = live.length < this.limit;
     if (allowed) live.push(now);
+    // A removed token never calls again, so its key is dropped here once its
+    // newest stamp has aged out. Stamps are pushed in order, so last is newest.
+    const cutoff = now - this.windowMs;
+    for (const [key, stamps] of this.stamps) {
+      if ((stamps.at(-1) ?? cutoff) <= cutoff) this.stamps.delete(key);
+    }
     // Stored either way: `live` is pruned, so writing it back on refusal is what
     // lets an exhausted token recover once its oldest stamps age out.
     this.stamps.set(token, live);
