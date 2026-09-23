@@ -683,6 +683,9 @@ function natsStartResponse(
 ): Response {
   return jsonResponse(202, {
     eventId: publicEventId,
+    // Always sent, so the gateway can poll status in-cluster even when no
+    // public statusUrl exists (PUBLIC_BASE_URL unset).
+    runId: event.runId,
     conversationKey: event.publicConversationKey,
     status: "processing",
     requestedMode: event.requestedMode,
