@@ -173,6 +173,48 @@ jobs:
             bench/baselines.json
           retention-days: 30
 
+  local-stack:
+    # The product end to end on one runner: self-hosted Convex in docker, core
+    # and gateway as bun processes, driven through the gateway by the cases in
+    # scripts/local-verify. Timings land in the job summary. Without the
+    # DEEPSEEK_API_KEY secret (forks) runs stop at the provider call, which
+    # still proves routing, auth, config and storage.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+
+      - name: Start the local stack
+        run: bun run local:up
+
+      - name: Verify through the gateway
+        run: bun run local:verify
+
+      - name: Upload stack logs and timings
+        # state.json holds the stack's secrets, so only logs and perf go up.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: local-stack-${{ github.run_id }}
+          path: |
+            ~/.broods-local/*/logs/
+            ~/.broods-local/*/perf.jsonl
+          if-no-files-found: ignore
+          retention-days: 14
+
   app-surfaces:
     runs-on: ubuntu-24.04
     permissions:
