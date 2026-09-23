@@ -95,8 +95,10 @@ const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024;
 // Room for the Nats-Msg-Id header, which also counts against max_payload.
 const HEADER_ALLOWANCE_BYTES = 1024;
-// Account and agent ids go into subjects raw, so they must be one plain token.
-const SUBJECT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+// Account and agent ids go into subjects raw, so they must be one token with no
+// wildcard. Only the characters NATS reserves are refused: virtual subagent ids
+// carry `~` from their task id.
+const SUBJECT_ID_PATTERN = /^[^\s.*>]+$/;
 
 // Both transports ship the same base client + JetStream API, so the returned
 // connection is interchangeable for every helper here. Pass `token` for
