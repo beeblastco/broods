@@ -188,6 +188,8 @@ Runtime notes:
 
   If Convex cannot reach core directly, fix that first: `bunx convex env set BROODS_ACCOUNT_MANAGE_URL http://core.beeblast.svc.cluster.local`, plus a NetworkPolicy egress rule from the `convex` namespace if needed. The two flags do not restore the old path.
 
+- The gateway buffers each proxied request body, so it refuses one over 20 MiB (`GATEWAY_MAX_REQUEST_BODY_BYTES`). A WebSocket upgrade whose token core cannot check (5xx or timeout) gets a 502 and does not count against `GATEWAY_AUTH_FAILURES_PER_MINUTE`. On SIGTERM the gateway stops listening and closes open sockets with 1012 so clients reconnect to another pod.
+
 ### Service secrets
 
 Four secrets, one job each. None falls back to another, and core and the gateway refuse to start without theirs.

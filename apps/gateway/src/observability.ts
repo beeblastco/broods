@@ -27,9 +27,6 @@ export type ObservabilityScope = {
 
 export type ObservabilityGatewayData = {
   kind: "observability";
-  project: string;
-  stage: string;
-  token: string;
   scope: ObservabilityScope;
 };
 
@@ -47,7 +44,6 @@ type LokiRange = {
 type LokiRow = { entry: ObservabilityLogEntry; ns: bigint };
 type ObservabilityStream = "logs" | "traces";
 type ObservabilitySocketState = {
-  scope: ObservabilityScope;
   // One live consumer per stream, and a generation bumped whenever that stream
   // is torn down: a consumer still opening or a backfill still running for the
   // old subscription sees the bump and stops instead of relaying into the new
@@ -58,6 +54,11 @@ type ObservabilitySocketState = {
   // The sandbox a logs subscription tails, so a repeat of the same subscribe
   // does not fire another Loki backfill scan.
   logsSandboxId: string | null;
+  // The last backfill queued per stream. Each waits for the one before, so a
+  // socket never has two Loki or Tempo backfills running for one stream.
+  backfills: Record<ObservabilityStream, Promise<void>>;
+  // One fetchTrace at a time per socket; a second one is refused.
+  fetchingTrace: boolean;
 };
 type OtelValue = {
   stringValue?: string;
@@ -118,6 +119,8 @@ const TEMPO_TRACE_TIMEOUT_MS = 5_000;
 // NATS replay (OBS_REPLAY_WINDOW_MS) every subscribe gets, so a shared answer
 // that misses its newest spans never shows.
 const TEMPO_TRACE_SHARE_MS = 5 * 60 * 1000;
+// Bounds the shared lookups by count too: past it the oldest goes first.
+const TEMPO_TRACE_CACHE_MAX = 5_000;
 // Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
 // polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
 // timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
@@ -141,7 +144,7 @@ const TEMPO_DETAIL_CONCURRENCY = 6;
 // cannot replace the lookups: on Tempo 2.7 `select()` has no attribute
 // wildcard and rejects `span:parentID`, both of which the rows need.
 const TEMPO_BACKFILL_CHUNK = 12;
-export const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
+const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
 // Span relay backpressure: re-check cadence and cap before shedding.
 const OBS_DRAIN_POLL_MS = 20;
 const OBS_DRAIN_MAX_WAIT_MS = 5_000;
@@ -175,7 +178,24 @@ export async function handleObservabilityMessage(
     return;
   }
   if (msg.type === "fetchTrace") {
-    await sendTrace(socket, socket.data.scope, msg.traceId);
+    const state = obsState.get(socket);
+    if (!state) return;
+    if (state.fetchingTrace) {
+      sendObs(socket, {
+        type: "backfill",
+        stream: "traces",
+        entries: [],
+        error: "A trace lookup is already running",
+      });
+
+      return;
+    }
+    state.fetchingTrace = true;
+    try {
+      await sendTrace(socket, socket.data.scope, msg.traceId);
+    } finally {
+      state.fetchingTrace = false;
+    }
 
     return;
   }
@@ -231,11 +251,12 @@ export function openObservabilitySocket(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
 ): void {
   obsState.set(socket, {
-    scope: socket.data.scope,
     subs: { logs: null, traces: null },
     runs: { logs: 0, traces: 0 },
     logsMinLevel: "INFO",
     logsSandboxId: null,
+    backfills: { logs: Promise.resolve(), traces: Promise.resolve() },
+    fetchingTrace: false,
   });
 }
 
@@ -526,8 +547,15 @@ async function handleObservabilitySubscribe(
   state.subs[stream] = live;
 
   sendObs(socket, { type: "ready" });
+  // Runs after the stream's previous backfill, and only if no newer subscribe
+  // replaced this one meanwhile.
   if (!sandboxId && typeof backfill === "number" && backfill > 0)
-    void sendBackfill(socket, scope, stream, backfill, minLevel, run);
+    state.backfills[stream] = state.backfills[stream].then(
+      (): Promise<void> | undefined =>
+        state.runs[stream] === run
+          ? sendBackfill(socket, scope, stream, backfill, minLevel, run)
+          : undefined,
+    );
 }
 
 // Backfill honours the same minLevel as the live relay, so a client asking for
@@ -820,6 +848,10 @@ function fetchTempoTrace(
     rows: rows,
     expiresAtMs: nowMs + TEMPO_TRACE_SHARE_MS,
   });
+  if (tempoTraces.size > TEMPO_TRACE_CACHE_MAX) {
+    const oldest = tempoTraces.keys().next().value;
+    if (oldest !== undefined) tempoTraces.delete(oldest);
+  }
   rows.catch((): void => {
     if (tempoTraces.get(traceId)?.rows === rows) tempoTraces.delete(traceId);
   });

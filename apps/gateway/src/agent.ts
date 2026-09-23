@@ -42,15 +42,9 @@ type ActiveRun = {
   agentId: string;
   publicConversationKey: string;
   publicEventId: string;
-};
-type NatsStartResponse = {
-  eventId: string;
-  conversationKey: string;
-  nats: {
-    accountId: string;
-    agentId: string;
-    conversationKey: string;
-  };
+  // One control input at a time: each one is a core POST plus a status poll.
+  /** Control inputs submitted and not yet applied or terminal. */
+  controls: number;
 };
 type IngressHttpResponse = {
   eventId?: string;
@@ -69,7 +63,10 @@ type ConversationScope = Omit<
   "connection"
 >;
 type ReplaySnapshot = Awaited<ReturnType<typeof conversationReplaySnapshot>>;
-// Everything the queued and attached paths follow a run with. Only these fields
+// A socket turn that starts at once carries the NATS scope core streams it on;
+// a queued one carries none and streams on the requested conversation.
+type CoreStartResponse = IngressHttpResponse & { nats?: ConversationScope };
+// Everything the execute and attach paths follow a run with. Only these fields
 // differ between them; the lifecycle itself is shared.
 type FollowedExecution = {
   connection: NatsConnection;
@@ -101,7 +98,16 @@ const TERMINAL_STATUSES = new Set<IngressStatus>([
   "expired",
 ]);
 const CURSOR_PREFIX = "ws-responses";
+// An agent id lands raw in a NATS subject (`v1.<account>.<agent>.ws...`), so it
+// must be one token: a `.` would shift the subject and `*` or `>` would widen
+// the subscription across agents.
+const SUBJECT_TOKEN = /^[^\s.*>]+$/;
+// Each control in flight polls its status until applied or terminal, and a
+// queued `collect` or `followup` stays in flight until the run ends, so this
+// bounds poll loops per socket without serializing batching.
+const MAX_CONTROLS_IN_FLIGHT = 8;
 const STATUS_POLL_INTERVAL_MS = 500;
+const STATUS_QUIET_MS = 3_000;
 const NATS_TAIL_GRACE_POLLS = 4;
 const NATS_TAIL_MAX_WAIT_MS = 10_000;
 
@@ -134,6 +140,17 @@ export function handleAgentMessage(
       sendAgentTest(socket, {
         type: "error",
         error: "No active run to control",
+      });
+
+      return;
+    }
+    if (active.controls >= MAX_CONTROLS_IN_FLIGHT) {
+      sendAgentTest(socket, {
+        type: "status",
+        requestId: message.requestId,
+        eventId: message.eventId,
+        status: "failed",
+        error: `Too many control inputs in flight on this WebSocket (max ${MAX_CONTROLS_IN_FLIGHT})`,
       });
 
       return;
@@ -190,14 +207,6 @@ export function buildCoreRunBody(
   };
 }
 
-export function websocketMessageForNatsData(
-  data: Record<string, unknown>,
-): WebSocketServerMessage | null {
-  return typeof data.type === "string"
-    ? (data as WebSocketServerMessage)
-    : null;
-}
-
 export function parseGatewayMessage(
   rawMessage: string | Buffer,
 ): WebSocketClientMessage | null {
@@ -213,11 +222,16 @@ export function parseGatewayMessage(
   return isExecuteMessage(parsed) ? parsed : null;
 }
 
+/**
+ * Stops the socket's active run. With `run`, only while that run is still the
+ * active one: a run's own cleanup must never abort a newer run on the socket.
+ */
 export function stopActiveRun(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  run?: ActiveRun,
 ): void {
   const activeRun = activeRuns.get(socket);
-  if (!activeRun) return;
+  if (!activeRun || (run && activeRun !== run)) return;
   clearTimeout(activeRun.startTimeout);
   activeRun.abort.abort();
   activeRuns.delete(socket);
@@ -229,12 +243,6 @@ async function runCoreStream(
   limits: GatewayLimits,
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
-  const abort = new AbortController();
-  let startTimedOut = false;
-  const startTimeout = setTimeout(() => {
-    startTimedOut = true;
-    abort.abort();
-  }, limits.runStartTimeoutMs);
   let body: Record<string, unknown>;
   try {
     body = buildCoreRunBody(message);
@@ -243,12 +251,18 @@ async function runCoreStream(
 
     return;
   }
+  const abort = new AbortController();
+  let startTimedOut = false;
   const active: ActiveRun = {
     abort: abort,
-    startTimeout: startTimeout,
+    startTimeout: setTimeout((): void => {
+      startTimedOut = true;
+      abort.abort();
+    }, limits.runStartTimeoutMs),
     agentId: String(body.agentId),
     publicConversationKey: String(body.conversationKey),
     publicEventId: String(body.eventId),
+    controls: 0,
   };
   activeRuns.set(socket, active);
   sendAgentTest(socket, {
@@ -258,6 +272,18 @@ async function runCoreStream(
   });
 
   try {
+    const scope: ConversationScope = {
+      accountId: socket.data.accountId,
+      agentId: active.agentId,
+      conversationKey: active.publicConversationKey,
+    };
+    const connection = await getNatsConnection();
+    // Taken before the POST, so every frame this run publishes lands after it
+    // and the consumer never replays the subject's earlier turns.
+    const snapshot = await conversationReplaySnapshot({
+      connection: connection,
+      ...scope,
+    });
     const response = await fetch(
       `${socket.data.coreBaseUrl}${socket.data.corePath}`,
       {
@@ -268,7 +294,7 @@ async function runCoreStream(
       },
     );
     if (!response.ok) {
-      clearTimeout(startTimeout);
+      clearTimeout(active.startTimeout);
       sendAgentTest(socket, {
         type: "error",
         status: response.status,
@@ -285,18 +311,19 @@ async function runCoreStream(
 
       return;
     }
-    const payload = (await response.json()) as NatsStartResponse &
-      IngressHttpResponse;
-    clearTimeout(startTimeout);
-    if (!payload.nats) {
-      if (!payload.eventId || !isIngressStatus(payload.status)) {
-        sendAgentTest(socket, {
-          type: "error",
-          error: "Core did not return a WebSocket stream or ingress status",
-        });
+    const payload = (await response.json()) as CoreStartResponse;
+    clearTimeout(active.startTimeout);
+    if (!payload.eventId || !isIngressStatus(payload.status)) {
+      sendAgentTest(socket, {
+        type: "error",
+        error: "Core did not return a WebSocket stream or ingress status",
+      });
 
-        return;
-      }
+      return;
+    }
+    // A durable 202 is not a terminal answer: follow the queued event to a
+    // terminal frame so the client's stream never hangs on a bare ack.
+    if (!payload.nats) {
       sendAgentTest(socket, {
         type: "ack",
         requestId: payload.eventId,
@@ -304,43 +331,43 @@ async function runCoreStream(
         status: payload.status,
         ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
       });
-      // A durable 202 is not a terminal answer: follow the queued event to a
-      // terminal frame so the client's stream never hangs on a bare ack.
-      await followQueuedExecution(
-        socket,
-        active,
-        {
-          eventId: payload.eventId,
-          status: payload.status,
-          ...(payload.runId ? { runId: payload.runId } : {}),
-          ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
-        },
-        getNatsConnection,
-      );
+      if (TERMINAL_STATUSES.has(payload.status)) {
+        sendTerminalFrame(socket, "Queued", payload.status);
 
-      return;
+        return;
+      }
     }
-    await streamNatsResponses(
-      socket,
-      payload,
-      abort.signal,
-      getNatsConnection,
-      false,
-    );
+    await followExecution(socket, abort.signal, {
+      connection: connection,
+      scope: payload.nats ?? scope,
+      eventId: payload.eventId,
+      eventKey: cursorEventKey(payload.eventId),
+      snapshot: snapshot,
+      startSequence: snapshot.lastSequence + 1,
+      initialConsumedSequence: snapshot.lastSequence,
+      // The snapshot predates the run, so nothing it emits is a replay.
+      isReplay: (): boolean => false,
+      statusRequestId: payload.eventId,
+      ...(payload.runId ? { runId: payload.runId } : {}),
+      ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
+      // A started turn is seeded so its "processing" is not re-sent as news.
+      seedStatus: payload.nats ? payload : null,
+      terminalLabel: payload.nats ? "Direct" : "Queued",
+    });
   } catch (error) {
     if (!abort.signal.aborted)
       sendAgentTest(socket, { type: "error", error: errorMessage(error) });
     else if (startTimedOut)
       sendAgentTest(socket, { type: "error", error: "Run start timed out" });
   } finally {
-    stopActiveRun(socket);
+    stopActiveRun(socket, active);
   }
 }
 
 /**
  * Follows one run to its terminal frame: streams its NATS responses, polls its
  * status, drains the tail, then emits exactly one done or error frame. Shared by
- * the queued and attached paths, which differ only in `execution`.
+ * the execute and attach paths, which differ only in `execution`.
  */
 async function followExecution(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
@@ -355,6 +382,7 @@ async function followExecution(
   let lastConsumedSequence = execution.initialConsumedSequence;
   let sawDone = false;
   let sawError = false;
+  let lastFrameAt = 0;
   let streamSettled = messages === null;
   const closeOnAbort = () => void messages?.close().catch(() => {});
   if (messages) {
@@ -374,8 +402,8 @@ async function followExecution(
               ackNatsMessage(natsMessage);
               continue;
             }
-            const outbound = websocketMessageForNatsData(event.data);
-            if (outbound) {
+            lastFrameAt = Date.now();
+            if (typeof event.data.type === "string") {
               sendAgentTest(socket, {
                 type: "output",
                 eventId: execution.eventId,
@@ -385,7 +413,7 @@ async function followExecution(
                   execution.eventKey,
                 ),
                 replay: execution.isReplay(natsMessage.seq),
-                data: outbound,
+                data: event.data as WebSocketServerMessage,
               });
             }
             ackNatsMessage(natsMessage);
@@ -413,6 +441,9 @@ async function followExecution(
     while (!signal.aborted && !sawDone && !terminal) {
       await Bun.sleep(STATUS_POLL_INTERVAL_MS);
       if (signal.aborted || sawDone) break;
+      // Frames arriving prove the run is alive, so status is only asked for
+      // once the stream has gone quiet.
+      if (Date.now() - lastFrameAt < STATUS_QUIET_MS) continue;
       const status = await fetchStatus(
         socket,
         execution.runId,
@@ -473,57 +504,13 @@ async function followExecution(
   );
 }
 
-async function followQueuedExecution(
-  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
-  active: ActiveRun,
-  accepted: {
-    eventId: string;
-    status: IngressStatus;
-    runId?: string;
-    statusUrl?: string;
-  },
-  getNatsConnection: () => Promise<NatsConnection>,
-): Promise<void> {
-  if (TERMINAL_STATUSES.has(accepted.status)) {
-    sendTerminalFrame(socket, "Queued", accepted.status);
-
-    return;
-  }
-
-  const scope = {
-    accountId: socket.data.accountId,
-    agentId: active.agentId,
-    conversationKey: active.publicConversationKey,
-  };
-  const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({
-    connection: connection,
-    ...scope,
-  });
-
-  await followExecution(socket, active.abort.signal, {
-    connection: connection,
-    scope: scope,
-    eventId: accepted.eventId,
-    eventKey: cursorEventKey(accepted.eventId),
-    snapshot: snapshot,
-    startSequence: snapshot.lastSequence + 1,
-    initialConsumedSequence: snapshot.lastSequence,
-    // A queued run starts after the snapshot, so nothing it emits is a replay.
-    isReplay: () => false,
-    statusRequestId: accepted.eventId,
-    ...(accepted.runId ? { runId: accepted.runId } : {}),
-    ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
-    seedStatus: null,
-    terminalLabel: "Queued",
-  });
-}
-
+/** Submits one control input and follows its status until it settles. */
 async function submitControl(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   active: ActiveRun,
   message: WebSocketClientControlMessage,
 ): Promise<void> {
+  active.controls += 1;
   try {
     const response = await fetch(
       `${socket.data.coreBaseUrl}${socket.data.corePath}`,
@@ -567,7 +554,7 @@ async function submitControl(
       status: payload.status,
       ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
     });
-    void pollControlStatus(
+    await pollControlStatus(
       socket,
       active,
       message.requestId,
@@ -585,6 +572,8 @@ async function submitControl(
         error: errorMessage(error),
       });
     }
+  } finally {
+    active.controls -= 1;
   }
 }
 
@@ -598,7 +587,7 @@ async function pollControlStatus(
 ): Promise<void> {
   let previous = "";
   while (!active.abort.signal.aborted) {
-    await Bun.sleep(500);
+    await Bun.sleep(STATUS_POLL_INTERVAL_MS);
     const payload = await fetchStatus(
       socket,
       runId,
@@ -607,12 +596,7 @@ async function pollControlStatus(
     ).catch(() => null);
     if (!payload?.status) continue;
     const statusError = errorText(payload.error);
-    const fingerprint = JSON.stringify([
-      payload.status,
-      payload.appliedMode,
-      payload.appliedToEventId,
-      statusError,
-    ]);
+    const fingerprint = statusFingerprint(payload);
     if (fingerprint !== previous) {
       previous = fingerprint;
       sendAgentTest(socket, {
@@ -631,8 +615,11 @@ async function pollControlStatus(
         ...(statusError ? { error: statusError } : {}),
       });
     }
+    // Applied means folded into its target run, whose own stream reports the
+    // outcome, so the control settles there and frees the socket's slot.
     if (
       payload.status === "not_found" ||
+      payload.status === "applied" ||
       (isIngressStatus(payload.status) && TERMINAL_STATUSES.has(payload.status))
     )
       return;
@@ -656,6 +643,7 @@ async function attachCoreStream(
     agentId: message.agentId,
     publicConversationKey: message.conversationKey,
     publicEventId: message.eventId,
+    controls: 0,
   };
   activeRuns.set(socket, active);
   const statusUrl = `/v1/runs/${encodeURIComponent(message.runId)}`;
@@ -790,7 +778,7 @@ async function attachCoreStream(
     if (!abort.signal.aborted)
       sendAgentTest(socket, { type: "error", error: errorMessage(error) });
   } finally {
-    stopActiveRun(socket);
+    stopActiveRun(socket, active);
   }
 }
 
@@ -886,67 +874,28 @@ async function waitForNatsTail(options: {
   }
 }
 
-async function streamNatsResponses(
-  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
-  started: NatsStartResponse,
-  signal: AbortSignal,
-  getNatsConnection: () => Promise<NatsConnection>,
-  replay: boolean,
-): Promise<void> {
-  const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({
-    connection: connection,
-    ...started.nats,
-  });
-  const eventKey = cursorEventKey(started.eventId);
-  const messages = await readConversationStream({
-    connection: connection,
-    ...started.nats,
-  });
-  try {
-    for await (const message of messages) {
-      if (signal.aborted) break;
-      const event = decodeNatsStreamEvent(message.data);
-      if (!event || event.headers.eventId !== started.eventId) {
-        ackNatsMessage(message);
-        continue;
-      }
-      const outbound = websocketMessageForNatsData(event.data);
-      if (outbound) {
-        sendAgentTest(socket, {
-          type: "output",
-          eventId: started.eventId,
-          cursor: formatCursor(snapshot.generation, message.seq, eventKey),
-          replay: replay || message.seq <= snapshot.lastSequence,
-          data: outbound,
-        });
-      }
-      ackNatsMessage(message);
-      if (event.data.type === "done") break;
-    }
-  } finally {
-    await messages.close().catch(() => {});
-  }
-}
-
+/**
+ * Reads a run's status from core's in-cluster address, by run id. Core's
+ * `statusUrl` is the public door, so when only that is known just its path is
+ * kept: polling the public URL would hairpin through ingress.
+ */
 async function fetchStatus(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   runId: string | undefined,
   signal: AbortSignal,
   statusUrl?: string,
 ): Promise<IngressHttpResponse> {
-  const target =
-    statusUrl && /^https?:\/\//.test(statusUrl)
-      ? statusUrl
-      : runId
-        ? `${socket.data.coreBaseUrl}/v1/runs/${encodeURIComponent(runId)}`
-        : null;
-  // Without a run id and without an absolute URL from core there is nothing to
-  // poll; callers treat a status-less answer as "nothing new yet".
-  if (!target) return {};
+  const path = runId
+    ? `/v1/runs/${encodeURIComponent(runId)}`
+    : statusUrl?.match(/\/v1\/runs\/[^/?#]+/)?.[0];
+  // Nothing to poll; callers treat a status-less answer as "nothing new yet".
+  if (!path) return {};
 
   return responseJson(
-    await fetch(target, { headers: coreHeaders(socket), signal: signal }),
+    await fetch(`${socket.data.coreBaseUrl}${path}`, {
+      headers: coreHeaders(socket),
+      signal: signal,
+    }),
   );
 }
 
@@ -1101,7 +1050,7 @@ function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
     typeof record.requestId === "string" &&
     record.requestId.length > 0 &&
     typeof record.agentId === "string" &&
-    record.agentId.length > 0 &&
+    SUBJECT_TOKEN.test(record.agentId) &&
     typeof record.conversationKey === "string" &&
     record.conversationKey.length > 0 &&
     typeof record.eventId === "string" &&
@@ -1141,7 +1090,7 @@ function isExecuteMessage(
   return (
     record.type === "execute" &&
     typeof record.agentId === "string" &&
-    record.agentId.trim().length > 0 &&
+    SUBJECT_TOKEN.test(record.agentId.trim()) &&
     (record.mode === undefined || isIngressMode(record.mode)) &&
     (hasEventInput(value) || hasAnswerInput(value))
   );

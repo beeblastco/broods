@@ -338,6 +338,12 @@ in the canonical identity defined above and defaults to `eventId`; `eventId`
 correlates the durable envelope/status. ACK is sent only after durable
 acceptance. Later status frames mirror the pollable record.
 
+Up to 8 control inputs can be in flight per socket. One stays in flight until
+its status is `applied` or terminal, so a queued `collect` or `followup` holds
+its place until the run ends. A `control` frame past the limit gets a `status`
+frame with `status: "failed"` and an error, and can be sent again once an
+earlier one settles.
+
 Convex/core owns admission and status truth. The gateway owns only delivery of
 the correlated ACK/status frames: it emits ACK after core returns durable
 acceptance and obtains later transitions from the authenticated status route.
@@ -354,6 +360,10 @@ it fully processed:
 { "type": "attached", "requestId": "a1", "eventId": "event-1", "status": "processing", "replayFromCursor": "ws-responses:4:1235", "replayThroughCursor": "ws-responses:4:1270" }
 { "type": "output", "eventId": "event-1", "cursor": "ws-responses:4:1235", "replay": true, "data": { "type": "text-delta", "text": "..." } }
 ```
+
+`agentId` names a NATS subject token, so the gateway refuses an `attach` or
+`execute` whose `agentId` holds a `.`, `*`, `>`, or whitespace as an invalid
+message.
 
 The cursor is opaque to clients. It encodes the JetStream stream generation,
 the global `JsMsg.seq`, and a binding to its originating event, so a cursor can
@@ -394,7 +404,10 @@ A busy WebSocket `execute` that is durably queued (`followup`, `collect`, or
 `steer`) receives its ACK and then stays live: the gateway streams the queued
 event's output once it reaches a runnable boundary and polls its durable status,
 always closing the client stream with a terminal `done` or `error` frame. A bare
-ACK is never the final frame. On terminal status, the
+ACK is never the final frame. A turn that starts at once is followed the same
+way, so a core that dies mid-run still ends the stream on its durable status.
+The gateway polls status on core's in-cluster address, and only once a run's
+output has been quiet for a few seconds. On terminal status, the
 conversation output may already have expired, so reconnect returns the terminal
 status/result rather than recreating token-by-token output. An attached socket
 does not own the run, and status remains pollable for seven days independently

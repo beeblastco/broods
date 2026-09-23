@@ -16,6 +16,7 @@ import { toErrorMessage } from "../../shared/errors.ts";
 import { logInfo, logWarn } from "../../shared/log.ts";
 import {
   MACHINE_CLOSE,
+  MACHINE_MAX_FRAME_BYTES,
   MACHINE_WEBSOCKET_PATH,
   occupiedReason,
   parseDaemonFrame,
@@ -44,7 +45,6 @@ import { configString, mergeSandboxEnv, truncateText } from "./utils.ts";
 const COMPUTER_REPLY_MS = 30_000;
 // The dashboard reads a computer as offline once its heartbeat goes quiet.
 const HEARTBEAT_MS = 60_000;
-const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 // Codex's per-tool default; a local server slower than that is hung.
 const MCP_REPLY_MS = 60_000;
 // The daemon kills the process at timeoutSeconds; this covers the round trip.
@@ -145,7 +145,7 @@ export function isMachineUpgrade(request: Request): boolean {
 
 export const machineWebSocketHandler: Bun.WebSocketHandler<MachineSocketData> =
   {
-    maxPayloadLength: MAX_FRAME_BYTES,
+    maxPayloadLength: MACHINE_MAX_FRAME_BYTES,
     message: function (socket, raw): void {
       const accountId = socket.data.accountId;
       if (!accountId) {

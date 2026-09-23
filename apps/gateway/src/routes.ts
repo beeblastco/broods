@@ -65,10 +65,6 @@ export function isInternalCorePath(pathname: string): boolean {
   return INTERNAL_CORE_PATHS.has(pathname.replace(/\/+$/, ""));
 }
 
-export function isWebSocketPath(pathname: string): boolean {
-  return matchAgentWebSocketPath(pathname) !== null;
-}
-
 /**
  * Parses the two agent WebSocket path shapes so the upgrade can bind the
  * requested endpoint to the runtime key's scope before any stream access.

@@ -2,9 +2,12 @@ import {
   openTerminalTicket,
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
+import { MACHINE_MAX_FRAME_BYTES } from "../../core/src/shared/machine-socket.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
+// Two of the largest machine frames, so one still in flight never trips it.
+const MAX_UPSTREAM_BUFFERED_BYTES = 2 * MACHINE_MAX_FRAME_BYTES;
 
 export type TerminalGatewayData = {
   kind: "terminal";
@@ -58,6 +61,8 @@ export function openTerminalTicketWithSecrets(
 export function isSessionInitFrame(frame: string): boolean {
   if (!frame.startsWith("{")) return false;
 
+  // Parsed here, not with utils.ts `parseJson`: core's machine relay test
+  // compiles this file under core's tsconfig, which utils.ts does not pass.
   try {
     const parsed: unknown = JSON.parse(frame);
 
@@ -167,6 +172,12 @@ export function relayTerminalInput(
       ? rawMessage
       : (new Uint8Array(rawMessage) as Uint8Array<ArrayBuffer>);
   if (state.upstream && state.upstream.readyState === WebSocket.OPEN) {
+    // An upstream that stopped draining would otherwise buffer without end.
+    if (state.upstream.bufferedAmount > MAX_UPSTREAM_BUFFERED_BYTES) {
+      socket.close(1009, "terminal upstream is not draining");
+
+      return;
+    }
     state.upstream.send(chunk);
 
     return;
