@@ -52,6 +52,7 @@ import {
 import {
   applySteering,
   DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  releaseIngressOwner,
   settleIngress,
   takeNextIngress,
   type AppliedIngress,
@@ -367,7 +368,7 @@ export class Session {
 
   async releaseConversationLease(): Promise<void> {
     if (this.ownerGeneration === undefined) return;
-    await runtime.mutate("releaseIngressOwner", {
+    await releaseIngressOwner({
       conversationKey: this.conversationKey,
       ownerEventId: this.eventId,
       ownerGeneration: this.ownerGeneration,

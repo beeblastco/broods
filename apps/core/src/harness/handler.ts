@@ -2087,7 +2087,7 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
  * persisted agentConfig/ephemeralSystem win over the base event's so a queued
  * request never inherits a previous request's overrides.
  */
-async function dispatchAppliedIngress(
+export async function dispatchAppliedIngress(
   base: IngressDispatchScope,
   next: AppliedIngress,
 ): Promise<void> {
