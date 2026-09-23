@@ -42,9 +42,15 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install OPA
+        env:
+          # From the v1.18.2 GitHub release asset opa_linux_amd64_static.sha256.
+          # Bump both together.
+          OPA_VERSION: v1.18.2
+          OPA_SHA256: 9903e5125ac281104f2c4b7371d10cc3b74a98933743fcbfc174f9bf0ab20de8
         run: |
           curl -fsSL -o /usr/local/bin/opa \
-            https://openpolicyagent.org/downloads/v1.18.2/opa_linux_amd64_static
+            "https://openpolicyagent.org/downloads/${OPA_VERSION}/opa_linux_amd64_static"
+          echo "${OPA_SHA256}  /usr/local/bin/opa" | sha256sum --check --strict
           chmod +x /usr/local/bin/opa
 
       # The source of truth first: blaming the deployment for a policy that is

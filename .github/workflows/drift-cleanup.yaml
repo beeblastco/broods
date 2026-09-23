@@ -1,24 +1,30 @@
 # Drift cleanup.
-# Runs `sst refresh` + `sst diff` for every active stage nightly, then if drift
-# is detected, runs `sst deploy` to reconcile (deleting resources whose code
-# was removed). This is the safety net for stages that did not get reconciled
-# at the time of a code change (e.g. failed deploy on `dev`, or a Phase-4-style
-# cutover landed after the last prod deploy). It is the second line of defence
-# against billable orphans (NAT Gateways, EIPs, unused log groups, deprecated
-# Lambda functions).
+# Runs `sst refresh` + `sst diff` for every active stage nightly. On `dev`, drift
+# is reconciled with `sst deploy` (deleting resources whose code was removed).
+# On production-* stages the run is report-only: drift fails the job so the
+# failure notification reaches a human, who reconciles through deploy.yaml.
+# This is the safety net for stages that did not get reconciled at the time of
+# a code change (e.g. a failed deploy on `dev`). It is the second line of
+# defence against billable orphans (NAT Gateways, EIPs, unused log groups,
+# deprecated Lambda functions).
 #
-# Production safety:
-#   - The matrix uses the GitHub `production` environment for production-*
-#     stages and `development` otherwise. The `production` environment in
-#     this repo is already approval-gated (see deploy.yaml), so prod
-#     reconciliation runs are no more dangerous than a regular prod deploy.
-#   - `sst deploy` auto-confirms in CI (no TTY). Drift is bounded because
-#     the only diff is between sst.config.ts and the live stack, never
-#     against an out-of-tree change.
+# Refs: the `production` environment only deploys from `main`, and the schedule
+# runs on the default branch (`dev`). So the scheduled run checks the non-
+# production stages itself and dispatches this workflow on `main` once per
+# production stage. A production dispatch from any other ref fails fast.
+#
+# Locking: each stage job takes the same `sst-<stage>` concurrency group as the
+# deploy job in deploy.yaml, so drift never touches a stage mid-deploy and never
+# needs `sst unlock`. A lock left behind by a crashed run fails the deploy here;
+# clear it by hand after checking nothing is running.
+#
+# Logs: the refresh/diff output names ARNs, so the account id is masked and the
+# plan stays in the job log only (no artifact, no step summary dump). The repo
+# is public.
 #
 # Trigger:
 #   - schedule: 0 3 * * * (03:00 UTC daily; low-traffic window)
-#   - workflow_dispatch: ad-hoc run, same matrix
+#   - workflow_dispatch: one stage; production-* only with `--ref main`
 
 name: Drift Cleanup
 
@@ -26,49 +32,108 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
-
-# Serialize against the deploy workflow so a manual prod deploy + a same-hour
-# drift run cannot both try to grab the SST/Pulumi state lock.
-concurrency:
-  group: drift-cleanup-${{ github.workflow }}
-  cancel-in-progress: false
+    inputs:
+      stage:
+        description: SST stage to check. production-* runs only from main.
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - production-eu-west-1
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  plan:
+    name: Pick stages
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      production: ${{ steps.pick.outputs.production }}
+    steps:
+      - name: Pick stages
+        id: pick
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_STAGE: ${{ inputs.stage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # stage|region|ref. `ref` is the branch that feeds the stage, as in
+          # deploy.yaml. Stand up a new stage = add it here (and to the
+          # dispatch options) or drift eats it.
+          STAGES='dev|eu-west-1|dev
+          production-eu-west-1|eu-west-1|main'
+
+          selected=""
+          production=""
+          while IFS='|' read -r stage region ref; do
+            if [[ "$EVENT_NAME" == "schedule" ]]; then
+              if [[ "$stage" == production* ]]; then
+                production+="$stage "
+                continue
+              fi
+            elif [[ "$stage" != "$INPUT_STAGE" ]]; then
+              continue
+            elif [[ "$stage" == production* && "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::Stage $stage runs only from main (this run is on $GITHUB_REF). Dispatch with --ref main."
+              exit 1
+            fi
+            selected+="${stage}|${region}|${ref}"$'\n'
+          done <<< "$STAGES"
+
+          matrix="$(printf '%s' "$selected" | jq -Rnc '[inputs | select(length > 0) | split("|") | {stage: .[0], region: .[1], ref: .[2]}]')"
+          {
+            echo "matrix=$matrix"
+            echo "production=$production"
+          } >> "$GITHUB_OUTPUT"
+
+  # Own job so a failed dispatch neither blocks nor hides the dev pass.
+  dispatch-production:
+    name: Dispatch production stages on main
+    needs: plan
+    if: needs.plan.outputs.production != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGES: ${{ needs.plan.outputs.production }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for stage in $STAGES; do
+            echo "Dispatching $stage on main"
+            gh workflow run drift-cleanup.yaml --repo "$GITHUB_REPOSITORY" --ref main -f stage="$stage"
+          done
+
   reconcile:
     name: Reconcile ${{ matrix.stage }}
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       # Each stage must finish (or fail) independently. One stage failing
       # must not block another's cleanup pass.
       fail-fast: false
-      # `ref` pins each stage to the branch that actually feeds it, mirroring
-      # deploy.yaml's source-of-truth: the `dev` stage tracks `dev`, and every
-      # `production-*` stage tracks `main` (the promoted code). Without this the
-      # workflow would check out its own trigger ref (`dev`) for ALL stages and
-      # the nightly cron would deploy dev's HEAD to production every night,
-      # bypassing the one-click promote-dev-to-main gate. Reconcile production
-      # only to what has been promoted to `main`.
       matrix:
-        include:
-          - stage: dev
-            region: eu-west-1
-            ref: dev
-          - stage: production-eu-west-1
-            region: eu-west-1
-            ref: main
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
-    # Mirror deploy.yaml's environment mapping so prod reconciles route through
-    # the `production` GitHub environment. NOTE: this only adds a human gate if
-    # the `production` environment has required reviewers configured in repo
-    # settings. It currently does NOT, so the gate is advisory until that is
-    # added. The `ref: main` pinning above is the load-bearing safety control
-    # (prod can only ever reconcile to promoted code); the environment gate is
-    # defense-in-depth on top of it. Add required reviewers to `production` to
-    # also require manual approval before a prod drift-reconcile applies.
+    # Same key as deploy.yaml's deploy job. Every production-* stage shares one.
+    concurrency:
+      group: sst-${{ startsWith(matrix.stage, 'production') && 'production' || matrix.stage }}
+      cancel-in-progress: false
+
+    # Mirror deploy.yaml's environment mapping so the diff sees the same
+    # per-environment Convex credentials a normal deploy does.
     environment: ${{ startsWith(matrix.stage, 'production') && 'production' || 'development' }}
 
     env:
@@ -88,11 +153,13 @@ jobs:
       # workflow owns that mirror step.
 
     steps:
+      # vars are not masked like secrets; every ARN in the plan carries this id.
+      - name: Mask AWS account id
+        run: echo "::add-mask::${AWS_ACCOUNT_ID}"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Reconcile each stage against ITS branch (see matrix `ref` above):
-          # dev←dev, production-*←main. Never deploy dev's HEAD to production.
           ref: ${{ matrix.ref }}
 
       - name: Setup Bun
@@ -133,68 +200,37 @@ jobs:
           echo "::group::sst diff: compute desired-vs-actual plan"
           # sst diff returns non-zero on errors, zero with content for diffs
           # and zero without content when the stack already matches.
-          set +e
           AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
             bunx sst diff --stage "$TARGET_STAGE" \
             2>&1 | tee "$LOG_DIR/diff.log"
           DIFF_RC=$?
-          set -e
           echo "::endgroup::"
 
           if [ "$DIFF_RC" -ne 0 ]; then
-            echo "::warning::sst diff exited $DIFF_RC, treating as 'drift detected, do not apply' so a human can review"
-            echo "diff_rc=$DIFF_RC" >> "$GITHUB_OUTPUT"
-            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::sst diff exited $DIFF_RC for $TARGET_STAGE; not applying anything"
+            exit "$DIFF_RC"
           fi
 
           # Drift signal: any Pulumi-style diff line (starts with +, -, ~) at
           # column 0 (resource-level) or after 6 spaces (attribute-level).
           if grep -qE '^([\+\-\~] |^      [\+\-\~] )' "$LOG_DIR/diff.log"; then
             echo "drift_detected=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "## Drift detected for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\`"
-              echo ""
-              echo "Pulumi plan will reconcile this stack. The full plan is archived as the workflow artifact \`drift-plan-${TARGET_STAGE}\`. First 200 lines:"
-              echo ""
-              echo '```'
-              head -200 "$LOG_DIR/diff.log"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "## Drift detected for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\`. The plan is in the \"Detect drift\" step log." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "drift_detected=false" >> "$GITHUB_OUTPUT"
-            {
-              echo "## No drift for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\` ✓"
-              echo ""
-              echo "Refresh + diff completed clean. Refresh log is archived as \`drift-plan-${TARGET_STAGE}\` for the next 30 days."
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "## No drift for stage \`$TARGET_STAGE\` in \`$TARGET_REGION\`" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload drift plan
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: drift-plan-${{ matrix.stage }}
-          path: /tmp/drift-${{ matrix.stage }}/*.log
-          # 30 days is enough to investigate the run that introduced a
-          # configuration regression; covers two monthly deploy cycles.
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Clear stale SST deploy lock
-        if: steps.detect.outputs.drift_detected == 'true'
-        working-directory: apps/core
+      - name: Report production drift
+        if: steps.detect.outputs.drift_detected == 'true' && startsWith(matrix.stage, 'production')
         env:
           TARGET_STAGE: ${{ matrix.stage }}
-          TARGET_REGION: ${{ matrix.region }}
-        shell: bash
         run: |
-          set -uo pipefail
-          AWS_REGION="$TARGET_REGION" AWS_DEFAULT_REGION="$TARGET_REGION" \
-            bunx sst unlock --stage "$TARGET_STAGE" || true
+          echo "::error::Drift on $TARGET_STAGE. Report-only: review the diff above and reconcile with the Deploy workflow from main."
+          exit 1
 
       - name: Reconcile (sst deploy)
-        if: steps.detect.outputs.drift_detected == 'true'
+        if: steps.detect.outputs.drift_detected == 'true' && !startsWith(matrix.stage, 'production')
         working-directory: apps/core
         env:
           TARGET_STAGE: ${{ matrix.stage }}
@@ -212,21 +248,7 @@ jobs:
 
           if [ "$DEPLOY_RC" -ne 0 ]; then
             echo "::error::sst deploy failed for $TARGET_STAGE in $TARGET_REGION (rc=$DEPLOY_RC)"
-            {
-              echo "## ❌ sst deploy failed for \`$TARGET_STAGE\` in \`$TARGET_REGION\` (rc=$DEPLOY_RC)"
-              echo ""
-              echo "Re-run manually after fixing the underlying issue:"
-              echo ""
-              echo '```'
-              echo "AWS_REGION=$TARGET_REGION AWS_DEFAULT_REGION=$TARGET_REGION \\"
-              echo "  bunx sst deploy --stage $TARGET_STAGE --print-logs"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
             exit "$DEPLOY_RC"
           fi
 
-          {
-            echo "## ✅ sst deploy succeeded for \`$TARGET_STAGE\` in \`$TARGET_REGION\`"
-            echo ""
-            echo "Drift was applied. The stack now matches sst.config.ts. Audit the artifact \`drift-plan-${TARGET_STAGE}\` for the historical plan."
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## sst deploy reconciled \`$TARGET_STAGE\` in \`$TARGET_REGION\`" >> "$GITHUB_STEP_SUMMARY"

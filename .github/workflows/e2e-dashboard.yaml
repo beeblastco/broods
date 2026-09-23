@@ -9,6 +9,10 @@ name: Dashboard e2e
 # Needs the probe account in the target environment: DASHBOARD_E2E_EMAIL and
 # DASHBOARD_E2E_PASSWORD, a WorkOS user with email + password auth. The suites
 # provision its org and project on first sign-in.
+#
+# workflow_run always runs on the default branch (dev), and the production
+# environment only deploys from main. So a main build dispatches this workflow
+# on main, and that run probes production.
 
 on:
   workflow_run:
@@ -25,16 +29,27 @@ on:
         type: string
 
 jobs:
+  dispatch-main:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the production probe on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run e2e-dashboard.yaml --repo "$GITHUB_REPOSITORY" --ref main
+
   deployed:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch != 'main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Checkout is all this job does with the token; deny everything else.
     permissions:
       contents: read
-    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'development' }}
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     env:
-      E2E_BASE_URL: ${{ inputs.base_url || ((github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
+      E2E_BASE_URL: ${{ inputs.base_url || (github.ref_name == 'main' && 'https://dashboard.broods.app' || 'https://dashboard.dev.broods.app') }}
       E2E_EMAIL: ${{ secrets.DASHBOARD_E2E_EMAIL }}
       E2E_PASSWORD: ${{ secrets.DASHBOARD_E2E_PASSWORD }}
       E2E_PROJECT_ID: ${{ vars.DASHBOARD_E2E_PROJECT_ID }}
