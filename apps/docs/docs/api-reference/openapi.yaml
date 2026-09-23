@@ -1442,7 +1442,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "Prebuilt image/snapshot to launch from: a workdir image id/name or a MicroVM image ARN. Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row.",
+                        description: "Prebuilt image/snapshot to launch from: a workdir image id/name, or on lambda a platform MicroVM image ARN in the same AWS account and region as the default image (any other ARN fails the run). Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row.",
                       }
                     persistent:
                       {

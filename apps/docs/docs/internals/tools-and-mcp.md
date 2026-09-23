@@ -58,7 +58,7 @@ The mcp-runner Lambda (`apps/lambda/handler.mjs`, `child-runner.mjs`) hosts the 
 - A batch shares one 30 s deadline and one 16 MB output cap. `RUN_TIMEOUT_MS` in `apps/lambda/handler.mjs` sets the deadline, with a 2 s grace for the child to abort itself. Its CPU is split evenly across its calls.
 - Warm reuse. Repeat invokes for the same account and bundle sha256 reuse a warm child, so only the first pays fetch, parse and spawn. A child serves at most `MCP_CHILD_MAX_CALLS` calls, default 64, and retires after `MCP_CHILD_IDLE_SECONDS` idle, default 300. A timeout or crash retires it at once. A handler that throws fails only its own request.
 - Metering. Each call's span carries `tool.compute.type: "mcp-sandbox"` and `tool.compute.cpu_usec`, billed into the account's tool-sandbox CPU usage.
-- With `MCP_TENANT_ISOLATION=true` on both the SST deploy and core, every invoke carries the account id as its Lambda tenant id. See [security](security.md).
+- Every invoke carries the account id as its Lambda tenant id, unless `MCP_TENANT_ISOLATION=false` on a non-production stage. See [security](security.md).
 - The bundle reaches the runner as a pre-signed URL valid for 120 s, so the function holds no S3 access.
 
 Because the transport is stateless, per-invoke hosting is a complete implementation, and agents use hosted and external servers the same way. `defineTool` and `POST /v1/tools` are retired; hosted MCP servers replace them.

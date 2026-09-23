@@ -78,7 +78,7 @@ Mountpoint for S3 was chosen over S3 Files (`mount -t s3files`). S3 Files allows
 
 ### Image and build
 
-AWS builds the image from an S3 zip of a Dockerfile and sources with `create-microvm-image` and `update-microvm-image`. It is not an ECR image Lambda or a custom runtime. A build is a versioned Firecracker snapshot of memory and disk. Core selects it by ARN through `MICROVM_IMAGE_IDENTIFIER`, optionally pinned with `MICROVM_IMAGE_VERSION`. A config's `snapshot` overrides the image. Image CI lives in `../lambda-sanbdox`.
+AWS builds the image from an S3 zip of a Dockerfile and sources with `create-microvm-image` and `update-microvm-image`. It is not an ECR image Lambda or a custom runtime. A build is a versioned Firecracker snapshot of memory and disk. Core selects it by ARN through `MICROVM_IMAGE_IDENTIFIER`, optionally pinned with `MICROVM_IMAGE_VERSION`. A config's `snapshot` overrides the image only with an ARN in the same account and region as that default, and `MICROVM_IMAGE_VERSION` then does not apply. Any other ARN fails the run, since tenants cannot build MicroVM images. Image CI lives in `../lambda-sanbdox`.
 
 `apps/core/sst.config.ts` provisions the prerequisites in the core region, except in `ap-southeast-1` where the feature is not available yet (`microvmPrereqsEnabled()`):
 
@@ -87,7 +87,7 @@ AWS builds the image from an S3 zip of a Dockerfile and sources with `create-mic
 - the `/broods/<stage>/microvms` log group, 30 day retention,
 - the NAT-less `SandboxNetwork` VPC with an S3 gateway endpoint scoped to the managed workspace bucket, and the `microvm-egress` connector whose ARN reaches core as `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`.
 
-Account config cannot override the image, roles, log group or size catalog. Validation rejects `options.functionNames`, `options.executionRoleArn` and `options.logGroup`; core reads role and log group only from `MICROVM_EXECUTION_ROLE_ARN` and `MICROVM_LOG_GROUP_NAME`.
+Account config cannot override the image version, roles, log group or size catalog. Validation accepts only `options.workspaceRoot` and `options.reservationKey` on `lambda`; core reads role and log group only from `MICROVM_EXECUTION_ROLE_ARN` and `MICROVM_LOG_GROUP_NAME`.
 
 There is no API to promote a running VM into a new image, so the dashboard's Create snapshot action is offered only for workdir.
 

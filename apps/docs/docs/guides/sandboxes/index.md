@@ -38,23 +38,23 @@ Only `provider` is required. Without a workspace every `bash` call gets a fresh 
 
 ## Configuration
 
-| Field                  | Default                | What it does                                                                                                |
-| ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `provider`             | `sandbox`              | Compute backend, from the table above                                                                       |
-| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                    |
-| `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                      |
-| `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                          |
-| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                    |
-| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                   |
-| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary |
-| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                               |
-| `memoryLimit`          | none                   | MB. Validated, maximum 8192 on `lambda`, but executors do not resize to it                                  |
-| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                        |
-| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                 |
-| `options`              | none                   | Provider-specific settings, see [Providers](providers.md)                                                   |
-| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                     |
-| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                        |
-| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                             |
+| Field                  | Default                | What it does                                                                                                      |
+| ---------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `provider`             | `sandbox`              | Compute backend, from the table above                                                                             |
+| `fallbackProvider`     | none                   | Ephemeral only. Where a run goes when `provider` is out of capacity. Cannot be `machine`                          |
+| `size`                 | provider default       | Compute footprint, see [Sizes](#sizes)                                                                            |
+| `snapshot`             | provider default       | Prebuilt image to boot from, see [Images](#images)                                                                |
+| `network`              | `{ mode: "deny-all" }` | Outbound access, see [Network](#network)                                                                          |
+| `permissionMode`       | `ask`                  | Which tool calls need approval, see below                                                                         |
+| `runtimes`             | all                    | Advisory list of `bash`, `python`, `node`. The tool rejects obvious other runtimes. Not a security boundary       |
+| `timeout`              | 30                     | Seconds per call. Maximum 600                                                                                     |
+| `memoryLimit`          | none                   | MB. Validated, maximum 8192 on `lambda`, but executors do not resize to it                                        |
+| `outputLimitBytes`     | 65536                  | Output kept per call. Maximum 262144                                                                              |
+| `envVars`              | none                   | Variables injected into every run. Accepts `env("NAME")`. Encrypted at rest                                       |
+| `options`              | none                   | Provider-specific settings, see [Providers](providers.md). On `lambda`, only `workspaceRoot` and `reservationKey` |
+| `persistent`           | `false`                | Reserve a long-lived machine, see [Persistent sandboxes](persistent.md)                                           |
+| `lifecycle`            | none                   | `idleTimeoutSeconds`, `maxLifetimeSeconds`. Needs `persistent: true`                                              |
+| `onCreate`, `onResume` | none                   | Setup commands. Need `persistent: true`, not supported on `e2b`                                                   |
 
 `envVars` cannot override the runtime's reserved names. Those are `PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `PYTHONPATH`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND` and the background-job slots. Those entries are dropped. The host environment, including any cloud credentials, never reaches a run.
 
@@ -114,7 +114,7 @@ Only the `sandbox` provider applies the size to the machine it creates, and it r
 Set `snapshot` to boot a prebuilt image instead of the provider default. Bake heavy toolchains into an image once rather than installing them on every cold start.
 
 - `sandbox` boots the named image. The dashboard's Create snapshot action captures a running `sandbox` instance into an image you can pin later. It is the only provider with that action.
-- `lambda` selects a MicroVM image by ARN. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
+- `lambda` selects a platform MicroVM image by ARN, in the same AWS account and region as the default image. A running MicroVM cannot be captured into a new image. Its state survives idle through suspend and resume instead.
 - `daytona`, `e2b` and `vercel` pick images through their own `options`, such as Daytona `snapshot`, E2B `template` or Vercel `image`.
 
 The dashboard Snapshots view shows which image each running instance booted from.
