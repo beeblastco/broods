@@ -3,19 +3,10 @@ import { describe, expect, it } from "bun:test";
 const { dispatchInProcessWorker, drainInProcessWorkers } =
   await import("../src/harness/handler.ts");
 
-type WorkerPayload = Parameters<typeof dispatchInProcessWorker>[0];
-
-function payload(id: number): WorkerPayload {
-  return {
-    kind: "direct-api-async-worker",
-    event: { eventId: `evt-${id}` },
-  } as unknown as WorkerPayload;
-}
-
 describe("in-process worker dispatch", () => {
   it("runs payloads with a synthesized invocation context", async () => {
     let seenContext: { requestId: string; deadlineMs: number } | undefined;
-    dispatchInProcessWorker(payload(1), async (_payload, context) => {
+    dispatchInProcessWorker("test-worker", async (context) => {
       seenContext = context;
     });
     await drainInProcessWorkers();
@@ -50,7 +41,7 @@ describe("in-process worker dispatch", () => {
 
     // Default cap is 8; dispatch 10 so two must queue.
     for (let i = 0; i < 10; i += 1) {
-      dispatchInProcessWorker(payload(i), run(i));
+      dispatchInProcessWorker("test-worker", run(i));
     }
     await waitForStarted(8);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -71,7 +62,7 @@ describe("in-process worker dispatch", () => {
 
   it("logs and swallows worker failures like a fire-and-forget invoke", async () => {
     // Must not reject or throw; the failure only surfaces through logError.
-    dispatchInProcessWorker(payload(99), async () => {
+    dispatchInProcessWorker("test-worker", async () => {
       throw new Error("worker exploded");
     });
     await drainInProcessWorkers();

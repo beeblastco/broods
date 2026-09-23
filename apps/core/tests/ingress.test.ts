@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
+  dispatchInProcessWorker,
   drainInProcessWorkers,
   handleChannelRequest,
 } from "../src/harness/handler.ts";
 import {
   acceptIngress,
+  interruptLiveOwners,
   prepareSessionMessage,
+  releaseIngressOwner,
+  takeNextIngress,
   type AppliedIngress,
   type ConversationDispatchTarget,
   type IngressCandidate,
@@ -197,8 +201,60 @@ describe("channel senders", (): void => {
     }) as never;
 
     await handleChannelRequest(aliceMessage());
+    await drainInProcessWorkers();
 
     expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }, bob]);
+  });
+
+  it("waits for a worker slot like every other run", async (): Promise<void> => {
+    runtime.mutate = (async (name: string): Promise<unknown> =>
+      name === "acceptIngress"
+        ? { outcome: "owner", ownerGeneration: 1 }
+        : null) as never;
+    const releases: (() => void)[] = [];
+    for (let slot = 0; slot < 8; slot += 1) {
+      dispatchInProcessWorker(
+        "busy",
+        () =>
+          new Promise<void>((resolve) => {
+            releases.push(resolve);
+          }),
+      );
+    }
+
+    await handleChannelRequest(aliceMessage());
+    await Bun.sleep(5);
+
+    // Admitted, but the turn has not started: all eight slots are taken.
+    expect(senders).toEqual([]);
+    for (const release of releases) release();
+    await drainInProcessWorkers();
+    expect(senders).toEqual([{ userId: "U1", userRoles: ["admin"] }]);
+  });
+
+  it("ignores a redelivery of an admitted message before storing its files", async (): Promise<void> => {
+    const mutations: string[] = [];
+    runtime.mutate = (async (name: string): Promise<unknown> => {
+      mutations.push(name);
+
+      return null;
+    }) as never;
+    runtime.query = (async (name: string): Promise<unknown> => {
+      if (name === "listPendingAsyncToolResults") return [];
+
+      return name === "getIngressStatusByEventId"
+        ? { eventId: "event-1", status: "processing" }
+        : null;
+    }) as never;
+
+    await handleChannelRequest({
+      ...aliceMessage(),
+      attachments: [{ type: "image", url: "https://files.test/a.png" }],
+    });
+
+    // No admission and no ingestion: the first delivery already did both.
+    expect(mutations).toEqual([]);
+    expect(senders).toEqual([]);
   });
 
   it("keeps the sender on an envelope recovered for another worker", async (): Promise<void> => {
@@ -211,6 +267,87 @@ describe("channel senders", (): void => {
     await drainInProcessWorkers();
 
     expect(senders).toEqual([bob]);
+  });
+});
+
+describe("live owners at shutdown", (): void => {
+  const HELD = "acct:acct_1:agent:agent_1:api:held";
+  const DONE = "acct:acct_1:agent:agent_1:api:done";
+  const MOVED = "acct:acct_1:agent:agent_1:api:moved";
+
+  it("hands back only the leases this process still holds", async (): Promise<void> => {
+    const calls: [string, Record<string, unknown>][] = [];
+    runtime.mutate = (async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      calls.push([name, args]);
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 3 };
+      }
+      if (name === "takeNextIngress") {
+        return { eventId: "moved-next", ownerGeneration: 4 };
+      }
+
+      return true;
+    }) as never;
+    // Leases earlier tests left in the module registry.
+    await interruptLiveOwners("reset");
+    const owners: [string, string][] = [
+      [HELD, "held"],
+      [DONE, "done"],
+      [MOVED, "moved"],
+    ];
+    for (const [conversationKey, eventId] of owners) {
+      await acceptIngress({
+        ...candidate(),
+        conversationKey: conversationKey,
+        eventId: eventId,
+      });
+    }
+    await releaseIngressOwner({
+      conversationKey: DONE,
+      ownerEventId: "done",
+      ownerGeneration: 3,
+    });
+    await takeNextIngress({
+      conversationKey: MOVED,
+      ownerEventId: "moved",
+      ownerGeneration: 3,
+    });
+    calls.length = 0;
+
+    expect(await interruptLiveOwners("restarting")).toBe(2);
+    // The released lease is gone; the transferred one is interrupted at its
+    // new generation, never the one it moved on from.
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        [
+          "settleIngress",
+          {
+            conversationKey: HELD,
+            ownerEventId: "held",
+            ownerGeneration: 3,
+            status: "failed",
+            error: "restarting",
+          },
+        ],
+        [
+          "releaseIngressOwner",
+          { conversationKey: HELD, ownerEventId: "held", ownerGeneration: 3 },
+        ],
+        [
+          "releaseIngressOwner",
+          {
+            conversationKey: MOVED,
+            ownerEventId: "moved-next",
+            ownerGeneration: 4,
+          },
+        ],
+      ]),
+    );
+    expect(calls).toHaveLength(4);
+    expect(await interruptLiveOwners("again")).toBe(0);
   });
 });
 

@@ -78,6 +78,7 @@ import { isPlainObject } from "../shared/object.ts";
 import {
   getObservabilityContext,
   mintTraceId,
+  runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
@@ -133,6 +134,9 @@ import {
 import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
+// How long a channel webhook waits for admission before it acks anyway. Under
+// Slack's and Discord's 3s, so a slow hook or a large file never earns a retry.
+const CHANNEL_ACK_BUDGET_MS = 2_000;
 // Bound so one inbound webhook cannot fan out into an unbounded credential scan.
 const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
 // The single runtime entry point; sync or background is a body field.
@@ -400,7 +404,8 @@ interface HttpRoutingContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-// `endpointId` absent means the bare production URL, which scans the account.
+// `endpointId` absent means the bare production URL, which scans the account's
+// production stages.
 interface WebhookRoute {
   accountId: string;
   channelName: string;
@@ -1339,9 +1344,6 @@ async function handleChannelWebhook(
       return toResponse(response);
     }
 
-    // The promise is deferred by one microtask so this request's scoped context
-    // is restored in finally before background channel processing establishes
-    // its own context.
     const { message, ack } = parsed;
     const response = ack ?? { statusCode: 200 };
     const target = await resolveChannelTarget(
@@ -1383,7 +1385,7 @@ async function handleChannelWebhook(
             account.accountId,
             target.agent.agentId,
           );
-    logInfo("Channel webhook accepted for async processing", {
+    logInfo("Channel webhook accepted", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: target.agent.agentId,
@@ -1421,49 +1423,62 @@ async function handleChannelWebhook(
       return toResponse(response);
     }
 
-    waitUntil(
-      Promise.resolve().then(() =>
-        processChannelMessage(
-          {
-            eventId: accountAgentScopedKey(
-              account.accountId,
-              target.agent.agentId,
-              message.eventId,
-            ),
-            conversationKey: accountAgentScopedKey(
-              account.accountId,
-              target.agent.agentId,
-              message.conversationKey,
-            ),
-            content: message.content,
-            ...(message.attachments?.length
-              ? { attachments: message.attachments }
-              : {}),
-            events: message.events ?? [
-              { role: "user", content: message.content },
-            ],
-            channelName: message.channelName,
-            ...(identity ? { identity: identity } : {}),
-            source: source,
-            channel: channel,
-            channelFactory: (replySource): ChannelActions =>
-              adapter.actions({ ...message, source: replySource }),
-            ...(message.answer ? { answer: message.answer } : {}),
-            accountId: account.accountId,
-            agentId: target.agent.agentId,
-            agentConfig: targetConfig,
-            ...(targetDeployment
-              ? {
-                  endpointId: targetDeployment.endpointId,
-                  projectSlug: targetDeployment.projectSlug,
-                  stageSlug: targetDeployment.stageSlug,
-                }
-              : {}),
-          },
-          handlers,
-        ),
-      ),
-    );
+    // Admission runs before the ack, so a delivery the provider saw acked is
+    // durably queued; the agent run goes to the worker pool. Its own scope,
+    // because it can outlive this request, whose finally restores the context.
+    const inherited = getObservabilityContext();
+    const admitted = runWithObservabilityScope((): Promise<void> => {
+      setObservabilityContext(inherited);
+
+      return processChannelMessage(
+        {
+          eventId: accountAgentScopedKey(
+            account.accountId,
+            target.agent.agentId,
+            message.eventId,
+          ),
+          conversationKey: accountAgentScopedKey(
+            account.accountId,
+            target.agent.agentId,
+            message.conversationKey,
+          ),
+          content: message.content,
+          ...(message.attachments?.length
+            ? { attachments: message.attachments }
+            : {}),
+          events: message.events ?? [
+            { role: "user", content: message.content },
+          ],
+          channelName: message.channelName,
+          ...(identity ? { identity: identity } : {}),
+          source: source,
+          channel: channel,
+          channelFactory: (replySource): ChannelActions =>
+            adapter.actions({ ...message, source: replySource }),
+          ...(message.answer ? { answer: message.answer } : {}),
+          accountId: account.accountId,
+          agentId: target.agent.agentId,
+          agentConfig: targetConfig,
+          ...(targetDeployment
+            ? {
+                endpointId: targetDeployment.endpointId,
+                projectSlug: targetDeployment.projectSlug,
+                stageSlug: targetDeployment.stageSlug,
+              }
+            : {}),
+        },
+        handlers,
+      );
+    });
+    waitUntil(admitted);
+    let ackTimer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      admitted,
+      new Promise<void>((resolve) => {
+        ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
+      }),
+    ]);
+    clearTimeout(ackTimer);
 
     return toResponse(response);
   } catch (err) {
@@ -1570,6 +1585,11 @@ export function attachMetadataToLatestUserIngress(
   return events;
 }
 
+/**
+ * Run the inbound hook and acknowledgements, then admit the message. Resolves
+ * after admission, with the agent run already on a worker slot. Never
+ * rejects: a failure is answered in the channel.
+ */
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -1663,7 +1683,7 @@ async function processChannelMessage(
         : (resolveCommandToken(content, event.source, event.channelName) ??
           undefined),
     });
-    logInfo("Channel message processing completed", {
+    logInfo("Channel message admitted", {
       channel: event.channelName,
       accountId: event.accountId,
       agentId: event.agentId,

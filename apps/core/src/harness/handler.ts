@@ -33,7 +33,11 @@ import {
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo } from "../shared/log.ts";
 import type { NatsPublisher } from "../shared/nats.ts";
-import { runWithObservabilityScope } from "../shared/otel.ts";
+import {
+  getObservabilityContext,
+  runWithObservabilityScope,
+  setObservabilityContext,
+} from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
   createRunId,
@@ -78,6 +82,7 @@ import {
 import {
   acceptIngress,
   getConversationDispatchTarget,
+  getIngressStatusByEventId,
   prepareSessionMessage,
   type AppliedIngress,
   type IngressAdmission,
@@ -143,7 +148,7 @@ const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
 const WORKER_SLOT_GRACE_MS = 5_000;
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
-const MAX_PENDING_WORKER_PAYLOADS = 1000;
+const MAX_PENDING_WORKER_RUNS = 1000;
 // Chunks arrive faster than a Convex round trip, so a streamed chunk checks
 // ownership on this clock. A frame the client acts on checks exactly: a stale
 // run must not land one in a stream the next owner is writing to. `waiting` is
@@ -159,10 +164,7 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerPayloads: [
-  AsyncWorkerInvocation | NatsWorkerInvocation,
-  InProcessWorkerRun,
-][] = [];
+const pendingWorkerRuns: [kind: string, run: InProcessWorkerRun][] = [];
 
 let activeInProcessWorkers = 0;
 
@@ -170,10 +172,7 @@ type ContinuationOutcome =
   | { kind: "pending"; pendingCount: number }
   | { kind: "ready"; invoked: boolean; publicEventId: string }
   | { kind: "skip" };
-type InProcessWorkerRun = (
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  context: RequestContext,
-) => Promise<unknown>;
+type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
@@ -208,23 +207,29 @@ interface ParentContinuationResult {
   questions: PendingQuestionSummary[];
 }
 
+/**
+ * Runs one agent turn on the pod's worker pool, or queues it FIFO while every
+ * slot is busy. Every background run goes through here, channel turns
+ * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once.
+ * @param kind a label for logs
+ */
 export function dispatchInProcessWorker(
-  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
-  run: InProcessWorkerRun = handler,
+  kind: string,
+  run: InProcessWorkerRun,
 ): void {
   if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
-    if (pendingWorkerPayloads.length >= MAX_PENDING_WORKER_PAYLOADS) {
+    if (pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
       // Load-shed: the awaiting caller surfaces the error instead of the queue
       // growing without bound.
       throw new Error("In-process worker queue is full");
     }
-    pendingWorkerPayloads.push([payload, run]);
+    pendingWorkerRuns.push([kind, run]);
 
     return;
   }
 
   activeInProcessWorkers += 1;
-  const execution = run(payload, {
+  const execution = run({
     requestId: crypto.randomUUID(),
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
@@ -234,7 +239,7 @@ export function dispatchInProcessWorker(
     () => undefined,
     (err) => {
       logError("In-process worker failed", {
-        kind: payload.kind,
+        kind: kind,
         error: err instanceof Error ? err.message : String(err),
       });
     },
@@ -248,7 +253,7 @@ export function dispatchInProcessWorker(
     new Promise<void>((resolve) => {
       slotTimer = setTimeout(() => {
         logError("In-process worker exceeded deadline; reclaiming slot", {
-          kind: payload.kind,
+          kind: kind,
           budgetMs: WORKER_TIMEOUT_BUDGET_MS,
         });
         resolve();
@@ -260,7 +265,7 @@ export function dispatchInProcessWorker(
     if (slotTimer) clearTimeout(slotTimer);
     activeInProcessWorkers -= 1;
     inProcessWorkers.delete(worker);
-    const next = pendingWorkerPayloads.shift();
+    const next = pendingWorkerRuns.shift();
     if (next) {
       dispatchInProcessWorker(next[0], next[1]);
     }
@@ -396,8 +401,7 @@ async function handleRequest(
       handleAsyncRequest: handleAsyncRequest,
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
-      handleChannelRequest: (channelEvent) =>
-        handleChannelRequest(channelEvent, context),
+      handleChannelRequest: handleChannelRequest,
       handleChannelContext: handleChannelContext,
     },
     {
@@ -1380,10 +1384,14 @@ async function handleNatsWorkerRequest(
   }
 }
 
-/** Run a channel webhook request and reply through that channel's ChannelActions. */
+/**
+ * Admit one channel message and hand its turn to the worker pool. Resolves once
+ * the message is durably admitted (or answered as a command, an answer, or a
+ * refusal), so the webhook can ack after it; the agent run itself happens on a
+ * worker slot and replies through the channel's ChannelActions.
+ */
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
-  context?: RequestContext,
 ): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
@@ -1421,6 +1429,24 @@ export async function handleChannelRequest(
   if (await settleChannelQuestion(event)) return;
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
+  // A provider redelivery of an admitted message must not store its files a
+  // second time. Only a message with files pays for this read.
+  if (
+    event.attachments?.length &&
+    (await getIngressStatusByEventId({
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+    }))
+  ) {
+    logInfo("Channel redelivery of an admitted message ignored", {
+      channel: event.channelName,
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+    });
+
+    return;
+  }
   // Before admission, so a turn that lands in the queue still carries its
   // media: the queued record holds only these events, and the drain loop
   // replays exactly what was queued.
@@ -1453,23 +1479,21 @@ export async function handleChannelRequest(
     },
     agentConfig: event.agentConfig ?? {},
   });
-  await dispatchRecoveredIngress(
-    {
-      accountId: event.accountId,
-      agentId: event.agentId,
-      agentConfig: event.agentConfig ?? {},
-      conversationKey: event.conversationKey,
-      publicConversationKey: eventPublicConversationKey(
-        event.conversationKey,
-        event.accountId,
-        event.agentId,
-      ),
-      endpointId: event.endpointId,
-      projectSlug: event.projectSlug,
-      stageSlug: event.stageSlug,
-    },
-    admission,
-  );
+  const scope: IngressDispatchScope = {
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig ?? {},
+    conversationKey: event.conversationKey,
+    publicConversationKey: eventPublicConversationKey(
+      event.conversationKey,
+      event.accountId,
+      event.agentId,
+    ),
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+  };
+  await dispatchRecoveredIngress(scope, admission);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
 
@@ -1504,7 +1528,7 @@ export async function handleChannelRequest(
     throw new Error("Channel admission did not return an owner generation");
   }
 
-  let session = new Session({
+  const session = new Session({
     eventId: event.eventId,
     conversationKey: event.conversationKey,
     accountId: event.accountId,
@@ -1522,9 +1546,55 @@ export async function handleChannelRequest(
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
   });
-  // The live turn gets the transient byte-backed parts on top of what
-  // admission saw; a follow-up taken off the queue brings its own.
-  let incoming: ConversationIngressEvent[] = ingested.turnEvents;
+  // A queued worker starts later, from whichever run frees its slot, so it
+  // takes this message's observability context rather than inheriting that one.
+  const observability = getObservabilityContext();
+  try {
+    dispatchInProcessWorker("channel-worker", (context) =>
+      runWithObservabilityScope(() => {
+        setObservabilityContext(observability);
+
+        // The webhook acked long ago, so a failure outside a turn is said here.
+        return runChannelTurns(
+          event,
+          session,
+          ingested.turnEvents,
+          context,
+        ).catch(async (err: unknown): Promise<never> => {
+          await event.channel
+            .sendText(
+              formatChannelErrorText(
+                err instanceof Error ? err.message : String(err),
+              ),
+            )
+            .catch(() => {});
+          throw err;
+        });
+      }),
+    );
+  } catch (err) {
+    await settleFailedIngressAndDrain(
+      session,
+      err instanceof Error ? err.message : "Failed to start channel turn",
+      () => dispatchNextIngress(session, scope),
+    );
+    throw err;
+  }
+}
+
+/**
+ * The owned channel turn, then every queued follow-up after it, on one worker
+ * slot. Each turn settles its envelope before the queue drains on.
+ * @param incoming the live turn's events, with the transient byte-backed parts
+ *   admission never saw; a follow-up taken off the queue brings its own
+ */
+async function runChannelTurns(
+  event: ChannelInboundEvent,
+  owned: Session,
+  incoming: ConversationIngressEvent[],
+  context: RequestContext,
+): Promise<void> {
+  let session = owned;
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
@@ -2337,7 +2407,7 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
-  dispatchInProcessWorker(payload);
+  dispatchInProcessWorker(payload.kind, (context) => handler(payload, context));
 }
 
 function asyncToolContinuationEventId(parentEventId: string): string {
