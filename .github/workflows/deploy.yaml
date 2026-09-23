@@ -74,8 +74,11 @@ jobs:
     # Resolves CONVEX_URL/CONVEX_DEPLOY_KEY from the matching environment:
     # production (prod Convex) on main, development (dev Convex) otherwise.
     environment: ${{ (github.ref == 'refs/heads/main' || startsWith(github.event.inputs.stage || '', 'production')) && 'production' || 'development' }}
+    # One lock per SST stage, shared with drift-cleanup.yaml, so a drift
+    # reconcile never runs against a stage mid-deploy. Every production-*
+    # stage shares one key because stage=production deploys all of them.
     concurrency:
-      group: ${{ github.workflow }}-deploy-${{ github.event_name == 'workflow_dispatch' && inputs.stage || github.ref_name }}
+      group: sst-${{ startsWith(inputs.stage || (github.ref == 'refs/heads/main' && 'production' || 'dev'), 'production') && 'production' || inputs.stage || 'dev' }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -166,6 +169,10 @@ jobs:
           while IFS='|' read -r target_stage target_region target_sandbox_ready; do
             if [[ -z "${target_stage:-}" ]]; then
               continue
+            fi
+            if [[ "$target_stage" == production* && "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "Stage $target_stage deploys only from main (this run is on $GITHUB_REF). Promote to main first." >&2
+              exit 1
             fi
             if [[ -z "${target_region:-}" ]]; then
               echo "Missing AWS region for stage: $target_stage" >&2
