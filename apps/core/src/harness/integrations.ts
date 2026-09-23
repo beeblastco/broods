@@ -1426,55 +1426,54 @@ async function handleChannelWebhook(
     // Admission runs before the ack, so a delivery the provider saw acked is
     // durably queued; the agent run goes to the worker pool. Its own scope,
     // because it can outlive this request, whose finally restores the context.
-    const inherited = getObservabilityContext();
-    const admitted = runWithObservabilityScope((): Promise<void> => {
-      setObservabilityContext(inherited);
-
-      return processChannelMessage(
-        {
-          eventId: accountAgentScopedKey(
-            account.accountId,
-            target.agent.agentId,
-            message.eventId,
-          ),
-          conversationKey: accountAgentScopedKey(
-            account.accountId,
-            target.agent.agentId,
-            message.conversationKey,
-          ),
-          content: message.content,
-          ...(message.attachments?.length
-            ? { attachments: message.attachments }
-            : {}),
-          events: message.events ?? [
-            { role: "user", content: message.content },
-          ],
-          channelName: message.channelName,
-          ...(identity ? { identity: identity } : {}),
-          source: source,
-          channel: channel,
-          channelFactory: (replySource): ChannelActions =>
-            adapter.actions({ ...message, source: replySource }),
-          ...(message.answer ? { answer: message.answer } : {}),
-          accountId: account.accountId,
-          agentId: target.agent.agentId,
-          agentConfig: targetConfig,
-          ...(targetDeployment
-            ? {
-                endpointId: targetDeployment.endpointId,
-                projectSlug: targetDeployment.projectSlug,
-                stageSlug: targetDeployment.stageSlug,
-              }
-            : {}),
-        },
-        handlers,
-      );
-    });
+    const admitted = runWithObservabilityScope(
+      (): Promise<void> =>
+        processChannelMessage(
+          {
+            eventId: accountAgentScopedKey(
+              account.accountId,
+              target.agent.agentId,
+              message.eventId,
+            ),
+            conversationKey: accountAgentScopedKey(
+              account.accountId,
+              target.agent.agentId,
+              message.conversationKey,
+            ),
+            content: message.content,
+            ...(message.attachments?.length
+              ? { attachments: message.attachments }
+              : {}),
+            events: message.events ?? [
+              { role: "user", content: message.content },
+            ],
+            channelName: message.channelName,
+            ...(identity ? { identity: identity } : {}),
+            source: source,
+            channel: channel,
+            channelFactory: (replySource): ChannelActions =>
+              adapter.actions({ ...message, source: replySource }),
+            ...(message.answer ? { answer: message.answer } : {}),
+            accountId: account.accountId,
+            agentId: target.agent.agentId,
+            agentConfig: targetConfig,
+            ...(targetDeployment
+              ? {
+                  endpointId: targetDeployment.endpointId,
+                  projectSlug: targetDeployment.projectSlug,
+                  stageSlug: targetDeployment.stageSlug,
+                }
+              : {}),
+          },
+          handlers,
+        ),
+      getObservabilityContext(),
+    );
     waitUntil(admitted);
     let ackTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       admitted,
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve): void => {
         ackTimer = setTimeout(resolve, CHANNEL_ACK_BUDGET_MS);
       }),
     ]);

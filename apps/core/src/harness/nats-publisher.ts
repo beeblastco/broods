@@ -9,7 +9,6 @@ import { logError } from "../shared/log.ts";
 import {
   ensureResponseStream,
   getSharedNatsConn,
-  oversizedPayloadBytes,
   streamResponseSubject,
   type NatsConnection,
   type NatsEventHeaders,
@@ -17,6 +16,12 @@ import {
   type NatsStreamEvent,
 } from "../shared/nats.ts";
 
+// nats-server's default max_payload, used until the server INFO says otherwise.
+const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024;
+// Shared so token publishing does not allocate an encoder per chunk.
+const ENCODER = new TextEncoder();
+// Room for the Nats-Msg-Id header, which also counts against max_payload.
+const HEADER_ALLOWANCE_BYTES = 1024;
 // Kept on a frame whose payload was dropped, so a client can still pair it.
 const TRUNCATED_FRAME_KEPT_FIELDS = [
   "id",
@@ -24,9 +29,6 @@ const TRUNCATED_FRAME_KEPT_FIELDS = [
   "toolName",
   "eventId",
 ] as const;
-
-// Shared so token publishing does not allocate an encoder per chunk.
-const ENCODER = new TextEncoder();
 
 export class LiveNatsPublisher implements NatsPublisher {
   private connectionPromise: Promise<NatsConnection> | null = null;
@@ -54,7 +56,7 @@ export class LiveNatsPublisher implements NatsPublisher {
   }
 
   async publish(data: Record<string, unknown>): Promise<void> {
-    const connection = await this.getConnection().catch(() => null);
+    const connection = await this.getConnection().catch((): null => null);
     if (!connection) return;
     try {
       // Ensure the stream exists before the first publish so it captures from the
@@ -86,26 +88,30 @@ export class LiveNatsPublisher implements NatsPublisher {
   }
 
   /**
-   * A frame over max_payload would be refused whole. The same frame type goes
-   * out without its payload instead, marked `truncated`, so a `done` still ends
-   * the stream and the full result stays readable from the run status.
+   * nats.js throws on a frame over max_payload, which publish would swallow.
+   * The same frame type goes out without its payload instead, marked
+   * `truncated`, so a `done` still ends the stream and the full result stays
+   * readable from the run status.
    */
   private encodeWithinLimit(
     connection: NatsConnection,
     data: Record<string, unknown>,
   ): Uint8Array {
     const encoded = ENCODER.encode(JSON.stringify(this.envelope(data)));
-    const oversized = oversizedPayloadBytes(connection, encoded);
-    if (oversized === null) return encoded;
+    const maxPayload =
+      connection.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES;
+    if (encoded.byteLength <= maxPayload - HEADER_ALLOWANCE_BYTES) {
+      return encoded;
+    }
     logError("NATS response frame over max_payload; payload dropped", {
       eventId: this.headers.eventId,
       frameType: data.type,
-      bytes: oversized,
+      bytes: encoded.byteLength,
     });
     const truncated: Record<string, unknown> = {
       type: data.type,
       truncated: true,
-      originalBytes: oversized,
+      originalBytes: encoded.byteLength,
     };
     for (const field of TRUNCATED_FRAME_KEPT_FIELDS) {
       if (typeof data[field] === "string") truncated[field] = data[field];
@@ -130,7 +136,7 @@ export class LiveNatsPublisher implements NatsPublisher {
       const shared = getSharedNatsConn();
       this.connectionPromise =
         shared ?? Promise.reject(new Error("NATS_URL is not configured"));
-      this.connectionPromise.catch((err: unknown) => {
+      this.connectionPromise.catch((err: unknown): void => {
         logError("NATS connection unavailable; this run streams nothing", {
           eventId: this.headers.eventId,
           error: err instanceof Error ? err.message : String(err),

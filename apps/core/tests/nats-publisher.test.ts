@@ -1,22 +1,22 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import * as realNats from "nats";
 
+const MAX_PAYLOAD = 4096;
+const connections: FakeConnection[] = [];
+const originalNatsUrl = process.env.NATS_URL;
+
 interface FakeConnection {
   options: Record<string, unknown>;
   published: { subject: string; data: Uint8Array }[];
   close: () => void;
 }
 
-const MAX_PAYLOAD = 4096;
-const connections: FakeConnection[] = [];
-const originalNatsUrl = process.env.NATS_URL;
-
 // Only the dial is faked; the subject and stream helpers stay real.
-mock.module("nats", () => ({
+mock.module("nats", (): Record<string, unknown> => ({
   ...realNats,
   connect: async (options: Record<string, unknown>): Promise<unknown> => {
     let close = (): void => {};
-    const closed = new Promise<void>((resolve) => {
+    const closed = new Promise<void>((resolve): void => {
       close = resolve;
     });
     const fake: FakeConnection = {
@@ -46,16 +46,16 @@ mock.module("nats", () => ({
 const { getSharedNatsConn } = await import("../src/shared/nats.ts");
 const { LiveNatsPublisher } = await import("../src/harness/nats-publisher.ts");
 
-beforeEach(() => {
+beforeEach((): void => {
   process.env.NATS_URL = "nats://nats.test:4222";
 });
 
-afterAll(() => {
+afterAll((): void => {
   if (originalNatsUrl === undefined) delete process.env.NATS_URL;
   else process.env.NATS_URL = originalNatsUrl;
 });
 
-describe("shared NATS connection", () => {
+describe("shared NATS connection", (): void => {
   it("reconnects forever and dials again once the connection closes", async (): Promise<void> => {
     const first = await getSharedNatsConn();
     const again = await getSharedNatsConn();
@@ -74,7 +74,7 @@ describe("shared NATS connection", () => {
   });
 });
 
-describe("LiveNatsPublisher", () => {
+describe("LiveNatsPublisher", (): void => {
   it("publishes an oversized frame as its type with the payload dropped", async (): Promise<void> => {
     const publisher = new LiveNatsPublisher({
       accountId: "acct_1",
@@ -97,7 +97,7 @@ describe("LiveNatsPublisher", () => {
       .published.map((message): Record<string, unknown> =>
         JSON.parse(new TextDecoder().decode(message.data)),
       );
-    expect(frames.map((frame) => frame.data)).toEqual([
+    expect(frames.map((frame): unknown => frame.data)).toEqual([
       { type: "text-delta", delta: "hi" },
       {
         type: "tool-result",

@@ -36,7 +36,6 @@ import type { NatsPublisher } from "../shared/nats.ts";
 import {
   getObservabilityContext,
   runWithObservabilityScope,
-  setObservabilityContext,
 } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
@@ -1562,35 +1561,32 @@ export async function handleChannelRequest(
   });
   // A queued worker starts later, from whichever run frees its slot, so it
   // takes this message's observability context rather than inheriting that one.
+  // The webhook acked long ago, so a failure outside a turn is said here.
   const observability = getObservabilityContext();
   try {
-    dispatchInProcessWorker("channel-worker", (context) =>
-      runWithObservabilityScope(() => {
-        setObservabilityContext(observability);
-
-        // The webhook acked long ago, so a failure outside a turn is said here.
-        return runChannelTurns(
-          event,
-          session,
-          ingested.turnEvents,
-          context,
-        ).catch(async (err: unknown): Promise<never> => {
-          await event.channel
-            .sendText(
-              formatChannelErrorText(
-                err instanceof Error ? err.message : String(err),
-              ),
-            )
-            .catch(() => {});
-          throw err;
-        });
-      }),
+    dispatchInProcessWorker("channel-worker", (context): Promise<void> =>
+      runWithObservabilityScope(
+        (): Promise<void> =>
+          runChannelTurns(event, session, ingested.turnEvents, context).catch(
+            async (err: unknown): Promise<never> => {
+              await event.channel
+                .sendText(
+                  formatChannelErrorText(
+                    err instanceof Error ? err.message : String(err),
+                  ),
+                )
+                .catch((): void => {});
+              throw err;
+            },
+          ),
+        observability,
+      ),
     );
   } catch (err) {
     await settleFailedIngressAndDrain(
       session,
       err instanceof Error ? err.message : "Failed to start channel turn",
-      () => dispatchNextIngress(session, scope),
+      (): Promise<boolean> => dispatchNextIngress(session, scope),
     );
     throw err;
   }
@@ -2421,7 +2417,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
-  dispatchInProcessWorker(payload.kind, (context) => handler(payload, context));
+  dispatchInProcessWorker(payload.kind, (context): Promise<Response> =>
+    handler(payload, context),
+  );
 }
 
 function asyncToolContinuationEventId(parentEventId: string): string {
@@ -2726,7 +2724,7 @@ function createDirectContinuationSseBody(
         // Bun closes a response that writes nothing for its idleTimeout, and one
         // bash call can run silent for longer. A comment line is ignored by
         // every SSE parser.
-        const keepalive = setInterval(() => {
+        const keepalive = setInterval((): void => {
           try {
             controller.enqueue(textEncoder.encode(": keepalive\n\n"));
           } catch {

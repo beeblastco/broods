@@ -10,6 +10,43 @@ const modules = import.meta.glob("../**/*.ts");
 
 type T = TestConvex<typeof schema>;
 
+interface Seeded {
+  accountId: Id<"accounts">;
+  agentIds: Record<string, Id<"agents">>;
+}
+
+describe("agents.listForProduction", (): void => {
+  test("lists only the agents of a deployed production stage", async (): Promise<void> => {
+    const tt = convexTest(schema, modules);
+    const { accountId, agentIds } = await seed(tt, [
+      { kind: "production", agent: "prod-bot", deployment: "active" },
+      { kind: "development", agent: "dev-bot", deployment: "active" },
+    ]);
+
+    const agents = await tt.query(internal.agent.agents.listForProduction, {
+      accountId: accountId,
+    });
+
+    // The dev agent holds a stage URL of its own; the bare URL never reaches it.
+    expect(agents.map((agent): Id<"agents"> => agent._id)).toEqual([
+      agentIds["prod-bot"],
+    ]);
+  });
+
+  test("drops a production stage whose deployment is revoked", async (): Promise<void> => {
+    const tt = convexTest(schema, modules);
+    const { accountId } = await seed(tt, [
+      { kind: "production", agent: "prod-bot", deployment: "revoked" },
+    ]);
+
+    const agents = await tt.query(internal.agent.agents.listForProduction, {
+      accountId: accountId,
+    });
+
+    expect(agents).toEqual([]);
+  });
+});
+
 /** One account with a project, and an agent in each named stage. */
 async function seed(
   tt: T,
@@ -18,11 +55,8 @@ async function seed(
     agent: string;
     deployment: "active" | "revoked" | null;
   }[],
-): Promise<{
-  accountId: Id<"accounts">;
-  agentIds: Record<string, Id<"agents">>;
-}> {
-  return await tt.run(async (ctx) => {
+): Promise<Seeded> {
+  return await tt.run(async (ctx): Promise<Seeded> => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
@@ -94,33 +128,3 @@ async function seed(
     return { accountId: accountId, agentIds: agentIds };
   });
 }
-
-describe("agents.listForProduction", () => {
-  test("lists only the agents of a deployed production stage", async (): Promise<void> => {
-    const tt = convexTest(schema, modules);
-    const { accountId, agentIds } = await seed(tt, [
-      { kind: "production", agent: "prod-bot", deployment: "active" },
-      { kind: "development", agent: "dev-bot", deployment: "active" },
-    ]);
-
-    const agents = await tt.query(internal.agent.agents.listForProduction, {
-      accountId: accountId,
-    });
-
-    // The dev agent holds a stage URL of its own; the bare URL never reaches it.
-    expect(agents.map((agent) => agent._id)).toEqual([agentIds["prod-bot"]]);
-  });
-
-  test("drops a production stage whose deployment is revoked", async (): Promise<void> => {
-    const tt = convexTest(schema, modules);
-    const { accountId } = await seed(tt, [
-      { kind: "production", agent: "prod-bot", deployment: "revoked" },
-    ]);
-
-    const agents = await tt.query(internal.agent.agents.listForProduction, {
-      accountId: accountId,
-    });
-
-    expect(agents).toEqual([]);
-  });
-});

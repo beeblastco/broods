@@ -10,6 +10,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../shared/runtime-keys.ts";
 import { dispatchAppliedIngress } from "./handler.ts";
 import { recoverQueuedIngress, type RecoveredIngress } from "./ingress.ts";
+import type { IngressDispatchScope } from "./integrations.ts";
 
 // A lease handed back at shutdown is picked up within this, or on boot.
 const RECOVERY_INTERVAL_MS = 30_000;
@@ -21,7 +22,10 @@ let sweeping = false;
 export function startIngressRecovery(): void {
   if (recovery) return;
   void sweepQueuedIngress();
-  recovery = setInterval(() => void sweepQueuedIngress(), RECOVERY_INTERVAL_MS);
+  recovery = setInterval(
+    (): void => void sweepQueuedIngress(),
+    RECOVERY_INTERVAL_MS,
+  );
   // A pending sweep must not hold the process open past SIGTERM.
   recovery.unref();
 }
@@ -33,47 +37,8 @@ export function stopIngressRecovery(): void {
   recovery = undefined;
 }
 
-/**
- * One pass: promote every orphaned queue and dispatch what it returns. A
- * dispatch that fails settles its envelope and drains on, like any other.
- * @returns how many applications were dispatched
- */
-export async function sweepQueuedIngress(): Promise<number> {
-  if (sweeping) return 0;
-  sweeping = true;
-  try {
-    const recovered = await recoverQueuedIngress();
-    for (const entry of recovered) {
-      await dispatchAppliedIngress(recoveryScope(entry), entry.applied).catch(
-        (err: unknown) => {
-          logError("Recovered ingress dispatch failed", {
-            conversationKey: entry.conversationKey,
-            eventId: entry.applied.eventId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        },
-      );
-    }
-    if (recovered.length > 0) {
-      logInfo("Recovered queued ingress", { count: recovered.length });
-    }
-
-    return recovered.length;
-  } catch (err) {
-    logError("Queued ingress recovery failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-
-    return 0;
-  } finally {
-    sweeping = false;
-  }
-}
-
 /** The dispatch scope an envelope carries itself, since no request names it. */
-function recoveryScope(
-  entry: RecoveredIngress,
-): Parameters<typeof dispatchAppliedIngress>[0] {
+function recoveryScope(entry: RecoveredIngress): IngressDispatchScope {
   const delivery = entry.applied.delivery;
   const deployment =
     delivery.kind === "channel" ? undefined : delivery.publicDeploymentIngress;
@@ -96,4 +61,39 @@ function recoveryScope(
         }
       : {}),
   };
+}
+
+/**
+ * One pass: promote every orphaned queue and dispatch what it returns. Each
+ * entry is its own conversation, so they dispatch together. A dispatch that
+ * fails settles its envelope and drains on, like any other.
+ */
+async function sweepQueuedIngress(): Promise<void> {
+  if (sweeping) return;
+  sweeping = true;
+  try {
+    const recovered = await recoverQueuedIngress();
+    await Promise.all(
+      recovered.map((entry): Promise<void> =>
+        dispatchAppliedIngress(recoveryScope(entry), entry.applied).catch(
+          (err: unknown): void => {
+            logError("Recovered ingress dispatch failed", {
+              conversationKey: entry.conversationKey,
+              eventId: entry.applied.eventId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        ),
+      ),
+    );
+    if (recovered.length > 0) {
+      logInfo("Recovered queued ingress", { count: recovered.length });
+    }
+  } catch (err) {
+    logError("Queued ingress recovery failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    sweeping = false;
+  }
 }

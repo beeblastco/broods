@@ -321,13 +321,14 @@ export async function interruptLiveOwners(error: string): Promise<number> {
     owners.map(async (owner): Promise<void> => {
       // Fenced: a run that settled on its own meanwhile makes this a no-op.
       await settleIngress({ ...owner, status: "failed", error: error }).catch(
-        () => 0,
+        (): number => 0,
       );
       await releaseIngressOwner(owner);
     }),
   );
 
-  return results.filter((result) => result.status === "fulfilled").length;
+  return results.filter((result): boolean => result.status === "fulfilled")
+    .length;
 }
 
 export async function prepareSessionMessage(options: {

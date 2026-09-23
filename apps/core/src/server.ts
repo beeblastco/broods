@@ -250,9 +250,9 @@ if (import.meta.main) {
       // next pod's recovery sweep starts whatever was queued behind them.
       const interrupted = await Promise.race([
         interruptLiveOwners(INTERRUPTED_RUN_ERROR),
-        new Promise<number>((resolve) =>
-          setTimeout(() => resolve(-1), INTERRUPT_BUDGET_MS),
-        ),
+        new Promise<number>((resolve): void => {
+          setTimeout((): void => resolve(-1), INTERRUPT_BUDGET_MS);
+        }),
       ]);
       logInfo("Core server interrupted runs past the drain deadline", {
         interrupted: interrupted,

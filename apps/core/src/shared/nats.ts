@@ -91,10 +91,6 @@ const OBSERVABILITY_STREAM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const OBSERVABILITY_STREAM_MAX_BYTES = 512 * 1024 * 1024;
 const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 
-// nats-server's default max_payload, used until the server INFO says otherwise.
-const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024;
-// Room for the Nats-Msg-Id header, which also counts against max_payload.
-const HEADER_ALLOWANCE_BYTES = 1024;
 // Account and agent ids go into subjects raw, so they must be one token with no
 // wildcard. Only the characters NATS reserves are refused: virtual subagent ids
 // carry `~` from their task id.
@@ -148,37 +144,21 @@ export function getSharedNatsConn(): Promise<NatsConnection> | null {
     timeout: 3000,
     maxReconnectAttempts: -1,
   })
-    .then((connection) => {
+    .then((connection): NatsConnection => {
       _natsConn = connection;
       _natsConnPromise = null;
-      void connection.closed().then(() => {
+      void connection.closed().then((): void => {
         if (_natsConn === connection) _natsConn = null;
       });
 
       return connection;
     })
-    .catch((err) => {
+    .catch((err: unknown): never => {
       _natsConnPromise = null;
       throw err;
     });
 
   return _natsConnPromise;
-}
-
-/**
- * The payload's size when it does not fit the server's max_payload (less room
- * for headers), else null. nats.js throws on an oversized publish, so a caller
- * that swallows publish errors must check first or the message vanishes.
- */
-export function oversizedPayloadBytes(
-  connection: NatsConnection,
-  payload: Uint8Array,
-): number | null {
-  const maxPayload = connection.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES;
-
-  return payload.byteLength > maxPayload - HEADER_ALLOWANCE_BYTES
-    ? payload.byteLength
-    : null;
 }
 
 // Create the response stream once per process; idempotent across concurrent

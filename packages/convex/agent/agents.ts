@@ -225,17 +225,26 @@ export const listForProduction = internalQuery({
         q.eq("accountId", args.accountId).eq("status", "active"),
       )
       .collect();
+    const stages = await Promise.all(
+      deployments.map((deployment): Promise<Doc<"stages"> | null> =>
+        ctx.db.get(deployment.stageId),
+      ),
+    );
+    const stageAgents = await Promise.all(
+      deployments
+        .filter(
+          (_deployment, index): boolean => stages[index]?.kind === "production",
+        )
+        .map((deployment): Promise<Doc<"agents">[]> =>
+          agentsInStage(
+            ctx,
+            { projectId: deployment.projectId, stageId: deployment.stageId },
+            args.accountId,
+          ),
+        ),
+    );
     const agents = new Map<Id<"agents">, Doc<"agents">>();
-    for (const deployment of deployments) {
-      const stage = await ctx.db.get(deployment.stageId);
-      if (stage?.kind !== "production") continue;
-      const stageAgents = await agentsInStage(
-        ctx,
-        { projectId: deployment.projectId, stageId: deployment.stageId },
-        args.accountId,
-      );
-      for (const agent of stageAgents) agents.set(agent._id, agent);
-    }
+    for (const agent of stageAgents.flat()) agents.set(agent._id, agent);
 
     return [...agents.values()];
   },
