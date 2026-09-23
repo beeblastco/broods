@@ -1,7 +1,7 @@
 /**
  * Hosted-MCP runner handler regressions, driven under real Node (handler.mjs
- * spawns process.execPath). Containment: the runner Lambda is shared by every
- * account and its warm execution environment is reused across tenants, so a run
+ * spawns process.execPath). Containment: a warm execution environment is reused
+ * across calls (and across accounts when tenant isolation is off), so a run
  * must leave nothing on disk and no live process behind. Delivery: the terminal
  * frame must arrive even under backpressure or a leaked grandchild pipe.
  */

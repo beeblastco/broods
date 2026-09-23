@@ -43,7 +43,22 @@ describe("sandbox config", () => {
     ).toThrow("config.snapshot must be a string");
   });
 
-  it("rejects lambda options that name platform resources", () => {
+  it("accepts only the lambda options the MicroVM executor reads", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "lambda",
+        options: { workspaceRoot: "/mnt/ws" },
+      }).options,
+    ).toEqual({ workspaceRoot: "/mnt/ws" });
+    for (const key of ["imageIdentifier", "imageVersion"]) {
+      expect(() =>
+        normalizeSandboxConfig({
+          provider: "lambda",
+          options: { [key]: "arn:aws:lambda:us-east-1:1:microvm-image:x" },
+        }),
+      ).toThrow(`config.options.${key} is not supported`);
+    }
+
     expect(() =>
       normalizeSandboxConfig({
         provider: "lambda",

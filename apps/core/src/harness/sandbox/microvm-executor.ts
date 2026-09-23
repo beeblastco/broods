@@ -524,26 +524,34 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  #optionOrEnv(option: string, env: string): string | undefined {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+  // Image and version are platform choices: tenants cannot build MicroVM images,
+  // so a `snapshot` pin may only name another image in the same AWS account and
+  // region as the runtime default, and MICROVM_IMAGE_VERSION only versions that
+  // default. Anything else would boot a foreign image under the platform role.
+  #image(): { imageIdentifier: string; imageVersion?: string } {
+    const fallback = optionalEnv("MICROVM_IMAGE_IDENTIFIER");
+    const pinned = configString(this.#config.snapshot);
+    if (!pinned) {
+      if (!fallback) {
+        throw new Error(
+          "MicroVM sandbox requires MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
+        );
+      }
+      const imageVersion = optionalEnv("MICROVM_IMAGE_VERSION");
 
-    return configString(options[option]) ?? optionalEnv(env);
-  }
-
-  #requireImageIdentifier(): string {
-    // `options.imageIdentifier` stays a back-compat alias for the `snapshot` pin.
-    const identifier =
-      configString(this.#config.snapshot) ??
-      this.#optionOrEnv("imageIdentifier", "MICROVM_IMAGE_IDENTIFIER");
-    if (!identifier) {
+      return {
+        imageIdentifier: fallback,
+        ...(imageVersion ? { imageVersion: imageVersion } : {}),
+      };
+    }
+    const scope = fallback ? microvmImageScope(fallback) : undefined;
+    if (!scope || microvmImageScope(pinned) !== scope) {
       throw new Error(
-        "MicroVM sandbox requires a config `snapshot` image ARN or MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
+        "config.snapshot must name a platform MicroVM image in this region",
       );
     }
 
-    return identifier;
+    return { imageIdentifier: pinned };
   }
 
   #persistent(request: SandboxReservationRef): boolean {
@@ -859,11 +867,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     request: SandboxRunRequest,
     logStream: string,
   ): Promise<RunMicrovmRequest> {
-    const imageIdentifier = this.#requireImageIdentifier();
-    const imageVersion = this.#optionOrEnv(
-      "imageVersion",
-      "MICROVM_IMAGE_VERSION",
-    );
+    const image = this.#image();
     // Role and log group are platform resources, so they come from the runtime
     // env only. An account naming the build role would get its IMDS credentials.
     const executionRoleArn = optionalEnv("MICROVM_EXECUTION_ROLE_ARN");
@@ -873,8 +877,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const runHookPayload = await this.#runHookPayload(request);
 
     return {
-      imageIdentifier: imageIdentifier,
-      ...(imageVersion ? { imageVersion: imageVersion } : {}),
+      ...image,
       ...(executionRoleArn ? { executionRoleArn: executionRoleArn } : {}),
       ...(logGroup
         ? {
@@ -1466,6 +1469,16 @@ function markMountCredentialsFresh(key: string): void {
 }
 
 // In-VM mount directory: one workspace per VM, so the base segment is enough.
+// `arn:aws:lambda:<region>:<account>:microvm-image`, or undefined for anything
+// that is not a MicroVM image ARN.
+function microvmImageScope(arn: string): string | undefined {
+  const parts = arn.split(":");
+  if (parts[0] !== "arn" || parts[2] !== "lambda") return undefined;
+  if (parts[5] !== "microvm-image" || parts.length < 7) return undefined;
+
+  return parts.slice(0, 6).join(":");
+}
+
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }

@@ -12,7 +12,11 @@ import {
   LambdaClient,
 } from "@aws-sdk/client-lambda";
 import type { McpRecord } from "../../shared/domain/mcp.ts";
-import { positiveIntegerEnv, requireEnv } from "../../shared/env.ts";
+import {
+  booleanEnv,
+  positiveIntegerEnv,
+  requireEnv,
+} from "../../shared/env.ts";
 import { getS3ObjectUrl } from "../../shared/s3.ts";
 import { FrameQueue, toolBundlesBucket, type RunnerFrame } from "../frames.ts";
 
@@ -227,8 +231,9 @@ async function drainInvokeStream(
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
       // A PER_TENANT function refuses an invoke without a tenant id, and any
-      // other function refuses one with it.
-      ...(process.env.MCP_TENANT_ISOLATION === "true"
+      // other function refuses one with it. On by default, matching the SST
+      // deploy; MCP_TENANT_ISOLATION=false only for a shared local-dev runner.
+      ...(booleanEnv("MCP_TENANT_ISOLATION", true)
         ? { TenantId: payload.accountId }
         : {}),
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
