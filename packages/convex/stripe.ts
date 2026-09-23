@@ -4,9 +4,23 @@
 
 import { StripeSubscriptions } from "@convex-dev/stripe";
 import { v } from "convex/values";
+import type Stripe from "stripe";
 import { components } from "./_generated/api";
 import { action, internalMutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+
+// A subscription in one of these statuses is over: it no longer blocks a new
+// checkout and is not the one billing shows.
+const ENDED_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
+  "canceled",
+  "incomplete_expired",
+];
+
+// Statuses that grant the paid plan.
+const PAID_STATUSES: ReadonlyArray<Stripe.Subscription.Status> = [
+  "active",
+  "trialing",
+];
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
@@ -22,6 +36,17 @@ export const createCheckoutSession = action({
       email: authUser.email ?? undefined,
     });
 
+    // Stops a second click or tab. It reads webhook-synced rows, so a checkout
+    // paid seconds ago can still slip through; Stripe's "limit customers to
+    // one subscription" Checkout setting closes that window.
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptions,
+      { stripeCustomerId: customerId },
+    );
+    if (subs.some((sub) => !isEnded(sub.status))) {
+      throw new Error("Already subscribed; use Manage Billing to change plan");
+    }
+
     const priceId = process.env.STRIPE_PRO_PRICE_ID;
     if (!priceId) throw new Error("STRIPE_PRO_PRICE_ID is not configured");
 
@@ -31,7 +56,9 @@ export const createCheckoutSession = action({
       mode: "subscription",
       successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
       cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
-      subscriptionMetadata: { authId: authUser.id },
+      // The component files a subscription under `metadata.userId`; billing
+      // info and plan sync look it up by that key.
+      subscriptionMetadata: { userId: authUser.id },
     });
 
     if (!session.url) throw new Error("No checkout URL returned");
@@ -71,26 +98,42 @@ export const getBillingInfo = query({
       { userId: authUser.id },
     );
 
-    return subs[0] ?? null;
+    return subs.find((sub) => !isEnded(sub.status)) ?? subs[0] ?? null;
   },
 });
 
+/**
+ * Recompute a user's plan from their synced subscriptions. The webhook runs
+ * it after `processEvent`. `users.plan` is the source of truth; orgs the user
+ * owns carry a copy so the CLI and org settings read it off the org.
+ */
 export const syncPlanInternal = internalMutation({
-  args: { authId: v.string(), status: v.string() },
+  args: { authId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
-      .first();
-
+      .unique();
     if (!user) return null;
 
-    const plan =
-      args.status === "active" || args.status === "trialing"
-        ? ("pro" as const)
-        : ("free" as const);
-    await ctx.db.patch(user._id, { plan: plan });
+    const subs = await ctx.runQuery(
+      components.stripe.public.listSubscriptionsByUserId,
+      { userId: args.authId },
+    );
+    const paid = subs.some((sub) =>
+      PAID_STATUSES.some((status) => status === sub.status),
+    );
+    const plan = paid ? ("pro" as const) : ("free" as const);
+    if (user.plan !== plan) await ctx.db.patch(user._id, { plan: plan });
+
+    const orgs = await ctx.db
+      .query("orgs")
+      .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", args.authId))
+      .collect();
+    for (const org of orgs) {
+      if (org.plan !== plan) await ctx.db.patch(org._id, { plan: plan });
+    }
 
     return null;
   },
@@ -105,6 +148,11 @@ function allowedDashboardOrigin(): string | null {
   if (redirectUri) return new URL(redirectUri).origin;
 
   return null;
+}
+
+/** Whether a subscription status means it is over. */
+function isEnded(status: string): boolean {
+  return ENDED_STATUSES.some((ended) => ended === status);
 }
 
 /** Validate Stripe return URLs so callers cannot choose arbitrary domains. */

@@ -4,8 +4,8 @@ import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
-import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
-import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
+import type { PlanTier } from "@/app/lib/pricing";
+import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
@@ -26,9 +26,7 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
-  const userPlan: ConfiguredPlanTier = resolvePlan(
-    currentUser?.plan as PlanTier | undefined,
-  );
+  const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
   const planConfig = PLAN_CONFIGS[userPlan];
   const onMaxPlan = isMaxPlan(userPlan);
 

@@ -1,69 +1,55 @@
+import type { Doc } from "@broods/convex/_generated/dataModel";
 import type { VariantProps } from "class-variance-authority";
 
 import type { badgeVariants } from "@/app/components/ui/badge";
 
-/** Valid plan tier identifiers stored in the database. */
-export type PlanTier = "hobby" | "developer" | "pro" | "free";
-
-/** Plan tiers that have display configs (excludes "free" which maps to "hobby"). */
-export type ConfiguredPlanTier = "hobby" | "developer" | "pro";
+/** Plan tier as stored on the user; the Convex schema validator owns the union. */
+export type PlanTier = Doc<"users">["plan"];
 
 export interface PlanConfig {
-  key: ConfiguredPlanTier;
+  key: PlanTier;
   label: string;
   description: string;
   order: number;
   badgeVariant: NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 }
 
-export const DEFAULT_PLAN: PlanTier = "hobby";
-
-/** Highest tier. Users on this plan see no upgrade button. */
-export const MAX_PLAN: PlanTier = "pro";
+/** Tier shown while the user row is still loading. */
+export const DEFAULT_PLAN: PlanTier = "free";
 
 export const UPGRADE_URL =
   process.env.NEXT_PUBLIC_UPGRADE_URL ?? "https://github.com/beeblastco/broods";
 
-export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
-  hobby: {
-    key: "hobby",
+export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
+  free: {
+    key: "free",
     label: "Hobby",
     description: "Free tier for personal projects",
     order: 0,
     badgeVariant: "secondary",
   },
-  developer: {
-    key: "developer",
-    label: "Developer",
-    description: "For individual developers shipping to production",
-    order: 1,
-    badgeVariant: "info",
-  },
   pro: {
     key: "pro",
     label: "Pro",
     description: "For teams and advanced workloads",
-    order: 2,
+    order: 1,
     badgeVariant: "warning",
+  },
+  enterprise: {
+    key: "enterprise",
+    label: "Enterprise",
+    description: "Custom limits and support",
+    order: 2,
+    badgeVariant: "info",
   },
 };
 
 /**
- * Resolve the effective plan, defaulting undefined to "hobby".
- * @param plan raw plan value from database
- * @returns resolved plan tier
- */
-export function resolvePlan(plan: PlanTier | undefined): ConfiguredPlanTier {
-  if (plan === "free" || plan === undefined) return "hobby";
-
-  return plan;
-}
-
-/**
- * Check whether a user is on the highest available tier.
+ * Check whether a user has nothing to upgrade to. Checkout only sells Pro, so
+ * Pro and Enterprise both hide the upgrade button.
  * @param plan current user plan
- * @returns true if on max tier
+ * @returns true if no upgrade is offered
  */
 export function isMaxPlan(plan: PlanTier): boolean {
-  return plan === MAX_PLAN;
+  return plan !== "free";
 }

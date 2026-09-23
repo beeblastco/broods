@@ -22,6 +22,7 @@ import {
   requireOrgMember,
 } from "../model/ownership/org";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { planValidator } from "../schema";
 
 const CLI_CODE_PREFIX = "fp_code_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -32,13 +33,7 @@ const CODE_TTL_MS = 5 * 60 * 1000;
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-// planValidator stays ahead of onboardingOrgValidator, which embeds it;
-// onboardingContextValidator embeds the rest and comes last.
-const planValidator = v.union(
-  v.literal("free"),
-  v.literal("pro"),
-  v.literal("enterprise"),
-);
+// onboardingContextValidator embeds the validators below, so it comes last.
 
 /** The API account backing the token's current org; `broods whoami` reports it. */
 const onboardingAccountValidator = v.object({
@@ -85,7 +80,7 @@ type OnboardingOrg = {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
-  plan: "free" | "pro" | "enterprise";
+  plan: Doc<"orgs">["plan"];
   accountStatus: "active" | "disabled" | "missing";
 };
 
@@ -175,7 +170,7 @@ export const createOnboardingOrg = internalMutation({
       name: name,
       slug: slug,
       ownerAuthId: token.authId,
-      plan: "free",
+      plan: user.plan,
       createdAt: now,
     });
     await ctx.db.insert("orgMembers", {
