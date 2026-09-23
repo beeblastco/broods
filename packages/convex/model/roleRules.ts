@@ -12,6 +12,7 @@ import {
   normalizePolicyDocument,
   type PolicyDocument,
 } from "./policyRules";
+import { ClientError } from "./clientError";
 
 const ROLE_ID_BYTES = 16;
 const ROLE_ID_PREFIX = "fp_role_";
@@ -50,7 +51,8 @@ export function createRoleSessionToken(): string {
 
 /** Validate a `POST /v1/account/assume-role` request body. */
 export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const roleId = requireString(value.roleId, "roleId");
   if (value.ttlSeconds === undefined) {
     return { roleId: roleId, ttlSeconds: ROLE_SESSION_DEFAULT_TTL_SECONDS };
@@ -61,7 +63,7 @@ export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
     value.ttlSeconds < 1 ||
     value.ttlSeconds > ROLE_SESSION_MAX_TTL_SECONDS
   ) {
-    throw new Error(
+    throw new ClientError(
       `ttlSeconds must be an integer between 1 and ${ROLE_SESSION_MAX_TTL_SECONDS}`,
     );
   }
@@ -70,7 +72,8 @@ export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
 }
 
 export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const name = requireString(value.name, "name");
   const policy = normalizePolicyDocument(value.policy, API_POLICY_ACTIONS);
   const projectId = optionalString(value.projectId, "projectId");
@@ -85,7 +88,8 @@ export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
 }
 
 export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const patch: UpdateRoleInput = {};
   if (value.name !== undefined) patch.name = requireString(value.name, "name");
   if (value.policy !== undefined) {
@@ -93,12 +97,12 @@ export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
   }
   if (value.status !== undefined) {
     if (value.status !== "active" && value.status !== "disabled") {
-      throw new Error("status must be one of: active, disabled");
+      throw new ClientError("status must be one of: active, disabled");
     }
     patch.status = value.status;
   }
   if (Object.keys(patch).length === 0) {
-    throw new Error("Request body must include name, policy, or status");
+    throw new ClientError("Request body must include name, policy, or status");
   }
 
   return patch;
@@ -106,7 +110,8 @@ export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -114,7 +119,7 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

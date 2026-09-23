@@ -12,6 +12,7 @@
 
 import { isPlainObject } from "./objects";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
+import { ClientError } from "./clientError";
 
 // Global clone of the shared pattern for iteration/replacement.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
@@ -227,7 +228,7 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   // configure a workspace, see it saved, and never learn nothing reads it.
   for (const [branch, hint] of Object.entries(REMOVED_BRANCH_HINTS)) {
     if (nested[branch] !== undefined) {
-      throw new Error(hint);
+      throw new ClientError(hint);
     }
   }
 
@@ -335,7 +336,7 @@ function assertNoUnsupportedKeys(
 ): void {
   for (const key of keys) {
     if (value[key] !== undefined) {
-      throw new Error(`${path}.${key} is not supported`);
+      throw new ClientError(`${path}.${key} is not supported`);
     }
   }
 }

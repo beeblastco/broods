@@ -19,6 +19,7 @@ import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { ClientError } from "../model/clientError";
 
 /** Resolved CLI auth: an org secret, a scoped deploy key, or a CLI token. */
 export type CliAuth =
@@ -91,8 +92,9 @@ export function assertNotForeign(
   name: string,
 ): void {
   if (!foreign.has(`${kind}:${name}`)) return;
-  throw new Error(
+  throw new ClientError(
     `${kind}:${name} is managed by another stage of this account and cannot be changed from this one`,
+    "conflict",
   );
 }
 
@@ -330,7 +332,7 @@ function asOptionalRecord(value: unknown): Record<string, unknown> | null {
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} config must be an object`);
+    throw new ClientError(`${label} config must be an object`);
   }
 
   return value as Record<string, unknown>;
@@ -363,13 +365,13 @@ function cronEvents(config: Record<string, unknown>, label: string): unknown[] {
     return [{ role: "user", content: [{ type: "text", text: config.prompt }] }];
   }
 
-  throw new Error(`${label}.events must be a non-empty array`);
+  throw new ClientError(`${label}.events must be a non-empty array`);
 }
 
 function cronStatus(value: unknown): "active" | "paused" {
   if (value === undefined) return "active";
   if (value === "active" || value === "paused") return value;
-  throw new Error("Cron job status must be active or paused");
+  throw new ClientError("Cron job status must be active or paused");
 }
 
 // Matches only this stage's crons: a deploy key pinned to dev must not delete
@@ -411,7 +413,7 @@ function desiredCrons(
       );
       const agentId = agentIds[localAgentName];
       if (!agentId)
-        throw new Error(
+        throw new ClientError(
           `Cron job ${resource.name} references unknown deployed agent: ${localAgentName}`,
         );
 
@@ -663,7 +665,7 @@ function rewriteExternalResourceRefs(
 
 function stringField(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim())
-    throw new Error(`${label} must be a non-empty string`);
+    throw new ClientError(`${label} must be a non-empty string`);
 
   return value;
 }
@@ -781,7 +783,7 @@ async function syncHookResources(
     const config = asRecord(resource.config, `hook:${resource.name}`);
     const events = config.events;
     if (!Array.isArray(events))
-      throw new Error(`hook:${resource.name}.events must be an array`);
+      throw new ClientError(`hook:${resource.name}.events must be an array`);
     const upload = await normalizeAccountHookUpload(
       {
         name: resource.name,
@@ -1021,7 +1023,7 @@ async function syncSkillResources(
     const config = asRecord(resource.config, `skill:${resource.name}`);
     const files = config.files;
     if (!Array.isArray(files))
-      throw new Error(`skill:${resource.name}.files must be an array`);
+      throw new ClientError(`skill:${resource.name}.files must be an array`);
     const skill = await ctx.runAction(internal.aws.skills.createSkill, {
       accountId: accountId,
       expectedName: resource.name,

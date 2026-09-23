@@ -10,6 +10,7 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { sandboxConfigsFields, paginationCursorFields } from "../schema";
+import { ClientError } from "../model/clientError";
 
 const sandboxConfigDoc = v.object({
   ...sandboxConfigsFields,
@@ -119,13 +120,13 @@ export const update = internalMutation({
     const { accountId, sandboxId, ...patch } = args;
     const normalized = ctx.db.normalizeId("sandboxConfigs", sandboxId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== accountId) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
@@ -160,13 +161,13 @@ export const remove = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
     if (!normalized) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) {
-      throw new Error(
+      throw new ClientError(
         "Sandbox config does not belong to the supplied accountId",
       );
     }

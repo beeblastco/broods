@@ -40,6 +40,7 @@ import {
   type PolicyReferenceRows,
 } from "./policyReferences";
 import { normalizeWorkspaceConfig } from "./workspaceRules";
+import { ClientError } from "./clientError";
 
 /** What a reserved instance belongs to: its sandbox config, or the workspace namespace keying it. */
 export type ReservationHolder =
@@ -63,8 +64,9 @@ export async function deleteAgentResource(
   const config = configs.find((entry) => entry.name === name);
   if (!config) return;
   if (config.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Agent "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   if (config.agentId) {
@@ -90,8 +92,9 @@ export async function deleteSandboxResource(
   const sandbox = await sandboxConfigByName(ctx, stageId, name);
   if (!sandbox) return false;
   if (sandbox.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Sandbox "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   const instances = await accountInstances(ctx, accountId);
@@ -113,8 +116,9 @@ export async function deleteWorkspaceResource(
   const workspace = await workspaceConfigByName(ctx, stageId, name);
   if (!workspace) return;
   if (workspace.managedBy !== "cli") {
-    throw new Error(
+    throw new ClientError(
       `Workspace "${name}" is dashboard-managed and cannot be deleted through the CLI.`,
+      "conflict",
     );
   }
   await ctx.db.delete(workspace._id);

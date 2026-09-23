@@ -10,6 +10,7 @@ import { ACCOUNT_ENV_VAR_NAME_PATTERN } from "../../model/agentConfigCodec";
 import { type ConfigAuditActor } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
 import { collectionPage, json, methodNotAllowed, writeAudit } from "./shared";
+import { ClientError } from "../../model/clientError";
 
 export async function handleAccountEnvVarRoute(
   ctx: ActionCtx,
@@ -43,7 +44,9 @@ export async function handleAccountEnvVarRoute(
       body.value.length < 1 ||
       body.value.length > 8192
     ) {
-      throw new Error("env value must be a string from 1 to 8192 characters");
+      throw new ClientError(
+        "env value must be a string from 1 to 8192 characters",
+      );
     }
     await ctx.runMutation(internal.account.envVars.set, {
       accountId: accountId,
@@ -84,7 +87,7 @@ export async function handleAccountEnvVarRoute(
 
 function validateAccountEnvVarName(name: string): void {
   if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
-    throw new Error(
+    throw new ClientError(
       "env name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters",
     );
   }

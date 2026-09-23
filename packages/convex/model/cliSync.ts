@@ -17,6 +17,7 @@ import {
 import { defaultSandboxOf } from "./agentRules";
 import { isPlainObject, remapKeys } from "./objects";
 import { stageNameEquals } from "./projectScope";
+import { ClientError } from "./clientError";
 
 /**
  * Resource kinds owned by the account service and snapshotted per stage in
@@ -44,7 +45,7 @@ export async function accountFromSecretHash(
 
 export function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value))
-    throw new Error("Resource config must be an object");
+    throw new ClientError("Resource config must be an object");
 
   return value;
 }
@@ -67,7 +68,7 @@ export function assertEnvRefsResolved(
     .sort();
   if (missing.length === 0) return;
 
-  throw new Error(
+  throw new ClientError(
     `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
       "Set each one with `broods env set <NAME>` (or put it in .env.local and run `broods dev`), then sync again.",
   );
@@ -95,9 +96,10 @@ export async function assertNoAccountScopedResourceConflict(
   const accountScoped = rows.find((row) => row.stageId === undefined);
   if (!accountScoped) return;
 
-  throw new Error(
+  throw new ClientError(
     `${options.table} "${options.name}" already exists account-wide. ` +
       "Move it to a project/stage or delete it first.",
+    "conflict",
   );
 }
 
@@ -125,7 +127,7 @@ export function assertSupportedWorkspaceSandboxMounts(
       if (!sandboxName) continue;
       const sandbox = sandboxes.get(sandboxName);
       if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
-      throw new Error(
+      throw new ClientError(
         `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId ?? "<unknown>")}" uses sandbox "${sandbox.name}" ` +
           `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
           `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
@@ -140,12 +142,12 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
   const provider = storage.provider;
   if (provider === undefined || provider === "s3") return;
   if (provider === "vercel") {
-    throw new Error(
+    throw new ClientError(
       `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
         `Use storage.provider "s3" or omit storage until Vercel Drive is wired.`,
     );
   }
-  throw new Error(
+  throw new ClientError(
     `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
   );
 }
@@ -325,7 +327,7 @@ export async function ensureStage(
 export function envName(value: string): string {
   const trimmed = value.trim();
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
-    throw new Error(`Invalid environment variable name: ${value}`);
+    throw new ClientError(`Invalid environment variable name: ${value}`);
   }
 
   return trimmed;
@@ -381,7 +383,7 @@ export function renameComparableResource(
 
 export function resourceName(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) throw new Error("Resource name is required");
+  if (!trimmed) throw new ClientError("Resource name is required");
 
   return trimmed;
 }

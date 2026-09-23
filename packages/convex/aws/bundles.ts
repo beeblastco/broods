@@ -13,6 +13,7 @@ import { internalAction } from "../_generated/server";
 import { accountHookBundleStorageKey } from "../model/accountHooks";
 import { MAX_MCP_BUNDLE_BYTES, mcpBundleStorageKey } from "../model/mcp";
 import { writeS3Object } from "../model/s3";
+import { ClientError } from "../model/clientError";
 
 /**
  * @param accountId account id owning the hook
@@ -51,13 +52,13 @@ export const putMcpBundle = internalAction({
   handler: async (ctx, args): Promise<string> => {
     const bytes = await bundleBytes(ctx, args.storageId);
     if (bytes.byteLength > MAX_MCP_BUNDLE_BYTES) {
-      throw new Error(
+      throw new ClientError(
         `bundle must be at most ${MAX_MCP_BUNDLE_BYTES} bytes (got ${bytes.byteLength})`,
       );
     }
     const actualSha = createHash("sha256").update(bytes).digest("hex");
     if (actualSha !== args.sha256) {
-      throw new Error(
+      throw new ClientError(
         "bundle sha256 does not match the uploaded bytes; re-upload and retry",
       );
     }
@@ -71,7 +72,7 @@ async function bundleBytes(
   storageId: string,
 ): Promise<Buffer> {
   const blob = await ctx.storage.get(storageId);
-  if (!blob) throw new Error("bundle is missing from Convex storage");
+  if (!blob) throw new ClientError("bundle is missing from Convex storage");
 
   return Buffer.from(await blob.arrayBuffer());
 }

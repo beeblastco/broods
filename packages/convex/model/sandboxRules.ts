@@ -7,6 +7,7 @@
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import { assertStorageEndpoint } from "./workspaceRules";
+import { ClientError } from "./clientError";
 
 export const SANDBOX_PROVIDERS = [
   "sandbox",
@@ -152,12 +153,12 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
     };
   }
   if (!isPlainObject(value)) {
-    throw new Error("config must be an object");
+    throw new ClientError("config must be an object");
   }
 
   const config = value;
   if ("internet" in config) {
-    throw new Error(
+    throw new ClientError(
       "config.internet is no longer supported; use config.network",
     );
   }
@@ -179,13 +180,15 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   const snapshot = optionalString(config.snapshot, "config.snapshot");
 
   if (fallbackProvider === provider) {
-    throw new Error("config.fallbackProvider must differ from config.provider");
+    throw new ClientError(
+      "config.fallbackProvider must differ from config.provider",
+    );
   }
   if (fallbackProvider === "machine") {
-    throw new Error("config.fallbackProvider cannot be machine");
+    throw new ClientError("config.fallbackProvider cannot be machine");
   }
   if (fallbackProvider !== undefined && config.persistent === true) {
-    throw new Error(
+    throw new ClientError(
       "config.fallbackProvider requires config.persistent to be false: a reserved sandbox belongs to one provider",
     );
   }
@@ -221,7 +224,8 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
   description?: string;
   config: SandboxConfig;
 } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeSandboxConfig(value.config);
@@ -243,7 +247,8 @@ export function normalizeUpdateSandboxConfigInput(
   existingConfig: SandboxConfig,
   value: unknown,
 ): { name?: string; description?: string | null; config: SandboxConfig } {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value))
+    throw new ClientError("Request body must be an object");
 
   const config =
     "config" in value
@@ -269,7 +274,7 @@ export function normalizeUpdateSandboxConfigInput(
 }
 
 function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new Error("config must be an object");
+  if (!isPlainObject(value)) throw new ClientError("config must be an object");
 
   return value;
 }
@@ -279,10 +284,12 @@ function assertEnvVarsAndOptions(
   provider: SandboxProvider,
 ): void {
   if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new Error("config.envVars must be an object with string values");
+    throw new ClientError(
+      "config.envVars must be an object with string values",
+    );
   }
   if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.options must be an object");
+    throw new ClientError("config.options must be an object");
   }
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options);
@@ -296,7 +303,9 @@ function assertMachineFields(
   if (provider !== "machine") return;
   for (const field of ["persistent", "size", "snapshot", "memoryLimit"]) {
     if (config[field] !== undefined) {
-      throw new Error(`config.${field} does not apply to the machine provider`);
+      throw new ClientError(
+        `config.${field} does not apply to the machine provider`,
+      );
     }
   }
 }
@@ -309,7 +318,7 @@ function assertNetworkEnforceable(
     (provider === "e2b" || provider === "machine") &&
     network.mode !== "allow-all"
   ) {
-    throw new Error(
+    throw new ClientError(
       `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
@@ -318,7 +327,7 @@ function assertNetworkEnforceable(
     network.mode === "restricted" &&
     (network.allowDomains || network.allowCidrs)
   ) {
-    throw new Error(
+    throw new ClientError(
       "lambda (MicroVM) cannot enforce per-sandbox allowlists: its egress connector is fixed at deploy time; use config.network.mode deny-all or allow-all",
     );
   }
@@ -326,7 +335,7 @@ function assertNetworkEnforceable(
 
 function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean") {
-    throw new Error(`${name} must be a boolean`);
+    throw new ClientError(`${name} must be a boolean`);
   }
 }
 
@@ -337,7 +346,7 @@ function assertOptionalEnum<T extends string>(
 ): T | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || !allowed.includes(value as T)) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
   }
 
   return value as T;
@@ -350,10 +359,10 @@ function assertOptionalPositiveInteger(
 ): void {
   if (value === undefined) return;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new ClientError(`${name} must be a positive integer`);
   }
   if (max !== undefined && value > max) {
-    throw new Error(`${name} must be an integer from 1 to ${max}`);
+    throw new ClientError(`${name} must be an integer from 1 to ${max}`);
   }
 }
 
@@ -390,7 +399,7 @@ function assertRuntimes(value: unknown): void {
         SANDBOX_RUNTIMES.includes(entry as RuntimeName),
     )
   ) {
-    throw new Error(
+    throw new ClientError(
       `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
     );
   }
@@ -439,13 +448,17 @@ function buildNormalizedConfig(
 
 function normalizeHookList(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+    throw new ClientError(
+      `${name} must be a non-empty array of non-empty strings`,
+    );
   }
   const commands = value.map((entry) =>
     typeof entry === "string" ? entry.trim() : "",
   );
   if (commands.some((entry) => entry.length === 0)) {
-    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+    throw new ClientError(
+      `${name} must be a non-empty array of non-empty strings`,
+    );
   }
 
   return commands;
@@ -453,7 +466,7 @@ function normalizeHookList(value: unknown, name: string): string[] {
 
 function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
   if (!isPlainObject(value)) {
-    throw new Error("config.lifecycle must be an object");
+    throw new ClientError("config.lifecycle must be an object");
   }
   assertOptionalPositiveInteger(
     value.idleTimeoutSeconds,
@@ -481,7 +494,7 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
     return { mode: "deny-all" };
   }
   if (!isPlainObject(value)) {
-    throw new Error("config.network must be an object");
+    throw new ClientError("config.network must be an object");
   }
   assertOptionalEnum(value.mode, "config.network.mode", SANDBOX_NETWORK_MODES);
   const mode = (value.mode as NetworkMode | undefined) ?? "deny-all";
@@ -494,7 +507,7 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
     "config.network.allowCidrs",
   );
   if (mode !== "restricted" && (allowDomains || allowCidrs)) {
-    throw new Error(
+    throw new ClientError(
       "config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted",
     );
   }
@@ -512,13 +525,13 @@ function normalizeOptionalStringList(
 ): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+    throw new ClientError(`${name} must be an array of non-empty strings`);
   }
   const entries = value.map((entry) =>
     typeof entry === "string" ? entry.trim() : "",
   );
   if (entries.some((entry) => entry.length === 0)) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+    throw new ClientError(`${name} must be an array of non-empty strings`);
   }
 
   return entries;
@@ -533,7 +546,9 @@ function normalizePersistentFields(
       ? normalizeLifecycle(config.lifecycle)
       : undefined;
   if (lifecycle && config.persistent !== true) {
-    throw new Error("config.lifecycle requires config.persistent to be true");
+    throw new ClientError(
+      "config.lifecycle requires config.persistent to be true",
+    );
   }
   const onCreate =
     config.onCreate !== undefined
@@ -544,12 +559,12 @@ function normalizePersistentFields(
       ? normalizeHookList(config.onResume, "config.onResume")
       : undefined;
   if ((onCreate || onResume) && config.persistent !== true) {
-    throw new Error(
+    throw new ClientError(
       "config.onCreate and config.onResume require config.persistent to be true",
     );
   }
   if (provider === "e2b" && (onCreate || onResume)) {
-    throw new Error(
+    throw new ClientError(
       "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
     );
   }
@@ -563,7 +578,8 @@ function normalizePersistentFields(
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -577,7 +593,7 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new ClientError(`${name} must be a positive integer`);
   }
 
   return parsed;
@@ -585,7 +601,7 @@ function positiveIntegerEnv(name: string, fallback: number): number {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();
@@ -600,10 +616,10 @@ function validateProviderOptions(
   }
   if ("docker" in options) {
     if (typeof options.docker !== "boolean") {
-      throw new Error("config.options.docker must be a boolean");
+      throw new ClientError("config.options.docker must be a boolean");
     }
     if (provider !== "sandbox") {
-      throw new Error(
+      throw new ClientError(
         "config.options.docker is only supported by the sandbox provider",
       );
     }
@@ -611,7 +627,7 @@ function validateProviderOptions(
   if (provider === "lambda") {
     for (const key of PLATFORM_ONLY_LAMBDA_OPTIONS) {
       if (key in options) {
-        throw new Error(
+        throw new ClientError(
           `config.options.${key} is not supported in account sandbox config`,
         );
       }
@@ -628,13 +644,13 @@ function validateProviderOptions(
   }
   if (provider === "vercel") {
     if ("image" in options && typeof options.image !== "string") {
-      throw new Error("config.options.image must be a string");
+      throw new ClientError("config.options.image must be a string");
     }
     if ("runtime" in options && typeof options.runtime !== "string") {
-      throw new Error("config.options.runtime must be a string");
+      throw new ClientError("config.options.runtime must be a string");
     }
     if ("image" in options && "runtime" in options) {
-      throw new Error(
+      throw new ClientError(
         "config.options.image and config.options.runtime cannot both be set",
       );
     }

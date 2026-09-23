@@ -74,6 +74,7 @@ import {
 } from "../model/environmentValues";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
+import { ClientError } from "../model/clientError";
 import { workspaceNamespace } from "../model/workspaceRules";
 
 // `touchProject` bumps `updatedAt` at most this often.
@@ -147,9 +148,10 @@ export const deleteResourceBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<{ reserved: boolean }> => {
     const { secretHash, project, stage, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
-    if (!resolved) throw new Error("Project/stage not found");
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
     const normalizedName = resourceName(name);
     const stageId = resolved.stageDoc._id;
 
@@ -205,7 +207,7 @@ export const deleteTargetsBySecretHash = internalQuery({
   handler: async (ctx, args): Promise<ReservationHolder[]> => {
     const { secretHash, project, stage, target } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return [];
     const stageId = resolved.stageDoc._id;
@@ -366,7 +368,7 @@ export const ensureScopeBySecretHash = internalMutation({
     args,
   ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> }> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
 
@@ -397,7 +399,7 @@ export const getEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<{ value: string } | null> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return null;
     const normalizedName = envName(name);
@@ -507,7 +509,7 @@ export const listEnvBySecretHash = internalQuery({
   > => {
     const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return [];
 
@@ -581,14 +583,15 @@ export const pruneSandboxesBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<string[]> => {
     const { secretHash, manifest } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(
       ctx,
       account,
       manifest.project,
       manifest.stage,
     );
-    if (!resolved) throw new Error("Project/stage not found");
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
     const { projectDoc, stageDoc } = resolved;
 
     await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
@@ -620,7 +623,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
     const existing = await ctx.db
@@ -697,9 +700,10 @@ export const removeEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<{ removed: boolean }> => {
     const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(ctx, account, project, stage);
-    if (!resolved) throw new Error("Project/stage not found");
+    if (!resolved)
+      throw new ClientError("Project/stage not found", "not_found");
     const normalizedName = envName(name);
 
     const existing = await ctx.db
@@ -755,14 +759,15 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(
       ctx,
       account,
       args.project,
       args.stage,
     );
-    if (!resolved) throw new Error("Project or stage not found");
+    if (!resolved)
+      throw new ClientError("Project or stage not found", "not_found");
     const authId = await authIdForAccount(ctx, account);
     if (!authId) throw new Error("Account org owner not found");
     const nodeId = canvasNodeId("skill", resourceName(args.skillName));
@@ -871,7 +876,7 @@ export const setEnvBySecretHash = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const { secretHash, project, stage, name, value } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
     await upsertEnvironmentVariable(ctx, {
@@ -904,7 +909,7 @@ export const syncManifestBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const { secretHash, manifest, prune } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
-    if (!account) throw new Error("Invalid Broods token");
+    if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
