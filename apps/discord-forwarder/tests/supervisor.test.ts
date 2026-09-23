@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ForwarderConfig } from "../src/config.ts";
 import type { ForwarderConnection } from "../src/connections.ts";
 import type { MessageCreate } from "../src/discord.ts";
-import type { GatewaySocketOptions } from "../src/socket.ts";
+import type { GatewaySocketOptions, SocketState } from "../src/socket.ts";
 import {
   Forwarder,
   groupConnectionsByToken,
@@ -18,7 +18,7 @@ const CONFIG: ForwarderConfig = {
 
 class StubSocket implements ForwarderSocket {
   botIdentity: string | null = null;
-  state: "ready" | "stopped" = "stopped";
+  state: SocketState = "stopped";
   started = 0;
   stopped = 0;
 
@@ -164,6 +164,21 @@ describe("reconcile", () => {
 
     expect(sockets.get("token-a")?.started).toBe(1);
     expect(forwarder.status().targets).toBe(2);
+  });
+
+  // 4014 (Message Content Intent off) waits on the owner. A config change is
+  // the only signal they may have fixed it, and a timer would burn IDENTIFYs.
+  it("replaces a socket parked on a fatal close code", () => {
+    const { forwarder, sockets } = stubbedForwarder();
+    forwarder.reconcile([connection()]);
+    const parked = sockets.get("token-a")!;
+    parked.state = "fatal";
+
+    forwarder.reconcile([connection()]);
+
+    expect(parked.stopped).toBe(1);
+    expect(sockets.get("token-a")).not.toBe(parked);
+    expect(sockets.get("token-a")?.started).toBe(1);
   });
 
   it("stops every socket on shutdown", () => {

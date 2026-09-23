@@ -63,7 +63,10 @@ export class Forwarder {
   /**
    * Opens sockets for tokens that gained a connection, closes the ones that lost
    * every connection, and re-points the rest. An unchanged token keeps its
-   * socket: its session, sequence number and IDENTIFY history all survive.
+   * socket: its session, sequence number and IDENTIFY history all survive. A
+   * socket parked on a fatal close code is replaced instead, because a config
+   * change is the only signal that the owner may have fixed the bot, and
+   * retrying on a timer would spend IDENTIFY budget.
    */
   reconcile(connections: readonly ForwarderConnection[]): void {
     const desired = groupConnectionsByToken(connections);
@@ -80,7 +83,9 @@ export class Forwarder {
     for (const [botToken, targets] of desired) {
       const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
-      if (existing) {
+      if (existing?.socket.state === "fatal") {
+        existing.socket.stop();
+      } else if (existing) {
         // reconcile runs on every config change, so warn only when the fan-out
         // itself moved.
         if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
