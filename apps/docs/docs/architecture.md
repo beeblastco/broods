@@ -297,12 +297,16 @@ Notes:
 - **Speed.** Core publish is fire-and-forget (no per-token PubAck round-trip),
   the `TextEncoder` is shared, and the subject is precomputed once per publisher.
 - **Transport by URL scheme.** `connectNats` in `nats.ts` selects the client
-  from `NATS_URL`: `wss://`/`ws://` → WebSocket (`nats.ws`) for out-of-cluster
-  callers (the cluster exposes only a `wss://` ingress externally);
-  `nats://`/`tls://` → core TCP (`nats`) for in-cluster callers on the internal
-  network (lower latency; core `4222` is not exposed externally). Moving a service
-  in-cluster is then a `NATS_URL` change, not a code change. `NATS_TOKEN` carries
-  the token-auth credential (omit for an unauthenticated server).
+  from `NATS_URL`: `nats://`/`tls://` → core TCP (`nats`), `wss://`/`ws://` →
+  WebSocket (`nats.ws`). NATS is in-cluster only: core and the gateway both dial
+  `nats://` on the cluster service, and no ingress exposes it. `NATS_TOKEN`
+  carries the token-auth credential (omit for an unauthenticated server).
+- **One connection per process.** Core publishes every run's stream, and its
+  logs and spans, over one shared connection that reconnects forever.
+- **Oversized frames.** A frame larger than the server's `max_payload` (1 MB by
+  default) is published as the same `type` with `truncated: true` and
+  `originalBytes`, its payload dropped, so a `done` still ends the stream. Read
+  the full result from the run status.
 - **No duplicates.** A single read path never sees a message twice; each publish
   also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
   `duplicate_window` (~2 min) collapses any publish retry.
@@ -325,11 +329,10 @@ Notes:
   disabled, the direct API stays SSE-only and NATS config is ignored.
 
 > **Infra lives in the infra repo and is applied via CI/CD.** The cluster NATS runs
-> JetStream with a WebSocket listener and Traefik ingress at `wss://nats.beeblast.co`
-> (token auth via the `nats-auth` secret) and a file-backed JetStream PVC, so
-> out-of-cluster callers connect over `wss://` today. For production durability, enable
-> JetStream clustering (`replicas: 3`, which multiplies storage by 3). Core `4222` stays
-> cluster-internal for future in-cluster callers (see the Transport note above).
+> JetStream with token auth (the `nats-auth` secret) and a file-backed JetStream PVC.
+> It is in-cluster only: no ingress exposes it, and callers use `nats://` on the
+> cluster service. For production durability, enable JetStream clustering
+> (`replicas: 3`, which multiplies storage by 3).
 
 ## Deferred delivery & resume (background jobs)
 

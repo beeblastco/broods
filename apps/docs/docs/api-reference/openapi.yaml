@@ -58,16 +58,16 @@ tags:
       via assume-role for a short-lived `fp_sts_...` session token.
 
 paths:
-  /:
+  /healthz:
     get:
       tags:
         - Direct API
       summary: Health probe
-      description: Unauthenticated probe for the deployed harness-processing Function URL.
+      description: Unauthenticated liveness probe. The gateway answers it itself, so it says nothing about core.
       security: []
       responses:
         "200":
-          description: Service is healthy
+          description: Gateway is up
           content:
             application/json:
               schema:
@@ -76,14 +76,16 @@ paths:
                   status:
                     type: string
                     example: ok
-                  method:
-                    type: string
-                    example: POST
+                  activeWebSockets:
+                    type: integer
+                  maxWebSockets:
+                    type: integer
               examples:
                 healthy:
                   value:
                     status: ok
-                    method: POST
+                    activeWebSockets: 3
+                    maxWebSockets: 1000
 
   /v1/runs:
     post:
