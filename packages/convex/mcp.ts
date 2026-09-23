@@ -19,7 +19,12 @@ import { authKit } from "./auth";
 import { mcpDoc } from "./account/mcp";
 import { storeMcpBundle } from "./model/bundles";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./model/envRefs";
-import { normalizeMcpInput, type McpInput } from "./model/mcp";
+import { REDACTED_SECRET_VALUE } from "./model/configValues";
+import {
+  CREDENTIAL_HEADER_VALUE_PATTERN,
+  normalizeMcpInput,
+  type McpInput,
+} from "./model/mcp";
 import { stripUndefined } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -113,7 +118,27 @@ export const getByNode = query({
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
 
-    return await activeServerByNode(ctx, stageId, nodeId);
+    const server = await activeServerByNode(ctx, stageId, nodeId);
+    if (
+      !server?.headers ||
+      (await getProjectForRole(ctx, authUser.id, projectId, "admin"))
+    ) {
+      return server;
+    }
+
+    // Members see which headers exist and their ${NAME} refs, never a value.
+    // Only admins save, so a masked value never travels back to the row.
+    return {
+      ...server,
+      headers: Object.fromEntries(
+        Object.entries(server.headers).map(([name, value]) => [
+          name,
+          CREDENTIAL_HEADER_VALUE_PATTERN.test(value)
+            ? value
+            : REDACTED_SECRET_VALUE,
+        ]),
+      ),
+    };
   },
 });
 

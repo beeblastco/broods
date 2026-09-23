@@ -13,7 +13,7 @@
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
-import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
+import { ACCOUNT_ENV_REFS_ONLY_PATTERN } from "./envRefs";
 import { ClientError } from "./clientError";
 
 const MAX_ALLOWED_TOOLS = 256;
@@ -36,15 +36,17 @@ const MAX_URL_LENGTH = 2048;
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
-/** Headers whose values carry credentials and so must use a ${NAME} ref. */
-const SENSITIVE_HEADER_NAMES = new Set([
-  "api-key",
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "x-api-key",
-  "x-auth-token",
-]);
+/** Header names whose values carry credentials and so must use a ${NAME} ref. */
+const SENSITIVE_HEADER_NAME_PATTERN =
+  /auth|token|secret|key|cookie|password|credential/i;
+
+/**
+ * A credential header value with no inline secret: `${NAME}` refs only, after
+ * an optional auth scheme word (`Bearer ${TOKEN}`). Anchored, so a literal
+ * beside a ref (`Bearer sk-live ${X}`) is refused. Members see only these.
+ */
+export const CREDENTIAL_HEADER_VALUE_PATTERN =
+  /^(?:[A-Za-z]+ )?(?:\$\{[A-Z][A-Z0-9_]*\})+$/;
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -372,8 +374,8 @@ function normalizeHeaders(value: unknown): Record<string, string> {
       );
     }
     if (
-      SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) &&
-      !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(headerValue)
+      SENSITIVE_HEADER_NAME_PATTERN.test(name) &&
+      !CREDENTIAL_HEADER_VALUE_PATTERN.test(headerValue)
     ) {
       throw new ClientError(
         `headers values for ${name} must reference an account env var like \${NAME}, not an inline secret`,
@@ -429,7 +431,7 @@ function normalizeOauth(
         `oauth.${name} must be a single-line string of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
-    if (secret && !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(fieldValue)) {
+    if (secret && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(fieldValue)) {
       throw new ClientError(
         `oauth.${name} must reference an account env var like \${NAME}, not an inline secret`,
       );

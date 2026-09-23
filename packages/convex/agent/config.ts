@@ -28,6 +28,7 @@ import {
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { saveAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
+import { redactConfigSecrets } from "../model/configValues";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 import { agentConfigsFields } from "../schema";
 
@@ -198,8 +199,15 @@ export const getById = query({
     const config = await ctx.db.get(configId);
     if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config)))
       return null;
+    const masked = maskRuntimeVariables(config);
+    if (await getProjectForRole(ctx, authUser.id, config.projectId, "admin")) {
+      return masked;
+    }
 
-    return maskRuntimeVariables(config);
+    // extraConfig holds the literal channel tokens and webhook secrets the
+    // dashboard writes. Members read them masked; only admins save the config
+    // back, so a mask never overwrites a stored secret.
+    return redactConfigSecrets(masked);
   },
 });
 
